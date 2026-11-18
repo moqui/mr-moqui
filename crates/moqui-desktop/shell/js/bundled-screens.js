@@ -208,7 +208,8 @@ module.exports = {
         // Start: the number's room, a named room, or the direct or group chat (moqui.chat.startChat)
         startDirect() {
             const pick = { values: this.newUserIds || [], name: this.newName, fromNumber: this.fromNumber };
-            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            // one Start at a time: a second would race the first to make the same room
+            if (moqui.chat.pickKind(pick.values) === 'none' || this.busy) return;
             this.busy = true;
             moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.busy = false;
@@ -1157,9 +1158,11 @@ const countOf = (counts, key) => {
 // their path under that root, and the screen path each is shown as; the host routes the same paths here
 // (src/client/windows.rs SHELL_SCREENS). Any other path is the server's page, in an app window (Calls' History, its
 // voicemail and recordings among them).
-const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose', 'Calls/Call': 'call', 'Calls/Dialer': 'dialer' };
-const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'] };
-const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer' };
+const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose', 'Calls/Call': 'call', 'Calls/Dialer': 'dialer',
+    'Settings/Devices': 'devices' };
+const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'],
+    devices: ['Settings', 'Devices'] };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices' };
 // what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
 const unsentItems = (found) => {
     const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
@@ -1996,9 +1999,35 @@ module.exports = {
                                           }, 8, ["onClick"])), [
                                             [_directive_close_popup]
                                           ]),
-                                          (_ctx.pushCheckable)
+                                          (_ctx.componentOf('devices'))
                                             ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 key: 1,
+                                                clickable: "",
+                                                class: "m-shell-crypto-devices",
+                                                onClick: $event => (_ctx.setUrl(_ctx.commsLink + '/Settings/Devices'))
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, { name: "sym_o_phonelink_lock" })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('My devices (encryption)')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["onClick"])), [
+                                                [_directive_close_popup]
+                                              ])
+                                            : _createCommentVNode("", true),
+                                          (_ctx.pushCheckable)
+                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                key: 2,
                                                 clickable: "",
                                                 onClick: _ctx.openPushCheck
                                               }, {
@@ -3270,7 +3299,8 @@ const messageTemplate = `
             </div>
         </div>
         <div v-if="item.redacted" class="text-body2 m-muted text-italic">{{item.removedLabel || room.t('Message removed')}}</div>
-        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable" :data-withheld="item.withheld || undefined"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.undecryptableText(item)}}</div>
+        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable" :data-withheld="item.withheld || undefined"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.undecryptableText(item)}}
+            <q-btn v-if="room.setupNeeded && item.withheld !== 'm.unverified'" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-setup-message" :label="room.t('Set up')" @click.stop="room.openSetup()"></q-btn></div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
@@ -3927,6 +3957,10 @@ const roomTemplate = `
                         <q-item-section avatar><q-icon :name="room.record.icon || 'sym_o_description'"></q-icon></q-item-section><q-item-section>{{t('The record')}}</q-item-section></q-item>
                     <q-item v-if="canModerate" clickable v-close-popup @click="openSettings">
                         <q-item-section avatar><q-icon name="sym_o_settings"></q-icon></q-item-section><q-item-section>{{t('Room settings')}}</q-item-section></q-item>
+                    <!-- a plain direct chat: its encrypted chat with the same people (Comms-Messaging §6.5) -->
+                    <q-item v-if="encryptOffered" clickable v-close-popup class="m-chat-start-encrypted-item" @click="startEncrypted">
+                        <q-item-section avatar><q-icon name="sym_o_lock"></q-icon></q-item-section>
+                        <q-item-section>{{encryptedSibling ? t('Open the encrypted chat') : t('Start an encrypted chat')}}</q-item-section></q-item>
                     <template v-if="isMember">
                         <q-separator></q-separator>
                         <q-item clickable v-close-popup @click="leave">
@@ -3938,8 +3972,20 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
+    <!-- a new device (Comms-Messaging §6.5): Set up this device in the banner's place until it reads what came before it -->
+    <div v-if="setupBar" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal text-warning m-chat-setup-bar" role="status">
+        <q-icon name="sym_o_phonelink_lock" size="16px"></q-icon>
+        <span class="col q-ml-xs">{{t('Set up this device to read messages sent before it was added.')}}</span>
+        <q-btn unelevated dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-setup" :label="t('Set up')" @click="openSetup"></q-btn>
+    </div>
+    <div v-else-if="backupHint" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-backup-hint">
+        <q-icon name="sym_o_key" size="16px" class="m-muted"></q-icon>
+        <span class="col q-ml-xs">{{t('Keep your encrypted messages if you lose this device: set up key backup.')}}</span>
+        <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="t('Set up key backup')" @click="openDevices"></q-btn>
+        <q-btn flat round dense size="xs" icon="sym_o_close" class="q-ml-xs" :aria-label="t('Close the note')" @click="closeBackupHint"></q-btn>
+    </div>
     <!-- the room's E2EE banner (Comms-Messaging §6.2): what reads its messages, with Verify in an encrypted room not all verified -->
-    <div v-if="room && label.banner && !bannerHidden" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner" :data-e2ee="label.state">
+    <div v-else-if="room && label.banner && !bannerHidden" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner" :data-e2ee="label.state">
         <q-icon :name="label.icon" size="16px" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon>
         <q-icon v-if="label.verified" name="sym_o_check" size="12px" class="text-positive"></q-icon>
         <span class="col q-ml-xs m-chat-e2ee-banner-text">{{label.banner}}</span>
@@ -3985,6 +4031,11 @@ const roomTemplate = `
                             <div class="text-subtitle1 text-weight-medium q-mt-sm">{{displayName}}</div>
                             <div class="text-caption m-muted">{{startText}}</div>
                             <div v-if="label.banner" class="text-caption m-muted q-mt-xs m-chat-e2ee-intro"><q-icon :name="label.icon" size="14px" class="q-mr-xs"></q-icon><span class="m-chat-e2ee-intro-text">{{label.banner}}</span></div>
+                            <!-- a plain direct chat's encrypted one, and an encrypted one's earlier plain chat (Comms-Messaging §6.5) -->
+                            <q-btn v-if="encryptOffered" flat dense no-caps color="primary" icon="sym_o_lock" class="q-mt-xs m-chat-start-encrypted" :loading="encryptBusy"
+                                    :label="encryptedSibling ? t('Open the encrypted chat') : t('Start an encrypted chat')" @click="startEncrypted"></q-btn>
+                            <div v-if="plainSibling" class="text-caption m-muted q-mt-xs m-chat-earlier-plain">{{earlierText}}
+                                <q-btn flat dense no-caps size="sm" color="primary" :label="t('Open')" @click="go(linkBase + '?chatRoomId=' + encodeURIComponent(plainSibling))"></q-btn></div>
                         </div>
                         <template v-for="item in items" :key="item.key">
                             <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm">
@@ -4330,6 +4381,8 @@ const roomTemplate = `
         <m-chat-verification v-for="flow in verifyFlows" :key="flow.flowId" :flow="flow" :who="nameOf(flow.otherUserId)" can-retry class="q-mb-sm"
                 @retry="retryVerify" @step="verifyStepped"></m-chat-verification>
     </m-dialog>
+    <!-- Set up this device: the recovery key, or a verification with another of the user's devices (Comms-Messaging §6.5) -->
+    <m-chat-device-setup v-if="sealed" ref="setupCard" v-model="setupOpen" :status="setup" @refresh="loadSetup" @later="setupLaterNow"></m-chat-device-setup>
     <!-- another person asks to verify with this device: shown in the room, as on My devices -->
     <m-dialog :model-value="incomingFlows.length > 0 && !verifyBox.open" :title="t('Verify')" width="520" @update:model-value="(open) => { if (!open) dismissIncoming(); }">
         <m-chat-verification v-for="flow in incomingFlows" :key="flow.flowId" :flow="flow" :who="incomingWho(flow)" class="q-mb-sm m-chat-incoming"
@@ -4471,8 +4524,11 @@ let roomCount = 0;
 const chatRoom = {
     name: 'ChatRoom',
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
-        compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
-    emits: ['back', 'thread', 'changed', 'left', 'read'],
+        compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' },
+        // the user's rooms (find#Rooms), for a direct room's other one with the same people; a first message to send once the
+        // room is shown (a dm link's unsaved message, sealed here in an encrypted room)
+        rooms: { type: Array, default: () => [] }, firstMessage: String },
+    emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu },
     data() {
         roomCount += 1;
@@ -4493,6 +4549,7 @@ const chatRoom = {
             bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
             verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
+            setup: null, setupOpen: false, setupTick: 0, encryptDefault: null, firstSent: false, encryptBusy: false,
             lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             peopleBox: { open: false, title: '', people: [] }, infoBox: { open: false, item: null, inThread: false, event: null, members: [], loading: false },
@@ -4540,6 +4597,27 @@ const chatRoom = {
         // who could not read my messages (COM-UI-013), as this browser keeps it for the account: {eventSeq: text}
         leftOutBySeq() { void this.leftOutTick; return this.sealed ? moqui.chat.leftOutOf(this.roomId) : {}; },
         verifications() { return (moqui.crypto && moqui.crypto.state && moqui.crypto.state.verifications) || []; },
+        // ---- E2EE by default (Comms-Messaging §6.5) ----
+        otherIds() { return this.callees.map((person) => person.userId); },
+        // an encrypted direct room's plain one with the same people, and a plain one's encrypted one
+        plainSibling() { return this.sealed && this.isDirect ? moqui.chat.directRoomFor(this.rooms, this.otherIds, this.me && this.me.userId, true) : null; },
+        encryptedSibling() {
+            if (this.sealed || !this.isDirect || this.compact) return null;
+            const found = moqui.chat.directRoomFor(this.rooms, this.otherIds, this.me && this.me.userId);
+            return found && found !== this.roomId ? found : null;
+        },
+        // Start an encrypted chat: a plain direct room whose people all have a crypto device (encryptionDefault), or Open the one there is
+        encryptOffered() {
+            return !!this.room && this.isDirect && !this.sealed && !this.compact && !this.room.bridged && this.room.roomTypeEnumId !== 'CrtExternal'
+                && (!!this.encryptedSibling || this.encryptDefault === true);
+        },
+        earlierText() { return fill(t('Earlier messages with {name} are in a chat that is not end-to-end encrypted.'), { name: this.displayName }); },
+        setupNeeded() { void this.setupTick; return this.sealed && !this.cryptoElsewhere && moqui.chat.setupNeeded(this.setup); },
+        setupBar() { void this.setupTick; return !!this.room && this.setupNeeded && !moqui.chat.setupLater(this.setup && this.setup.deviceId); },
+        backupHint() {
+            void this.setupTick;
+            return !!this.room && this.sealed && !this.setupNeeded && !!this.setup && !(this.setup.otherDevices || []).length && moqui.chat.backupHinted(this.setup);
+        },
         verifyTitle() { return fill(t('Verify {name}'), { name: this.verifyBox.userId ? this.nameOf(this.verifyBox.userId) : '' }); },
         verifyDevices() {
             const person = this.trust && this.trust.people && this.verifyBox.userId ? this.trust.people[this.verifyBox.userId] : null;
@@ -4656,6 +4734,24 @@ const chatRoom = {
     watch: {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
         cryptoReady(value) { if (value) this.loadTrust(); },
+        // the room shown: its first message (a dm link's) sent through the room's own send, sealed in an encrypted room
+        state(value) {
+            if (value !== 'ready') return;
+            if (this.firstMessage && !this.firstSent) {
+                this.firstSent = true;
+                const body = this.firstMessage;
+                // not sent here (an app window holds no keys for an encrypted room, or the outbox refused it): the text stays in
+                // the composer, or is said when the room opens elsewhere
+                const keep = () => {
+                    const composer = this.composers && this.composers.main;
+                    if (composer && !this.cryptoElsewhere) composer.body = body;
+                    else moqui.notifyMessages([{ type: 'warning', message: t('Your message was not sent: open the chat in Chat to send it') }]);
+                };
+                if (this.cryptoElsewhere) { keep(); this.$emit('first-sent'); }
+                else this.sendMessage({ body }).catch(keep).then(() => this.$emit('first-sent'));
+            }
+            this.loadEncryptDefault();
+        },
         // a verification with someone of this room done: their check, and the room's
         verifications(list) {
             if (!this.sealed) return;
@@ -4718,6 +4814,7 @@ const chatRoom = {
         loadTrust() {
             const crypto = moqui.crypto;
             if (!this.sealed || this.cryptoElsewhere || !crypto || !crypto.roomTrust || !crypto.state || crypto.state.status !== 'ready') return;
+            this.loadSetup();
             const roomId = this.roomId;
             crypto.roomTrust(roomId, this.memberIds()).then((answer) => {
                 if (roomId === this.roomId) this.trust = moqui.chat.trustOf(answer, this.me.userId);
@@ -4730,6 +4827,39 @@ const chatRoom = {
             setTimeout(() => this.loadTrust(), 500);
         },
         closeBanner() { moqui.chat.closeBanner(this.roomId, this.label.state); this.bannerTick += 1; },
+        // ---- a new device (Comms-Messaging §6.5): whether it is set up, the card, Not now ----
+        loadSetup() {
+            const crypto = moqui.crypto;
+            if (!this.sealed || this.cryptoElsewhere || !crypto || !crypto.setupStatus || !crypto.state || crypto.state.status !== 'ready') return;
+            const roomId = this.roomId;
+            crypto.setupStatus().then((status) => {
+                if (roomId !== this.roomId) return;
+                this.setup = status;
+                this.setupTick += 1;
+            }, () => null);
+        },
+        openSetup() { this.setupOpen = true; this.loadSetup(); },
+        setupLaterNow() { moqui.chat.putSetupLater(this.setup && this.setup.deviceId); this.setupTick += 1; },
+        closeBackupHint() { moqui.chat.closeSetupHint(); this.setupTick += 1; },
+        // a plain direct room: whether its people all have a crypto device, so it offers Start an encrypted chat (one bit)
+        loadEncryptDefault() {
+            if (!this.room || !this.isDirect || this.sealed || this.compact || this.encryptDefault !== null || !this.otherIds.length) return;
+            this.encryptDefault = false;
+            this.get('encryptionDefault', { userIds: this.otherIds.join(',') }).then((json) => { this.encryptDefault = json.encrypted === true; }, () => null);
+        },
+        // the encrypted direct chat of the same people, made or opened (createDirect with encrypted); the plain one stays
+        startEncrypted() {
+            if (needsConnection() || this.encryptBusy) return;
+            if (this.encryptedSibling) { this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(this.encryptedSibling)); return; }
+            // one at a time: a second click would race the first to make the room (the server answers the oldest anyway)
+            this.encryptBusy = true;
+            this.post('createDirect', { userIds: this.otherIds.join(','), encrypted: 'true' }).then((json) => {
+                this.encryptBusy = false;
+                if (!json || !json.chatRoomId) return;
+                this.$emit('changed');
+                this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(json.chatRoomId));
+            }, () => { this.encryptBusy = false; });
+        },
         // Verify: My devices, where this user's own devices are verified by emoji or QR code
         openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
         // ---- verifying people (COM-UI-013, §6.1 rule 3) ----
@@ -4809,7 +4939,7 @@ const chatRoom = {
             if (err && err.reasonCode === 'verifiedUserProblem') this.askProblems(err.problems, retry);
             else moqui.notifyMessages([{ type: 'warning', message: (err && (err.errors || err.message)) || t('This message could not be encrypted') }]);
         },
-        undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName); },
+        undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName, this.setupNeeded); },
         bridgeEncryptionText(encryption) {
             if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
             if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
@@ -4819,6 +4949,7 @@ const chatRoom = {
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
         onRoomKeys() {
             if (!this.sealed || this.state !== 'ready') return;
+            this.loadSetup();
             const lists = [this.events, this.threadView.events].filter((list) => list.some((item) => item.undecryptable || (item.encryptedReactions || []).length));
             lists.forEach((list) => moqui.chat.openEvents(this.roomId, list.filter((item) => item.undecryptable), (file) => this.sealedUrl(file)));
         },
@@ -6416,12 +6547,29 @@ module.exports = {
             // the folded groups of the rail, by key (kept per user: foldKey), the Activity or Threads feed and each direct
             // chat's mail line, by room
             folded: {}, feed: { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 }, mailLines: {},
-            // a dm link's unsaved message to people with no direct chat yet: {userIds, name, text, busy}
-            pendingDirect: null
+            // a dm link's unsaved message to people with no direct chat yet: {userIds, name, text, busy, encrypted}
+            pendingDirect: null,
+            // that message, sent by the room once createDirect made it: {roomId, body}
+            firstMessage: null,
+            // my other devices' requests to verify with this one (a new device being set up, §6.5), dismissed here, and those
+            // devices by deviceId (their names and when they were added)
+            dismissedOwn: {}, ownDevices: {}
         };
     },
     computed: {
         params() { return this.$root.currentParameters || {}; },
+        // the unsaved direct chat's label: the room its first send makes, once encryptionDefault answered
+        pendingLabel() {
+            const pending = this.pendingDirect;
+            if (!pending || pending.encrypted == null) return null;
+            return moqui.chat.e2eeLabel({ roomTypeEnumId: 'CrtDirect', visibilityEnumId: 'CrvMembers', encrypted: pending.encrypted });
+        },
+        // another of my devices asks to verify with this one, open in Chat (not only on My devices)
+        ownRequests() {
+            const me = this.me && this.me.userId;
+            const list = (moqui.crypto && moqui.crypto.state && moqui.crypto.state.verifications) || [];
+            return me ? list.filter((flow) => !flow.weStarted && flow.otherUserId === me && !flow.cancelled && !this.dismissedOwn[flow.flowId]) : [];
+        },
         // below 1024 px the rail and the room are one pane (style-guide §3.8)
         stacked() { return this.$q.screen.lt.md; },
         base() { return this.$root.basePath + '/' + this.chatPath(); },
@@ -6510,6 +6658,17 @@ module.exports = {
         }
     },
     watch: {
+        // a request from another of my devices: its name and when it was added, read once (moqui.crypto.setupStatus)
+        ownRequests(list) {
+            if (!(list || []).some((flow) => flow.otherDeviceId && !this.ownDevices[flow.otherDeviceId]) || !moqui.crypto || !moqui.crypto.setupStatus) return;
+            moqui.crypto.setupStatus().then((status) => {
+                const known = Object.assign({}, this.ownDevices);
+                ((status && status.otherDevices) || []).forEach((device) => { known[device.deviceId] = device; });
+                this.ownDevices = known;
+            }, () => null);
+        },
+        // New room's Encrypted follows the default for the people picked, until the user sets it (§6.5)
+        'newRoom.userIds'(ids) { if (this.newRoom.open) this.newRoomDefault(ids); },
         // Activity and Threads read their feed when shown
         filter(value) { if (value === 'activity' || value === 'threads') this.loadFeed(false); },
         // a room change opens that room; the screen is not remounted for it
@@ -6754,7 +6913,11 @@ module.exports = {
                 if (found) { this.pendingDirect = null; this.replaceRoom(found); return; }
                 this.roomId = null;
                 const kept = this.pendingDirect && this.pendingDirect.userIds.join(',') === ids.join(',') ? this.pendingDirect.text : '';
-                this.pendingDirect = { userIds: ids, name, text: kept, busy: false };
+                const pending = { userIds: ids, name, text: kept, busy: false, encrypted: null };
+                this.pendingDirect = pending;
+                this.get('encryptionDefault', { userIds: ids.join(',') }).then((json) => {
+                    if (this.pendingDirect && this.pendingDirect.userIds.join(',') === ids.join(',')) this.pendingDirect.encrypted = json.encrypted === true;
+                }, () => null);
             });
         },
         // the unsaved message's Send: the direct chat made now, the message sent in it, and the room shown in place of the link
@@ -6767,11 +6930,11 @@ module.exports = {
             const body = text.split(/\n{2,}/).map((part) => '<p>' + part.split('\n').map(escape).join('<br>') + '</p>').join('');
             this.post('createDirect', { userIds: pending.userIds.join(',') }).then((json) => {
                 if (!json || !json.chatRoomId) { pending.busy = false; return; }
-                return this.post('send', { chatRoomId: json.chatRoomId, body }).then(() => json.chatRoomId, () => json.chatRoomId).then((id) => {
-                    this.pendingDirect = null;
-                    this.scheduleRooms();
-                    this.replaceRoom(id);
-                });
+                // the room sends it once shown, through its own send: sealed there in an encrypted room (§6.5)
+                this.firstMessage = { roomId: json.chatRoomId, body };
+                this.pendingDirect = null;
+                this.scheduleRooms();
+                this.replaceRoom(json.chatRoomId);
             }, () => { pending.busy = false; });
         },
         scheduleRooms() { clearTimeout(this.roomsTimer); this.roomsTimer = setTimeout(() => this.loadRooms(), 400); },
@@ -6869,7 +7032,8 @@ module.exports = {
         // Start in New direct message: the number's room, a named room, or the direct chat (moqui.chat.startChat)
         startPicked() {
             const pick = { values: this.newDirect.userIds || [], name: this.newDirect.name, fromNumber: this.newDirect.fromNumber };
-            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            // one Start at a time: a second would race the first to make the same room
+            if (moqui.chat.pickKind(pick.values) === 'none' || this.newDirect.busy) return;
             this.newDirect.busy = true;
             moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.newDirect.busy = false;
@@ -6879,11 +7043,29 @@ module.exports = {
                 this.openRoom(json.chatRoomId);
             }, () => { this.newDirect.busy = false; });
         },
-        openNewRoom() { if (needsConnection()) return; this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
+        openNewRoom() {
+            if (needsConnection()) return;
+            this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false, touched: false };
+            this.newRoomDefault([]);
+        },
+        newRoomDefault(ids) {
+            const asked = (ids || []).join(',');
+            this.get('encryptionDefault', { userIds: asked }).then((json) => {
+                if (this.newRoom.open && !this.newRoom.touched && (this.newRoom.userIds || []).join(',') === asked) this.newRoom.encrypted = json.encrypted === true;
+            }, () => null);
+        },
+        dismissOwn(flow) { this.dismissedOwn = Object.assign({}, this.dismissedOwn, { [flow.flowId]: true }); },
+        // whom an own request is from: the device's name and when it was added, not its id
+        ownWho(flow) {
+            const device = this.ownDevices[flow.otherDeviceId];
+            if (!device) return t('another of your devices');
+            const name = device.displayName || t('another of your devices');
+            return device.createdDate ? fill(t('{name}, added {when}'), { name, when: moqui.chat.dateTime(device.createdDate) }) : name;
+        },
         // New direct message's people (or those given) in their direct chat, made or found now
         startDirect(userIds) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
-            if (!ids.length) return;
+            if (!ids.length || this.newDirect.busy) return;
             this.newDirect.busy = true;
             this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
                 Object.assign(this.newDirect, { open: false, userIds: [], busy: false, name: '' });
@@ -6893,8 +7075,10 @@ module.exports = {
         },
         createRoom() {
             this.newRoom.busy = true;
+            // untouched, the server decides (everyone has a crypto device, §6.5); a public room is never encrypted
+            const chosen = this.newRoom.type === 'public' ? 'false' : this.newRoom.touched ? (this.newRoom.encrypted ? 'true' : 'false') : '';
             this.post('createRoom', { roomTypeEnumId: this.newRoom.type, roomName: this.newRoom.name, topic: this.newRoom.topic || '',
-                memberUserIds: (this.newRoom.userIds || []).join(','), encrypted: this.newRoom.type !== 'public' && this.newRoom.encrypted ? 'true' : 'false' }).then((json) => {
+                memberUserIds: (this.newRoom.userIds || []).join(','), encrypted: chosen }).then((json) => {
                 this.newRoom = { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false };
                 this.scheduleRooms();
                 this.openRoom(json.chatRoomId);
@@ -6966,6 +7150,8 @@ module.exports = {
         this.registerKeys();
         this.roomsReady = this.loadRooms();
         this.roomsReady.then(() => this.$nextTick(() => this.measure()));
+        // this browser's crypto device, made in idle time once the rooms show, so new chats can be encrypted (§6.5)
+        this.roomsReady.then(() => { if (moqui.chat && moqui.chat.makeDeviceSoon) moqui.chat.makeDeviceSoon(); });
         this.applyParams();
         setTimeout(() => this.measure(), 300);
     },
@@ -7007,6 +7193,7 @@ module.exports = {
                   const _component_m_text_area = _resolveComponent("m-text-area")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
                   const _component_m_dialog = _resolveComponent("m-dialog")
+                  const _component_m_chat_verification = _resolveComponent("m-chat-verification")
                   const _component_q_btn_toggle = _resolveComponent("q-btn-toggle")
                   const _component_q_toggle = _resolveComponent("q-toggle")
                   const _component_q_inner_loading = _resolveComponent("q-inner-loading")
@@ -7832,12 +8019,15 @@ module.exports = {
                               thread: _ctx.thread,
                               "can-go-back": _ctx.stacked,
                               "link-base": _ctx.linkBase,
+                              rooms: _ctx.rooms,
+                              "first-message": _ctx.firstMessage && _ctx.firstMessage.roomId === _ctx.roomId ? _ctx.firstMessage.body : '',
                               onBack: _ctx.closeRoom,
                               onThread: _ctx.setThread,
                               onChanged: _ctx.scheduleRooms,
                               onLeft: _ctx.onLeft,
-                              onRead: _ctx.onRoomRead
-                            }, null, 8, ["bubbles", "base", "room-id", "me", "prefs", "seq", "thread", "can-go-back", "link-base", "onBack", "onThread", "onChanged", "onLeft", "onRead"]))
+                              onRead: _ctx.onRoomRead,
+                              onFirstSent: $event => (_ctx.firstMessage = null)
+                            }, null, 8, ["bubbles", "base", "room-id", "me", "prefs", "seq", "thread", "can-go-back", "link-base", "rooms", "first-message", "onBack", "onThread", "onChanged", "onLeft", "onRead", "onFirstSent"]))
                           : (_ctx.pendingDirect)
                             ? (_openBlock(), _createElementBlock("div", {
                                 key: 1,
@@ -7863,6 +8053,20 @@ module.exports = {
                                   _createElementVNode("div", { class: "col text-subtitle1 ellipsis" }, _toDisplayString(_ctx.pendingDirect.name || _ctx.t('New direct message')), 1)
                                 ]),
                                 _createVNode(_component_q_separator),
+                                (_ctx.pendingLabel)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 0,
+                                      class: "row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-pending-e2ee",
+                                      "data-e2ee": _ctx.pendingLabel.state
+                                    }, [
+                                      _createVNode(_component_q_icon, {
+                                        name: _ctx.pendingLabel.icon,
+                                        size: "16px",
+                                        class: _normalizeClass(_ctx.pendingLabel.lock ? 'text-positive' : 'm-muted')
+                                      }, null, 8, ["name", "class"]),
+                                      _createElementVNode("span", { class: "col q-ml-xs" }, _toDisplayString(_ctx.pendingLabel.banner), 1)
+                                    ], 8, ["data-e2ee"]))
+                                  : _createCommentVNode("", true),
                                 _createElementVNode("div", { class: "col column items-center justify-center q-pa-lg text-center m-muted" }, [
                                   _createVNode(_component_q_icon, {
                                     name: "sym_o_chat",
@@ -7991,6 +8195,25 @@ module.exports = {
                       _: 1
                     }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
                     _createVNode(_component_m_dialog, {
+                      "model-value": _ctx.ownRequests.length > 0,
+                      title: _ctx.t('Verify your new device'),
+                      width: "520",
+                      "onUpdate:modelValue": (open) => { if (!open) _ctx.ownRequests.forEach(_ctx.dismissOwn); }
+                    }, {
+                      default: _withCtx(() => [
+                        _createElementVNode("div", { class: "text-body2 q-mb-sm" }, _toDisplayString(_ctx.t('Another of your devices asks to be verified, to read your encrypted messages. Accept only if you are setting it up now.')), 1),
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.ownRequests, (flow) => {
+                          return (_openBlock(), _createBlock(_component_m_chat_verification, {
+                            key: flow.flowId,
+                            flow: flow,
+                            who: _ctx.ownWho(flow),
+                            class: "q-mb-sm m-chat-own-request"
+                          }, null, 8, ["flow", "who"]))
+                        }), 128))
+                      ]),
+                      _: 1
+                    }, 8, ["model-value", "title", "onUpdate:modelValue"]),
+                    _createVNode(_component_m_dialog, {
                       modelValue: _ctx.newRoom.open,
                       "onUpdate:modelValue": $event => ((_ctx.newRoom.open) = $event),
                       title: _ctx.t('New room'),
@@ -8012,12 +8235,12 @@ module.exports = {
                         (_ctx.newRoom.type !== 'public')
                           ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
                               _createVNode(_component_q_toggle, {
-                                modelValue: _ctx.newRoom.encrypted,
-                                "onUpdate:modelValue": $event => ((_ctx.newRoom.encrypted) = $event),
+                                "model-value": _ctx.newRoom.encrypted,
                                 name: "roomEncrypted",
                                 label: _ctx.t('Encrypted'),
-                                class: "m-chat-new-encrypted"
-                              }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                class: "m-chat-new-encrypted",
+                                "onUpdate:modelValue": (on) => { _ctx.newRoom.encrypted = on; _ctx.newRoom.touched = true; }
+                              }, null, 8, ["model-value", "label", "onUpdate:modelValue"]),
                               (_ctx.newRoom.encrypted)
                                 ? (_openBlock(), _createElementBlock("div", {
                                     key: 0,
@@ -8235,6 +8458,7 @@ module.exports = {
                   const _component_q_space = _resolveComponent("q-space")
                   const _component_m_dialog = _resolveComponent("m-dialog")
                   const _component_m_chat_verification = _resolveComponent("m-chat-verification")
+                  const _component_m_chat_device_setup = _resolveComponent("m-chat-device-setup")
                   const _component_q_spinner = _resolveComponent("q-spinner")
                   const _component_q_dialog = _resolveComponent("q-dialog")
                   const _component_m_check = _resolveComponent("m-check")
@@ -9034,8 +9258,34 @@ module.exports = {
                                               [_directive_close_popup]
                                             ])
                                           : _createCommentVNode("", true),
+                                        (_ctx.encryptOffered)
+                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                              key: 9,
+                                              clickable: "",
+                                              class: "m-chat-start-encrypted-item",
+                                              onClick: _ctx.startEncrypted
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_lock" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.encryptedSibling ? _ctx.t('Open the encrypted chat') : _ctx.t('Start an encrypted chat')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"])), [
+                                              [_directive_close_popup]
+                                            ])
+                                          : _createCommentVNode("", true),
                                         (_ctx.isMember)
-                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 9 }, [
+                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 10 }, [
                                               _createVNode(_component_q_separator),
                                               _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 clickable: "",
@@ -9077,51 +9327,105 @@ module.exports = {
                         : _createCommentVNode("", true)
                     ]),
                     _createVNode(_component_q_separator),
-                    (_ctx.room && _ctx.label.banner && !_ctx.bannerHidden)
+                    (_ctx.setupBar)
                       ? (_openBlock(), _createElementBlock("div", {
                           key: 0,
-                          class: "row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner",
-                          "data-e2ee": _ctx.label.state
+                          class: "row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal text-warning m-chat-setup-bar",
+                          role: "status"
                         }, [
                           _createVNode(_component_q_icon, {
-                            name: _ctx.label.icon,
-                            size: "16px",
-                            class: _normalizeClass(_ctx.label.lock ? 'text-positive' : 'm-muted')
-                          }, null, 8, ["name", "class"]),
-                          (_ctx.label.verified)
-                            ? (_openBlock(), _createBlock(_component_q_icon, {
-                                key: 0,
-                                name: "sym_o_check",
-                                size: "12px",
-                                class: "text-positive"
-                              }))
-                            : _createCommentVNode("", true),
-                          _createElementVNode("span", { class: "col q-ml-xs m-chat-e2ee-banner-text" }, _toDisplayString(_ctx.label.banner), 1),
-                          (_ctx.label.verify)
-                            ? (_openBlock(), _createBlock(_component_q_btn, {
-                                key: 1,
-                                flat: "",
-                                dense: "",
-                                "no-caps": "",
-                                size: "sm",
-                                color: "primary",
-                                class: "q-ml-xs m-chat-verify",
-                                label: _ctx.t('Verify'),
-                                onClick: $event => (_ctx.verifySomeone())
-                              }, null, 8, ["label", "onClick"]))
-                            : _createCommentVNode("", true),
+                            name: "sym_o_phonelink_lock",
+                            size: "16px"
+                          }),
+                          _createElementVNode("span", { class: "col q-ml-xs" }, _toDisplayString(_ctx.t('Set up this device to read messages sent before it was added.')), 1),
                           _createVNode(_component_q_btn, {
-                            flat: "",
-                            round: "",
+                            unelevated: "",
                             dense: "",
-                            size: "xs",
-                            icon: "sym_o_close",
-                            class: "q-ml-xs",
-                            "aria-label": _ctx.t('Close the note'),
-                            onClick: _ctx.closeBanner
-                          }, null, 8, ["aria-label", "onClick"])
-                        ], 8, ["data-e2ee"]))
-                      : _createCommentVNode("", true),
+                            "no-caps": "",
+                            size: "sm",
+                            color: "primary",
+                            class: "q-ml-xs m-chat-setup",
+                            label: _ctx.t('Set up'),
+                            onClick: _ctx.openSetup
+                          }, null, 8, ["label", "onClick"])
+                        ]))
+                      : (_ctx.backupHint)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 1,
+                            class: "row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-backup-hint"
+                          }, [
+                            _createVNode(_component_q_icon, {
+                              name: "sym_o_key",
+                              size: "16px",
+                              class: "m-muted"
+                            }),
+                            _createElementVNode("span", { class: "col q-ml-xs" }, _toDisplayString(_ctx.t('Keep your encrypted messages if you lose this device: set up key backup.')), 1),
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              dense: "",
+                              "no-caps": "",
+                              size: "sm",
+                              color: "primary",
+                              class: "q-ml-xs",
+                              label: _ctx.t('Set up key backup'),
+                              onClick: _ctx.openDevices
+                            }, null, 8, ["label", "onClick"]),
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              round: "",
+                              dense: "",
+                              size: "xs",
+                              icon: "sym_o_close",
+                              class: "q-ml-xs",
+                              "aria-label": _ctx.t('Close the note'),
+                              onClick: _ctx.closeBackupHint
+                            }, null, 8, ["aria-label", "onClick"])
+                          ]))
+                        : (_ctx.room && _ctx.label.banner && !_ctx.bannerHidden)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 2,
+                              class: "row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner",
+                              "data-e2ee": _ctx.label.state
+                            }, [
+                              _createVNode(_component_q_icon, {
+                                name: _ctx.label.icon,
+                                size: "16px",
+                                class: _normalizeClass(_ctx.label.lock ? 'text-positive' : 'm-muted')
+                              }, null, 8, ["name", "class"]),
+                              (_ctx.label.verified)
+                                ? (_openBlock(), _createBlock(_component_q_icon, {
+                                    key: 0,
+                                    name: "sym_o_check",
+                                    size: "12px",
+                                    class: "text-positive"
+                                  }))
+                                : _createCommentVNode("", true),
+                              _createElementVNode("span", { class: "col q-ml-xs m-chat-e2ee-banner-text" }, _toDisplayString(_ctx.label.banner), 1),
+                              (_ctx.label.verify)
+                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                    key: 1,
+                                    flat: "",
+                                    dense: "",
+                                    "no-caps": "",
+                                    size: "sm",
+                                    color: "primary",
+                                    class: "q-ml-xs m-chat-verify",
+                                    label: _ctx.t('Verify'),
+                                    onClick: $event => (_ctx.verifySomeone())
+                                  }, null, 8, ["label", "onClick"]))
+                                : _createCommentVNode("", true),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                round: "",
+                                dense: "",
+                                size: "xs",
+                                icon: "sym_o_close",
+                                class: "q-ml-xs",
+                                "aria-label": _ctx.t('Close the note'),
+                                onClick: _ctx.closeBanner
+                              }, null, 8, ["aria-label", "onClick"])
+                            ], 8, ["data-e2ee"]))
+                          : _createCommentVNode("", true),
                     _createElementVNode("div", {
                       class: "col row no-wrap",
                       style: {"min-height":"0"}
@@ -9271,6 +9575,37 @@ module.exports = {
                                                         class: "q-mr-xs"
                                                       }, null, 8, ["name"]),
                                                       _createElementVNode("span", { class: "m-chat-e2ee-intro-text" }, _toDisplayString(_ctx.label.banner), 1)
+                                                    ]))
+                                                  : _createCommentVNode("", true),
+                                                (_ctx.encryptOffered)
+                                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                      key: 3,
+                                                      flat: "",
+                                                      dense: "",
+                                                      "no-caps": "",
+                                                      color: "primary",
+                                                      icon: "sym_o_lock",
+                                                      class: "q-mt-xs m-chat-start-encrypted",
+                                                      loading: _ctx.encryptBusy,
+                                                      label: _ctx.encryptedSibling ? _ctx.t('Open the encrypted chat') : _ctx.t('Start an encrypted chat'),
+                                                      onClick: _ctx.startEncrypted
+                                                    }, null, 8, ["loading", "label", "onClick"]))
+                                                  : _createCommentVNode("", true),
+                                                (_ctx.plainSibling)
+                                                  ? (_openBlock(), _createElementBlock("div", {
+                                                      key: 4,
+                                                      class: "text-caption m-muted q-mt-xs m-chat-earlier-plain"
+                                                    }, [
+                                                      _createTextVNode(_toDisplayString(_ctx.earlierText) + " ", 1),
+                                                      _createVNode(_component_q_btn, {
+                                                        flat: "",
+                                                        dense: "",
+                                                        "no-caps": "",
+                                                        size: "sm",
+                                                        color: "primary",
+                                                        label: _ctx.t('Open'),
+                                                        onClick: $event => (_ctx.go(_ctx.linkBase + '?chatRoomId=' + encodeURIComponent(_ctx.plainSibling)))
+                                                      }, null, 8, ["label", "onClick"])
                                                     ]))
                                                   : _createCommentVNode("", true)
                                               ])),
@@ -11258,6 +11593,17 @@ module.exports = {
                       ]),
                       _: 1
                     }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
+                    (_ctx.sealed)
+                      ? (_openBlock(), _createBlock(_component_m_chat_device_setup, {
+                          key: 3,
+                          ref: "setupCard",
+                          modelValue: _ctx.setupOpen,
+                          "onUpdate:modelValue": $event => ((_ctx.setupOpen) = $event),
+                          status: _ctx.setup,
+                          onRefresh: _ctx.loadSetup,
+                          onLater: _ctx.setupLaterNow
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "status", "onRefresh", "onLater"]))
+                      : _createCommentVNode("", true),
                     _createVNode(_component_m_dialog, {
                       "model-value": _ctx.incomingFlows.length > 0 && !_ctx.verifyBox.open,
                       title: _ctx.t('Verify'),
@@ -12320,13 +12666,13 @@ module.exports = {
                   const _component_q_icon = _resolveComponent("q-icon")
                   const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_chip = _resolveComponent("q-chip")
+                  const _component_q_btn = _resolveComponent("q-btn")
                   const _component_chat_edit = _resolveComponent("chat-edit")
                   const _component_q_item_section = _resolveComponent("q-item-section")
                   const _component_q_item_label = _resolveComponent("q-item-label")
                   const _component_q_linear_progress = _resolveComponent("q-linear-progress")
                   const _component_q_item = _resolveComponent("q-item")
                   const _component_q_space = _resolveComponent("q-space")
-                  const _component_q_btn = _resolveComponent("q-btn")
                   const _component_q_card = _resolveComponent("q-card")
                   const _component_m_record_card = _resolveComponent("m-record-card")
                   const _component_q_spinner = _resolveComponent("q-spinner")
@@ -12495,7 +12841,20 @@ module.exports = {
                                 size: "16px",
                                 class: "q-mr-xs"
                               }),
-                              _createTextVNode(_toDisplayString(_ctx.room.undecryptableText(_ctx.item)), 1)
+                              _createTextVNode(_toDisplayString(_ctx.room.undecryptableText(_ctx.item)) + " ", 1),
+                              (_ctx.room.setupNeeded && _ctx.item.withheld !== 'm.unverified')
+                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                    key: 0,
+                                    flat: "",
+                                    dense: "",
+                                    "no-caps": "",
+                                    size: "sm",
+                                    color: "primary",
+                                    class: "q-ml-xs m-chat-setup-message",
+                                    label: _ctx.room.t('Set up'),
+                                    onClick: _withModifiers($event => (_ctx.room.openSetup()), ["stop"])
+                                  }, null, 8, ["label", "onClick"]))
+                                : _createCommentVNode("", true)
                             ], 8, ["data-withheld"]))
                           : (_openBlock(), _createElementBlock(_Fragment, { key: 4 }, [
                               (_ctx.room.isEditing(_ctx.item))
@@ -23273,5 +23632,558 @@ module.exports = {
             delete target.template;
         }
         return { component: component, style: "\n.m-dialer-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }\n.m-dialer-key { min-height: 52px; }\n", scoped: false };
+    } };
+    moqui.qvtBundled["BasicComms/Settings/Devices"] = { make: function (Vue) {
+        const module = { exports: {} };
+        const define = moqui.define;
+        // the file's script as it is (not indented: a template string in it keeps its text)
+        const returned = (function (exports) {
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+module.exports = {
+    name: 'ChatDevices',
+    data() {
+        return { devices: [], loaded: false, thisId: null, trust: {}, backup: { version: null, enabled: false, total: 0, backedUp: 0, busy: false },
+            recoveryKey: '', restore: { open: false, text: '', busy: false }, verifiedOnly: false, peerNames: {}, setup: null, setupOpen: false };
+    },
+    computed: {
+        verifications() { return (moqui.crypto && moqui.crypto.state.verifications) || []; },
+        // a phone: the device's actions under it, so nothing runs off the screen
+        phone() { return this.$q.screen.lt.sm; },
+        problem() { return (moqui.crypto && moqui.crypto.state.problem) || null; },
+        setupNeeded() { return !!this.thisId && !!moqui.chat && moqui.chat.setupNeeded(this.setup); },
+        backupText() {
+            const b = this.backup;
+            if (!this.thisId) return t('This browser has no encryption keys yet.');
+            if (!b.version) return t('Not set up: a new device cannot read older encrypted messages.');
+            if (!b.enabled) return t('Set up on another device: restore it here with your recovery key.');
+            return t('On: room keys of this browser are backed up, encrypted to your recovery key') + ' (' + b.backedUp + '/' + b.total + ')';
+        }
+    },
+    watch: {
+        // another person's verification: their name, asked once (peerNames: only people this user's devices reach)
+        verifications: { immediate: true, handler(list) {
+            const me = this.$root.userId;
+            const wanted = (list || []).map((v) => v.otherUserId).filter((id) => id && id !== me && !(id in this.peerNames));
+            if (!wanted.length) return;
+            const names = Object.assign({}, this.peerNames);
+            wanted.forEach((id) => { names[id] = null; });
+            this.peerNames = names;
+            this.request('peerNames', { userIds: Array.from(new Set(wanted)).join(',') }).then((json) => {
+                this.peerNames = Object.assign({}, this.peerNames, json.nameMap || {});
+            }, () => null);
+        } }
+    },
+    mounted() { this.load(); },
+    methods: {
+        t,
+        url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'Devices']).join('/') + '/' + name; },
+        // a refusal for want of a recent sign-in is not shown: it rejects, so moqui.reauth.retry asks the user and tries again
+        request(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
+                const json = result.json || {};
+                if (json.reasonCode === 'reauthRequired') throw json;
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        // an action that needs a sign-in in the last five minutes: asked for first, and again if the server still refuses
+        confirmed(fn) {
+            if (!moqui.reauth) return Promise.resolve().then(fn);
+            return moqui.reauth.ensure().then(() => moqui.reauth.retry(fn));
+        },
+        refused(err, fallback) {
+            if (err && err.reasonCode === 'cancelled') return;
+            moqui.notifyMessages([], (err && err.errors) || fallback);
+        },
+        load() {
+            this.thisId = moqui.crypto ? moqui.crypto.thisDeviceId() : null;
+            this.request('keySettings').then((json) => { this.verifiedOnly = !!json.verifiedDevicesOnly; }, () => null);
+            return this.request('devices').then((json) => {
+                this.devices = json.deviceList || [];
+                this.loaded = true;
+                this.loadCrypto();
+            }, () => { this.loaded = true; });
+        },
+        saveVerifiedOnly(on) {
+            this.request('storeKeySettings', { verifiedDevicesOnly: on ? 'true' : 'false' }, 'POST').then(() => {
+                if (moqui.crypto && moqui.crypto.settingsChanged) moqui.crypto.settingsChanged();
+            }, () => { this.verifiedOnly = !on; });
+        },
+        // a store that cannot be opened: after the user confirms who they are, a new device, then the backup
+        startOver() {
+            this.$q.dialog({ title: t('Start over with a new device?'), message: t('This browser\'s encryption keys that cannot be opened are deleted, and it gets a new device. Messages it read before come back from your key backup: restore it with your recovery key next.'),
+                ok: { label: t('Start over'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => this.confirmed(() => moqui.crypto.startOver()).then(() => { this.restore.open = true; this.load(); },
+                    (err) => this.refused(err, t('This browser did not start over'))));
+        },
+        // what this browser's store knows: each device's verification and the key backup (only when it has a device)
+        loadCrypto() {
+            if (!this.thisId || !moqui.crypto) return;
+            const me = this.$root.userId;
+            moqui.crypto.devicesOf(me).then((list) => {
+                const trust = {};
+                (list || []).forEach((d) => { trust[d.deviceId] = !!d.verified; });
+                this.trust = trust;
+            }, () => null);
+            moqui.crypto.backupStatus().then((status) => { this.backup = Object.assign({}, this.backup, status); }, () => null);
+            if (moqui.crypto.setupStatus) moqui.crypto.setupStatus().then((status) => { this.setup = status; }, () => null);
+        },
+        // A new recovery key starts a new backup version: the old one is no longer used, and its keys that this browser does not
+        // hold are read again only with the old recovery key. So it is asked first (never a silent reset).
+        setupBackup() {
+            if (this.backup.version) {
+                this.$q.dialog({ title: t('Make a new recovery key?'), message: t('This starts a new key backup with a new recovery key. Keys only in the current backup (older messages this browser never read) are not copied to it. Restore with your current recovery key first if you still have it.'),
+                    ok: { label: t('New recovery key'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                    .onOk(() => this.makeBackup());
+                return;
+            }
+            this.makeBackup();
+        },
+        // a new backup (and its recovery key) needs a sign-in in the last five minutes: the user confirms who they are first
+        makeBackup() {
+            this.backup.busy = true;
+            this.confirmed(() => moqui.crypto.enableBackup()).then((out) => {
+                this.recoveryKey = out.recoveryKey;
+                this.backup.busy = false;
+                this.loadCrypto();
+            }, (err) => { this.backup.busy = false; this.refused(err, t('The key backup was not set up')); });
+        },
+        // the recovery key opens the backup version it was made for: the current one, or an older one "New recovery key" left
+        restoreBackup() {
+            this.restore.busy = true;
+            moqui.crypto.restoreBackup(this.restore.text).then((out) => {
+                this.restore = { open: false, text: '', busy: false };
+                moqui.notifyMessages([{ type: 'success', message: (out.current ? t('Keys restored:') : t('Keys restored from an older key backup:')) + ' ' + out.imported }]);
+                this.loadCrypto();
+            }, (err) => { this.restore.busy = false; moqui.notifyMessages([], (err && err.errors) || t('The keys were not restored')); });
+        },
+        verify(d) {
+            moqui.crypto.verifyDevice(this.$root.userId, d.deviceId).catch((err) => moqui.notifyMessages([], (err && err.errors) || t('The verification did not start')));
+        },
+        // one of this user's own devices can be asked again
+        retryDevice(v) { return v.otherDeviceId && v.otherDeviceId !== this.thisId ? this.devices.find((d) => d.deviceId === v.otherDeviceId) || null : null; },
+        // a match confirmed: the devices' trust read again once the other side is done
+        stepped(action) { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadCrypto(), 1500); },
+        // the card dismisses it first (m-chat-verification's retry)
+        retry(v) { const d = this.retryDevice(v); if (d) this.verify(d); },
+        // whom a verification is with: one of my devices by its name, another person by their name
+        whoOf(v) {
+            if (v.otherUserId && v.otherUserId !== this.$root.userId) return this.peerNames[v.otherUserId] || t('another person');
+            const d = v.otherDeviceId ? this.devices.find((one) => one.deviceId === v.otherDeviceId) : null;
+            return d ? d.displayName || d.deviceId : v.otherDeviceId || '';
+        },
+        copy(text) { if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') }]), () => null); },
+        rename(d) {
+            this.$q.dialog({ title: t('Rename the device'), prompt: { model: d.displayName || '', type: 'text', maxlength: 100 },
+                ok: { label: t('Rename'), color: 'primary', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk((name) => this.request('rename', { deviceId: d.deviceId, displayName: name }, 'POST').then(() => this.load(), () => null));
+        },
+        remove(d) {
+            const mine = d.deviceId === this.thisId;
+            this.$q.dialog({ title: t('Remove the device?'),
+                message: mine ? t('This browser deletes its keys; it gets a new device the next time it needs one.') : t('It gets no new keys, and others stop encrypting to it.'),
+                ok: { label: t('Remove'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => {
+                    // a device with keys is removed only after a sign-in in the last five minutes (the server cannot tell
+                    // which browser asks)
+                    const run = () => (mine && moqui.crypto ? moqui.crypto.forget() : this.request('revoke', { deviceId: d.deviceId }, 'POST'));
+                    (d.hasKeys ? this.confirmed(run) : Promise.resolve().then(run)).then(() => this.load(),
+                        (err) => { this.refused(err, t('The device was not removed')); this.load(); });
+                });
+        },
+        fingerprint(key) { return String(key || '').replace(/(.{4})/g, '$1 ').trim(); },
+        whenText(millis) {
+            return millis ? new Date(Number(millis)).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+        }
+    }
+};
+        })(module.exports);
+        const component = Object.assign({}, returned !== undefined ? returned : module.exports);
+        {
+            const target = component;
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_space = _resolveComponent("q-space")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_banner = _resolveComponent("q-banner")
+                  const _component_m_chat_device_setup = _resolveComponent("m-chat-device-setup")
+                  const _component_q_toggle = _resolveComponent("q-toggle")
+                  const _component_q_card = _resolveComponent("q-card")
+                  const _component_m_text_line = _resolveComponent("m-text-line")
+                  const _component_m_chat_verification = _resolveComponent("m-chat-verification")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_badge = _resolveComponent("q-badge")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+
+                  return (_openBlock(), _createElementBlock("div", {
+                    class: "m-chat-devices q-pa-sm column no-wrap q-gutter-md",
+                    style: {"max-width":"900px","width":"100%","min-width":"0"}
+                  }, [
+                    _createElementVNode("div", { class: "row items-center" }, [
+                      _createElementVNode("div", { class: "text-h6" }, _toDisplayString(_ctx.t('My devices')), 1),
+                      _createVNode(_component_q_space),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        "no-caps": "",
+                        icon: "sym_o_refresh",
+                        label: _ctx.t('Refresh'),
+                        onClick: _ctx.load
+                      }, null, 8, ["label", "onClick"])
+                    ]),
+                    _createElementVNode("div", { class: "m-muted" }, _toDisplayString(_ctx.t('The browsers that hold your encryption keys, for encrypted rooms and calls. A browser gets one the first time it needs it.')) + " " + _toDisplayString(_ctx.t('Remove one you no longer use: it gets no new keys, and others stop encrypting to it.')), 1),
+                    (_ctx.problem)
+                      ? (_openBlock(), _createBlock(_component_q_banner, {
+                          key: 0,
+                          rounded: "",
+                          class: "m-tonal text-negative m-chat-store-problem"
+                        }, {
+                          avatar: _withCtx(() => [
+                            _createVNode(_component_q_icon, { name: "sym_o_key_off" })
+                          ]),
+                          action: _withCtx(() => [
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              "no-caps": "",
+                              color: "negative",
+                              label: _ctx.t('Start over'),
+                              class: "m-chat-start-over",
+                              onClick: _ctx.startOver
+                            }, null, 8, ["label", "onClick"])
+                          ]),
+                          default: _withCtx(() => [
+                            _createTextVNode(" " + _toDisplayString(_ctx.t("This browser's encryption keys cannot be opened. They are kept as they are. To go on, start over with a new device here, then restore older messages from your key backup with your recovery key.")) + " ", 1)
+                          ]),
+                          _: 1
+                        }))
+                      : _createCommentVNode("", true),
+                    (_ctx.setupNeeded)
+                      ? (_openBlock(), _createBlock(_component_q_banner, {
+                          key: 1,
+                          rounded: "",
+                          class: "m-tonal text-warning m-chat-devices-setup"
+                        }, {
+                          avatar: _withCtx(() => [
+                            _createVNode(_component_q_icon, { name: "sym_o_phonelink_lock" })
+                          ]),
+                          action: _withCtx(() => [
+                            _createVNode(_component_q_btn, {
+                              unelevated: "",
+                              "no-caps": "",
+                              color: "primary",
+                              label: _ctx.t('Set up'),
+                              class: "m-chat-devices-setup-open",
+                              onClick: $event => (_ctx.setupOpen = true)
+                            }, null, 8, ["label", "onClick"])
+                          ]),
+                          default: _withCtx(() => [
+                            _createTextVNode(" " + _toDisplayString(_ctx.t('Set up this device to read encrypted messages sent before it was added: restore your key backup, or verify it from another of your devices.')) + " ", 1)
+                          ]),
+                          _: 1
+                        }))
+                      : _createCommentVNode("", true),
+                    _createVNode(_component_m_chat_device_setup, {
+                      modelValue: _ctx.setupOpen,
+                      "onUpdate:modelValue": $event => ((_ctx.setupOpen) = $event),
+                      status: _ctx.setup,
+                      onRefresh: _ctx.loadCrypto
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "status", "onRefresh"]),
+                    _createVNode(_component_q_card, {
+                      flat: "",
+                      bordered: "",
+                      class: "q-pa-md"
+                    }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_q_toggle, {
+                          modelValue: _ctx.verifiedOnly,
+                          "onUpdate:modelValue": [$event => ((_ctx.verifiedOnly) = $event), _ctx.saveVerifiedOnly],
+                          label: _ctx.t('Send my room keys only to verified devices'),
+                          class: "m-chat-verified-only"
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                        _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.t("In every encrypted room, your messages are encrypted only for devices that were verified (by emoji or QR code, or by their owner's cross-signing). A device that is not verified cannot read them.")), 1)
+                      ]),
+                      _: 1
+                    }),
+                    _createVNode(_component_q_card, {
+                      flat: "",
+                      bordered: "",
+                      class: "q-pa-md m-chat-backup"
+                    }, {
+                      default: _withCtx(() => [
+                        _createElementVNode("div", { class: "row items-center wrap q-gutter-y-xs" }, [
+                          _createVNode(_component_q_icon, {
+                            name: "sym_o_key",
+                            size: "22px",
+                            class: "q-mr-sm text-primary"
+                          }),
+                          _createElementVNode("div", {
+                            class: "col",
+                            style: {"min-width":"12em"}
+                          }, [
+                            _createElementVNode("div", { class: "text-subtitle1" }, _toDisplayString(_ctx.t('Key backup')), 1),
+                            _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.backupText), 1)
+                          ]),
+                          (_ctx.thisId)
+                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 0,
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                icon: "sym_o_add_moderator",
+                                label: _ctx.backup.version ? _ctx.t('New recovery key') : _ctx.t('Set up key backup'),
+                                loading: _ctx.backup.busy,
+                                class: "m-chat-backup-setup",
+                                onClick: _ctx.setupBackup
+                              }, null, 8, ["label", "loading", "onClick"]))
+                            : _createCommentVNode("", true),
+                          (_ctx.thisId && _ctx.backup.version)
+                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 1,
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                icon: "sym_o_restore",
+                                label: _ctx.t('Restore'),
+                                class: "m-chat-backup-restore",
+                                onClick: $event => (_ctx.restore.open = true)
+                              }, null, 8, ["label", "onClick"]))
+                            : _createCommentVNode("", true)
+                        ]),
+                        (_ctx.recoveryKey)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 0,
+                              class: "q-mt-sm q-pa-sm rounded-borders m-tonal"
+                            }, [
+                              _createElementVNode("div", { class: "text-body2" }, _toDisplayString(_ctx.t('Your recovery key. Keep it somewhere safe, apart from this browser: it is shown once, and without it a new device cannot read older encrypted messages.')), 1),
+                              _createElementVNode("div", {
+                                class: "text-mono text-weight-medium q-mt-xs m-chat-recovery-key",
+                                style: {"word-break":"break-all"}
+                              }, _toDisplayString(_ctx.recoveryKey), 1),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                icon: "sym_o_content_copy",
+                                label: _ctx.t('Copy'),
+                                onClick: $event => (_ctx.copy(_ctx.recoveryKey))
+                              }, null, 8, ["label", "onClick"]),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                label: _ctx.t('I have kept it'),
+                                onClick: $event => (_ctx.recoveryKey = '')
+                              }, null, 8, ["label", "onClick"])
+                            ]))
+                          : _createCommentVNode("", true),
+                        (_ctx.restore.open)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 1,
+                              class: "row items-center q-gutter-sm q-mt-sm"
+                            }, [
+                              _createElementVNode("div", { class: "col" }, [
+                                _createVNode(_component_m_text_line, {
+                                  modelValue: _ctx.restore.text,
+                                  "onUpdate:modelValue": $event => ((_ctx.restore.text) = $event),
+                                  name: "recoveryKey",
+                                  label: _ctx.t('Recovery key')
+                                }, null, 8, ["modelValue", "onUpdate:modelValue", "label"])
+                              ]),
+                              _createVNode(_component_q_btn, {
+                                unelevated: "",
+                                "no-caps": "",
+                                color: "primary",
+                                label: _ctx.t('Restore'),
+                                loading: _ctx.restore.busy,
+                                class: "m-chat-restore-go",
+                                onClick: _ctx.restoreBackup
+                              }, null, 8, ["label", "loading", "onClick"])
+                            ]))
+                          : _createCommentVNode("", true)
+                      ]),
+                      _: 1
+                    }),
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.verifications, (v) => {
+                      return (_openBlock(), _createBlock(_component_m_chat_verification, {
+                        key: v.flowId,
+                        flow: v,
+                        who: _ctx.whoOf(v),
+                        "can-retry": !!_ctx.retryDevice(v),
+                        onRetry: $event => (_ctx.retry(v)),
+                        onStep: _ctx.stepped
+                      }, null, 8, ["flow", "who", "can-retry", "onRetry", "onStep"]))
+                    }), 128)),
+                    (_ctx.loaded && !_ctx.devices.length)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 2,
+                          class: "m-muted"
+                        }, _toDisplayString(_ctx.t('No devices yet.')), 1))
+                      : _createCommentVNode("", true),
+                    (_ctx.devices.length)
+                      ? (_openBlock(), _createBlock(_component_q_list, {
+                          key: 3,
+                          bordered: "",
+                          separator: "",
+                          class: "rounded-borders",
+                          style: {"min-width":"0"}
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.devices, (d) => {
+                              return (_openBlock(), _createBlock(_component_q_item, {
+                                key: d.deviceId,
+                                class: _normalizeClass(_ctx.phone ? 'column items-stretch' : '')
+                              }, {
+                                default: _withCtx(() => [
+                                  (!_ctx.phone)
+                                    ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                        key: 0,
+                                        avatar: ""
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, {
+                                            name: "sym_o_devices",
+                                            color: d.deviceId === _ctx.thisId ? 'primary' : 'grey'
+                                          }, null, 8, ["color"])
+                                        ]),
+                                        _: 2
+                                      }, 1024))
+                                    : _createCommentVNode("", true),
+                                  _createVNode(_component_q_item_section, { style: {"min-width":"0"} }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_label, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(d.displayName || d.deviceId) + " ", 1),
+                                          (d.deviceId === _ctx.thisId)
+                                            ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                key: 0,
+                                                color: "primary",
+                                                class: "q-ml-xs"
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('This browser')), 1)
+                                                ]),
+                                                _: 1
+                                              }))
+                                            : (_ctx.trust[d.deviceId] === true)
+                                              ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                  key: 1,
+                                                  color: "positive",
+                                                  class: "q-ml-xs m-chat-device-verified"
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Verified')), 1)
+                                                  ]),
+                                                  _: 1
+                                                }))
+                                              : (_ctx.trust[d.deviceId] === false)
+                                                ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                    key: 2,
+                                                    color: "grey-6",
+                                                    class: "q-ml-xs m-chat-device-unverified"
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.t('Not verified')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  }))
+                                                : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(d.deviceId) + " · " + _toDisplayString(_ctx.t('added')) + " " + _toDisplayString(_ctx.whenText(d.createdDate)), 1),
+                                          (d.lastSeenDate)
+                                            ? (_openBlock(), _createElementBlock("span", { key: 0 }, " · " + _toDisplayString(_ctx.t('last seen')) + " " + _toDisplayString(_ctx.whenText(d.lastSeenDate)), 1))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      (d.ed25519Key)
+                                        ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                            key: 0,
+                                            caption: "",
+                                            class: "text-mono",
+                                            style: {"word-break":"break-all"}
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('Key')) + " " + _toDisplayString(_ctx.fingerprint(d.ed25519Key)), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024))
+                                        : _createCommentVNode("", true),
+                                      (d.userAgent)
+                                        ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                            key: 1,
+                                            caption: "",
+                                            class: "ellipsis",
+                                            style: {"max-width":"100%"}
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(d.userAgent), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024))
+                                        : _createCommentVNode("", true)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  _createVNode(_component_q_item_section, {
+                                    side: !_ctx.phone,
+                                    class: _normalizeClass(_ctx.phone ? 'q-pl-none q-pt-xs' : '')
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createElementVNode("div", { class: "row wrap q-gutter-xs" }, [
+                                        (_ctx.thisId && d.deviceId !== _ctx.thisId && _ctx.trust[d.deviceId] === false)
+                                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: 0,
+                                              flat: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              icon: "sym_o_verified_user",
+                                              label: _ctx.t('Verify'),
+                                              onClick: $event => (_ctx.verify(d))
+                                            }, null, 8, ["label", "onClick"]))
+                                          : _createCommentVNode("", true),
+                                        _createVNode(_component_q_btn, {
+                                          flat: "",
+                                          dense: "",
+                                          "no-caps": "",
+                                          icon: "sym_o_edit",
+                                          label: _ctx.t('Rename'),
+                                          onClick: $event => (_ctx.rename(d))
+                                        }, null, 8, ["label", "onClick"]),
+                                        _createVNode(_component_q_btn, {
+                                          flat: "",
+                                          dense: "",
+                                          "no-caps": "",
+                                          icon: "sym_o_delete",
+                                          color: "negative",
+                                          label: _ctx.t('Remove'),
+                                          onClick: $event => (_ctx.remove(d))
+                                        }, null, 8, ["label", "onClick"])
+                                      ])
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["side", "class"])
+                                ]),
+                                _: 2
+                              }, 1032, ["class"]))
+                            }), 128))
+                          ]),
+                          _: 1
+                        }))
+                      : _createCommentVNode("", true)
+                  ]))
+                }
+            })();
+            delete target.template;
+        }
+        return { component: component, style: null, scoped: false };
     } };
 })(globalThis.moqui);

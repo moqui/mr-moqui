@@ -245,10 +245,14 @@
         message waits for a device that does not acknowledge it. chat_store_key_secret: the platform secret each device's
         browser-store key is derived under (HMAC of userId|deviceId|revision), so no table holds the keys; generated when
         unset. A new value makes every browser's store unreadable (each makes a new device; older messages then need the
-        key backup). -->
+        key backup). chat_device_active_days: a device seen in this many days counts as one in use, so a new direct or
+        private room of users who each have one is end-to-end encrypted by default (plans/Comms-Messaging.md §6.5).
+        chat_device_auto_expire_days: a device Chat made by itself, never verified, is revoked after this many days unseen. -->
     <default-property name="chat_server_name" value="localhost"/>
     <default-property name="chat_to_device_retention_days" value="30"/>
     <default-property name="chat_store_key_secret" value="CHANGEME" is-secret="true"/>
+    <default-property name="chat_device_active_days" value="90"/>
+    <default-property name="chat_device_auto_expire_days" value="30"/>
 
     <!-- Call media (the rtc feature; plans/archive/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
@@ -725,6 +729,9 @@
         <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
         <!-- the numbers a user asked names of (SmsServices.find#PhoneNames), counted by user and hour -->
         <cache name="moqui.sms.names.asked" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
+        <!-- the people a user asked the encryption default of (ChatKeyServices.get#EncryptionDefault): a slot per person, by
+            user and hour, claimed with putIfAbsent; per node unless a distributed cache factory is configured -->
+        <cache name="moqui.chat.encryption.default.asked" type="distributed" expire-time-live="3600" max-elements="200000" value-type="Long"/>
         <!-- whether the Login screen's Test Login still holds (UserServices.get#TestLoginOffered), by a digest of the
             test account's stored hash, so an anonymous render runs the password check at most once a minute -->
         <cache name="webroot.login.test" type="local" expire-time-live="60" max-elements="10" value-type="Boolean"/>

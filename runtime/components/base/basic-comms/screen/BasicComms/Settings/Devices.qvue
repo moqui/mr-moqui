@@ -34,6 +34,13 @@ along with this software (see the LICENSE.md file). If not, see
         {{t("This browser's encryption keys cannot be opened. They are kept as they are. To go on, start over with a new device here, then restore older messages from your key backup with your recovery key.")}}
         <template v-slot:action><q-btn flat no-caps color="negative" :label="t('Start over')" class="m-chat-start-over" @click="startOver"></q-btn></template>
     </q-banner>
+    <!-- a new device (plans/Comms-Messaging.md §6.5): set up from the key backup or another device, to read what came before it -->
+    <q-banner v-if="setupNeeded" rounded class="m-tonal text-warning m-chat-devices-setup">
+        <template v-slot:avatar><q-icon name="sym_o_phonelink_lock"></q-icon></template>
+        {{t('Set up this device to read encrypted messages sent before it was added: restore your key backup, or verify it from another of your devices.')}}
+        <template v-slot:action><q-btn unelevated no-caps color="primary" :label="t('Set up')" class="m-chat-devices-setup-open" @click="setupOpen = true"></q-btn></template>
+    </q-banner>
+    <m-chat-device-setup v-model="setupOpen" :status="setup" @refresh="loadCrypto"></m-chat-device-setup>
     <q-card flat bordered class="q-pa-md">
         <q-toggle v-model="verifiedOnly" :label="t('Send my room keys only to verified devices')" class="m-chat-verified-only" @update:model-value="saveVerifiedOnly"></q-toggle>
         <div class="text-caption m-muted">{{t("In every encrypted room, your messages are encrypted only for devices that were verified (by emoji or QR code, or by their owner's cross-signing). A device that is not verified cannot read them.")}}</div>
@@ -93,13 +100,14 @@ module.exports = {
     name: 'ChatDevices',
     data() {
         return { devices: [], loaded: false, thisId: null, trust: {}, backup: { version: null, enabled: false, total: 0, backedUp: 0, busy: false },
-            recoveryKey: '', restore: { open: false, text: '', busy: false }, verifiedOnly: false, peerNames: {} };
+            recoveryKey: '', restore: { open: false, text: '', busy: false }, verifiedOnly: false, peerNames: {}, setup: null, setupOpen: false };
     },
     computed: {
         verifications() { return (moqui.crypto && moqui.crypto.state.verifications) || []; },
         // a phone: the device's actions under it, so nothing runs off the screen
         phone() { return this.$q.screen.lt.sm; },
         problem() { return (moqui.crypto && moqui.crypto.state.problem) || null; },
+        setupNeeded() { return !!this.thisId && !!moqui.chat && moqui.chat.setupNeeded(this.setup); },
         backupText() {
             const b = this.backup;
             if (!this.thisId) return t('This browser has no encryption keys yet.');
@@ -175,6 +183,7 @@ module.exports = {
                 this.trust = trust;
             }, () => null);
             moqui.crypto.backupStatus().then((status) => { this.backup = Object.assign({}, this.backup, status); }, () => null);
+            if (moqui.crypto.setupStatus) moqui.crypto.setupStatus().then((status) => { this.setup = status; }, () => null);
         },
         // A new recovery key starts a new backup version: the old one is no longer used, and its keys that this browser does not
         // hold are read again only with the old recovery key. So it is asked first (never a silent reset).

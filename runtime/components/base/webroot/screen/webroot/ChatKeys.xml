@@ -16,7 +16,7 @@
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
     <transition name="device" method="post" begin-transaction="false">
-        <actions><script>ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('web', {verb: 'create#ChatDevice', names: ['displayName']})</script></actions>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('web', {verb: 'create#ChatDevice', names: ['displayName', 'automatic']})</script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="devices" read-only="true" begin-transaction="false">

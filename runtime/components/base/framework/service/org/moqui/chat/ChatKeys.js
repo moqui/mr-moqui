@@ -263,7 +263,9 @@ function deviceView(device) {
     deviceId: device.deviceId, displayName: device.displayName || null, ed25519Key: device.ed25519Key || null,
     hasKeys: !!device.ed25519Key, userAgent: device.userAgent || null, createdDate: ms(device.createdDate),
     lastSeenDate: ms(device.lastSeenDate), revokedDate: ms(device.revokedDate),
-    revoked: !!device.revokedDate,
+    revoked: !!device.revokedDate, automatic: device.madeAutomatically === 'Y',
+    // seen in the last chat_device_active_days: one in use (the set-up card lists only these)
+    active: !device.revokedDate && ms(device.lastSeenDate) != null && ms(device.lastSeenDate) >= ms(ec.user.nowTimestamp) - activeDays() * 86400000,
   }
 }
 
@@ -271,7 +273,9 @@ function deviceView(device) {
 function createDevice(p) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in first')
-  if (find(DEVICE).condition('userId', me).condition('revokedDate', null).count() >= MAX_DEVICES) {
+  // the devices in use count (seen in chat_device_active_days): browsers long gone do not hold a new one back
+  const since = new Date(ms(ec.user.nowTimestamp) - activeDays() * 86400000)
+  if (find(DEVICE).condition('userId', me).condition('revokedDate', null).condition('lastSeenDate', '>=', since).count() >= MAX_DEVICES) {
     return refuse('tooManyDevices', 'Remove a device in Settings, My devices, before adding another')
   }
   const deviceId = newDeviceId(me)
@@ -279,7 +283,8 @@ function createDevice(p) {
   const device = ec.entity.makeValue(DEVICE)
   device.setFields({ userId: me, deviceId, displayName: String(p.displayName || '').trim().slice(0, 100) || null,
     userAgent: String(p.userAgent || '').slice(0, 255) || null, listRevision: 1, listChangedDate: ec.user.nowTimestamp,
-    lastToDevicePos: 0, ackedToDevicePos: 0, createdDate: ec.user.nowTimestamp, lastSeenDate: ec.user.nowTimestamp }, true, null, null)
+    lastToDevicePos: 0, ackedToDevicePos: 0, createdDate: ec.user.nowTimestamp, lastSeenDate: ec.user.nowTimestamp,
+    madeAutomatically: p.automatic === true || p.automatic === 'true' || p.automatic === 'Y' ? 'Y' : null }, true, null, null)
   device.create()
   return { deviceId, user_id: matrixId(me), serverName: serverName() }
 }
@@ -316,6 +321,12 @@ function revokeDevice(p) {
   if (device.revokedDate) return { deviceId: device.deviceId, repeated: true }
   // a device with no identity keys has nothing encrypted to it (a browser dropping a device whose first keys were refused)
   if (device.ed25519Key && !recentAuth()) return refuseReauth()
+  revokeRow(me, device)
+  return { deviceId: device.deviceId }
+}
+
+/** A device revoked: its store key changes, its keys, signatures and queue go, its tabs and calls hear of it. */
+function revokeRow(me, device) {
   device.set('revokedDate', ec.user.nowTimestamp)
   // its store can no longer be opened with a key from here: the revision the key is derived from goes up
   device.set('storeRevision', Number(device.storeRevision || 1) + 1)
@@ -328,7 +339,6 @@ function revokeDevice(p) {
   wake(me, { kind: 'devices', action: 'revoked', deviceId: device.deviceId })
   // its legs in end-to-end encrypted calls leave them (W8): the others rotate their call keys without it
   ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('deviceRevoked', { userId: me, deviceId: device.deviceId })
-  return { deviceId: device.deviceId }
 }
 
 /**
@@ -1232,7 +1242,34 @@ function clean(p) {
   } catch (err) {
     ec.logger.error(`Claimed one-time keys not cleaned: ${err && err.message ? err.message : err}`)
   }
-  return { messagesDeleted: messages, keysDeleted: keys }
+  // devices Chat made by itself (a private window, a browser tried once), never verified and not seen for
+  // chat_device_auto_expire_days: revoked, each on its own, so others stop encrypting to them
+  const autoDays = Math.max(1, Number(property('chat_device_auto_expire_days')) || 30)
+  let devicesRevoked = 0
+  let stale = []
+  try {
+    stale = Array.from(find(DEVICE).condition('madeAutomatically', 'Y').condition('revokedDate', null)
+      .condition('lastSeenDate', '<', new Date(now - autoDays * 86400000)).orderBy('lastSeenDate').limit(1000).list())
+  } catch (err) {
+    ec.logger.error(`Unused automatic chat devices not found: ${err && err.message ? err.message : err}`)
+  }
+  for (const device of stale) {
+    try {
+      if (verifiedDevice(device.userId, device.deviceId)) continue
+      ec.service.sync().name('org.moqui.chat.ChatKeyServices.revoke#AutomaticDevice').parameters({ userId: device.userId, deviceId: device.deviceId })
+        .requireNewTransaction(true).disableAuthz().call()
+      if (ec.message.hasError()) {
+        ec.logger.error(`Automatic chat device ${device.userId}/${device.deviceId} not revoked: ${ec.message.errorsString}`)
+        ec.message.clearErrors()
+        continue
+      }
+      ec.logger.info(`Revoked automatic chat device ${device.userId}/${device.deviceId}, not seen since ${device.lastSeenDate}`)
+      devicesRevoked++
+    } catch (err) {
+      ec.logger.error(`Automatic chat device ${device.userId}/${device.deviceId} not revoked: ${err && err.message ? err.message : err}`)
+    }
+  }
+  return { messagesDeleted: messages, keysDeleted: keys, devicesRevoked }
 }
 
 function whoami() {
@@ -1255,6 +1292,116 @@ function peerNames(p) {
   for (const account of find('moqui.security.UserAccount').condition('userId', 'in', reach).selectField('userId')
     .selectField('userFullName').selectField('username').disableAuthz().list()) names[account.userId] = account.userFullName || account.username || account.userId
   return { nameMap: names }
+}
+
+// ---- E2EE by default (plans/Comms-Messaging.md §6.5) ----
+
+/** Whether a device was verified by its user: signed with the user's self-signing key (a cross-signing signature over it). */
+function verifiedDevice(userId, deviceId) {
+  return find(SIGNATURE).condition({ targetUserId: userId, targetKeyId: deviceId, signerUserId: userId }).count() > 0
+}
+
+/** Internal (revoke#AutomaticDevice, the daily cleanup): one automatic device revoked, its row locked first. */
+function revokeAutomatic(p) {
+  const device = find(DEVICE).condition({ userId: String(p.userId || ''), deviceId: String(p.deviceId || '') }).forUpdate(true).one()
+  if (!device || device.revokedDate || device.madeAutomatically !== 'Y') return { revoked: false }
+  revokeRow(device.userId, device)
+  return { revoked: true }
+}
+
+/** People one ask of the default may name, and people a user may ask about in an hour. */
+const DEFAULT_MAX_USERS = 50
+const DEFAULT_PER_HOUR = 600
+
+/** The days a device counts as in use after it was last seen (chat_device_active_days, default 90). */
+function activeDays() {
+  const days = Number(property('chat_device_active_days'))
+  return days > 0 ? days : 90
+}
+
+/**
+ * Of userIds, the users with a crypto device in use: not revoked, with its identity keys uploaded, and seen (a key upload
+ * or a sync) in the last chat_device_active_days. A device that has not synced for that long would never read a message.
+ */
+function usersWithDevices(userIds) {
+  const ids = Array.from(new Set(userIds.filter((id) => id)))
+  const out = new Set()
+  if (!ids.length) return out
+  const since = new Date(ms(ec.user.nowTimestamp) - activeDays() * 86400000)
+  const day = (millis) => Math.floor(Number(millis) / 86400000)
+  for (const part of chunks(ids, 500)) {
+    const rows = Array.from(find(DEVICE).condition('userId', 'in', part).condition('revokedDate', null).condition('deviceKeysJson', '!=', null)
+      .condition('lastSeenDate', '>=', since).selectField('userId').selectField('deviceId').selectField('madeAutomatically')
+      .selectField('createdDate').selectField('lastSeenDate').limit(5000).list())
+    // a device Chat made by itself counts once it was seen on a later day than it was made, or its user verified it: one
+    // private window does not make its user one with a device
+    const pending = []
+    for (const row of rows) {
+      if (out.has(row.userId)) continue
+      if (row.madeAutomatically !== 'Y' || day(ms(row.lastSeenDate)) > day(ms(row.createdDate))) out.add(row.userId)
+      else pending.push(row)
+    }
+    for (const row of pending) if (!out.has(row.userId) && verifiedDevice(row.userId, row.deviceId)) out.add(row.userId)
+  }
+  return out
+}
+
+/** The people of a list, each once, the current user left out. */
+function othersOf(me, p) {
+  return Array.from(new Set(Array.from(p.userIdList || []).map((id) => String(id || '').trim()).filter((id) => id && id !== me)))
+}
+
+/**
+ * Internal (check#DevicesReady): whether the current user and every one of userIdList have a crypto device in use, so a new
+ * direct or private room of them is encrypted by default. A user that does not exist or is disabled has none.
+ */
+function devicesReady(p) {
+  const me = ec.user.userId
+  if (!me) return { ready: false }
+  const others = othersOf(me, p)
+  const known = new Set(others.length ? Array.from(find('moqui.security.UserAccount').condition('userId', 'in', others)
+    .condition(ec.entity.conditionFactory.makeCondition('disabled', 'not-equals', 'Y', true)).selectField('userId').list())
+    .map((row) => row.userId) : [])
+  // the device query runs for an unknown user too, so the time of an answer does not tell one apart
+  const have = usersWithDevices([me].concat(others))
+  return { ready: others.every((id) => known.has(id)) && [me].concat(others).every((id) => have.has(id)) }
+}
+
+/**
+ * get#EncryptionDefault: one bit for a set of people, whether a new room of the current user and them would be end-to-end
+ * encrypted by default (every one has a crypto device in use). Nothing else of their devices. A user an app's chat-target
+ * provider refuses this one (get#RefusedUsers), or one that does not exist, counts as one with no device. At most
+ * DEFAULT_MAX_USERS people an ask (tooMany) and DEFAULT_PER_HOUR an hour a user (rateLimited), each answered false.
+ */
+function encryptionDefault(p) {
+  const me = ec.user.userId
+  if (!me) return { encrypted: false, reasonCode: 'notSignedIn' }
+  const others = othersOf(me, p)
+  if (others.length > DEFAULT_MAX_USERS) return { encrypted: false, reasonCode: 'tooMany' }
+  // at most DEFAULT_PER_HOUR people an hour a user: each person asked about claims one slot of the hour (user:hour:n)
+  // with putIfAbsent, which is atomic, so asks at once cannot both take the last slots (the hour's own key is only where
+  // the next claim starts looking). The cache is type distributed: shared by the nodes when a distributed cache factory
+  // is configured, per node with the default local one.
+  const asked = ec.cache.getCache('moqui.chat.encryption.default.asked')
+  const hourKey = me + ':' + Math.floor(ms(ec.user.nowTimestamp) / 3600000)
+  const weight = Math.max(1, others.length)
+  let slot = Math.max(0, Number(asked.get(hourKey) || 0))
+  let claimed = 0
+  while (claimed < weight && slot < DEFAULT_PER_HOUR) {
+    if (asked.putIfAbsent(hourKey + ':' + slot, 1)) claimed++
+    slot++
+  }
+  asked.put(hourKey, slot)
+  if (claimed < weight) return { encrypted: false, reasonCode: 'rateLimited' }
+  let refusedAny = false
+  if (others.length) {
+    const refused = ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers').parameter('userIdList', others).call()
+    refusedAny = ec.message.hasError() || Array.from(refused?.refusedUserIdList || []).length > 0
+    ec.message.clearErrors()
+  }
+  // the same device query whoever is refused, so the answer's time says no more than its bit
+  const ready = devicesReady({ userIdList: others }).ready === true
+  return { encrypted: ready && !refusedAny }
 }
 
 /** Internal: Matrix user IDs of userIds, and back (for screens and other services). */
@@ -1299,7 +1446,7 @@ const operations = {
   createDevice, findDevices, renameDevice, revokeDevice, storeKey, uploadKeys, queryKeys, claimKeys, sendToDevice, syncToDevice,
   uploadCrossSigningKeys, uploadKeySignatures, createBackupVersion, getBackupVersion, updateBackupVersion,
   deleteBackupVersion, storeBackupKeys, getBackupKeys, deleteBackupKeys, clean, whoami, mapIds, web,
-  findBackupVersions, getKeySettings, storeKeySettings, setRoomVerifiedOnly, peerNames,
+  findBackupVersions, getKeySettings, storeKeySettings, setRoomVerifiedOnly, peerNames, devicesReady, encryptionDefault, revokeAutomatic,
 }
 
 function execute(op, parameters) {

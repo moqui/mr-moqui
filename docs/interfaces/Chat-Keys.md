@@ -22,11 +22,21 @@ their per-sender call keys over the same device layer. The design is [plans/arch
 A device is one browser's crypto store for one user, as in Matrix: devices belong to users, not to chat actors.
 
 - **Made on first use.** `ensureDevice()` asks the server for a device (`create#ChatDevice`: a 10-letter deviceId) the
-  first time this browser needs one for the user.
+  first time this browser needs one for the user. Chat asks for it when it opens (in idle time once its rooms show; not
+  in a desktop app window, nor in a browser without WebAssembly or IndexedDB), so new chats can be encrypted by default
+  (below). A device made so is marked (`automatic`, `ChatDevice.madeAutomatically`).
+- **At most 50 in use.** A user holds at most 50 devices seen in the last `chat_device_active_days` (`tooManyDevices`);
+  long-unused ones do not hold a new one back. `find#ChatDevices` answers each device's `active` (seen in that time) and
+  `automatic`.
+- **Unused automatic devices go.** The daily job `clean_ChatToDevice_daily` (`clean#ChatToDevice`) revokes each device
+  Chat made by itself that its user never verified (no cross-signing signature over it) and that was not seen for
+  `chat_device_auto_expire_days` (30), as a revoke by its user does, each in its own transaction (`revoke#AutomaticDevice`)
+  and logged; one that fails is logged and the rest go on. A private window's device, made each time it opens Chat, goes
+  this way.
   - The store is IndexedDB, named `moqui-crypto-<userId>-<deviceId>`.
   - The deviceId is kept in localStorage under the userId, so the next page opens the same store.
-- **Nothing loads until needed.** The 7.8 MB WebAssembly module loads only when a caller asks for the device; pages that
-  never do load none of it.
+- **Nothing loads until needed.** The 7.8 MB WebAssembly module loads only when a caller asks for the device (Chat, an
+  encrypted room or call, My devices' actions); pages that never do load none of it.
 - **Keys.** The machine uploads its signed identity keys and one-time keys (`upload#Keys`). A device's identity keys
   cannot change once set.
 - **Revoking.** Settings, My devices removes a device (`revoke#ChatDevice`):
@@ -210,6 +220,36 @@ A direct or private room may be made encrypted (`create#Room` with `encrypted`; 
 turned off. A public or record room is never encrypted (`encryptedRoom`), and an encrypted room stays members only. An
 encrypted direct room is a room of its own beside the plain direct room of the same people.
 
+**Encrypted by default** ([Comms-Messaging §6.5](../../plans/Comms-Messaging.md#65-e2ee-by-default)). Chat's
+`createDirect` and `createRoom` go through `ChatScreenServices.create#ChatRoom`. With no `encrypted` given:
+- a direct room answers the encrypted direct room of exactly these people when there is one, else the plain one when
+  there is one (it keeps opening, though everyone now has a device), else a new room, encrypted when the user and every
+  member have a crypto device in use (`check#DevicesReady`);
+- a private room is encrypted on the same rule; a public room never.
+
+A device in use is not revoked, has uploaded its identity keys and was seen (a key upload or a sync) in the last
+`chat_device_active_days` (90). One Chat made by itself (`automatic`) counts only once it was seen on a later day than it
+was made, or its user verified it (a cross-signing signature over it), so one private window does not make its user one
+with a device. `create#Room`'s own default stays plain, so XMPP's direct chats, a call to a person and
+agents are unchanged. `createDirect` with `encrypted` true is Start an encrypted chat: a plain direct room's menu and
+start offer it when its people all have a device, it makes or opens the encrypted direct room of the same people, and
+that room's start links back to the plain one. `moqui.chat.directRoomFor` opens the encrypted direct room first.
+
+The page asks `get#EncryptionDefault` (Chat's `encryptionDefault`) for the label of a dm link's unsaved chat, New room's
+Encrypted (until the user sets it) and Start an encrypted chat. It answers one bit for up to 50 people, nothing of their
+devices; a person an app's chat-target provider (or an external caller's reach) refuses, or one unknown or disabled,
+counts as having none, and the same device query runs for them, so the answer's time tells no more than its bit. Past
+600 people an hour a user it answers false (`rateLimited`): each person asked about claims a slot of the hour with the
+cache's `putIfAbsent`, which is atomic, so asks at once cannot pass the limit together. The cache
+(`moqui.chat.encryption.default.asked`) is `distributed`: one count for the cluster when a distributed cache factory is
+configured, a count per node with the default local one. The server only picks the default: the room made has its label,
+and an encrypted room never becomes plain.
+
+Two makes of the same people's direct room at once (two Start clicks, two people starting the chat with each other) wait
+for each other: `create#ChatRoom` locks the people's `UserAccount` rows in one order first, so the second finds the room
+the first made. A twin made all the same (by a server that does not take that lock) is left alone: the oldest is answered,
+and `directRoomFor` picks the oldest too. The Start buttons and Start an encrypted chat take one click at a time.
+
 **What the server keeps.** A message, edit or reaction is the Megolm ciphertext the sending browser made (the
 `m.room.encrypted` content, in `contentJson.encrypted`, `ChatEvent.encrypted` Y). In the clear, as in Matrix:
 - the relation targets: `replyToEventSeq`, `threadRootEventSeq`, `editsEventSeq`, `relatesToEventSeq` (what an edit,
@@ -316,6 +356,37 @@ one ended, with Try again. A verified device of one's own is signed
 with the self-signing key (`keys/signatures/upload`), so the user's other devices trust it too. The server keeps no
 verified flag of its own: it would establish no trust.
 
+## A new device
+
+A new browser, phone or desktop app makes its device when Chat opens; what was sent before was encrypted for the user's
+other devices only. Messages sent after it was made reach it, since the members' browsers hear of it at their next sync
+(`device_lists.changed`). `moqui.crypto.setupStatus()` says where it stands: `{deviceId, backup (the server's current
+backup version, or null), restored (this device holds that backup's key), verified (signed by the user's verified
+identity, or verified here with another of their devices), otherDevices (the user's other devices in use, each with its
+name, when it was added and when last seen)}`. `moqui.chat.setupNeeded` is the rule: it is set up once it can read what
+was sent before it, that is when it holds the current backup's key, or, with no key backup on the server to receive,
+once it was verified with another device of the user's (which forwards the room keys it holds). Verified while a backup
+exists is not yet set up: the card says "Verified. Getting your keys from the other device…" (`setupWaiting`), and after
+two minutes "Your other device did not send the keys", with Try again (`moqui.crypto.requestSecrets()` asks again) and Use
+your recovery key. Only a user with a key backup or another device needs it (a first device needs none; its encrypted
+rooms offer Set up key backup once).
+
+Until it is set up, an encrypted room shows "Set up this device to read messages sent before it was added", with Set
+up, in its banner's place, and each message it cannot read says "Sent before this device was set up", with Set up (the
+`m.unverified` text stays). Set up opens `m-chat-device-setup` (Chat; My devices has it at its top):
+- **Recovery key**: Restore (`restoreBackup`); a wrong key is said plainly and nothing is reset.
+- **Another device**: the user's other devices in use (seen in `chat_device_active_days`), by name and when last seen,
+  each with Verify (emoji or QR, in the card). The other device shows the request in Chat as well as on My devices, naming
+  the new device and when it was added. Once it is done, this device asks its verified devices for the secrets it
+  lacks (`requestMissingSecretsIfNeeded`): the cross-signing keys, which the SDK imports, and the backup key
+  (`m.megolm_backup.v1`), which the SDK sends only to a verified device of the same user. A backup key is used only when
+  it opens the server's current backup (its public key); then the backup is imported as with the recovery key, and this
+  device backs up to it. One received while no page handled it is used when the store next opens. With no backup, the
+  verified device forwards the room keys it holds when asked, while it is open.
+- **Not now** closes it, kept per account and device in this browser.
+
+A full-screen dialog on a phone, 480 px on a desktop.
+
 ## The browser API
 
 In `moqui.crypto` (the store's tab runs each call; another tab's call is relayed to it):
@@ -341,6 +412,8 @@ In `moqui.crypto` (the store's tab runs each call; another tab's call is relayed
 | `rotateRoom(chatRoomId)` | A new session for the room's next message |
 | `onRoomKeys(fn)` | `fn([{roomId, sessionId}])` when room keys arrive (from a member, or a restore). Returns the unsubscribe |
 | `encryptFile(blob)`, `decryptFile(data, info)` | `{blob, info}` for upload; the decrypted bytes (the hash is checked) |
+| `setupStatus()` | `{deviceId, backup, restored, verified, otherDevices: [{deviceId, displayName, createdDate, lastSeenDate}]}`: whether this device reads what was sent before it (A new device) |
+| `requestSecrets()` | The secrets this device lacks asked of the user's verified devices again (Try again) |
 | `enableBackup()`, `backupStatus()`, `restoreBackup(recoveryKey)` | `{version, recoveryKey}`; `{version, enabled, total, backedUp}`; `{version, imported, total, failed, current}` (the version the key opens, an older one too) |
 | `crossSigningStatus()`, `setupCrossSigning(reset)` | `{hasMaster, hasSelfSigning, hasUserSigning, identity, verified}` |
 | `verifyDevice(userId, deviceId)`, `verification(flowId, action, arg)`, `dismissVerification(flowId)` | Start a verification (its flowId); a step: `accept`, `sas`, `confirm`, `mismatch`, `cancel`, `showQr`, `scanned` (the code's bytes), `qrConfirm`. `state.verifications` lists them with their emoji or QR image |
@@ -350,8 +423,10 @@ In `moqui.chat`: `e2eeLabel(room, trust)` (the room's label, [Comms-Messaging §
 leftOut, people}`), `verifyTarget`, `problemsText`, `leftOutText`, `noteLeftOut` and `leftOutOf(roomId)` (who could not
 read my messages, kept in localStorage per account), `undecryptableText(withheld, senderName)`, `sealMessage(roomId, memberIds, html, files)` (the send parameters `{encryptedJson, mentionUserIds}`),
 `sealReaction`, `sealFile`, `openFile(url, file, roomId)` (a blob URL), `releaseFiles(roomId, ids)`,
-`openEvents(roomId, list, attachmentUrl)`, `openEvent(roomId, event, attachmentUrl)` and
-`myReaction(roomId, messageSeq, key, me)`. A decrypted file's blob URL is revoked when its room closes (the last view of it
+`openEvents(roomId, list, attachmentUrl)`, `openEvent(roomId, event, attachmentUrl)`,
+`myReaction(roomId, messageSeq, key, me)`, `setupNeeded(setupStatus)`, `setupWaiting(setupStatus)`,
+`directRoomFor(rooms, userIds, me, plain)` (the encrypted one first, the oldest of each kind) and `makeDeviceSoon()`
+(Chat's device in idle time, `ensureDevice({automatic: true})`). A decrypted file's blob URL is revoked when its room closes (the last view of it
 goes: `closeRoom`), or for the attachments named; opened again, it is fetched and decrypted again.
 
 ## Settings
@@ -359,6 +434,8 @@ goes: `closeRoom`), or for the attachments named; opened again, it is fetched an
 | Property | Default | What |
 | --- | --- | --- |
 | `chat_server_name` | `localhost` | The server name in device user IDs |
+| `chat_device_active_days` | `90` | A device seen in this many days counts for the encryption default (Encrypted by default) and toward the 50 a user may hold |
+| `chat_device_auto_expire_days` | `30` | A device Chat made by itself, never verified, is revoked by the daily job after this many days unseen |
 | `chat_to_device_retention_days` | `30` | How long a to-device message waits for a device that does not acknowledge it (the job `clean_ChatToDevice_daily`, which also deletes one-time keys claimed over a day ago) |
 | `chat_store_key_secret` | generated | The secret the store keys are derived under. A new value makes every browser's store unreadable (each starts over and reads older messages from the key backup) |
 
@@ -389,7 +466,16 @@ policy sets none.
   - backup versions, a put to another version refused with `current_version`, the better-session rule, keys by room
     and by session, deletes, counts and etags;
   - `device_lists.left` when the only shared room ends.
-- **Server, encrypted rooms:** `./moq test basic-comms --spec BasicCommsEncrypted` (6 features). Every refusal above with
+- **Server, the encryption default:** `./moq test framework --spec ChatEncryptionDefault`: the bit true only when the asker
+  and everyone have a device in use, false for none, a revoked or keyless device, one not seen in 90 days and an unknown
+  user; nothing else answered; more than 50 people and past 600 an hour refused; an automatic device counted once seen on
+  a later day or verified; the job revoking an unused automatic device and keeping a verified one and one the user made;
+  the 50 devices counting only those in use. `BasicCommsEncrypted`'s last feature: a
+  direct, group direct and private room encrypted when all have devices and plain otherwise, the encrypted direct room
+  answered after a device went, a plain direct room kept and Start an encrypted chat beside it, an explicit choice kept, a
+  public room never, `create#Room`'s own default plain, the oldest of two encrypted direct rooms of the same people
+  answered, and the bit false for a person an external user's reach leaves out.
+- **Server, encrypted rooms:** `./moq test basic-comms --spec BasicCommsEncrypted` (8 features). Every refusal above with
   the parameters that pass in a plain room; no plaintext in `bodyText`, the snippet, search, the ChatMention notification
   or the stored content; the timeline's ciphertext of an edit and its reactions; the terminal.
 - **Browser, encrypted rooms:** `./moq test-client basic-comms --serve --spec EncryptedChatFlow` (three users, three
@@ -407,6 +493,11 @@ policy sets none.
 - **Browser, the chat store:** `./moq test-client webroot --offline --spec WebrootChat`: a closed room's decrypted files
   revoked, another room's kept, and a file decrypted again when opened again.
 - **Browser, encrypted calls:** `EncryptedCallFlow` also checks the warning of unverified devices on the roster.
+- **Browser, a new device:** `CryptoFlow`'s first feature: after two devices of a user verify by emoji, the new one (the
+  first has a key backup) needs setting up before, then receives the backup key from the first and holds it, with no
+  recovery key. `ShellSync` (offline, the bundled shell): the set-up bar and card (Restore, Verify; verified with the
+  backup key not here yet, the card waits, then says the keys did not come, and Try again asks again), a dm link's unsaved
+  chat with its label, Start an encrypted chat and the link back, My devices in the shell.
 - **Browser:** `./moq test-client basic-comms --serve --spec CryptoFlow`. Two Chromium pages of two users who share a
   room:
   - each makes a device;

@@ -437,21 +437,37 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== Rooms and members ========== -->
 
+    <!-- a new room; encrypted true or false as the user chose, else the default (E2EE by default, plans/Comms-Messaging.md §6.5) -->
     <transition name="createRoom">
         <actions><script><![CDATA[
+            const flag = (value) => value === true || value === 'true' || value === 'Y' ? true : value === false || value === 'false' || value === 'N' ? false : null
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.create#ChatRoom').parameters({roomTypeEnumId: roomTypeEnumId || 'private',
-                roomName: roomName || null, topic: topic || null, memberUserIds: memberUserIds || null,
-                encrypted: encrypted === true || encrypted === 'true' || encrypted === 'Y'}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {chatRoomId: out.chatRoomId, created: out.created})
+                roomName: roomName || null, topic: topic || null, memberUserIds: memberUserIds || null, encrypted: flag(encrypted)}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {chatRoomId: out.chatRoomId, created: out.created, encrypted: !!out.encrypted})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- a direct message with these users: the room there is, or a new one -->
+    <!-- a direct message with these users: the room there is (the encrypted one first), or a new one, encrypted when everyone
+        in it has a crypto device; encrypted true: the encrypted direct room of these people, made when there is none (Start an
+        encrypted chat in a plain direct room); false: the plain one (a page that cannot encrypt, a call's decline with a text) -->
     <transition name="createDirect">
         <actions><script><![CDATA[
+            const sealed = encrypted === true || encrypted === 'true' || encrypted === 'Y' ? true : encrypted === false || encrypted === 'false' || encrypted === 'N' ? false : null
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.create#ChatRoom').parameters({roomTypeEnumId: 'direct',
-                memberUserIds: userIds || null}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {chatRoomId: out.chatRoomId, created: out.created})
+                memberUserIds: userIds || null, encrypted: sealed}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {chatRoomId: out.chatRoomId, created: out.created, encrypted: !!out.encrypted})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- whether a new room of the user and these people (userIds, comma-separated) is encrypted by default: one bit
+        (org.moqui.chat.ChatKeyServices.get#EncryptionDefault, which names no device), for the unsaved first message's label,
+        New room's toggle and Start an encrypted chat -->
+    <transition name="encryptionDefault" read-only="true">
+        <actions><script><![CDATA[
+            const ids = String(userIds || '').split(',').map((id) => id.trim()).filter((id) => id)
+            const out = ec.service.sync().name('org.moqui.chat.ChatKeyServices.get#EncryptionDefault').parameter('userIdList', ids).call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({encrypted: out.encrypted === true, reasonCode: out.reasonCode || null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
