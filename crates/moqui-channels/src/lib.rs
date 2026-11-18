@@ -37,6 +37,7 @@
 //! without it no SMS adapter is registered, so an SMS bridge stays not connected and its webhook answers 401, as an
 //! unknown bridge's does.
 
+pub mod groupme;
 pub mod providers;
 pub mod sms;
 
@@ -65,6 +66,7 @@ pub fn adapters() -> Vec<Arc<dyn ChatBridgeAdapter>> {
         // business RCS on the same providers (docs/interfaces/RCS.md)
         Arc::new(sms::SmsAdapter::new(providers::twilio::Twilio::rcs())),
         Arc::new(sms::SmsAdapter::new(providers::sinch::Sinch::rcs())),
+        Arc::new(groupme::GroupMeAdapter::default()),
     ]
 }
 

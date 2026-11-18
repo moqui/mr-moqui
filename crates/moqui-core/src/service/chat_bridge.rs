@@ -153,6 +153,9 @@ pub enum Encryption {
     /// None: the network and its providers read every message (SMS and MMS). An adapter that says nothing says this.
     #[default]
     None,
+    /// None, and the adapter says so of its network: it has no end-to-end encryption at all (GroupMe). The room's label
+    /// names the network; [`Encryption::None`] alone may be an adapter that said nothing.
+    NoneByNetwork,
     /// In transit only (TLS to and between servers): the provider and the network's servers read it.
     Transport,
     /// End to end on the network, decrypted by the bridge on this server and encrypted again (WhatsApp through a bridge).
@@ -166,6 +169,7 @@ impl Encryption {
     pub fn as_str(self) -> &'static str {
         match self {
             Encryption::None => "None",
+            Encryption::NoneByNetwork => "NoneByNetwork",
             Encryption::Transport => "Transport",
             Encryption::BridgeDecrypted => "BridgeDecrypted",
             Encryption::EndToEnd => "EndToEnd",
@@ -261,6 +265,12 @@ pub trait ChatBridgeAdapter: Send + Sync {
     fn start(&self, bridge: &BridgeInfo) -> Result<(), String> {
         let _ = bridge;
         Ok(())
+    }
+    /// Whether the adapter keeps the bridge's status itself (a connection of its own, which only the node holding it
+    /// knows the outcome of): then a [`Self::start`] that succeeds does not mark the bridge connected. The default is
+    /// false.
+    fn keeps_status(&self) -> bool {
+        false
     }
     /// Disconnect it (disabled, or the server stopping).
     fn stop(&self, chat_bridge_id: &str) {
@@ -487,6 +497,29 @@ fn bridge_info(row: &EntityValue) -> BridgeInfo {
         name: text_of(row, "name").unwrap_or_default(),
         config,
     }
+}
+
+/// The bridge `bridge_id` as its adapter sees it (`configJson` read and parsed), with its status: for an adapter's
+/// own thread (a network's push connection), which reads its bridge again between its waits. None when there is no
+/// such bridge.
+///
+/// # Errors
+///
+/// When the row cannot be read.
+pub fn bridge_row(facade: &EntityFacade, bridge_id: &str) -> Result<Option<(BridgeInfo, String)>, LibError> {
+    Ok(facade
+        .find(BRIDGE)?
+        .eq("chatBridgeId", Value::string(bridge_id))
+        .disable_authz()
+        .one()?
+        .map(|row| (bridge_info(&row), text_of(&row, "statusId").unwrap_or_default())))
+}
+
+/// Keep a bridge's status from an adapter's own thread: connected, or not connected with `error` as its last error. A
+/// disabled bridge stays disabled; the same connected status again writes nothing.
+pub fn note_status(facade: &EntityFacade, bridge_id: &str, connected: bool, error: Option<&str>) {
+    let status = if connected { "CbsConnected" } else { "CbsNotConnected" };
+    set_status(facade, bridge_id, status, error, now_millis());
 }
 
 /// The adapter of a bridge: its `adapterName`, else its network's enumeration code.
@@ -1047,6 +1080,7 @@ fn lifecycle(
     if started {
         return;
     }
+    let keeps_status = adapter.as_ref().is_some_and(|adapter| adapter.keeps_status());
     let outcome = match adapter {
         None => Err(format!(
             "No chat bridge adapter {} in this build",
@@ -1064,7 +1098,10 @@ fn lifecycle(
     match outcome {
         Ok(()) => {
             lock(&worker.state).started_bridges.insert(info.chat_bridge_id.clone());
-            set_status(facade, &info.chat_bridge_id, "CbsConnected", None, now);
+            // an adapter that keeps the status itself writes the real outcome of its connection
+            if !keeps_status {
+                set_status(facade, &info.chat_bridge_id, "CbsConnected", None, now);
+            }
         }
         // the same failure again (each round tries) is not logged or written again
         Err(error) if status == "CbsNotConnected" && last_error == Some(error.as_str()) => {}
@@ -1773,8 +1810,8 @@ fn push_state(room_id: &str, seq: i64) {
 #[path = "chat_bridge_web.rs"]
 mod web;
 pub use web::{
-    media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook,
-    webhook_public_url, FetchedMedia, MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
+    delivery_file, media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms,
+    webhook, webhook_public_url, FetchedMedia, MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
 };
 
 #[path = "chat_bridge_edge.rs"]

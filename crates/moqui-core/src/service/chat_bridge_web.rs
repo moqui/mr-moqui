@@ -472,11 +472,18 @@ pub fn media_at(
 /// [`media`] of the server's own messages.
 fn own_media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, now: i64) -> Option<MediaFile> {
     let attachment_id = media_token_valid(bridge_id, token, now)?;
+    delivery_file(factory, bridge_id, &attachment_id)
+}
+
+/// File `attachment_id` of a message that goes to bridge `bridge_id`, read for an adapter that uploads it to its
+/// network (GroupMe's image service) rather than give an address: only a file of a message with a delivery to that
+/// bridge. None when it is not one, or cannot be read.
+pub fn delivery_file(factory: &ExecutionContextFactory, bridge_id: &str, attachment_id: &str) -> Option<MediaFile> {
     let facade = factory.entity()?;
     let row = facade
         .find("moqui.chat.ChatAttachment")
         .and_then(|find| {
-            find.eq("chatAttachmentId", Value::string(&attachment_id))
+            find.eq("chatAttachmentId", Value::string(attachment_id))
                 .disable_authz()
                 .one()
         })

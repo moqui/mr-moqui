@@ -4,7 +4,7 @@ A chat room can reach outside Moqui: a connector maps it to a room or conversati
 Telegram, Slack and others), and a native endpoint (XMPP, Matrix) serves Moqui rooms to their clients. This is the layer
 under both: chat actors, the input from a network, and the durable delivery of what goes out. The design is
 [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.1, §4.3 and §4.4, milestone C1. C1 has no network adapter
-of its own: C4-SMS adds the SMS adapters, one for each provider (`sms` on Telnyx, `sms-twilio` on Twilio, not yet tested with Twilio; [SMS](SMS.md)), and business RCS on the same core (`rcs-twilio`, `rcs-sinch`, bridges of network RCS, not yet tested with the provider; [RCS](RCS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
+of its own: C4-SMS adds the SMS adapters, one for each provider (`sms` on Telnyx, `sms-twilio` on Twilio, not yet tested with Twilio; [SMS](SMS.md)), and business RCS on the same core (`rcs-twilio`, `rcs-sinch`, bridges of network RCS, not yet tested with the provider; [RCS](RCS.md)). The GroupMe adapter (`groupme`, network GroupMe, not yet tested with GroupMe; [GroupMe](GroupMe.md)) is one person's account, which connects out to GroupMe's push channel. The user guide is [Comms](../tools/Comms.md#bridged-rooms).
 
 - **Entities:** the C1 block at the end of `framework/entity/ChatEntities.xml` (`ChatActor`, `ChatExternalUser`,
   `ChatBridge`, `ChatRoomBridge`, `ChatEventExternal`, `ChatBridgeInbound`, `ChatBridgeDelivery`), with
@@ -43,7 +43,8 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | --- | --- |
 | `name` | The name a `ChatBridge` row selects it by: its `adapterName`, else its network's enumeration code (`sms`, `whatsapp`, `xmpp` and so on). |
 | `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit), `encryption` (below), `group_max` (the most outside numbers of a group text: Telnyx 8, Twilio 9; 0 for none, and a group room then refuses to send, `groupTextsNotSupported`). Each implementation narrows these to the API version it verified. |
-| `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. |
+| `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. An adapter that keeps a connection of its own (GroupMe's push channel) starts its node's coordinator here, which holds a lease per bridge so one node of a cluster connects (`moqui.edge.EdgeSenderLock`), and keeps the bridge's status itself (`chat_bridge::note_status`). |
+| `keeps_status` | True for an adapter whose own connection's outcome is the bridge's status (GroupMe): a `start` that succeeds then does not mark the bridge connected. The default is false. |
 | `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room and the network's own conversation of it when the adapter stored one (`external_thread_id`, `store#MappingThread`), the kind, the text and HTML, the sender's name and local user, the message's files (`attachments`, its `ChatAttachment` rows in order), the network id of the message an edit, reaction or delete is about, the reaction key, a rich message's cards and buttons (`rich`, its `content.rich`: an adapter that cannot send them sends the text, their text form), the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. A request with no room is a direct send (`send#BridgeDirect`, below). |
 | `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers as an unsigned request (`WebhookResponse::not_signed`). |
 | `verify_webhook` | The signature step alone, for a disabled bridge and behind an edge node: whether the request is the network's. It keeps no replay state. The default refuses every request. |
@@ -51,7 +52,7 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | `webhook_verifiable` | Whether this node has what `verify_webhook` needs (a key or secret, a configuration that read): a queued request it cannot check waits rather than being refused as forged. |
 | `edge_answer` | An edge node's answer to the network for a request it queued (2xx) or refused for its rate (429), in the network's shape (Twilio's TwiML); never an unsigned request's. |
 | `webhook_event_id`, `apply_webhook` | For an edge node's queue: the event's id (a repeat is dropped) and what orders it, and the work of `webhook` after its checks, on the local node. |
-| `fetch_media` | The bytes of a file a network's message names, within a bound (`store#BridgeMedia`). The default fetches nothing. |
+| `fetch_media` | The bytes of a file a network's message names, within a bound (`store#BridgeMedia`). The default fetches nothing. An adapter that uploads a message's files to its network (GroupMe's image service) reads them with `chat_bridge::delivery_file`, only for a message with a delivery to its bridge. |
 | `typing` | Show the other side that a user of ours is typing (`send#BridgeTyping`, which `signal#Typing` starts asynchronously, at most once in 15 seconds a room): business RCS. Nothing is kept or retried; a failure is logged. The default sends nothing. |
 | `delete_content` | Delete a content the adapter made at its network for a send (`ChatBridgeDelivery.providerContentId`, kept by `note#DeliveryContent`: a Twilio Content of a rich message), on the message's final receipt or by the delivery worker's daily sweep of those older than 2 days (`clean#ProviderContent`). The default has none. |
 | `lookup_number` | What the network's provider knows of an outside number (`NumberLookup`: line type, carrier, caller name), for the spam filter (`lookup#BridgeNumber`, [SMS, Blocked numbers and spam](SMS.md#blocked-numbers-and-spam)); a paid request, asked only when its answer can change a verdict. The default has none (`notSupported`); the SMS adapter asks its provider's `lookup_request` (Twilio Lookup v2). |
@@ -109,14 +110,17 @@ screens leave the action out (`get#Room` `bridgeCapabilities`). An inbound edit 
 with the same reason; it is never shown as synchronized.
 
 `encryption` is how far the network keeps a message from others: `None` (the network and its providers read it: SMS and
-MMS, every SMS adapter), `Transport` (TLS in transit only), `BridgeDecrypted` (end to end on the network, decrypted by
+MMS, every SMS adapter), `NoneByNetwork` (the same, and the adapter says so of its network: it has no end-to-end
+encryption at all; GroupMe), `Transport` (TLS in transit only), `BridgeDecrypted` (end to end on the network, decrypted by
 the bridge here: WhatsApp through a bridge) or `EndToEnd` (end to end through the bridge; none yet). An adapter that says
 nothing says `None`, and so does a bridge with no adapter in the build. `get#BridgeCapabilities` returns it, each bridge
 of `get#RoomBridges` (and so `get#Room`'s `bridges`) has it, and `find#Rooms` gives each room's `bridgeNetworks`
 (`{network, networkName, encryption, outbound}`). A bridged room is never end-to-end encrypted on this server, whatever
 the network does: its label (`moqui.chat.e2eeLabel`, [Comms-Messaging §6.2](../../plans/Comms-Messaging.md#62-labels))
-is the SMS one for a text, else "the bridge reads messages to pass them on", and the room settings name each bridge's
-encryption.
+is the SMS one for a text; for a room whose bridges all say `NoneByNetwork` (GroupMe), "{network} has no end-to-end
+encryption, and the bridge reads messages to pass them on"; else "the bridge reads messages to pass them on" (`None`
+alone may be an adapter that said nothing). The room
+settings name each bridge's encryption.
 
 ## Input
 
@@ -127,7 +131,8 @@ contract:
 1. **Security first, for the whole batch.** An unknown or disabled bridge, a token that does not match the bridge's
    `inboundTokenHash` (SHA-256, compared in constant time; not asked with `transportVerified`, which only an adapter that
    checked the network's signature itself sets, from its webhook, and which holds only while `chat_bridge::webhook` is
-   working that bridge's request), a malformed transaction id, a batch over 200 items or 1 MB, or
+   working that bridge's request, or while the adapter's own authenticated connection to the network is (GroupMe's push
+   channel, `sms::with_mark`)), a malformed transaction id, a batch over 200 items or 1 MB, or
    an item that names a local user (`userId`, `senderUserId`, `localUserId`, `chatActorId`, `senderActorId`) refuses the
    batch with its reason code before anything is stored.
 2. **Stored before it is acknowledged.** The batch is a `ChatBridgeInbound` row, unique on the bridge and transaction
@@ -137,7 +142,8 @@ contract:
    node's round) never turns a final outcome back into waiting or an accepted item into one rejected by the race it lost.
 3. **Each item on its own**, in order, in a transaction of its own (`process#InboundItem`): a malformed item is rejected
    by its `itemId` (`malformed`, `attachmentsUnsupported`, `noMapping`, `notInbound`, `notMember`, `archived`, `notOwn`)
-   and the others go on. A message's files come as `media` (up to 10 addresses): each is fetched by the adapter in the
+   and the others go on. An item's `mentions` may be `['@room']` only (GroupMe's `@all`): the text's first `@all` or
+   `@everyone` becomes the room's mention. A message's files come as `media` (up to 10 addresses): each is fetched by the adapter in the
    item's transaction (`store#BridgeMedia`, a safe content type, no uploader) and sent with the message; one that cannot
    be fetched is named in the message's text and the rest go on. An `attachments` list is still refused.
 4. **Mapped once.** An item maps to a local event through `ChatEventExternal`, unique on the bridge, the external room
@@ -217,7 +223,7 @@ secret or `webhookUrl` is fixed), counted there ("N webhooks refused since ...")
 minutes; one it cannot check (no secret) waits. Files a message sends by address (MMS) are put on the edge node
 and served there at `/channels/{chatBridgeId}/media/{token}`. The local node's `channels_public_url` names the edge
 node; the Edge Node wizard sets it and lists each bridge's webhook URL ([SMS](SMS.md) has the steps). Networks that
-only connect out (Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway) need no edge node. On an
+only connect out (GroupMe's push channel; Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway) need no edge node. On an
 all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the webhook and media routes look for the server's
 own bridge or file first, then the local node's copy; a bridge id both sides have gets 409, naming it.
 
@@ -248,6 +254,7 @@ name it.
   verifies on the edge node checked again; the edge node's whole path for one it cannot verify (no check, keyed by its
   signature, the network's answer shape, the cap on what waits); the rate per client address and per bridge; a
   mapping's thread kept once and carried by its sends.
+- `crates/moqui-channels/src/groupme/tests.rs`: the GroupMe adapter against a fake GroupMe ([GroupMe, Tests](GroupMe.md#tests)).
 - `crates/moqui-channels/src/tests.rs` also: a provider's opt-out signal kept once per event; a provider's opt-out
   refusal marking the pair; a text in a provider's conversation coming to its room.
 - `crates/moqui-host/tests/it/lock_then_insert.rs`: racing first joins make one actor.

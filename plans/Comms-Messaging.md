@@ -943,11 +943,17 @@ yet). The sidecar's license applies to the sidecar, not to MR Moqui; a legal che
   Signal unlinks it. The server stores plaintext.
 - The UI says plainly: "Signal messages are end-to-end encrypted until they reach your server. Your server can read them."
 
-**GroupMe**
+**GroupMe** (designed as phase 14, §18.3)
 - Public API v3 (`api.groupme.com/v3`): groups, direct messages, likes, attachments, members. A user token reads groups,
   members and Topics; the push channel gives new messages.
-- Adapter `groupme.rs`: each group and Topic is a room; likes map to a heart reaction; `@all` maps to `@room`.
-- Risk: low; the API is old but works. GroupMe has no E2EE, so nothing is lost.
+- Adapter `groupme` (`crates/moqui-channels/src/groupme/`), bridge type `CbtGroupMe`, encryption `None`:
+  - each group, each Topic and each direct conversation is a private room of the bridge's owner;
+  - a like is a heart reaction both ways, and `@all` is `@room` both ways;
+  - pictures go out through GroupMe's image service.
+- New messages come through GroupMe's push channel: one outbound HTTPS connection from the core node, so no webhook and
+  no edge node. A catch-up through the messages API after each reconnect is the polling fallback.
+- Risk: low; the API is old but works. GroupMe has no E2EE, so nothing is lost. Direct messages, Topics and the push
+  event types beyond `line.create` are documented only by the community (phase 14, "Not confirmed").
 
 **Google Messages and RCS** (details in §16)
 - SMS and MMS: through the ported number on the SMS provider. Group texts: §9.
@@ -1053,12 +1059,12 @@ that adds it. "New" means this plan adds it (§17).
 | Large groups | Public and private rooms; test with 5,000 members | Built; load test new |
 | Join by SMS without the app | SMS members of a room: a phone number added to a room gets each message as a text with the sender's name, and its replies post to the room | New |
 | Group invite links and QR | Invite links | New |
-| Likes | Heart reaction | Built |
-| Topics (subgroups) | Threads, or linked sub-rooms | Built (threads) |
+| Likes | Heart reaction; across the GroupMe bridge a like is a heart both ways | Built; the bridge in phase 14 |
+| Topics (subgroups) | Threads, or linked sub-rooms. A bridged Topic is a room of its own, "Group › Topic" | Built (threads); the bridge in phase 14 |
 | Events with RSVP | An event message with Going / Maybe / No, and a calendar entry | New |
 | Polls | Polls | Built |
 | Gallery | Media tab | §5 |
-| Mute, @all | Mute, `@room` | Built |
+| Mute, @all | Mute, `@room`; across the GroupMe bridge `@all` and `@room` map both ways | Built; the bridge in phase 14 |
 | Directory and join requests | Browse rooms; join request for private rooms | Browse built; requests new |
 
 ### 14.6 Cheogram (XMPP)
@@ -1125,7 +1131,7 @@ server shows on the phone within a minute; a call and a text from that contact s
 | Phone SMS and MMS | The `sim-sms` build reads the phone's messages once and uploads them to the number's rooms | Needs the default SMS role during import |
 | Signal | `signal-cli` backfill when linking (Signal offers "transfer message history") | Only what Signal transfers |
 | iMessage | BlueBubbles backfill (pages of 1,000) | From the Mac's history |
-| GroupMe | The API's message history per group | Full history |
+| GroupMe | The API's message history per group. Phase 14 catches a room up from its last message only | Full history |
 | Cheogram | The XMPP archive (MAM) of the old account, if its server keeps it; or an export | Best effort |
 | Google Messages | Through the phone's SMS store (`sim-sms` import); RCS history only through the bridge | RCS history mostly lost |
 
@@ -1298,7 +1304,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 7 | Stickers, GIF search, location and live location | §14.3 |
 | 8 | Event messages with RSVP | §14.5 |
 | 9 | Screen security option; one-time code helper; send original photo | §14.2, §14.4 |
-| 10 | GroupMe adapter (`groupme.rs`) | §13.3 |
+| 10 | GroupMe adapter (`groupme`): designed, phase 14 (§18.3) | §13.3 |
 | 11 | Signal adapter on `signal-cli` (`signal.rs`), optional build feature | §13.3 |
 | 12 | iMessage adapter on BlueBubbles (`bluebubbles.rs`), optional build feature | §13.3 |
 | 13 | Business RCS in the SMS provider modules, Twilio and Sinch first: phase 10; its rich features and labels: designed, phase 13 (§18.3) | §16 |
@@ -2561,6 +2567,341 @@ README; the crate's notes (`sms.rs`, `providers/twilio.rs`, `providers/sinch.rs`
   - our read receipts out (later, with their own setting);
   - rich messages in direct sends and from the terminal.
 
+#### Phase 14: GroupMe adapter (D5, §13.3, §14.5, §17 #10)
+
+Designed 2026-11-17. Built against a fake GroupMe only, so **not yet tested with GroupMe**. The adapter is
+`crates/moqui-channels/src/groupme/`, on GroupMe's public API v3 with the user's access token. The facts it relies on,
+and those not confirmed, are at the end of this entry.
+
+**New messages: the push channel.** GroupMe offers three ways:
+
+| Way | For | Against |
+| --- | --- | --- |
+| Push: Faye/Bayeux at `push.groupme.com/faye`, long-polling over HTTPS (chosen) | Official (the push tutorial). One outbound connection a bridge, from the core node: no webhook, no edge node, nothing public. The user channel `/user/<id>` carries every group's, Topic's and direct conversation's messages and likes | A thread a bridge holds a long poll open. Its event types beyond `line.create` are documented by the community only |
+| Bot callback URL | Official, a plain POST | A bot in each group, which the group sees; no direct messages; no signature, so anyone with the URL can forge a message; needs a public webhook (the edge node) |
+| Polling | Simple | A request a room an interval; slow; GroupMe's rate limit (420) |
+
+The push channel is chosen. Polling is only its catch-up after a reconnect.
+
+**The connection** (`groupme/push.rs`).
+- `start()` spawns one thread per bridge, `moqui-groupme-<chatBridgeId>`, holding a `Weak` factory. `stop()` sets its
+  stop flag and does not wait for it. Its loop:
+  1. `GET /users/me`: the token's GroupMe user id.
+  2. Handshake (`/meta/handshake`, `long-polling`), then subscribe to `/user/<id>` with `ext: {access_token, timestamp}`.
+  3. Catch up (below).
+  4. `/meta/connect` long polls, each with a read timeout of the server's `advice.timeout` plus 15 s. Each answer's
+     messages are handled in order.
+- Every hour a new handshake and subscription (the tutorial: "Signature must refresh every hour").
+- A failed connect, `advice.reconnect: handshake`, a network error or a 5xx: a new handshake after 2 s, doubling up to
+  5 min.
+- Before each poll the thread reads the bridge row again (status and `configJson`):
+  - disabled or removed: the thread ends;
+  - a changed token or settings: a new handshake at once.
+- The bridge is connected once subscribed. A 401 (from the API or the push server) marks it not connected with "GroupMe
+  refused the access token: get a new one (docs/interfaces/GroupMe.md)". The thread then tries again every 5 minutes,
+  and at once when `store#Bridge` changes the token.
+- New core helpers in `chat_bridge.rs`:
+  - `note_status(facade, bridge_id, connected, error)` wraps `set_status` for an adapter's own thread;
+  - `bridge_row(facade, bridge_id)` returns the `BridgeInfo` and status.
+- **In a cluster** one node holds each bridge's connection (decided 2026-11-17, at the design check). It is the lease
+  the replication sender and the SIP trunks already use: a `moqui.edge.EdgeSenderLock` row `groupme:<chatBridgeId>`,
+  through `moqui_core::edge::replica::sender::claim`.
+  - The lease is 120 s, renewed between steps (each long poll is at most the server's timeout plus 15 s).
+  - Another node asks every 15 s and takes the lease over when it lapses.
+  - A holder whose claims fail stops after two thirds of the lease since its last good claim.
+  - A thread that ends lets the lease go.
+
+  Should two nodes still meet, duplicates stop in `ingest#Event`: one transaction id a GroupMe event
+  (`gm:<message id>`), and `ChatEventExternal` is unique on the event.
+- **Edge nodes:** nothing. The connection goes out from the core node, and files go out as uploads, not addresses.
+
+**Catch-up** (the polling fallback).
+- When it runs:
+  - after each subscription;
+  - every `syncMinutes` (60).
+- Per run:
+  - `GET /groups?omit=memberships&per_page=100` (up to `maxRooms`) and `GET /chats?per_page=100`;
+  - at the start and hourly, `GET /groups/:id/subgroups` for the Topics.
+- What it does:
+  - It makes the rooms of chosen groups, Topics and conversations that have none.
+  - A room whose `last_message_id` is not its newest mapped event fetches `GET /groups/:id/messages?after_id=<newest>&limit=100`
+    (or `GET /direct_messages?other_user_id=…&after_id=…`), at most 5 pages a room.
+  - The newest mapped event is the mapping's latest `ChatEventExternal` that is not a like. No cursor field is needed.
+  - A new room starts at GroupMe's newest message. History is §15's, later.
+
+**Rooms.**
+- `externalRoomId`:
+  - `g:<group id>`: a group;
+  - `g:<topic id>`: a Topic, which posts and reads as a conversation of its own;
+  - `dm:<other user id>`: a direct conversation. Its chat id (`a+b`) is the mapping's `externalThreadId`
+    (`store#MappingThread`), for likes.
+- Each is a `CrtPrivate`, `CrvMembers` room, not encrypted, with a `CrbBoth` mapping. Not `CrtExternal`: that is a phone
+  number's room. So GroupMe rooms list under Bridged.
+- The room's name and topic:
+  - a group: the group's name, topic "GroupMe group";
+  - a Topic: "Group › Topic", topic "GroupMe Topic in {group}";
+  - a conversation: the person's name, topic "GroupMe direct messages".
+- The bridge's owner (`configJson.ownerUserId`) is the room's owner and its one local member when it is made. The owner
+  may add others: they read, and their sends are refused (below).
+- A new name from GroupMe renames the room only while the room still has GroupMe's last name (the mapping's
+  `externalRoomName`): the owner's own name wins.
+- Which rooms (`configJson`):
+  - `groupIds` (empty: every group);
+  - `skipGroupIds`;
+  - `topics` (true);
+  - `directMessages` (true);
+  - `maxRooms` (200, Topics and conversations counted).
+
+  An event of a room left out is dropped, logged at debug.
+- New service file `org.moqui.chat.GroupMeServices` (`GroupMeServices.xml`, `GroupMe.js`), internal (no remote), which
+  the adapter calls with authorization off:
+  - `ensure#Room` {chatBridgeId, externalRoomId, kind (group, topic, direct), name, parentName, conversationId}: under the
+    bridge's row lock, the active mapping or a new room and mapping, as `ensure#PairRoom`. It reads the owner from the
+    bridge's `configJson` itself, so no caller names a user. Out: chatRoomId, chatRoomBridgeId, created.
+  - `receive#Likes` {chatBridgeId, externalRoomId, messageId, likedByList, ownGroupMeId, names}: the likes of one message
+    as a state.
+    - It compares the heart reactions of the room's external actors on that message with `likedByList`.
+    - It sends `ingest#Event`: a reaction for each new like (`like:<message>:<user>:<n>`), and a redaction of the latest
+      like for each one taken back.
+    - The owner's own GroupMe id counts as liked while the owner has a local heart on the message, so the owner's like
+      does not come back as a second heart.
+    - One transaction id per state (`gml:<message>:<hash of the sorted ids>`), so a repeat, or another node's, is a
+      duplicate.
+
+**In** (`groupme/events.rs`). Each push message or caught-up message is one `ingest#Event` batch. The adapter runs it
+under its bridge's transport mark (`sms::with_mark`): its own TLS connection to GroupMe, signed in with the token, is the
+transport check. Nothing comes in on the webhook route: `webhook()` keeps the default 401.
+
+| GroupMe | Becomes |
+| --- | --- |
+| `line.create`, `direct_message.create`, a caught-up message | A message as the GroupMe person (`externalUserId` its `user_id`, its `name`, its `avatar_url` when on `https://i.groupme.com`, `originDate` from `created_at`). Image (`i.groupme.com`) and video (`v.groupme.com`) attachments are `media`, up to 10. A location is a line "Location: {name}" with an OpenStreetMap link built from the coordinates. A file is the line "[A file on GroupMe: open GroupMe to get it]". A `reply` attachment is the reply's target. Its `favorited_by` goes to `receive#Likes` |
+| `@all` or `@everyone` as a word in the text | `item.mentions: ['@room']`. `process#InboundItem` (small change) makes the first such word `<span data-mention-id="@room">`. Any other value in `mentions` is `malformed`. `send#Message`'s @room rule still applies |
+| `favorite` | `receive#Likes` with `subject.line.favorited_by` |
+| `message.update`, `message.deleted` (community-documented) | An edit (`edit:<id>:<updated_at>`) or a delete of the message. `ingest#Event`'s own-sender rule applies |
+| `membership.create` | `ensure#Room` for the group, when chosen |
+| `system: true`, `typing`, `ping`, other types | Dropped |
+| The owner's own message sent from here (its `user_id` the token's, its `source_guid` starting `moqui-chat:`) | Dropped: the echo of a send, even before the send's mapping is written |
+
+- The owner's own messages and likes from the GroupMe app show as the owner's GroupMe person, a member like the others.
+  The bridge layer has no puppet of a local user.
+- `fetch_media` fetches only `https://i.groupme.com/…` and `https://v.groupme.com/…`, through the guarded client (public
+  addresses only, `maxInboundMediaBytes`, at most 20 MiB). `store#BridgeMedia`'s safe types apply.
+
+**Out** (`groupme/mod.rs` `deliver`).
+- **Only the owner speaks for the account.** An event of another local member fails `notBridgeOwner` ("GroupMe messages
+  go from {owner}'s account only").
+- **A message.**
+  - Text: up to 1,000 characters (`textTooLong`).
+  - `POST /groups/:id/messages` `{message: {source_guid, text, attachments}}`, or `POST /direct_messages`
+    `{direct_message: {source_guid, recipient_id, text, attachments}}`.
+  - `source_guid` is the delivery's idempotency key, and `X-Access-Token` the token.
+  - 201: `Accepted` with GroupMe's message id.
+- **@room.** An `@room` mention in the HTML goes as the text `@all`, with a `mentions` attachment of every member but
+  the owner, each at that text. The members come from `GET /groups/:id`, kept 10 minutes. There is none in a direct
+  conversation.
+- **Pictures.** Each image file is read through a new core helper, `chat_bridge::delivery_file(bridge_id,
+  attachment_id)`: `own_media`'s check that the message went to the bridge, without the media token. It is posted to
+  `image.groupme.com/pictures` with its content type and the token, and its `payload.url` becomes an `image`
+  attachment.
+  - A picture over `maxImageBytes` (10 MB) fails `mediaTooLarge`.
+  - Any other file fails `fileNotCarried` ("GroupMe takes only pictures from this server"). GroupMe's video and file
+    services are community-documented only.
+- **A like.** A heart reaction (❤️, ❤, ♥️, ♥) is `POST /messages/<conversation>/<message>/like`; its removal is
+  `…/unlike`. The conversation is the group's or Topic's id, or the mapping's chat id.
+  - Any other reaction fails `reactionNotCarried` ("GroupMe carries only the heart").
+  - An edit or a delete is `bridgeUnsupported`, refused before the change by the capabilities.
+- **GroupMe's answers.**
+  - 200 and 201: accepted.
+  - 400: `Failed` `badRequest`, with GroupMe's `meta.errors`.
+  - 401: `Retry` with the bridge not connected.
+  - 403: `Failed` `refused`, with GroupMe's error (its update limits; not in the group).
+  - 404: `Failed` `notFound`.
+  - 420, 429, 502, 503: `Retry`.
+  - 409 (the same `source_guid` within a minute), a 500, or an answer lost in flight: the room's latest 20 messages are
+    looked up for our `source_guid`. Found, it is `Accepted` with that id; else `Uncertain`.
+- **Capabilities:**
+  - `edit` false, `delete` false, `reaction` true;
+  - `idempotent` false: GroupMe dedupes for a minute only, shorter than the lease;
+  - `sends_per_minute` 20 (`sendsPerMinute`);
+  - `encryption` `None`, `group_max` 0.
+
+**The data model and configuration.**
+- `ChatEntities.xml`: Enumeration `CbtGroupMe` (GroupMe, `enumCode` `groupme`). No new entity or field, and no
+  migration.
+- `configJson`, encrypted as every bridge's:
+  - `accessToken` and `ownerUserId` (both required);
+  - the room choices above, `syncMinutes`, `sendsPerMinute`, `maxImageBytes`, `maxInboundMediaBytes`;
+  - `apiBaseUrl` (`https://api.groupme.com/v3`), `imageBaseUrl` (`https://image.groupme.com`), `pushUrl`
+    (`https://push.groupme.com/faye`), and `allowInternalAddresses` (tests only, never on production).
+- `store#Bridge` for `CbtGroupMe` checks (`GroupMeServices.check#Bridge`):
+  - the adapter is `groupme`;
+  - `accessToken` and `ownerUserId` are there, and the owner is a user;
+  - the owner does not change while the bridge has rooms (`ownerFixed`);
+  - the owner has no other GroupMe bridge (`oneBridge`).
+- `lib.rs`: `pub mod groupme;` and its line in `adapters()`.
+
+**Self-service** (decided 2026-11-17, at the design check: in the first release).
+- Settings, Chat gets a GroupMe section (`Settings/Chat.xml`, which renders in both modes). It shows:
+  - the status (Connected with the room count; Not connected with the reason; Disconnected);
+  - Access token (a password field, write-only) and Connect, or Connect again;
+  - Disconnect.
+- `GroupMeServices`, the current user's own bridge:
+  - `get#MyGroupMe`: the status, never the token.
+  - `connect#MyGroupMe`: makes the user's GroupMe bridge (owner the user, adapter `groupme`), or replaces its token and
+    connects it again. An empty token keeps the one kept. At most one per user (the user's row lock, then a look).
+  - `disconnect#MyGroupMe`: the bridge is disabled, so the worker stops its thread. The token is forgotten. The
+    `lastErrorText` says "Disconnected by its owner: the rooms keep their history and no longer sync with GroupMe".
+    The rooms stay.
+- Only the owner (these services) and a `ChatBridgeAdmin` (System, Chat Bridges, `find#Bridges`, `store#Bridge`) see or
+  change the bridge. The token is kept in the encrypted `configJson`.
+- The property `chat_groupme_self_service` (`true` by default) turns it off. When `false`, Connect is refused
+  (`selfServiceOff`) and the section shows only a bridge the user has, without its token form.
+- The administrator's path stays: System, Chat Bridges takes a GroupMe bridge as any other (the network, the adapter and
+  the JSON configuration), and the guide gives the keys.
+
+**Screens.**
+- Settings, Chat, GroupMe (above). BasicComms.spec's one render of Settings, Chat checks it.
+- GroupMe rooms show in Chat's Bridged section with the GroupMe chip, a failed send's reason, and Send again.
+- The label (§6.2), in `WebrootChat.js` `e2eeLabel` and `ChatTui.xml`: a room whose bridges all have `encryption`
+  `None` and are not SMS says "Not end-to-end encrypted. {network} has no end-to-end encryption, and the bridge reads
+  messages to pass them on." The rule is generic, not GroupMe's alone.
+- The terminal shows the same label line, and nothing new besides.
+- Phone and desktop: the same rooms, label and captions. Nothing depends on the width.
+
+**Failure tolerance.**
+- Each push message, each caught-up message, each room and each like state is worked on its own. One that fails is
+  logged with the bridge and GroupMe's id, and the rest go on. A room not made is tried again at the next sync.
+- A file not fetched is named in its message (`ingest#Event`'s rule).
+- One message's handling runs under `catch_unwind`: a panic is logged and the thread goes on.
+- The thread ends only when its bridge is stopped, disabled or removed. A failure backs off and connects again.
+- A catch-up page that fails is logged, and that room waits for the next run.
+
+**Security and abuse.**
+- The token is only in the encrypted `configJson`. It is never returned (`store#Bridge`), never logged (errors are
+  scrubbed of it), and sent only over https: `start()` refuses an http URL but a test's `allowInternalAddresses`. It
+  goes in the `X-Access-Token` header and in the Faye `ext`, never in a URL.
+- No public endpoint: input comes only over the bridge's own connection, and every `ingest#Event` check applies (no
+  local identity, the batch's bounds, the dedupes). The transport mark is set only around the adapter's own calls.
+- Files are fetched from GroupMe's two media hosts only, through the guarded client. Avatars are kept only from
+  `i.groupme.com`.
+- No local user speaks through another's account: only the owner's events go out.
+- `@room` comes only from the word `@all` or `@everyone`, and `send#Message`'s rule for who may mention the room still
+  applies.
+- Bounds: `maxRooms` (a stranger adding the owner to many groups, or many direct messages, makes at most that many rooms;
+  `directMessages` false stops strangers' rooms); `sendsPerMinute`; 420 and 429 backed off; at most 5 catch-up pages a
+  room.
+
+**Left out.**
+- Edits, deletes and replies going out. GroupMe's edit is a v4 call documented by the community only.
+- Typing, read receipts, polls, events, galleries, emoji PowerUps (they show as their placeholder), reactions other than
+  the heart (GroupMe's newer reactions are community-documented), and sending video and files.
+- History beyond the catch-up (§15), and GroupMe's system messages.
+- A group's whole roster as members: a GroupMe person joins the room when they first post or like.
+- GroupMe's OAuth flow for applications: the user pastes their token.
+- The WebSocket transport: long-polling needs no new crate.
+- Archiving a room when the owner leaves its group. GroupMe's 403 or 404 fails its sends with the reason.
+- Bots.
+
+**Tests** (regression):
+- `crates/moqui-channels/src/groupme/tests.rs`, on a fake GroupMe on loopback (REST, image service and Faye long-poll).
+  The token is built with `format!`. The push session is driven a step at a time (`push::Session::step`), with no
+  timing:
+  - send: a text with the idempotency key as `source_guid` and the token header; `textTooLong`; another member's
+    message refused (`notBridgeOwner`);
+  - receive: the handshake, the subscription with the token in `ext`, and a `line.create` into the group's room as
+    the GroupMe person with name and avatar; the same message on two connects kept once; the owner's echo dropped;
+  - a like both ways: a heart out as `/like` and its removal as `/unlike`; another emoji refused; a `favorite` in as a
+    heart and taken back; the owner's own like not doubled;
+  - `@all`: in as an `@room` mention; `@room` out as `@all` with every member mentioned;
+  - an attachment: a picture out through `/pictures` then as an `image` attachment; a picture in, fetched; a PDF out
+    refused; a file from another host not fetched;
+  - a Topic: a message with a `parent_id` into its own room, "Group › Topic", and a reply sent to the Topic;
+  - a direct message: `direct_message.create` into the conversation's room; the reply through `/direct_messages` with
+    `recipient_id`; a like with the chat id;
+  - an expired token: a 401 on a send is `Retry` with the bridge not connected; a 401 at the subscription marks it not
+    connected with the guide's message; a new token in `configJson` connects again;
+  - rate limits: 420 and 429 on a send are `Retry`; the session backs off on a push 5xx;
+  - catch-up: after a reconnect, the messages after the room's newest fetched with `after_id`;
+  - a lost answer found by its `source_guid`;
+  - `store#Bridge`'s checks; the capabilities (`None`);
+  - self-service: one bridge a user, the token never shown, Connect again with no token, Disconnect, the property off;
+  - the lease: one node holds it, another is refused.
+- `webroot/test/client/WebrootChat.spec.js`: the label of a room whose bridge's network has no E2EE.
+- `basic-comms/test/BasicComms.spec.js`: the GroupMe section on the existing Settings, Chat render.
+
+**Docs:**
+- New: `docs/interfaces/GroupMe.md`, the operator guide, marked **not yet tested with GroupMe**: getting the token
+  (dev.groupme.com, Access Token), the owner, which groups (and the keys), what is carried and what is not, the limits,
+  the facts not confirmed.
+- Changed:
+  - `Chat-Bridges.md`: the adapter, the network that connects out, the label;
+  - `docs/tools/Comms.md`: GroupMe, beside Bridged rooms;
+  - `docs/Run-Deploy.md`: the property `chat_groupme_self_service`;
+  - `Cargo.toml`'s description;
+  - this plan's status.
+
+**The API facts** (dev.groupme.com, read 2026-11-17).
+- Confirmed:
+  - the base URL, the `X-Access-Token` header, the `{response, meta}` envelope and the status codes (420 for the rate
+    limit);
+  - messages index (`after_id`, `limit` up to 100, 304 when none) and create (`source_guid` deduped a minute with 409,
+    text up to 1,000, `image` attachments only from `i.groupme.com`);
+  - the image service (`POST image.groupme.com/pictures`, `payload.url`);
+  - `like` and `unlike` at `/messages/:conversation_id/:message_id/`;
+  - `/chats`, `/users/me`;
+  - the push handshake, the subscription to `/user/<id>` with `ext.access_token` and `timestamp`, long-poll connect,
+    the `line.create` shape and the hourly signature.
+- Not confirmed (from the community's docs, groupme-js.github.io/GroupMeCommunityDocs, or not found):
+  - `GET` and `POST /direct_messages`: the current page lists Direct Messages but shows only Chats;
+  - Topics (`/groups/:id/subgroups`, a Topic's messages under its own id, `parent_id` on `line.create`);
+  - the push types `direct_message.create`, `favorite`, `message.update`, `message.deleted` and `membership.create`;
+  - the `mentions` (`user_ids`, `loci`) and `reply` attachments, and video at `v.groupme.com`;
+  - the order of a chat id (`a+b`);
+  - the rate limit's numbers and the image size limit;
+  - whether GroupMe itself treats `@all` as anything but text.
+
+**Status (2026-11-17): built**, against a fake GroupMe only. Not yet tested with GroupMe.
+- Built as designed, with the design check's two changes (self-service in Settings, Chat, and one node holding each
+  connection by the lease), and these details:
+  - `receive#Likes` runs with no transaction of its own (`transaction="ignore"`), as `receive#Sms` does, so
+    `ingest#Event` stores its batch first.
+  - After a refused token the thread asks for the bridge every 10 s during its wait, so a new token connects within
+    seconds, not at once.
+  - Settings, Chat is an XML screen that renders in both modes, so the terminal has the GroupMe section too.
+- Review fixes (2026-11-17):
+  - **Re-likes.** A likes state's transaction id has the time too, so a like after an unlike after a like applies.
+  - **The catch-up mark.** `ChatRoomBridge.syncCursor` replaces "the room's newest mapped event". It moves past a page
+    taken whole; a failed page or message, or the page cap (`catchUpPageSize`, `catchUpPages`), stops it there, and the
+    next run (within a minute) resumes. A pushed message moves it only in a caught-up room.
+  - **Redirects.** The token's calls follow none; a file follows at most three, each to the file hosts only.
+  - **The label.** `Encryption::NoneByNetwork`, which only the GroupMe adapter says, is what the label names a network
+    by; `None` alone stays the plain bridged label.
+  - **One coordinator a node**, not a thread per bridge on every node.
+    - It lists the GroupMe bridges in one query and claims or renews all their leases in one pass (`claim_all`), up to
+      `chat_groupme_node_max` (50), and runs a session thread only for each bridge it holds.
+    - The leases are renewed apart from the sessions, so no step outlasts them; a long poll is at most 60 + 15 s.
+    - Each coordinator claims under its own token, so an old one never frees a new one's lease.
+    - A bridge's configuration is read again only when its `lastUpdatedStamp` moved.
+    - A long wait is kept as `ChatBridge.retryDate`, so a hand-over waits it out.
+    - A panic in a pass is caught, and the next pass runs; a coordinator that ended starts again at the next `start`.
+  - **The status.** The adapter says `keeps_status`, so the worker's `start` no longer marks it connected; only the
+    holder's session writes it, only when the row says otherwise. The last error is a code and a text (`tokenRefused`,
+    `connectFailed`, `noToken`, `roomLimit`, `disconnected`), which Settings, Chat says in the user's language.
+  - **Outcomes.** A picture's or the account's failure before the post is `Retry`. A 500, 502, 503 or lost answer looks
+    the message up; not found, it is tried again within the first three attempts (GroupMe's minute of dedupe), then
+    uncertain.
+  - **Direct messages.** The answer's `message` (the community's docs), else `direct_message`; its chat id is kept when
+    new.
+  - **`@room` in a Topic** mentions its group's members (the Topic mapping's `externalThreadId` is its group). With the
+    members unread, or more than 100 others, `@all` goes as text alone.
+  - **Room limits.** `maxDirectRooms` (50) inside `maxRooms`, so groups come before strangers' messages; a refusal is
+    kept an hour per conversation; the status says "room limit reached".
+  - **Owner.** `ChatBridge.ownerUserId`, kept plain, finds a user's own bridge without reading every configuration.
+  - `Config`'s `Debug` hides the token; the screen and service texts go through `ec.l10n.localize`.
+- Left:
+  - the live test with GroupMe, and the facts not confirmed (`docs/interfaces/GroupMe.md`, "Not confirmed");
+  - what "Left out" names.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -2574,7 +2915,6 @@ Each of these needs its design first:
 Then the other networks and the rest of §17, in this order:
 1. The number on the SMS and SIP provider, block and spam (phase 11, designed), contacts sync (the user stops using Google Messages and Cheogram).
 2. Default phone app and the merged call log (the user stops using the Phone app).
-3. GroupMe adapter (official API, low risk).
 4. Signal adapter.
 5. iMessage adapter (needs a Mac).
 6. Disappearing messages, invite links, scheduled send, SMS members.
