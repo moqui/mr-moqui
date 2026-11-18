@@ -1708,6 +1708,11 @@ Planned:
 Designed 2026-11-17 (§6.5, §6.1 rule 5). Chat's new direct rooms and private groups are end-to-end encrypted when
 everyone in them has a crypto device; a new device is set up from the key backup or another device.
 
+Status (2026-11-17): built (`97f8937d0` server, `ef3fa69e0` client, then the docs). The retests of COM-UI-012 and 014
+found nothing open (the review's rows). The basic-comms client suite measured 10.9 s of its 12 s (ShellSync 7.7 s,
+CryptoFlow 3.2 s). Left: §18.4's row on a real phone; the SDK's forwarding of room keys to a verified device with no
+backup is not in a spec.
+
 | Work | Files |
 |---|---|
 | `check#DevicesReady` (internal) and `get#EncryptionDefault` (one bit, 50 people an ask, 600 an hour), from `ChatDevice` (not revoked, identity keys, seen in `chat_device_active_days`, default 90) | `ChatKeyServices.xml`, `ChatKeys.js`, `MoquiDefaultConf.xml` (the property) |

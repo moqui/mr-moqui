@@ -317,7 +317,8 @@ goes by `uploadChunk` in 1 MB chunks, its progress kept, and after a restart or 
 ## Bundled screens and app windows
 
 `shell/bundled-screens.txt` lists the screens bundled with the app: the shell's own Root and SignIn, and BasicComms'
-chat panel, Chat, Inbox (Mail), Compose, Calls/Call and Calls/Dialer, from their `.qvue` files, the web's own source.
+chat panel, Chat, Inbox (Mail), Compose, Calls/Call, Calls/Dialer and Settings/Devices (My devices), from their `.qvue`
+files, the web's own source.
 They are precompiled into `shell/js/bundled-screens.js` with WebrootCall.js's components in `WebrootCall.render.js`,
 and the libraries they load (tiptap, the crypto library) are in `libs.txt`; a golden test checks both
 (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`, `call_components_are_precompiled`).
@@ -355,7 +356,10 @@ the device refuse with `elsewhere`, and an encrypted room there offers Open in C
 window's account while that account is current (`open_in_shell`).
 
 A browser device of the same user is a device of its own; the shell's is made new, with no migration from a store of
-an app window or a browser, and its older room keys come from the key backup ([Chat keys](../interfaces/Chat-Keys.md)).
+an app window or a browser, when Chat opens. Its older room keys come from the key backup, or from another device it is
+verified with: an encrypted room says Set up this device until then ([Chat keys](../interfaces/Chat-Keys.md#a-new-device)).
+My devices (BasicComms `Settings/Devices`) is bundled in the shell, in the account menu as "My devices (encryption)":
+the key backup, verification and Set up this device are the shell's.
 
 ## Calls
 
@@ -446,8 +450,8 @@ leaves them alone (`pushDelivers`) and only tells the host which room shows (`ro
 
 ## Known gaps
 
-- Device-dependent features refuse with `elsewhere` in app windows (My devices' actions, the key backup, verification),
-  and their Settings screens are not bundled in the shell yet, so they cannot be used in the client.
+- Device-dependent features refuse with `elsewhere` in app windows (My devices' actions, the key backup, verification);
+  the shell's bundled My devices has them.
 - A shared sign-out does not clear the webview's HTTP cache. The pages' queue of scoped storage to clear is in memory,
   so a page that closes before it runs leaves it to the next one.
 - A kept link that arrives while signed out stays for the next sign-in, which may be another account's.
