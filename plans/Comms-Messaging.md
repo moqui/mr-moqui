@@ -31,7 +31,7 @@ Parts:
 | §3: desktop gaps | Built (phase 8): the palette in the app's shell, its rooms first in Comms, people and phone rooms; Activity, Threads, the groups and the mail line | 8, done |
 | §4: reactions and the message menu | Built (phase 6): one action list, the emoji picker, who reacted and voted by touch, Info; a real phone's feel left | 6, done |
 | §5: details tabs and new services | Built (phase 7): the tabs, the list services with one paging rule, voice notes; a voice note on a real phone left | 7, done |
-| §6: E2EE policy and labels | Built (phase 3): the labels, the call rule, verifying people and the new-device warning. E2EE by default (decided, §19) and first sign-in on a new phone are later work (§6.5) | 3, done |
+| §6: E2EE policy and labels | Built (phase 3): the labels, the call rule, verifying people and the new-device warning. E2EE by default and first sign-in on a new device: designed (§6.5) | 3, done; 12 designed |
 | §7: notifications | Built (phase 2): the push worker and its rules, encrypted payloads per device for FCM, Web Push and UnifiedPush, the Android app's notifications, the desktop's, the check screen; the soak tests on real phones left | 2, done |
 | §8: voice and video calls | Built (phases 4 and 5): voice and video buttons, the call screen, voice to video, picture-in-picture, move, call waiting, Telecom on Android, the network tests and resilience, the direct path; EDGE and the bandwidth step not met, the browser network suite and real phones left | 4, 5, done |
 | §9: the user's own phone number | Built (phase 9): group texts, the phone's dialer and Contacts through the app, contacts' names; §9.2 waits for the user's port, 10DLC and live tests | 9, built |
@@ -310,7 +310,7 @@ lists, its members pane and settings; rule 3's checks by a verified person (Memb
 person by emoji in Chat, and the warning before a send to a verified person's new device or new identity (Verify, or
 Send anyway); rule 4 on the server and in Chat's call. Rule 7: no lock in Mail; the "Email is not end-to-end encrypted"
 line is on a person's mail line beside their chats (phase 8, the `mail` state of the label). Rule 5 is
-phase 10.
+phase 12 (§6.5).
 
 Server work for rule 4 (built):
 - `roomRequiresE2ee` read only the room's `callE2eeRequired`. It now also returns true for a room with `encrypted`.
@@ -331,6 +331,7 @@ start and composer, Chat's rail and the home list use it, and the terminal shows
 |---|---|---|---|
 | Encrypted, all devices verified | Lock with check | "Messages and calls are end-to-end encrypted. Only people in this chat can read them." | — |
 | Encrypted, not all verified | Lock | Same, plus a "Verify" link | — |
+| Encrypted, this device not set up (§6.5) | Lock | "Set up this device to read messages sent before it was added." with "Set up", in place of the banner above until done | — |
 | Plain private room or plain direct chat | Open lock | "Not end-to-end encrypted. The server can read these messages." | — |
 | Public channel | Open lock, no banner | — | — |
 | SMS or MMS | Open lock | "Not end-to-end encrypted. Texts go through the phone network and the SMS provider." | "Text message" |
@@ -341,7 +342,8 @@ start and composer, Chat's rail and the home list use it, and the terminal shows
 - The room type has its own icon in the room list (person, people, `#`, record, SMS), separate from the lock. Today a
   private room's type icon is a lock (`ROOM_ICONS.CrtPrivate`, `Chat.qvue:234`); it becomes a people icon.
 - The label state is one function in `moqui.chat` (§2.2), from the room's `encrypted` flag, its type, its bridges and
-  the devices' trust. The header, the room info, the room list, the call screen and a notification all use it.
+  the devices' trust. The header, the room info, the room list, the call screen and a notification all use it. A
+  direct chat not made yet (a dm link's unsaved first message) shows the label of the room its first send makes (§6.5).
 - A bridge's label comes from its adapter: `Capabilities` (`chat_bridge.rs:110-119`) gets an `encryption` field with
   the values `None`, `Transport`, `BridgeDecrypted` and `EndToEnd`, and `get#BridgeCapabilities` returns it.
 
@@ -377,27 +379,116 @@ The UI explains this when the user picks an encrypted room:
 - The message text in a notification on a phone, until the app is opened (§7.4).
 - The server still sees who is in the room, when each person sends, and which message a reply or reaction points to.
 
-### 6.5 Design needed before E2EE by default
+### 6.5 E2EE by default
 
-- **Rooms.** Today an encrypted direct room is a separate room from the plain direct room with the same person
-  (`directKey` with an `e2ee:` prefix, `ChatServices.xml:1428`), and encryption cannot be turned on or off after the
-  room is made. Decided (§19): `createDirect` and a new private group make an encrypted room when every person in
-  it has a crypto device, else a plain room with the plain banner. The plain direct rooms that exist stay. When a
-  person has both, the picker opens the encrypted one.
-- **Device verification.** Emoji verification stalls today: after Compare emoji, no emoji show on either device
-  (COM-UI-012, P1). Fix it before any label or default depends on "verified" (§18 phase 0).
-- **Android.** The crypto device already runs in the Android WebView (the shell page, as on the desktop), and its
-  store passphrase is sealed by the Android Keystore. What is open is the check on a real phone
-  ([Exit checks, MD6](Mobile-Desktop-Exit-Checks.md#md6-the-android-app)), and the My devices screen, which is 907 px
-  wide on a 390 px phone (COM-UI-014).
-- **First sign-in on a new phone.** Restore from key backup with the recovery key, or verify from another device.
-- **Search on the device.** The offline store is plain SQLite and relies on the OS disk encryption
-  ([Desktop-Client](../docs/ui/Desktop-Client.md)). Decided (§19): no search in an encrypted room at first, and the
-  search pane says so before a query. Later, search in memory over the messages the device has decrypted. Nothing
-  decrypted is written to disk for search.
-- **Message text in a phone notification.** The crypto store is the WebView's, with one owner, so native code cannot
-  decrypt a push. Decided (§19): a notification for an encrypted room shows the room and sender only (§7.4). No
-  hidden WebView and no crypto store in Rust is planned for it; revisit only if daily use asks for it.
+Decided (§19): `createDirect` and a new private group make an encrypted room when every person in it has a crypto
+device, else a plain room with the plain banner; the plain direct rooms that exist stay, and when a person has both the
+picker opens the encrypted one; no search in an encrypted room at first; a phone notification for an encrypted room
+shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3), with the user's two answers of the same day
+(§19.1): Chat makes the browser's device, and a plain direct chat that exists keeps opening, with a switch.
+
+- **Rooms today.** An encrypted direct room is a room of its own beside the plain direct room of the same people
+  (`directKey` with an `e2ee:` prefix, `create#Room`), and encryption cannot be turned on or off after the room is made.
+  That stays.
+- **Who has a crypto device.** A user whose device is not revoked, has uploaded its identity keys
+  (`ChatDevice.curve25519Key`) and was seen in the last 90 days (`lastSeenDate`, set by each key upload and sync;
+  property `chat_device_active_days`). A device that has not synced for that long would never read what is sent to it.
+  A device Chat made by itself (`ChatDevice.madeAutomatically`, below) counts only once it was seen on a later day than
+  it was made, or its user verified it (a cross-signing signature over it), so one private window does not make its user
+  one with a device.
+- **Devices are made when Chat opens (decided, §19.1).** Today a browser makes its device only when it first needs
+  one, so few people would have one and the default would seldom apply. From phase 12 the Chat screen (on the web, and
+  the bundled Chat of the desktop and Android apps) makes this browser's device once its room list shows, in idle time
+  (`moqui.crypto.ensureDevice({automatic: true})`): the 7.8 MB module loads once per browser and is cached. Not the
+  tray's chat panel, not a desktop app window (`elsewhere`), not a browser without WebAssembly or IndexedDB (logged; Chat
+  works, its rooms plain). Such a device is marked `madeAutomatically`. So they do not pile up: a user's 50 devices count
+  only those seen in `chat_device_active_days`, and the daily `clean#ChatToDevice` revokes each automatic device never
+  verified and not seen for `chat_device_auto_expire_days` (30), logged, one at a time.
+- **The rule, on the server.** `ChatScreenServices.create#ChatRoom`, which Chat's `createDirect` and `createRoom`
+  transitions call. When `encrypted` is not given:
+  - a direct room (one person or several): the encrypted direct room of exactly these people, when there is one, is
+    answered whatever their devices now; else the plain one, when there is one, whatever their devices (decided,
+    §19.1); else a new room, encrypted when the user and every member have a device (`check#DevicesReady`), else plain;
+  - a private room: encrypted when every member has a device;
+  - a public room: never.
+
+  An explicit `encrypted` (New room's toggle once the user changed it) is kept as today. `create#Room` itself keeps
+  `encrypted` false by default, so XMPP's direct chats, a call to a person (`Calls.js`), agents and the apps' own rooms
+  do not change. The out-parameters gain `encrypted`, which the transitions answer. Two makes of the same people's direct
+  room at once wait for each other (the people's `UserAccount` rows locked in one order); a twin made anyway is left, and
+  the oldest is answered, as `directRoomFor` picks it.
+- **What the client learns.** `get#EncryptionDefault` (`ChatKeyServices`; Chat's transition `encryptionDefault`)
+  answers one bit for a set of people: whether a new room of the user and them would be encrypted. No device IDs,
+  counts, names or dates. A user refused by an app's chat-target provider (`get#RefusedUsers`), unknown or disabled
+  counts as one with no device, after the same device query, so its time tells nothing more. At most 50 people an ask and
+  600 an hour a user (then `rateLimited` and false), counted atomically (a cache slot per person, `putIfAbsent`), shared
+  by the cluster with a distributed cache factory and per node without one. The bit is what the room made would show
+  anyway; the ask only lets the screen show it before the room exists.
+- **The picker.** `moqui.chat.directRoomFor` answers the encrypted direct room of these people first, then the plain
+  one, as `createDirect` does. Chat's dm link (the pickers, the palette's people, a person's Message) with no room yet
+  opens the unsaved first message, which shows the label of the room its first send makes (`encryptionDefault`); that
+  message is sent by the room's own send once `createDirect` made the room, so it is sealed in an encrypted room.
+  `startChat` sends no `encrypted` for a named group (the server decides). New room: the Encrypted toggle follows
+  `encryptionDefault` for the members picked until the user changes it; untouched, nothing is sent and the server
+  decides.
+- **Start an encrypted chat.** A plain direct room's header menu (Room) and its start offer "Start an encrypted chat"
+  (one click at a time) when `encryptionDefault` says true for its people: `createDirect` with `encrypted` true makes or
+  opens the encrypted direct room of the same people, and the picker opens that one from then on. The encrypted room's
+  start then says "Earlier messages with {name} are in a chat that is not end-to-end encrypted", with Open. The plain
+  room stays as it is.
+- **First sign-in on a new device.** A new browser, phone or desktop app makes its device when Chat opens. Messages sent
+  before that were encrypted for the user's other devices only. Until this device is set up:
+  - the encrypted room shows "Set up this device to read messages sent before it was added", with Set up, in the
+    banner's place (§6.2); each message it cannot read says "Sent before this device was set up", with Set up, in
+    place of today's backup text (the `m.unverified` text stays). Sending and the messages sent after the device was
+    made work at once: the members' browsers hear of the new device at their next sync (`device_lists.changed`);
+  - set up means this device can read what was sent before it: it holds the key of the user's current key backup, or,
+    when the server has no key backup to receive, it was verified with another of the user's devices (here, or by its
+    cross-signing), which forwards the keys it holds. Verified while a backup exists is not yet set up: the card says
+    "Verified. Getting your keys from the other device…", and after two minutes "Your other device did not send the
+    keys", with Try again (the secrets asked again) and Use your recovery key; the bar and each message's Set up stay. It
+    is needed only when the user has a key backup or another device (`moqui.chat.setupNeeded` on
+    `moqui.crypto.setupStatus()`). A user's first device needs none; its encrypted rooms
+    offer "Set up key backup" once (closed per account), which opens My devices.
+
+  Set up opens `m-chat-device-setup` (`WebrootChat.js`; Chat, and My devices at its top), with two ways:
+  - **Recovery key** (when there is a backup): the key typed or pasted, then Restore (`restoreBackup`); a wrong key is
+    said plainly (`badRecoveryKey`, `wrongRecoveryKey`) and nothing is reset.
+  - **Another device**: the user's other devices in use (seen in `chat_device_active_days`), by name and when last seen,
+    the last seen first, each with Verify; the emoji (or QR) comparison
+    runs in the card (`m-chat-verification`). The other device shows the request in Chat, in any room or the rail
+    (new: today a request from one's own device shows on My devices only), naming the new device and when it was
+    added, and on My devices. When it is done, this
+    device asks its verified devices for the secrets it lacks (`OlmMachine.requestMissingSecretsIfNeeded`): the backup
+    key (`m.megolm_backup.v1`) and the cross-signing keys. The SDK answers only a verified device of the same user. A
+    backup key is used only when it opens the server's current backup (its public key); then the backup is restored as
+    with the recovery key, and this device backs up to it. With no backup, the verified device forwards the room keys it
+    holds when asked (the SDK's room key requests), while it is open.
+  - Not now closes the card, kept per account and device in this browser; the messages keep their Set up.
+
+  When done, the room decrypts again (`onRoomKeys`) and the bar goes. On a phone the card is a full-screen dialog
+  (under 600 px wide), on a desktop 480 px.
+- **My devices in the apps.** The desktop and Android apps have no My devices today (Desktop-Client, Known gaps), so
+  their device can neither back up nor verify. Phase 12 bundles Settings/Devices (`Devices.qvue`) in the shell, with
+  Root's route, the account menu's "My devices (encryption)" and a link to it shown in the shell (`SHELL_SCREENS`,
+  `client/windows.rs`).
+- **Device verification.** COM-UI-012 (emoji verification stalled) was fixed in phase 0 (`82affc535`): the device
+  that did not start the comparison accepts it, a sync every 5 s while one is open, the states, a timeout and Try
+  again; `CryptoFlow` checks it through `moqui.crypto`. COM-UI-014 (My devices 907 px wide on a 390 px phone) was fixed
+  there too and checked by a probe page. Phase 12 retested both through the screen with a one-off client spec, not kept
+  (two browser contexts of one user on one origin: Verify, Accept, Compare emoji, They match on My devices, then They
+  differ; My devices at 390 × 844 with a long device name, light and dark) and found nothing open; QR, two origins, the
+  keyboard and the TUI are not retested (the review's rows).
+- **Search.** Built in phase 0 (COM-UI-011): the search pane of an encrypted room says so before a query, its field
+  disabled. Later, search in memory over the messages the device has decrypted; nothing decrypted is written to disk
+  for search. The offline store is plain SQLite and relies on the OS disk encryption
+  ([Desktop-Client](../docs/ui/Desktop-Client.md)).
+- **Message text in a phone notification.** Built (phase 2, §7.4): the room and the sender only. The crypto store is
+  the WebView's, with one owner, so native code cannot decrypt a push. No hidden WebView and no crypto store in Rust is
+  planned for it; revisit only if daily use asks for it.
+- **Android.** The crypto device runs in the Android WebView (the shell page, as on the desktop), its store passphrase
+  sealed by the Android Keystore. The check on a real phone is in §18.4 (phase 12), with
+  [Exit checks, MD6](Mobile-Desktop-Exit-Checks.md#md6-the-android-app).
 
 **Labels done when:** each state in §6.2 shows on a phone and on a desktop, and the SMS room shows the SMS banner
 (acceptance client spec `ChatLabels`; the call states on the call screen come with phase 4). A regression spec covers rule 4: a call in an encrypted room is encrypted, a phone and a
@@ -1799,6 +1890,86 @@ R2 adds `ReceiptStatus::Read` and a typing event.
   - several numbers per RCS bridge (per-person routing and opt-out across them);
   - R2.
 
+#### Phase 12: E2EE by default and first sign-in on a new device
+
+Designed 2026-11-17 (§6.5, §6.1 rule 5). Chat's new direct rooms and private groups are end-to-end encrypted when
+everyone in them has a crypto device; a new device is set up from the key backup or another device.
+
+Status (2026-11-17): built (`97f8937d0` server, `ef3fa69e0` client, `11f1aac12` docs, `d8604a21d`, then the review's
+fixes). The retests of COM-UI-012 and 014 found nothing open (the review's rows). The basic-comms client suite measured
+10.8 s of its 12 s. Left: §18.4's row on a real phone; the SDK's forwarding of room keys to a verified device with no
+backup is not in a spec; `moqui-desktop`'s own tests were not run here (the crate needs `./moq desktop`'s generated
+`target/moqui-app`), only rustfmt on its changed files.
+
+| Work | Files |
+|---|---|
+| `check#DevicesReady` (internal) and `get#EncryptionDefault` (one bit, 50 people an ask, 600 an hour counted atomically, the same query for a refused person), from `ChatDevice` (not revoked, identity keys, seen in `chat_device_active_days`, default 90; an automatic one once seen on a later day or verified); `madeAutomatically`; the 50 devices in use only; the daily revoke of unused automatic devices (`revoke#AutomaticDevice`, `chat_device_auto_expire_days`) | `ChatKeyEntities.xml`, `ChatKeyServices.xml`, `ChatKeys.js`, webroot `ChatKeys.xml`, `MoquiDefaultConf.xml` |
+| The default in `create#ChatRoom` (`encrypted` not given: the encrypted direct room, then the plain one, then the rule; out `encrypted`; the people's rows locked, the oldest twin answered); the transitions `createDirect` (`encrypted` true for Start an encrypted chat, false for a page that cannot encrypt), `createRoom` (no `encrypted` unless given) and `encryptionDefault` | `ChatScreenServices.xml`, `Chat.xml` |
+| `directRoomFor` encrypted first, the oldest of each kind; `startChat` without `encrypted`; `setupNeeded`, `setupWaiting`; `undecryptableText`'s set-up text; `makeDeviceSoon`; the `m-chat-device-setup` card (waiting, Try again, Use your recovery key). The set-up bar is Chat's own, not an `e2eeLabel` state | `WebrootChat.js` |
+| `setupStatus`, `requestSecrets`, the secrets asked after a verification with one's own device (`requestMissingSecretsIfNeeded`, the receive-secret callback, the backup key checked against the current backup and restored with it: `restoreBackup`'s import shared), `ensureDevice({automatic})`. No `setup` in the crypto state: Chat and My devices ask `setupStatus` | `WebrootCrypto.js` |
+| Chat: the device made when the rooms show (idle time); the unsaved chat's label from `encryptionDefault` and its first send through the room's send (kept in the composer when not sent); Start an encrypted chat in a plain direct room's header menu and start, one click at a time, and the plain chat's link at the encrypted chat's start; the set-up bar and the message's Set up; an own-device verification request as a dialog anywhere in Chat, naming the device and when it was added; New room's toggle; Start one click at a time | `Chat.qvue` |
+| The chat panel's Start one click at a time (its `encrypted` goes through `startChat`) | `Panel/ChatPanel.qvue` |
+| A declined call's text: a page that cannot encrypt asks for the plain direct room | `WebrootCall.js` |
+| My devices: the set-up card at its top; COM-UI-012 and 014 whatever the retest finds | `Settings/Devices.qvue` |
+| My devices in the apps: the route, the account menu's item, the bundle, a link to it shown in the shell | `crates/moqui-desktop/shell/screens/Root.qvue`, `shell/js/shell.js`, `shell/bundled-screens.txt`, `bundled-screens.js`, `src/client/windows.rs` |
+
+- **Phone and desktop.** One card for both: full screen under 600 px, a 480 px dialog above. The bar and the
+  message's Set up are in the room on both. On the Android app it is the shell's bundled Chat and My devices.
+- **Terminal.** No change: it lists an encrypted room and says to open it in a browser, as today; it makes no direct
+  rooms.
+- **Bridges, XMPP, calls.** No change: an encrypted room is never bridged and XMPP serves none; `create#Room`'s own
+  default stays plain, so XMPP's direct chats and a call to a person (`Calls.js`) keep the plain direct room. A call
+  from an encrypted room is encrypted (rule 4).
+- **Failure tolerance.**
+  - The device at Chat's opening: a failure (no WebAssembly, IndexedDB blocked, a refused upload) is logged and Chat
+    goes on; that browser has no device, and the rule then makes plain rooms for its user unless another device of
+    theirs counts.
+  - `encryptionDefault` that fails or is `rateLimited`: the unsaved chat shows no label until the room is made, and
+    New room's toggle stays off unless the user turns it on; the server decides at the create.
+  - Secrets not answered in 2 minutes: the card says to open Chat on that device or use the recovery key, with Try
+    again. A backed-up key that does not decrypt is counted and skipped, as `restoreBackup` does.
+- **Security and abuse.**
+  - `get#EncryptionDefault` reveals one bit for a set, the bit the room made would show. A refused, unknown or disabled
+    user is answered as one with no device, the limits bound probing, and it names no device.
+  - The server only picks the default. The room's label shows what was made, and an encrypted room never becomes plain.
+    A server that answered false could only make a plain room, which says so.
+  - Secrets go only to a verified device of the same user (the SDK's rule). A gossiped backup key is used only when it
+    opens the server's current backup. No recovery key or secret reaches the server.
+  - Devices at Chat's opening: marked `madeAutomatically`. A private window makes a device each time it opens Chat: such
+    a device counts for the default only once used on a later day or verified, the 50 a user may hold count only those
+    in use, and the daily job revokes one never verified after 30 days unseen.
+  - Two makes of one direct room at once: the people's rows are locked in one order, the oldest twin is answered, and
+    the buttons take one click at a time.
+- **Left out.** Turning a room's encryption on or off; search on the device (later, §19.1); dehydrated devices (keys
+  received while no device is open); Matrix secret storage (4S); signing in a new device by QR from another; revoking
+  stale devices the user made (only automatic ones go by the job); the Dialer's call to a person in the encrypted direct
+  room.
+- **Tests (regression).**
+  - Server: `framework/test/ChatEncryptionDefault.spec.js` (new): `get#EncryptionDefault` true when all have a device,
+    false for one without, a revoked or keyless device, one not seen in 90 days, a refused and an unknown user; the
+    answer holds the bit only; 51 people refused; past 600 an hour `rateLimited`. `basic-comms/test/BasicCommsEncrypted`
+    (a feature): `create#ChatRoom` with no `encrypted`, a direct room, a group direct and a private room encrypted when
+    all have devices and plain otherwise; the encrypted direct room answered after a device of theirs went; a plain
+    direct room that exists answered though all have devices, and `encrypted` true then making the encrypted one
+    beside it; an explicit false kept; a public room never; `create#Room`'s own default plain.
+  - Client, offline: `webroot/test/client/WebrootChat` (`directRoomFor` encrypted first, then plain; `startChat` sends
+    no `encrypted`; `setupNeeded`; the set-up texts and label) and `basic-comms/test/client/ShellSync` (the bundled Chat
+    with a stand-in server and crypto: a dm link with no room shows the label the default gives; a plain direct room
+    offers Start an encrypted chat, and the encrypted room links to it; the search pane's notice before a query; the
+    set-up bar, the card's Restore with the key and Verify of one's own device, the bar gone when done; My devices
+    routed in the shell).
+  - Client, with the server: `basic-comms/test/client/CryptoFlow`'s emoji feature goes on: the first device has a key
+    backup, and after the comparison the second gets the backup key from it and restores with no recovery key
+    (`setupStatus` needed before, not after). The client budget (12 s, 8.2–10.5 s measured) is measured after; an
+    overrun goes to the user.
+  - No acceptance spec: the screen retests of COM-UI-012 and 014 are by hand, recorded in the review.
+- **Docs.** [Chat keys](../docs/interfaces/Chat-Keys.md) (the default, `get#EncryptionDefault`, the device at Chat's
+  opening, set-up, the secrets, the API's `setupStatus`), [Comms](../docs/tools/Comms.md),
+  [Desktop-Client](../docs/ui/Desktop-Client.md#chat-crypto) (My devices bundled; its Known gaps line),
+  [Mobile-Client](../docs/ui/Mobile-Client.md) (first sign-in), the BasicComms README, the review's COM-UI-012 and 014
+  rows.
+- **Done when.** The regression specs above pass within budget; on a real phone, the row of §18.4.
+
 #### Phase 14: GroupMe adapter (D5, §13.3, §14.5, §17 #10)
 
 Designed 2026-11-17. Built against a fake GroupMe only, so **not yet tested with GroupMe**. The adapter is
@@ -2072,7 +2243,6 @@ Each of these needs its design first:
 
 | Work | Design needed |
 |---|---|
-| E2EE by default | §6.5: first sign-in on a new phone, and the Android check. What `createDirect` makes is decided |
 | `sim-sms` | §10: MMS, a synced SIM room and its sends, SIM threads beside server rooms |
 | `sim-dialer` and the contacts sync | §14.7, §14.8; what a server without mr-mantle offers |
 | Unified contacts and the per-message network choice | §11; mail stays in the Inbox, with a line on a person's row (§3, §19.1) |
@@ -2101,6 +2271,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 5 | Wi-Fi to mobile data during a call |
 | 7 | A voice note recorded and played |
 | 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (each provider's group receipts are from its documentation), on Telnyx and on Twilio |
+| 12 | First sign-in on a new phone with the Android app: the device made when Chat opens (and how long the module takes to load), Set up this device in an encrypted room, the recovery key typed and pasted, then on another new phone Verify with the desktop by emoji, older messages readable after each; My devices in the app at the phone's width, with the keyboard up and in dark mode; a direct chat started from the phone with a person who has a device is encrypted, and with one who has none is plain |
 
 ## 19. Decisions and open questions
 
@@ -2120,6 +2291,8 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-16 | Mod+K stays the shell palette's key. Chat adds to its sources and adds no key listener of its own (§3) |
 | 2026-11-16 | No chat component moves to a plain `.js` file. Helpers go to `moqui.chat`; a new shared component is an `m-` component (§2.2) |
 | 2026-11-16 | E2EE by default: a new direct chat or private group is encrypted when every person in it has a crypto device, else plain with the plain banner. The plain direct rooms that exist stay; the picker opens the encrypted room when a person has both (§6.1 rule 5, §6.5) |
+| 2026-11-17 | Chat makes the browser's crypto device when it opens (idle time after the room list shows), on the web and in the apps' bundled Chat, so E2EE by default applies (§6.5) |
+| 2026-11-17 | A plain direct chat that exists keeps opening from Start, though everyone in it now has a device; its header and details offer "Start an encrypted chat", which makes or opens the encrypted direct room, linked back to the plain one. Only people with no direct chat yet get an encrypted one by default (§6.5) |
 | 2026-11-16 | Search in an encrypted room: none at first, said in the pane before a query. Later, in memory over the messages the device has decrypted; nothing decrypted is written to disk for search (§6.5) |
 | 2026-11-16 | A phone notification for an encrypted room keeps the room and sender only, with no later design for its text. Revisit only from daily use (§6.5, §7.4) |
 | 2026-11-16 | A reaction to my message shows in Activity, with no push (§7.2 rule 4) |

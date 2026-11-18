@@ -225,8 +225,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the room -->
     <div v-show="!stacked || roomId || pendingDirect" class="col column no-wrap" style="min-width:0">
         <chat-room v-if="roomId && loaded" :key="roomId" ref="room" :bubbles="stacked" :base="base" :room-id="roomId" :me="me" :prefs="prefs" :seq="seq" :thread="thread"
-                :can-go-back="stacked" :link-base="linkBase" @back="closeRoom" @thread="setThread" @changed="scheduleRooms" @left="onLeft"
-                @read="onRoomRead"></chat-room>
+                :can-go-back="stacked" :link-base="linkBase" :rooms="rooms" :first-message="firstMessage && firstMessage.roomId === roomId ? firstMessage.body : ''"
+                @back="closeRoom" @thread="setThread" @changed="scheduleRooms" @left="onLeft" @read="onRoomRead" @first-sent="firstMessage = null"></chat-room>
         <!-- a dm link to people with no direct chat (the palette's People to message): an unsaved message; the direct chat is
             made with its first send, so a link followed by mistake makes nothing the other person sees -->
         <div v-else-if="pendingDirect" class="col column no-wrap m-chat-pending-direct">
@@ -236,6 +236,11 @@ along with this software (see the LICENSE.md file). If not, see
                 <div class="col text-subtitle1 ellipsis">{{pendingDirect.name || t('New direct message')}}</div>
             </div>
             <q-separator></q-separator>
+            <!-- the label of the room the first send makes (encryptionDefault: everyone in it has a crypto device, §6.5) -->
+            <div v-if="pendingLabel" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-pending-e2ee" :data-e2ee="pendingLabel.state">
+                <q-icon :name="pendingLabel.icon" size="16px" :class="pendingLabel.lock ? 'text-positive' : 'm-muted'"></q-icon>
+                <span class="col q-ml-xs">{{pendingLabel.banner}}</span>
+            </div>
             <div class="col column items-center justify-center q-pa-lg text-center m-muted">
                 <q-icon name="sym_o_chat" size="48px"></q-icon>
                 <div class="text-caption q-mt-sm">{{t('No conversation yet: it starts when you send your first message.')}}</div>
@@ -273,13 +278,20 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
     </m-dialog>
 
+    <!-- another of my devices asks to verify with this one (a new device being set up, Comms-Messaging §6.5) -->
+    <m-dialog :model-value="ownRequests.length > 0" :title="t('Verify your new device')" width="520" @update:model-value="(open) => { if (!open) ownRequests.forEach(dismissOwn); }">
+        <div class="text-body2 q-mb-sm">{{t('Another of your devices asks to be verified, to read your encrypted messages. Accept only if you are setting it up now.')}}</div>
+        <m-chat-verification v-for="flow in ownRequests" :key="flow.flowId" :flow="flow" :who="ownWho(flow)" class="q-mb-sm m-chat-own-request"></m-chat-verification>
+    </m-dialog>
     <!-- NewRoom: name, topic, private or public, members -->
     <m-dialog v-model="newRoom.open" :title="t('New room')" width="560">
         <q-btn-toggle v-model="newRoom.type" spread dense no-caps unelevated toggle-color="primary" class="q-mb-xs"
                 :options="[{label: t('Private'), value: 'private', icon: 'sym_o_groups'}, {label: t('Public'), value: 'public', icon: 'sym_o_tag'}]"></q-btn-toggle>
         <div class="text-caption m-muted q-mb-sm">{{newRoom.type === 'public' ? t('Anyone can find this room, read it and join.') : t('Only the people in it see it; members add others.')}}</div>
         <template v-if="newRoom.type !== 'public'">
-            <q-toggle v-model="newRoom.encrypted" name="roomEncrypted" :label="t('Encrypted')" class="m-chat-new-encrypted"></q-toggle>
+            <!-- on by default when everyone picked has a crypto device (encryptionDefault, §6.5), until the user sets it -->
+            <q-toggle :model-value="newRoom.encrypted" name="roomEncrypted" :label="t('Encrypted')" class="m-chat-new-encrypted"
+                    @update:model-value="(on) => { newRoom.encrypted = on; newRoom.touched = true; }"></q-toggle>
             <div v-if="newRoom.encrypted" class="text-caption m-muted q-mb-sm">{{t('End-to-end encrypted, for good: only the devices of its members read it. No server search, link previews, agents, polls, bridges, forwards, filing on records or terminal; a new device reads older messages from your key backup.')}}</div>
         </template>
         <m-text-line v-model="newRoom.name" name="roomName" :label="t('Name')" required></m-text-line>
@@ -486,7 +498,8 @@ const messageTemplate = `
             </div>
         </div>
         <div v-if="item.redacted" class="text-body2 m-muted text-italic">{{item.removedLabel || room.t('Message removed')}}</div>
-        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable" :data-withheld="item.withheld || undefined"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.undecryptableText(item)}}</div>
+        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable" :data-withheld="item.withheld || undefined"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.undecryptableText(item)}}
+            <q-btn v-if="room.setupNeeded && item.withheld !== 'm.unverified'" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-setup-message" :label="room.t('Set up')" @click.stop="room.openSetup()"></q-btn></div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
@@ -1143,6 +1156,10 @@ const roomTemplate = `
                         <q-item-section avatar><q-icon :name="room.record.icon || 'sym_o_description'"></q-icon></q-item-section><q-item-section>{{t('The record')}}</q-item-section></q-item>
                     <q-item v-if="canModerate" clickable v-close-popup @click="openSettings">
                         <q-item-section avatar><q-icon name="sym_o_settings"></q-icon></q-item-section><q-item-section>{{t('Room settings')}}</q-item-section></q-item>
+                    <!-- a plain direct chat: its encrypted chat with the same people (Comms-Messaging §6.5) -->
+                    <q-item v-if="encryptOffered" clickable v-close-popup class="m-chat-start-encrypted-item" @click="startEncrypted">
+                        <q-item-section avatar><q-icon name="sym_o_lock"></q-icon></q-item-section>
+                        <q-item-section>{{encryptedSibling ? t('Open the encrypted chat') : t('Start an encrypted chat')}}</q-item-section></q-item>
                     <template v-if="isMember">
                         <q-separator></q-separator>
                         <q-item clickable v-close-popup @click="leave">
@@ -1154,8 +1171,20 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
+    <!-- a new device (Comms-Messaging §6.5): Set up this device in the banner's place until it reads what came before it -->
+    <div v-if="setupBar" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal text-warning m-chat-setup-bar" role="status">
+        <q-icon name="sym_o_phonelink_lock" size="16px"></q-icon>
+        <span class="col q-ml-xs">{{t('Set up this device to read messages sent before it was added.')}}</span>
+        <q-btn unelevated dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-setup" :label="t('Set up')" @click="openSetup"></q-btn>
+    </div>
+    <div v-else-if="backupHint" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-backup-hint">
+        <q-icon name="sym_o_key" size="16px" class="m-muted"></q-icon>
+        <span class="col q-ml-xs">{{t('Keep your encrypted messages if you lose this device: set up key backup.')}}</span>
+        <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="t('Set up key backup')" @click="openDevices"></q-btn>
+        <q-btn flat round dense size="xs" icon="sym_o_close" class="q-ml-xs" :aria-label="t('Close the note')" @click="closeBackupHint"></q-btn>
+    </div>
     <!-- the room's E2EE banner (Comms-Messaging §6.2): what reads its messages, with Verify in an encrypted room not all verified -->
-    <div v-if="room && label.banner && !bannerHidden" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner" :data-e2ee="label.state">
+    <div v-else-if="room && label.banner && !bannerHidden" class="row no-wrap items-center q-px-sm q-py-xs text-caption m-tonal m-chat-e2ee-banner" :data-e2ee="label.state">
         <q-icon :name="label.icon" size="16px" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon>
         <q-icon v-if="label.verified" name="sym_o_check" size="12px" class="text-positive"></q-icon>
         <span class="col q-ml-xs m-chat-e2ee-banner-text">{{label.banner}}</span>
@@ -1201,6 +1230,11 @@ const roomTemplate = `
                             <div class="text-subtitle1 text-weight-medium q-mt-sm">{{displayName}}</div>
                             <div class="text-caption m-muted">{{startText}}</div>
                             <div v-if="label.banner" class="text-caption m-muted q-mt-xs m-chat-e2ee-intro"><q-icon :name="label.icon" size="14px" class="q-mr-xs"></q-icon><span class="m-chat-e2ee-intro-text">{{label.banner}}</span></div>
+                            <!-- a plain direct chat's encrypted one, and an encrypted one's earlier plain chat (Comms-Messaging §6.5) -->
+                            <q-btn v-if="encryptOffered" flat dense no-caps color="primary" icon="sym_o_lock" class="q-mt-xs m-chat-start-encrypted" :loading="encryptBusy"
+                                    :label="encryptedSibling ? t('Open the encrypted chat') : t('Start an encrypted chat')" @click="startEncrypted"></q-btn>
+                            <div v-if="plainSibling" class="text-caption m-muted q-mt-xs m-chat-earlier-plain">{{earlierText}}
+                                <q-btn flat dense no-caps size="sm" color="primary" :label="t('Open')" @click="go(linkBase + '?chatRoomId=' + encodeURIComponent(plainSibling))"></q-btn></div>
                         </div>
                         <template v-for="item in items" :key="item.key">
                             <div v-if="item.kind === 'day'" class="row items-center no-wrap q-my-sm q-px-sm">
@@ -1546,6 +1580,8 @@ const roomTemplate = `
         <m-chat-verification v-for="flow in verifyFlows" :key="flow.flowId" :flow="flow" :who="nameOf(flow.otherUserId)" can-retry class="q-mb-sm"
                 @retry="retryVerify" @step="verifyStepped"></m-chat-verification>
     </m-dialog>
+    <!-- Set up this device: the recovery key, or a verification with another of the user's devices (Comms-Messaging §6.5) -->
+    <m-chat-device-setup v-if="sealed" ref="setupCard" v-model="setupOpen" :status="setup" @refresh="loadSetup" @later="setupLaterNow"></m-chat-device-setup>
     <!-- another person asks to verify with this device: shown in the room, as on My devices -->
     <m-dialog :model-value="incomingFlows.length > 0 && !verifyBox.open" :title="t('Verify')" width="520" @update:model-value="(open) => { if (!open) dismissIncoming(); }">
         <m-chat-verification v-for="flow in incomingFlows" :key="flow.flowId" :flow="flow" :who="incomingWho(flow)" class="q-mb-sm m-chat-incoming"
@@ -1687,8 +1723,11 @@ let roomCount = 0;
 const chatRoom = {
     name: 'ChatRoom',
     props: { base: String, roomId: String, me: Object, prefs: { type: Object, default: () => ({}) }, seq: [Number, String], thread: [Number, String],
-        compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' } },
-    emits: ['back', 'thread', 'changed', 'left', 'read'],
+        compact: Boolean, canGoBack: Boolean, bubbles: Boolean, linkBase: { type: String, default: '/qapps/BasicComms/Chat' },
+        // the user's rooms (find#Rooms), for a direct room's other one with the same people; a first message to send once the
+        // room is shown (a dm link's unsaved message, sealed here in an encrypted room)
+        rooms: { type: Array, default: () => [] }, firstMessage: String },
+    emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu },
     data() {
         roomCount += 1;
@@ -1709,6 +1748,7 @@ const chatRoom = {
             bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
             verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
+            setup: null, setupOpen: false, setupTick: 0, encryptDefault: null, firstSent: false, encryptBusy: false,
             lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             peopleBox: { open: false, title: '', people: [] }, infoBox: { open: false, item: null, inThread: false, event: null, members: [], loading: false },
@@ -1756,6 +1796,27 @@ const chatRoom = {
         // who could not read my messages (COM-UI-013), as this browser keeps it for the account: {eventSeq: text}
         leftOutBySeq() { void this.leftOutTick; return this.sealed ? moqui.chat.leftOutOf(this.roomId) : {}; },
         verifications() { return (moqui.crypto && moqui.crypto.state && moqui.crypto.state.verifications) || []; },
+        // ---- E2EE by default (Comms-Messaging §6.5) ----
+        otherIds() { return this.callees.map((person) => person.userId); },
+        // an encrypted direct room's plain one with the same people, and a plain one's encrypted one
+        plainSibling() { return this.sealed && this.isDirect ? moqui.chat.directRoomFor(this.rooms, this.otherIds, this.me && this.me.userId, true) : null; },
+        encryptedSibling() {
+            if (this.sealed || !this.isDirect || this.compact) return null;
+            const found = moqui.chat.directRoomFor(this.rooms, this.otherIds, this.me && this.me.userId);
+            return found && found !== this.roomId ? found : null;
+        },
+        // Start an encrypted chat: a plain direct room whose people all have a crypto device (encryptionDefault), or Open the one there is
+        encryptOffered() {
+            return !!this.room && this.isDirect && !this.sealed && !this.compact && !this.room.bridged && this.room.roomTypeEnumId !== 'CrtExternal'
+                && (!!this.encryptedSibling || this.encryptDefault === true);
+        },
+        earlierText() { return fill(t('Earlier messages with {name} are in a chat that is not end-to-end encrypted.'), { name: this.displayName }); },
+        setupNeeded() { void this.setupTick; return this.sealed && !this.cryptoElsewhere && moqui.chat.setupNeeded(this.setup); },
+        setupBar() { void this.setupTick; return !!this.room && this.setupNeeded && !moqui.chat.setupLater(this.setup && this.setup.deviceId); },
+        backupHint() {
+            void this.setupTick;
+            return !!this.room && this.sealed && !this.setupNeeded && !!this.setup && !(this.setup.otherDevices || []).length && moqui.chat.backupHinted(this.setup);
+        },
         verifyTitle() { return fill(t('Verify {name}'), { name: this.verifyBox.userId ? this.nameOf(this.verifyBox.userId) : '' }); },
         verifyDevices() {
             const person = this.trust && this.trust.people && this.verifyBox.userId ? this.trust.people[this.verifyBox.userId] : null;
@@ -1872,6 +1933,24 @@ const chatRoom = {
     watch: {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
         cryptoReady(value) { if (value) this.loadTrust(); },
+        // the room shown: its first message (a dm link's) sent through the room's own send, sealed in an encrypted room
+        state(value) {
+            if (value !== 'ready') return;
+            if (this.firstMessage && !this.firstSent) {
+                this.firstSent = true;
+                const body = this.firstMessage;
+                // not sent here (an app window holds no keys for an encrypted room, or the outbox refused it): the text stays in
+                // the composer, or is said when the room opens elsewhere
+                const keep = () => {
+                    const composer = this.composers && this.composers.main;
+                    if (composer && !this.cryptoElsewhere) composer.body = body;
+                    else moqui.notifyMessages([{ type: 'warning', message: t('Your message was not sent: open the chat in Chat to send it') }]);
+                };
+                if (this.cryptoElsewhere) { keep(); this.$emit('first-sent'); }
+                else this.sendMessage({ body }).catch(keep).then(() => this.$emit('first-sent'));
+            }
+            this.loadEncryptDefault();
+        },
         // a verification with someone of this room done: their check, and the room's
         verifications(list) {
             if (!this.sealed) return;
@@ -1934,6 +2013,7 @@ const chatRoom = {
         loadTrust() {
             const crypto = moqui.crypto;
             if (!this.sealed || this.cryptoElsewhere || !crypto || !crypto.roomTrust || !crypto.state || crypto.state.status !== 'ready') return;
+            this.loadSetup();
             const roomId = this.roomId;
             crypto.roomTrust(roomId, this.memberIds()).then((answer) => {
                 if (roomId === this.roomId) this.trust = moqui.chat.trustOf(answer, this.me.userId);
@@ -1946,6 +2026,39 @@ const chatRoom = {
             setTimeout(() => this.loadTrust(), 500);
         },
         closeBanner() { moqui.chat.closeBanner(this.roomId, this.label.state); this.bannerTick += 1; },
+        // ---- a new device (Comms-Messaging §6.5): whether it is set up, the card, Not now ----
+        loadSetup() {
+            const crypto = moqui.crypto;
+            if (!this.sealed || this.cryptoElsewhere || !crypto || !crypto.setupStatus || !crypto.state || crypto.state.status !== 'ready') return;
+            const roomId = this.roomId;
+            crypto.setupStatus().then((status) => {
+                if (roomId !== this.roomId) return;
+                this.setup = status;
+                this.setupTick += 1;
+            }, () => null);
+        },
+        openSetup() { this.setupOpen = true; this.loadSetup(); },
+        setupLaterNow() { moqui.chat.putSetupLater(this.setup && this.setup.deviceId); this.setupTick += 1; },
+        closeBackupHint() { moqui.chat.closeSetupHint(); this.setupTick += 1; },
+        // a plain direct room: whether its people all have a crypto device, so it offers Start an encrypted chat (one bit)
+        loadEncryptDefault() {
+            if (!this.room || !this.isDirect || this.sealed || this.compact || this.encryptDefault !== null || !this.otherIds.length) return;
+            this.encryptDefault = false;
+            this.get('encryptionDefault', { userIds: this.otherIds.join(',') }).then((json) => { this.encryptDefault = json.encrypted === true; }, () => null);
+        },
+        // the encrypted direct chat of the same people, made or opened (createDirect with encrypted); the plain one stays
+        startEncrypted() {
+            if (needsConnection() || this.encryptBusy) return;
+            if (this.encryptedSibling) { this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(this.encryptedSibling)); return; }
+            // one at a time: a second click would race the first to make the room (the server answers the oldest anyway)
+            this.encryptBusy = true;
+            this.post('createDirect', { userIds: this.otherIds.join(','), encrypted: 'true' }).then((json) => {
+                this.encryptBusy = false;
+                if (!json || !json.chatRoomId) return;
+                this.$emit('changed');
+                this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(json.chatRoomId));
+            }, () => { this.encryptBusy = false; });
+        },
         // Verify: My devices, where this user's own devices are verified by emoji or QR code
         openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
         // ---- verifying people (COM-UI-013, §6.1 rule 3) ----
@@ -2025,7 +2138,7 @@ const chatRoom = {
             if (err && err.reasonCode === 'verifiedUserProblem') this.askProblems(err.problems, retry);
             else moqui.notifyMessages([{ type: 'warning', message: (err && (err.errors || err.message)) || t('This message could not be encrypted') }]);
         },
-        undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName); },
+        undecryptableText(item) { return moqui.chat.undecryptableText(item.withheld, item.senderName, this.setupNeeded); },
         bridgeEncryptionText(encryption) {
             if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
             if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
@@ -2035,6 +2148,7 @@ const chatRoom = {
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
         onRoomKeys() {
             if (!this.sealed || this.state !== 'ready') return;
+            this.loadSetup();
             const lists = [this.events, this.threadView.events].filter((list) => list.some((item) => item.undecryptable || (item.encryptedReactions || []).length));
             lists.forEach((list) => moqui.chat.openEvents(this.roomId, list.filter((item) => item.undecryptable), (file) => this.sealedUrl(file)));
         },
@@ -3632,12 +3746,29 @@ module.exports = {
             // the folded groups of the rail, by key (kept per user: foldKey), the Activity or Threads feed and each direct
             // chat's mail line, by room
             folded: {}, feed: { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 }, mailLines: {},
-            // a dm link's unsaved message to people with no direct chat yet: {userIds, name, text, busy}
-            pendingDirect: null
+            // a dm link's unsaved message to people with no direct chat yet: {userIds, name, text, busy, encrypted}
+            pendingDirect: null,
+            // that message, sent by the room once createDirect made it: {roomId, body}
+            firstMessage: null,
+            // my other devices' requests to verify with this one (a new device being set up, §6.5), dismissed here, and those
+            // devices by deviceId (their names and when they were added)
+            dismissedOwn: {}, ownDevices: {}
         };
     },
     computed: {
         params() { return this.$root.currentParameters || {}; },
+        // the unsaved direct chat's label: the room its first send makes, once encryptionDefault answered
+        pendingLabel() {
+            const pending = this.pendingDirect;
+            if (!pending || pending.encrypted == null) return null;
+            return moqui.chat.e2eeLabel({ roomTypeEnumId: 'CrtDirect', visibilityEnumId: 'CrvMembers', encrypted: pending.encrypted });
+        },
+        // another of my devices asks to verify with this one, open in Chat (not only on My devices)
+        ownRequests() {
+            const me = this.me && this.me.userId;
+            const list = (moqui.crypto && moqui.crypto.state && moqui.crypto.state.verifications) || [];
+            return me ? list.filter((flow) => !flow.weStarted && flow.otherUserId === me && !flow.cancelled && !this.dismissedOwn[flow.flowId]) : [];
+        },
         // below 1024 px the rail and the room are one pane (style-guide §3.8)
         stacked() { return this.$q.screen.lt.md; },
         base() { return this.$root.basePath + '/' + this.chatPath(); },
@@ -3726,6 +3857,17 @@ module.exports = {
         }
     },
     watch: {
+        // a request from another of my devices: its name and when it was added, read once (moqui.crypto.setupStatus)
+        ownRequests(list) {
+            if (!(list || []).some((flow) => flow.otherDeviceId && !this.ownDevices[flow.otherDeviceId]) || !moqui.crypto || !moqui.crypto.setupStatus) return;
+            moqui.crypto.setupStatus().then((status) => {
+                const known = Object.assign({}, this.ownDevices);
+                ((status && status.otherDevices) || []).forEach((device) => { known[device.deviceId] = device; });
+                this.ownDevices = known;
+            }, () => null);
+        },
+        // New room's Encrypted follows the default for the people picked, until the user sets it (§6.5)
+        'newRoom.userIds'(ids) { if (this.newRoom.open) this.newRoomDefault(ids); },
         // Activity and Threads read their feed when shown
         filter(value) { if (value === 'activity' || value === 'threads') this.loadFeed(false); },
         // a room change opens that room; the screen is not remounted for it
@@ -3970,7 +4112,11 @@ module.exports = {
                 if (found) { this.pendingDirect = null; this.replaceRoom(found); return; }
                 this.roomId = null;
                 const kept = this.pendingDirect && this.pendingDirect.userIds.join(',') === ids.join(',') ? this.pendingDirect.text : '';
-                this.pendingDirect = { userIds: ids, name, text: kept, busy: false };
+                const pending = { userIds: ids, name, text: kept, busy: false, encrypted: null };
+                this.pendingDirect = pending;
+                this.get('encryptionDefault', { userIds: ids.join(',') }).then((json) => {
+                    if (this.pendingDirect && this.pendingDirect.userIds.join(',') === ids.join(',')) this.pendingDirect.encrypted = json.encrypted === true;
+                }, () => null);
             });
         },
         // the unsaved message's Send: the direct chat made now, the message sent in it, and the room shown in place of the link
@@ -3983,11 +4129,11 @@ module.exports = {
             const body = text.split(/\n{2,}/).map((part) => '<p>' + part.split('\n').map(escape).join('<br>') + '</p>').join('');
             this.post('createDirect', { userIds: pending.userIds.join(',') }).then((json) => {
                 if (!json || !json.chatRoomId) { pending.busy = false; return; }
-                return this.post('send', { chatRoomId: json.chatRoomId, body }).then(() => json.chatRoomId, () => json.chatRoomId).then((id) => {
-                    this.pendingDirect = null;
-                    this.scheduleRooms();
-                    this.replaceRoom(id);
-                });
+                // the room sends it once shown, through its own send: sealed there in an encrypted room (§6.5)
+                this.firstMessage = { roomId: json.chatRoomId, body };
+                this.pendingDirect = null;
+                this.scheduleRooms();
+                this.replaceRoom(json.chatRoomId);
             }, () => { pending.busy = false; });
         },
         scheduleRooms() { clearTimeout(this.roomsTimer); this.roomsTimer = setTimeout(() => this.loadRooms(), 400); },
@@ -4085,7 +4231,8 @@ module.exports = {
         // Start in New direct message: the number's room, a named room, or the direct chat (moqui.chat.startChat)
         startPicked() {
             const pick = { values: this.newDirect.userIds || [], name: this.newDirect.name, fromNumber: this.newDirect.fromNumber };
-            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            // one Start at a time: a second would race the first to make the same room
+            if (moqui.chat.pickKind(pick.values) === 'none' || this.newDirect.busy) return;
             this.newDirect.busy = true;
             moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.newDirect.busy = false;
@@ -4095,11 +4242,29 @@ module.exports = {
                 this.openRoom(json.chatRoomId);
             }, () => { this.newDirect.busy = false; });
         },
-        openNewRoom() { if (needsConnection()) return; this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
+        openNewRoom() {
+            if (needsConnection()) return;
+            this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false, touched: false };
+            this.newRoomDefault([]);
+        },
+        newRoomDefault(ids) {
+            const asked = (ids || []).join(',');
+            this.get('encryptionDefault', { userIds: asked }).then((json) => {
+                if (this.newRoom.open && !this.newRoom.touched && (this.newRoom.userIds || []).join(',') === asked) this.newRoom.encrypted = json.encrypted === true;
+            }, () => null);
+        },
+        dismissOwn(flow) { this.dismissedOwn = Object.assign({}, this.dismissedOwn, { [flow.flowId]: true }); },
+        // whom an own request is from: the device's name and when it was added, not its id
+        ownWho(flow) {
+            const device = this.ownDevices[flow.otherDeviceId];
+            if (!device) return t('another of your devices');
+            const name = device.displayName || t('another of your devices');
+            return device.createdDate ? fill(t('{name}, added {when}'), { name, when: moqui.chat.dateTime(device.createdDate) }) : name;
+        },
         // New direct message's people (or those given) in their direct chat, made or found now
         startDirect(userIds) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
-            if (!ids.length) return;
+            if (!ids.length || this.newDirect.busy) return;
             this.newDirect.busy = true;
             this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
                 Object.assign(this.newDirect, { open: false, userIds: [], busy: false, name: '' });
@@ -4109,8 +4274,10 @@ module.exports = {
         },
         createRoom() {
             this.newRoom.busy = true;
+            // untouched, the server decides (everyone has a crypto device, §6.5); a public room is never encrypted
+            const chosen = this.newRoom.type === 'public' ? 'false' : this.newRoom.touched ? (this.newRoom.encrypted ? 'true' : 'false') : '';
             this.post('createRoom', { roomTypeEnumId: this.newRoom.type, roomName: this.newRoom.name, topic: this.newRoom.topic || '',
-                memberUserIds: (this.newRoom.userIds || []).join(','), encrypted: this.newRoom.type !== 'public' && this.newRoom.encrypted ? 'true' : 'false' }).then((json) => {
+                memberUserIds: (this.newRoom.userIds || []).join(','), encrypted: chosen }).then((json) => {
                 this.newRoom = { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false };
                 this.scheduleRooms();
                 this.openRoom(json.chatRoomId);
@@ -4182,6 +4349,8 @@ module.exports = {
         this.registerKeys();
         this.roomsReady = this.loadRooms();
         this.roomsReady.then(() => this.$nextTick(() => this.measure()));
+        // this browser's crypto device, made in idle time once the rooms show, so new chats can be encrypted (§6.5)
+        this.roomsReady.then(() => { if (moqui.chat && moqui.chat.makeDeviceSoon) moqui.chat.makeDeviceSoon(); });
         this.applyParams();
         setTimeout(() => this.measure(), 300);
     },

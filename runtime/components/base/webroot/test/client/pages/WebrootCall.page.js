@@ -139,6 +139,7 @@ test("a declined call's quick text goes to the caller's direct room, sealed in a
         assert.equal(group.texted, true);
         assert.deepEqual(posted.map((p) => p[0]), ["declineCall", "createDirect", "room", "send"]);
         assert.equal(posted[1][1].userIds, "bob");
+        assert.equal(posted[1][1].encrypted, undefined, "the default where the page can encrypt");
         assert.deepEqual(sealed, [["D7", ["ann", "bob"], "Later"]]);
         assert.equal(posted[3][1].body, undefined, "no plain text to an encrypted room");
         assert.equal(posted[3][1].encryptedJson, "{}");
@@ -148,6 +149,16 @@ test("a declined call's quick text goes to the caller's direct room, sealed in a
         const phone = await call.declineWithText("P1", "Later");
         assert.equal(phone.texted, false);
         assert.deepEqual(posted.map((p) => p[0]), ["declineCall"]);
+        // a page that can encrypt takes the default; one that cannot (a desktop app window) asks for the plain direct room,
+        // so no encrypted room is made that it cannot write in (Comms-Messaging §6.5)
+        assert.equal(posted.length, 1);
+        posted.length = 0;
+        moqui.crypto = { elsewhere: () => true };
+        encrypted = false;
+        state.calls.C3 = view("C3", { kind: "group", myLegStatus: "offered", startedByUserId: "bob", chatRoomId: "R3" });
+        await call.declineWithText("C3", "Not now");
+        assert.equal(posted[1][0], "createDirect");
+        assert.equal(posted[1][1].encrypted, "false");
     } finally {
         moqui.request = request;
         moqui.chat = chat;

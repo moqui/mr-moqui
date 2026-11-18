@@ -89,6 +89,8 @@ fn the_comms_screens_the_shell_bundles_are_shown_there_and_the_rest_in_an_app_wi
         "/qapps/BasicComms/Calls/Call?callSessionId=C1",
         "/apps/BasicComms/Calls/Call.qvue?callSessionId=C1",
         "/qapps/BasicComms/Calls/Dialer?number=1",
+        // My devices: the shell's, which holds the account's crypto device
+        "/qapps/BasicComms/Settings/Devices",
     ] {
         assert!(shown_in_shell(path, "/qapps/BasicComms"), "{path}");
     }
@@ -107,6 +109,9 @@ fn the_comms_screens_the_shell_bundles_are_shown_there_and_the_rest_in_an_app_wi
         "/qapps/BasicComms/Calls/History",
         "/qapps/BasicComms/Calls/Voicemail",
         "/qapps/BasicComms/Calls/Recordings",
+        // the other Settings, and My devices' own transitions
+        "/qapps/BasicComms/Settings/Chat",
+        "/qapps/BasicComms/Settings/Devices/devices",
         "/qapps/BasicComms/Calls/Call/callState?callSessionId=C1",
         "/qapps/BasicComms/Panel/Dialer",
         "/qapps/BasicComms/Inbox/MessageDetail?emailMessageId=1",

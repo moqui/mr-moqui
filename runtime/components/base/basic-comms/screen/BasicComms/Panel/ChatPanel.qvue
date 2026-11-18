@@ -370,7 +370,8 @@ module.exports = {
         // Start: the number's room, a named room, or the direct or group chat (moqui.chat.startChat)
         startDirect() {
             const pick = { values: this.newUserIds || [], name: this.newName, fromNumber: this.fromNumber };
-            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            // one Start at a time: a second would race the first to make the same room
+            if (moqui.chat.pickKind(pick.values) === 'none' || this.busy) return;
             this.busy = true;
             moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.busy = false;
