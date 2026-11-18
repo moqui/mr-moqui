@@ -355,6 +355,9 @@ pub static CATALOG: &[Unit] = &[
     single("client-sync", Class::Live),
     single("chat", Class::Live).secrets(&[("store-key-secret", Secret::Generated)]),
     single("load-runner", Class::Live),
+    single("xmpp-server", LISTENER)
+        .secrets(&[("scram-decoy-key", Secret::Generated)])
+        .children(&[single("upload", Class::Live).secrets(&[("secret", Secret::Generated)])]),
     // the TLS pair is made together at boot (conf_env::generate_secrets), not as two random values
     single("cluster-member", BOOT).secrets(&[("tls-cert", Secret::Kept), ("tls-key", Secret::Kept)]),
     single("push", Class::Live).children(&[

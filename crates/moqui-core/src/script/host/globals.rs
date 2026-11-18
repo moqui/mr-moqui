@@ -658,19 +658,19 @@ fn property_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// The secret properties [`secret_code_hash`] keys a digest with: the XMPP upload secret, which `get#AttachmentUrls`
 /// derives a file's download token from.
-const KEYED_SECRETS: &[&str] = &["xmpp_upload_secret"];
+const KEYED_SECRETS: &[&str] = &["xmpp-server/upload@secret"];
 
-/// `System.secretCodeHash(name, text)`: `ec.user.singleUseCodeHash` of the secret property's value followed by `text`,
-/// for a name of [`KEYED_SECRETS`] only; null when the property is not set. The secret is not returned.
+/// `System.secretCodeHash(selector, text)`: `ec.user.singleUseCodeHash` of the secret conf attribute's value followed by
+/// `text`, for a selector of [`KEYED_SECRETS`] only; null when it is not set. The secret is not returned.
 fn secret_code_hash(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = call.text_or_empty(0);
     if !KEYED_SECRETS.contains(&name.as_str()) {
         return Err(lib(moqui_lib::error::Error::new(format!(
-            "secretCodeHash does not take the property {name}"
+            "secretCodeHash does not take {name}"
         ))));
     }
-    let secret = property_value(&name);
-    if secret.is_empty() {
+    let secret = crate::context::conf_env::setting(&name);
+    if secret.is_empty() || secret.ends_with("CHANGEME") {
         return Ok(None::<String>.into());
     }
     let hash = crate::user::single_use_hash(&format!("{secret}{}", call.opt_text(1).unwrap_or_default()))

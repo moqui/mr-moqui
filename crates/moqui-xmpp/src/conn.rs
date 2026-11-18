@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A session over its connection: TCP with STARTTLS (`xmpp_port`), direct TLS with ALPN `xmpp-client`
-//! (`xmpp_tls_port`, XEP-0368), or WebSocket frames (`/xmpp-websocket`, RFC 7395, which moqui-host's HTTP listener
+//! A session over its connection: TCP with STARTTLS (`xmpp-server@port`), direct TLS with ALPN `xmpp-client`
+//! (`xmpp-server@tls-port`, XEP-0368), or WebSocket frames (`/xmpp-websocket`, RFC 7395, which moqui-host's HTTP listener
 //! upgrades). A stream need not be TCP ([`serve_stream`]): an edge node's tunnel (plans/archive/Edge-Node.md §5.4) is a byte
 //! stream with the client's TLS inside, and server-to-server (C3b) will run over the same. The TLS session's exporter
 //! is taken here for channel binding; over WebSocket the host takes it at its HTTPS accept. A connection that drops

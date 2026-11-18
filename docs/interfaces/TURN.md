@@ -55,8 +55,8 @@ Open these ports on the firewall:
   the page asks their UDP addresses for its public address (a binding, no credential), and relays nothing through them,
   since the other page is no media node. Two pages that cannot reach each other move the call to the media server.
 - The exception is an XMPP user's own credential, for calls between XMPP clients ([XMPP](XMPP.md), XEP-0215), issued
-  only while `xmpp_turn_enabled` is true (off by default), never to an external user (`EXTERNAL_USER`), and at most
-  `xmpp_turn_per_hour` (30) a user an hour: `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>`
+  only while `xmpp-server@turn-enabled` is true (off by default), never to an external user (`EXTERNAL_USER`), and at most
+  `xmpp-server@turn-per-hour` (30) a user an hour: `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>`
   (`make#IceServers`), and such a relay may reach
   public unicast addresses too, never loopback, private, unique-local, link-local, shared (100.64/10), multicast or
   documentation ranges, nor an IPv6 address carrying an inside IPv4 one (6to4, IPv4-compatible, NAT64, Teredo)

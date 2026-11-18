@@ -27,7 +27,7 @@
 //! - The wizard: with the dialer behind the services (the process's one edge link slot holds the edge node's hook, and
 //!   `instance@node-role` is a process property, so both are set for the local node for that part), the Discover, Apply and
 //!   Test steps and the status render, Discover's choices are kept, Apply applies, and the test passes. Then the XMPP
-//!   area: Discover offers it for this node's `xmpp_domain` and adds the domain to the passthrough names, Apply sends
+//!   area: Discover offers it for this node's `xmpp-server@domain` and adds the domain to the passthrough names, Apply sends
 //!   it (the edge node keeps it and has the name), and Test probes the tunnel ports (this node runs no XMPP server, so
 //!   those fail, saying so) and finds the name.
 //! - Calls: the edge node runs a media node and TURN (the process's one media socket: the local node, started first,
@@ -438,10 +438,10 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
     );
 }
 
-/// The XMPP area of the wizard on the local node, for its `xmpp_domain` (set as a property after the servers started,
+/// The XMPP area of the wizard on the local node, for its `xmpp-server@domain` (set as a property after the servers started,
 /// so the local node runs no XMPP server).
 fn xmpp_area(local: &Gate, edge: &Gate) {
-    moqui_lib::env::set_property("xmpp_domain", "chat.example.com".to_string());
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__domain", "chat.example.com".to_string());
     let factory = Arc::clone(local.server.factory());
     let context = factory.new_context();
     let _entered = context.enter();
@@ -521,7 +521,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     assert_eq!(tests["xmppWeb"]["ok"], "true", "{tests:?}");
     show("EdgeNode/Status", &["chat.example.com through ports"]);
     // web access off: the edge node has the name (a trailing dot is the same domain), so Discover and Apply take it
-    moqui_lib::env::set_property("xmpp_domain", "Chat.example.com.".to_string());
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__domain", "Chat.example.com.".to_string());
     assert_eq!(
         post("EdgeNode/Pair/Discover/chooseSetup", &[("xmppOn", Value::string("Y"))]),
         ""
@@ -542,7 +542,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
         "{applied:?}"
     );
     // and a domain the edge node does not have: Discover refuses, Apply applies the rest with a failed line
-    moqui_lib::env::set_property("xmpp_domain", "talk.example.com".to_string());
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__domain", "talk.example.com".to_string());
     let refused = post("EdgeNode/Pair/Discover/chooseSetup", &[("xmppOn", Value::string("Y"))]);
     assert!(refused.contains("turn web access on"), "{refused}");
     let applied = call(
@@ -558,8 +558,8 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
             .any(|line| line["ok"] == "false" && line["text"].contains("turn web access on")),
         "{lines:?}"
     );
-    // with no xmpp_domain, nothing is changed
-    moqui_lib::env::clear_property("xmpp_domain");
+    // with no xmpp-server@domain, nothing is changed
+    moqui_lib::env::clear_property("moqui_conf__xmpp_server__domain");
     let parameters = BTreeMap::from([("xmppOn".to_string(), Value::Bool(true))]);
     let refused = moqui_core::service::sync("org.moqui.edge.EdgeServices.apply#EdgeSetup", &parameters);
     let errors =

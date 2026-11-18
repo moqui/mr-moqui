@@ -117,7 +117,7 @@ fn answered_names(factory: &ExecutionContextFactory, set_up: &[NameRow]) -> BTre
         add(normal_name(&host), "A site's host".to_string());
     }
     add(property("smtp-server@hostname"), "The SMTP host".to_string());
-    add(property("xmpp_domain"), "The XMPP domain".to_string());
+    add(property("xmpp-server@domain"), "The XMPP domain".to_string());
     match terminate_hosts(factory) {
         Ok(hosts) => {
             for (host, node) in hosts {

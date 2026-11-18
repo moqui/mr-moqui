@@ -23,7 +23,7 @@
     <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
     <!-- XMPP (plans/archive/Edge-Node.md §5.4, §10; plans/Edge-Node2.md §4.1): the server's own XMPP server runs here, for
-        its xmpp_domain, on xmpp_port and xmpp_tls_port as on a normal node, and the same ports take the paired nodes'
+        its xmpp-server@domain, on xmpp-server@port and xmpp-server@tls-port as on a normal node, and the same ports take the paired nodes'
         XMPP domains: a connection that names one (the TLS server name, or the stream's to) goes down that node's link,
         and the node ends its TLS with its own certificates. Tunnel ports of their own (edge@xmpp-port and
         edge@xmpp-tls-port, other than the server's) are an option, as is a pair of ports per node (EdgePort rows). -->

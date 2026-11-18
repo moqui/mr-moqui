@@ -77,7 +77,8 @@ function serverFacts() {
         ),
         serverStarted: out.serverStarted === true,
         packageName: text(out.packageName),
-        prop: name => text(System.getProperty(name)),
+        // a conf attribute by its selector, else a property not yet in the conf
+        prop: name => text(name.includes("@") ? ec.factory.getConfValue(name) : System.getProperty(name)),
         // a conf attribute as the server reads it (element/@attribute)
         conf: attribute => text(conf[attribute])
     }
@@ -258,7 +259,7 @@ const protocols = [
         feature: "xmpp",
         entry: "XMPP",
         settingGroup: "Protocols: chat",
-        on: facts => ({on: set(facts, "xmpp_domain"), reason: "xmpp_domain is not set"}),
+        on: facts => ({on: set(facts, "xmpp-server@domain"), reason: "xmpp-server@domain is not set"}),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "xmpp.listener",
         publicTarget: "xmpp.public"

@@ -281,8 +281,8 @@ feature("an upload is attached only by the user who put it; a slot over the limi
 // nothing kept), and an upload no message was given is deleted a day after it was put
 feature("PEP bytes, blocked JIDs and push registrations stop at their caps; an unattached upload goes after a day", {
     when() {
-        const capped = withProperty("xmpp_pep_max_bytes", "300", () => withProperty("xmpp_block_max_jids", "2", () =>
-            withProperty("xmpp_push_max_registrations", "1", () => {
+        const capped = withConf("xmpp-server@pep-max-bytes", "300", () => withConf("xmpp-server@block-max-jids", "2", () =>
+            withConf("xmpp-server@push-max-registrations", "1", () => {
                 // 42 bytes of element around the text
                 const item = (itemId, size) => as(C, "publish#PepItem", {node: "urn:xmpp:avatar:data", itemId,
                     payloadXml: "<data xmlns='urn:xmpp:avatar:data'>" + "x".repeat(size) + "</data>"})
@@ -348,9 +348,9 @@ feature("TURN for XMPP apps is off by default; on, an external user and a user p
     when() {
         // the same parameters for each user: none (the credential is keyed to the signed-in user)
         const ask = (userId) => as(userId, "get#IceServers", {})
-        const off = withProperty("xmpp_turn_enabled", null, () => ask(A))
+        const off = withConf("xmpp-server@turn-enabled", null, () => ask(A))
         return withProperty("turn_external_urls", "turn:turn.example.org:3478?transport=udp", () =>
-            withProperty("xmpp_turn_enabled", "true", () => withProperty("xmpp_turn_per_hour", "2", () => {
+            withConf("xmpp-server@turn-enabled", "true", () => withConf("xmpp-server@turn-per-hour", "2", () => {
                 const allowed = ask(A)
                 const external = ask(D)
                 const second = ask(A)

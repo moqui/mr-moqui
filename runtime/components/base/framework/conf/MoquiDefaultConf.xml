@@ -112,6 +112,36 @@
     <cluster-member tls-cert="CHANGEME" tls-key="CHANGEME" https-port="" base-url="" transport="" protocol=""
             bind-address=""/>
 
+    <!-- XMPP for local users (the xmpp feature, C3a; plans/archive/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
+        xmpp-server@domain is empty. xmpp-server@domain is the domain of the users' JIDs (user@domain), with the rooms on
+        rooms.<domain> and uploads on upload.<domain> (xmpp-server@rooms-domain, xmpp-server@upload-domain to name others); xmpp-server@port
+        (STARTTLS, 5222 by convention) on xmpp-server@host and xmpp-server@tls-port (direct TLS with ALPN xmpp-client, 5223) on
+        xmpp-server@tls-host, each off while empty; the certificates from runtime/cert by name (the domain, rooms.<domain> and
+        upload.<domain>, else default). xmpp-server@websocket-enabled true serves /xmpp-websocket (RFC 7395) on the HTTP listener.
+        xmpp-server/upload@url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp-server/upload@max-bytes their
+        largest size; xmpp-server/upload@secret derives the URLs of chat files sent to XMPP clients. xmpp-server@resume-seconds is how
+        long a dropped session waits for stream resumption, xmpp-server@fast-token-days how long a FAST token lasts.
+        xmpp-server/upload@seconds is the longest a PUT to an upload slot may take; an upload no message was given is deleted
+        xmpp-server/upload@unattached-hours after it was put (by clean#Uploads, daily; 0 keeps it). A user's PEP items hold at
+        most xmpp-server@pep-max-bytes in all, the block list xmpp-server@block-max-jids JIDs and the push registrations
+        xmpp-server@push-max-registrations; past one the request is refused with resource-constraint (0: no cap).
+        xmpp-server@turn-enabled true lets external services
+        (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
+        xmpp-server@turn-per-hour a user an hour; off, the feature is not advertised. xmpp-server@scram-decoy-key derives the SCRAM salts
+        of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
+        xmpp-server@s2s-port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
+        behind an edge node it will be the edge node's (plans/archive/Edge-Node.md §5.4). On an edge node (moqui_conf__instance__node_role=front_edge) no XMPP
+        server starts: its edge@xmpp-port and edge@xmpp-tls-port tunnel clients to the local node. An all-in-one node
+        (moqui_conf__instance__node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge@xmpp-port and
+        edge@xmpp-tls-port, which must differ from them (a tunnel port on the same port is off, logged). -->
+    <xmpp-server domain="" rooms-domain="" upload-domain="" port="" host="0.0.0.0" tls-port="" tls-host="" s2s-port=""
+            websocket-enabled="false" resume-seconds="300" fast-token-days="14" pep-max-bytes="20971520"
+            block-max-jids="1000" push-max-registrations="50" turn-enabled="false" turn-per-hour="30"
+            scram-decoy-key="CHANGEME">
+        <upload url="" max-bytes="20971520" seconds="300" unattached-hours="24" root="dbresource://xmpp-upload"
+                secret="CHANGEME"/>
+    </xmpp-server>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
 
@@ -218,50 +248,6 @@
     <default-property name="sip_registrar_max_expires" value="3600"/>
     <default-property name="sip_registrar_default_expires" value="600"/>
     <default-property name="sip_registrar_nat_expires" value="60"/>
-    <!-- XMPP for local users (the xmpp feature, C3a; plans/archive/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
-        xmpp_domain is empty. xmpp_domain is the domain of the users' JIDs (user@domain), with the rooms on
-        rooms.<domain> and uploads on upload.<domain> (xmpp_rooms_domain, xmpp_upload_domain to name others); xmpp_port
-        (STARTTLS, 5222 by convention) on xmpp_host and xmpp_tls_port (direct TLS with ALPN xmpp-client, 5223) on
-        xmpp_tls_host, each off while empty; the certificates from runtime/cert by name (the domain, rooms.<domain> and
-        upload.<domain>, else default). xmpp_websocket_enabled true serves /xmpp-websocket (RFC 7395) on the HTTP listener.
-        xmpp_upload_url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp_upload_max_bytes their
-        largest size; xmpp_upload_secret derives the URLs of chat files sent to XMPP clients. xmpp_resume_seconds is how
-        long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts.
-        xmpp_upload_seconds is the longest a PUT to an upload slot may take; an upload no message was given is deleted
-        xmpp_upload_unattached_hours after it was put (by clean#Uploads, daily; 0 keeps it). A user's PEP items hold at
-        most xmpp_pep_max_bytes in all, the block list xmpp_block_max_jids JIDs and the push registrations
-        xmpp_push_max_registrations; past one the request is refused with resource-constraint (0: no cap).
-        xmpp_turn_enabled true lets external services
-        (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
-        xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
-        of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
-        xmpp_s2s_port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
-        behind an edge node it will be the edge node's (plans/archive/Edge-Node.md §5.4). On an edge node (moqui_conf__instance__node_role=front_edge) no XMPP
-        server starts: its edge@xmpp-port and edge@xmpp-tls-port tunnel clients to the local node. An all-in-one node
-        (moqui_conf__instance__node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge@xmpp-port and
-        edge@xmpp-tls-port, which must differ from them (a tunnel port on the same port is off, logged). -->
-    <default-property name="xmpp_domain" value=""/>
-    <default-property name="xmpp_rooms_domain" value=""/>
-    <default-property name="xmpp_upload_domain" value=""/>
-    <default-property name="xmpp_port" value=""/>
-    <default-property name="xmpp_host" value="0.0.0.0"/>
-    <default-property name="xmpp_tls_port" value=""/>
-    <default-property name="xmpp_tls_host" value=""/>
-    <default-property name="xmpp_websocket_enabled" value="false"/>
-    <default-property name="xmpp_upload_url" value=""/>
-    <default-property name="xmpp_upload_max_bytes" value="20971520"/>
-    <default-property name="xmpp_upload_secret" value="CHANGEME" is-secret="true"/>
-    <default-property name="xmpp_resume_seconds" value="300"/>
-    <default-property name="xmpp_fast_token_days" value="14"/>
-    <default-property name="xmpp_upload_seconds" value="300"/>
-    <default-property name="xmpp_upload_unattached_hours" value="24"/>
-    <default-property name="xmpp_pep_max_bytes" value="20971520"/>
-    <default-property name="xmpp_block_max_jids" value="1000"/>
-    <default-property name="xmpp_push_max_registrations" value="50"/>
-    <default-property name="xmpp_turn_enabled" value="false"/>
-    <default-property name="xmpp_turn_per_hour" value="30"/>
-    <default-property name="xmpp_scram_decoy_key" value="CHANGEME" is-secret="true"/>
-    <default-property name="xmpp_s2s_port" value=""/>
 
     <!-- Voicemail (V2; plans/archive/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.

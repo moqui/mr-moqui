@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! XMPP when this build has no `xmpp` feature: nothing starts, and a set `xmpp_domain` is an error in the log.
+//! XMPP when this build has no `xmpp` feature: nothing starts, and a set `xmpp-server@domain` is an error in the log.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,8 +22,11 @@ use moqui_core::context::ExecutionContextFactory;
 pub(crate) struct XmppNode;
 
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
-    if !moqui_lib::env::get_prop_or_env("xmpp_domain").trim().is_empty() {
-        tracing::error!("xmpp_domain is set but this build has no XMPP server (the xmpp feature)");
+    if !moqui_core::context::conf_env::setting("xmpp-server@domain")
+        .trim()
+        .is_empty()
+    {
+        tracing::error!("xmpp-server@domain is set but this build has no XMPP server (the xmpp feature)");
     }
     moqui_core::startup::listener(factory, "XMPP", moqui_core::startup::State::NotBuilt);
     None

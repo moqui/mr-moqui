@@ -18,28 +18,28 @@ is C3b, not built. The XMPP view is of the same rooms, messages and presence the
 ## Settings
 
 The `xmpp` feature is in the Maximal, Enterprise and Debug packages.
-Everything is off until `xmpp_domain` is set; each listener is off until its port is set.
+Everything is off until `xmpp-server@domain` is set; each listener is off until its port is set.
 
 | Property | Default | |
 | --- | --- | --- |
-| `xmpp_domain` | empty | The domain of the users' JIDs, `user@<domain>` |
-| `xmpp_rooms_domain`, `xmpp_upload_domain` | `rooms.<domain>`, `upload.<domain>` | The MUC service and the upload service |
-| `xmpp_port`, `xmpp_host` | empty, `0.0.0.0` | STARTTLS (5222 by convention) |
-| `xmpp_tls_port`, `xmpp_tls_host` | empty, `xmpp_host` | Direct TLS with ALPN `xmpp-client` (5223, XEP-0368) |
-| `xmpp_websocket_enabled` | `false` | `/xmpp-websocket` (RFC 7395) on the HTTP listener |
-| `xmpp_upload_url` | `https://<domain>` (and `webapp-list/webapp[webroot]@https-port`) | The base of upload URLs |
-| `xmpp_upload_max_bytes` | 20971520 | The largest upload |
-| `xmpp_upload_secret` | generated | Derives the URLs of chat files sent to XMPP clients |
-| `xmpp_resume_seconds` | 300 | How long a dropped session waits for resumption |
-| `xmpp_fast_token_days` | 14 | How long a FAST token lasts |
-| `xmpp_upload_seconds` | 300 | The longest a PUT to an upload slot may take |
-| `xmpp_upload_unattached_hours` | 24 | An upload no message was given is deleted this long after its PUT (by the daily `clean#Uploads`; 0 keeps it) |
-| `xmpp_pep_max_bytes` | 20971520 | A user's PEP items in all, in bytes |
-| `xmpp_block_max_jids` | 1000 | The JIDs a user blocks |
-| `xmpp_push_max_registrations` | 50 | A user's push registrations (XEP-0357) |
-| `xmpp_turn_enabled` | `false` | External services (XEP-0215) hand out TURN credentials ([Calls](#calls)) |
-| `xmpp_turn_per_hour` | 30 | TURN credentials a user gets an hour |
-| `xmpp_scram_decoy_key` | generated | Derives the SCRAM salts of unknown users, the same across restarts and nodes |
+| `xmpp-server@domain` | empty | The domain of the users' JIDs, `user@<domain>` |
+| `xmpp-server@rooms-domain`, `xmpp-server@upload-domain` | `rooms.<domain>`, `upload.<domain>` | The MUC service and the upload service |
+| `xmpp-server@port`, `xmpp-server@host` | empty, `0.0.0.0` | STARTTLS (5222 by convention) |
+| `xmpp-server@tls-port`, `xmpp-server@tls-host` | empty, `xmpp-server@host` | Direct TLS with ALPN `xmpp-client` (5223, XEP-0368) |
+| `xmpp-server@websocket-enabled` | `false` | `/xmpp-websocket` (RFC 7395) on the HTTP listener |
+| `xmpp-server/upload@url` | `https://<domain>` (and `webapp-list/webapp[webroot]@https-port`) | The base of upload URLs |
+| `xmpp-server/upload@max-bytes` | 20971520 | The largest upload |
+| `xmpp-server/upload@secret` | generated | Derives the URLs of chat files sent to XMPP clients |
+| `xmpp-server@resume-seconds` | 300 | How long a dropped session waits for resumption |
+| `xmpp-server@fast-token-days` | 14 | How long a FAST token lasts |
+| `xmpp-server/upload@seconds` | 300 | The longest a PUT to an upload slot may take |
+| `xmpp-server/upload@unattached-hours` | 24 | An upload no message was given is deleted this long after its PUT (by the daily `clean#Uploads`; 0 keeps it) |
+| `xmpp-server@pep-max-bytes` | 20971520 | A user's PEP items in all, in bytes |
+| `xmpp-server@block-max-jids` | 1000 | The JIDs a user blocks |
+| `xmpp-server@push-max-registrations` | 50 | A user's push registrations (XEP-0357) |
+| `xmpp-server@turn-enabled` | `false` | External services (XEP-0215) hand out TURN credentials ([Calls](#calls)) |
+| `xmpp-server@turn-per-hour` | 30 | TURN credentials a user gets an hour |
+| `xmpp-server@scram-decoy-key` | generated | Derives the SCRAM salts of unknown users, the same across restarts and nodes |
 
 **DNS and certificates.** `_xmpp-client._tcp.<domain>` (5222) and `_xmpps-client._tcp.<domain>` (5223) name the host.
 The TLS listeners use `runtime/cert` by the name a client asks for (the domain, `rooms.<domain>`, `upload.<domain>`,
@@ -56,7 +56,7 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archi
   §4.1, E16): each connection goes to the local node whose XMPP domain it names, by the TLS server name (SNI) on the
   direct TLS port and by the `to` of the stream header the client sends in the clear on the STARTTLS port. The edge
   node reads only that (at most 16 KB, within 10 seconds), passes the bytes it read on first, and sees no stanza. A
-  local node's domain is the one its Configure named (the wizard's Apply sends `xmpp_domain`). While one local node
+  local node's domain is the one its Configure named (the wizard's Apply sends `xmpp-server@domain`). While one local node
   is paired, a connection that names no domain or one of no node goes to it (refused while it is away); with several
   paired it is refused, whichever are linked, as is a domain two nodes name. The domains are the host table's, which
   Configure, pairing and revoking load again, so a connection reads no database. A pair of ports of one local node's own is an option: `EdgePort` rows of kind `xmpp` and
@@ -66,26 +66,26 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archi
   limits per source apply. So the edge node must see the clients' own addresses: behind a TCP load balancer that
   sends no PROXY header, every client would share one address, one per-source limit (20) and one sign-in block. The TLS ends there, with its certificates for the domain, so SCRAM-SHA-256-PLUS and FAST
   bound to the TLS session work as on its own ports. It needs no XMPP port of its own for the tunnel; Chat apps shows
-  its own `xmpp_port` and `xmpp_tls_port`, so give them the edge node's numbers.
+  its own `xmpp-server@port` and `xmpp-server@tls-port`, so give them the edge node's numbers.
 - The SRV records name the edge node in public DNS, the local node in the office's.
 - **A front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19) has the tunnel ports too, and takes a domain from
   a node paired with it as its front pairing (the wizard sends the XMPP domain to the front when there is one). Before
   an edge cluster of `front_edge` members the members' own tunnel ports take the domains, with SRV records naming each
   member; with `edge` members, which bind none, each local node's front pairing gives the front its domain.
-- `/xmpp-websocket` and uploads (`xmpp_upload_url`, `https://<domain>`) ride on web access: the XMPP domain must be
+- `/xmpp-websocket` and uploads (`xmpp-server/upload@url`, `https://<domain>`) ride on web access: the XMPP domain must be
   one of the node's host names on the edge node. In terminate mode the WebSocket has no exporter, so clients sign in
   with SCRAM-SHA-256 there.
 - The Edge Node wizard on the local node sets this up: Discover offers XMPP when the edge node has a tunnel port and
-  this node an `xmpp_domain`, and adds the domain to the passthrough names; Apply sends the domain to the edge node
+  this node an `xmpp-server@domain`, and adds the domain to the passthrough names; Apply sends the domain to the edge node
   and checks `_xmpp-client._tcp` and `_xmpps-client._tcp` against the edge node's name and ports; Test opens a client
   connection through each tunnel port, whose TLS must be this node's own certificate, sending no credentials.
 - While the link is down clients cannot connect; they retry, and what was sent to them waits in the archive.
 - On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the server's own XMPP server keeps
-  `xmpp_port` and `xmpp_tls_port`, and they take the local nodes' domains too: a connection that names a paired
+  `xmpp-server@port` and `xmpp-server@tls-port`, and they take the local nodes' domains too: a connection that names a paired
   node's domain goes down its link, the rest are the server's own. The offer gives a local node these ports when no
   tunnel ports are set. Tunnel ports of their own are an option, and they too take the server's own domain; one the
   same as the server's is not opened again.
-- Federation (C3b) will take 5269 (`xmpp_s2s_port`, off) on the edge node, with stanzas to local users queued while
+- Federation (C3b) will take 5269 (`xmpp-server@s2s-port`, off) on the edge node, with stanzas to local users queued while
   the local node is away ([plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.3).
 
 ## Addresses
@@ -113,11 +113,11 @@ with a second factor signs in with an app password, which is made after it.
 - The server keeps no password. `create#UserAppPassword` stores SCRAM verifiers with the password
   (`UserAppPassword.scram*`): salted, 10,000 iterations, one for the password as shown and one without its dashes. A
   user's app passwords share one salt, so one challenge fits each.
-- **Unknown users** go through the SCRAM exchange with a salt derived from their name and `xmpp_scram_decoy_key`
+- **Unknown users** go through the SCRAM exchange with a salt derived from their name and `xmpp-server@scram-decoy-key`
   (is-secret, generated when unset), and fail at its end as a wrong password does: the salt is the same across
   restarts and nodes, and for every spelling of the name the account lookup takes as one (without case, XEP-0106
   escaped), so it does not tell a name that is no user's apart.
-- **STARTTLS is required** on `xmpp_port`: before it, anything but `<starttls/>` (a SASL `<auth>` included) ends the
+- **STARTTLS is required** on `xmpp-server@port`: before it, anything but `<starttls/>` (a SASL `<auth>` included) ends the
   stream, so a client whose STARTTLS offer was stripped on the way cannot be led to sign in in the clear.
 - **PLAIN** only over TLS, as a fallback for a client without SCRAM.
 - **SASL2** (XEP-0388) with **Bind 2** (XEP-0386): one round trip binds a resource from the client's tag and turns on
@@ -145,11 +145,11 @@ with a second factor signs in with an app password, which is made after it.
 - A stanza acts on at most 20 reactions, invitations or linked uploads; a session asks a client about at most 4
   capability hashes at a time.
 - MAM pages are at most 250 messages, a room join's history 100. PEP: 200 nodes a user, 256 items a node, 256 KiB an
-  item, `xmpp_pep_max_bytes` (20 MiB) a user in all. A user blocks at most `xmpp_block_max_jids` (1,000) JIDs and has at
-  most `xmpp_push_max_registrations` (50) push registrations. Past one of these three the request is refused with
+  item, `xmpp-server@pep-max-bytes` (20 MiB) a user in all. A user blocks at most `xmpp-server@block-max-jids` (1,000) JIDs and has at
+  most `xmpp-server@push-max-registrations` (50) push registrations. Past one of these three the request is refused with
   `resource-constraint` and nothing is kept. Uploads: 60 slots a user an hour, asking for at most ten times
-  `xmpp_upload_max_bytes` in all; a slot takes its PUT within an hour, and an upload no message of a room was given
-  is deleted `xmpp_upload_unattached_hours` (24) after it was put, by the daily job (so a file shared only inside an
+  `xmpp-server/upload@max-bytes` in all; a slot takes its PUT within an hour, and an upload no message of a room was given
+  is deleted `xmpp-server/upload@unattached-hours` (24) after it was put, by the daily job (so a file shared only inside an
   OMEMO-encrypted message, whose URL the server cannot see, is gone a day or two later).
 
 ## Chat
@@ -214,18 +214,18 @@ for, within an hour, then serves the file. A PUT is checked (the token, an open 
 are the slot's) before any of its body is read; a second PUT of a slot while one is coming to this node is 409 at
 once. The body is spooled as it arrives (`runtime/tmp/upload`, so a slow client holds no request worker, database
 connection or memory), never past the slot's size (a longer one is 413, a shorter one 400), within
-`xmpp_upload_seconds` (408 after); then stored with the slot's row locked for update in the transaction that marks it
+`xmpp-server/upload@seconds` (408 after); then stored with the slot's row locked for update in the transaction that marks it
 done, so of PUTs to two nodes one writes and the other gets 409. A PUT that fails leaves no file and the slot open. A message that links it gets it as a chat file of the room (`attach#Upload`), so the web
-shows it. A chat file sent to an XMPP client gets such a URL too, derived from the file and `xmpp_upload_secret`. The
+shows it. A chat file sent to an XMPP client gets such a URL too, derived from the file and `xmpp-server/upload@secret`. The
 URL is the capability, as XEP-0363 has it: anyone it is passed to can read the file.
 
 ## Calls
 
 External services (XEP-0215) hand an XMPP client the embedded TURN server (and `turn_external_urls`) with a credential
 keyed to the user, for its own Jingle calls. Such a credential may relay to public addresses only ([TURN](TURN.md)).
-This is off unless `xmpp_turn_enabled` is true: while off, the feature is not advertised (service discovery's list goes
+This is off unless `xmpp-server@turn-enabled` is true: while off, the feature is not advertised (service discovery's list goes
 through `features::offered`) and a request is answered with an empty list. Even on, an external user (`EXTERNAL_USER`)
-gets none, nor a user past `xmpp_turn_per_hour` credentials in the hour; each is the same empty list. Moqui's own calls
+gets none, nor a user past `xmpp-server@turn-per-hour` credentials in the hour; each is the same empty list. Moqui's own calls
 stay WebRTC in the browser.
 
 ## Push
@@ -250,7 +250,7 @@ sends a request for each advertised feature and checks it is served.
 | Messages | XEP-0308, XEP-0424, XEP-0444, XEP-0461, XEP-0333 (displayed), XEP-0085, XEP-0359, XEP-0066 links to uploads |
 | PEP | XEP-0163 with publish-options, owner configure and delete; XEP-0084, XEP-0402, both OMEMO namespaces |
 | Mobile | XEP-0352, XEP-0357 (registration and the notification; delivery needs federation) |
-| Files and calls | XEP-0363, XEP-0215 (with `xmpp_turn_enabled`) |
+| Files and calls | XEP-0363, XEP-0215 (with `xmpp-server@turn-enabled`) |
 
 **XEP-0479 levels claimed: none.** Every suite builds on the Core suite, whose server requirements include RFC 6120
 server-to-server and XEP-0114 components, which C3a does not have (federation is C3b); IM Core also needs vCard
@@ -283,7 +283,7 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
   domain on the one pair of ports, by SNI and by the stream's `to`; another pairing's domain and a domain of no one
   refused; a port row of one pairing reaching only it; a removed row's port closed.
 - `cargo test -p moqui-host --test it -- xmpp::` (about 6 s, two servers): an upload PUT answered before its body for
-  an unknown token and a wrong length, a body over the slot's size 413, one past `xmpp_upload_seconds` 408, and two PUTs
+  an unknown token and a wrong length, a body over the slot's size 413, one past `xmpp-server/upload@seconds` 408, and two PUTs
   at once, the second waiting on the row and then 409; and a real server with tokio-xmpp as one client
   (SCRAM-SHA-256-PLUS over tls-exporter on direct TLS; a room joined, its message read on the web side and the web's
   answer back; the room's archive paged; an upload put and fetched over HTTP; an OMEMO device list published), and a
@@ -296,7 +296,7 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
   makes them.
 - `cargo test -p moqui-rtc turn`: an XMPP user's TURN credential relays to public addresses only.
 - `./moq test basic-comms --spec BasicComms`: Chat apps in qvt and tui, marking an app password made before XMPP
-  sign-in, and saying XMPP is not set up while `xmpp_domain` is empty.
+  sign-in, and saying XMPP is not set up while `xmpp-server@domain` is empty.
 
 **Not checked live:** Conversations, Monal, Dino and Gajim against a deployment, the XEP-0479 compliance tester, a
 web client over `/xmpp-websocket` with channel binding behind this process's HTTPS, and push notifications reaching an

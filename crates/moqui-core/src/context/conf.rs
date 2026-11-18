@@ -340,6 +340,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
             None => base.append_node(over_push.deep_copy()),
         }
     }
+    // XMPP, with its upload settings merged as one element
+    base.merge_child_with_child_key(over, "xmpp-server", "upload", &[], None);
     // texts and chat bridges, with the edge node's limits merged as one element
     base.merge_child_with_child_key(over, "channels", "edge-limits", &[], None);
     // mail delivery, with its one dkim element merged the same way (an attribute of the override replaces the base one)

@@ -102,7 +102,7 @@ sip = ["rtc", "dep:moqui-sip"]
 # channels@webhooks-enabled is true; without this feature no adapter answers them. In Maximal and Enterprise; not Lite.
 channels = ["dep:moqui-channels"]
 # XMPP for local users (crates/moqui-xmpp, plans/archive/Comms-Framework.md §4.3 C3a, docs/interfaces/XMPP.md): the listeners
-# (src/xmpp/), /xmpp-websocket and /xmpp-upload/ on the HTTP listener. It starts only when xmpp_domain is set. In Maximal,
+# (src/xmpp/), /xmpp-websocket and /xmpp-upload/ on the HTTP listener. It starts only when xmpp-server@domain is set. In Maximal,
 # Enterprise and Debug; not Lite.
 xmpp = ["axum", "dep:moqui-xmpp"]
 telemetry = ["moqui-core/telemetry"]

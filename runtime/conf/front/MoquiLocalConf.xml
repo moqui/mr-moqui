@@ -47,7 +47,7 @@
         calls: the members' own media nodes and TURN, at addresses of their own, never through the front
             (docs/interfaces/WebRTC.md, Cluster);
         phones: SIP at the members' own addresses, never through the front;
-        XMPP: the front's XMPP ports take this node's xmpp_domain when the wizard sends it;
+        XMPP: the front's XMPP ports take this node's xmpp-server@domain when the wizard sends it;
         PASS: PASS servers of your own reach the cluster as their authority over its host names (conf/pass). -->
 
     <!-- Draining and rolling upgrades, as in conf/local-cluster/MoquiPooledConf.xml: drain a member on its own System ›

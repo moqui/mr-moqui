@@ -350,8 +350,8 @@ impl Server {
         }
     }
 
-    /// The XMPP listeners' addresses (STARTTLS, direct TLS), when this build has the `xmpp` feature and `xmpp_domain`
-    /// with `xmpp_port` or `xmpp_tls_port` is set.
+    /// The XMPP listeners' addresses (STARTTLS, direct TLS), when this build has the `xmpp` feature and `xmpp-server@domain`
+    /// with `xmpp-server@port` or `xmpp-server@tls-port` is set.
     #[must_use]
     pub fn xmpp_addresses(&self) -> (Option<std::net::SocketAddr>, Option<std::net::SocketAddr>) {
         #[cfg(feature = "xmpp")]
@@ -1927,7 +1927,7 @@ fn boot_server_factory(
     let rtc = rtc::start(&factory);
     // phone calls (sip_port, sip_tls_port), beside the call media they join
     let sip = sip::start(&factory);
-    // XMPP for local users (xmpp_domain): its listeners, and the chat pushes to its sessions
+    // XMPP for local users (xmpp-server@domain): its listeners, and the chat pushes to its sessions
     let xmpp = xmpp::start(&factory);
     // last, so mail is taken only once everything it runs is up
     let smtpd = start_smtp(&factory);

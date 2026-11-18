@@ -258,20 +258,20 @@ along with this software (see the LICENSE.md file). If not, see
             operatorNote="Set moqui_conf__git_server__public_url in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.domain" title="XMPP domain" settingGroup="Protocols: chat"
             description="The domain of the users' chat addresses; empty keeps XMPP off" valueTypeEnumId="IsvText"
-            propertyName="xmpp_domain" restartRequired="Y" sequenceNum="3130"
-            operatorNote="Set xmpp_domain in the environment or the runtime conf and restart"/>
+            propertyName="xmpp-server@domain" restartRequired="Y" sequenceNum="3130"
+            operatorNote="Set moqui_conf__xmpp_server__domain in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.port" title="XMPP port" settingGroup="Protocols: chat"
             description="The STARTTLS port for chat apps" valueTypeEnumId="IsvText"
-            propertyName="xmpp_port" restartRequired="Y" sequenceNum="3140"
-            operatorNote="Set xmpp_port in the environment or the runtime conf and restart"/>
+            propertyName="xmpp-server@port" restartRequired="Y" sequenceNum="3140"
+            operatorNote="Set moqui_conf__xmpp_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.host" title="XMPP address" settingGroup="Protocols: chat"
             description="The address the XMPP ports bind" valueTypeEnumId="IsvText"
-            propertyName="xmpp_host" restartRequired="Y" sequenceNum="3150"
-            operatorNote="Set xmpp_host in the environment or the runtime conf and restart"/>
+            propertyName="xmpp-server@host" restartRequired="Y" sequenceNum="3150"
+            operatorNote="Set moqui_conf__xmpp_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.tlsPort" title="XMPP direct TLS port" settingGroup="Protocols: chat"
             description="The direct TLS port for chat apps" valueTypeEnumId="IsvText"
-            propertyName="xmpp_tls_port" restartRequired="Y" sequenceNum="3160"
-            operatorNote="Set xmpp_tls_port in the environment or the runtime conf and restart"/>
+            propertyName="xmpp-server@tls-port" restartRequired="Y" sequenceNum="3160"
+            operatorNote="Set moqui_conf__xmpp_server__tls_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaPort" title="Call media port" settingGroup="Protocols: calls"
             description="The UDP port of call media; empty keeps calls' media off" valueTypeEnumId="IsvText"
             propertyName="rtc_media_port" restartRequired="Y" sequenceNum="3170"

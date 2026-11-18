@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     domain's _xmpp-client._tcp and _xmpps-client._tcp records naming the edge node (its public names, the host of
     edge/node@url, its MX host) and its tunnel ports, and with calls A and AAAA for each name in the edge node's TURN
     URLs (its addresses, or its media node's), expected and found; Check again looks them up again. XMPP writes
-    nothing on this node: apply#EdgeSetup sends xmpp_domain to the edge node. Calls write edge/node@calls-enabled in
+    nothing on this node: apply#EdgeSetup sends xmpp-server@domain to the edge node. Calls write edge/node@calls-enabled in
     runtime/.env and the edge node's CallMediaNode row (draining while off), with lines for the media address, the
     TURN secret and the row. Phones write edge/node@sip-enabled in runtime/.env (off: the trunks and fallbacks go to the
     edge node empty, and its link-kept SipNode row takes no new call), with lines for the two replicated sets, the

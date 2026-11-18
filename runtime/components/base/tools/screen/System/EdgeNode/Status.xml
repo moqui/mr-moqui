@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     holds queue delivery both ways until Resume, and Resync (resync#Replication) sends every set whole again. Setup (§5.7,
     E10): what this node uses the edge node for: its host names there (get#EdgeOffer nodeHosts, while the link is up),
     the system's and the accounts' mail through the EDGE mail server, the chat address (channels@public-url), the
-    PASS client's sites, XMPP (xmpp_domain through the edge node's tunnel ports, while the link is up) and calls (new
+    PASS client's sites, XMPP (xmpp-server@domain through the edge node's tunnel ports, while the link is up) and calls (new
     calls on the edge node's media node while its link-kept row is live, or off by edge/node@calls-enabled) and phones
     (the trunks and phones through the edge node's SIP engine while its link-kept SipNode row is live, with its
     trunks loaded and the numbers with a fallback, or off by edge/node@sip-enabled), with Set up
@@ -203,7 +203,7 @@ along with this software (see the LICENSE.md file). If not, see
             let xmppText = hostsText
             // the edge node's SIP engine as its offer says it now (E10 phones): its trunks and the fallbacks it holds
             let sipOffer = null
-            const xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()
+            const xmppDomain = String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().replace(/\.$/, '').toLowerCase()
             if (state === 'linked') {
                 ec.message.pushErrors()
                 try {

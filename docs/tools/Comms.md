@@ -162,12 +162,12 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   and every other bridge. Tap a reply on someone else's card to answer with its words (in a bridged room the buttons
   are the other person's to tap, on their phone); a link opens, a call dials. On a phone the buttons of a message are
   one row that scrolls sideways; on a desktop they wrap. A card is not edited.
-- <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
+- <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp-server@domain`), the people of the server can use an XMPP
   app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Settings, Chat apps
   shows the address to sign in as (`username@domain`; an email-style username has its `@` written as `\40`), the
   server and its ports, and the app passwords, each saying whether it works with XMPP apps (one made before XMPP
   sign-in has no SCRAM verifiers, and most apps refuse it), with New app password for XMPP. Calls between XMPP apps get
-  a TURN relay only when the administrator turned it on (`xmpp_turn_enabled`), and never for an external user. The app sees the rooms as group chats on `rooms.<domain>` (joined from its bookmarks, which list the rooms),
+  a TURN relay only when the administrator turned it on (`xmpp-server@turn-enabled`), and never for an external user. The app sees the rooms as group chats on `rooms.<domain>` (joined from its bookmarks, which list the rooms),
   the people of direct messages as contacts, the history of both, reactions, replies, edits and deletes, files, typing
   and read markers, and the same presence as the web. A room that is end-to-end encrypted in Moqui does not open in an
   XMPP app. Messages two XMPP apps encrypt with OMEMO stay between them: the web shows "Encrypted message (OMEMO)". See

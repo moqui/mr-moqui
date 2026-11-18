@@ -40,7 +40,7 @@
     <default-property name="pass_backend_url" value="edge:"/>
 
     <!-- XMPP (docs/interfaces/XMPP.md, Behind an edge node): one pair of ports takes every pairing's XMPP domain, by the
-        TLS server name on direct TLS and by the stream's to on STARTTLS; each local node sets its own xmpp_domain, and
+        TLS server name on direct TLS and by the stream's to on STARTTLS; each local node sets its own xmpp-server@domain, and
         a domain another pairing named first is refused. Set in .env:
                                      moqui_conf__edge__xmpp_port=5222
                                      moqui_conf__edge__xmpp_tls_port=5223

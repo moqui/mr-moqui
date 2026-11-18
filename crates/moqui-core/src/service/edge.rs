@@ -1440,15 +1440,15 @@ fn host_list(parameters: &BTreeMap<String, Value>) -> Vec<EdgeHostInfo> {
         .collect()
 }
 
-/// The local node's XMPP domain (`xmpp_domain`), lower case with no trailing dot; empty when it runs no XMPP server.
+/// The local node's XMPP domain (`xmpp-server@domain`), lower case with no trailing dot; empty when it runs no XMPP server.
 fn xmpp_domain() -> String {
-    moqui_lib::env::get_prop_or_env("xmpp_domain")
+    crate::context::conf_env::setting("xmpp-server@domain")
         .trim()
         .trim_end_matches('.')
         .to_ascii_lowercase()
 }
 
-/// The XMPP choice of `apply#EdgeSetup` (plans/archive/Edge-Node.md §5.7, E10): this node's `xmpp_domain`, which must be one of
+/// The XMPP choice of `apply#EdgeSetup` (plans/archive/Edge-Node.md §5.7, E10): this node's `xmpp-server@domain`, which must be one of
 /// its host names on the edge node, since uploads (`https://<domain>`) and `/xmpp-websocket` ride on web access. With
 /// web access on, the domain is added to `hosts` as passthrough when it is not listed; with it off, the edge node should
 /// have it already, and the answer's second part is false when it does not (a failed line, the rest still applied).
@@ -1460,7 +1460,7 @@ fn xmpp_choice(
 ) -> Result<(String, bool), String> {
     let domain = xmpp_domain();
     if domain.is_empty() {
-        return Err("this node runs no XMPP server: set xmpp_domain".to_string());
+        return Err("this node runs no XMPP server: set xmpp-server@domain".to_string());
     }
     if !offer.xmpp.available {
         return Err("the edge node has no XMPP tunnel ports (edge@xmpp-port, edge@xmpp-tls-port)".to_string());
@@ -1528,12 +1528,12 @@ fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> V
             "xmpp",
             false,
             "Several local nodes are linked to the edge node and this node named no XMPP domain there, so its ports \
-             cannot find this node's clients: set xmpp_domain here and apply again",
+             cannot find this node's clients: set xmpp-server@domain here and apply again",
         ));
     }
     // Chat apps (get#ClientSettings) shows this node's own ports: the edge node's should have the same numbers
-    for (name, edge_port) in [("xmpp_port", xmpp.port), ("xmpp_tls_port", xmpp.tls_port)] {
-        let own = moqui_lib::env::get_prop_or_env(name).trim().to_string();
+    for (name, edge_port) in [("xmpp-server@port", xmpp.port), ("xmpp-server@tls-port", xmpp.tls_port)] {
+        let own = crate::context::conf_env::setting_or_property(name);
         if !own.is_empty() && edge_port > 0 && own != edge_port.to_string() {
             lines.push(SetupLine::new(
                 "xmpp",
@@ -1552,7 +1552,7 @@ fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> V
 /// input), send the edge node its part (Configure; when it is not taken nothing changes here either), then write the
 /// chosen areas' local rows and settings, and send every replicated set whole again. Each step is a line; once the
 /// edge node has its part, a local step that fails does not stop the others. XMPP writes nothing here: the domain is
-/// this node's `xmpp_domain`, sent in Configure and added to the host names ([`xmpp_choice`]). Calls send nothing to
+/// this node's `xmpp-server@domain`, sent in Configure and added to the host names ([`xmpp_choice`]). Calls send nothing to
 /// the edge node: with its media node offered, `callsOn` is this node's `edge/node@calls-enabled`
 /// ([`crate::edge::calls::apply`]). Phones neither: with its SIP engine offered, `sipOn` is this node's
 /// `edge/node@sip-enabled` ([`crate::edge::sip::apply`]), which holds the trunks and fallbacks back while off.

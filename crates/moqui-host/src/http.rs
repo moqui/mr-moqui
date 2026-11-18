@@ -387,7 +387,7 @@ pub(crate) async fn listen(
     let app = crate::monitor::routes(app);
     // the chat bridges' webhooks and the files of their messages (src/channels.rs), when channels@webhooks-enabled
     let app = crate::channels::routes(app, &factory);
-    // XMPP over WebSocket and its file uploads, while the XMPP server runs (xmpp_domain)
+    // XMPP over WebSocket and its file uploads, while the XMPP server runs (xmpp-server@domain)
     #[cfg(feature = "xmpp")]
     let app = crate::xmpp::routes(app, &factory);
     // a host whose root screen refuses the framework's routes (root-screen framework-routes="refuse", a site of its

@@ -210,7 +210,10 @@ fn a_stop_closes_terminal_and_xmpp_websockets_at_once() {
         "termws-stop",
         Some(PLAIN_USER),
         "",
-        &[("xmpp_domain", "stop.example"), ("xmpp_websocket_enabled", "true")],
+        &[
+            ("moqui_conf__xmpp_server__domain", "stop.example"),
+            ("moqui_conf__xmpp_server__websocket_enabled", "true"),
+        ],
     );
     let address = gate.server.address();
     let cookie = crate::common::sign_in(address, "john.doe", "moqui");

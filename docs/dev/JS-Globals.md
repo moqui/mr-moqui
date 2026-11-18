@@ -412,7 +412,7 @@ A node kept in the context keeps its methods. The form, service and entity defin
 | `System.getProperty(name)` | A system property or environment value, null when it is not set or empty, null for a conf attribute's environment name (`moqui_conf__...`: read the conf with `ec.factory.getConfValue`, [JS-Core-API](JS-Core-API.md)), and null for a secret: a property the conf marks `is-secret="true"`, and a name of a password, secret, token, credential or key (`_key`, `_pass`, `_pw`, `crypt`), so the crypt pass, the session key and passwords given in the environment never reach a script; a credential a script sends to another server (`pass_client_secret`) is named to `RestClient.addPropertyHeader` ([JS-Core-API](JS-Core-API.md)), which sends it without returning it |
 | `System.isPropertySet(name)` | Whether a property, a secret one too, has a value other than the `CHANGEME` placeholder; the value is not returned |
 | `System.propertyMatches(name, given)` | Whether `given` is the property's value, compared by digest on the server; false when either is empty. For a client secret a caller presents |
-| `System.secretCodeHash(name, text)` | `ec.user.singleUseCodeHash` of the secret's value followed by `text`, for `xmpp_upload_secret` only (an XMPP file's download token); null when it is not set |
+| `System.secretCodeHash(name, text)` | `ec.user.singleUseCodeHash` of the secret's value followed by `text`, for `xmpp-server/upload@secret` only (an XMPP file's download token); null when it is not set |
 | `ResourceReference.isTextFilename(filename)` | Whether the content type of the file name is a text type. It is the only member: get a reference with `ec.resource.getLocationReference(location)` ([JS-Core-API](JS-Core-API.md#ecresource)) |
 
 ### EdiHandler

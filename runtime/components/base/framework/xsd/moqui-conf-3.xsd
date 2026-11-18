@@ -27,6 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" ref="load-runner"/>
                 <xs:element minOccurs="0" ref="cluster-member"/>
+                <xs:element minOccurs="0" ref="xmpp-server"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2156,6 +2157,38 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="transport" type="xs:string"><xs:annotation><xs:documentation>Empty (the cluster port), ssh or notify.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="protocol" type="xs:string"><xs:annotation><xs:documentation>Empty or grpc, or rest.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="bind-address" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="xmpp-server">
+        <xs:annotation><xs:documentation>XMPP for local users (docs/interfaces/XMPP.md): off while domain is empty.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="upload"><xs:complexType>
+                    <xs:attribute name="url" type="xs:string"/>
+                    <xs:attribute name="max-bytes" type="xs:string" default="20971520"/>
+                    <xs:attribute name="seconds" type="xs:string" default="300"/>
+                    <xs:attribute name="unattached-hours" type="xs:string" default="24"/>
+                    <xs:attribute name="root" type="xs:string" default="dbresource://xmpp-upload"/>
+                    <xs:attribute name="secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="domain" type="xs:string"/>
+            <xs:attribute name="rooms-domain" type="xs:string"/>
+            <xs:attribute name="upload-domain" type="xs:string"/>
+            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="host" type="xs:string" default="0.0.0.0"/>
+            <xs:attribute name="tls-port" type="xs:string"/>
+            <xs:attribute name="tls-host" type="xs:string"/>
+            <xs:attribute name="s2s-port" type="xs:string"/>
+            <xs:attribute name="websocket-enabled" type="xs:string" default="false"/>
+            <xs:attribute name="resume-seconds" type="xs:string" default="300"/>
+            <xs:attribute name="fast-token-days" type="xs:string" default="14"/>
+            <xs:attribute name="pep-max-bytes" type="xs:string" default="20971520"/>
+            <xs:attribute name="block-max-jids" type="xs:string" default="1000"/>
+            <xs:attribute name="push-max-registrations" type="xs:string" default="50"/>
+            <xs:attribute name="turn-enabled" type="xs:string" default="false"/>
+            <xs:attribute name="turn-per-hour" type="xs:string" default="30"/>
+            <xs:attribute name="scram-decoy-key" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

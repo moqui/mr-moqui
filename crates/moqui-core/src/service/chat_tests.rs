@@ -1781,7 +1781,10 @@ fn a_file_put_over_xmpp_goes_with_the_last_message_that_has_it() {
     let (_root_lock, _root) = attachment_root(&dir);
     std::fs::create_dir_all(dir.join("xmpp/7")).unwrap();
     std::fs::write(dir.join("xmpp/7/photo.png"), b"png").unwrap();
-    moqui_lib::env::set_property("xmpp_upload_root", format!("file:{}", dir.join("xmpp").display()));
+    moqui_lib::env::set_property(
+        "moqui_conf__xmpp_server__upload__root",
+        format!("file:{}", dir.join("xmpp").display()),
+    );
     let location = format!("file:{}", dir.join("xmpp/7/photo.png").display());
     row(
         &facade,
@@ -1848,7 +1851,7 @@ fn a_file_put_over_xmpp_goes_with_the_last_message_that_has_it() {
     ok("redact#Message", &[("chatRoomId", text(&chat)), ("eventSeq", int(second))]);
     assert!(!dir.join("xmpp/7/photo.png").exists(), "the file is gone with the last message");
     assert!(uploads().is_empty(), "its upload URL is gone");
-    moqui_lib::env::clear_property("xmpp_upload_root");
+    moqui_lib::env::clear_property("moqui_conf__xmpp_server__upload__root");
     moqui_lib::env::clear_property("moqui_conf__chat__attachment_root");
     let _ = std::fs::remove_dir_all(&dir);
 }

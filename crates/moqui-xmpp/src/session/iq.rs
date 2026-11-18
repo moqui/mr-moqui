@@ -416,7 +416,7 @@ impl Session {
             ("set", "block") if !jids.is_empty() => {
                 match self.call(services::BLOCK, json!({"jidList": jids})).await {
                     Err(_) => return self.refuse(iq, "wait", "internal-server-error", None),
-                    // the block list is at its cap (xmpp_block_max_jids, SEC-COM-20): nothing was blocked
+                    // the block list is at its cap (xmpp-server@block-max-jids, SEC-COM-20): nothing was blocked
                     Ok(found) if backend::flag(&found, "resourceConstraint") => {
                         return self.refuse(iq, "wait", "resource-constraint", None);
                     }
@@ -440,7 +440,7 @@ impl Session {
     async fn external_services(&mut self, iq: &Element) {
         let mut services_el = E::new("services", ns::EXTDISCO);
         if !self.server.config.turn_enabled {
-            // not advertised, and no TURN while off (`xmpp_turn_enabled`): an empty list, as for a user refused
+            // not advertised, and no TURN while off (`xmpp-server@turn-enabled`): an empty list, as for a user refused
             return self.send(iq_result(iq).c(services_el).build());
         }
         // the service refuses an external user and a user past the hour's rate with an empty list
@@ -492,7 +492,7 @@ impl Session {
                 .await
         };
         match result {
-            // the user has its most registrations (xmpp_push_max_registrations, SEC-COM-20)
+            // the user has its most registrations (xmpp-server@push-max-registrations, SEC-COM-20)
             Ok(found) if backend::flag(&found, "resourceConstraint") => {
                 self.refuse(iq, "wait", "resource-constraint", None)
             }

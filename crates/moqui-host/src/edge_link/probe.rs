@@ -68,12 +68,12 @@ pub async fn xmpp_probe(
     port: u16,
     direct: bool,
 ) -> Result<String, String> {
-    let domain = moqui_lib::env::get_prop_or_env("xmpp_domain")
+    let domain = moqui_core::context::conf_env::setting("xmpp-server@domain")
         .trim()
         .trim_end_matches('.')
         .to_ascii_lowercase();
     if domain.is_empty() {
-        return Err("This node runs no XMPP server: set xmpp_domain".to_string());
+        return Err("This node runs no XMPP server: set xmpp-server@domain".to_string());
     }
     if !crate::xmpp::running(&factory, direct) {
         return Err(format!(

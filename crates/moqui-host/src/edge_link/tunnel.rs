@@ -24,7 +24,7 @@
 //! - **XMPP** ([`super::TUNNEL_XMPP`], [`super::TUNNEL_XMPPS`]): each connection to `edge@xmpp-port` (STARTTLS) or
 //!   `edge@xmpp-tls-port` (direct TLS), to the XMPP server of the local node whose XMPP domain the connection names
 //!   (plans/Edge-Node2.md §4.1, E16: the TLS server name on the direct TLS port, the stream header's `to` on the
-//!   STARTTLS port, [`super::xmpp_domain`]), which ends the TLS (§5.4). The edge node reads only that, sees no stanza,
+//!   STARTTLS port, [`super::xmpp-server@domain`]), which ends the TLS (§5.4). The edge node reads only that, sees no stanza,
 //!   and channel binding works as on the local node's own ports. An all-in-one node's own XMPP ports do the same for
 //!   its pairings' domains ([`xmpp_to_pairing`]), so one pair of ports serves every domain.
 //! - **A port per pairing** ([`watch_rows`], E16): each `moqui.edge.EdgePort` row, an SSH or XMPP port whose
@@ -264,7 +264,7 @@ pub(crate) enum XmppRoute {
 
 /// Where an XMPP connection naming `domain` goes: to the one pairing whose Configure named that XMPP domain
 /// (`pairings`, each pairing and its domain); else to this node's own server when it has one (`own`, an all-in-one
-/// node's `xmpp_domain`) and the connection names it, a subdomain of it, or none; else, while exactly one pairing is
+/// node's `xmpp-server@domain`) and the connection names it, a subdomain of it, or none; else, while exactly one pairing is
 /// active (`active`), to it, as before a node named its domain, linked or not (an away one is refused when its tunnel
 /// opens, never sent to another). A domain two pairings name is refused.
 pub(crate) fn xmpp_route(
@@ -336,7 +336,7 @@ pub(crate) fn xmpp_domains(
 
 /// This node's own XMPP domain while its own XMPP server runs (an all-in-one node), lower case.
 fn own_xmpp_domain(factory: &ExecutionContextFactory, direct: bool) -> Option<String> {
-    let domain = moqui_lib::env::get_prop_or_env("xmpp_domain");
+    let domain = moqui_core::context::conf_env::setting("xmpp-server@domain");
     (crate::xmpp::running(factory, direct))
         .then(|| super::xmpp_domain::host_name(&domain))
         .flatten()
@@ -594,27 +594,30 @@ fn reconcile(
     }
 }
 
-/// On an all-in-one node with its own XMPP server (`xmpp_domain` set), the property of the server's own XMPP listener
-/// that `bind` would take: `xmpp_port` or `xmpp_tls_port` on the same port and an overlapping host. The paired node's
+/// On an all-in-one node with its own XMPP server (`xmpp-server@domain` set), the property of the server's own XMPP listener
+/// that `bind` would take: `xmpp-server@port` or `xmpp-server@tls-port` on the same port and an overlapping host. The paired node's
 /// XMPP domain gets tunnel ports of its own (plans/archive/Edge-Node.md §10), so such a tunnel port is skipped, logged.
 pub(crate) fn own_xmpp_clash(bind: SocketAddr) -> Option<&'static str> {
     let property = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
-    if property("xmpp_domain").is_empty() {
+    if property("xmpp-server@domain").is_empty() {
         return None;
     }
-    let shared_host = property("xmpp_host");
-    [("xmpp_port", "xmpp_host"), ("xmpp_tls_port", "xmpp_tls_host")]
-        .into_iter()
-        .find(|(port_name, host_name)| {
-            let Ok(port) = property(port_name).parse::<u16>() else {
-                return false;
-            };
-            let host = Some(property(host_name))
-                .filter(|host| !host.is_empty())
-                .unwrap_or_else(|| shared_host.clone());
-            same_listener(bind, port, &host)
-        })
-        .map(|(port_name, _)| port_name)
+    let shared_host = property("xmpp-server@host");
+    [
+        ("xmpp-server@port", "xmpp-server@host"),
+        ("xmpp-server@tls-port", "xmpp-server@tls-host"),
+    ]
+    .into_iter()
+    .find(|(port_name, host_name)| {
+        let Ok(port) = property(port_name).parse::<u16>() else {
+            return false;
+        };
+        let host = Some(property(host_name))
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| shared_host.clone());
+        same_listener(bind, port, &host)
+    })
+    .map(|(port_name, _)| port_name)
 }
 
 /// Whether a listener on `bind` and one on `port` of `host` (an IP, a name, or empty for every address) would take the

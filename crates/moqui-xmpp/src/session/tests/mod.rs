@@ -645,7 +645,7 @@ async fn a_request_past_a_users_cap_is_a_resource_constraint() {
 
 #[tokio::test]
 async fn every_advertised_feature_answers() {
-    // TURN on for XMPP (xmpp_turn_enabled), so external services (XEP-0215) are advertised too
+    // TURN on for XMPP (xmpp-server@turn-enabled), so external services (XEP-0215) are advertised too
     let mut config = Config::for_domain("moqui.local");
     config.software_version = "test".to_string();
     config.turn_enabled = true;
@@ -723,7 +723,7 @@ async fn disco_features(client: &mut Client) -> Vec<String> {
 
 #[tokio::test]
 async fn turn_for_xmpp_is_off_by_default_and_then_neither_advertised_nor_issued() {
-    // off (xmpp_turn_enabled false, the default): the server's features have no XEP-0215, and a client that asks
+    // off (xmpp-server@turn-enabled false, the default): the server's features have no XEP-0215, and a client that asks
     // anyway gets an empty list, without the TURN service being asked
     let (server, fake) = server();
     assert!(!server.config.turn_enabled);
@@ -788,7 +788,7 @@ async fn decoy_salt(server: &Arc<Server>, username: &str) -> String {
 
 #[tokio::test]
 async fn an_unknown_users_salt_is_the_same_from_a_restarted_server_with_the_same_key() {
-    // xmpp_scram_decoy_key: two servers (a restart, or two nodes) with the same key give an unknown name the same salt;
+    // xmpp-server@scram-decoy-key: two servers (a restart, or two nodes) with the same key give an unknown name the same salt;
     // another key gives another
     let config = |key: &[u8]| {
         let mut config = Config::for_domain("moqui.local");

@@ -623,20 +623,20 @@ fn the_helper_objects_and_their_functions_are_frozen() -> Result<(), Error> {
 fn a_script_reads_no_secret_property() -> Result<(), Error> {
     clear_context_stack();
     moqui_lib::env::set_property("entity_ds_crypt_pass", "crypt-secret-value");
-    moqui_lib::env::set_property("xmpp_upload_secret", "upload-secret");
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__upload__secret", "upload-secret");
     moqui_lib::env::set_property("script_plain_setting", "plain");
     let seen = eval_value(
         "[System.getProperty('entity_ds_crypt_pass') === null, System.getProperty('entity.ds.crypt.pass') === null, \
-         System.getProperty('xmpp_upload_secret') === null, System.getProperty('script_plain_setting') === 'plain', \
+         System.getProperty('xmpp-server/upload@secret') === null, System.getProperty('script_plain_setting') === 'plain', \
          System.isPropertySet('entity_ds_crypt_pass'), !System.isPropertySet('script_no_such_setting'), \
          System.propertyMatches('entity_ds_crypt_pass', 'crypt-secret-value'), \
          !System.propertyMatches('entity_ds_crypt_pass', 'crypt-secret'), \
-         System.secretCodeHash('xmpp_upload_secret', ':1') === ec.user.singleUseCodeHash('upload-secret:1'), \
+         System.secretCodeHash('xmpp-server/upload@secret', ':1') === ec.user.singleUseCodeHash('upload-secret:1'), \
          (() => { try { System.secretCodeHash('entity_ds_crypt_pass', ''); return false } catch (e) { return true } })()]\
          .map(String).join()",
     );
     moqui_lib::env::clear_property("entity_ds_crypt_pass");
-    moqui_lib::env::clear_property("xmpp_upload_secret");
+    moqui_lib::env::clear_property("moqui_conf__xmpp_server__upload__secret");
     moqui_lib::env::clear_property("script_plain_setting");
     assert_eq!(
         moqui_lib::object::to_plain_string(&seen?),

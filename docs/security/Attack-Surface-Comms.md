@@ -354,11 +354,11 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
 ## XMPP
 
 The XMPP server (`crates/moqui-xmpp`, host `src/xmpp/`, [XMPP](../interfaces/XMPP.md)) runs only in a binary with the
-`xmpp` feature (Maximal, Enterprise, Debug) and only when `xmpp_domain` is set. Each listener is off unless set:
-`xmpp_port` (STARTTLS, required before anything else) on `xmpp_host`, `xmpp_tls_port` (direct TLS) on
-`xmpp_tls_host`, and `/xmpp-websocket` with `xmpp_websocket_enabled`. Local users only: no server-to-server
-(`xmpp_s2s_port` is declared in the default conf and no code reads it). `xmpp_host` defaults to `0.0.0.0`, so `xmpp_port`
-listens on every IPv4 address once it is set. `xmpp_tls_host` is empty by default and then takes `xmpp_host`; an empty
+`xmpp` feature (Maximal, Enterprise, Debug) and only when `xmpp-server@domain` is set. Each listener is off unless set:
+`xmpp-server@port` (STARTTLS, required before anything else) on `xmpp-server@host`, `xmpp-server@tls-port` (direct TLS) on
+`xmpp-server@tls-host`, and `/xmpp-websocket` with `xmpp-server@websocket-enabled`. Local users only: no server-to-server
+(`xmpp-server@s2s-port` is declared in the default conf and no code reads it). `xmpp-server@host` defaults to `0.0.0.0`, so `xmpp-server@port`
+listens on every IPv4 address once it is set. `xmpp-server@tls-host` is empty by default and then takes `xmpp-server@host`; an empty
 host is `0.0.0.0`. A direct TLS handshake and a STARTTLS handshake each have 10 seconds. A connection with nothing read
 for 600 seconds is closed, and a write the client does not take for 60 seconds ends it.
 
@@ -366,9 +366,9 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   and cannot carry a second factor): SCRAM-SHA-256 and SCRAM-SHA-256-PLUS against the verifiers stored when the
   app password was made (salted, 10,000 iterations), with tls-exporter channel binding where the connection has its
   own TLS session and a downgrade (`y` where the server binds) refused; PLAIN over TLS only; FAST tokens (XEP-0484)
-  bound to the client's user-agent id, kept encrypted, expiring (`xmpp_fast_token_days`), and without channel binding
+  bound to the client's user-agent id, kept encrypted, expiring (`xmpp-server@fast-token-days`), and without channel binding
   refused unless their count grows; a token goes with the app password it was issued under. An unknown user gets a salt
-  derived from the name and `xmpp_scram_decoy_key` (is-secret, generated when unset), so the exchange does not tell it
+  derived from the name and `xmpp-server@scram-decoy-key` (is-secret, generated when unset), so the exchange does not tell it
   apart, and its salt stays the same across restarts and nodes. A disabled account cannot sign in.
   A session checks every minute (`check#Credential`) that its app password is not revoked, that the
   account is not disabled with no `disabledDateTime` and not past its `terminateDate`, and ends when not (SEC-COM-15).
@@ -398,9 +398,9 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   most 1,000 unacknowledged stanzas and 10 detached sessions a user; PEP 200 nodes a user and 256 items a node;
   uploads 60 slots a user an hour.
   A PEP item is at most 262,144 characters, and `publish#PepItem` keeps one only while the user's PEP items stay within
-  `xmpp_pep_max_bytes` (20 MiB) of UTF-8 (`XmppPepItem.payloadBytes`, the replaced item not counted). `block#Jids` takes
-  500 JIDs a call and blocks none past `xmpp_block_max_jids` (1,000); `enable#Push` adds a row for each `pushJid` and
-  `node` and keeps none past `xmpp_push_max_registrations` (50, a replacement not counted). Past a cap the IQ is refused
+  `xmpp-server@pep-max-bytes` (20 MiB) of UTF-8 (`XmppPepItem.payloadBytes`, the replaced item not counted). `block#Jids` takes
+  500 JIDs a call and blocks none past `xmpp-server@block-max-jids` (1,000); `enable#Push` adds a row for each `pushJid` and
+  `node` and keeps none past `xmpp-server@push-max-registrations` (50, a replacement not counted). Past a cap the IQ is refused
   with `resource-constraint` (type wait); 0 is no cap. There is no per-session stanza rate limit; a session's stanzas are
   worked one at a time.
 - **Authorization** is the user's: most stanzas become a service call as the signed-in user, through
@@ -424,29 +424,29 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   when they share a room
   with the owner), `presence` the people the owner shares a room with,
   `whitelist` the owner.
-- **TURN for XMPP calls** (XEP-0215): off unless `xmpp_turn_enabled` is true; while off, external services are not
+- **TURN for XMPP calls** (XEP-0215): off unless `xmpp-server@turn-enabled` is true; while off, external services are not
   advertised and a request gets an empty list. On, a credential keyed to the user (`xmpp.<userId>`) may relay to public
   unicast addresses only, never loopback, private, link-local, shared or documentation ranges ([TURN](#turn)); it is a
   relay to the internet within the TURN quotas, as a public TURN service's is. An external user (`EXTERNAL_USER`) never
-  gets one, and a user at most `xmpp_turn_per_hour` (30) an hour (counted on the distributed cache
+  gets one, and a user at most `xmpp-server@turn-per-hour` (30) an hour (counted on the distributed cache
   `moqui.xmpp.turn.issued`); a refusal is the same empty list.
 - **Push** (XEP-0357) registrations are stored, with their app server's secret encrypted; a notification has the message
   count only, and goes nowhere until federation (C3b).
 - **Upload files** (XEP-0363; the route's row is in
   [Attack-Surface-Routes.md](Attack-Surface-Routes.md#host-routes-and-servlets)). An upload is stored at
-  `dbresource://xmpp-upload/<xmppUploadId>/<name>` (`xmpp_upload_root` names another root). The token is 32 random
-  characters for a slot, and for a chat file the first 40 letters and digits of `singleUseCodeHash(xmpp_upload_secret +
+  `dbresource://xmpp-upload/<xmppUploadId>/<name>` (`xmpp-server/upload@root` names another root). The token is 32 random
+  characters for a slot, and for a chat file the first 40 letters and digits of `singleUseCodeHash(xmpp-server/upload@secret +
   ':' + chatAttachmentId)`. The route takes any method: `OPTIONS` is 204, `PUT` writes, and every other method is
   answered as a read. A file that was put is served at its URL with no expiry: the read checks only the token's row,
   `completedDate` and that the location has bytes, and loads the whole file into memory on a request worker. The content
   type is the one the uploader gave the slot. A type that starts with `image/`, `audio/` or `video/` is served inline,
   except the exact text `image/svg+xml` (a type with a parameter or another case, such as `image/svg+xml;
   charset=utf-8`, is inline). Every answer has `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. A
-  user's slots are limited to 60 an hour and ten times `xmpp_upload_max_bytes` an hour, and uploads count toward no
+  user's slots are limited to 60 an hour and ten times `xmpp-server/upload@max-bytes` an hour, and uploads count toward no
   drive quota. `attach#Upload` makes a `ChatAttachment` of the room on the same stored file, with the uploader's file
   name and content type. It refuses an upload that is not the caller's own completed one, and the session then logs the
   upload by its file name at WARN, never the URL whose token reads it. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes slots never
-  put within an hour, a completed upload no chat file has `xmpp_upload_unattached_hours` (24) after it was put (so a
+  put within an hour, a completed upload no chat file has `xmpp-server/upload@unattached-hours` (24) after it was put (so a
   file shared only inside an OMEMO message goes then), and expired FAST tokens. `ChatServices.clear#MessageContent` and `clean#PendingAttachments` remove each chat
   file through `ChatServices.remove#AttachmentFile`: a file under the upload root goes, with its `XmppUpload` rows, when
   no other `ChatAttachment` has its location, so a file put over XMPP goes with the last message that has it (deletion or

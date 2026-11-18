@@ -22,7 +22,7 @@
             client with no secret;
         calls: edge/node@calls-enabled (false keeps new calls on this node's own media nodes);
         phones: edge/node@sip-enabled (false sends the replicated trunks and fallbacks empty).
-        XMPP: set xmpp_domain here, not on the edge node; give any XMPP ports of this node's own the edge node's numbers,
+        XMPP: set xmpp-server@domain here, not on the edge node; give any XMPP ports of this node's own the edge node's numbers,
         which Chat apps shows. SSH: ssh-server@port here, for the edge node's SSH tunnel, whose host and port the clone URLs
         name (leave ssh-server@public-host and ssh-server@public-port empty; docs/interfaces/Git-Hosting.md). A dev local node's
         command line and shells through the edge node need moqui_conf__terminal__remote=true.

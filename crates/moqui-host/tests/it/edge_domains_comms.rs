@@ -16,7 +16,7 @@
 //! domains on one pair of ports, each to the pairing whose domain it names (the TLS server name on the direct TLS
 //! port, the stream's `to` on the STARTTLS port), and a port of one pairing (an `EdgePort` row) to that pairing only.
 //!
-//! Both ends are real servers in the test's own process, as in `edge_xmpp.rs`: a local node with `xmpp_domain` and
+//! Both ends are real servers in the test's own process, as in `edge_xmpp.rs`: a local node with `xmpp-server@domain` and
 //! its own XMPP server, linked as `local-x`, and a second pairing `local-y`, linked by a dialer that serves no tunnels
 //! (any tunnel to it is refused), so a connection that reaches the local node's XMPP server went down `local-x`'s link.
 
@@ -121,9 +121,9 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &local_port,
             ),
-            ("xmpp_domain", "moqui.local"),
-            ("xmpp_tls_port", "0"),
-            ("xmpp_tls_host", "127.0.0.1"),
+            ("moqui_conf__xmpp_server__domain", "moqui.local"),
+            ("moqui_conf__xmpp_server__tls_port", "0"),
+            ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &local_cert), ("cert/default.key", &local_key)],
     );
@@ -317,9 +317,9 @@ fn two_local_nodes_comms_stay_apart() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &local_port,
             ),
-            ("xmpp_domain", "moqui.local"),
-            ("xmpp_tls_port", "0"),
-            ("xmpp_tls_host", "127.0.0.1"),
+            ("moqui_conf__xmpp_server__domain", "moqui.local"),
+            ("moqui_conf__xmpp_server__tls_port", "0"),
+            ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &local_cert), ("cert/default.key", &local_key)],
     );

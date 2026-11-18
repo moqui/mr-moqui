@@ -121,8 +121,8 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "xmpp.listener",
         external: false,
-        hosts: &["xmpp_host"],
-        ports: &["xmpp_port"],
+        hosts: &["xmpp-server@host"],
+        ports: &["xmpp-server@port"],
         default_port: "",
     },
     Target {
@@ -163,8 +163,8 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "xmpp.public",
         external: true,
-        hosts: &["xmpp_domain"],
-        ports: &["xmpp_port"],
+        hosts: &["xmpp-server@domain"],
+        ports: &["xmpp-server@port"],
         default_port: "",
     },
 ];

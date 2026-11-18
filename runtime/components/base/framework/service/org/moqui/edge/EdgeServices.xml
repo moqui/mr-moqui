@@ -702,11 +702,11 @@ along with this software (see the LICENSE.md file). If not, see
             channels@public-url in runtime/.env, the edge node's address. PASS: edge/node@pass-client and
             pass_client_(id)_sites and _callback in runtime/.env. Web: hostList (hostName, modeEnumId) is this node's
             whole list of names on the edge node; a name another node holds is refused there. XMPP (xmppOn): this node's
-            xmpp_domain goes to the edge node (kept in its setupJson), and with web access on it is added to hostList as
+            xmpp-server@domain goes to the edge node (kept in its setupJson), and with web access on it is added to hostList as
             passthrough when not listed, as uploads (https://domain) and /xmpp-websocket ride on web access; with web
             access off and the name not on the edge node, a failed xmpp line says so and the rest is applied. Refused
-            before any change when this node has no xmpp_domain or the edge node no tunnel port. Nothing is written
-            locally for XMPP; lines say when this node's xmpp_port or xmpp_tls_port (which Chat apps shows) differ
+            before any change when this node has no xmpp-server@domain or the edge node no tunnel port. Nothing is written
+            locally for XMPP; lines say when this node's xmpp-server@port or xmpp-server@tls-port (which Chat apps shows) differ
             from the edge node's ports, and when the edge node's ports cannot find this node's clients. Calls (callsOn given, and the edge node's media node offered; left out, nothing
             changes; nothing is sent to the edge node): edge/node@calls-enabled true or false in runtime/.env, and the edge
             node's CallMediaNode row written again at once, draining while it is false (the link keeps it so after
@@ -770,7 +770,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="dkimRecord"/>
             <parameter name="mailMta"><description>The edge node's MTA, moqui or postfix: with postfix Rspamd's key
                 signs, which the edge node does not know, so only that a DKIM record is there is checked</description></parameter>
-            <parameter name="xmppDomain"><description>This node's xmpp_domain when its clients come through the edge
+            <parameter name="xmppDomain"><description>This node's xmpp-server@domain when its clients come through the edge
                 node; empty for no XMPP records</description></parameter>
             <parameter name="xmppHosts" type="List"/>
             <parameter name="xmppPort" type="Integer"/>
@@ -801,7 +801,7 @@ along with this software (see the LICENSE.md file). If not, see
             checks that it takes the webhooks of chatBridgeIds (not checked with none); with passOn, the PASS client
             settings name passSites and the edge node has mr-pass; with xmppOn, a client stream through each tunnel port
             the edge node has on (check xmpp for STARTTLS, xmpps for direct TLS; not checked when off) reaches this
-            node's XMPP server, which must take tunneled connections of that kind, and xmpp_domain is one of this node's
+            node's XMPP server, which must take tunneled connections of that kind, and xmpp-server@domain is one of this node's
             host names there (xmppWeb); the TLS must present this node's own certificate for the domain; with callsOn
             (not checked while edge/node@calls-enabled is false), the edge node's CallMediaNode row is kept by the link,
             live, with the Hello's media address and not draining, so Calls.js puts it first (callsNode),

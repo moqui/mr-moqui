@@ -3552,7 +3552,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="remove" noun="AttachmentFile" allow-remote="false">
         <description>Internal: the stored file of a chat file that goes (clear#MessageContent, clean#PendingAttachments),
             before its ChatAttachment row is deleted. A file under the chat root (chat@attachment-root) is deleted; a file
-            put over XMPP, under the upload root (xmpp_upload_root, attach#Upload), is deleted when no other chat file is on
+            put over XMPP, under the upload root (xmpp-server/upload@root, attach#Upload), is deleted when no other chat file is on
             it, with the XmppUpload rows of its location (SEC-COM-14). The XmppUpload rows made to serve this chat file to
             XMPP clients (get#AttachmentUrls) go either way, so no upload URL outlives it.</description>
         <in-parameters><parameter name="chatAttachmentId" required="true"/></in-parameters>
@@ -3561,7 +3561,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!file) return
             const location = file.location ? String(file.location) : ''
             const chatRoot = (ec.factory.getConfValue('chat@attachment-root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
-            const uploadRoot = (System.getProperty('xmpp_upload_root') || 'dbresource://xmpp-upload').replace(/\/+$/, '') + '/'
+            const uploadRoot = (ec.factory.getConfValue('xmpp-server/upload@root') || 'dbresource://xmpp-upload').replace(/\/+$/, '') + '/'
             ec.entity.find('moqui.xmpp.XmppUpload').condition('chatAttachmentId', chatAttachmentId).disableAuthz().deleteAll()
             if (location.startsWith(chatRoot)) {
                 ec.resource.getLocationReference(location).delete()

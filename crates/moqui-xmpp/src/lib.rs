@@ -46,7 +46,7 @@ use moqui_lib::source_guard::{GuardPolicy, SourceGuard};
 /// The settings of the server, from the host's properties.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// The domain of user JIDs, `user@domain` (`xmpp_domain`).
+    /// The domain of user JIDs, `user@domain` (`xmpp-server@domain`).
     pub domain: String,
     /// The MUC service, `rooms.<domain>` by default.
     pub rooms_domain: String,
@@ -64,10 +64,10 @@ pub struct Config {
     pub fast_token_lifetime: Duration,
     /// The version answered to XEP-0092 software version queries; empty answers none.
     pub software_version: String,
-    /// Whether external services (XEP-0215) hand out TURN credentials (`xmpp_turn_enabled`, off by default). While off,
+    /// Whether external services (XEP-0215) hand out TURN credentials (`xmpp-server@turn-enabled`, off by default). While off,
     /// the feature is not advertised and a request is answered with no services.
     pub turn_enabled: bool,
-    /// The key the SCRAM salts of unknown users are derived from (`xmpp_scram_decoy_key`), so they stay the same across
+    /// The key the SCRAM salts of unknown users are derived from (`xmpp-server@scram-decoy-key`), so they stay the same across
     /// restarts and nodes; empty uses a random key of this process.
     pub decoy_key: Vec<u8>,
 }

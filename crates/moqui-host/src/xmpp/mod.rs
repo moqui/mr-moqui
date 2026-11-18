@@ -13,17 +13,17 @@
  */
 
 //! XMPP for local users (plans/archive/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): the host's side of
-//! [`moqui_xmpp`]. Off while `xmpp_domain` is empty.
+//! [`moqui_xmpp`]. Off while `xmpp-server@domain` is empty.
 //!
-//! - **Listeners.** `xmpp_port` (STARTTLS) on `xmpp_host` and `xmpp_tls_port` (direct TLS, ALPN `xmpp-client`) on
-//!   `xmpp_tls_host`, each off while empty, on a small Tokio runtime of their own; the certificates from `runtime/cert`
+//! - **Listeners.** `xmpp-server@port` (STARTTLS) on `xmpp-server@host` and `xmpp-server@tls-port` (direct TLS, ALPN `xmpp-client`) on
+//!   `xmpp-server@tls-host`, each off while empty, on a small Tokio runtime of their own; the certificates from `runtime/cert`
 //!   by the name the client asks for ([`crate::tls::CertStore`]: the domain, `rooms.` and `upload.`, else `default`).
 //!   At most [`PER_SOURCE`] connections from one source at once (an IPv6 /64 is one, an IPv4-mapped address is its IPv4
 //!   one, [`moqui_lib::source_guard::source_key`]) and [`MAX_CONNECTIONS`] in all, WebSockets included.
 //!   `/xmpp-websocket` (RFC 7395) on the HTTP listener
-//!   when `xmpp_websocket_enabled` ([`ws`]), and `/xmpp-upload/` for files ([`upload`]).
-//! - **Settings.** External services (XEP-0215) hand out TURN credentials only with `xmpp_turn_enabled`; the SCRAM salts
-//!   of unknown users derive from `xmpp_scram_decoy_key` (generated when unset), so they stay the same across restarts.
+//!   when `xmpp-server@websocket-enabled` ([`ws`]), and `/xmpp-upload/` for files ([`upload`]).
+//! - **Settings.** External services (XEP-0215) hand out TURN credentials only with `xmpp-server@turn-enabled`; the SCRAM salts
+//!   of unknown users derive from `xmpp-server@scram-decoy-key` (generated when unset), so they stay the same across restarts.
 //! - **The backend.** Each service the session names runs on a request worker ([`crate::worker`]): as the signed-in
 //!   user, logged in by username (`internal_login_user`, which refuses a disabled account), or as internal work.
 //! - **Pushes.** A subscription to the notification bus's `notification-message` topic, as `/notws` has, hands every
@@ -165,20 +165,20 @@ fn number<T: std::str::FromStr>(name: &str, default: T) -> T {
 
 /// The server's settings from the properties.
 pub(crate) fn config() -> Option<Config> {
-    let domain = property("xmpp_domain");
+    let domain = property("xmpp-server@domain");
     if domain.is_empty() {
         return None;
     }
     let mut config = Config::for_domain(&domain);
-    let rooms = property("xmpp_rooms_domain");
+    let rooms = property("xmpp-server@rooms-domain");
     if !rooms.is_empty() {
         config.rooms_domain = rooms.to_lowercase();
     }
-    let upload = property("xmpp_upload_domain");
+    let upload = property("xmpp-server@upload-domain");
     if !upload.is_empty() {
         config.upload_domain = upload.to_lowercase();
     }
-    let base = property("xmpp_upload_url");
+    let base = property("xmpp-server/upload@url");
     config.upload_base_url = if base.is_empty() {
         match property("webapp-list/webapp[webroot]@https-port").as_str() {
             "" | "443" => format!("https://{}", config.domain),
@@ -187,14 +187,17 @@ pub(crate) fn config() -> Option<Config> {
     } else {
         base.trim_end_matches('/').to_string()
     };
-    config.upload_max_bytes = number("xmpp_upload_max_bytes", config.upload_max_bytes);
-    config.resume_timeout = Duration::from_secs(number("xmpp_resume_seconds", 300_u64).clamp(0, 3600));
-    config.fast_token_lifetime = Duration::from_secs(number("xmpp_fast_token_days", 14_u64).clamp(1, 365) * 86_400);
+    config.upload_max_bytes = number("xmpp-server/upload@max-bytes", config.upload_max_bytes);
+    config.resume_timeout = Duration::from_secs(number("xmpp-server@resume-seconds", 300_u64).clamp(0, 3600));
+    config.fast_token_lifetime =
+        Duration::from_secs(number("xmpp-server@fast-token-days", 14_u64).clamp(1, 365) * 86_400);
     config.software_version = env!("CARGO_PKG_VERSION").to_string();
-    config.turn_enabled = property("xmpp_turn_enabled") == "true";
-    let decoy = property("xmpp_scram_decoy_key");
+    config.turn_enabled = property("xmpp-server@turn-enabled") == "true";
+    let decoy = property("xmpp-server@scram-decoy-key");
     if decoy.is_empty() || decoy.ends_with("CHANGEME") {
-        tracing::warn!("XMPP: xmpp_scram_decoy_key is not set; unknown users' SCRAM salts change with each start");
+        tracing::warn!(
+            "XMPP: xmpp-server@scram-decoy-key is not set; unknown users' SCRAM salts change with each start"
+        );
     } else {
         config.decoy_key = decoy.into_bytes();
     }
@@ -206,7 +209,7 @@ pub(crate) fn server_of(factory: &ExecutionContextFactory) -> Option<Arc<Server>
     lock(&factory.extension(|_| XmppSlot::default()).server).clone()
 }
 
-/// The HTTP routes while the server runs: the upload URLs, and `/xmpp-websocket` with `xmpp_websocket_enabled`.
+/// The HTTP routes while the server runs: the upload URLs, and `/xmpp-websocket` with `xmpp-server@websocket-enabled`.
 pub(crate) fn routes(
     app: axum::Router<Arc<crate::http::HttpState>>,
     factory: &ExecutionContextFactory,
@@ -219,7 +222,7 @@ pub(crate) fn routes(
         &format!("{}{{token}}/{{name}}", upload::PREFIX),
         axum::routing::any(upload::handle),
     );
-    if property("xmpp_websocket_enabled") == "true" {
+    if property("xmpp-server@websocket-enabled") == "true" {
         tracing::info!("XMPP over WebSocket at {}", ws::PATH);
         app.route(ws::PATH, axum::routing::get(ws::upgrade).connect(ws::upgrade))
     } else {
@@ -227,7 +230,7 @@ pub(crate) fn routes(
     }
 }
 
-/// Start the listeners and the subscription when `xmpp_domain` is set. Never on a dedicated edge node, whose client
+/// Start the listeners and the subscription when `xmpp-server@domain` is set. Never on a dedicated edge node, whose client
 /// ports tunnel to its local node (checked for this factory, as a test runs both ends in one process). An all-in-one
 /// node starts its own, on its own ports, beside the tunnel ports of its paired node's domain (plans/archive/Edge-Node.md §10).
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
@@ -246,8 +249,8 @@ pub(crate) const LISTENER: &str = "XMPP";
 
 /// The client ports: the port property, the host property, and whether the port is direct TLS (else STARTTLS).
 const CLIENT_PORTS: [(&str, &str, bool); 2] = [
-    ("xmpp_port", "xmpp_host", false),
-    ("xmpp_tls_port", "xmpp_tls_host", true),
+    ("xmpp-server@port", "xmpp-server@host", false),
+    ("xmpp-server@tls-port", "xmpp-server@tls-host", true),
 ];
 
 /// Where the client port `port_name` listens: None while it is empty, else its address or why that listener is off.
@@ -261,7 +264,7 @@ fn client_address(port_name: &str, host_name: &str) -> Option<Result<SocketAddr,
     };
     let host = Some(property(host_name))
         .filter(|host| !host.is_empty())
-        .unwrap_or_else(|| property("xmpp_host"));
+        .unwrap_or_else(|| property("xmpp-server@host"));
     let host = if host.is_empty() { "0.0.0.0".to_string() } else { host };
     Some(
         match (host.as_str(), port).to_socket_addrs().map(|mut found| found.next()) {
@@ -271,10 +274,10 @@ fn client_address(port_name: &str, host_name: &str) -> Option<Result<SocketAddr,
     )
 }
 
-/// The client ports XMPP will bind, for the port check before the framework is built: none while `xmpp_domain` is
+/// The client ports XMPP will bind, for the port check before the framework is built: none while `xmpp-server@domain` is
 /// empty or on a dedicated edge node (`front`, `front_edge` or `edge`), whose client ports tunnel to its local node.
 pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
-    if property("xmpp_domain").is_empty() || moqui_core::edge::node_role_kind().edge_node() {
+    if property("xmpp-server@domain").is_empty() || moqui_core::edge::node_role_kind().edge_node() {
         return Vec::new();
     }
     CLIENT_PORTS
@@ -294,13 +297,13 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
 
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     use moqui_core::startup::{listener, State};
-    if property("xmpp_domain").is_empty() {
-        listener(factory, LISTENER, State::off("xmpp_domain is not set"));
+    if property("xmpp-server@domain").is_empty() {
+        listener(factory, LISTENER, State::off("xmpp-server@domain is not set"));
         return None;
     }
     if moqui_core::edge::settings(factory).edge_node() {
         tracing::warn!(
-            "XMPP: xmpp_domain is set on a dedicated edge node (instance@node-role {}), which starts no XMPP server: \
+            "XMPP: xmpp-server@domain is set on a dedicated edge node (instance@node-role {}), which starts no XMPP server: \
              edge@xmpp-port and edge@xmpp-tls-port tunnel clients to the local node",
             moqui_core::edge::settings(factory).role.as_str()
         );
@@ -312,10 +315,11 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
         return None;
     }
     let config = config()?;
-    // the services read these: the bookmarks' room JIDs, the URLs of files sent to XMPP clients
-    moqui_lib::env::set_property("xmpp_rooms_domain", config.rooms_domain.clone());
-    moqui_lib::env::set_property("xmpp_upload_url", config.upload_base_url.clone());
-    moqui_lib::env::set_property("xmpp_upload_max_bytes", config.upload_max_bytes.to_string());
+    // the services read these, resolved from the conf (its defaults filled in): the bookmarks' room JIDs, the URLs of
+    // files sent to XMPP clients; runtime state, not settings (plans/Conf-Paths.md, Decisions)
+    moqui_lib::env::set_property("xmpp_resolved_rooms_domain", config.rooms_domain.clone());
+    moqui_lib::env::set_property("xmpp_resolved_upload_url", config.upload_base_url.clone());
+    moqui_lib::env::set_property("xmpp_resolved_upload_max_bytes", config.upload_max_bytes.to_string());
     let backend: Arc<dyn Backend> = Arc::new(HostBackend {
         factory: Arc::downgrade(factory),
     });

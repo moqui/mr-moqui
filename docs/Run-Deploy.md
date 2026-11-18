@@ -418,14 +418,14 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `channels/edge-limits@webhooks-per-minute`, `channels/edge-limits@webhooks-per-client-minute`, `channels/edge-limits@unverified-max-bytes`, `channels/edge-limits@unverified-waiting` | `600`, `120`, `32768`, `500` | On an edge node, for a bridge whose provider signs with a secret it does not hold (the local node checks them): the webhooks a minute it queues for the bridge and from one client address, the largest body, and how many of the bridge's may wait; past them 413 or 429 |
 | `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`, `sip_max_connections_per_source` | `20`, `100`, `2000`, `500`, `100` | The SIP listener's flood caps: new requests a second per source and at once, the transactions past which new requests are dropped, TCP and TLS connections at once, and from one source ([SIP, Settings](interfaces/SIP.md#settings)) |
 | `sip_registrar_enabled`, `sip_domain` | `false`, empty | The registrar for desk and soft phones, off even with the SIP listeners on; the realm and domain phones register to (`sip_public_address`, else `moqui`, when empty) ([SIP, Registrar](interfaces/SIP.md#registrar)) |
-| `xmpp_domain`, `xmpp_rooms_domain`, `xmpp_upload_domain` | empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): off while `xmpp_domain` is empty; users are `user@<domain>`, rooms `room@rooms.<domain>` |
-| `xmpp_port`, `xmpp_host`, `xmpp_tls_port`, `xmpp_tls_host`, `xmpp_websocket_enabled` | empty, `0.0.0.0`, empty, `xmpp_host`, `false` | The XMPP client listeners: STARTTLS (5222 by convention) and direct TLS (5223), each off while empty; `/xmpp-websocket` on the HTTP listener when `true` |
-| `xmpp_upload_url`, `xmpp_upload_max_bytes`, `xmpp_upload_secret` | `https://<domain>` (with `webapp-list/webapp[webroot]@https-port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
-| `xmpp_resume_seconds`, `xmpp_fast_token_days` | `300`, `14` | How long a dropped session waits for stream resumption, and how long a FAST token lasts |
-| `xmpp_upload_seconds` | `300` | The longest a PUT to an upload slot may take |
-| `xmpp_turn_enabled`, `xmpp_turn_per_hour` | `false`, `30` | External services (XEP-0215): TURN credentials for XMPP apps' calls, never to an external user, at most so many a user an hour |
-| `xmpp_scram_decoy_key` | generated | Derives the SCRAM salts of names that are no user's, so they stay the same across restarts and nodes |
-| `xmpp_s2s_port` | empty | Server to server (5269, federation, C3b): not built, nothing listens on it yet |
+| `xmpp-server@domain`, `xmpp-server@rooms-domain`, `xmpp-server@upload-domain` | empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): off while `xmpp-server@domain` is empty; users are `user@<domain>`, rooms `room@rooms.<domain>` |
+| `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host`, `xmpp-server@websocket-enabled` | empty, `0.0.0.0`, empty, `xmpp-server@host`, `false` | The XMPP client listeners: STARTTLS (5222 by convention) and direct TLS (5223), each off while empty; `/xmpp-websocket` on the HTTP listener when `true` |
+| `xmpp-server/upload@url`, `xmpp-server/upload@max-bytes`, `xmpp-server/upload@secret` | `https://<domain>` (with `webapp-list/webapp[webroot]@https-port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
+| `xmpp-server@resume-seconds`, `xmpp-server@fast-token-days` | `300`, `14` | How long a dropped session waits for stream resumption, and how long a FAST token lasts |
+| `xmpp-server/upload@seconds` | `300` | The longest a PUT to an upload slot may take |
+| `xmpp-server@turn-enabled`, `xmpp-server@turn-per-hour` | `false`, `30` | External services (XEP-0215): TURN credentials for XMPP apps' calls, never to an external user, at most so many a user an hour |
+| `xmpp-server@scram-decoy-key` | generated | Derives the SCRAM salts of names that are no user's, so they stay the same across restarts and nodes |
+| `xmpp-server@s2s-port` | empty | Server to server (5269, federation, C3b): not built, nothing listens on it yet |
 | `call_forward_max_hops`, `call_forward_ring_seconds` | `5`, `30` | The most forwards one phone call takes (a user's rules, a ring group's fallback; 1 to 10), and how long a forward to an outside number rings before the call goes on (10 to 120) ([SIP, Call handling](interfaces/SIP.md#call-handling)) |
 | `call_queue_tick_seconds`, `call_transfer_ring_seconds` | `5`, `30` | How often the SIP engine checks each call waiting in a queue (offers, the wait limit, the caller's place; 1 to 30), and how long a blind transfer's target rings before the caller goes to their voicemail (10 to 120) ([SIP, Queues](interfaces/SIP.md#queues), [Transfer and merge](interfaces/SIP.md#transfer-and-merge)) |
 | `call_hold_music_location`, `call_queue_prompt_location` | empty | Hold music for calls on hold and in queues without their own (WAV or Ogg Opus, looped; empty: a tone pattern; use only audio you may use), and a folder of `0.wav` to `9.wav` that speaks a queue caller's place (empty: pips) ([SIP, Queues](interfaces/SIP.md#queues)) |
@@ -789,7 +789,7 @@ a backup asked for now with the job's own parameters ([Attack-Surface](security/
 | `rtc_media_tcp_port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off | `rtc_media_tcp_port` |
 | `turn_port` (UDP and TCP), `turn_tls_port`, 443 on `turn_tls443_host`; `turn_relay_ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off | `turn_port`, `turn_tls_port`, `turn_tls443_host`, `turn_host`, `turn_relay_ports` |
 | `sip_port` (UDP and TCP), `sip_tls_port`; `sip_rtp_ports` (UDP) | SIP trunks, desk and soft phones (the registrar, with `sip_registrar_enabled`; `sip_tls_port` 5061 and `_sips._tcp` for remote phones), and the RTP of phone legs ([SIP](interfaces/SIP.md)) | Off; Maximal, Enterprise and Debug only | `sip_port`, `sip_host`, `sip_tls_port`, `sip_tls_host`, `sip_rtp_ports`, `sip_rtp_host`, `sip_public_address` |
-| `xmpp_port` (5222), `xmpp_tls_port` (5223) | XMPP clients, STARTTLS and direct TLS with ALPN `xmpp-client` ([XMPP](interfaces/XMPP.md)); the WebSocket is on the HTTP listener (`/xmpp-websocket`) | Off; Maximal, Enterprise and Debug only | `xmpp_domain`, `xmpp_port`, `xmpp_host`, `xmpp_tls_port`, `xmpp_tls_host` |
+| `xmpp-server@port` (5222), `xmpp-server@tls-port` (5223) | XMPP clients, STARTTLS and direct TLS with ALPN `xmpp-client` ([XMPP](interfaces/XMPP.md)); the WebSocket is on the HTTP listener (`/xmpp-websocket`) | Off; Maximal, Enterprise and Debug only | `xmpp-server@domain`, `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host` |
 
 XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTLS) and `_xmpps-client._tcp.<domain>`
 (5223, direct TLS, XEP-0368), both at the host's name; the certificates in `runtime/cert` must cover the domain,
@@ -1183,7 +1183,7 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
   replicated record that claims a server's item is not applied: System › Edge Clients › Domains lists it under Replica conflicts,
   with Check again. The server's own setup refuses an address, bridge or number the local node holds. An address both
   sides hold gets 451 at `RCPT TO`, and a bridge both hold gets 409 at its webhook; each is logged.
-- **XMPP.** The server's XMPP server keeps `xmpp_port` and `xmpp_tls_port`. Give the local node's domain tunnel ports
+- **XMPP.** The server's XMPP server keeps `xmpp-server@port` and `xmpp-server@tls-port`. Give the local node's domain tunnel ports
   of their own, such as `moqui_conf__edge__xmpp_port=5242` and `moqui_conf__edge__xmpp_tls_port=5243`, named in that domain's SRV records. A
   tunnel port the same as the server's own is off, with an error logged.
 - **PASS.** The server's mr-pass keeps its local authority (`pass_backend_url` is not `edge:`). PASS sites for the
@@ -1214,7 +1214,7 @@ The confs, the `.env` names and the commands are in [runtime/conf/multi-domain](
 
 1. Set up the edge node as for one local node, from `conf/multi-domain/MoquiEdgeConf.xml`.
 2. For each local node: make a pairing code on the edge node (System › Edge Clients › Clients), and pair and run the
-   wizard on the local node. Give each local node its own `xmpp_domain` and `sip_domain` first.
+   wizard on the local node. Give each local node its own `xmpp-server@domain` and `sip_domain` first.
 3. Check Edge Clients › Domains: each local node's host names, mail domains, XMPP domain, SIP realm and numbers, chat
    bridges and PASS sites, and any record refused because another node claimed its item.
 4. For SSH, give each local node a tunnel port of its own on Edge Clients › Ports.

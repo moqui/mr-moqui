@@ -204,7 +204,7 @@ pub struct EdgeSetup {
     pub mail_domains: Vec<String>,
     pub chat_bridge_ids: Vec<String>,
     pub pass_sites: Vec<String>,
-    /// The local node's XMPP domain (`xmpp_domain`), when its clients come through the edge node's tunnel ports;
+    /// The local node's XMPP domain (`xmpp-server@domain`), when its clients come through the edge node's tunnel ports;
     /// empty when not. Its `rooms.` and `upload.` names are the domain's and are not sent.
     pub xmpp_domain: String,
 }
