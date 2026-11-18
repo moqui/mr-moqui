@@ -1188,3 +1188,18 @@ fn a_webhooks_replay_window_is_at_most_half_the_time_its_signature_is_held() {
     // a cache that holds entries for good leaves the wanted window
     assert_eq!(super::web::window_within(300_000, 0, 0), 300_000);
 }
+
+/// The spam filter's number lookup (plans/Comms-Messaging.md §18.3 phase 11): a bridge whose adapter has none, and a
+/// bridge not found, answer notSupported, never an error, so the text it judges goes on.
+#[test]
+fn a_bridge_with_no_number_lookup_answers_not_supported() {
+    let bed = bed("lookup", false);
+    let _entered = bed.ctx.enter();
+    for id in ["BA", "NONE"] {
+        let out = ok(
+            &format!("{BRIDGES}.lookup#BridgeNumber"),
+            &[("chatBridgeId", text(id)), ("phoneNumber", text("+15550001111"))],
+        );
+        assert_eq!(out_text(&out, "reasonCode"), "notSupported", "{id}");
+    }
+}

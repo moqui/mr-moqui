@@ -475,6 +475,44 @@ fn the_room_level_decides_who_is_pushed() {
     assert_eq!(devices(&bed.net.take()), set(["FRANK-PHONE"]));
 }
 
+/// Phase 11 (block and spam): a member whose room is in Spam & blocked gets no push, a mention included, and nor does a
+/// user who blocked the sender; the others still do.
+#[test]
+fn a_filtered_room_and_a_blocked_sender_push_nothing() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    update(
+        &bed.facade,
+        "moqui.chat.ChatRoomMember",
+        &[("chatRoomId", &bed.room), ("userId", "bob")],
+        &[("filterEnumId", text("CmfSpam"))],
+    );
+    row(
+        &bed.facade,
+        "moqui.chat.ChatUserBlock",
+        &[("userId", text("dave")), ("blockedUserId", text("alice"))],
+    );
+    login("alice");
+    send(
+        &bed.room,
+        &format!("<p>{} {} hello</p>", mention("bob"), mention("dave")),
+        &[],
+    );
+    run(bed.now);
+    assert!(
+        devices(&bed.net.take()).is_empty(),
+        "bob filtered it, dave blocked alice"
+    );
+    login("carol");
+    send(&bed.room, "<p>from carol</p>", &[]);
+    run(bed.now + 1_000);
+    assert_eq!(
+        devices(&bed.net.take()),
+        set(["DAVE-UP"]),
+        "dave blocked alice, not carol"
+    );
+}
+
 /// Rule 4: a reaction is the sender's activity and never a push; taking it back takes its activity.
 #[test]
 fn a_reaction_never_pushes() {

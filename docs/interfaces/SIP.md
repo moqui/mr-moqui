@@ -278,6 +278,15 @@ token (`CallRoute.stepSeq`, `stepToken` in the answers): the engine's timer and 
 the token of the step they came from, and one that arrives after the plan moved on is `stale` and changes nothing, so a
 late decline or timer of an earlier step cannot skip the step that rings now.
 
+**The Blocked list** (Settings, Call handling, Blocked numbers; or Block in a phone room's menu). A user's one
+`CallerList` of type `CltBlocked`, made on the first block, which a rule cannot name: a caller on it (a number, or a
+prefix ending in `*`) is refused, 603 Decline, before every rule below, with no voicemail. A ring group's member who
+blocked the caller is left out before any leg is made (no tab, phone or mobile rings, and no missed call is logged); in
+order or round robin their turn is skipped and the next member rings. A user who blocked a person in chat is not rung
+by their calls: a direct call to them is refused as one to nobody (`noCallee`), and a room's call leaves them out with no
+leg and no callee log. The list's numbers' texts are kept out of the user's sight too
+([SMS, Blocked numbers and spam](SMS.md#blocked-numbers-and-spam)).
+
 **A user's rules** (Settings, Call handling; `CallHandlingRule`, read in `sequenceNum` order, each while its schedule
 is open or closed):
 

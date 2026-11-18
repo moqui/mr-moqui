@@ -16,8 +16,15 @@
 //
 // The user's own settings (their rules, caller lists, call waiting, mobile, caller-ID blocking, do not disturb) and the
 // admin's ring groups and schedules are here too; admin services need VoiceAdmin.
+//
+// The Blocked list (plans/Comms-Messaging.md §18.3 phase 11): a user's one CallerList of type CltBlocked, made on the
+// first block (blockNumber), named by its type, never renamed, deleted or named by a rule. A caller on it is refused
+// before every rule (planUser); Calls.js ring leaves out a user who blocked the caller (blockedUsers); its numbers' pair
+// rooms are out of the user's sight (ChatBlocks.js refilterPhoneRooms) and their texts come in out of sight (SmsSpam.js).
 
 const CALLS = 'component://framework/service/org/moqui/call/Calls.js'
+const CHAT_BLOCKS = 'component://framework/service/org/moqui/chat/ChatBlocks.js'
+const BLOCKED = 'CltBlocked'
 const VOICE = 'component://framework/service/org/moqui/call/Voice.js'
 const SESSION = 'moqui.call.CallSession'
 const NUMBER = 'moqui.call.PhoneNumber'
@@ -189,12 +196,39 @@ function isAnonymous(raw) {
   return !/\d{3,}/.test(text)
 }
 
+/** Whether a list entry (a number, or a prefix ending in *) holds number. */
+function entryHolds(entry, number) {
+  const text = String(entry || '')
+  return text.endsWith('*') ? number.startsWith(text.slice(0, -1)) : text === number
+}
+
 function onList(callerListId, number) {
   if (!callerListId || !number) return false
-  return rows(ENTRY, { callerListId }).some((e) => {
-    const entry = String(e.phoneNumber || '')
-    return entry.endsWith('*') ? number.startsWith(entry.slice(0, -1)) : entry === number
-  })
+  return rows(ENTRY, { callerListId }).some((e) => entryHolds(e.phoneNumber, number))
+}
+
+/** The user's Blocked list (CltBlocked), made when make is true; null when there is none. */
+function blockedListOf(userId, make) {
+  if (!userId) return null
+  const found = Array.from(find(LIST).condition({ userId, listTypeEnumId: BLOCKED }).list())[0]
+  if (found || !make) return found || null
+  const list = ec.entity.makeValue(LIST)
+  list.setSequencedIdPrimary()
+  list.setFields({ userId, name: 'Blocked numbers', listTypeEnumId: BLOCKED }, true, null, null)
+  list.create()
+  return list
+}
+
+/** Of userIdList, the users whose Blocked list holds phoneNumber (Calls.js ring, ChatBlocks.js, SmsSpam.js). */
+function blockedUsers(p) {
+  const number = String(p.phoneNumber || '').trim()
+  const users = Array.from(new Set(Array.from(p.userIdList || []).map((id) => String(id || '')).filter((id) => id)))
+  if (!number || !users.length) return { userIdList: [] }
+  const lists = Array.from(find(LIST).condition('userId', 'in', users).condition('listTypeEnumId', BLOCKED).list())
+  if (!lists.length) return { userIdList: [] }
+  const holding = new Set(Array.from(find(ENTRY).condition('callerListId', 'in', lists.map((l) => l.callerListId)).list())
+    .filter((e) => entryHolds(e.phoneNumber, number)).map((e) => e.callerListId))
+  return { userIdList: lists.filter((l) => holding.has(l.callerListId)).map((l) => l.userId) }
 }
 
 function settingOf(userId) {
@@ -337,6 +371,11 @@ function planUser(userId, ctx) {
     .filter((r) => ruleApplies(r, ctx))
   const of = (kind) => rules.filter((r) => r.kindEnumId === kind)
   const reject = (reasonCode) => [{ type: 'reject', reasonCode }]
+  // the Blocked list, before every rule: refused, with no voicemail
+  if (ctx.from && blockedUsers({ phoneNumber: ctx.from, userIdList: [userId] }).userIdList.length) {
+    trace(ctx, `${userId}: caller on the Blocked list`)
+    return reject('declined')
+  }
   if (ctx.anonymous && of('ChrAnonymousReject').length) {
     trace(ctx, `${userId}: anonymous caller rejected`)
     return selectiveSteps(of('ChrAnonymousReject')[0], userId, ctx, reject('anonymous'))
@@ -493,9 +532,24 @@ function planOf(route) {
 }
 
 /** A ring step: the users still free (a group's members are read again), the forwards allowed; null when none rings. */
+/** Of a step's users, those whose Blocked list holds the caller's number (a failure is logged: nobody left out). */
+function blockersOfCaller(route, userIds) {
+  if (!route.fromNumber || !userIds.length) return new Set()
+  try {
+    return new Set(blockedUsers({ phoneNumber: route.fromNumber, userIdList: userIds }).userIdList || [])
+  } catch (err) {
+    ec.logger.warn(`Call ${route.callSessionId}: the Blocked lists were not read, all rung: ${err && err.message ? err.message : err}`)
+    return new Set()
+  }
+}
+
 function runRing(route, step, displayName) {
-  const users = (step.users || []).filter((userId) => step.role === 'ringGroupMember' ? memberFree(userId) : enabledUser(userId))
-  const numbers = (step.numbers || []).filter((n) => (step.role !== 'ringGroupMember' || users.includes(n.userId)) &&
+  // a user who blocked the caller is left out before any leg: no tab, phone or mobile rings, and no missed call; in a
+  // ring group taken in turns, their turn is skipped (the step has nobody, so the plan goes on)
+  const blockers = blockersOfCaller(route, step.users || [])
+  const users = (step.users || []).filter((userId) => !blockers.has(userId))
+    .filter((userId) => step.role === 'ringGroupMember' ? memberFree(userId) : enabledUser(userId))
+  const numbers = (step.numbers || []).filter((n) => !blockers.has(n.userId)).filter((n) => (step.role !== 'ringGroupMember' || users.includes(n.userId)) &&
     voice('forwardCheck', { phoneNumber: n.number, userId: n.userId, byAdmin: !!n.byAdmin }).allowed)
   if (!users.length && !numbers.length) return null
   const rung = calls('ringStep', { callSessionId: route.callSessionId, userIdList: users, numberList: numbers, role: step.role,
@@ -696,8 +750,9 @@ function ruleView(rule) {
   }
 }
 
+/** The user's own caller lists (not the Blocked list), with their entries. */
 function listsOf(userId) {
-  return Array.from(find(LIST).condition('userId', userId).orderBy('name').list()).map((list) => ({
+  return Array.from(find(LIST).condition('userId', userId).orderBy('name').list()).filter((list) => list.listTypeEnumId !== BLOCKED).map((list) => ({
     callerListId: list.callerListId, name: list.name,
     entryList: Array.from(find(ENTRY).condition('callerListId', list.callerListId).orderBy('phoneNumber').list())
       .map((e) => ({ phoneNumber: e.phoneNumber, name: e.name || null })),
@@ -720,11 +775,13 @@ function getSettings() {
   return {
     ruleList: Array.from(find(RULE).condition('userId', me).orderBy('sequenceNum').list()).map(ruleView),
     callerListList: listsOf(me),
+    blockedList: blockedEntries(me),
     scheduleList: schedulesFor(me),
     groupList: Array.from(find(GROUP).orderBy('name').list()).map((g) => ({ ringGroupId: g.ringGroupId, name: g.name || g.ringGroupId })),
     settings: {
       callWaiting: setting.callWaiting === 'Y', mobileNumber: setting.mobileNumber || null, ringMobile: setting.ringMobile === 'Y',
       mobileScheduleId: setting.mobileScheduleId || null, hideCallerId: setting.hideCallerId === 'Y', dnd: dnd(me),
+      spamFilter: setting.spamFilter !== 'N',
       forwardEnabled: voiceSetting.forwardEnabled === 'Y' && voiceSetting.outboundEnabled === 'Y',
     },
     kindList: enumsOf('CallHandlingKind'), targetList: enumsOf('CallHandlingTarget'),
@@ -735,7 +792,8 @@ function updateSettings(p) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in first')
   const fields = {}
-  for (const key of ['callWaiting', 'ringMobile', 'hideCallerId']) if (p[key] != null && p[key] !== '') fields[key] = yes(p[key]) ? 'Y' : 'N'
+  for (const key of ['callWaiting', 'ringMobile', 'hideCallerId', 'spamFilter']) if (p[key] != null && p[key] !== '') fields[key] = yes(p[key]) ? 'Y' : 'N'
+  const spamOff = fields.spamFilter === 'N' && settingOf(me).spamFilter !== 'N'
   if (p.mobileNumber != null) {
     if (blank(p.mobileNumber)) fields.mobileNumber = null
     else {
@@ -750,6 +808,11 @@ function updateSettings(p) {
     else fields.mobileScheduleId = p.mobileScheduleId
   }
   makeOrUpdate(SETTING, { userId: me }, fields)
+  // the filter off: the user's rooms in Spam come back
+  if (spamOff) {
+    const spam = Array.from(find('moqui.chat.ChatRoomMember').condition({ userId: me, filterEnumId: 'CmfSpam' }).selectField('chatRoomId').list())
+    if (spam.length) chatBlocks('setFilters', { userId: me, chatRoomIdList: spam.map((row) => row.chatRoomId), onlyFrom: 'CmfSpam' })
+  }
   if (p.dnd != null && p.dnd !== '' && yes(p.dnd) !== dnd(me)) {
     ec.service.sync().name('org.moqui.chat.ChatServices.set#UserStatus').parameter('status', yes(p.dnd) ? 'dnd' : 'online').call()
   }
@@ -793,7 +856,7 @@ function storeRule(p) {
   const callerListId = p.callerListId !== undefined && p.callerListId !== null ? p.callerListId || null : rule?.callerListId || null
   if (SELECTIVE.includes(kind)) {
     const list = callerListId ? one(LIST, { callerListId }) : null
-    if (!list || list.userId !== me) return refuse('badRule', 'Choose a list of callers')
+    if (!list || list.userId !== me || list.listTypeEnumId === BLOCKED) return refuse('badRule', 'Choose a list of callers')
   }
   const commsScheduleId = p.commsScheduleId === undefined || p.commsScheduleId === null ? rule?.commsScheduleId || null : p.commsScheduleId || null
   if (commsScheduleId && !schedulesFor(me).some((s) => s.commsScheduleId === commsScheduleId)) return refuse('notFound', 'Schedule not found')
@@ -825,10 +888,68 @@ function deleteRule(p) {
   return {}
 }
 
-function myList(callerListId) {
+/** One of the current user's own caller lists; the Blocked list only with blocked (blockNumber and its entries). */
+function myList(callerListId, blocked) {
   const me = ec.user.userId
   const list = me && callerListId ? one(LIST, { callerListId }) : null
-  return list && list.userId === me ? list : null
+  return list && list.userId === me && (blocked || list.listTypeEnumId !== BLOCKED) ? list : null
+}
+
+function chatBlocks(op, parameters) {
+  return ec.resource.script(CHAT_BLOCKS).execute(op, parameters) || {}
+}
+
+/** The entries of the user's Blocked list: [{phoneNumber, name}]. */
+function blockedEntries(userId) {
+  const list = blockedListOf(userId, false)
+  return list ? Array.from(find(ENTRY).condition('callerListId', list.callerListId).orderBy('phoneNumber').list())
+    .map((e) => ({ phoneNumber: e.phoneNumber, name: e.name || null })) : []
+}
+
+/** A typed number in E.164, or a prefix (+ and digits ending in *); {number} or {refusal}. */
+function entryNumber(raw) {
+  const text = String(raw || '').trim()
+  if (text.endsWith('*')) {
+    const number = '+' + text.replace(/[^0-9]/g, '') + '*'
+    if (!/^\+\d{1,14}\*$/.test(number) || !text.startsWith('+')) return { refusal: refuse('badNumber', 'A prefix starts with + and its country code, then ends with *') }
+    return { number }
+  }
+  const number = voice('forwardCheck', { phoneNumber: text, userId: ec.user.userId, byAdmin: false }).number
+  return number ? { number } : { refusal: refuse('badNumber', 'That is not a phone number') }
+}
+
+/** The current user blocks a number or a prefix: on their Blocked list (made now when there is none), its pair rooms out of their sight. */
+function blockNumber(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const entry = entryNumber(p.phoneNumber)
+  if (entry.refusal) return entry.refusal
+  const list = blockedListOf(me, true)
+  if (!one(ENTRY, { callerListId: list.callerListId, phoneNumber: entry.number })) {
+    if (find(ENTRY).condition('callerListId', list.callerListId).count() >= MAX_ENTRIES) return refuse('tooMany', 'The list is full')
+    makeOrUpdate(ENTRY, { callerListId: list.callerListId, phoneNumber: entry.number }, { name: blank(p.name) ? null : String(p.name).trim().slice(0, 100) })
+  }
+  chatBlocks('refilterPhoneRooms', { userId: me })
+  return { phoneNumber: entry.number, callerListId: list.callerListId }
+}
+
+/** The current user unblocks a number or a prefix (as it is on the list): its pair rooms come back unless another entry holds them. */
+function unblockNumber(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const list = blockedListOf(me, false)
+  if (!list) return {}
+  const raw = String(p.phoneNumber || '').trim()
+  const entry = one(ENTRY, { callerListId: list.callerListId, phoneNumber: raw }) || (entryNumber(raw).number
+    ? one(ENTRY, { callerListId: list.callerListId, phoneNumber: entryNumber(raw).number }) : null)
+  ec.message.clearErrors()
+  if (entry) {
+    entry.delete()
+    // the user's Report spam of it is withdrawn: their vote, and the teammates' rooms their report put in Spam
+    ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('withdrawReport', { userId: me, phoneNumber: entry.phoneNumber })
+  }
+  chatBlocks('refilterPhoneRooms', { userId: me })
+  return {}
 }
 
 function storeList(p) {
@@ -837,6 +958,7 @@ function storeList(p) {
   const name = String(p.name || '').trim().slice(0, 100)
   if (!name) return refuse('noName', 'Give the list a name')
   if (!blank(p.callerListId)) {
+    if (myList(p.callerListId, true) && !myList(p.callerListId)) return refuse('blockedList', 'The Blocked list keeps its name')
     const list = myList(p.callerListId)
     if (!list) return refuse('notFound', 'List not found')
     list.set('name', name)
@@ -852,6 +974,7 @@ function storeList(p) {
 }
 
 function deleteList(p) {
+  if (myList(p.callerListId, true) && !myList(p.callerListId)) return refuse('blockedList', 'The Blocked list stays; take its numbers off instead')
   const list = myList(p.callerListId)
   if (!list) return refuse('notFound', 'List not found')
   if (find(RULE).condition('callerListId', list.callerListId).count() > 0) return refuse('inUse', 'A rule uses this list; change the rule first')
@@ -861,6 +984,8 @@ function deleteList(p) {
 }
 
 function addEntry(p) {
+  const blockedList = myList(p.callerListId, true)
+  if (blockedList && blockedList.listTypeEnumId === BLOCKED) return blockNumber(p)
   const list = myList(p.callerListId)
   if (!list) return refuse('notFound', 'List not found')
   const raw = String(p.phoneNumber || '').trim()
@@ -878,6 +1003,8 @@ function addEntry(p) {
 }
 
 function removeEntry(p) {
+  const blockedList = myList(p.callerListId, true)
+  if (blockedList && blockedList.listTypeEnumId === BLOCKED) return unblockNumber(p)
   const list = myList(p.callerListId)
   if (!list) return refuse('notFound', 'List not found')
   const entry = one(ENTRY, { callerListId: list.callerListId, phoneNumber: p.phoneNumber })
@@ -1205,7 +1332,9 @@ function normalize(p) {
 const operations = {
   inbound, advance, evaluate, getSettings, updateSettings, storeRule, deleteRule, storeList, deleteList, addEntry, removeEntry,
   findGroups, storeGroup, deleteGroup, storeMember, deleteMember, findSchedules, storeSchedule, deleteSchedule,
-  storeScheduleRule, deleteScheduleRule, checkSchedule, searchDialable, dialerData, normalize,
+  storeScheduleRule, deleteScheduleRule, checkSchedule, searchDialable, dialerData, normalize, blockNumber, unblockNumber,
+  // for Calls.js, ChatBlocks.js and SmsSpam.js
+  blockedUsers,
   // for Voice.js, Voicemail.js and V5's IVR, queues and transfers
   routeTo,
   scheduleOpen: (p) => ({ open: scheduleOpen(p.commsScheduleId, blank(p.atMs) ? nowMs() : Number(p.atMs)) }),
