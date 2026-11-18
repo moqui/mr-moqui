@@ -2784,6 +2784,9 @@ const chatRoom = {
             }
             if (delivery.state === 'uncertain') return fill(t('May not have reached {names}'), { names: this.deliveryNames(item, 'uncertain') });
             if (delivery.state === 'pending') return fill(t('Sending to {names}'), { names: this.deliveryNames(item, 'pending') });
+            // an RCS bridge's message that went as the fallback says so (Comms-Messaging §16)
+            const fallback = delivery.destinations.length === 1 ? moqui.chat.pathName(delivery.destinations[0]) : '';
+            if (fallback) return fill(t('Delivered to {network} as {path}'), { network: this.deliveryNames(item), path: fallback });
             return fill(t('Delivered to {names}'), { names: this.deliveryNames(item) });
         },
         deliveryIcon(item) {

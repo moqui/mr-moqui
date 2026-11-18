@@ -142,7 +142,9 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   with (the SMS icon, named their number): its texts, pictures, calls and voicemail are there, and everyone our number
   reaches is in it. Calls, Text a number opens it for a number you are granted; a reply goes from that number. A person
   who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
-  administrator allows them. See [SMS](../interfaces/SMS.md).
+  administrator allows them. See [SMS](../interfaces/SMS.md). A number on an RCS bridge texts as the brand's RCS
+  agent, with SMS from the number when the phone has no RCS; each message's caption and Info say when it went as SMS
+  or MMS ([RCS](../interfaces/RCS.md)).
 - <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
   app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Settings, Chat apps
   shows the address to sign in as (`username@domain`; an email-style username has its `@` written as `\40`), the

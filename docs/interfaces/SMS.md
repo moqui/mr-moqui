@@ -1,7 +1,7 @@
 # SMS and MMS
 
 Texts to and from outside numbers, through the provider's messaging API and webhooks, on the chat bridge layer
-([Chat bridges](Chat-Bridges.md)). Telnyx is the first provider (D-V4). A number's texts, calls and voicemail land in one
+([Chat bridges](Chat-Bridges.md)). Business RCS goes through the same core and providers ([RCS](RCS.md)). Telnyx is the first provider (D-V4). A number's texts, calls and voicemail land in one
 room per outside number. The design is [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §5.6, §5.4 ("One
 conversation per outside number"), §4.3 ("Business channels"), milestone C4-SMS. Texting needs no SIP engine: a number
 with a messaging bridge and no trunk texts.
@@ -405,7 +405,7 @@ documentation of the Conversation API ([API reference](https://developers.sinch.
   administrator fixes it; 429 and 503 are tried again; another 4xx fails (`providerRefused`).
 - **In.** The signature is checked on the server that holds the secret (behind an edge node, the local node:
   [Behind an edge node](#setup)). Only the SMS and MMS channels are texts: a message on another channel of the app
-  (Messenger, WhatsApp) is left. Sinch keeps a text's files 7 days, and they are fetched as the text comes in.
+  (Messenger, WhatsApp, RCS: an `rcs-sinch` bridge takes RCS, [RCS](RCS.md)) is left. Sinch keeps a text's files 7 days, and they are fetched as the text comes in.
   `DELIVERED` and `READ` are delivered, `FAILED` fails the delivery with Sinch's reason; `QUEUED_ON_CHANNEL` and
   `SWITCHING_CHANNEL` are left.
 - **Opt-out.** `OPT_IN` and `OPT_OUT` do not fire for a STOP texted on SMS: a STOP comes as a text and goes through

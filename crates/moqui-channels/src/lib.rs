@@ -27,6 +27,10 @@
 //!   pair room, then `ingest#Event`) and `ChatBridgeServices.note#DeliveryReceipt` for a delivery receipt.
 //! - [`providers`]: one module a provider. [`providers::telnyx`] is the `sms` adapter's, on the Telnyx Messaging API
 //!   v2; [`providers::sinch`] is `sms-sinch`'s, on the Sinch Conversation API.
+//! - Business RCS (plans/Comms-Messaging.md §16, docs/interfaces/RCS.md) is the same adapter on an RCS provider
+//!   ([`sms::Channel::Rcs`]): `rcs-twilio` ([`providers::twilio::Twilio::rcs`]) and `rcs-sinch`
+//!   ([`providers::sinch::Sinch::rcs`]), bridges of type `CbtRcs`, with SMS and MMS from our number as the fallback and
+//!   each sent message's path (RCS, SMS or MMS) kept on its delivery.
 //!
 //! The crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it only through the
 //! [`moqui_core::extension`] entry below. moqui-host links it under its `channels` feature (Enterprise and Maximal);
@@ -52,12 +56,15 @@ moqui_core::extension::submit! {
     }
 }
 
-/// The adapters of this crate: one for each SMS provider, by its adapter name.
+/// The adapters of this crate, by their adapter names: one for each SMS provider, and the RCS ones of Twilio and Sinch.
 pub fn adapters() -> Vec<Arc<dyn ChatBridgeAdapter>> {
     vec![
         Arc::new(sms::SmsAdapter::new(providers::telnyx::Telnyx)),
         Arc::new(sms::SmsAdapter::new(providers::twilio::Twilio::default())),
         Arc::new(sms::SmsAdapter::new(providers::sinch::Sinch::default())),
+        // business RCS on the same providers (docs/interfaces/RCS.md)
+        Arc::new(sms::SmsAdapter::new(providers::twilio::Twilio::rcs())),
+        Arc::new(sms::SmsAdapter::new(providers::sinch::Sinch::rcs())),
     ]
 }
 

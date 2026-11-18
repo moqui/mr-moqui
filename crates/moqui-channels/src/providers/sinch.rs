@@ -59,6 +59,11 @@
 //!   files are kept by Sinch 7 days, and the core fetches them as the text comes in.
 //!
 //! Its encryption is `None` (plans/Comms-Messaging.md §6.3), as every SMS provider's.
+//!
+//! The same provider is also the `rcs-sinch` adapter's ([`Sinch::rcs`]): business RCS on the app's `RCS` channel, with
+//! SMS and MMS as its fallback ([`rcs`], docs/interfaces/RCS.md). The `sms-sinch` adapter still leaves an RCS message.
+
+pub mod rcs;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -72,8 +77,9 @@ use moqui_lib::http::{Method, RestClient, RestResponse};
 use serde_json::{json, Value as Json};
 
 use crate::sms::{
-    answer, call, flag_of, text_of, ApiBody, ApiRequest, Defaults, Inbound, InboundMedia, Keyword, OptSignal, Outgoing,
-    ProviderError, Receipt, ReceiptStatus, Refusal, Settings, SmsEvent, SmsProvider,
+    answer, call, flag_of, postback_of, text_of, ApiBody, ApiRequest, Channel, Defaults, Inbound, InboundMedia,
+    Keyword, OptSignal, Outgoing, Path, ProviderError, Receipt, ReceiptStatus, Refusal, Settings, SmsEvent,
+    SmsProvider,
 };
 
 /// The header Sinch signs a webhook in, and the others of its signature.
@@ -143,14 +149,29 @@ impl std::fmt::Debug for Token {
     }
 }
 
-/// The Sinch provider of the `sms-sinch` adapter (one for every Sinch bridge): its access tokens, by token service,
-/// key id and a hash of the key's secret, so a bridge whose secret changed never takes another's token.
+/// The Sinch provider of the `sms-sinch` adapter (one for every Sinch bridge), and of the `rcs-sinch` adapter
+/// ([`Sinch::rcs`]): its access tokens, by token service, key id and a hash of the key's secret, so a bridge whose
+/// secret changed never takes another's token.
 #[derive(Debug, Default)]
 pub struct Sinch {
     tokens: Mutex<HashMap<String, Token>>,
+    /// SMS and MMS (`sms-sinch`), or business RCS (`rcs-sinch`).
+    channel: Channel,
 }
 
 impl Sinch {
+    /// The provider of the `rcs-sinch` adapter.
+    pub fn rcs() -> Self {
+        Self {
+            channel: Channel::Rcs,
+            ..Self::default()
+        }
+    }
+
+    fn is_rcs(&self) -> bool {
+        self.channel == Channel::Rcs
+    }
+
     fn token_key(config: &Config) -> String {
         let secret = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, config.key_secret.as_bytes());
         format!(
@@ -255,8 +276,29 @@ impl SmsProvider for Sinch {
         "Sinch"
     }
 
+    fn channel(&self) -> Channel {
+        self.channel
+    }
+
     fn adapter_name(&self) -> &'static str {
-        "sms-sinch"
+        if self.is_rcs() {
+            "rcs-sinch"
+        } else {
+            "sms-sinch"
+        }
+    }
+
+    fn sms_adapter_name(&self) -> Option<&'static str> {
+        self.is_rcs().then_some("sms-sinch")
+    }
+
+    /// The project and its app (`projectId/appId`): a webhook's `project_id/app_id`.
+    fn account_of(&self, config: &Json) -> Option<String> {
+        Some(format!(
+            "{}/{}",
+            text_of(config, "projectId")?,
+            text_of(config, "appId")?
+        ))
     }
 
     fn defaults(&self) -> Defaults {
@@ -321,6 +363,9 @@ impl SmsProvider for Sinch {
         {
             return Err("The Sinch bridge's authBaseUrl is not an https address".to_string());
         }
+        if self.is_rcs() {
+            return rcs::check(config);
+        }
         Ok(())
     }
 
@@ -349,6 +394,13 @@ impl SmsProvider for Sinch {
             "message": message,
             "channel_properties": {sender_key: out.ours},
         });
+        // RCS first, then (with the fallback) SMS or MMS from the room's number
+        if self.is_rcs() {
+            let (identities, order, properties) = rcs::route(out, &theirs);
+            body["recipient"]["identified_by"]["channel_identities"] = identities;
+            body["channel_priority_order"] = order;
+            body["channel_properties"] = properties;
+        }
         let delivery = &out.request.chat_bridge_delivery_id;
         if !delivery.is_empty() && delivery.len() <= 128 {
             body["correlation_id"] = Json::String(delivery.clone());
@@ -395,7 +447,8 @@ impl SmsProvider for Sinch {
                 "Sinch sends one file a text: send each file in a text of its own",
             );
         }
-        if !out.media_urls.is_empty() && config.mms_sender.as_deref() != Some(out.ours) {
+        // a file's fallback is an MMS, from the MMS channel's sender (RCS alone needs none)
+        if !out.media_urls.is_empty() && out.fallback && config.mms_sender.as_deref() != Some(out.ours) {
             let error = match &config.mms_sender {
                 None => "The Sinch bridge has no mmsSender: its texts carry no files until its MMS channel is set up"
                     .to_string(),
@@ -561,11 +614,12 @@ impl Sinch {
         let Ok(event) = serde_json::from_slice::<Json>(&request.body) else {
             return Err(WebhookResponse::text(400, "the body is not JSON"));
         };
+        let rcs = self.is_rcs();
         if let Some(message) = event.get("message") {
-            return received(&event, message, ours);
+            return received(&event, message, ours, rcs);
         }
         if let Some(report) = event.get("message_delivery_report") {
-            return receipt(&event, report);
+            return receipt(&event, report, rcs);
         }
         for (key, keyword, succeeded) in [
             ("opt_out_notification", Keyword::Stop, "OPT_OUT_SUCCEEDED"),
@@ -575,7 +629,7 @@ impl Sinch {
                 let event_id = str_at(notice, "/request_id")
                     .map(str::to_string)
                     .unwrap_or_else(|| body_hash(&request.body));
-                return Ok(opted(notice, &event_id, keyword, succeeded, ours));
+                return Ok(opted(notice, &event_id, keyword, succeeded, ours, rcs));
             }
         }
         Ok(SmsEvent::Ignored(
@@ -620,14 +674,17 @@ fn millis_of(text: Option<&str>) -> Option<i64> {
 }
 
 /// A `MESSAGE_INBOUND`: a text, a file, or a file with its caption. Our number is the message's `sender_id` (the number
-/// the person texted), else the bridge's `smsSender`.
-fn received(event: &Json, message: &Json, ours: Option<&str>) -> Result<SmsEvent, WebhookResponse> {
+/// the person texted), else the bridge's `smsSender`. On an RCS bridge (`rcs`) the `RCS` channel's too ([`rcs`]): our
+/// number is `smsSender`, and a place and a tapped suggestion are kept.
+fn received(event: &Json, message: &Json, ours: Option<&str>, rcs: bool) -> Result<SmsEvent, WebhookResponse> {
     if str_at(message, "/direction").is_some_and(|direction| direction != "TO_APP") {
         return Ok(SmsEvent::Ignored("a message from the app".to_string()));
     }
-    // an app may have other channels (Messenger, WhatsApp): their identities are no phone numbers
+    // an app may have other channels (Messenger, WhatsApp): their identities are no phone numbers; an RCS identity is
+    // one, and only an RCS bridge takes it
     let channel = str_at(message, "/channel_identity/channel").or_else(|| str_at(message, "/channel"));
-    if !matches!(channel, Some("SMS" | "MMS")) {
+    let on_rcs = channel == Some("RCS");
+    if !(matches!(channel, Some("SMS" | "MMS")) || (rcs && on_rcs)) {
         return Ok(SmsEvent::Ignored(format!(
             "a message on channel {}",
             channel.unwrap_or("none")
@@ -639,7 +696,9 @@ fn received(event: &Json, message: &Json, ours: Option<&str>) -> Result<SmsEvent
             "a text names its message and the sender's number",
         ));
     };
+    // an RCS message's sender_id is the agent's, no number of ours
     let Some(ours) = str_at(message, "/sender_id")
+        .filter(|_| !on_rcs)
         .map(e164)
         .or_else(|| ours.map(str::to_string))
     else {
@@ -657,12 +716,24 @@ fn received(event: &Json, message: &Json, ours: Option<&str>) -> Result<SmsEvent
         .into_iter()
         .collect()
     };
+    let mut location = None;
+    let mut postback = None;
     let (text, media) = if let Some(words) = content.pointer("/text_message/text").and_then(Json::as_str) {
         (Some(words.to_string()), Vec::new())
     } else if let Some(media) = content.get("media_message") {
         (None, file(str_at(media, "/url")))
     } else if let Some(card) = content.get("media_card_message") {
         (str_at(card, "/caption").map(str::to_string), file(str_at(card, "/url")))
+    } else if let Some(place) = content.get("location_message").filter(|_| on_rcs) {
+        location = rcs::location_of(place);
+        if location.is_none() {
+            return Ok(SmsEvent::Ignored("a place with no coordinates".to_string()));
+        }
+        (None, Vec::new())
+    } else if let Some(choice) = content.get("choice_response_message").filter(|_| on_rcs) {
+        // a tapped suggestion: its payload, as its words until R2's chips answer to it
+        postback = postback_of(str_at(choice, "/postback_data"));
+        (postback.clone(), Vec::new())
     } else {
         return Ok(SmsEvent::Ignored("a message that is not a text or a file".to_string()));
     };
@@ -674,12 +745,18 @@ fn received(event: &Json, message: &Json, ours: Option<&str>) -> Result<SmsEvent
         text,
         media,
         origin_millis: millis_of(str_at(message, "/accept_time").or_else(|| str_at(event, "/accepted_time"))),
+        location,
+        postback,
+        account: str_at(event, "/project_id")
+            .zip(str_at(event, "/app_id"))
+            .map(|(project, app)| format!("{project}/{app}")),
         ..Inbound::default()
     }))
 }
 
-/// A `MESSAGE_DELIVERY`: the message's state at its recipient.
-fn receipt(event: &Json, report: &Json) -> Result<SmsEvent, WebhookResponse> {
+/// A `MESSAGE_DELIVERY`: the message's state at its recipient. On an RCS bridge (`rcs`) also the way it went: the
+/// report's channel, and `SWITCHING_CHANNEL` the fallback's.
+fn receipt(event: &Json, report: &Json, rcs: bool) -> Result<SmsEvent, WebhookResponse> {
     let Some(id) = str_at(report, "/message_id") else {
         return Err(WebhookResponse::text(400, "a delivery report names its message"));
     };
@@ -687,6 +764,13 @@ fn receipt(event: &Json, report: &Json) -> Result<SmsEvent, WebhookResponse> {
     let status = match status {
         "DELIVERED" | "READ" => ReceiptStatus::Delivered,
         "FAILED" => ReceiptStatus::Failed,
+        // RCS did not reach the phone: the next channel of the order, SMS or MMS, is tried
+        "SWITCHING_CHANNEL" if rcs => {
+            return Ok(SmsEvent::Path {
+                remote_event_id: id.to_string(),
+                path: Path::Fallback,
+            })
+        }
         // QUEUED_ON_CHANNEL (taken by the SMS channel: the text was accepted already), SWITCHING_CHANNEL (a fallback)
         other => return Ok(SmsEvent::Ignored(other.to_string())),
     };
@@ -702,16 +786,21 @@ fn receipt(event: &Json, report: &Json) -> Result<SmsEvent, WebhookResponse> {
         other_remote_event_id: None,
         receipt_millis: millis_of(str_at(event, "/event_time").or_else(|| str_at(event, "/accepted_time"))),
         opt_signal: None,
+        path: rcs
+            .then(|| rcs::path_of(str_at(report, "/channel_identity/channel")))
+            .flatten(),
     }))
 }
 
 /// An `OPT_OUT` or `OPT_IN` Sinch took: STOP or START from their number to the bridge's `smsSender` (the notice names
 /// none of ours). Left when it did not succeed, is of another channel, or the bridge has no `smsSender`.
-fn opted(notice: &Json, event_id: &str, keyword: Keyword, succeeded: &str, ours: Option<&str>) -> SmsEvent {
+fn opted(notice: &Json, event_id: &str, keyword: Keyword, succeeded: &str, ours: Option<&str>, rcs: bool) -> SmsEvent {
     if str_at(notice, "/status") != Some(succeeded) {
         return SmsEvent::Ignored(str_at(notice, "/status").unwrap_or("no status").to_string());
     }
-    if str_at(notice, "/channel").is_some_and(|channel| channel != "SMS" && channel != "MMS") {
+    // an RCS bridge's RCS opt-out is the person's STOP of the pair, as an SMS one is
+    if str_at(notice, "/channel").is_some_and(|channel| !matches!(channel, "SMS" | "MMS") && !(rcs && channel == "RCS"))
+    {
         return SmsEvent::Ignored("an opt-out of another channel".to_string());
     }
     let (Some(theirs), Some(ours)) = (str_at(notice, "/identity"), ours) else {

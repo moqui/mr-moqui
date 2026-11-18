@@ -1095,6 +1095,15 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     lines = chat.messageInfoLines(chat.messageInfo(group, members, { me: "ann" }), when).filter((line) => line.key === "delivered" || line.key === "recipient");
     assert.deepEqual(lines.map((line) => line.label + ": " + line.text), ["SMS: Delivered: the network's receipt says so",
         "+15552220001: Delivered: the network's receipt says so", "+15552220002: Not delivered"]);
+    // an RCS bridge's message (plans/Comms-Messaging.md §16): the way it went; "as SMS" on the bubble only for the fallback
+    const rcs = (path) => event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "RCS", state: "accepted", receipt: "delivered", path }] } });
+    const sentAs = (path) => chat.messageInfoLines(chat.messageInfo(rcs(path), members, { me: "ann" }), when).filter((line) => line.key === "path").map((line) => line.text);
+    assert.deepEqual(sentAs("rcs"), ["RCS"]);
+    assert.deepEqual(sentAs("sms"), ["SMS: the phone did not take RCS"]);
+    assert.deepEqual(sentAs("mms"), ["MMS: the phone did not take RCS"]);
+    assert.deepEqual(sentAs(null), [], "not known yet, or an SMS bridge's");
+    assert.deepEqual(["rcs", "sms", "mms", null].map((path) => chat.pathName({ path })), ["", "SMS", "MMS", ""]);
     // a thread: Sent and Delivered only, it has no read markers
     const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
     const thread = chat.messageInfo(reply, members, { me: "ann" });
