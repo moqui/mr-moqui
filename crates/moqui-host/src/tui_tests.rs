@@ -288,6 +288,7 @@ fn the_first_administrator_is_posted_with_the_token_initial_admin_needed_hands_o
         full_name: "Ada Admin".into(),
         email: "ada@example.com".into(),
         setup_secret: String::new(),
+        join_advanced: false,
     };
     let asked = Arc::new(Mutex::new(Vec::new()));
     let link = Link::over(Setup {

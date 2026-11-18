@@ -11,19 +11,19 @@
 
 
 
-
-                 ┌─ Welcome to your new system: create the first administrator ───┐
-                 │   Username . . . . : [admin               ]                    │
-                 │   Password . . . . : [•••••••••••••       ]                    │
-                 │   Password again . : [•••••••••••••       ]                    │
-                 │   Full name  . . . : [Ada Admin           ]                    │
-                 │ > Email  . . . . . : [ada@example.com     ]                    │
-                 │   The password: at least 12 characters, 1 digit, 1 other       │
-                 │                                                                │
-                 │ Enter=Next  Ctrl+S=Create and log in  Tab=Next  Esc=Cancel     │
-                 └────────────────────────────────────────────────────────────────┘
-
-
+        ┌─ Welcome to your new system: create the first administrator ────────────────────┐
+        │   Username  . . . . . . : [admin               ]                                │
+        │   Password  . . . . . . : [•••••••••••••       ]                                │
+        │   Password again  . . . : [•••••••••••••       ]                                │
+        │   Full name . . . . . . : [Ada Admin           ]                                │
+        │ > Email . . . . . . . . : [ada@example.com     ]                                │
+        │   Also join ADMIN_ADV . : [ ]                                                   │
+        │   The password: at least 12 characters, 1 digit, 1 other                        │
+        │   ADMIN_ADV: login as another user, SQL, SSH shell, conf edit, deploy and more. │
+        │   Leave it off unless needed; only a member can add a member later.             │
+        │                                                                                 │
+        │ Enter=Next  Space=Toggle  Ctrl+S=Create and log in  Tab=Next  Esc=Cancel        │
+        └─────────────────────────────────────────────────────────────────────────────────┘
 
 
 

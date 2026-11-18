@@ -74,12 +74,14 @@ On the server:
    and `privkey.pem` ([certificates](#certificates)).
 3. Write the host's settings to `/opt/moqui/.env`. The first start adds the generated secrets to the same file.
    `webapp_https_port` is the port clients use; leave it out when they reach the server on 443.
+   `initial_admin_enabled=true` turns on the form that creates the first administrator (step 5); it is off unless set.
 
    ```sh
    sudo -u moqui tee /opt/moqui/.env > /dev/null <<'EOF'
    webapp_http_host=erp.example.com
    webapp_https_enabled=true
    webapp_https_port=8443
+   initial_admin_enabled=true
    EOF
    sudo chmod 600 /opt/moqui/.env
    ```
@@ -95,7 +97,8 @@ On the server:
    `https://erp.example.com:8443/Login` and create the first administrator with **Create Initial Admin Account**. The
    form is there only while nobody has an account. From any machine but the server itself it also asks for the setup
    secret, which the server writes to its log at startup (`moqui.log`, the line that begins "No user account exists
-   yet").
+   yet"). Check **Also join Administrators - Advanced** only if this account needs the advanced tools
+   ([the first administrator](#the-first-administrator)). Then take `initial_admin_enabled=true` out of `.env`.
 6. Back up `/opt/moqui/.env` with the database. It holds `entity_ds_crypt_pass`, the key of the encrypted fields.
 
 Upgrades, backups, binding port 443 and the rest are in [One production server](#one-production-server).
@@ -533,11 +536,12 @@ Data loaded into empty DB, re-initializing ExecutionContextFactory
 Every start checks the tables. `entity_add_missing_startup` (default `true`) creates missing tables and adds missing
 columns and indexes. Columns are never dropped or changed.
 
-While the only accounts are the seeded ones nobody logs in as (`_NA_` and the agents' chat users), the login page
-shows **Create Initial Admin Account**. The account it makes is in the `ADMIN` group. Once any person has an account,
-the form is gone and the service refuses the call. A request from the server's own machine (a loopback peer, straight
-to the listener, with no proxy's forwarding header) creates it as is; from any other address the form asks for the
-one-time setup secret the server writes to its startup log while no account exists, and a restart makes a new one.
+While the only accounts are the seeded ones nobody logs in as (`_NA_` and the agents' chat users) and
+`initial_admin_enabled` is `true`, the login page shows **Create Initial Admin Account**
+([the first administrator](#the-first-administrator)). Once any person has an account, the form is gone and the
+service refuses the call. A request from the server's own machine (a loopback peer, straight to the listener, with no
+proxy's forwarding header) creates it as is; from any other address the form asks for the one-time setup secret the
+server writes to its startup log while no account exists, and a restart makes a new one.
 Two requests at once make one account: the create takes a row lock and asks again.
 
 | Type | What it holds |
@@ -559,6 +563,29 @@ Otherwise it is UPDATE first, then INSERT. `-D create-or-update=true` switches t
 has created the row since (`ON CONFLICT DO NOTHING`, on MySQL `ON DUPLICATE KEY UPDATE`), and that row is then updated.
 Either way, concurrent calls for one new key do not fail on it
 ([Parity-Diffs](../plans/Parity-Diffs.md#atomic-create-or-update-2026-10-30)).
+
+### The first administrator
+
+`initial_admin_enabled` is `false` in the default conf and `true` in the dev conf (and on the Desktop app's node). On a
+server, set it for the setup, usually as a line in `.env` (`initial_admin_enabled=true`), restart, and take it out once
+the account is made. While it is off and no account exists, the login page and the startup log say how to turn it on,
+and the service refuses the call.
+
+The account the form makes is in the `ADMIN` group. With **Also join Administrators - Advanced** checked it is in
+`ADMIN_ADV` too: login as another user, the SQL runner, the SSH admin shell and host terminal, conf editing, component
+deploy, load testing and hosted instances. These run code or reach data outside the apps, so leave it off unless the
+account needs them; a system may have no member at all. `ADMIN_ADV` is a privileged group: only a member can add a
+member. With no member, the operator adds one with a data load, with the server stopped on embedded Postgres (the
+`userId` is on System › Security › User Account):
+
+```sh
+cat > adv.xml <<'EOF'
+<entity-facade-xml type="install">
+    <moqui.security.UserGroupMember userGroupId="ADMIN_ADV" userId="100000" fromDate="2026-11-17 00:00:00"/>
+</entity-facade-xml>
+EOF
+moqui load location=$PWD/adv.xml
+```
 
 ## Database and search
 

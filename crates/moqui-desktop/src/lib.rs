@@ -491,6 +491,7 @@ fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("The node is a dev instance: the Dev AIDE and the dev tools (Developer tools in the tray)");
     }
     properties.extend(node::purpose_properties(dev_tools));
+    properties.extend(node::setup_properties());
     let start = NodeStart {
         mode,
         runtime,
