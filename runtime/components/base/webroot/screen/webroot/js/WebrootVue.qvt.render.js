@@ -3447,6 +3447,762 @@
               }, 8, ["model-value", "maximized", "onUpdate:modelValue"]))
             }
         } },
+        "m-chat-networks": { hash: "e4ba9f73", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_badge = _resolveComponent("q-badge")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_q_menu = _resolveComponent("q-menu")
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_card = _resolveComponent("q-card")
+              const _component_q_dialog = _resolveComponent("q-dialog")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_ctx.ways.length > 1)
+                ? (_openBlock(), _createBlock(_component_q_btn, {
+                    key: 0,
+                    flat: "",
+                    round: "",
+                    dense: "",
+                    size: "sm",
+                    icon: _ctx.icon,
+                    class: "m-chat-networks",
+                    "aria-label": _ctx.title,
+                    onClick: $event => (_ctx.phone ? (_ctx.sheet = true) : null)
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_tooltip, null, {
+                        default: _withCtx(() => [
+                          _createTextVNode(_toDisplayString(_ctx.title), 1)
+                        ]),
+                        _: 1
+                      }),
+                      (!_ctx.phone)
+                        ? (_openBlock(), _createBlock(_component_q_menu, {
+                            key: 0,
+                            anchor: "top left",
+                            self: "bottom left"
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_list, {
+                                class: "m-chat-ways",
+                                style: {"min-width":"260px"}
+                              }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.ways, (way) => {
+                                    return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                      key: way.key,
+                                      clickable: way.usable && !way.current,
+                                      disable: !way.usable,
+                                      active: way.current,
+                                      "data-way": way.network + ':' + way.kind,
+                                      onClick: $event => (_ctx.choose(way))
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, {
+                                              name: way.icon
+                                            }, null, 8, ["name"])
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_label, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(way.name), 1),
+                                                (way.best)
+                                                  ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                      key: 0,
+                                                      color: "primary",
+                                                      class: "q-ml-xs m-chat-way-best"
+                                                    }, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(_ctx.t('Best')), 1)
+                                                      ]),
+                                                      _: 1
+                                                    }))
+                                                  : _createCommentVNode("", true),
+                                                (way.current)
+                                                  ? (_openBlock(), _createElementBlock("span", {
+                                                      key: 1,
+                                                      class: "text-caption m-muted q-ml-xs"
+                                                    }, _toDisplayString(_ctx.t('Here')), 1))
+                                                  : _createCommentVNode("", true)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            (way.detail)
+                                              ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                  key: 0,
+                                                  caption: "",
+                                                  class: "ellipsis"
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(way.detail), 1)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024))
+                                              : _createCommentVNode("", true),
+                                            _createVNode(_component_q_item_label, {
+                                              caption: "",
+                                              class: "row no-wrap items-center m-chat-way-label"
+                                            }, {
+                                              default: _withCtx(() => [
+                                                (way.label.icon)
+                                                  ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                      key: 0,
+                                                      name: way.label.icon,
+                                                      size: "14px",
+                                                      class: "q-mr-xs"
+                                                    }, null, 8, ["name"]))
+                                                  : _createCommentVNode("", true),
+                                                _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(way.label.text || way.label.banner), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        (way.reason)
+                                          ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                              key: 0,
+                                              side: "",
+                                              class: "text-caption"
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(way.reason), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024))
+                                          : _createCommentVNode("", true)
+                                      ]),
+                                      _: 2
+                                    }, 1032, ["clickable", "disable", "active", "data-way", "onClick"])), [
+                                      [_directive_close_popup, _ctx.closes]
+                                    ])
+                                  }), 128))
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }))
+                        : _createCommentVNode("", true),
+                      (_ctx.phone)
+                        ? (_openBlock(), _createBlock(_component_q_dialog, {
+                            key: 1,
+                            modelValue: _ctx.sheet,
+                            "onUpdate:modelValue": $event => ((_ctx.sheet) = $event),
+                            position: "bottom"
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_card, { class: "full-width" }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_card_section, { class: "text-subtitle2 q-pb-none" }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.t('Send with')), 1)
+                                    ]),
+                                    _: 1
+                                  }),
+                                  _createVNode(_component_q_list, {
+                                    class: "m-chat-ways",
+                                    style: {"min-width":"260px"}
+                                  }, {
+                                    default: _withCtx(() => [
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.ways, (way) => {
+                                        return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                          key: way.key,
+                                          clickable: way.usable && !way.current,
+                                          disable: !way.usable,
+                                          active: way.current,
+                                          "data-way": way.network + ':' + way.kind,
+                                          onClick: $event => (_ctx.choose(way))
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, { avatar: "" }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_icon, {
+                                                  name: way.icon
+                                                }, null, 8, ["name"])
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_label, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(way.name), 1),
+                                                    (way.best)
+                                                      ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                          key: 0,
+                                                          color: "primary",
+                                                          class: "q-ml-xs m-chat-way-best"
+                                                        }, {
+                                                          default: _withCtx(() => [
+                                                            _createTextVNode(_toDisplayString(_ctx.t('Best')), 1)
+                                                          ]),
+                                                          _: 1
+                                                        }))
+                                                      : _createCommentVNode("", true),
+                                                    (way.current)
+                                                      ? (_openBlock(), _createElementBlock("span", {
+                                                          key: 1,
+                                                          class: "text-caption m-muted q-ml-xs"
+                                                        }, _toDisplayString(_ctx.t('Here')), 1))
+                                                      : _createCommentVNode("", true)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024),
+                                                (way.detail)
+                                                  ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                      key: 0,
+                                                      caption: "",
+                                                      class: "ellipsis"
+                                                    }, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(way.detail), 1)
+                                                      ]),
+                                                      _: 2
+                                                    }, 1024))
+                                                  : _createCommentVNode("", true),
+                                                _createVNode(_component_q_item_label, {
+                                                  caption: "",
+                                                  class: "row no-wrap items-center m-chat-way-label"
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    (way.label.icon)
+                                                      ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                          key: 0,
+                                                          name: way.label.icon,
+                                                          size: "14px",
+                                                          class: "q-mr-xs"
+                                                        }, null, 8, ["name"]))
+                                                      : _createCommentVNode("", true),
+                                                    _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(way.label.text || way.label.banner), 1)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            (way.reason)
+                                              ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                                  key: 0,
+                                                  side: "",
+                                                  class: "text-caption"
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(way.reason), 1)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024))
+                                              : _createCommentVNode("", true)
+                                          ]),
+                                          _: 2
+                                        }, 1032, ["clickable", "disable", "active", "data-way", "onClick"])), [
+                                          [_directive_close_popup, _ctx.closes]
+                                        ])
+                                      }), 128))
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["modelValue", "onUpdate:modelValue"]))
+                        : _createCommentVNode("", true)
+                    ]),
+                    _: 1
+                  }, 8, ["icon", "aria-label", "onClick"]))
+                : _createCommentVNode("", true)
+            }
+        } },
+        "m-chat-person": { hash: "6187cdd3", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, createBlock: _createBlock, withDirectives: _withDirectives, withKeys: _withKeys, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_q_menu = _resolveComponent("q-menu")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_badge = _resolveComponent("q-badge")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_separator = _resolveComponent("q-separator")
+              const _component_q_card_actions = _resolveComponent("q-card-actions")
+              const _component_q_card = _resolveComponent("q-card")
+              const _component_q_dialog = _resolveComponent("q-dialog")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_ctx.person)
+                ? (_openBlock(), _createBlock(_component_q_card, {
+                    key: 0,
+                    flat: "",
+                    bordered: "",
+                    class: "m-chat-person q-ma-sm"
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_card_section, { class: "row items-center no-wrap q-py-sm" }, {
+                        default: _withCtx(() => [
+                          _createElementVNode("div", {
+                            class: "col",
+                            style: {"min-width":"0"}
+                          }, [
+                            _createElementVNode("div", { class: "text-subtitle2 ellipsis m-chat-person-name" }, _toDisplayString(_ctx.title), 1),
+                            (_ctx.username)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 0,
+                                  class: "text-caption m-muted ellipsis"
+                                }, _toDisplayString(_ctx.username), 1))
+                              : _createCommentVNode("", true)
+                          ]),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            round: "",
+                            dense: "",
+                            icon: "sym_o_more_vert",
+                            class: "m-chat-person-menu",
+                            "aria-label": _ctx.t('Person')
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_menu, null, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_list, { style: {"min-width":"200px"} }, {
+                                    default: _withCtx(() => [
+                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                        clickable: "",
+                                        "data-person": "rename",
+                                        onClick: _ctx.startRename
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('Rename')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }, 8, ["onClick"])), [
+                                        [_directive_close_popup]
+                                      ]),
+                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                        clickable: "",
+                                        "data-person": "add",
+                                        onClick: $event => (_ctx.adding = true)
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('Add a conversation, number or address')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }, 8, ["onClick"])), [
+                                        [_directive_close_popup]
+                                      ]),
+                                      (_ctx.person.contactUrl)
+                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            key: 0,
+                                            clickable: "",
+                                            tag: "a",
+                                            href: _ctx.person.contactUrl,
+                                            "data-person": "contact"
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Open the contact')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["href"])), [
+                                            [_directive_close_popup]
+                                          ])
+                                        : _createCommentVNode("", true),
+                                      (_ctx.person.edited)
+                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            key: 1,
+                                            clickable: "",
+                                            "data-person": "reset",
+                                            onClick: $event => (_ctx.$emit('reset'))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Undo my changes')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"])), [
+                                            [_directive_close_popup]
+                                          ])
+                                        : _createCommentVNode("", true)
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["aria-label"])
+                        ]),
+                        _: 1
+                      }),
+                      (_ctx.renaming)
+                        ? (_openBlock(), _createBlock(_component_q_card_section, {
+                            key: 0,
+                            class: "row items-center no-wrap q-gutter-x-sm q-pt-none"
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_input, {
+                                modelValue: _ctx.nameText,
+                                "onUpdate:modelValue": $event => ((_ctx.nameText) = $event),
+                                dense: "",
+                                outlined: "",
+                                autofocus: "",
+                                class: "col",
+                                maxlength: "100",
+                                name: "personName",
+                                label: _ctx.t('Your name for them'),
+                                onKeyup: _withKeys(_ctx.saveName, ["enter"])
+                              }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "onKeyup"]),
+                              _createVNode(_component_q_btn, {
+                                unelevated: "",
+                                "no-caps": "",
+                                dense: "",
+                                color: "primary",
+                                label: _ctx.t('Save'),
+                                class: "m-chat-person-save",
+                                onClick: _ctx.saveName
+                              }, null, 8, ["label", "onClick"]),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                "no-caps": "",
+                                dense: "",
+                                label: _ctx.t('Cancel'),
+                                onClick: $event => (_ctx.renaming = false)
+                              }, null, 8, ["label", "onClick"])
+                            ]),
+                            _: 1
+                          }))
+                        : _createCommentVNode("", true),
+                      (_ctx.person.blocked)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 1,
+                            class: "q-px-md q-pb-sm text-caption"
+                          }, _toDisplayString(_ctx.t('You blocked this person')), 1))
+                        : _createCommentVNode("", true),
+                      _createVNode(_component_q_list, {
+                        class: "m-chat-ways",
+                        style: {"min-width":"260px"}
+                      }, {
+                        default: _withCtx(() => [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.ways, (way) => {
+                            return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                              key: way.key,
+                              clickable: way.usable && !way.current,
+                              disable: !way.usable,
+                              active: way.current,
+                              "data-way": way.network + ':' + way.kind,
+                              onClick: $event => (_ctx.choose(way))
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_icon, {
+                                      name: way.icon
+                                    }, null, 8, ["name"])
+                                  ]),
+                                  _: 2
+                                }, 1024),
+                                _createVNode(_component_q_item_section, null, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_label, null, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(way.name), 1),
+                                        (way.best)
+                                          ? (_openBlock(), _createBlock(_component_q_badge, {
+                                              key: 0,
+                                              color: "primary",
+                                              class: "q-ml-xs m-chat-way-best"
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.t('Best')), 1)
+                                              ]),
+                                              _: 1
+                                            }))
+                                          : _createCommentVNode("", true),
+                                        (way.current)
+                                          ? (_openBlock(), _createElementBlock("span", {
+                                              key: 1,
+                                              class: "text-caption m-muted q-ml-xs"
+                                            }, _toDisplayString(_ctx.t('Here')), 1))
+                                          : _createCommentVNode("", true)
+                                      ]),
+                                      _: 2
+                                    }, 1024),
+                                    (way.detail)
+                                      ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                          key: 0,
+                                          caption: "",
+                                          class: "ellipsis"
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(way.detail), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024))
+                                      : _createCommentVNode("", true),
+                                    _createVNode(_component_q_item_label, {
+                                      caption: "",
+                                      class: "row no-wrap items-center m-chat-way-label"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        (way.label.icon)
+                                          ? (_openBlock(), _createBlock(_component_q_icon, {
+                                              key: 0,
+                                              name: way.label.icon,
+                                              size: "14px",
+                                              class: "q-mr-xs"
+                                            }, null, 8, ["name"]))
+                                          : _createCommentVNode("", true),
+                                        _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(way.label.text || way.label.banner), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1024)
+                                  ]),
+                                  _: 2
+                                }, 1024),
+                                (way.reason)
+                                  ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                      key: 0,
+                                      side: "",
+                                      class: "text-caption"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(way.reason), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                                  : _createCommentVNode("", true)
+                              ]),
+                              _: 2
+                            }, 1032, ["clickable", "disable", "active", "data-way", "onClick"])), [
+                              [_directive_close_popup, _ctx.closes]
+                            ])
+                          }), 128))
+                        ]),
+                        _: 1
+                      }),
+                      (_ctx.mail)
+                        ? (_openBlock(), _createBlock(_component_q_item, {
+                            key: 2,
+                            clickable: "",
+                            class: "m-chat-person-mail",
+                            onClick: $event => (_ctx.$emit('mail', _ctx.mail))
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_icon, { name: "sym_o_mail" })
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_item_section, null, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_item_label, { class: "ellipsis" }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.t('Email')) + ": " + _toDisplayString(_ctx.mail.subject || _ctx.t('(no subject)')), 1)
+                                    ]),
+                                    _: 1
+                                  }),
+                                  _createVNode(_component_q_item_label, { caption: "" }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.mailLabel.text), 1)
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["onClick"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.addresses.length)
+                        ? (_openBlock(), _createElementBlock(_Fragment, { key: 3 }, [
+                            _createVNode(_component_q_separator),
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.addresses, (address) => {
+                              return (_openBlock(), _createBlock(_component_q_item, {
+                                key: address.addressKey,
+                                dense: ""
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_item_section, null, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_label, {
+                                        caption: "",
+                                        class: "ellipsis"
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(address.label), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  _createVNode(_component_q_item_section, { side: "" }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_btn, {
+                                        flat: "",
+                                        dense: "",
+                                        "no-caps": "",
+                                        size: "sm",
+                                        label: _ctx.t('Not this person'),
+                                        "aria-label": _ctx.notThis(address),
+                                        "data-separate": address.addressKey,
+                                        onClick: $event => (_ctx.$emit('separate', address.addressKey))
+                                      }, null, 8, ["label", "aria-label", "data-separate", "onClick"])
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1024))
+                            }), 128))
+                          ], 64))
+                        : _createCommentVNode("", true),
+                      _createVNode(_component_q_dialog, {
+                        modelValue: _ctx.adding,
+                        "onUpdate:modelValue": $event => ((_ctx.adding) = $event),
+                        maximized: _ctx.phone
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_card, {
+                            style: _normalizeStyle(_ctx.phone ? '' : 'width:420px;max-width:95vw'),
+                            class: "m-chat-person-add"
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_card_section, { class: "text-subtitle1" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.addTitle), 1)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_card_section, { class: "q-pt-none" }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_input, {
+                                    modelValue: _ctx.addText,
+                                    "onUpdate:modelValue": $event => ((_ctx.addText) = $event),
+                                    dense: "",
+                                    outlined: "",
+                                    autofocus: "",
+                                    name: "personAdd",
+                                    label: _ctx.t('A name, a number or a mail address'),
+                                    onKeyup: _withKeys(_ctx.addTyped, ["enter"])
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "onKeyup"]),
+                                  _createVNode(_component_q_list, {
+                                    dense: "",
+                                    class: "q-mt-sm"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      (_ctx.typed)
+                                        ? (_openBlock(), _createBlock(_component_q_item, {
+                                            key: 0,
+                                            clickable: "",
+                                            "data-add": "typed",
+                                            onClick: _ctx.addTyped
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: _ctx.typed.indexOf('email:') === 0 ? 'sym_o_mail' : 'sym_o_call'
+                                                  }, null, 8, ["name"])
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.typedLabel), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"]))
+                                        : _createCommentVNode("", true),
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.picks, (other) => {
+                                        return (_openBlock(), _createBlock(_component_q_item, {
+                                          key: other.personKey,
+                                          clickable: "",
+                                          "data-add": other.personKey,
+                                          onClick: $event => (_ctx.addPerson(other))
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.otherLabel(other)), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1032, ["data-add", "onClick"]))
+                                      }), 128))
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_card_actions, { align: "right" }, {
+                                default: _withCtx(() => [
+                                  _withDirectives(_createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    label: _ctx.t('Cancel')
+                                  }, null, 8, ["label"]), [
+                                    [_directive_close_popup]
+                                  ])
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["style"])
+                        ]),
+                        _: 1
+                      }, 8, ["modelValue", "onUpdate:modelValue", "maximized"])
+                    ]),
+                    _: 1
+                  }))
+                : _createCommentVNode("", true)
+            }
+        } },
         "m-chat-verification": { hash: "2f682fbe", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, createVNode: _createVNode, Fragment: _Fragment, renderList: _renderList, withCtx: _withCtx } = Vue
 
