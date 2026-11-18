@@ -127,12 +127,25 @@ pub(crate) async fn run_apps<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + U
     }
 }
 
+/// A command's output as it is written to the client's terminal: C0 and C1 controls other than tab and newline, and the
+/// bidirectional overrides and isolates, are dropped (as the TUI's `clean_text` does), so an error that quotes stored
+/// text cannot drive the administrator's terminal (a title change, an OSC 52 clipboard write: SEC-FIL-63); then each
+/// newline is `newline`.
 pub(crate) fn with_newlines(text: &str, newline: &str) -> String {
+    let clean: String = text.chars().filter(|ch| !terminal_unsafe(*ch)).collect();
     if newline == "\n" {
-        text.to_string()
+        clean
     } else {
-        text.replace('\n', newline)
+        clean.replace('\n', newline)
     }
+}
+
+fn terminal_unsafe(ch: char) -> bool {
+    let code = u32::from(ch);
+    (code < 0x20 && ch != '\t' && ch != '\n')
+        || (0x7F..0xA0).contains(&code)
+        || (0x202A..=0x202E).contains(&code)
+        || (0x2066..=0x2069).contains(&code)
 }
 
 /// The commands, for completion.
@@ -449,7 +462,7 @@ pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite 
 /// An input the shell refuses: the message, then a fresh prompt.
 async fn refuse<W: AsyncWriteExt + Unpin>(stream: &mut W, message: &str, newline: &str) -> std::io::Result<()> {
     stream
-        .write_all(format!("error: {message}{newline}{PROMPT}").as_bytes())
+        .write_all(format!("error: {}{newline}{PROMPT}", with_newlines(message, newline)).as_bytes())
         .await
 }
 

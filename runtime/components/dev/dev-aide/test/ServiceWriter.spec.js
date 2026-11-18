@@ -117,6 +117,25 @@ feature("a rule's condition is tried against a context in the sim", {
     },
 })
 
+feature("a rule's condition is not tried at the view tier", {
+    when() {
+        ec.user.internalLoginUser("spec.dev.viewer")
+        try {
+            const answer = svc("eval#Condition", { condition: "amount > 3", against: JSON.stringify({ amount: 5 }) })
+            return { holds: answer?.holds, refusal: String(ec.message.getErrorsString() || "") }
+        } catch (error) {
+            return { refusal: String(error) }
+        } finally {
+            ec.message.clearAll()
+            ec.user.internalLoginUser("john.doe")
+        }
+    },
+    then(result) {
+        result.holds !== true
+        result.refusal.includes("extend tier")
+    },
+})
+
 feature("a Try's log lines come back with it", {
     expect() {
         const result = svc("try#Snippet", { language: "javascript", body: "ec.logger.info('the snippet wrote this line')" }).result
