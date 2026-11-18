@@ -574,6 +574,8 @@ sudo scripts/call-network.sh   # calls on shaped networks (tc netem in namespace
 ./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
 ./moq git-status               # or any git command in every repo: ./moq git pull
 ./moq completion --install     # tab completion for bash or zsh
+./moq claude-code              # an agent harness's setup: AGENTS.md and .agents/skills where it looks (./moq help
+                               # lists the setups: claude-code, claude-desktop)
 ```
 
 The everyday tasks with their Gradle counterparts, and the runtime, conf and deployment detail, are in

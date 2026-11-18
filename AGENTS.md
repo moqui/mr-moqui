@@ -12,6 +12,7 @@ own. Read the parts of this file your task touches, and the guides they point to
 - Rust: read [docs/dev/Practices-Rust.md](docs/dev/Practices-Rust.md) before working on Rust code (`crates/*`, a component's `src/`): where code goes, crate and module organization, tests, and idiom.
 - JavaScript API: the references are `docs/dev/JS-*.md` ([docs/README.md](docs/README.md#dev-developing-on-mr-moqui)): [JS-Core-API](docs/dev/JS-Core-API.md) for `ec.*`, [JS-Globals](docs/dev/JS-Globals.md) for decimals, dates and the helper objects, [JS-Service-Scripts](docs/dev/JS-Service-Scripts.md), [JS-XML-Actions](docs/dev/JS-XML-Actions.md), [JS-Screen-Scripts](docs/dev/JS-Screen-Scripts.md) and [JS-Testkit](docs/dev/JS-Testkit.md). Look a member up there before assuming a Java one exists; when you add a host member, add it to the reference and to `crates/moqui-devkit/src/typegen/moqui-host.d.ts`, and rewrite the typegen golden (`UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`).
 - Tests: read the [testing skill](.agents/skills/testing/SKILL.md) before writing or running tests.
+- Harnesses: the repositories hold no harness's own files. A harness that does not find `AGENTS.md` and `.agents/skills` by itself has a setup task in `moq` that links or packages them where it looks (`./moq help` lists them on its "agent harnesses" line); add one there for a new harness.
 
 ## Rules
 

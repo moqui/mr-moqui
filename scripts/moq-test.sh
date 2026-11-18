@@ -300,6 +300,17 @@ check "complete run binary commands" 0 '^lint$' -- "$M" __complete 2 run ''
 check "complete run options" 0 '^--debug$' -- "$M" __complete 2 run --d
 check "complete -D property" 0 '^moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=$' -- "$M" __complete 3 run -D moqui_conf__ent
 check "complete alias task" 0 '^seed$' -- "$M" __complete 2 lP se
+
+# ========== agent harness setups ==========
+
+mkdir -p "$R/.agents/skills/sk1"
+printf -- '---\nname: sk1\ndescription: x\n---\n' >"$R/.agents/skills/sk1/SKILL.md"
+check "complete harness task" 0 '^claude-code$' -- "$M" __complete 1 claude-c
+check "task list has the harnesses on one line" 0 'agent harnesses +claude-code, claude-desktop' -- "$M" help
+check "claude-code links a skill" 0 'claude/skills/sk1 -> ../../.agents/skills/sk1' -- "$M" claude-code
+check "claude-code made the link" 0 '^../../.agents/skills/sk1$' -- readlink "$R/.claude/skills/sk1"
+ln -s ../../.agents/skills/gone "$R/.claude/skills/gone"
+check "claude-code removes a link to a gone skill" 0 'removed .claude/skills/gone' -- "$M" claude-code
 check "complete help" 0 '^git-status$' -- "$M" __complete 2 help git-s
 check "complete autodoc kinds" 0 '^entity$' -- "$M" __complete 3 autodoc --kinds ''
 check "complete autodoc options" 0 '^--components$' -- "$M" __complete 2 autodoc --c
