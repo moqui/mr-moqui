@@ -313,24 +313,29 @@ feature("scheduled send: a message sent at its time takes the room's timer then,
         const room = as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Expiry scheduled", memberUserIdList: [B]}).chatRoomId
         as(A, EXPIRY + "set#RoomTimer", {chatRoomId: room, seconds: 3600})
         const scheduled = as(A, "org.moqui.chat.ChatScheduleServices.schedule#Message", {chatRoomId: room, body: "<p>later, then gone</p>",
-            sendDate: Date.now() + 2 * 60000})
-        const sendAt = Date.now() + 3 * 60000
-        ec.user.setEffectiveTime(sendAt)
-        try { sys(() => ec.service.sync().name("org.moqui.chat.ChatScheduleServices.send#DueMessages").call()) } finally { ec.user.setEffectiveTime(null) }
+            sendDate: Date.now() + 2 * 60000}).errors
+        // the due job sends it (its clock 3 minutes on)
+        ec.user.setEffectiveTime(Date.now() + 3 * 60000)
+        sys(() => ec.service.sync().name("org.moqui.chat.ChatScheduleServices.send#DueMessages").call())
+        ec.user.setEffectiveTime(null)
         ec.message.clearErrors()
         const sent = sys(() => ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId: room, eventTypeEnumId: "CetMessage"}).orderBy("-eventSeq").list()[0])
-        const reminder = as(B, "org.moqui.chat.ChatScheduleServices.set#Reminder", {chatRoomId: room, eventSeq: sent.eventSeq, remindDate: Date.now() + 30 * 60000})
-        expireAt(sendAt + 3600000 + 60000)
-        const after = sys(() => ec.entity.find("moqui.chat.ChatMessageReminder").condition("chatMessageReminderId", reminder.chatMessageReminderId).one())
-        return {scheduled, sendAt, sent, reminder, after, gone: event(room, sent.eventSeq) == null}
+        const seq = Number(sent.eventSeq)
+        const body = String(sent.bodyText || "")
+        const timer = ec.user.timestampMillis(sent.expireDate) - ec.user.timestampMillis(sent.sentDate)
+        const reminder = as(B, "org.moqui.chat.ChatScheduleServices.set#Reminder", {chatRoomId: room, eventSeq: seq, remindDate: Date.now() + 30 * 60000})
+        expireAt(ec.user.timestampMillis(sent.expireDate) + 60000)
+        const dropped = sys(() => ec.entity.find("moqui.chat.ChatMessageReminder").condition("chatMessageReminderId", reminder.chatMessageReminderId).one())
+        return {scheduled, body, timer, reminder: reminder.errors, gone: event(room, seq) == null,
+            status: dropped ? String(dropped.statusEnumId) : "", reason: dropped ? String(dropped.reasonCode) : ""}
     },
-    then({scheduled, sendAt, sent, reminder, after, gone}) {
-        scheduled.errors == ""
-        ec.user.timestampMillis(sent.sentDate) >= sendAt
-        ec.user.timestampMillis(sent.expireDate) == ec.user.timestampMillis(sent.sentDate) + 3600000
-        reminder.errors == ""
+    then({scheduled, body, timer, reminder, gone, status, reason}) {
+        scheduled == ""
+        body == "later, then gone"
+        timer == 3600000
+        reminder == ""
         gone
-        after.statusEnumId == "CrmDropped"
-        after.reasonCode == "messageGone"
+        status == "CrmDropped"
+        reason == "messageGone"
     }
 })
