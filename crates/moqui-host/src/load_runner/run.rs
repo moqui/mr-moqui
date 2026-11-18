@@ -689,7 +689,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
     let max = super::targets::max_runs();
     if runs.len() >= max {
         return Err(format!(
-            "{} load(s) already running on this server, the most at once (load_runner_max_runs {max})",
+            "{} load(s) already running on this server, the most at once (load-runner@max-runs {max})",
             runs.len()
         ));
     }

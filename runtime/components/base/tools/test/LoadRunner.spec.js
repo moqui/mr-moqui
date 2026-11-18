@@ -208,9 +208,9 @@ feature("a file that is not a load script and a target the run may not reach are
     expect() {
         start({ scriptLocation: "component://tools/test/LoadRunner.spec.js" }).error.includes("not a load script")
         start({ scriptLocation: "component://tools/test/load/../LoadRunner.spec.js" }).error.includes("not a load script")
-        // a dev instance reaches any URL; a production one only this server, loopback and load_runner_targets
+        // a dev instance reaches any URL; a production one only this server, loopback and load-runner@targets
         withConf("instance@purpose", "production", () =>
-            start({ targetKind: "url", targetUrl: "https://example.org/" }).error).includes("load_runner_targets")
+            start({ targetKind: "url", targetUrl: "https://example.org/" }).error).includes("load-runner@targets")
         // ServiceCall calls services in process: over HTTP it is refused
         start({ targetKind: "this" }).error.includes("service target")
     },
@@ -222,7 +222,7 @@ feature("a second run while one runs is refused, its users change while it runs,
         long.error == ""
         runIds.push(long.runId)
         invoke(S + "get#LoadRunStatus", { runId: long.runId }).running == true
-        withProperty("load_runner_max_runs", "1", () => start({ scenarios: quick(1, 1) }).error).includes("already running")
+        withConf("load-runner@max-runs", "1", () => start({ scenarios: quick(1, 1) }).error).includes("already running")
         invoke(S + "delete#LoadRun", { runId: long.runId }).error.includes("running")
         // the run page's control (Load/updateUsers, update#LoadRunUsers): the scenario's target is 2 users from now on,
         // and a rate for a closed scenario is refused

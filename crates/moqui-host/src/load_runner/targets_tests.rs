@@ -37,7 +37,7 @@ fn ssh_reaches_loopback_this_servers_listener_and_the_listed_hosts() {
     // another port, another host, and an https prefix's host are not allowed
     assert!(policy.allow_ssh("shell.example.com", 22).is_err());
     let err = policy.allow_ssh("api.example.com", 22).unwrap_err();
-    assert!(err.contains("load_runner_targets"), "{err}");
+    assert!(err.contains("load-runner@targets"), "{err}");
     // the ssh entries are not http prefixes
     assert!(policy.allow("https://shell.example.com:2222/").is_err());
     // this server's own listener, by its name or the address it binds
@@ -102,7 +102,7 @@ fn a_prefix_is_matched_on_the_path_a_request_is_sent_to() {
 fn another_site_is_refused_unless_listed() {
     let open = policy(&[], "");
     let err = open.allow("https://example.org/").unwrap_err();
-    assert!(err.contains("load_runner_targets"), "{err}");
+    assert!(err.contains("load-runner@targets"), "{err}");
 
     let listed = policy(&[], "https://staging.example.com, https://example.org/app/");
     assert_eq!(listed.allow("https://staging.example.com/anything?x=1"), Ok(()));

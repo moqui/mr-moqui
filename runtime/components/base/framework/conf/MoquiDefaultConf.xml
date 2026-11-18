@@ -92,19 +92,16 @@
         <fcm service-account="" project-id="" base-url=""/>
     </push>
 
+    <!-- Load runs from Tools (org.moqui.dev.LoadServices, plans/archive/LoadRunner.md §10). A run may reach this server (its
+        https URL; its http one only on a loopback host), loopback (localhost and the loopback addresses), and the URL
+        prefixes in targets (comma-separated, each with its scheme: https://staging.example.com allows that origin,
+        https://example.com/app/ only under that path); a dev instance may reach any URL. Plain http to another machine
+        needs its prefix here, since a login crosses in the clear. max-runs is how many loads may run at once on this
+        instance, max-users the most users a run may have. -->
+    <load-runner targets="" max-runs="1" max-users="1000"/>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
-    <!--
-        Load runs from Tools (org.moqui.dev.LoadServices, plans/archive/LoadRunner.md §10). A run may reach this server (its https
-        URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),
-        and the URL prefixes in load_runner_targets (comma-separated, each with its scheme: https://staging.example.com
-        allows that origin, https://example.com/app/ only under that path); a dev instance may reach any URL. Plain
-        http to another machine needs its prefix here, since a login crosses in the clear. load_runner_max_runs is how
-        many loads may run at once on this instance, load_runner_max_users the most users a run may have.
-    -->
-    <default-property name="load_runner_targets" value=""/>
-    <default-property name="load_runner_max_runs" value="1"/>
-    <default-property name="load_runner_max_users" value="1000"/>
 
 
 

@@ -35,9 +35,9 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" transaction="ignore">
         <description>Start a load script on threads of this server and answer its runId; the run goes on after this
             returns. Refuses a location that is not a load script of a loaded component, a target that is not allowed
-            (this server, loopback, a prefix in load_runner_targets, or any URL on a dev instance; plain http to another
-            machine only when load_runner_targets names it), more runs at once than load_runner_max_runs (1) and more
-            users than load_runner_max_users (1,000), and a scenario users that is not a whole number of at least 1.
+            (this server, loopback, a prefix in load-runner@targets, or any URL on a dev instance; plain http to another
+            machine only when load-runner@targets names it), more runs at once than load-runner@max-runs (1) and more
+            users than load-runner@max-users (1,000), and a scenario users that is not a whole number of at least 1.
             targetKind is service (this server's services, called in process; a plan whose uses has service needs it),
             this (this server over HTTP, by its own URL; the default) or url (another server, targetUrl).
             parameters fill the plan's parameters; a secret one is held in memory for the run only. scenarios overrides
@@ -68,7 +68,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Change a running scenario's target from now on, in place of the rest of its stages (plans/archive/LoadRunner.md
             L6): users, a closed scenario's users at once (those above it finish their iteration and wait; more start
             for a higher one) or a rate scenario's most at once; or rate, a rate scenario's iterations started per
-            second. Give one of them. Refused past load_runner_max_users for the run in all, a rate for a closed
+            second. Give one of them. Refused past load-runner@max-users for the run in all, a rate for a closed
             scenario, a scenario the run does not have, and a run that is not running on this server.</description>
         <in-parameters>
             <parameter name="runId" required="true"/>

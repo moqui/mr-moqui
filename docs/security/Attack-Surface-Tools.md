@@ -15,7 +15,7 @@ Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed pr
 | `Tools/Database/*`, `Tools/Schema/*` (cancel or end a session, DDL and maintenance jobs, stats resets) | `DATABASE_ADMIN` (`ADMIN_ADV`). A job is only a plan the server made; no service takes job statement text |
 | `db=ext:…` on any database service, and the connection services | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance; the refusal is one vague "Not available" |
 | ETL (`org.moqui.dev.EtlServices`) | All actions on the Tools app, checked again as the user on the worker; `GROOVY_SHELL_WEB` for a mapping with an `expression`; `SQL_RUNNER_WEB` for a SQL source; files only from the user's uploads, `dbresource://moqui/etl/` and `runtime://import/` (any `dbresource://` with `DATABASE_ADMIN`) |
-| `Tools/Load.xml`, `Tools/Load/*` (load scripts, a run's form, runs, a run, compare; start, stop, a live change of a scenario's users or rate within `load_runner_max_users`, delete, import, download) | `LOAD_RUNNER` (sealed, `ADMIN_ADV`) and all actions on the Tools app, checked by every `org.moqui.dev.LoadServices` service whatever calls it. Without `LOAD_RUNNER` the Tools menu entry is left out (`Tools.xml` `menu-include`) and `Load.xml` shows Not available. A run names a script by location, only a `test/load/*.load.js` file of a loaded component; no screen takes script text. A run's script and target are never taken from a result file: Run again and an import resolve and check them anew. See [Load runs](#load-runs) |
+| `Tools/Load.xml`, `Tools/Load/*` (load scripts, a run's form, runs, a run, compare; start, stop, a live change of a scenario's users or rate within `load-runner@max-users`, delete, import, download) | `LOAD_RUNNER` (sealed, `ADMIN_ADV`) and all actions on the Tools app, checked by every `org.moqui.dev.LoadServices` service whatever calls it. Without `LOAD_RUNNER` the Tools menu entry is left out (`Tools.xml` `menu-include`) and `Load.xml` shows Not available. A run names a script by location, only a `test/load/*.load.js` file of a loaded component; no screen takes script text. A run's script and target are never taken from a result file: Run again and an import resolve and check them anew. See [Load runs](#load-runs) |
 | `Tools/Home.xml` | shows the SQL card, saved queries and SQL history only with `SQL_RUNNER_WEB`, and the Load testing links and load runs only with `LOAD_RUNNER`. |
 | `Tools/Service/ServiceDetail.xml`, `Tools/Schema/Entity.xml`, `Tools/Database/Overview.xml` | embed a Monitor panel only for a reader of the `otel_metrics` dataset (granted with `SYSTEM_APP`): a Tools user without System sees no telemetry there |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
@@ -95,12 +95,12 @@ Tools › Load runs a load script on threads of the server (`crates/moqui-host/s
 §10; the guide is [Load-Runner](../tools/Load-Runner.md)):
 
 - **Targets.** A run reaches this server (its own https URL, and its http URL only on a loopback host), loopback, and
-  the URL prefixes of the `load_runner_targets` property; a dev instance reaches any URL. Plain `http` to another
-  machine is refused unless `load_runner_targets` names it, since a login crosses in the clear; a prefix carries its
+  the URL prefixes of the `load-runner@targets` property; a dev instance reaches any URL. Plain `http` to another
+  machine is refused unless `load-runner@targets` names it, since a login crosses in the clear; a prefix carries its
   scheme, and is matched on the path a request is sent to after `..` and `.` segments are resolved (`targets.rs`).
   `insecure` (an invalid certificate accepted) is a run setting shown on the run.
 - **SSH.** A script whose plan uses `ssh` connects (`ssh.connect`, `test_client/ssh.rs`) only to this server's own SSH
-  listener, loopback, and the `ssh://host:port` entries of `load_runner_targets`; a dev instance to any host. A host
+  listener, loopback, and the `ssh://host:port` entries of `load-runner@targets`; a dev instance to any host. A host
   key not pinned by the script is taken only from loopback, or from any host when the run is `insecure`. It logs in
   with the account and password or key the script gives, so it can do over SSH only what that account may.
 - **In-process service calls.** A script whose plan uses `service` calls this server's services through
@@ -116,7 +116,7 @@ Tools › Load runs a load script on threads of the server (`crates/moqui-host/s
   parameters, which the session keeps for the form shown again, leave it out. Run again of an imported run fills only
   the target kind, not the file's URL, params or settings. A run is read, deleted and imported only by its `runId`, a directory name
   under `runtime/tmp/test-load/`; an import is checked to be a result (16 MiB at most) before it is kept.
-- **Limits.** One running load per instance (`load_runner_max_runs`) and 1,000 users a run (`load_runner_max_users`).
+- **Limits.** One running load per instance (`load-runner@max-runs`) and 1,000 users a run (`load-runner@max-users`).
 - **Demo.** The demo lock-down replaces `Tools/Load` with its Disabled screen.
 
 ## Component deploy and conf reload

@@ -164,7 +164,7 @@ The demo directory is in the dev set, so a default `./moq archive` does not carr
 
 ## Load runner targets
 
-A load run needs the `LOAD_RUNNER` permission (`crates/moqui-host/src/load_runner/mod.rs:77`) and takes `targetUrl`. `TargetPolicy::of_factory` (`load_runner/targets.rs`) allows this server's own origins, loopback, and the URL prefixes and `ssh://host:port` entries of `load_runner_targets` (empty by default). On a dev instance `any` is true and a run reaches any URL and any SSH host. `DEFAULT_MAX_RUNS` is 1 and `DEFAULT_MAX_USERS` is 1000 when `load_runner_max_runs` and `load_runner_max_users` are not set.
+A load run needs the `LOAD_RUNNER` permission (`crates/moqui-host/src/load_runner/mod.rs:77`) and takes `targetUrl`. `TargetPolicy::of_factory` (`load_runner/targets.rs`) allows this server's own origins, loopback, and the URL prefixes and `ssh://host:port` entries of `load-runner@targets` (empty by default). On a dev instance `any` is true and a run reaches any URL and any SSH host. `DEFAULT_MAX_RUNS` is 1 and `DEFAULT_MAX_USERS` is 1000 when `load-runner@max-runs` and `load-runner@max-users` are not set.
 
 ## Open questions
 

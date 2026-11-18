@@ -354,6 +354,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "client-sync",
         // chat: devices and keys, attachments, retention (docs/interfaces/Chat-Keys.md)
         "chat",
+        // load runs from Tools (plans/archive/LoadRunner.md §10)
+        "load-runner",
         "ssh-server",
         "terminal",
         "git-server",
