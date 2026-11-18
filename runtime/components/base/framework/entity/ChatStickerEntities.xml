@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Sticker packs in chat (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices, ChatSticker.js):
     the server's packs (an administrator's, ChatStickerAdmin) and each user's own, their pictures stored as content
-    (chat_sticker_root, dbresource://chat-stickers by default). A sent sticker is a copy of its picture in the room, an
+    (chat/stickers@root, dbresource://chat-stickers by default). A sent sticker is a copy of its picture in the room, an
     ordinary ChatAttachment (stickerOf), so removing a pack never breaks a message and a user's pack stays its owner's. No
     outside service. No Java counterpart. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
@@ -60,7 +60,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="width" type="number-integer"/>
         <field name="height" type="number-integer"/>
         <field name="digest" type="text-medium"/>
-        <field name="createdByUserId" type="id"><description>Who added it: a user adds at most chat_sticker_uploads_per_hour</description></field>
+        <field name="createdByUserId" type="id"><description>Who added it: a user adds at most chat/stickers@uploads-per-hour</description></field>
         <field name="createdDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatStickerPack" short-alias="pack"/>
         <index name="CHAT_STICKER_PACK_SEQ"><index-field name="chatStickerPackId"/><index-field name="sequenceNum"/></index>

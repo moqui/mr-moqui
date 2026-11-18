@@ -2,11 +2,11 @@
 //
 // Sticker packs (plans/Comms-Messaging.md §18.3 phase 20): the services of org.moqui.chat.ChatStickerServices. The server's
 // packs (no owner) are kept by a holder of ChatStickerAdmin and offered to every chat user; a user's own are theirs alone.
-// A sticker is a PNG, WebP or GIF picture (animated ones too) stored as content under chat_sticker_root, at most
-// chat_sticker_max_bytes: its type is read from its bytes (whatever the name or the browser said), its sides (at most
-// chat_sticker_max_side, 512 px) from its header before it is decoded, and it is decoded within a small memory limit
+// A sticker is a PNG, WebP or GIF picture (animated ones too) stored as content under chat/stickers@root, at most
+// chat/stickers@max-bytes: its type is read from its bytes (whatever the name or the browser said), its sides (at most
+// chat/stickers@max-side, 512 px) from its header before it is decoded, and it is decoded within a small memory limit
 // (ec.resource.makeStickerThumbnail, which also makes its still 128 px thumbnail). A user adds at most
-// chat_sticker_uploads_per_hour (60) stickers an hour.
+// chat/stickers@uploads-per-hour (60) stickers an hour.
 // Sending one copies its picture into the room as an ordinary ChatAttachment (stickerOf), so every path files take works
 // for it (access by the room, retention, redaction, disappearing messages, the bridges' files and MMS), removing a pack
 // never breaks a message, and a user's pack stays theirs. The message's body is its words ("Sticker 👍") for search,
@@ -27,12 +27,13 @@ const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;
 const words = (value) => String(value ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
 const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
 const message = (err) => (err && err.message ? err.message : String(err))
-const property = (name, fallback) => { const value = Number(System.getProperty(name)); return value > 0 ? value : fallback }
-const limits = () => ({ maxBytes: property('chat_sticker_max_bytes', 512 * 1024), packStickers: property('chat_sticker_pack_max', 200),
-  serverPacks: property('chat_sticker_server_packs_max', 50), userPacks: property('chat_sticker_user_packs_max', 10),
-  userPackStickers: property('chat_sticker_user_pack_max', 100), maxSide: property('chat_sticker_max_side', 512),
-  perHour: property('chat_sticker_uploads_per_hour', 60) })
-const root = () => (System.getProperty('chat_sticker_root') || 'dbresource://chat-stickers').replace(/\/+$/, '')
+// a limit by its conf selector (chat/stickers@max-bytes), the fallback when it is not above 0
+const property = (name, fallback) => { const value = Number(ec.factory.getConfValue(name)); return value > 0 ? value : fallback }
+const limits = () => ({ maxBytes: property('chat/stickers@max-bytes', 512 * 1024), packStickers: property('chat/stickers@pack-max', 200),
+  serverPacks: property('chat/stickers@server-packs-max', 50), userPacks: property('chat/stickers@user-packs-max', 10),
+  userPackStickers: property('chat/stickers@user-pack-max', 100), maxSide: property('chat/stickers@max-side', 512),
+  perHour: property('chat/stickers@uploads-per-hour', 60) })
+const root = () => (ec.factory.getConfValue('chat/stickers@root') || 'dbresource://chat-stickers').replace(/\/+$/, '')
 const isAdmin = () => ec.user.hasPermission('ChatStickerAdmin') === true
 
 function refuse(reasonCode, text) {
@@ -155,7 +156,7 @@ function deletePack(p) {
 }
 
 /**
- * add#Sticker: a picture into a pack the caller may change: PNG, WebP or GIF, at most chat_sticker_max_bytes, that
+ * add#Sticker: a picture into a pack the caller may change: PNG, WebP or GIF, at most chat/stickers@max-bytes, that
  * decodes (its still thumbnail made); the same picture once a pack; emoji (one, for search and its words) and altText.
  */
 function addSticker(p) {
@@ -275,7 +276,7 @@ function send(p) {
     }
   }
   const size = Number(sticker.fileSize || 0)
-  const daily = Number(System.getProperty('chat_attachment_daily_bytes') || 1073741824)
+  const daily = Number(ec.factory.getConfValue('chat@attachment-daily-bytes') || 1073741824)
   const dayAgo = new Date(Number(ec.user.nowTimestamp) - 86400000)
   const today = Array.from(find(ATTACHMENT).condition('uploadedByUserId', me).condition('uploadedDate', '>=', dayAgo).selectField('fileSize').list())
     .reduce((sum, one) => sum + Number(one.fileSize || 0), 0)
@@ -283,7 +284,7 @@ function send(p) {
   const extension = TYPES[sticker.contentType] || 'png'
   const file = ec.entity.makeValue(ATTACHMENT)
   file.setSequencedIdPrimary()
-  const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '')
+  const chatRoot = (ec.factory.getConfValue('chat@attachment-root') || 'dbresource://chat').replace(/\/+$/, '')
   const location = `${chatRoot}/${p.chatRoomId}/${file.chatAttachmentId}/sticker.${extension}`
   ec.resource.getLocationReference(location).copyFrom(sticker.contentLocation)
   file.setFields({ chatRoomId: p.chatRoomId, location, fileName: 'sticker.' + extension, contentType: sticker.contentType, fileSize: size,

@@ -2095,9 +2095,22 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
     <xs:element name="chat">
-        <xs:annotation><xs:documentation>Chat: its devices and keys, attachments, retention, previews and the agent and
-            GroupMe settings (MoquiDefaultConf.xml says each).</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>Chat: its devices and keys, attachments, retention, previews, the agent and
+            GroupMe settings, disappearing messages, the contacts hook, one-time codes, calendar events and stickers
+            (MoquiDefaultConf.xml says each).</xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:sequence>
+                <xs:element name="stickers" minOccurs="0"><xs:complexType>
+                    <xs:attribute name="root" type="xs:string" default="dbresource://chat-stickers"/>
+                    <xs:attribute name="max-bytes" type="non-neg-int-expandable" default="524288"/>
+                    <xs:attribute name="max-side" type="non-neg-int-expandable" default="512"/>
+                    <xs:attribute name="pack-max" type="non-neg-int-expandable" default="200"/>
+                    <xs:attribute name="server-packs-max" type="non-neg-int-expandable" default="50"/>
+                    <xs:attribute name="user-packs-max" type="non-neg-int-expandable" default="10"/>
+                    <xs:attribute name="user-pack-max" type="non-neg-int-expandable" default="100"/>
+                    <xs:attribute name="uploads-per-hour" type="non-neg-int-expandable" default="60"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
             <xs:attribute name="server-name" type="xs:string" default="localhost"/>
             <xs:attribute name="store-key-secret" type="xs:string"/>
             <xs:attribute name="to-device-retention-days" type="non-neg-int-expandable" default="30"/>
@@ -2116,6 +2129,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="schedule-user-per-run" type="non-neg-int-expandable" default="20"/>
             <xs:attribute name="groupme-node-max" type="non-neg-int-expandable" default="50"/>
             <xs:attribute name="groupme-self-service" type="boolean-expandable" default="true"/>
+            <xs:attribute name="view-once-days" type="non-neg-int-expandable" default="14"/>
+            <xs:attribute name="expiry-round-limit" type="non-neg-int-expandable" default="2000"/>
+            <xs:attribute name="contact-service" type="xs:string"/>
+            <xs:attribute name="otp-keywords" type="xs:string"/>
+            <xs:attribute name="calendar-uid-domain" type="xs:string" default="chat.moqui"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="channels">

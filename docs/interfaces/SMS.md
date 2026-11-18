@@ -179,7 +179,7 @@ post to the room as it.
   delivery alone. No typing goes to a text member.
 - **STOP and HELP.** STOP is applied as for any text (the pair opts out) and also takes the member out: its mapping
   ends, its member row is left, and the room says "<name> left by replying STOP". START opts back in and does not add
-  them back. HELP gets one answer a day, naming the room and the deployment (`chat_server_name`, when set). A member taken out of the room (People, Take out) has its mapping ended by a SECA
+  them back. HELP gets one answer a day, naming the room and the deployment (`chat@server-name`, when set). A member taken out of the room (People, Take out) has its mapping ended by a SECA
   (`SmsRoom.secas.xml`); its texts go to the pair room again, as do texts to an archived room.
 - **Limits and cost.** Each message is a text to each text member. The add dialog and the composer say so. A room's
   text counts in its adder's day (`smsMaxPerUserPerDay`), the room's and everyone's. VoicePolicy (System, Voice, Fraud):
@@ -227,7 +227,7 @@ post to the room as it.
    delivered text back to sent. A receipt of a text Moqui did not send is answered and left.
 5. A failure of the server's own is 500, so the provider tries again; the batch was stored before (§4.1).
 6. A one-time code in a text that came in (plans/Comms-Messaging.md §18.3 phase 21; `ChatPrivacyServices
-   mark#OneTimeCode`, after the text is taken in): 4 to 8 digits within 40 characters of a keyword (`chat_otp_keywords`,
+   mark#OneTimeCode`, after the text is taken in): 4 to 8 digits within 40 characters of a keyword (`chat@otp-keywords`,
    comma separated; English by default: code, verification, OTP, passcode, PIN, login, 2FA and the like), never part of a
    phone number, price, date, time, year or link, and none when two are as near. The message keeps it (`content.otp`)
    for its Copy, in the room and in the notification. When the code is the text's only candidate and every local member

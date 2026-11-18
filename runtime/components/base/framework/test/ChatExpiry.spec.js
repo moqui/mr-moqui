@@ -214,7 +214,7 @@ feature("an encrypted room: a session's key backup goes with its last event, and
         as(A, EXPIRY + "set#RoomTimer", {chatRoomId: room, seconds: 60})
         as(A, CHAT + "send#Message", {chatRoomId: room, encrypted: sealed("expiry-s1")})
         as(A, CHAT + "send#Message", {chatRoomId: room, encrypted: sealed("expiry-s2")})
-        const roomId = "!" + room + ":" + String(System.getProperty("chat_server_name") || "localhost").toLowerCase()
+        const roomId = "!" + room + ":" + String(ec.factory.getConfValue("chat@server-name") || "localhost").toLowerCase()
         sys(() => {
             const make = (entity, fields) => ec.entity.makeValue(entity).setFields(fields, true, null, null).createOrUpdate()
             make("moqui.chat.ChatKeyBackup", {userId: A, version: "1", algorithm: "m.megolm_backup.v1.curve25519-aes-sha2", createdDate: ec.user.nowTimestamp})

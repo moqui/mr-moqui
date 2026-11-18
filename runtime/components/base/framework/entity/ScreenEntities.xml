@@ -202,7 +202,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Email Contact Service (service name, called with userId and emailAddressList, answers contactAddressList)" enumId="STRT_EMAIL_CONTACT_SERVICE" enumTypeId="ScreenThemeResourceType"/>
             <!-- Chat (org.moqui.chat.ChatPeopleServices.find#ContactPeople): the contacts a user can see that have one of a list of
                 addresses (tel:, email:, user:), each with its own, so chat groups a person's rooms across networks
-                (plans/Comms-Messaging.md §11.1); the chat_contact_service property wins over it -->
+                (plans/Comms-Messaging.md §11.1); the chat@contact-service property wins over it -->
             <moqui.basic.Enumeration description="Chat Contact Service (service name, called with userId and addressList, answers contactList)" enumId="STRT_CHAT_CONTACT_SERVICE" enumTypeId="ScreenThemeResourceType"/>
             <!-- Appearance of the /qapps shell (docs/ui/Qvt-Client.md, Appearance; crates/moqui-core/src/screen/sri/appearance.rs):
                 the scheme a user who has chosen none gets, what a user may change, and services that adjust both by station,

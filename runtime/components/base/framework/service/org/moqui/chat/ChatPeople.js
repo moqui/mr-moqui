@@ -390,7 +390,7 @@ function waysOf(person, context) {
   }
   // mail: an outside person's addresses, in the Inbox's Compose (a user's address is never shown)
   if (!person.userId) {
-    const compose = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox/Compose?to='
+    const compose = (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Inbox/Compose?to='
     for (const key of shown.filter((found) => kindOf(found) === 'email')) ways.push({ kind: 'mail', network: 'mail', address: valueOf(key), url: compose + encodeURIComponent(valueOf(key)) })
   }
   // the best: Moqui chat; else the network they last wrote on; else the SMS room with the latest message from either side,

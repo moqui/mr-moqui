@@ -190,7 +190,7 @@ tracking them.
 
 **Key backup** (`m.megolm_backup.v1.curve25519-aes-sha2`; the server stores `session_data` as the browser made it).
 - **Disappearing messages** (plans/Comms-Messaging.md §18.3 phase 16). When the expiry deletes an encrypted room's
-  messages, a backed-up session (room ID `!<chatRoomId>:<chat_server_name>`) that no event of the room still uses
+  messages, a backed-up session (room ID `!<chatRoomId>:<chat@server-name>`) that no event of the room still uses
   (`ChatEvent.megolmSessionId`) goes from every user's backup, but only once it can be in use no more: its newest use
   past the room's rotation period (the timer, a week at most) and 10 minutes. Till then it waits (`ChatExpirySession`,
   its `dueDate`), and the expiry worker deletes it then, unless a newer message of the room uses it again. In a room with

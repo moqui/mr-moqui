@@ -372,8 +372,8 @@ function noteMemberKeyword(p) {
   if (p.keyword === 'HELP') {
     if (mapping.helpReplyDate && ms(mapping.helpReplyDate) > nowMs() - DAY) return { done: false }
     const room = one(ROOM, { chatRoomId: mapping.chatRoomId }) || {}
-    // the deployment's own name (chat_server_name, its chat and XMPP domain), unless it is still the default
-    const server = String(System.getProperty('chat_server_name') || '').trim()
+    // the deployment's own name (chat@server-name, its chat and XMPP domain), unless it is still the default
+    const server = String(ec.factory.getConfValue('chat@server-name') || '').trim()
     const roomName = room.roomName || ec.l10n.localize('a group')
     const text = server && server !== 'localhost'
       ? ec.resource.expand('Texts of ${roomName}, from ${server}. Reply STOP to leave.', '', { roomName, server })
@@ -416,7 +416,7 @@ function noteAdderProblem(p) {
     try {
       ec.makeNotificationMessage().topic('ChatTextMember').userIds([userId]).reason('system')
         .message({ roomName, chatRoomId: mapping.chatRoomId, memberName, reason: String(p.message || '') })
-        .record('moqui.chat.ChatRoom', mapping.chatRoomId).link((System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId='
+        .record('moqui.chat.ChatRoom', mapping.chatRoomId).link((ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId='
           + encodeURIComponent(mapping.chatRoomId)).send()
       told++
     } catch (err) {

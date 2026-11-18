@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
                 startDate: startDate ? Number(startDate) : null, endDate: endDate ? Number(endDate) : null, timeZone: timeZone || null,
                 allDay: String(allDay) === 'true', place: place || null, description: description || null,
                 threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
-                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
         ]]></script></actions>
         <default-response type="none"/>

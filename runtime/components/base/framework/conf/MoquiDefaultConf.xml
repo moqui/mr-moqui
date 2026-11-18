@@ -53,13 +53,27 @@
         services a message to an agent goes to, comma separated. held-overdue-days: a held message due longer is failed
         (deviceAway); schedule-user-per-run: the most messages of one sender a run of the schedule job sends.
         groupme-node-max: the GroupMe push connections one node holds; groupme-self-service false keeps users from
-        connecting their own GroupMe. -->
+        connecting their own GroupMe.
+        view-once-days (§18.3 phase 16; ChatExpiryServices): a view-once photo or video not opened by everyone goes this
+        many days after it is sent; expiry-round-limit: the due events the expiry worker deletes in a round, which runs
+        again at once while more are due. contact-service: the contacts hook of chat's people (§11.1,
+        ChatPeopleServices.find#ContactPeople), over the qapps theme's STRT_CHAT_CONTACT_SERVICE. otp-keywords: the words,
+        comma separated, a one-time code is found near in a text (ChatOtp.js; the English ones when empty).
+        calendar-uid-domain: the domain of a chat event's calendar UID, chat-roomId-eventSeq@ it (§18.3 phase 19).
+        stickers (§18.3 phase 20, ChatStickerServices): root, where sticker pictures are kept; max-bytes and max-side, the
+        largest picture and its longest side in pixels; pack-max, the stickers of a server pack, server-packs-max the
+        server packs; user-packs-max and user-pack-max, the packs a user makes and the stickers in each; uploads-per-hour,
+        the stickers a user adds an hour. -->
     <chat server-name="localhost" store-key-secret="CHANGEME" to-device-retention-days="30" device-active-days="90"
             device-auto-expire-days="30" spam-purge-days="0" attachment-root="dbresource://chat"
             attachment-max-bytes="26214400" attachment-daily-bytes="1073741824" changes-keep-days="30"
             edit-window-minutes="1440" link-previews="true" link-preview-service=""
             agent-entry-services="org.moqui.agent.AgentServices.handle#ChatMessage" held-overdue-days="7"
-            schedule-user-per-run="20" groupme-node-max="50" groupme-self-service="true"/>
+            schedule-user-per-run="20" groupme-node-max="50" groupme-self-service="true" view-once-days="14"
+            expiry-round-limit="2000" contact-service="" otp-keywords="" calendar-uid-domain="chat.moqui">
+        <stickers root="dbresource://chat-stickers" max-bytes="524288" max-side="512" pack-max="200" server-packs-max="50"
+                user-packs-max="10" user-pack-max="100" uploads-per-hour="60"/>
+    </chat>
 
     <!-- Texts (C4-SMS; plans/archive/Comms-Framework.md §5.6, docs/interfaces/SMS.md): a number's SMS and MMS go through its
         messaging bridge, a ChatBridge of type SMS (System, Chat Bridges; its provider settings in its configuration), with or

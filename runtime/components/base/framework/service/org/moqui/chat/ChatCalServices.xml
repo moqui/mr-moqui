@@ -138,7 +138,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="CalEventIcs">
         <description>An event as an .ics file, for one who can read the room (the ICalendar tool): PUBLISH, or CANCEL once
-            cancelled; UID chat-roomId-eventSeq@ the property chat_cal_uid_domain (chat.moqui by default) and SEQUENCE the
+            cancelled; UID chat-roomId-eventSeq@ the property chat@calendar-uid-domain (chat.moqui by default) and SEQUENCE the
             revision, so a calendar that imports it again updates its entry; the times in the event's zone (TZID), or the
             days of an all-day event; baseUrl (the server's) makes the message's link its URL. Out: fileText, fileName,
             contentType, reasonCode (notFound, noIcs).</description>

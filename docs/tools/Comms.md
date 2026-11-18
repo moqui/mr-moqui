@@ -260,7 +260,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
     person in the room opens it once, full screen, with no download or forward; closing it ends it, and the message
     then reads Opened. The sender sees Opened, or "Opened by 2 of 4" (people with read receipts off are not counted). The
     server deletes the file once everyone has opened it, and a view-once message nobody opened goes after 14 days
-    (`chat_view_once_days`). While it is open the Android app blocks screenshots and screen recording; a browser and the
+    (`chat@view-once-days`). While it is open the Android app blocks screenshots and screen recording; a browser and the
     desktop app cannot, and the viewer says so.
 - **Send later and reminders** (plans/Comms-Messaging.md §18.3 phase 15; `org.moqui.chat.ChatScheduleServices`).
   - *Send later.* A long press on Send on a phone, or the arrow beside Send or a right click on it on a desktop, opens
@@ -362,9 +362,9 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   tap sends the sticker, which shows large with no bubble. Your own packs are in Settings, Stickers (a pack, its
   pictures with an emoji and a description each, Hide and Delete); the server's packs, offered to everyone, are in
   System, Chat Stickers for a holder of `ChatStickerAdmin` (ADMIN has it). A sticker is a PNG, WebP or GIF picture,
-  animated ones too, of at most 512 KB (`chat_sticker_max_bytes`) and 512 px a side: its type is read from its bytes,
+  animated ones too, of at most 512 KB (`chat/stickers@max-bytes`) and 512 px a side: its type is read from its bytes,
   whatever its name says, and its sides from its header before it is decoded (a file claiming huge sides is refused
-  unread); at most 60 stickers a person an hour (`chat_sticker_uploads_per_hour`). A sent sticker is a copy in
+  unread); at most 60 stickers a person an hour (`chat/stickers@uploads-per-hour`). A sent sticker is a copy in
   its room, so deleting a pack removes no sticker already sent, and a pack of yours is seen by no one else; in an
   encrypted room your device seals the picture as it seals any file (its size may still tell the server which known
   sticker it is). Texts and other networks get the picture (MMS), or "Sticker 👍" where no picture can go. GIF search
@@ -598,7 +598,7 @@ that names it is trusted, so its service reads only what the hook asks), even wh
 name, and `get#Providers` lists it with no app. For `sms-consent` a provider that fails refuses the text, as a no does.
 
 **The contacts hook of chat's people.** Which of a user's rooms are one person is asked of one service (not a provider:
-the framework keeps no contacts), named by the `chat_contact_service` property, else the theme value
+the framework keeps no contacts), named by the `chat@contact-service` property, else the theme value
 `STRT_CHAT_CONTACT_SERVICE` of the user's theme, as the mail contact hook (`STRT_EMAIL_CONTACT_SERVICE`) is.
 `ChatPeopleServices.find#ContactPeople` (Rust, `crates/moqui-core/src/service/contacts.rs`) calls it with authorization
 disabled, in its own transaction, with `userId` and `addressList` (`tel:+E.164`, `email:address`, `user:userId`; only

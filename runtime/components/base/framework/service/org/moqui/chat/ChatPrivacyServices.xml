@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="detect" noun="OneTimeCode" allow-remote="false">
         <description>Internal: the one-time code of a text, or none: 4 to 8 digits on word boundaries (one space or dash inside
-            allowed, or after a "G-" style prefix) within 40 characters of a keyword (chat_otp_keywords, comma separated,
+            allowed, or after a "G-" style prefix) within 40 characters of a keyword (chat@otp-keywords, comma separated,
             else English: code, verification, OTP, passcode, PIN, login, 2FA and the like), not part of a phone number, a
             price or amount, a date or time, a year or a link; two candidates as near are none. strong: it is the text's only
             candidate; deletable: strong, and within 20 characters of a core word (code, OTP, verification, passcode,

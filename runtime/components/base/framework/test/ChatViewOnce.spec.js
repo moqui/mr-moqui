@@ -1,7 +1,7 @@
 // View-once media (plans/Comms-Messaging.md §18.3 phase 16; ChatExpiry.js, ChatExpiryServices): what send#Message takes as
 // view-once (one photo or video, no text, not in a bridged room); get#Timeline gives no file; open#ViewOnce serves the file in
 // a window to a recipient, never to its sender, and once only; get#Attachment never serves it; the sender's Opened; the file
-// gone once everyone opened it, the message standing; and one nobody opened gone after chat_view_once_days.
+// gone once everyone opened it, the message standing; and one nobody opened gone after chat@view-once-days.
 // Run: ./moq test framework --spec ChatViewOnce
 const A = "CHAT_ONCE_A"
 const B = "CHAT_ONCE_B"

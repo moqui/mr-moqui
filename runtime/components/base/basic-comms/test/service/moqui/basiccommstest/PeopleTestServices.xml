@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- For moqui test runs of basic-comms only (test/MoquiConf.xml registers this file and names it in chat_contact_service):
+<!-- For moqui test runs of basic-comms only (test/MoquiConf.xml registers this file and names it in chat@contact-service):
     the contacts hook of chat's people (org.moqui.chat.ChatPeopleServices.find#ContactPeople) for the BasicCommsPeople
     spec's numbers (+1555333....), deterministic, so the people test never depends on another component. Each address it
     is asked about is kept (cache moqui.test.people.asked, by user), so the spec sees what reached the hook. -->

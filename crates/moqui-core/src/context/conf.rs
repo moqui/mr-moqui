@@ -373,6 +373,16 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         keys(&["email-client", "oauth-provider"]),
         None,
     );
+    // chat (docs/interfaces/Chat-Keys.md), its stickers merged as one element
+    if let Some(over_chat) = over.first_named("chat") {
+        match base.first_named("chat") {
+            Some(base_chat) => {
+                base_chat.copy_attributes_from(&over_chat);
+                base_chat.merge_single_child(&over_chat, "stickers");
+            }
+            None => base.append_node(over_chat.deep_copy()),
+        }
+    }
     // push, its web and fcm children each merged as one element
     if let Some(over_push) = over.first_named("push") {
         match base.first_named("push") {
@@ -431,8 +441,6 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "acme",
         // the offline clients' logs and uploads (plans/Mobile-Desktop.md MD5)
         "client-sync",
-        // chat: devices and keys, attachments, retention (docs/interfaces/Chat-Keys.md)
-        "chat",
         // load runs from Tools (plans/archive/LoadRunner.md §10)
         "load-runner",
         // this server as a cluster member (plans/archive/Cluster.md)

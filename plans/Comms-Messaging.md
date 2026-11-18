@@ -47,7 +47,7 @@ Parts:
 
 | Area | What exists |
 |---|---|
-| Messages | Send, edit (24 hours by default: `chat_edit_window_minutes`, 0 for no limit), redact, reply, threads with a thread pane, forward, pins, polls, mentions, drafts, link previews (text only, three a message) |
+| Messages | Send, edit (24 hours by default: `chat@edit-window-minutes`, 0 for no limit), redact, reply, threads with a thread pane, forward, pins, polls, mentions, drafts, link previews (text only, three a message) |
 | Send state | Outbox rows (sending, waiting, not sent, with Retry) and bridge delivery rows (pending, failed, uncertain, delivered). An ordinary message has no "sent" tick. No scheduled send |
 | Reactions | `react` transition; aggregated per message as `[{key, count, userIds, mine}]` in the timeline; six quick reactions and a fixed grid of 40 emoji in `Chat.qvue`. Who reacted shows in a hover tooltip only |
 | Read state | Read markers (`markRead`, `markAllRead`); read receipts from each member's `lastReadEventSeq` (`prefs.readReceipts`), under own bubbles on a phone |
@@ -395,7 +395,7 @@ shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3), with t
   That stays.
 - **Who has a crypto device.** A user whose device is not revoked, has uploaded its identity keys
   (`ChatDevice.curve25519Key`) and was seen in the last 90 days (`lastSeenDate`, set by each key upload and sync;
-  property `chat_device_active_days`). A device that has not synced for that long would never read what is sent to it.
+  property `chat@device-active-days`). A device that has not synced for that long would never read what is sent to it.
   A device Chat made by itself (`ChatDevice.madeAutomatically`, below) counts only once it was seen on a later day than
   it was made, or its user verified it (a cross-signing signature over it), so one private window does not make its user
   one with a device.
@@ -405,8 +405,8 @@ shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3), with t
   (`moqui.crypto.ensureDevice({automatic: true})`): the 7.8 MB module loads once per browser and is cached. Not the
   tray's chat panel, not a desktop app window (`elsewhere`), not a browser without WebAssembly or IndexedDB (logged; Chat
   works, its rooms plain). Such a device is marked `madeAutomatically`. So they do not pile up: a user's 50 devices count
-  only those seen in `chat_device_active_days`, and the daily `clean#ChatToDevice` revokes each automatic device never
-  verified and not seen for `chat_device_auto_expire_days` (30), logged, one at a time.
+  only those seen in `chat@device-active-days`, and the daily `clean#ChatToDevice` revokes each automatic device never
+  verified and not seen for `chat@device-auto-expire-days` (30), logged, one at a time.
 - **The rule, on the server.** `ChatScreenServices.create#ChatRoom`, which Chat's `createDirect` and `createRoom`
   transitions call. When `encrypted` is not given:
   - a direct room (one person or several): the encrypted direct room of exactly these people, when there is one, is
@@ -457,7 +457,7 @@ shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3), with t
   Set up opens `m-chat-device-setup` (`WebrootChat.js`; Chat, and My devices at its top), with two ways:
   - **Recovery key** (when there is a backup): the key typed or pasted, then Restore (`restoreBackup`); a wrong key is
     said plainly (`badRecoveryKey`, `wrongRecoveryKey`) and nothing is reset.
-  - **Another device**: the user's other devices in use (seen in `chat_device_active_days`), by name and when last seen,
+  - **Another device**: the user's other devices in use (seen in `chat@device-active-days`), by name and when last seen,
     the last seen first, each with Verify; the emoji (or QR) comparison
     runs in the card (`m-chat-verification`). The other device shows the request in Chat, in any room or the rail
     (new: today a request from one's own device shows on My devices only), naming the new device and when it was
@@ -2155,7 +2155,7 @@ Report spam from a group room's menu filters that room for the user, until Unblo
 - A spam text's files are fetched as any text's are, with the same bounds. Its links are not linked.
 - A user keeps at most 500 entries on the Blocked list and 500 blocked people.
 
-**The spam purge** (decided 2026-11-17). The property `chat_spam_purge_days`, 0 by default (keep). Above 0, the daily
+**The spam purge** (decided 2026-11-17). The property `chat@spam-purge-days`, 0 by default (keep). Above 0, the daily
 `clean#ChatRetention` deletes the texts older than that in each phone room that every current member has in Spam
 (`SmsSpamServices.purge#SpamRooms`, through `clean#RoomRetention` with its `retentionDays`), each room on its own:
 one that fails is logged and the rest go on.
@@ -2273,7 +2273,7 @@ backup is not in a spec; `moqui-desktop`'s own tests were not run here (the crat
 
 | Work | Files |
 |---|---|
-| `check#DevicesReady` (internal) and `get#EncryptionDefault` (one bit, 50 people an ask, 600 an hour counted atomically, the same query for a refused person), from `ChatDevice` (not revoked, identity keys, seen in `chat_device_active_days`, default 90; an automatic one once seen on a later day or verified); `madeAutomatically`; the 50 devices in use only; the daily revoke of unused automatic devices (`revoke#AutomaticDevice`, `chat_device_auto_expire_days`) | `ChatKeyEntities.xml`, `ChatKeyServices.xml`, `ChatKeys.js`, webroot `ChatKeys.xml`, `MoquiDefaultConf.xml` |
+| `check#DevicesReady` (internal) and `get#EncryptionDefault` (one bit, 50 people an ask, 600 an hour counted atomically, the same query for a refused person), from `ChatDevice` (not revoked, identity keys, seen in `chat@device-active-days`, default 90; an automatic one once seen on a later day or verified); `madeAutomatically`; the 50 devices in use only; the daily revoke of unused automatic devices (`revoke#AutomaticDevice`, `chat@device-auto-expire-days`) | `ChatKeyEntities.xml`, `ChatKeyServices.xml`, `ChatKeys.js`, webroot `ChatKeys.xml`, `MoquiDefaultConf.xml` |
 | The default in `create#ChatRoom` (`encrypted` not given: the encrypted direct room, then the plain one, then the rule; out `encrypted`; the people's rows locked, the oldest twin answered); the transitions `createDirect` (`encrypted` true for Start an encrypted chat, false for a page that cannot encrypt), `createRoom` (no `encrypted` unless given) and `encryptionDefault` | `ChatScreenServices.xml`, `Chat.xml` |
 | `directRoomFor` encrypted first, the oldest of each kind; `startChat` without `encrypted`; `setupNeeded`, `setupWaiting`; `undecryptableText`'s set-up text; `makeDeviceSoon`; the `m-chat-device-setup` card (waiting, Try again, Use your recovery key). The set-up bar is Chat's own, not an `e2eeLabel` state | `WebrootChat.js` |
 | `setupStatus`, `requestSecrets`, the secrets asked after a verification with one's own device (`requestMissingSecretsIfNeeded`, the receive-secret callback, the backup key checked against the current backup and restored with it: `restoreBackup`'s import shared), `ensureDevice({automatic})`. No `setup` in the crypto state: Chat and My devices ask `setupStatus` | `WebrootCrypto.js` |
@@ -2783,7 +2783,7 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
     The rooms stay.
 - Only the owner (these services) and a `ChatBridgeAdmin` (System, Chat Bridges, `find#Bridges`, `store#Bridge`) see or
   change the bridge. The token is kept in the encrypted `configJson`.
-- The property `chat_groupme_self_service` (`true` by default) turns it off. When `false`, Connect is refused
+- The property `chat@groupme-self-service` (`true` by default) turns it off. When `false`, Connect is refused
   (`selfServiceOff`) and the section shows only a bridge the user has, without its token form.
 - The administrator's path stays: System, Chat Bridges takes a GroupMe bridge as any other (the network, the adapter and
   the JSON configuration), and the guide gives the keys.
@@ -2865,7 +2865,7 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
 - Changed:
   - `Chat-Bridges.md`: the adapter, the network that connects out, the label;
   - `docs/tools/Comms.md`: GroupMe, beside Bridged rooms;
-  - `docs/Run-Deploy.md`: the property `chat_groupme_self_service`;
+  - `docs/Run-Deploy.md`: the property `chat@groupme-self-service`;
   - `Cargo.toml`'s description;
   - this plan's status.
 
@@ -2907,7 +2907,7 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
     by; `None` alone stays the plain bridged label.
   - **One coordinator a node**, not a thread per bridge on every node.
     - It lists the GroupMe bridges in one query and claims or renews all their leases in one pass (`claim_all`), up to
-      `chat_groupme_node_max` (50), and runs a session thread only for each bridge it holds.
+      `chat@groupme-node-max` (50), and runs a session thread only for each bridge it holds.
     - The leases are renewed apart from the sessions, so no step outlasts them; a long poll is at most 60 + 15 s.
     - Each coordinator claims under its own token, so an old one never frees a new one's lease.
     - A bridge's configuration is read again only when its `lastUpdatedStamp` moved.
@@ -3011,7 +3011,7 @@ someone else is "not found".
    and the app's screens are checked again as them.
 3. Refuse when the sender's place in the room is out of their sight (`filterEnumId` `CmfBlocked`: they blocked its
    number or its person since): reason `blocked`.
-4. `send#Message` with the row's body, reply, thread, files and records, `roomUrl` from `comms_app_root`, and
+4. `send#Message` with the row's body, reply, thread, files and records, `roomUrl` from `comms@app-root`, and
    `clientRef` `sched:<id>`. It checks membership (`notMember`) and the archive (`archived`) itself, and resolves the
    mentions as they are then.
 5. In the same transaction: `CsmSent`, `sentEventSeq`. The `sched:` clientRef also makes a retry after a crash answer
@@ -3193,8 +3193,8 @@ on Send, and a reminder's notification on the phone.
 **Review fixes (2026-11-18).** What the review changed in the entry above:
 - *The due queue.* The server's due query takes only the rows it holds. Held rows have their own bounded queries: a
   revoked device fails its rows (D3's daily revoke of unused automatic devices among them), and a held row due more than
-  `chat_held_overdue_days` (7) ago fails `deviceAway`. A device not seen for 7 days shows as "can't be sent from" it.
-  At most `chat_schedule_user_per_run` (20) messages of one sender go in a run; the rest wait.
+  `chat@held-overdue-days` (7) ago fails `deviceAway`. A device not seen for 7 days shows as "can't be sent from" it.
+  At most `chat@schedule-user-per-run` (20) messages of one sender go in a run; the rest wait.
 - *The sender at the send time* is `run#AsSender` (`crates/moqui-core/src/service/chat_schedule.rs`): the user set as
   `user::as_user` sets it, with none of a sign-in's checks, so a required or expired password change stops nothing. Only
   an account closed for good or terminated fails (`accountDisabled`). A sign-in lock (`disabledDateTime` within
@@ -3253,7 +3253,7 @@ actually sent.
 | Entity, field | What |
 |---|---|
 | `ChatRoom.messageTimerSeconds` | The room's timer for new messages: 30 to 2,419,200 (4 weeks); empty means off. `find#Rooms`, `get#Room` and `get#Timeline` answer it |
-| `ChatEvent.expireDate` (index `CHAT_EVENT_EXPIRE`) | When the event goes. A message gets `sentDate` plus the room's timer. A view-once message gets the earlier of that and `chat_view_once_days` (14). An edit, reaction, redaction or pin of a message gets the message's `expireDate`, so all of them are due together. Membership, call and system events never expire |
+| `ChatEvent.expireDate` (index `CHAT_EVENT_EXPIRE`) | When the event goes. A message gets `sentDate` plus the room's timer. A view-once message gets the earlier of that and `chat@view-once-days` (14). An edit, reaction, redaction or pin of a message gets the message's `expireDate`, so all of them are due together. Membership, call and system events never expire |
 | `ChatEvent.viewOnce` | Y: a view-once message |
 | `ChatEvent.megolmSessionId` (index `CHAT_EVENT_SESSION`: `chatRoomId`, `megolmSessionId`) | `content.encrypted.session_id` of an encrypted event, set by `append#Event`. It tells when the server's key backup of a session can go |
 | `moqui.chat.ChatViewOnceOpen` (`chatRoomId`, `eventSeq`, `userId` pk; `openedDate`, `downloadCount`) | A recipient's open of a view-once message. Its rows go with the message |
@@ -3262,7 +3262,7 @@ actually sent.
 | `ChatKeyBackupSession` index `CHAT_BACKUP_ROOM_SESSION` (`roomId`, `sessionId`) | The rows of a session across users' backups, found in one query |
 | `ChatEventLink` index `CHAT_LINK_HASH` (`urlHash`) | Whether another message still links a URL whose preview cache row could go |
 | `ChatSetupData.xml` | No new job: the worker below runs the deletes, and the daily `clean#ChatRetention` also runs `expire#DueMessages` as a backstop |
-| `MoquiDefaultConf.xml` | `chat_view_once_days` (14), `chat_expiry_round_limit` (2000) |
+| `MoquiDefaultConf.xml` | `chat@view-once-days` (14), `chat@expiry-round-limit` (2000) |
 
 **The exact delete.** A due-time index and a worker per node, with no per-message scheduling:
 - `crates/moqui-core/src/service/chat_expiry.rs`, on the pattern of `chat_push.rs`: a thread per node, started beside
@@ -3368,7 +3368,7 @@ The other choice was a warning on the room. It was not taken: the timer would th
 holds:
 - The ciphertext and the files' blobs go as any message's do.
 - The key backup: a backed-up Megolm session goes once no event of the room uses it (above).
-- To-device room keys are deleted when acknowledged, and after `chat_to_device_retention_days` as today.
+- To-device room keys are deleted when acknowledged, and after `chat@to-device-retention-days` as today.
 - So that a session does not outlive its messages, the sender's browser in a room with a timer rotates its outbound
   session: `EncryptionSettings.rotationPeriod` is the timer (at most a week), with `rotationPeriodMessages` 100. A timer
   change invalidates the session (`WebrootCrypto.js` `encryptRoomNow`).
@@ -3618,7 +3618,7 @@ A use is a join or a request. So a link with approval that allows 10 uses lets a
    - else they join: a member row, as `add#Member` makes one, and the membership event
      `{action: 'join', userId, via: 'link', chatInviteLinkId}`, shown as "Ann joined by an invite link";
    - a person who left by themselves comes back as `add#Member` brings them back.
-4. Out: `outcome` (`joined`, `requested` or `member`), `chatRoomId`, `roomUrl` (`${comms_app_root}/Chat?chatRoomId=`).
+4. Out: `outcome` (`joined`, `requested` or `member`), `chatRoomId`, `roomUrl` (`${comms@app-root}/Chat?chatRoomId=`).
    Refused with a `reasonCode`:
    - `notFound`: a bad, revoked, expired or used-up link, or one whose maker is disabled; a person the maker could not
      add to the room: one the maker blocked (D1), or one `get#RefusedUsers` asked as the maker refuses (the apps'
@@ -4067,7 +4067,7 @@ rather than typed. The desktop app's bundled Chat is the same; offline, Add says
 - A private room every user may read (`visibilityEnumId` not `CrvMembers`) takes no text members (`openRoom`).
 - Shared numbers: SMS.md and the Numbers screen's help advise numbers of their own for room texts and say what adding a
   customer of a shared number does; the add dialog's `pairRoomActive` warning names it.
-- HELP's answer names the deployment by `chat_server_name` when it is set (there is no other name property).
+- HELP's answer names the deployment by `chat@server-name` when it is set (there is no other name property).
 - Tests: `SmsRoomMembers.spec.js` (an archived room's member taking the number, two mappings to the pair room, an
   international number refused for the adder, room texts on the adder's day and its limit, the grant lost with the
   moderators told, `openRoom`, `tooManyMembers`, `dailyLimit`, `blocked`, `optedOut`); moqui-channels (the adder's
@@ -4096,7 +4096,7 @@ through the `invitation` provider hook (`ironstone.comms.InboxServices.respond#I
 - **Without a provider** (the framework alone, or mr-mantle without an app that declares the hook): "Add to calendar"
   is the event as an `.ics` file (the framework's `ICalendar` tool, `write({method: PUBLISH, events})`; CANCEL once
   cancelled), and in the Android app the phone's calendar app opened on a new event (below).
-- The UID is `chat-<chatRoomId>-<eventSeq>@<host>` (the host of `comms_app_root`), and the SEQUENCE is the event's
+- The UID is `chat-<chatRoomId>-<eventSeq>@<host>` (the host of `comms@app-root`), and the SEQUENCE is the event's
   `revision`. A calendar that imports the file again after a change updates its entry rather than adding one.
 - mr-boss's provider is a change in its own repository, `respond#Invitation`'s path with the UID as `universalId`. It
   is not in this branch (§19.1 asks).
@@ -4249,7 +4249,7 @@ terminal; GroupMe's native events; floating times with no zone.
   (`ChatCal.js` `committed`, which a screen's transition needs, as it has one in place) and call the providers after.
 - *The own answer is one object*: `calEvent.mine {answer, remindMinutes, calendarDate}`, so a pushed update (which has
   none) keeps it (`moqui.chat.applyUpdate`).
-- *The UID's domain* is the property `chat_cal_uid_domain` (`chat.moqui` by default).
+- *The UID's domain* is the property `chat@calendar-uid-domain` (`chat.moqui` by default).
 - *mr-boss's provider is built*: `ironstone.comms.ChatServices.sync#ChatCalendarEntry` on mr-boss branch
   `d2e-chat-calendar` (`856b8737`), with `test/Comms/ChatCalendar` (2 features). One Mantle event per chat event, its
   `universalId` the UID; a cancel also when the message is gone.
@@ -4292,13 +4292,13 @@ sticker is a message that shows large.
 | `moqui.chat.ChatSticker` (`chatStickerId` pk, sequenced) | `chatStickerPackId`, `sequenceNum`, `emoji` (one emoji: search and the text form), `altText` (up to 80: the description a screen reader reads), `contentLocation`, `thumbLocation` (a still PNG of 128 px, `ec.resource.makeThumbnail`), `contentType`, `fileSize`, `width`, `height`, `digest` (SHA-256: the same picture once a pack), `createdDate` |
 | `ChatAttachment.stickerOf` (extend-entity) | The `chatStickerId` a room's copy came from: `find#RoomFiles` leaves stickers out of the Media and Files tabs |
 
-- Storage: `${chat_sticker_root || 'dbresource://chat-stickers'}/<packId>/<stickerId>/<n>.<ext>`, through
+- Storage: `${chat/stickers@root || 'dbresource://chat-stickers'}/<packId>/<stickerId>/<n>.<ext>`, through
   `ec.resource`.
 - The type is the decoder's guess from the bytes, never the name or the browser's: PNG, GIF or WebP only, stored with
   that type and extension. The sides are read from the header before any decode, then it is decoded within a small
   memory limit (`ec.resource.makeStickerThumbnail`, which answers its sides and makes its thumbnail).
-- Limits (properties): `chat_sticker_max_bytes` 512 KB; `chat_sticker_max_side` 512 px a side; 200 stickers a pack; 50
-  server packs; 10 packs and 100 stickers a pack for a user; `chat_sticker_uploads_per_hour` 60 a user.
+- Limits (properties): `chat/stickers@max-bytes` 512 KB; `chat/stickers@max-side` 512 px a side; 200 stickers a pack; 50
+  server packs; 10 packs and 100 stickers a pack for a user; `chat/stickers@uploads-per-hour` 60 a user.
 
 **Services** (new `org.moqui.chat.ChatStickerServices`, logic in `ChatSticker.js`)
 
@@ -4432,7 +4432,7 @@ There is no map, no geocoding and no outside request.
 - A sticker is checked by its bytes (magic and decode), so an SVG, HTML or script cannot pass as a picture. It is
   served with its stored type, `nosniff` and no `Content-Disposition: attachment` trickery.
 - A user pack's pictures go to its owner only. Another member sees the copy, under the room's access.
-- Size and count limits apply, and each copy counts in `chat_attachment_daily_bytes`.
+- Size and count limits apply, and each copy counts in `chat@attachment-daily-bytes`.
 - In an encrypted room, a sealed file's size may tell the server which sticker it is (stickers are known files): said
   in [Comms](../docs/tools/Comms.md).
 - A location is shared only by the person's act, never in the background, and a device position only with the device's
@@ -4494,8 +4494,8 @@ location attachment outbound (its text goes).
 **Review fixes (2026-11-18).**
 - *A sticker's picture is checked before it is decoded* (`ec.resource.makeStickerThumbnail`, `files.rs`): its type from
   its bytes (PNG, GIF or WebP only; a JPEG or BMP named `.png` is refused; it is stored with its real type and
-  extension), its sides from its header (none over `chat_sticker_max_side`, 512 px), then a decode within 16 MiB; a tiny
-  PNG claiming 100,000 px a side is refused unread. At most `chat_sticker_uploads_per_hour` (60) stickers a user an hour.
+  extension), its sides from its header (none over `chat/stickers@max-side`, 512 px), then a decode within 16 MiB; a tiny
+  PNG claiming 100,000 px a side is refused unread. At most `chat/stickers@uploads-per-hour` (60) stickers a user an hour.
 - *A refused file goes as words*: when an adapter refuses a message's files (`mediaTooLarge`, `tooManyFiles`,
   `mmsNotSetUp`, `filesUnsupported`, `noFiles`), the round sends its words alone (`DeliveryRequest.text_form`; a
   sticker's "Sticker 👍"); one with no words stays refused.
@@ -4530,7 +4530,7 @@ per-event `expireDate`, so it is built after phase 16 merges.
 **One-time codes**
 - **Found in incoming texts only**: SMS, MMS and RCS into a phone room (and an SMS member's reply, phase 18). Never in
   chat between users. `ChatOtp.js` `detect(text)` (in `Sms.js` `receive()`, before `ingest#Event`):
-  - a text of at most 600 characters, with a keyword: `chat_otp_keywords`, by default code, verification, verify,
+  - a text of at most 600 characters, with a keyword: `chat@otp-keywords`, by default code, verification, verify,
     OTP, passcode, one-time, PIN, security code, login, sign in, 2FA, authentication, confirm;
   - a candidate is 4 to 8 digits on word boundaries, with one space or dash allowed inside ("123 456", "123-456"), or
     the digits after a `G-` style prefix;
@@ -4653,7 +4653,7 @@ entity: a code is in the message's content, and its deletion is phase 16's `expi
 - A Copy button on the desktop app and on browsers that show no actions.
 - Codes in mail.
 - Autofilling a code into another app (Android's SMS Retriever is for the app's own codes).
-- Codes in other languages beyond what an operator adds to `chat_otp_keywords`.
+- Codes in other languages beyond what an operator adds to `chat@otp-keywords`.
 - `FLAG_SECURE` on the desktop and the web, which is not possible there.
 - Video compression.
 - A remembered default for Original.
@@ -4767,7 +4767,7 @@ has no server spec of its own.
 
 **What exists** (read 2026-11-17):
 - `crates/moqui-core/src/service/contacts.rs`: `EmailClientServices.filter#ContactAddresses`. It answers only which mail
-  addresses are a user's contacts, for an automatic reply. Its hook is named by a property (`email_contact_service`) or
+  addresses are a user's contacts, for an automatic reply. Its hook is named by a property (`email-client@contact-service`) or
   the user's theme value (`STRT_EMAIL_CONTACT_SERVICE`). The hook runs with authorization disabled for the given user,
   in its own transaction, and a failure is logged once. No hook: null, and nothing counts as a contact. Phase 22 reuses
   this machinery (`hook_service`, `call_hook`, `first_time`) for a second service.
@@ -4834,7 +4834,7 @@ The person key is `p:<chatPersonId>`, else `a:<its first address>`. Each person 
 `roomPerson` maps each room to its person key.
 
 **The contacts hook** (`contacts.rs`, `ChatPeopleServices.find#ContactPeople`, a Rust service, `allow-remote` false):
-- It is named by the property `chat_contact_service`, else the theme value `STRT_CHAT_CONTACT_SERVICE`. It is called
+- It is named by the property `chat@contact-service`, else the theme value `STRT_CHAT_CONTACT_SERVICE`. It is called
   as `filter#ContactAddresses` is: authorization disabled, for the given user, in its own transaction.
 - In: `userId` and `addressList` (`tel:`, `email:` and `user:` keys).
 - Out: `contactList`, each `{contactRef, name, url, addressList}`: the contacts the user may see that have one of the
@@ -5019,7 +5019,7 @@ The line shows on each of the person's rooms. The limits stay: 180 days, 300 mes
   - Rust: `contacts.rs` unit tests for normalizing the answer (key forms, repeats, limits), `cargo test -p moqui-core
     contacts`.
   - Server: `basic-comms/test/BasicCommsPeople.spec.js` (new), with a test hook
-    (`test/service/moqui/basiccommstest/PeopleTestServices.xml`, named by `chat_contact_service` in the component's
+    (`test/service/moqui/basiccommstest/PeopleTestServices.xml`, named by `chat@contact-service` in the component's
     `test/MoquiConf.xml`). It covers:
     - each kind of room's person;
     - a merge of a phone room with a user, whose best way is then Moqui chat (the encrypted room first);

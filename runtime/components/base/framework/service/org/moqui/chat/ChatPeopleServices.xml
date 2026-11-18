@@ -100,7 +100,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="ContactPeople" type="rust" location="moqui_core::service::contacts::find_contact_people"
             transaction="ignore" allow-remote="false">
         <description>Internal: the contacts hook of chat's people. The framework keeps no contacts (they are the app's, such
-            as Mantle's parties), so it asks the service the chat_contact_service property names, else the theme value
+            as Mantle's parties), so it asks the service the chat@contact-service property names, else the theme value
             STRT_CHAT_CONTACT_SERVICE of the user's qapps theme. The hook is called with authorization disabled, in a
             transaction of its own, with userId and addressList (tel:+E.164, email:address, user:userId; at most 300) and
             answers contactList: the contacts the user can see that have one of the addresses, each {contactRef, name, url

@@ -58,7 +58,7 @@ function refuse(reasonCode, text) {
   return { reasonCode }
 }
 
-const roomUrl = (chatRoomId) => (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId)
+const roomUrl = (chatRoomId) => (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId)
 
 function access(chatRoomId) {
   return ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call() || {}

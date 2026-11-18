@@ -38,7 +38,7 @@ const words = (value) => String(value ?? '').replace(/\s+/g, ' ').trim()
 const paragraph = (value) => String(value ?? '').replace(/\r\n?/g, '\n').split('\n').map((line) => line.replace(/[ \t]+/g, ' ').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim()
 const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
 const message = (err) => (err && err.message ? err.message : String(err))
-const appRoot = () => (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '')
+const appRoot = () => (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms').replace(/\/+$/, '')
 const roomLink = (chatRoomId, eventSeq) => `${appRoot()}/Chat?chatRoomId=${encodeURIComponent(chatRoomId)}&eventSeq=${eventSeq}`
 
 /** A refusal: its message an error, its reason code in the answer. */
@@ -68,7 +68,7 @@ function committed(body) {
 
 /** The .ics UID of an event: stable for the message, the same in every file and every calendar provider. */
 function uidOf(chatRoomId, eventSeq) {
-  return `chat-${chatRoomId}-${eventSeq}@${System.getProperty('chat_cal_uid_domain') || 'chat.moqui'}`
+  return `chat-${chatRoomId}-${eventSeq}@${ec.factory.getConfValue('chat@calendar-uid-domain') || 'chat.moqui'}`
 }
 
 let zoneSet = null

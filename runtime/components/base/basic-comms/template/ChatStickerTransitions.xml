@@ -42,7 +42,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.chat.ChatStickerServices.send#Sticker').parameters({chatRoomId: chatRoomId || '',
                 chatStickerId: chatStickerId || '', replyToEventSeq: replyToEventSeq ? Number(replyToEventSeq) : null,
                 threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
-                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
         ]]></script></actions>
         <default-response type="none"/>
@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.chat.ChatLocationServices.send#Location').parameters({chatRoomId: chatRoomId || '',
                 location: place && typeof place === 'object' ? place : {}, replyToEventSeq: replyToEventSeq ? Number(replyToEventSeq) : null,
                 threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
-                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
         ]]></script></actions>
         <default-response type="none"/>

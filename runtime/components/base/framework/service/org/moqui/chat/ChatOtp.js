@@ -2,7 +2,7 @@
 //
 // One-time codes and screen security (plans/Comms-Messaging.md §18.3 phase 21): the services of
 // org.moqui.chat.ChatPrivacyServices. A code is found only in an incoming text from outside (SMS, MMS, RCS: Sms.js
-// receive), never in chat between users: a 4 to 8 digit candidate near a keyword (chat_otp_keywords), with phone numbers,
+// receive), never in chat between users: a 4 to 8 digit candidate near a keyword (chat@otp-keywords), with phone numbers,
 // prices, dates, times, years and links left out, and two candidates as near taken as none. The message keeps it as
 // content.otp {code}; its push carries it where the push carries the snippet (chat_push.rs), for a Copy button. When every
 // local member of the room asks for it (CHAT_OTP_DELETE) and the code may delete itself (the text's only candidate, within
@@ -23,9 +23,9 @@ const find = (entity) => ec.entity.find(entity).disableAuthz()
 const localize = (text) => ec.l10n.localize(text)
 const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
 
-/** The keywords: chat_otp_keywords (comma separated) when set, else the English ones. */
+/** The keywords: chat@otp-keywords (comma separated) when set, else the English ones. */
 function keywords() {
-  const own = String(System.getProperty('chat_otp_keywords') || '').split(',').map((word) => word.trim().toLowerCase()).filter((word) => word)
+  const own = String(ec.factory.getConfValue('chat@otp-keywords') || '').split(',').map((word) => word.trim().toLowerCase()).filter((word) => word)
   return own.length ? own : KEYWORDS
 }
 

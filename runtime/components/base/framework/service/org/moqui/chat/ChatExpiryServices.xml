@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="expire" noun="DueMessages" authenticate="anonymous-all" transaction="ignore">
-        <description>The due events (expireDate at or before now), up to limit (chat_expiry_round_limit, 2000), each room by
+        <description>The due events (expireDate at or before now), up to limit (chat@expiry-round-limit, 2000), each room by
             expire#RoomMessages in its own transaction: one that fails is logged, and its events are still due next time; it is
             skipped on this node for 5 minutes (the cache chat.expiry.failed), so it holds no round back. The
             expiry worker runs it at the next due time; the daily clean#ChatRetention runs it too. more: there are more due

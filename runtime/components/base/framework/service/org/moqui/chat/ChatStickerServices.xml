@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="create" noun="StickerPack">
         <description>A pack: the caller's own, or with server a server pack (ChatStickerAdmin). packName up to 60 characters.
-            At most chat_sticker_user_packs_max (10) of a user's and chat_sticker_server_packs_max (50) of the server's.
+            At most chat/stickers@user-packs-max (10) of a user's and chat/stickers@server-packs-max (50) of the server's.
             Refused: badName, notAllowed, tooMany. Out: chatStickerPackId.</description>
         <in-parameters>
             <parameter name="packName" required="true"/>
@@ -70,11 +70,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="add" noun="Sticker">
         <description>A picture into a pack the caller keeps: a PNG, WebP or GIF by its bytes (whatever its name or type says;
-            it is stored with its real type and extension), animated ones too, at most chat_sticker_max_bytes (512 KB) and
-            chat_sticker_max_side (512 px a side, read from its header before it is decoded), decoded within a small memory
-            limit (its still 128 px thumbnail is made from it); at most chat_sticker_uploads_per_hour (60) of a user an hour;
-            the same picture once a pack; at most chat_sticker_pack_max (200) stickers a server pack and
-            chat_sticker_user_pack_max (100) a user's. emoji (one, up to 16 characters) and altText (up to 80). Refused:
+            it is stored with its real type and extension), animated ones too, at most chat/stickers@max-bytes (512 KB) and
+            chat/stickers@max-side (512 px a side, read from its header before it is decoded), decoded within a small memory
+            limit (its still 128 px thumbnail is made from it); at most chat/stickers@uploads-per-hour (60) of a user an hour;
+            the same picture once a pack; at most chat/stickers@pack-max (200) stickers a server pack and
+            chat/stickers@user-pack-max (100) a user's. emoji (one, up to 16 characters) and altText (up to 80). Refused:
             noFile, badType, tooLarge, tooMany, duplicate. Out: chatStickerId, sticker.</description>
         <in-parameters>
             <parameter name="chatStickerPackId" required="true"/>

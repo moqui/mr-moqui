@@ -208,7 +208,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="linkPreviewJson" type="text-very-long"><description>The previews of the message's links, a JSON list of
             {url, title, description, siteName} (fetch#LinkPreviews), or {"removed": true} once the sender removed them</description></field>
         <field name="expireDate" type="date-time"><description>When the event goes (phase 16, ChatExpiryServices.expire#DueMessages):
-            a message's sentDate plus its room's timer, a view-once message's at the latest chat_view_once_days after it is
+            a message's sentDate plus its room's timer, a view-once message's at the latest chat@view-once-days after it is
             sent; an edit, reaction, redaction or pin of a message has the message's. Empty: never.</description></field>
         <field name="viewOnce" type="text-indicator"><description>Y: a view-once photo or video (open#ViewOnce)</description></field>
         <field name="megolmSessionId" type="text-medium"><description>An encrypted event's Megolm session (content.encrypted.session_id),

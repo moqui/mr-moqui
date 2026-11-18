@@ -106,7 +106,7 @@ feature("packs: a user's own and the server's, which only a sticker admin makes;
         const svg = as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine, file: uploadedFile("x.png", "<svg xmlns='http://www.w3.org/2000/svg'/>", "image/png")})
         const html = as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine, file: uploadedFile("x.html", "<script>alert(1)</script>", "text/html")})
         const othersPack = as(B, ST + "add#Sticker", {chatStickerPackId: shared.mine, file: picture("blue.png", BLUE_PNG, "image/png")})
-        const big = withProperty("chat_sticker_max_bytes", "20", () => as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine,
+        const big = withConf("chat/stickers@max-bytes", "20", () => as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine,
             file: picture("blue.png", BLUE_PNG, "image/png")}))
         // the type is the bytes': a JPEG or a BMP named and typed as a PNG is refused, a GIF typed as a PNG is a GIF
         const jpeg = as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine, file: picture("photo.png", JPEG, "image/png")})
@@ -115,7 +115,7 @@ feature("packs: a user's own and the server's, which only a sticker admin makes;
         // a tiny PNG claiming 100,000 px a side is refused from its header, before it is decoded
         const bomb = as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine, file: picture("bomb.png", BOMB_PNG, "image/png")})
         // at most so many an hour
-        const hourly = withProperty("chat_sticker_uploads_per_hour", "2", () => as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine,
+        const hourly = withConf("chat/stickers@uploads-per-hour", "2", () => as(A, ST + "add#Sticker", {chatStickerPackId: shared.mine,
             file: picture("blue.png", BLUE_PNG, "image/png")}))
         shared.gifRow = gifAsPng.chatStickerId
         shared.red = red.chatStickerId

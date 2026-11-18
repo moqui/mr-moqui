@@ -7,7 +7,7 @@
 // - A room's timer (ChatRoom.messageTimerSeconds, setRoomTimer): a new message goes that long after it is sent, for
 //   everyone. append#Event asks expiryOf for an event's expireDate: a message's sentDate plus the timer; an edit, reaction,
 //   redaction or pin of a message the message's own, so they are due together. A view-once message's is at the latest
-//   chat_view_once_days after it is sent (content.viewOnceUntil keeps that time).
+//   chat@view-once-days after it is sent (content.viewOnceUntil keeps that time).
 // - The delete (expireDue, expireRoom): the due rows by the index CHAT_EVENT_EXPIRE, each room in its own transaction.
 //   A message goes with what clear#MessageContent clears, its preview cache rows no other link has, its thread root's
 //   count, the room's last message, its room changes (one marker change stands for them: eventSeq empty, {cause:
@@ -63,7 +63,8 @@ const REMINDER = 'moqui.chat.ChatMessageReminder'
 const find = (entity) => ec.entity.find(entity).disableAuthz()
 const one = (entity, fields) => find(entity).condition(fields).one()
 const blank = (value) => value == null || String(value).trim() === ''
-const property = (name) => String(System.getProperty(name) || '').trim()
+// a setting by its conf selector (chat@view-once-days), empty when it is not set
+const property = (name) => String(ec.factory.getConfValue(name) || '').trim()
 const millis = (value) => (value == null || value === '' ? null : ec.user.timestampMillis(value))
 const nowMillis = (p) => (p && p.nowMillis != null && String(p.nowMillis) !== '' ? Number(p.nowMillis) : millis(ec.user.nowTimestamp))
 const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
@@ -76,7 +77,7 @@ function refuse(reasonCode, text) {
 }
 
 function viewOnceDays() {
-  return Math.max(1, Number(property('chat_view_once_days')) || 14)
+  return Math.max(1, Number(property('chat@view-once-days')) || 14)
 }
 
 /** The mappings in force of a room (its bridges), and whether it is federated: then no timer or view-once. */
@@ -90,7 +91,7 @@ function bridgedReason(room) {
 
 /** The room's server name in the Matrix room ID the browsers name its key backup by. */
 function matrixRoomId(chatRoomId) {
-  return '!' + chatRoomId + ':' + (property('chat_server_name') || 'localhost').toLowerCase()
+  return '!' + chatRoomId + ':' + (property('chat@server-name') || 'localhost').toLowerCase()
 }
 
 // ---------- append#Event: an event's time ----------
@@ -325,7 +326,7 @@ function timelineView(p) {
 /** The rounds' work: the due events, each room on its own in its own transaction. */
 function expireDue(p) {
   const now = nowMillis(p)
-  const limit = Math.max(1, Number(p.limit) || Number(property('chat_expiry_round_limit')) || 2000)
+  const limit = Math.max(1, Number(p.limit) || Number(property('chat@expiry-round-limit')) || 2000)
   // the rooms with events due (grouped by room: one room's many rows do not fill a round; each room is emptied in its
   // turn, so the rounds come to every room), and the rooms whose backed-up sessions are due to go
   const due = Array.from(find('moqui.chat.ChatEventDueRoom').condition('expireDate', 'less-equals', new Date(now)).selectField('chatRoomId')

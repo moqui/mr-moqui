@@ -1,7 +1,7 @@
 // One person across networks (plans/Comms-Messaging.md §11.1, §18.3 phase 22): org.moqui.chat.ChatPeopleServices, as
 // Chat's transitions call them. A user's people come from their rooms (a direct room of two, a phone room of one number),
 // their own merges, splits and names, and the contacts hook (test/service/.../PeopleTestServices.xml, named by
-// chat_contact_service in test/MoquiConf.xml), asked only about their rooms' addresses; a person who is a user shows no
+// chat@contact-service in test/MoquiConf.xml), asked only about their rooms' addresses; a person who is a user shows no
 // number or address the hook gave; a contact naming an unknown user or one who blocked the viewer is left out whole;
 // a typed address cannot probe what the hook knows; one user's changes are theirs alone; an automatic person's key stays
 // when a message comes; the ways come best first (Moqui chat, then the network they wrote on, then SMS, then mail) and a
