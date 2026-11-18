@@ -27,6 +27,12 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><if condition="!ec.message.hasError()"><message type="success">Bridge changed</message></if></actions>
         <default-response url="."/>
     </transition>
+    <transition name="replayRefused">
+        <service-call name="org.moqui.chat.ChatBridgeServices.replay#RefusedWebhooks" in-map="{chatBridgeId:chatBridgeId}"
+                out-map="replayed"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${replayed.appliedCount} applied, ${replayed.refusedCount} still refused</message></if></actions>
+        <default-response url="."/>
+    </transition>
     <transition name="retryDelivery">
         <service-call name="org.moqui.chat.ChatBridgeServices.retry#Delivery" in-map="{chatBridgeDeliveryId:chatBridgeDeliveryId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Sending again</message></if></actions>
@@ -43,7 +49,11 @@ along with this software (see the LICENSE.md file). If not, see
             networkText: (b.networkName || b.typeEnumId || '') + (b.adapter ? '' : ' · ' + L('no adapter in this build')),
             statusLine: (b.statusText || L('Not started yet')) + (b.lastStatusDate ? ' · ' + when(b.lastStatusDate) : ''),
             statusColor: b.statusId === 'CbsConnected' ? 'positive' : b.statusId === 'CbsDisabled' ? 'grey' : 'warning',
-            errorText: b.lastErrorText ? b.lastErrorText + (b.lastErrorDate ? ' (' + when(b.lastErrorDate) + ')' : '') : '',
+            errorText: [b.lastErrorText ? b.lastErrorText + (b.lastErrorDate ? ' (' + when(b.lastErrorDate) + ')' : '') : '',
+                // queued webhooks whose signature was not the network's: a wrong secret or webhookUrl, or forged
+                b.refusedWebhookCount ? ec.resource.expand('${count} webhooks refused since ${since}', '', {count: b.refusedWebhookCount,
+                    since: when(b.refusedWebhookSince)}) : ''].filter((part) => part).join(' · '),
+            replayText: b.refusedWebhookCount ? L('Replay refused') : '',
             countText: [b.pendingCount ? b.pendingCount + ' ' + L('waiting') : '', b.failedCount ? b.failedCount + ' ' + L('failed') : '',
                 b.uncertainCount ? b.uncertainCount + ' ' + L('uncertain') : ''].filter((part) => part).join(', ') || L('None'),
             disabledFlag: b.statusId === 'CbsDisabled' ? 'N' : 'Y',
@@ -79,6 +89,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="countText"><default-field title="Deliveries"><display/></default-field></field>
                     <field name="tools" align="right"><default-field title="">
                         <link url="setDisabled" link-type="hidden-form-link" text="${toggleText}" parameter-map="{chatBridgeId:chatBridgeId, disabled:disabledFlag}"/>
+                        <link url="replayRefused" link-type="hidden-form-link" text="${replayText}" condition="replayText" parameter-map="{chatBridgeId:chatBridgeId}"/>
                     </default-field></field>
                     <columns type="mobile">
                         <column><field-ref name="name"/><field-ref name="networkText"/><field-ref name="errorText"/></column>

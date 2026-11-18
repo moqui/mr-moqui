@@ -618,6 +618,7 @@ fn send_mms(local: &Gate, telnyx: &str, bridge_id: &str, key: &str, attachment: 
             chat_room_id: String::new(),
             event_seq: 0,
             external_room_id: format!("{OURS}/{THEIRS}"),
+            external_thread_id: None,
             kind: DeliveryKind::Message,
             text: Some("A picture".to_string()),
             html: None,

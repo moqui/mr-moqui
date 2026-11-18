@@ -37,7 +37,7 @@ Parts:
 | §9: the user's own phone number | Built (phase 9): group texts, the phone's dialer and Contacts through the app, contacts' names; §9.2 waits for the user's port, 10DLC and live tests | 9, built |
 | §10: the phone's SIM texts (`sim-sms`) | Phone only with an opt-in sync, decided; MMS and the synced room need a design | 10+ |
 | §11–§15: other networks and app equivalents | Plan; each network needs an adapter or a bridge | 10+ |
-| §16: RCS | Research done; business RCS through Telnyx is ready to build | 10+ |
+| §16: RCS | Research done; business RCS through the SMS provider modules, Twilio and Sinch first, is ready to build | 10+ |
 
 # Part 1: The app
 
@@ -58,7 +58,7 @@ Parts:
 | Archive | Per member (`archivedEventSeq`) and per room by an owner (`archivedDate`, read-only) |
 | Encrypted chat | Megolm rooms, cross-signing, emoji and QR verification, key backup ([Chat-Keys](../docs/interfaces/Chat-Keys.md)). Opt-in for direct and private rooms when the room is made; never turned on or off later. An encrypted direct room is a separate room from the plain one with the same person. The shell page owns the crypto device, on the desktop and on Android ([Desktop-Client](../docs/ui/Desktop-Client.md#chat-crypto)); on Android its passphrase is sealed by the Android Keystore |
 | Calls | WebRTC with an SFU; SFrame E2EE with `requireE2ee` or the room's `callE2eeRequired`, set at the start and never lowered ([WebRTC](../docs/interfaces/WebRTC.md)). One call button in the room header; it always starts with video |
-| Phone number | Telnyx SMS and MMS ([SMS](../docs/interfaces/SMS.md)); SIP trunks, `place#PhoneCall`, the Dialer, voicemail ([SIP](../docs/interfaces/SIP.md)). One room per outside number holds its texts, calls and voicemail |
+| Phone number | SMS and MMS through a provider: Telnyx, Twilio or Sinch ([SMS](../docs/interfaces/SMS.md)); SIP trunks, `place#PhoneCall`, the Dialer, voicemail ([SIP](../docs/interfaces/SIP.md)). One room per outside number holds its texts, calls and voicemail |
 | Mobile push | The server sends FCM data messages of kind `ring`, `ringEnded` and `notification` (every persisted notification). The app shows only the ring (`PushService.kt`, `CallManager.kt`); a `notification` is dropped ([Mobile-Client](../docs/ui/Mobile-Client.md)) |
 | Mobile shell | Bundled `Root.qvue`. Home is `Panel/ChatPanel.qvue` at full size with the `home` prop; the shell header hides while a room is open. A room opens `Chat.qvue`'s `chat-room` in `compact` mode with bubbles |
 | Mail | The Comms Inbox: accounts and identities, folders and labels, threads, To, Cc and Bcc, reply, reply all (with Reply-To) and forward with a copy of the attachments, drafts, undo send, uploads that resume, Save to Files and Attach from Files, saved searches, snooze, Spam and Trash, block and unsubscribe, invitations, text blocks (private or shared with a group), ordered rules with stop, automatic replies with a time window, shared mailboxes with read, send and manage rights, removal of an account with its mail kept, `.eml` and print output. This plan must keep all of it working (COM-UI-019, 022, 024, 029) |
@@ -692,15 +692,17 @@ profile on both paths; it needs root, so it has not run yet: it skips without it
 ## 9. The user's own phone number
 
 The app replaces an XMPP phone-number app (such as Cheogram Android with a gateway service). The user ports the number
-to the server's Telnyx account. The server already does texts, MMS, calls and voicemail for a number (§1).
+to the server's SMS and SIP provider (Twilio, Sinch or Telnyx). The server already does texts, MMS, calls and voicemail
+for a number (§1): texts through the provider's messaging API, calls on standard SIP through its trunk.
 
 ### 9.1 Gaps
 
 | Item | Today | Work |
 |---|---|---|
-| Port the number | — | A Telnyx port order (a portal step by the user, not code). Then add the number in System, Voice: Numbers with the messaging bridge, the trunk and the user's routes |
-| 10DLC | Required for texts from a US local number | The user registers the brand and campaign in the Telnyx portal ([SMS](../docs/interfaces/SMS.md)) |
-| Checked live | Telnyx calls, SMS and MMS are tested with fakes only | Test on the real number: text, MMS, call in, call out, voicemail. Only the user starts a test that calls or texts a real number |
+| Port the number | — | A port order with the provider (a portal step by the user, not code). Then add the number in System, Voice: Numbers with the messaging bridge, the trunk and the user's routes |
+| 10DLC | Required for texts from a US local number | The user registers the brand and campaign in the provider's portal ([SMS](../docs/interfaces/SMS.md)) |
+| Providers | Telnyx (adapter `sms`), Twilio (`sms-twilio`) and Sinch (`sms-sinch`) built; none tested live with the provider. Sinch has no group texts on its Conversation API; Twilio's group texts use its Conversations API (US/CA) | Others test each provider live first (below) |
+| Checked live | Calls, SMS and MMS are tested with fakes only, for every provider | Test on the real number with the chosen provider: text, MMS, a group text, call in, call out, voicemail. Only the user starts a test that calls or texts a real number |
 | Push for messages | The app shows only the call ring | §7 |
 | Phone rooms in the list | Rooms of type `CrtExternal` with an SMS icon in Chat; no icon on the phone home (`ChatPanel.qvue:153`); listed only under All | The icon on the home (§2.2); a Phone group in the sidebar and a phone filter on the phone layout (§3) |
 | Start a text | The Text action on a call in Call history (`Calls/History.xml:303`) | A phone number in the new-chat picker (§2.2) |
@@ -710,9 +712,20 @@ to the server's Telnyx account. The server already does texts, MMS, calls and vo
 
 Status (phase 9, 2026-11-17):
 - **Group texts** ([SMS, Group texts](../docs/interfaces/SMS.md#group-texts)): a group MMS is one room for its set of
-  outside numbers (8 recipients at most, sorted, `<ours>/<a>,<b>,...`), whoever of them writes first; a reply goes out
-  as one group MMS to them all (Telnyx `/v2/messages/group_mms`), each number checked and counted as a single text is,
-  each recipient's receipt kept; new group rooms are limited a day for one sender and one of our numbers.
+  outside numbers (sorted, `<ours>/<a>,<b>,...`), whoever of them writes first; a reply goes out as one group text to
+  them all, each number checked and counted as a single text is, each recipient's receipt kept; new group rooms are
+  limited a day for one sender and one of our numbers. The most recipients is the bridge's (`Capabilities`, the
+  provider's `group_max`): Telnyx 8 (`/v2/messages/group_mms`), Twilio 9 (a Conversation of the room's numbers, at most 10
+  participants with ours, US/CA +1 long codes), Sinch none (a group room on a Sinch bridge refuses to send and says why).
+- **Providers** ([SMS](../docs/interfaces/SMS.md)): the SMS adapter is one provider-neutral core
+  (`crates/moqui-channels/src/sms.rs`, the `SmsProvider` trait: the send rules and limits, refusals, the never-resend
+  rule, the webhook's checks, `receive#Sms` and `note#DeliveryReceipt`) with a module per provider in
+  `crates/moqui-channels/src/providers/`. Telnyx (adapter `sms`), Twilio (`sms-twilio`: 1:1 texts on the Messages API,
+  group texts through the Conversations API) and Sinch (`sms-sinch`: the Conversation API's SMS and MMS channels, no
+  group texts) are built; none is tested live with the provider, and the user has others test them first. A webhook
+  signed with a secret (Twilio, Sinch) is verified on the core node, never on an edge node. Calls stay on SIP through
+  the provider's trunk; the voice profiles `VppTwilio` and `VppSinch` are data only, not verified
+  ([SIP](../docs/interfaces/SIP.md)).
 - **The phone's dialer and Contacts** ([Mobile-Client, The phone's dialer and contacts](../docs/ui/Mobile-Client.md#the-phones-dialer-and-contacts)):
   the app registers a managed `tel` calling account while an account signed in on the phone has a number to call
   from. Android lists it under Calling accounts, where only the user turns it on: the app says so in its notification
@@ -759,7 +772,7 @@ Optional: the app becomes the Android default SMS app for the phone's own SIM.
 - A synced SIM thread: its room type and bridge type, and how a text sent from the desktop goes out through the
   phone (the phone as the bridge, through a push and the Rust outbox) and what the room shows while the phone is off.
 - How SIM threads and server rooms show together in the list, and what happens when a person has both a SIM thread
-  and a room on the user's Telnyx number.
+  and a room on the user's number at the provider.
 
 # Part 2: One app for all messaging
 
@@ -785,7 +798,7 @@ inbox.
 | WebRTC calls | MR Moqui users and guests by link | Yes (SFrame) | §8 |
 | XMPP (C3a) | People on XMPP apps (Conversations, Cheogram, Monal, Dino, Gajim) with an account on this server | OMEMO between XMPP apps | Federation to other XMPP servers is C3b, not built |
 | SIP | Desk phones, soft phones, the phone network through a trunk | No | Calls, IVR, voicemail |
-| SMS and MMS | Any phone number, through Telnyx | No | One room per outside number with its texts, calls and voicemail |
+| SMS and MMS | Any phone number, through the SMS provider (Telnyx, Twilio or Sinch) | No | One room per outside number with its texts, calls and voicemail |
 | Mail | Any mail address | No (TLS only in transit) | The Comms Inbox; a person's mail can show beside their chats |
 | Matrix (C6a client API, C6b federation; planned) | Matrix users | Megolm possible | The appservice API (C6c) is also the way to host Matrix bridges (§13.2) |
 
@@ -795,24 +808,25 @@ inbox.
 
 | App | How the app reaches its people | Official? | E2EE through MR Moqui | Needs |
 |---|---|---|---|---|
-| Google Messages: SMS, MMS | The user's number, ported to Telnyx (decided) | Yes | No | Built; live checks (§9) |
-| Google Messages: RCS | Business RCS through Telnyx; personal RCS only through a Google Messages for Web bridge | Business: yes. Personal: no | No | §16; see §13.4 |
+| Google Messages: SMS, MMS | The user's number, ported to an SMS and SIP provider: Twilio, Sinch or Telnyx (decided) | Yes | No | Built; live checks (§9) |
+| Google Messages: RCS | Business RCS through the same provider (Twilio and Sinch first); personal RCS only through a Google Messages for Web bridge | Business: yes. Personal: no | No | §16; see §13.4 |
 | iMessage | A Mac the user owns runs BlueBubbles Server; an adapter talks to its API | No | No | An always-on Mac signed in to the Apple ID |
 | Signal | A linked device (like Signal Desktop) through `signal-cli` | No (Signal allows linked devices; the client is third party) | No, the bridge decrypts | A Signal account on a phone to link from |
 | GroupMe | GroupMe's public API v3 with the user's access token | Yes | GroupMe has no E2EE | The user's token (`request_secret`) |
-| Cheogram | Replaced: the number moves to Telnyx (decided). XMPP contacts reach the user on this server's XMPP | — | OMEMO only between XMPP apps | C3b federation for contacts on other XMPP servers |
+| Cheogram | Replaced: the number moves to an SMS and SIP provider (decided). XMPP contacts reach the user on this server's XMPP | — | OMEMO only between XMPP apps | C3b federation for contacts on other XMPP servers |
 
 ### 13.2 How bridges plug in
 
 All networks go through the chat bridge layer ([Chat-Bridges](../docs/interfaces/Chat-Bridges.md)): a
 `ChatBridgeAdapter` (the trait is in `crates/moqui-core/src/service/chat_bridge.rs`; the adapters are in
-`crates/moqui-channels`, which has one today, Telnyx SMS), one room per outside conversation, the bridge chip and the
+`crates/moqui-channels`, which has one today, SMS: a neutral core with a module per provider), one room per outside
+conversation, the bridge chip and the
 E2EE label from the adapter's `encryption` capability (§6.2). A new network also needs its bridge type (`Cbt…`) where
 `ChatEntities.xml` has none.
 
 | Way | Use for | Why |
 |---|---|---|
-| A Rust adapter on a documented API | GroupMe (REST), BlueBubbles (REST and its event socket), Telnyx RCS | Small, no extra process, same as the SMS adapter |
+| A Rust adapter on a documented API | GroupMe (REST), BlueBubbles (REST and its event socket), business RCS in the SMS provider modules (§16) | Small, no extra process, same as the SMS adapter |
 | A Rust adapter on a sidecar's JSON-RPC | Signal (`signal-cli` daemon, GPL-3) | The Signal protocol stays in a maintained client. The sidecar is a separate process |
 | The Matrix appservice API (C6c) with a mautrix bridge as sidecar | Personal RCS (`mautrix-gmessages`), later WhatsApp, Telegram, Discord | One API in MR Moqui opens many maintained bridges. Each bridge is AGPL and runs as a separate process |
 
@@ -845,26 +859,27 @@ yet). The sidecar's license applies to the sidecar, not to MR Moqui; a legal che
 - Risk: low; the API is old but works. GroupMe has no E2EE, so nothing is lost.
 
 **Google Messages and RCS** (details in §16)
-- SMS and MMS: through the ported number on Telnyx. Group texts: §9.
-- Business RCS (RBM) through Telnyx: verified brand sender, rich cards, replies in the thread. Not person to person.
+- SMS and MMS: through the ported number on the SMS provider. Group texts: §9.
+- Business RCS (RBM) through the same provider (Twilio and Sinch first): verified brand sender, rich cards, replies in
+  the thread. Not person to person.
 - Personal RCS: only a bridge to Google Messages for Web (`mautrix-gmessages` behind C6c). It needs a phone with Google
   Messages as the default SMS app and the number on its SIM.
 
 **Cheogram**
-- Its phone number role moves to Telnyx (decided). Its XMPP role stays: the user's XMPP contacts on this server reach the
+- Its phone number role moves to the SMS and SIP provider (decided). Its XMPP role stays: the user's XMPP contacts on this server reach the
   user in the app; XMPP apps (including Cheogram itself) can still sign in to this server.
 - C3b federation brings contacts on other XMPP servers.
 
 ### 13.4 The RCS conflict
 
-Personal RCS needs the number on a SIM in a phone with Google Messages (§16). The user's number is moving to Telnyx,
-so that number cannot have personal RCS. The choices:
+Personal RCS needs the number on a SIM in a phone with Google Messages (§16). The user's number is moving to an SMS and
+SIP provider (Twilio, Sinch or Telnyx), so that number cannot have personal RCS. The choices:
 
 | Choice | Result |
 |---|---|
-| A. Number on Telnyx (decided) | SMS, MMS, calls and voicemail in the app. Others see SMS, not RCS. Business RCS possible for a brand sender |
-| B. Number stays on a SIM, Google Messages plus the bridge | Personal RCS through the bridge; SMS and MMS through the bridge too; no Telnyx calls on that number |
-| C. Both: Telnyx number for the user, a second SIM line with RCS | Two numbers; people must know which to use |
+| A. Number on the provider (decided) | SMS, MMS, calls and voicemail in the app. Others see SMS, not RCS. Business RCS possible for a brand sender, through the same provider |
+| B. Number stays on a SIM, Google Messages plus the bridge | Personal RCS through the bridge; SMS and MMS through the bridge too; no provider calls on that number |
+| C. Both: the provider's number for the user, a second SIM line with RCS | Two numbers; people must know which to use |
 
 The plan builds A. B and C stay open (§19.3).
 
@@ -895,11 +910,11 @@ that adds it. "New" means this plan adds it (§17).
 
 | Feature | Equivalent | Status |
 |---|---|---|
-| SMS, MMS, group MMS | Telnyx SMS, MMS; group texts | Built; group texts planned |
+| SMS, MMS, group MMS | SMS and MMS through the provider; group texts | Built; group texts in phase 9 (none on Sinch, §9) |
 | RCS chat | Business RCS; personal RCS by bridge (§13.4) | §16 |
 | Default SMS app | `sim-sms` build | §10 |
 | Scheduled send | Scheduled send: a send time on a message the server holds and sends, as mail's due drafts are (`send#DueDrafts`). A chat event has no send time today, and the only outbox is the client's | New |
-| Spam protection, block, report | Block a number: the caller lists that call handling has (`CallerList`, Settings, Call handling), used for texts too. Block a person in chat: new. Spam filter for outside numbers (Telnyx number reputation and a local list) | New; the caller lists are built |
+| Spam protection, block, report | Block a number: the caller lists that call handling has (`CallerList`, Settings, Call handling), used for texts too. Block a person in chat: new. Spam filter for outside numbers (the provider's number lookup where it has one, and a local list) | New; the caller lists are built |
 | One-time codes: copy, delete after 24 h | Detect codes in SMS; Copy button in the notification; optional delete | New |
 | Message reminders | "Remind me" on a message: a notification later | New |
 | Smart replies, writing help | Suggested replies from `moqui-llm`, plain rooms only (never encrypted rooms) | New |
@@ -959,7 +974,7 @@ that adds it. "New" means this plan adds it (§17).
 
 | Feature | Equivalent | Status |
 |---|---|---|
-| Phone number: SMS, MMS, calls, voicemail | Telnyx number | Built; §9 |
+| Phone number: SMS, MMS, calls, voicemail | The number on the SMS and SIP provider | Built; §9 |
 | Calls in the Android dialer | Android `PhoneAccount` | §9 |
 | XMPP chat with OMEMO | This server's XMPP for XMPP contacts; Moqui chat with Megolm in the app | Built (C3a) |
 | Contacts on other XMPP servers | C3b federation | Not built |
@@ -971,26 +986,26 @@ that adds it. "New" means this plan adds it (§17).
 ### 14.7 Android Phone app
 
 The app can become the Android default phone app (the `ROLE_DIALER` role). It then handles every call on the phone:
-the SIM's carrier calls and the server's calls (Moqui calls and the Telnyx number).
+the SIM's carrier calls and the server's calls (Moqui calls and the user's number on the SIP provider).
 
 | Feature | Equivalent | Status |
 |---|---|---|
 | Dialer keypad, `tel:` links | Dialer screen (exists on the web; the desktop app can be the `tel:` handler), `tel:` and `DIAL` intents on Android | Dialer built; Android intents new |
 | In-call screen for SIM calls | An `InCallService`: the same call screen as Moqui calls (§8) for carrier calls | New |
-| Pick the line per call | SIM line, the Telnyx number (through `place#PhoneCall`), or a Moqui call to a user. Default by contact, last used | New |
+| Pick the line per call | SIM line, the provider's number (through `place#PhoneCall`), or a Moqui call to a user. Default by contact, last used | New |
 | Incoming carrier calls | Ring screen over the lock screen (exists for Moqui calls), with the caller's contact name | Ring built; carrier calls new |
-| Call log | One history: SIM calls (Android `CallLog`), Telnyx calls and Moqui calls (server call history), merged and by person | New |
+| Call log | One history: SIM calls (Android `CallLog`), the provider number's calls and Moqui calls (server call history), merged and by person | New |
 | Voicemail | Server voicemail in the number's room (built). The carrier's voicemail: dial-in only (visual voicemail of carriers is closed) | Server voicemail built |
 | Spam and unknown callers | Android `CallScreeningService`: block numbers on the user's caller lists (§14.2; the server already rejects by them), silence unknown callers as an option | New |
-| Hold, mute, speaker, Bluetooth, merge, swap | Android Telecom for SIM calls; the server for Telnyx and Moqui calls | Partly built |
+| Hold, mute, speaker, Bluetooth, merge, swap | Android Telecom for SIM calls; the server for the provider number's calls and Moqui calls | Partly built |
 | Emergency calls | Always on the SIM and the carrier, through Android, never through the server. The app must not block or delay them | Required |
-| Calls from the Contacts app and the car | A managed Android `PhoneAccount` for the Telnyx number and Moqui calls, so other apps and cars can call through them | §9 |
+| Calls from the Contacts app and the car | A managed Android `PhoneAccount` for the provider's number and Moqui calls, so other apps and cars can call through them | §9 |
 
 **Build:** a cargo feature `sim-dialer`, like `sim-sms`, with its Android parts in an optional plugin crate. The default
 APK has no `CALL_PHONE`, `READ_CALL_LOG` or `ANSWER_PHONE_CALLS` permissions. Google Play allows call log permissions only
 for the default phone app, so the call log is in this build only. `sim-sms` and `sim-dialer` can ship in one "phone" APK.
 
-**Done when:** with the role given, a carrier call in and out, a Telnyx call in and out, and a Moqui call all use the
+**Done when:** with the role given, a carrier call in and out, a call in and out on the provider's number, and a Moqui call all use the
 app's screens and appear in one call log; an emergency number goes to the carrier at once.
 
 ### 14.8 Android Contacts app
@@ -1001,7 +1016,7 @@ app's screens and appear in one call log; an emergency number goes to the carrie
 | Contacts synced to the server | The server's CardDAV contact books (Mantle's `ContactDavServices`, [Sync](../docs/interfaces/Sync.md)): personal books read and write, shared books read only | Built on a server with the mr-mantle add-on. The framework alone keeps no contacts: there the Contacts screen shows the phone's own contacts and MR Moqui users only |
 | Contacts in other Android apps | A built-in Android sync adapter: an Android account "MR Moqui" that syncs the CardDAV books into Android's contact store, both ways. The phone app, the keyboard and the car see them | New |
 | Existing phone contacts | Import once from the phone's other accounts into the personal book, with duplicates merged | New |
-| Caller name and photo | From the synced contacts on the phone, and on the server from the `call-context` provider that an app implements, for SIM, Telnyx and Moqui calls and for texts | New |
+| Caller name and photo | From the synced contacts on the phone, and on the server from the `call-context` provider that an app implements, for SIM, provider and Moqui calls and for texts | New |
 | Favorites, groups | Favorites (starred), contact groups as CardDAV categories | New |
 | Share a contact | A vCard message in chat; save a received vCard | New |
 | Network per person | Link a contact to an MR Moqui user, an XMPP address, a Signal or GroupMe identity, a phone number (§11) | New |
@@ -1035,10 +1050,10 @@ Scope: the mobile app (`crates/moqui-mobile`) and the server chat bridges (`crat
 ### 16.1 Summary
 
 1. A third-party Android app cannot send or receive RCS on the user's own number. Android has no public RCS API. Only Google Messages can do it.
-2. The server can send and receive RCS as a verified **business** sender (RBM) through Telnyx. People can reply in a 1:1 thread. Brand vetting and carrier approval are necessary.
+2. The server can send and receive RCS as a verified **business** sender through the SMS provider it already uses. Twilio, Sinch and Telnyx each resell Google's RCS Business Messaging (RBM), with a fallback to SMS or MMS. People can reply in a 1:1 thread. Brand vetting and carrier approval are necessary.
 3. RCS end-to-end encryption (MLS, Universal Profile 3.0) is live only in Google Messages and Apple Messages. Business RCS is never end-to-end encrypted.
 4. A bridge to Google Messages for Web (the mautrix-gmessages approach) gives personal RCS on the user's number. It is unofficial, AGPL, and the bridge reads all plaintext.
-5. Recommendation: build a Telnyx RCS business adapter first. Add a personal RCS bridge only as an opt-in, labelled experimental feature.
+5. Recommendation: build business RCS into the SMS provider modules, on the neutral SMS core, Twilio and Sinch first; Telnyx RCS is optional. Add a personal RCS bridge only as an opt-in, labelled experimental feature.
 
 ### 16.2 Findings
 
@@ -1052,8 +1067,8 @@ Google Messages for Web.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1. Native RCS in the app | App talks RCS to carrier/Jibe | Nobody (no API) | n/a | Not possible | n/a | n/a | Do not build |
 | 2. Hand-off to Google Messages | App opens the thread in Google Messages by intent | Any user with Google Messages | Yes, in Google Messages | Free | Low | Two apps; the thread is not in MR Moqui | Build as fallback |
-| 3. Telnyx RCS business agent | Server adapter on Telnyx RBM API | Operators with a verified brand | No | $100 vetting, $500 T-Mobile, per-message fees | Medium | Approval time; A2P only; not the user's number | **Build first** |
-| 4. Other RBM providers (Twilio, Sinch, Vonage) | Same as 3 | Same as 3 | No | Similar | Medium each | Same as 3 | Later, if needed |
+| 3. Business RCS through the SMS providers | The provider's RBM sender, in the same module as its SMS: Twilio and Sinch, Telnyx optional | Operators with a verified brand | No | Brand vetting, carrier launch, per-message fees (Appendix A) | Medium for the first, small for each next | Approval time; A2P only; not the user's number | **Build first** (Twilio and Sinch) |
+| 4. Other RBM providers (Vonage, AWS) | A provider module of its own, as 3 | Same as 3 | No | Similar | Medium each | Same as 3 | Later, if needed |
 | 5. Google Messages Web bridge (sidecar) | Go `libgm` sidecar + Rust adapter | One user per paired phone | No (plaintext at bridge) | Free | Medium-high | ToS, AGPL, breakage, phone online, no `sim-sms` | Optional, experimental, off by default |
 | 6. Open-source IMS client | Own RCS stack | Rooted/privileged only | Possible in theory | n/a | Very high | Carriers reject it | Do not build |
 | 7. EU DMA / GrapheneOS / future API | Wait for an official path | Unknown | Unknown | Unknown | Unknown | May never cover chat apps | Watch |
@@ -1069,26 +1084,63 @@ Google Messages for Web.
 5. Label every SIM SMS/MMS thread with the SMS label of §6.2, and "Your carrier can read these messages." in the
    message info.
 
-#### RCS phase 1: Telnyx RCS business adapter (server)
+#### How each provider carries RCS
 
-1. Add `crates/moqui-channels/src/telnyx_rcs.rs` next to `telnyx.rs`. Name the adapter `rcs`.
-2. Add a chat bridge type for RCS (for example `CbtRcs`; `ChatEntities.xml` has none). Keep `configJson` encrypted, like the SMS adapter.
-3. Config keys: `apiKey`, `publicKey`, `agentId`, `messagingProfileId`, `smsFallbackFrom`, `mmsFallback`, `apiBaseUrl`.
-4. Reuse the Ed25519 webhook check (`webhook::signature_valid` in `crates/moqui-channels/src/webhook.rs`) and the replay cache of the bridge layer (`replay_take` in `chat_bridge_web.rs`). Move code that only `telnyx.rs` has and both need into a small `telnyx_common` module.
-5. Map `deliver()` to `POST /v2/messages/rcs`. Send attachments as `rich_card` media by `file_url`.
-6. Map inbound `text`, `user_file`, `location` and `suggestion_response` to `ChatBridgeServices.ingest#Event`.
-7. Map `message.sent`, `message.finalized` and `message.read` to delivery and read status.
-8. Record `data.type` (RCS or SMS) on each sent message. Show the real path in the UI.
-9. Set `Capabilities`: `edit=false`, `delete=false`, `reaction=false`, `idempotent=false`, `encryption=Transport`.
-10. Add a capability check before send. Fall back to the SMS bridge when the number is not RCS-capable.
-11. Add tests with a fake Telnyx server, like the current SMS tests.
-12. Write an operator guide in `docs/interfaces/`: brand, agent, test devices, launch, fees.
+Business RCS goes through the same provider modules as SMS (§9, Providers), each on Google's RBM model that the
+provider resells. The facts and their sources are in Appendix A, Finding 2.
+
+| | Twilio | Sinch | Telnyx (optional) |
+| --- | --- | --- | --- |
+| Sender | An RCS sender in a Messaging Service, beside the service's numbers | The Conversation API's `RCS` channel on the app | An RCS agent (`agent_id`) on a messaging profile |
+| Send | The Messages API with `MessagingServiceSid` and an E.164 `To` | `messages:send` with an `RCS` channel identity, as SMS and MMS are sent | `POST /v2/messages/rcs` |
+| Fallback | Automatic: SMS or MMS from the service's numbers when the phone has no RCS | `channel_priority_order` `["RCS","SMS"]` (MMS for a file); `SWITCHING_CHANNEL` in the delivery report | `sms_fallback` or `mms_fallback`; the answer's `data.type` says which went |
+| No fallback | A `To` of `rcs:+1…` | `RCS` alone in the order | No fallback fields |
+| Rich content | `ContentSid` (a Content Template: cards, carousels, suggestions) | The Conversation API's rich message kinds (cards, carousels, choices) | `rich_card`, `carousel_card`, suggestions |
+| Reports | Status callbacks as for SMS, with `read` | `MESSAGE_DELIVERY`: `DELIVERED`, `READ`, `FAILED`, `SWITCHING_CHANNEL` | `message.sent`, `message.finalized`, `message.read` |
+| Signature | `X-Twilio-Signature`, checked on the core node | `x-sinch-webhook-signature`, checked on the core node | Ed25519, as its SMS |
+
+#### RCS phase 1: business RCS in the provider modules (server)
+
+1. RCS is not a module of its own, and the `telnyx_common` module planned before is not needed: the neutral core
+   (`crates/moqui-channels/src/sms.rs`) keeps the send rules and limits, the refusals, the never-resend rule, the
+   webhook's checks (POST, the replay cache, the provider's `verify`, on the core node for a secret-signed provider)
+   and the `receive#Sms` and `note#DeliveryReceipt` calls. Each provider module gets its RCS part: `providers/twilio.rs` and `providers/sinch.rs`
+   first, `providers/telnyx.rs` optional. The `SmsProvider` trait gains what RCS needs (the channel of a send, rich
+   content, the path a message went).
+2. Add a chat bridge type for RCS (for example `CbtRcs`; `ChatEntities.xml` has none), with adapter names
+   `rcs-twilio`, `rcs-sinch` and `rcs-telnyx`, chosen by `ChatBridge.adapterName` as the SMS ones are. Its own bridge,
+   since its sender is the brand agent, not a number: the other person's phone shows it in a thread apart from the
+   number's texts. Keep `configJson` encrypted, like the SMS adapters.
+3. Config keys: the provider's SMS keys, plus its RCS sender: Twilio's `messagingServiceSid` with the RCS sender in it;
+   Sinch's `appId` with the RCS channel set up, and `smsSender` and `mmsSender` for the fallback; Telnyx's `agentId`,
+   `messagingProfileId`, `smsFallbackFrom`, `mmsFallback`.
+4. Sinch's inbound handling must accept the `RCS` channel: today `providers/sinch.rs` leaves a message and an opt-out
+   on any channel but SMS and MMS. An RCS identity is a phone number, so the RCS bridge keys a room by the other
+   person's number, as the SMS bridge does.
+5. Send through the table above: the provider's fallback by default; no fallback where the room or the message asks for
+   RCS only. A file goes as the provider's media (Twilio `MediaUrl`, Sinch `media_message`, Telnyx `file_url`).
+6. Map inbound text, files, location and suggestion replies to `ChatBridgeServices.ingest#Event`.
+7. Map each provider's reports to delivery and read status. A report never moves a delivery backwards (Twilio's come in
+   any order).
+8. Record the path (RCS, SMS or MMS) of each sent message, from the provider's answer or report. Show the real path in
+   the UI.
+9. Set `Capabilities`: `edit=false`, `delete=false`, `reaction=false`, `idempotent=false`, `encryption=Transport`, no
+   group texts (RBM has no groups).
+10. The provider's fallback is the capability check. Where the provider has a capability lookup (Telnyx's RCS
+    Capabilities endpoint), use it only to show the path before a send.
+11. Decide where a reply to a fallback text goes: it reaches the fallback number, so the RCS room when that number is
+    the RCS bridge's own, else the number's SMS room.
+12. Add tests with each provider's fake server in `crates/moqui-channels/src/tests.rs`, like the SMS tests.
+13. Write an operator guide in `docs/interfaces/`: per provider, the brand, the agent or sender, test devices, launch
+    and fees, each marked not yet tested with the provider until it is.
 
 #### RCS phase 2: Rich features and labels
 
 1. Add suggested replies and actions to the chat model. Show them as chips in the mobile UI.
-2. Add rich cards and carousels as a message kind. Render them in the mobile UI.
-3. Add typing and read events when Telnyx exposes RBM `IS_TYPING` and `READ`.
+2. Add rich cards and carousels as a message kind, sent in each provider's form (the table above). Render them in the
+   mobile UI.
+3. Add typing and read events where the provider passes RBM's `IS_TYPING` and `READ` (Twilio's `read` status and
+   Sinch's `READ` report give read; typing once a provider's docs show it).
 4. Show the RCS labels below in thread headers and message info. The `encryption` capability they come from is built
    with the other labels (§6.2, §18 phase 3), not here.
 
@@ -1108,7 +1160,7 @@ Google Messages for Web.
 1. Check the EU DMA Article 6(7) eligibility terms (draft due 2027-02-01).
 2. Check Android 18 for new Messages APIs.
 3. Check GrapheneOS RCS client progress.
-4. Check Telnyx docs for RBM typing events and non-US API onboarding.
+4. Check each provider's docs for RBM typing events and the countries it onboards (Telnyx: the US by API).
 
 ### 16.5 UI labels for E2EE status
 
@@ -1117,7 +1169,7 @@ paths, in the same form.
 
 | Path | Label (thread header) | Detail text (message info) | Icon |
 | --- | --- | --- | --- |
-| RCS business (Telnyx RBM) | "RCS Business - not end-to-end encrypted" | "Encrypted in transit only. Telnyx, Google, carriers and this server can read it." | Open lock + verified badge |
+| RCS business (the provider's RBM) | "RCS Business - not end-to-end encrypted" | "Encrypted in transit only. The provider, Google, carriers and this server can read it." (The provider by name: Twilio, Sinch or Telnyx.) | Open lock + verified badge |
 | RCS business, sent as SMS fallback | "Sent as SMS - not encrypted" | "The phone did not support RCS. This message went as SMS." | Open lock |
 | RCS via Google Messages bridge | "RCS via bridge - not end-to-end encrypted" | "Google Messages on your phone decrypts it. The bridge and this server can read it." | Open lock + bridge icon |
 | Hand-off to Google Messages | "Opens in Google Messages" | "Google Messages shows its own encryption status." | External link |
@@ -1148,7 +1200,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 10 | GroupMe adapter (`groupme.rs`) | §13.3 |
 | 11 | Signal adapter on `signal-cli` (`signal.rs`), optional build feature | §13.3 |
 | 12 | iMessage adapter on BlueBubbles (`bluebubbles.rs`), optional build feature | §13.3 |
-| 13 | Telnyx RCS adapter | §16 |
+| 13 | Business RCS in the SMS provider modules, Twilio and Sinch first | §16 |
 | 14 | Matrix appservice API (C6c), then `mautrix-gmessages` for personal RCS | §13.2 |
 | 15 | History imports | §15 |
 | 16 | Default phone app (`sim-dialer`): SIM calls, line choice, one call log, call screening | §14.7 |
@@ -1307,8 +1359,8 @@ Done 2026-11-17 in `fdd1ab597` ([review](ui-review-basic-comms.md) COM-UI-001, 0
 | The terminal's one line | `ChatTui.xml` |
 | Bundled screens regenerated | `bundled-screens.js` |
 
-- SMS is `None`, not `Transport` (§6.3: "Never"): Telnyx is reached over TLS, but the provider, the carriers and the
-  phone network read every text.
+- SMS is `None`, not `Transport` (§6.3: "Never"): the provider is reached over TLS, but the provider, the carriers and
+  the phone network read every text.
 - Tests. Regression: the label's rules, the trust and the texts (`WebrootChat`); rule 4 (`CallEncryption`: an encrypted
   room's call, a phone and a guest refused, the setting fixed, an encrypted direct room, a plain direct room's choice);
   the terminal's line (`BasicCommsChat`, `BasicCommsEncrypted`, `BasicCommsBridges`); the bridges' encryption
@@ -1533,16 +1585,20 @@ Planned:
 
 #### Phase 9: the user's phone number
 
-- The user's steps: the port order and 10DLC in the Telnyx portal; the live tests on the real number.
+- The user's steps: the port order and 10DLC in the SMS and SIP provider's portal; the live tests on the real number.
 - A managed `PhoneAccount` with an outgoing path, on the current Telecom library; names from the phone's contacts and
   from `call-context`; group texts.
-- Files: `CallManager.kt`, `CallConnectionService.kt`, the Android manifest, `Sms.js`,
-  `crates/moqui-channels/src/telnyx.rs`.
+- Files: `CallManager.kt`, `CallConnectionService.kt`, the Android manifest, `Sms.js`, the SMS adapter (then
+  `crates/moqui-channels/src/telnyx.rs`; now `sms.rs` and `providers/`).
 - Done when: §9.2.
 - Status (2026-11-17): built (§9.1's status); §9.2 waits for the user's port, 10DLC and the live tests (§18.4).
   - Group texts: `Sms.js` (`numberSet`, `groupKey`, a group room in `ensure#PairRoom`, `open#PairRoom` and `receive#Sms`'s
-    `recipientList`), the Telnyx adapter's group send and the webhook's recipients (`to` and `cc`); Text a number takes
-    several numbers, and the new-chat pickers start a group text for several (`WebrootChat.js` `pickKind`, `startChat`).
+    `recipientList`), the adapter's group send and the webhook's recipients (Telnyx's `to` and `cc`; Twilio's group
+    texts, added later, through its Conversations API); Text a number takes several numbers, and the new-chat pickers start a group text for
+    several (`WebrootChat.js` `pickKind`, `startChat`). A group room on a bridge without group texts (Sinch) refuses to
+    send and says why.
+  - Providers: built, none tested live with the provider (§9.1, Providers). Telnyx was the only provider in phase 9;
+    the SMS adapter then became a neutral core with a module per provider, and Twilio and Sinch were added on it.
   - Names: `find#PhoneNames` (the apps' `call-context` providers, as the user) and Chat's `phoneNames`;
     `moqui.chat.nameRooms` and `contactOptions` (the phone's contacts first), `m-drop-down`'s `options-extra`.
   - Android: `DialAccount.kt` (the managed account, the handing over, the check's state), `PhoneBook.kt` (the
@@ -1585,13 +1641,13 @@ Each of these needs its design first:
 | Unified contacts and the per-message network choice | §11; mail stays in the Inbox, with a line on a person's row (§3, §19.1) |
 
 Then the other networks and the rest of §17, in this order:
-1. The number on Telnyx, block and spam, contacts sync (the user stops using Google Messages and Cheogram).
+1. The number on the SMS and SIP provider, block and spam, contacts sync (the user stops using Google Messages and Cheogram).
 2. Default phone app and the merged call log (the user stops using the Phone app).
 3. GroupMe adapter (official API, low risk).
 4. Signal adapter.
 5. iMessage adapter (needs a Mac).
 6. Disappearing messages, invite links, scheduled send, SMS members.
-7. RCS: Telnyx business adapter, then C6c and the personal RCS bridge if §13.4 picks B or C.
+7. RCS: business RCS in the SMS provider modules (Twilio and Sinch first), then C6c and the personal RCS bridge if §13.4 picks B or C.
 8. The rest of §17.
 
 **Done when** for each network: the user sends and gets text, a photo and a reaction with a real person on that network,
@@ -1608,7 +1664,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 4 | The rows of §8.2 between two phones and with the desktop app. A voice call on the earpiece with the screen off at the ear; a video call on the speaker; a Bluetooth and a wired headset taking the call at once and giving it back; the audio button's choices. Home during a video call: picture-in-picture with the video only; Home during a voice call: the call goes on with its microphone (and a video call's camera) for minutes, screen off. A second call while in one: it rings, Answer holds the first, Swap, and a car's or watch's hold. Move a call from the desktop to the phone and back with no gap. The lock screen. An encrypted call on the phone's WebView. Opening a server page or switching account mid-call (the native call ends with the page). The held party hanging up (the native call on hold goes). A Bluetooth headset connected at the call's start. Chromium WebRTC's own audio routing against Telecom's. A car's or watch's mute, and what a car or a watch shows of a call; a second call shown answered on a car or a watch once the first is held; the screen at the ear after the app goes to the back and comes back; a renderer crash mid-call |
 | 5 | Wi-Fi to mobile data during a call |
 | 7 | A voice note recorded and played |
-| 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (Telnyx's group receipts are from its documentation) |
+| 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (each provider's group receipts are from its documentation), on Telnyx and on Twilio |
 
 ## 19. Decisions and open questions
 
@@ -1616,7 +1672,9 @@ These cannot be shown by a browser at phone width. They are collected here for e
 
 | Date | Decision |
 |---|---|
-| 2026-11-16 | The user's number moves to Telnyx (§13.4, choice A). Cheogram's phone number role ends; its XMPP role stays |
+| 2026-11-16 | The user's number moves to an SMS and SIP provider: Twilio, Sinch or Telnyx (§13.4, choice A). Cheogram's phone number role ends; its XMPP role stays |
+| 2026-11-17 | Standard specs where they reach (SIP for calls), and no one provider at the centre: the SMS adapter is a neutral core with a module per provider (Telnyx `sms`, Twilio `sms-twilio`, Sinch `sms-sinch`). Sinch on its Conversation API, with no group texts; Twilio's group texts through its Conversations API. A secret-signed webhook is verified on the core node (§9) |
+| 2026-11-17 | Business RCS goes through the same provider modules, Twilio and Sinch first; Telnyx RCS is optional (§16.4, §19.4 Q9) |
 | 2026-11-16 | The layout thresholds stay as built: 1024 px for the stacked layout, 640 px for bubbles, 900 px for a pane over the timeline (§1) |
 | 2026-11-16 | Room rows keep the built swipes: right pins, left archives. Mark read is in the long-press sheet (§2.1) |
 | 2026-11-16 | Every call in an encrypted room is E2EE, direct rooms included. No fallback to a plain call (§6.1 rule 4) |
@@ -1640,7 +1698,8 @@ None. The questions asked here are decided in §19.1.
 
 ### 19.3 Open: other networks
 
-- §13.4: number on Telnyx only (A), or keep a SIM line for personal RCS (B or C)?
+- §13.4: number on the provider only (A), or keep a SIM line for personal RCS (B or C)?
+- Which provider holds the user's number: Twilio, Sinch or Telnyx? None is tested live yet (§9).
 - iMessage: is there a Mac that can stay on? Without one, iPhone users get SMS.
 - Signal: accept that the server can read bridged Signal messages? The alternative is to keep the Signal app for those
   chats.
@@ -1651,17 +1710,20 @@ None. The questions asked here are decided in §19.1.
 ### 19.4 Open: RCS
 
 1. Do you accept that RCS from the server comes from a business agent name, not your own number?
-2. Will you pay the Telnyx brand vetting ($100) and T-Mobile launch ($500) fees?
+2. Will you pay the provider's brand vetting and carrier launch fees (Telnyx: $100 vetting, $500 T-Mobile launch;
+   Twilio's and Sinch's onboarding figures differ by source, Appendix A)?
 3. Which agent use case fits: Transactional or Multi-use?
-4. Which countries do you need? Telnyx API onboarding is US only today.
+4. Which countries do you need? Telnyx API onboarding is US only today; check Twilio's and Sinch's.
 5. Do you want RCS phase 3 (personal RCS bridge)? It has ToS risk and AGPL code.
 6. If yes, do you accept a separate AGPL sidecar repo?
 7. If yes, is it acceptable that the server stores bridged RCS as plaintext?
 8. For `sim-sms` users, should the app warn and turn off RCS, or should it keep Google Messages as default and use only the hand-off?
-9. Is a Twilio or Sinch adapter needed, or is Telnyx enough?
+9. Is a Twilio or Sinch adapter needed, or is Telnyx enough? Answered: Twilio and Sinch first, in the provider modules
+   their SMS adapters already have; Telnyx RCS is optional (§16.4, §19.1).
 
 The prices, dates and platform rules in §16 and Appendix A come from the sources in Appendix B as read on
-2026-11-16. They were not checked again in the revision. Check the source before a decision that depends on one.
+2026-11-16; the Twilio and Sinch RCS API facts were read on 2026-11-17. They were not checked again in the revision.
+Check the source before a decision that depends on one.
 
 # Appendix
 
@@ -1716,6 +1778,17 @@ Research for §16, 2026-11-16. Not checked again in the revision (§19.4).
 | Signature | `telnyx-signature-ed25519` + `telnyx-timestamp`. Same as the existing SMS adapter. |
 | Capability check | RCS Capabilities endpoint (is a number RCS-capable). |
 | Agent management | `/v2/rcs/brands`, `/v2/rcs/agents`, test devices, launch, carrier approvals. |
+
+**Twilio and Sinch RCS API shape** (read 2026-11-17):
+
+| Function | Twilio | Sinch (Conversation API) |
+| --- | --- | --- |
+| Sender | An RCS sender added to a Messaging Service's sender pool. | The `RCS` channel on the Conversation API app. |
+| Send | `POST /2010-04-01/Accounts/{AccountSid}/Messages.json` with `MessagingServiceSid` and an E.164 `To`, as for SMS. | `POST /v1/projects/{project}/messages:send` with an `RCS` channel identity. |
+| Fallback | Automatic SMS or MMS from the service's numbers when the phone cannot take RCS. A `To` of `rcs:+1…` turns it off. | `channel_priority_order` `["RCS","SMS"]`; a fallback shows as `SWITCHING_CHANNEL` in the delivery report. |
+| Rich content | `ContentSid` (Content Templates). | The API's rich message kinds. |
+| Status | Status callbacks as for SMS; they include `read`. | `MESSAGE_DELIVERY`: `QUEUED_ON_CHANNEL`, `DELIVERED`, `READ`, `FAILED`, `SWITCHING_CHANNEL`. |
+| Signature | `X-Twilio-Signature`, HMAC-SHA1 with the Auth Token. Same as its SMS. | `x-sinch-webhook-signature`, HMAC-SHA256 with the webhook secret. Same as its SMS. |
 
 ### Finding 3: RCS end-to-end encryption
 
@@ -1804,6 +1877,9 @@ Business RCS:
 - Google Messages, RCS chats with businesses: https://support.google.com/messages/answer/7513219?hl=en
 - Twilio RCS GA: https://www.twilio.com/en-us/blog/products/launches/rcs-generally-available
 - Twilio RCS page: https://www.twilio.com/en-us/messaging/channels/rcs
+- Twilio, send an RCS message: https://www.twilio.com/docs/rcs/send-an-rcs-message
+- Sinch, Conversation API RCS channel: https://developers.sinch.com/docs/conversation/channel-support/rcs
+- Sinch, Conversation API callbacks: https://developers.sinch.com/docs/conversation/callbacks
 - Sinch, RCS pricing: https://sinch.com/blog/rcs-pricing-explained/
 - Vonage, RBM use cases: https://api.support.vonage.com/hc/en-us/articles/15331569271836-RBM-Supported-Use-Cases
 - SimplyRCS, provider price comparison (vendor source): https://simplyrcs.ai/blog/how-much-does-rcs-cost/

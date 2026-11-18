@@ -525,9 +525,35 @@ function noteKeyword(p) {
 }
 
 /**
+ * Internal (the adapter's webhook, after it checked the provider's signature): an opt-out (STOP) or opt-in (START) the
+ * provider tells of as its event eventId, applied once: the event is kept as a done ChatBridgeInbound (transactionId
+ * signal:<eventId>, removed with the batches after 30 days), so a copy changes nothing. Only for a number of ours on this
+ * bridge. outcome noted, duplicate or ignored.
+ */
+function noteOptSignal(p) {
+  const keyword = String(p.keyword || '').toUpperCase()
+  if (!['STOP', 'START'].includes(keyword)) return { outcome: 'ignored', reasonCode: 'badKeyword' }
+  const ours = voice('toE164', { phoneNumber: p.ourNumber }).number
+  const theirs = voice('toE164', { phoneNumber: p.theirNumber }).number
+  const number = ours ? one(NUMBER, { phoneNumber: ours }) : null
+  if (!number || number.messagingBridgeId !== p.chatBridgeId) return { outcome: 'ignored', reasonCode: 'unknownNumber' }
+  if (!theirs) return { outcome: 'ignored', reasonCode: 'badNumber' }
+  const transactionId = 'signal:' + String(p.eventId)
+  // the bridge's row lock: two copies at once apply it once
+  find(BRIDGE).condition('chatBridgeId', p.chatBridgeId).forUpdate(true).one()
+  if (one('moqui.chat.ChatBridgeInbound', { chatBridgeId: p.chatBridgeId, transactionId })) return { outcome: 'duplicate' }
+  const seen = ec.entity.makeValue('moqui.chat.ChatBridgeInbound')
+  seen.setFields({ chatBridgeId: p.chatBridgeId, transactionId, receivedDate: ec.user.nowTimestamp, processedDate: ec.user.nowTimestamp,
+    statusEnumId: 'CbiDone', itemCount: 0, waitingCount: 0 }, true, null, null)
+  seen.create()
+  noteKeyword({ ourNumber: ours, theirNumber: theirs, keyword })
+  return { outcome: 'noted' }
+}
+
+/**
  * Internal (the adapter's webhook, after it checked the provider's signature): a text from theirNumber to ourNumber.
  * ourNumber must have messaging through chatBridgeId (else outcome ignored, reasonCode unknownNumber). A STOP, START or HELP
- * keeps the pair's opt-out. The pair room is found or made, then the text goes through ingest#Event as the provider's
+ * keeps the pair's opt-out (STOP and START once for the message). The pair room is found or made, then the text goes through ingest#Event as the provider's
  * transaction eventId (a repeated webhook does nothing again): outcome, chatRoomId, eventSeq.
  */
 function receive(p) {
@@ -542,17 +568,30 @@ function receive(p) {
       if (row && row.messagingBridgeId === p.chatBridgeId) { ours = candidate; number = row; break }
     }
   }
+  // a provider's conversation (externalThreadId: a Twilio Conversation of a group text): the room of the mapping that
+  // keeps it, of our number and its numbers, whoever writes
+  const thread = blank(p.externalThreadId) ? null : Array.from(find(MAPPING).condition('chatBridgeId', p.chatBridgeId)
+    .condition('externalThreadId', String(p.externalThreadId)).condition('thruDate', null).list())[0]
+  const threadNumbers = thread ? String(thread.externalRoomId || '').split('/') : null
+  if (threadNumbers && threadNumbers.length === 2) {
+    const row = one(NUMBER, { phoneNumber: threadNumbers[0] })
+    if (row && row.messagingBridgeId === p.chatBridgeId) { ours = threadNumbers[0]; number = row }
+  }
   if (!number || number.messagingBridgeId !== p.chatBridgeId) return { outcome: 'ignored', reasonCode: 'unknownNumber' }
   if (!theirs) return { outcome: 'ignored', reasonCode: 'badNumber' }
+  const threadList = threadNumbers && threadNumbers.length === 2 && threadNumbers[0] === ours ? threadNumbers[1].split(',').filter((n) => n) : null
   // the others it went to: a group's room, the sender and them. Our numbers are left out (two of ours in one group are
   // both ours), the sender is kept whatever is cut (then at most the bridge's group maximum less one others), and a
   // sender that is not a number in E.164 (a short code) keeps a room of its own: never another person's pair room; on a
   // bridge whose provider carries no group texts it is the sender's pair room, as a reply could not go to the group
   const groupMax = recipients.length > 1 ? groupMaxOf(p.chatBridgeId) : 0
   const others = isE164(theirs) && groupMax ? recipients.filter((value) => value !== theirs && value !== ours && !isOurs(value)) : []
-  let groupNumbers = others.length ? numberSet([theirs].concat(others.slice(0, groupMax - 1))) : null
+  let groupNumbers = threadList ? (threadList.length > 1 ? threadList : null)
+    : others.length ? numberSet([theirs].concat(others.slice(0, groupMax - 1))) : null
+  // a conversation's pair: its one number
+  const pairTheirs = threadList && threadList.length === 1 ? threadList[0] : theirs
   let note = null
-  if (groupNumbers) {
+  if (groupNumbers && !threadList) {
     // a new group room: at most GROUP_ROOMS_PER_SENDER a day from one outside number, GROUP_ROOMS_PER_NUMBER for one of
     // ours; past that the text goes to the sender's pair room, said so, and no new room reaches the number's users
     const key = groupKey(ours, groupNumbers)
@@ -577,9 +616,14 @@ function receive(p) {
     if (ec.message.hasError()) throw new Error(ec.message.errorsString)
     return out
   }
-  if (keyword) sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
+  // a STOP or START is applied once for its message (note#SmsOptSignal, signal:text:<messageId>), so a copy of the
+  // webhook the replay cache no longer holds (a provider whose signature has no time: Twilio) does not change the
+  // opt-out again after a later keyword; HELP changes no opt-out
+  if (keyword === 'HELP') sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
+  else if (keyword) sub('org.moqui.call.SmsServices.note#SmsOptSignal', { chatBridgeId: p.chatBridgeId,
+    eventId: 'text:' + String(p.messageId), ourNumber: ours, theirNumber: theirs, keyword })
   const pair = sub('org.moqui.call.SmsServices.ensure#PairRoom', groupNumbers ? { ourNumber: ours, theirNumberList: groupNumbers }
-    : { ourNumber: ours, theirNumber: theirs })
+    : { ourNumber: ours, theirNumber: pairTheirs })
   if (!pair.chatRoomId) return { outcome: 'ignored', reasonCode: pair.reasonCode || 'noMessaging' }
   const item = { itemId: String(p.messageId), type: 'message', externalRoomId: pair.externalRoomId, externalEventId: String(p.messageId),
     externalUserId: theirs, displayName: theirs, text: note ? note + (p.text ? '\n' + p.text : '') : p.text || null, originDate: p.originMillis != null ? Number(p.originMillis) : null,
@@ -705,7 +749,7 @@ function phoneNames(p) {
 }
 
 const operations = {
-  ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, releaseSend, noteKeyword, receive, sendMessage, myTextNumbers,
+  ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, releaseSend, noteKeyword, noteOptSignal, receive, sendMessage, myTextNumbers,
   syncNumberRooms, phoneNames,
   keyword: (p) => ({ keyword: keywordOf(p.text) }),
 }

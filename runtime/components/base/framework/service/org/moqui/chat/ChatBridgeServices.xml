@@ -574,13 +574,17 @@ along with this software (see the LICENSE.md file). If not, see
         chatWebhook and chatMedia (MoquiDefaultConf.xml edge), granted to _EDGE_ in EdgeSetupData.xml ========== -->
     <service verb="apply" noun="EdgeWebhook" type="rust" location="moqui_core::service::chat_bridge::edge::apply_edge_webhook"
             allow-remote="false">
-        <description>On a local node, the queue kind chatWebhook: a network's webhook request its edge node checked (the
-            signature, with the replicated chatBridges set) and queued by the network's event id. The payload is the
-            request (method, headers, body in base64, client address, the time it came); the bridge's adapter applies
-            it (ChatBridgeAdapter::apply_webhook, the SMS adapter's receive#Sms and note#DeliveryReceipt) with the
-            transport-verified mark set, without checking the signature again. A bridge disabled here, a database that
-            cannot be read, or the adapter's 409, 429 or 503 answers retryLater; a bridge not here, a malformed item or
-            any other refusal is an error, counted. Refused on an edge node.</description>
+        <description>On a local node, the queue kind chatWebhook: a network's webhook request its edge node queued by the
+            network's event id, having checked its signature with the replicated chatBridges set (a public key) or, for a
+            network that signs with a secret, only its size, signature header and rate. The payload is the request
+            (method, path and query, headers, body in base64, client address, the time it came). Its signature is checked
+            here again with the bridge's whole configuration, at the time it came, whichever way it was queued; then the
+            bridge's adapter applies it (ChatBridgeAdapter::apply_webhook, the SMS adapter's receive#Sms and
+            note#DeliveryReceipt) with the transport-verified mark set. One this node cannot check (no key or secret), a
+            bridge disabled here, a database that cannot be read, or the adapter's 409, 429 or 503 answers retryLater; one
+            whose signature is not the network's is kept as a ChatBridgeWebhookRefused (replay#RefusedWebhooks) and the
+            item answered done; a bridge not here, a malformed item or any other refusal is an error, counted. Refused on
+            an edge node.</description>
         <implements service="org.moqui.mail.EmailServices.apply#EdgeQueueItem"/>
     </service>
     <service verb="store" noun="EdgeMedia" type="rust" location="moqui_core::service::chat_bridge::edge::store_edge_media"
@@ -591,6 +595,63 @@ along with this software (see the LICENSE.md file). If not, see
             /channels/{chatBridgeId}/media/{token} for minutes (the local node's channels_media_minutes); the files
             that ran out are removed. Refused on a local node.</description>
         <implements service="org.moqui.mail.EmailServices.apply#EdgeQueueItem"/>
+    </service>
+
+    <service verb="replay" noun="RefusedWebhooks" type="rust"
+            location="moqui_core::service::chat_bridge::edge::replay_refused_webhooks" allow-remote="false">
+        <description>ChatBridgeAdmin: the queued webhooks of chatBridgeId refused on this cluster (ChatBridgeWebhookRefused,
+            their signature not the network's), checked again with the bridge's configuration as it is now (its secret or
+            webhookUrl fixed) and applied when they pass, each in a transaction of its own. Out: appliedCount, refusedCount
+            (still refused, kept), waitingCount (cannot be checked or applied now, kept).</description>
+        <in-parameters><parameter name="chatBridgeId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="appliedCount" type="Integer"/>
+            <parameter name="refusedCount" type="Integer"/>
+            <parameter name="waitingCount" type="Integer"/>
+        </out-parameters>
+    </service>
+
+    <service verb="store" noun="MappingThread" allow-remote="false" transaction="force-new">
+        <description>Internal (a bridge's adapter, right after it made a conversation on its network for a mapping: a Twilio
+            Conversation of a group text): keep externalThreadId on the active mapping of externalRoomId on chatBridgeId, in a
+            transaction of its own, so later sends carry it (DeliveryRequest.external_thread_id) and a text that names it
+            comes to the mapping's room (receive#Sms). Refused (reasonCode threadTaken) when another active mapping of the
+            bridge has it; noMapping when there is no active mapping. An empty externalThreadId lets the mapping's go (the
+            conversation is gone or closed on the network; the adapter makes another). Out: chatRoomBridgeId.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="externalRoomId" required="true"/>
+            <parameter name="externalThreadId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatRoomBridgeId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            chatRoomBridgeId = null; reasonCode = null
+            const active = (conditions) => {
+                let find = ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatBridgeId', chatBridgeId).condition('thruDate', null).disableAuthz()
+                for (const [name, value] of Object.entries(conditions)) find = find.condition(name, value)
+                return Array.from(find.list())
+            }
+            const mapping = active({externalRoomId: externalRoomId})[0]
+            if (!mapping) { reasonCode = 'noMapping'; ec.message.addError(ec.l10n.localize('The room has no mapping to this bridge')); return }
+            const thread = externalThreadId == null ? '' : String(externalThreadId).trim()
+            if (!thread) {
+                const cleared = ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomBridgeId', mapping.chatRoomBridgeId).forUpdate(true).disableAuthz().one()
+                cleared.set('externalThreadId', null)
+                cleared.update()
+                chatRoomBridgeId = mapping.chatRoomBridgeId
+                return
+            }
+            if (active({externalThreadId: externalThreadId}).some((row) => row.chatRoomBridgeId !== mapping.chatRoomBridgeId)) {
+                reasonCode = 'threadTaken'; ec.message.addError(ec.l10n.localize('Another room of this bridge has that conversation')); return
+            }
+            const row = ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomBridgeId', mapping.chatRoomBridgeId).forUpdate(true).disableAuthz().one()
+            row.set('externalThreadId', externalThreadId)
+            row.update()
+            chatRoomBridgeId = mapping.chatRoomBridgeId
+        ]]></script></actions>
     </service>
 
     <!-- ========== Delivery state ========== -->
@@ -789,7 +850,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="Bridges">
         <description>The chat bridges (ChatBridgeAdmin): each {chatBridgeId, name, typeEnumId, networkName, adapterName,
             statusId, statusText, lastErrorText, lastErrorDate, lastStatusDate, sendsPerMinute, hasToken, roomCount (active
-            mappings), pendingCount, failedCount, uncertainCount, adapter (this build has one)}; and the latest 50 deliveries
+            mappings), pendingCount, failedCount, uncertainCount, adapter (this build has one), refusedWebhookCount and
+            refusedWebhookSince (the queued webhooks refused as not the network's and kept, ChatBridgeWebhookRefused, and
+            the first one's date)}; and the latest 50 deliveries
             that failed or are uncertain (problemList: {chatBridgeDeliveryId, chatBridgeId, bridgeName, chatRoomId, roomName,
             eventSeq, state, reasonCode, error, attemptCount, lastAttemptDate}). The configuration is never returned.</description>
         <out-parameters>
@@ -822,7 +885,10 @@ along with this software (see the LICENSE.md file). If not, see
                     roomCount: count('moqui.chat.ChatRoomBridge', {chatBridgeId: id, thruDate: null}),
                     pendingCount: count('moqui.chat.ChatBridgeDelivery', {chatBridgeId: id, statusEnumId: 'CdsPending'}),
                     failedCount: count('moqui.chat.ChatBridgeDelivery', {chatBridgeId: id, statusEnumId: 'CdsFailed'}),
-                    uncertainCount: count('moqui.chat.ChatBridgeDelivery', {chatBridgeId: id, statusEnumId: 'CdsUncertain'})})
+                    uncertainCount: count('moqui.chat.ChatBridgeDelivery', {chatBridgeId: id, statusEnumId: 'CdsUncertain'}),
+                    refusedWebhookCount: count('moqui.chat.ChatBridgeWebhookRefused', {chatBridgeId: id}),
+                    refusedWebhookSince: toMillis(Array.from(ec.entity.find('moqui.chat.ChatBridgeWebhookRefused').condition('chatBridgeId', id)
+                        .orderBy('refusedDate').limit(1).disableAuthz().list())[0]?.refusedDate)})
             }
             const names = {}
             for (const row of bridges) names[row.chatBridgeId] = row.name
