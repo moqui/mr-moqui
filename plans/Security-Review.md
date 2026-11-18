@@ -53,7 +53,11 @@ in [Security-Review-Low](Security-Review-Low.md).
    inward, and its report says what was read whole, sampled or not reached. The lead read the cited lines of every
    High and Medium candidate before it was recorded (its **Re-check** says which lines, and what was not read); a
    Low or Info one is as its reviewer reported it. One writer for each area then wrote the entries and brought the
-   area's map file up to date from the reports. Nothing was run and nothing found in this round is fixed.
+   area's map file up to date from the reports. Nothing was run and nothing found in this round is fixed. An entry's
+   lines, names and settings are those of the commit its unit read: mr-moqui `f6a7de2f9` for units A1 to A19 and B1 to
+   B11, before the settings became conf attributes (`plans/archive/Conf-Paths.md` §6 maps each old name to its
+   selector); the units after them read the tree of the merge `40c0b234e` or later, and their reports name it. The
+   map files use the selectors throughout.
 
 Status values:
 
