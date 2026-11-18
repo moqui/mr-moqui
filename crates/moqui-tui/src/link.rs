@@ -92,6 +92,8 @@ pub struct AdminAccount {
     pub email: String,
     /// The setup secret of the server's startup log; empty when the setup asked for none.
     pub setup_secret: String,
+    /// Also put the account in ADMIN_ADV (`joinAdvanced`), which only a member can add a member to later.
+    pub join_advanced: bool,
 }
 
 /// The passwords and the setup secret are never in a log line.
@@ -101,6 +103,7 @@ impl std::fmt::Debug for AdminAccount {
             .field("username", &self.username)
             .field("full_name", &self.full_name)
             .field("email", &self.email)
+            .field("join_advanced", &self.join_advanced)
             .finish_non_exhaustive()
     }
 }

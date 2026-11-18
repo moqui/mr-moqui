@@ -409,7 +409,8 @@ pub(super) fn find(factory: &ExecutionContextFactory, path: &str) -> Option<Rout
 }
 
 /// Run the route's token service: the `routeContext` it answers for a token it accepts, else `None`. Errors the check
-/// leaves are taken back out of the message facade; a failing service is logged and refuses the token.
+/// leaves are taken back out of the message facade; a failing service is logged and refuses the token. A token the
+/// service refuses is noted as a failed credential (`web::note_auth_failure`).
 fn check_token(found: &RouteMatch) -> Option<Value> {
     let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
     let parameters = BTreeMap::from([
@@ -426,7 +427,12 @@ fn check_token(found: &RouteMatch) -> Option<Value> {
                 .cloned()
                 .unwrap_or(Value::Map(indexmap::IndexMap::default())),
         ),
-        Ok(_) => None,
+        // a token the service refuses counts against the client as a failed credential does, so guessing tokens is
+        // limited by the web protection (SEC-RTE-16); a failing service is not the client's guess
+        Ok(_) => {
+            crate::web::note_auth_failure();
+            None
+        }
         Err(err) => {
             tracing::error!(route = %found.route.name, service = %found.route.token_service, "token check failed: {err}");
             None

@@ -160,6 +160,14 @@ impl Session {
                 self.set_message("Not logged in.".to_string(), true);
                 return;
             }
+            // the ADMIN_ADV toggle: Space flips it, y and n set it, other typing is ignored
+            Key::Char(ch) if login.is_toggle(login.at) && !press.ctrl && !press.alt => match ch.to_ascii_lowercase() {
+                ' ' => login.join_advanced = !login.join_advanced,
+                'y' => login.join_advanced = true,
+                'n' => login.join_advanced = false,
+                _ => {}
+            },
+            _ if login.is_toggle(login.at) => {}
             _ => {
                 let text = login.field_mut(login.at);
                 let mut cursor = text.chars().count();
@@ -174,7 +182,7 @@ impl Session {
     /// dialog and send nothing. The passwords stay until the answer: a created account logs in with them.
     fn send_setup(&mut self, mut login: Login) {
         let labels = login.labels();
-        let missing = (0..labels.len()).find(|at| login.field(*at).trim().is_empty());
+        let missing = (0..labels.len()).find(|at| !login.is_toggle(*at) && login.field(*at).trim().is_empty());
         if let Some(at) = missing {
             login.error = format!("{} is required", labels[at]);
             login.at = at;
@@ -191,6 +199,7 @@ impl Session {
                 full_name: login.full_name.trim().to_string(),
                 email: login.email.trim().to_string(),
                 setup_secret: login.setup_secret.trim().to_string(),
+                join_advanced: login.join_advanced,
             };
             if self
                 .lanes

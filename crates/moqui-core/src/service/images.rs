@@ -163,6 +163,12 @@ fn input_bytes(parameters: &BTreeMap<String, Value>, name: &str, location_name: 
     }
 }
 
+/// The image in `bytes`, decoded within the same limits as `convert#Image` (no side over 30,000 pixels, the
+/// decoder's allocation limit), or None. For the thumbnails of `ec.files` (SEC-SCR-09).
+pub(crate) fn decode_limited(bytes: &[u8]) -> Option<DynamicImage> {
+    decode(bytes).ok().map(|(image, _)| image)
+}
+
 /// Decode an image, and the name of its format as a file suffix.
 fn decode(bytes: &[u8]) -> Result<(DynamicImage, String), LibError> {
     let mut reader = ImageReader::new(Cursor::new(bytes))

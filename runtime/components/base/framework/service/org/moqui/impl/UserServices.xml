@@ -560,17 +560,24 @@ along with this software (see the LICENSE.md file). If not, see
             screen's create form, its initialAdminNeeded transition and the terminal's login dialog ask this, and
             create#InitialAdminAccount refuses unless it holds. Seed data has accounts nobody logs in as, which do not
             count: _NA_, the edge node's delegate _EDGE_ (EdgeSetupData.xml) and the chat users of agents
-            (AgentTypeData.xml). The password rules are answered only while needed is true.</description>
+            (AgentTypeData.xml). It is needed only while initial_admin_enabled is true (MoquiDefaultConf.xml, false by
+            default): with no account and the property off, needed is false and disabled is true. The password rules are
+            answered only while needed is true.</description>
         <out-parameters>
             <parameter name="needed" type="Boolean" required="true"/>
+            <parameter name="disabled" type="Boolean" required="true"><description>No account exists, but
+                initial_admin_enabled is not true, so the first administrator cannot be created now.</description></parameter>
             <parameter name="minLength" type="Integer"/>
             <parameter name="minDigits" type="Integer"/>
             <parameter name="minOthers" type="Integer"/>
         </out-parameters>
         <actions>
-            <set field="needed" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
+            <set field="noAccounts" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
                 ['_NA_', '_EDGE_'].concat(Array.from(ec.entity.find('moqui.agent.AgentDefinition').selectField('chatUserId').disableAuthz().list())
                     .map((agent) => agent.chatUserId).filter(Boolean))).disableAuthz().count() == 0"/>
+            <set field="enabled" from="String(System.getProperty('initial_admin_enabled') || '').trim() == 'true'"/>
+            <set field="needed" from="noAccounts &amp;&amp; enabled"/>
+            <set field="disabled" from="noAccounts &amp;&amp; !enabled"/>
             <if condition="needed">
                 <set field="minLength" from="ec.user.passwordRules.minLength"/>
                 <set field="minDigits" from="ec.user.passwordRules.minDigits"/>
@@ -587,11 +594,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="emailAddress"><text-email/></parameter>
             <parameter name="setupSecret"><description>The one-time setup secret the server writes to its startup log
                 while no account exists; not needed for a request from this machine (ec.user.initialAdminLocal).</description></parameter>
+            <parameter name="joinAdvanced" type="Boolean" default="false"><description>Also put the account in ADMIN_ADV
+                (Administrators - Advanced: login as another user, the SQL runner, the SSH admin shell, conf edit,
+                component deploy and the other sealed tools). ADMIN_ADV is a privileged group, so only a member can add a
+                member later; this is the way in for the first one.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="userId" required="true"/></out-parameters>
         <actions>
             <!-- only allow this if there are no user accounts but the seed ones (get#InitialAdminNeeded) -->
             <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
+            <if condition="adminNeeded.disabled">
+                <return error="true" message="Creating the initial admin account is off: set initial_admin_enabled=true (in .env) and restart"/></if>
             <if condition="!adminNeeded.needed">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
             <!-- The first caller became an administrator from any address (SEC-WEB-08, SEC-CLI-01): only a request from
@@ -604,11 +617,16 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="createLock" for-update="true">
                 <field-map field-name="userId" value="_NA_"/></entity-find-one>
             <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
+            <if condition="adminNeeded.disabled">
+                <return error="true" message="Creating the initial admin account is off: set initial_admin_enabled=true (in .env) and restart"/></if>
             <if condition="!adminNeeded.needed">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
             <service-call name="org.moqui.impl.UserServices.create#UserAccount" in-map="context" out-map="context"/>
             <service-call name="create#moqui.security.UserGroupMember" in-map="{userId: userId, userGroupId: 'ADMIN'}"
                     disable-authz="true"/>
+            <if condition="joinAdvanced">
+                <service-call name="create#moqui.security.UserGroupMember" in-map="{userId: userId, userGroupId: 'ADMIN_ADV'}"
+                        disable-authz="true"/></if>
         </actions>
     </service>
 

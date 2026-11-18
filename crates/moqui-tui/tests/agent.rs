@@ -344,8 +344,9 @@ fn the_login_dialog_is_filled_by_set_and_sent_by_do() {
         .any(|call| matches!(call, LinkCall::Login { username, code, .. } if username == "john" && code == "123456")));
 }
 
-/// On a server with no accounts the dialog is "initial admin": its five fields are the elements, `set` fills them by
-/// their labels (one of two words too), and `do Create and log in` creates the account and logs in.
+/// On a server with no accounts the dialog is "initial admin": its five fields and the ADMIN_ADV check are the
+/// elements, `set` fills them by their labels (one of two words too), `do` on the check sets it, and `do Create and
+/// log in` creates the account and logs in.
 #[test]
 fn the_setup_dialog_is_driven_by_set_and_do() {
     let link = gallery_link();
@@ -361,6 +362,7 @@ fn the_setup_dialog_is_driven_by_set_and_do() {
     assert!(look.text.contains("overlay initial admin"), "{}", look.text);
     let listed = agent.run("elements");
     assert!(listed.text.contains("login.fullName"), "{}", listed.text);
+    assert!(listed.text.contains("login.joinAdvanced"), "{}", listed.text);
     for command in [
         "set Username ada",
         "set Password Secret-pass-1",
@@ -372,6 +374,8 @@ fn the_setup_dialog_is_driven_by_set_and_do() {
         assert!(answer.ok, "{command}: {}", answer.text);
         assert!(!answer.text.contains("Secret-pass-1"), "{}", answer.text);
     }
+    let check = agent.run("do login.joinAdvanced");
+    assert!(check.ok, "{}", check.text);
     let done = agent.run("do Create and log in");
     assert!(done.ok, "{}", done.text);
     assert!(done.text.contains("overlay none"), "{}", done.text);
@@ -379,7 +383,7 @@ fn the_setup_dialog_is_driven_by_set_and_do() {
         .calls()
         .iter()
         .any(|call| matches!(call, LinkCall::CreateInitialAdmin(account)
-        if account.username == "ada" && account.full_name == "Ada Admin")));
+        if account.username == "ada" && account.full_name == "Ada Admin" && account.join_advanced)));
 }
 
 /// A form whose transition writes, in a section-iterate entry (its domId ends `_1`), a find field with a from and a
