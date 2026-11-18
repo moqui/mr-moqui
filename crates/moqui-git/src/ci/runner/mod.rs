@@ -28,6 +28,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 pub mod archive;
+pub mod collect;
 pub mod http;
 
 /// How the runner reaches the server. `path` is relative to the job's endpoints (`job`, `log`, `steps/1`, ...).
@@ -255,6 +256,12 @@ impl LogSender<'_> {
 /// `${hash:FILE}` in a cache key replaced by the SHA-256 of that file of the workspace (the first 16 hex characters;
 /// empty when it is not there or is outside the workspace).
 pub fn expand_key(key: &str, workspace: &Path) -> String {
+    expand_key_noting(key, workspace, &mut Vec::new())
+}
+
+/// [`expand_key`], with a note for the job's log for each `${hash:FILE}` whose file is there but was not read (a link,
+/// a directory, a file outside the workspace), which hashes to nothing and so leaves that part of the key constant.
+pub fn expand_key_noting(key: &str, workspace: &Path, notes: &mut Vec<String>) -> String {
     let mut out = String::new();
     let mut rest = key;
     while let Some((before, after)) = rest.split_once("${hash:") {
@@ -266,9 +273,17 @@ pub fn expand_key(key: &str, workspace: &Path) -> String {
         };
         if crate::ci::file::valid_path(file) {
             let mut bytes = Vec::new();
-            if copy_regular(workspace, &workspace.join(file), &mut bytes).is_ok() {
-                let digest = moqui_lib::codec::hex_encode(&Sha256::digest(&bytes));
-                out.push_str(digest.get(..16).unwrap_or(&digest));
+            let path = workspace.join(file);
+            match copy_regular(workspace, &path, &mut bytes) {
+                Ok(()) => {
+                    let digest = moqui_lib::codec::hex_encode(&Sha256::digest(&bytes));
+                    out.push_str(digest.get(..16).unwrap_or(&digest));
+                }
+                Err(_) if path.symlink_metadata().is_err() => {}
+                Err(_) => notes.push(format!(
+                    "Cache key {key}: ${{hash:{file}}} hashes to nothing, as {file} is not a regular file of the \
+                     workspace (a link is not followed)"
+                )),
             }
         }
         rest = tail;
@@ -338,20 +353,53 @@ pub(crate) fn copy_regular(workspace: &Path, file: &Path, out: &mut dyn std::io:
 /// followed only while what it names is in the workspace: a path whose target is outside it (a link of the last
 /// name, or of a directory on the way) is left out, and a `*` never lists a directory out of it (SEC-GIT-81).
 pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
-    matches_and_refused(workspace, pattern).0
+    find(workspace, pattern)
+        .found
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
 }
 
-/// [`matches`], and the paths left out because they do not resolve inside the workspace (a link out of it, or a
-/// dangling one), at most a hundred, for the job's log.
-pub fn matches_and_refused(workspace: &Path, pattern: &str) -> (Vec<PathBuf>, Vec<PathBuf>) {
+/// What a matched path is, by `symlink_metadata`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    File,
+    Link,
+    Dir,
+    Other,
+}
+
+impl Kind {
+    fn of(path: &Path) -> Self {
+        match path.symlink_metadata().map(|meta| meta.file_type()) {
+            Ok(kind) if kind.is_symlink() => Self::Link,
+            Ok(kind) if kind.is_file() => Self::File,
+            Ok(kind) if kind.is_dir() => Self::Dir,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// What a pattern names in the workspace ([`find`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Matches {
+    /// The paths [`matches`] answers, each with what it is.
+    pub found: Vec<(PathBuf, Kind)>,
+    /// The paths left out because they do not resolve inside the workspace (a link out of it, or a dangling one), at
+    /// most a hundred, for the job's log.
+    pub refused: Vec<PathBuf>,
+}
+
+/// [`matches`], with what each path is and the paths refused.
+pub fn find(workspace: &Path, pattern: &str) -> Matches {
     const MAX: usize = 5000;
     const MAX_REFUSED: usize = 100;
     let mut refused = Vec::new();
     if !crate::ci::file::valid_path(pattern) {
-        return (Vec::new(), refused);
+        return Matches::default();
     }
     let Ok(root) = workspace.canonicalize() else {
-        return (Vec::new(), refused);
+        return Matches::default();
     };
     let mut keep = |path: PathBuf, next: &mut Vec<PathBuf>| {
         if resolves_inside(&root, &path) {
@@ -393,7 +441,16 @@ pub fn matches_and_refused(workspace: &Path, pattern: &str) -> (Vec<PathBuf>, Ve
         }
     }
     found.retain(|path| path != workspace);
-    (found, refused)
+    Matches {
+        found: found
+            .into_iter()
+            .map(|path| {
+                let kind = Kind::of(&path);
+                (path, kind)
+            })
+            .collect(),
+        refused,
+    }
 }
 
 /// End a step's process and what it started: the process group on Unix, the process elsewhere.
@@ -649,7 +706,10 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(workspace: &Path, name: &str) -> Self {
-        let dir = workspace.parent().unwrap_or(workspace);
+        Self::in_dir(workspace.parent().unwrap_or(workspace), name)
+    }
+
+    fn in_dir(dir: &Path, name: &str) -> Self {
         Self(dir.join(format!(".moqui-ci-{}-{name}", std::process::id())))
     }
 }
@@ -660,176 +720,31 @@ impl Drop for Scratch {
     }
 }
 
-/// What the runner reads of the workspace after the steps: one report file as it is, or files and directories packed
-/// as a tar.gz (an artifact, a cache).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Collect {
-    Report,
-    Pack,
-}
-
-impl Collect {
-    #[cfg(unix)]
-    fn word(self) -> &'static str {
-        match self {
-            Self::Report => "report",
-            Self::Pack => "pack",
-        }
+/// Write a line to the job's log for each of `refused`, named by its path in the workspace.
+fn log_refused(
+    log: &mut LogSender<'_>,
+    workspace: &Path,
+    refused: &[PathBuf],
+    said: impl Fn(&str) -> String,
+) -> Result<(), Stop> {
+    for path in refused {
+        log.line(None, &said(&shown_path(workspace, path)))?;
     }
-}
-
-/// The arguments of the child a `--step-user` runner reads the workspace with: `moqui ci-run collect report|pack`.
-pub const COLLECT_ARGS: [&str; 2] = ["ci-run", "collect"];
-
-/// The longest a child reading the workspace runs before it is killed.
-#[cfg(unix)]
-const COLLECT_LIMIT: Duration = Duration::from_secs(30 * 60);
-
-/// Read `files` of the workspace into the new file `out`, as `kind` says: [`copy_regular`] for a report (one file),
-/// [`archive::pack`] for an artifact or a cache. With a step user the reading is done by a child of this binary
-/// ([`COLLECT_ARGS`]) running as that user, so a link a step made reads only what the step could read itself; the
-/// runner, root in that mode, reads nothing of the workspace (SEC-GIT-81).
-fn collect(options: &Options, kind: Collect, files: &[PathBuf], out: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    if let Some(user) = &options.step_user {
-        return collect_as(user, &options.workspace, kind, files, out);
-    }
-    match kind {
-        Collect::Report => {
-            let [file] = files else {
-                return Err("a report is one file".into());
-            };
-            let mut written = std::fs::File::create(out).map_err(|err| format!("{}: {err}", out.display()))?;
-            copy_regular(&options.workspace, file, &mut written)
-        }
-        Collect::Pack => archive::pack(&options.workspace, files, out),
-    }
-}
-
-/// [`collect`] as `user`: this binary's [`COLLECT_ARGS`] with the step user's uid and gid and no environment, the
-/// workspace and the paths NUL-separated on its standard input, its standard output `out`, and its error text in a
-/// file; each of them a file the runner made, so no pipe can hold the runner. Killed after [`COLLECT_LIMIT`].
-#[cfg(unix)]
-fn collect_as(user: &StepUser, workspace: &Path, kind: Collect, files: &[PathBuf], out: &Path) -> Result<(), String> {
-    use std::io::Write as _;
-    use std::os::unix::ffi::OsStrExt as _;
-    use std::os::unix::process::CommandExt as _;
-
-    let program = std::env::current_exe().map_err(|err| format!("this program's path is not known: {err}"))?;
-    let list = Scratch::new(workspace, "collect-list");
-    let errors = Scratch::new(workspace, "collect-errors");
-    let mut names = Vec::new();
-    for path in std::iter::once(workspace).chain(files.iter().map(PathBuf::as_path)) {
-        names.extend_from_slice(path.as_os_str().as_bytes());
-        names.push(0);
-    }
-    let open = |path: &Path, write: bool| {
-        std::fs::OpenOptions::new()
-            .read(!write)
-            .write(write)
-            .create(write)
-            .truncate(write)
-            .open(path)
-            .map_err(|err| format!("{}: {err}", path.display()))
-    };
-    open(&list.0, true)?
-        .write_all(&names)
-        .map_err(|err| format!("{}: {err}", list.0.display()))?;
-    let mut child = Command::new(&program)
-        .args(COLLECT_ARGS)
-        .arg(kind.word())
-        .current_dir(workspace)
-        .env_clear()
-        .stdin(open(&list.0, false)?)
-        .stdout(open(out, true)?)
-        .stderr(open(&errors.0, true)?)
-        .uid(user.uid)
-        .gid(user.gid)
-        .spawn()
-        .map_err(|err| format!("{} did not start as {}: {err}", program.display(), user.name))?;
-    let deadline = Instant::now() + COLLECT_LIMIT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err(format!(
-                    "reading as {} took over {} minutes",
-                    user.name,
-                    COLLECT_LIMIT.as_secs() / 60
-                ));
-            }
-            Err(err) => break Err(format!("reading as {}: {err}", user.name)),
-        }
-    }?;
-    if status.success() {
-        return Ok(());
-    }
-    let mut said = String::new();
-    if let Ok(file) = std::fs::File::open(&errors.0) {
-        let _ = file.take(2048).read_to_string(&mut said);
-    }
-    Err(said
-        .lines()
-        .next()
-        .filter(|line| !line.trim().is_empty())
-        .map_or_else(|| format!("reading as {} failed: {status}", user.name), str::to_string))
-}
-
-/// `moqui ci-run collect report|pack`, the child of [`collect_as`]: the workspace and then the paths, NUL-separated,
-/// on standard input; the report's bytes or the tar.gz on standard output. The exit code: 0, or [`EXIT_ERROR`] with
-/// why on standard error.
-#[cfg(unix)]
-pub fn collect_child(kind: &str) -> i32 {
-    use std::os::fd::AsFd as _;
-    use std::os::unix::ffi::OsStrExt as _;
-
-    let run = || -> Result<(), String> {
-        let kind = match kind {
-            "report" => Collect::Report,
-            "pack" => Collect::Pack,
-            other => return Err(format!("moqui ci-run collect: {other} is not report or pack")),
-        };
-        let mut input = Vec::new();
-        std::io::stdin()
-            .lock()
-            .take(64 * 1024 * 1024)
-            .read_to_end(&mut input)
-            .map_err(|err| format!("the paths did not read: {err}"))?;
-        let mut paths = input
-            .split(|byte| *byte == 0)
-            .filter(|path| !path.is_empty())
-            .map(|path| PathBuf::from(std::ffi::OsStr::from_bytes(path)));
-        let workspace = paths.next().ok_or("no workspace was given")?;
-        let files: Vec<PathBuf> = paths.collect();
-        let stdout = std::io::stdout()
-            .as_fd()
-            .try_clone_to_owned()
-            .map_err(|err| format!("standard output: {err}"))?;
-        let mut out = std::io::BufWriter::new(std::fs::File::from(stdout));
-        match kind {
-            Collect::Report => {
-                let [file] = files.as_slice() else {
-                    return Err("a report is one file".into());
-                };
-                copy_regular(&workspace, file, &mut out)?;
-            }
-            Collect::Pack => archive::pack_into(&workspace, &files, &mut out)?,
-        }
-        std::io::Write::flush(&mut out).map_err(|err| format!("standard output: {err}"))
-    };
-    match run() {
-        Ok(()) => EXIT_SUCCESS,
-        Err(err) => {
-            eprintln!("{err}");
-            EXIT_ERROR
-        }
-    }
+    Ok(())
 }
 
 fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
+    // an absolute workspace: the paths of it a collect child is given hold in any directory (`--work` may be relative)
+    let workspace = std::path::absolute(&options.workspace).map_err(|err| {
+        Stop::Error(format!(
+            "the workspace {} has no absolute path: {err}",
+            options.workspace.display()
+        ))
+    })?;
+    let options = &Options {
+        workspace,
+        ..options.clone()
+    };
     let (status, job) = transport.json("GET", "job", None).map_err(Stop::Error)?;
     check(status, "getting the job", &job)?;
     let spec = &job["spec"];
@@ -877,7 +792,11 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
         let (Some(key), Some(path)) = (cache["key"].as_str(), cache["path"].as_str()) else {
             continue;
         };
-        let key = expand_key(key, &options.workspace);
+        let mut notes = Vec::new();
+        let key = expand_key_noting(key, &options.workspace, &mut notes);
+        for note in notes {
+            log.line(None, &note)?;
+        }
         let scratch = Scratch::new(&options.workspace, "cache.tar.gz");
         match transport.download(&format!("caches?{}", query(&[("key", &key)])), &scratch.0) {
             Ok(200) => match archive::unpack(&scratch.0, &options.workspace) {
@@ -957,28 +876,38 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
             succeeded = false;
         }
     }
-    // reports and artifacts: also of a job that failed; read as the step user, if there is one (collect)
+    // with a step user, what the steps left running (a process that left its group with setsid) is ended before
+    // anything is read: none of it can stop the child that reads, or change the files under it while it reads
+    if let Some(user) = &options.step_user {
+        for _ in 0..5 {
+            if end_leftovers(started.elapsed().as_secs() + 1, Some(user)) == 0 {
+                break;
+            }
+        }
+    }
+    // reports, artifacts and caches are read within one time limit, as the step user if there is one (collect)
+    let collecting = Instant::now() + collect::COLLECT_LIMIT;
+    // reports and artifacts: also of a job that failed
     for pattern in spec["reports"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let Some(pattern) = pattern.as_str() else { continue };
-        let (files, refused) = matches_and_refused(&options.workspace, pattern);
-        for path in refused {
-            log.line(
-                None,
-                &format!(
-                    "Report {} was not uploaded: it does not resolve inside the workspace",
-                    shown_path(&options.workspace, &path)
-                ),
-            )?;
-        }
-        for file in files {
+        let found = match collect::find_in(options, pattern, collecting) {
+            Ok(found) => found,
+            Err(err) => {
+                log.line(None, &format!("Reports {pattern} were not read: {err}"))?;
+                continue;
+            }
+        };
+        log_refused(&mut log, &options.workspace, &found.refused, |shown| {
+            format!("Report {shown} was not uploaded: it does not resolve inside the workspace")
+        })?;
+        for (file, kind) in found.found {
             let shown = shown_path(&options.workspace, &file);
-            let Ok(meta) = file.symlink_metadata() else { continue };
             // a report is a regular file of its own: a link is refused, even to a file in the workspace
-            if meta.file_type().is_symlink() {
+            if kind == Kind::Link {
                 log.line(None, &format!("Report {shown} was not uploaded: it is a symbolic link"))?;
                 continue;
             }
-            if !meta.is_file() {
+            if kind != Kind::File {
                 continue;
             }
             let name = file
@@ -986,7 +915,7 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let scratch = Scratch::new(&options.workspace, "report");
-            if let Err(err) = collect(options, Collect::Report, std::slice::from_ref(&file), &scratch.0) {
+            if let Err(err) = collect::report(options, &file, &scratch.0, collecting) {
                 log.line(None, &format!("Report {shown} was not uploaded: {err}"))?;
                 continue;
             }
@@ -1015,22 +944,23 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
         let (Some(name), Some(pattern)) = (artifact["name"].as_str(), artifact["path"].as_str()) else {
             continue;
         };
-        let (files, refused) = matches_and_refused(&options.workspace, pattern);
-        for path in refused {
-            log.line(
-                None,
-                &format!(
-                    "Artifact {name}: {} was left out, as it does not resolve inside the workspace",
-                    shown_path(&options.workspace, &path)
-                ),
-            )?;
-        }
+        let found = match collect::find_in(options, pattern, collecting) {
+            Ok(found) => found,
+            Err(err) => {
+                log.line(None, &format!("Artifact {name} was not read: {err}"))?;
+                continue;
+            }
+        };
+        log_refused(&mut log, &options.workspace, &found.refused, |shown| {
+            format!("Artifact {name}: {shown} was left out, as it does not resolve inside the workspace")
+        })?;
+        let files: Vec<PathBuf> = found.found.into_iter().map(|(path, _)| path).collect();
         if files.is_empty() {
             log.line(None, &format!("Artifact {name}: nothing at {pattern}"))?;
             continue;
         }
         let scratch = Scratch::new(&options.workspace, "artifact.tar.gz");
-        if let Err(err) = collect(options, Collect::Pack, &files, &scratch.0) {
+        if let Err(err) = collect::pack(options, &files, &scratch.0, collecting) {
             log.line(None, &format!("Artifact {name} was not packed: {err}"))?;
             continue;
         }
@@ -1055,12 +985,22 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
     // caches: saved by a trusted job that succeeded, for a key nothing was stored under
     if succeeded && job["trusted"].as_bool() == Some(true) {
         for (key, path) in &missed {
-            let dir = options.workspace.join(path);
-            if dir.symlink_metadata().is_err() {
+            let found = match collect::find_in(options, path, collecting) {
+                Ok(found) => found,
+                Err(err) => {
+                    log.line(None, &format!("Cache {key} was not read: {err}"))?;
+                    continue;
+                }
+            };
+            log_refused(&mut log, &options.workspace, &found.refused, |shown| {
+                format!("Cache {key}: {shown} was left out, as it does not resolve inside the workspace")
+            })?;
+            let dirs: Vec<PathBuf> = found.found.into_iter().map(|(path, _)| path).collect();
+            if dirs.is_empty() {
                 continue;
             }
             let scratch = Scratch::new(&options.workspace, "cache-out.tar.gz");
-            if let Err(err) = collect(options, Collect::Pack, &[dir], &scratch.0) {
+            if let Err(err) = collect::pack(options, &dirs, &scratch.0, collecting) {
                 log.line(None, &format!("Cache {key} was not packed: {err}"))?;
                 continue;
             }

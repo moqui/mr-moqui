@@ -241,8 +241,11 @@ fn patterns_never_resolve_out_of_the_workspace() {
                 .map(|path| path.strip_prefix(&workspace).unwrap().to_string_lossy().into_owned())
                 .collect()
         };
-        let (found, refused) = super::matches_and_refused(&workspace, pattern);
-        (shown(found), shown(refused))
+        let found = super::find(&workspace, pattern);
+        (
+            shown(found.found.into_iter().map(|(path, _)| path).collect()),
+            shown(found.refused),
+        )
     };
     let strings = |names: &[&str]| -> Vec<String> { names.iter().map(|name| (*name).to_string()).collect() };
     assert_eq!(
@@ -283,6 +286,11 @@ fn a_report_is_read_only_as_a_regular_file_in_the_workspace() {
     assert!(read("d/x.xml").unwrap_err().contains("outside the workspace"));
     assert!(read("real").unwrap_err().contains("not a regular file"));
     assert_eq!(expand_key("k-${hash:Cargo.lock}", &workspace), "k-");
+    // which the job's log says, as it leaves that part of the key constant; a file that is not there says nothing
+    let mut notes = Vec::new();
+    super::expand_key_noting("k-${hash:Cargo.lock}-${hash:missing}", &workspace, &mut notes);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("${hash:Cargo.lock} hashes to nothing"), "{notes:?}");
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -412,5 +420,157 @@ fn a_job_uploads_no_report_or_artifact_through_a_link() {
         .iter()
         .all(|(_, _, bytes)| !String::from_utf8_lossy(bytes).contains("SECRET")));
     drop(uploads);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A collect child's request: the workspace and then `items`, NUL-terminated.
+#[cfg(unix)]
+fn request_of(workspace: &Path, items: &[&str]) -> Vec<u8> {
+    let mut bytes = workspace.to_string_lossy().into_owned().into_bytes();
+    bytes.push(0);
+    for item in items {
+        bytes.extend_from_slice(item.as_bytes());
+        bytes.push(0);
+    }
+    bytes
+}
+
+/// SEC-GIT-81: what a `--step-user` runner's collect child does with its request (`collect::serve`): `find` answers
+/// what `find` does in the runner, refusals included; `report` copies a regular file and refuses a link; `pack` keeps a
+/// link as a link and refuses a path out; `probe` answers nothing; another word is refused.
+#[cfg(unix)]
+#[test]
+fn a_collect_child_finds_reads_and_packs_as_the_runner_would() {
+    use super::collect::serve;
+
+    let root = scratch("collect-serve");
+    let workspace = root.join("src");
+    linked_workspace(&workspace);
+    let ask = |kind: &str, items: &[&str]| -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        serve(kind, &mut request_of(&workspace, items).as_slice(), &mut out).map(|()| out)
+    };
+    // find: what the child writes reads back in the runner as what find answers there
+    let answer = super::collect::decode_matches(&ask("find", &["reports/*.xml"]).unwrap()).unwrap();
+    assert_eq!(answer, super::find(&workspace, "reports/*.xml"));
+    assert_eq!(
+        answer.found,
+        [
+            (workspace.join("reports/inner.xml"), super::Kind::Link),
+            (workspace.join("reports/ok.xml"), super::Kind::File),
+        ]
+    );
+    assert_eq!(answer.refused, [workspace.join("reports/out.xml")]);
+    assert!(ask("find", &["a", "b"]).unwrap_err().contains("one pattern"));
+    // report
+    let ok = workspace.join("reports/ok.xml").to_string_lossy().into_owned();
+    assert_eq!(ask("report", &[&ok]).unwrap(), b"<ok/>");
+    let inner = workspace.join("reports/inner.xml").to_string_lossy().into_owned();
+    assert!(ask("report", &[&inner]).is_err());
+    let out = workspace.join("reports/out.xml").to_string_lossy().into_owned();
+    assert!(ask("report", &[&out]).unwrap_err().contains("outside the workspace"));
+    assert!(ask("report", &[&ok, &ok]).unwrap_err().contains("one file"));
+    // pack
+    let dist = workspace.join("dist").to_string_lossy().into_owned();
+    let packed = ask("pack", &[&dist]).unwrap();
+    let archive_file = root.join("packed.tar.gz");
+    std::fs::write(&archive_file, &packed).unwrap();
+    let entries = entries_of(&archive_file);
+    assert!(entries.iter().any(|(path, link, _)| path == "dist/leak" && *link));
+    assert!(entries
+        .iter()
+        .all(|(_, _, bytes)| !String::from_utf8_lossy(bytes).contains("SECRET")));
+    let d = workspace.join("d").to_string_lossy().into_owned();
+    assert!(ask("pack", &[&d]).unwrap_err().contains("outside the workspace"));
+    // probe, and a word that is none
+    assert_eq!(ask("probe", &[]).unwrap(), b"");
+    assert!(ask("list", &[])
+        .unwrap_err()
+        .contains("is not find, report, pack or probe"));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// This process's user, as a step user: `run_as` sets its own uid and gid, which needs no root.
+#[cfg(unix)]
+fn this_user() -> super::StepUser {
+    super::StepUser {
+        name: "this-user".into(),
+        uid: super::output_of("id", &["-u"]).trim().parse().unwrap(),
+        gid: super::output_of("id", &["-g"]).trim().parse().unwrap(),
+    }
+}
+
+/// SEC-GIT-81: a collect child runs as the user with its request on its input and its answer in the runner's file; a
+/// failure answers its first error line; one past the deadline is killed; and on Linux this binary runs by
+/// `/proc/self/exe`, as the step user runs it.
+#[cfg(unix)]
+#[test]
+fn a_collect_child_runs_as_the_user_answers_in_a_file_and_is_killed_at_its_deadline() {
+    use std::time::{Duration, Instant};
+
+    use super::collect::{run_as, Collect, Collector};
+
+    let root = scratch("collect-run");
+    let user = this_user();
+    let sh = |script: &str| Collector {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), script.into(), "sh".into()],
+    };
+    let out = root.join("out");
+    let later = Instant::now() + Duration::from_secs(60);
+    // the input reaches the child, and what it writes is the runner's file; its last argument is what it is asked
+    run_as(
+        &user,
+        &sh("/bin/cat; echo \" $1\""),
+        Collect::Pack,
+        b"input-bytes",
+        &out,
+        &root,
+        later,
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "input-bytes pack\n");
+    // a child that fails answers the first line it wrote on standard error
+    let failed = run_as(
+        &user,
+        &sh("echo 'it went wrong' >&2; echo more >&2; exit 2"),
+        Collect::Report,
+        b"",
+        &out,
+        &root,
+        later,
+    );
+    assert_eq!(failed.unwrap_err(), "it went wrong");
+    // one still running at the deadline is killed
+    let began = Instant::now();
+    let slow = run_as(
+        &user,
+        &sh("exec /bin/sleep 30"),
+        Collect::Find,
+        b"",
+        &out,
+        &root,
+        Instant::now() + Duration::from_millis(300),
+    );
+    assert!(slow.unwrap_err().contains("ran out of time"));
+    assert!(began.elapsed() < Duration::from_secs(10));
+    // past the deadline nothing starts
+    assert!(run_as(&user, &sh("true"), Collect::Probe, b"", &out, &root, Instant::now()).is_err());
+    // this binary by /proc/self/exe on Linux (here the test binary, which lists its tests and ends)
+    let this = Collector::this_binary().unwrap();
+    if cfg!(target_os = "linux") {
+        assert_eq!(this.program, PathBuf::from("/proc/self/exe"));
+    }
+    let listing = Collector {
+        program: this.program,
+        args: vec!["--list".into(), "--exact".into(), "no-such-test".into()],
+    };
+    run_as(&user, &listing, Collect::Probe, b"", &out, &root, later).unwrap();
+    // nothing of the child's scratch files is left beside its answer
+    let left: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["out"]);
     std::fs::remove_dir_all(&root).unwrap();
 }

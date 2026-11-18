@@ -270,6 +270,23 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 .unwrap_or(10)
                 .clamp(2, 3600);
             let work = option(args, "--work").map_or_else(|| std::env::temp_dir().join("moqui-ci"), PathBuf::from);
+            // absolute, as a collect child runs in another directory and is given paths of the workspace (SEC-GIT-81)
+            let work = std::path::absolute(&work)
+                .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
+            // the step user must run this binary, which reads the reports, artifacts and caches as that user: asked
+            // once here, so a runner that could not read them takes no job
+            #[cfg(unix)]
+            if let Some(user) = &step_user {
+                std::fs::create_dir_all(&work)
+                    .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
+                runner::collect::probe(user, &work).map_err(|why| {
+                    Error::new(format!(
+                        "moqui ci-run poll: --step-user {} cannot run this program, which reads each job's reports, \
+                         artifacts and caches as that user: {why}",
+                        user.name
+                    ))
+                })?;
+            }
             let shell = option(args, "--shell");
             let keep_processes = args.iter().any(|arg| arg == "--keep-processes");
             // a pool's untrusted runs go only to a runner that runs its steps as another user (SEC-GIT-19)
@@ -329,11 +346,11 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
             }
         }
         // the child a --step-user runner reads a job's reports, artifacts and caches with, as the step user
-        // (runner::collect_as; SEC-GIT-81): not for a person to run
+        // (runner::collect; SEC-GIT-81): not for a person to run
         Some("collect") => {
             #[cfg(unix)]
             {
-                Ok(runner::collect_child(args.get(1).map_or("", String::as_str)))
+                Ok(runner::collect::collect_child(args.get(1).map_or("", String::as_str)))
             }
             #[cfg(not(unix))]
             {
