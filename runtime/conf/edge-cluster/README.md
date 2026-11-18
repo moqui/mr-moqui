@@ -28,7 +28,7 @@ queue, the pairings and the host names are rows the members share. A clustered a
   the transactional datasource's `host`, `port`, `database`, `user`
   and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first
   start generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`, `cluster_tls_key`, `moqui_conf__entity_facade__crypt_pass`,
-  `edge_link_key` (the one link key local nodes pin), `turn_auth_secret`, `acme_account_key` and, once made,
+  `edge_link_key` (the one link key local nodes pin), `turn_auth_secret`, `acme@account-key` and, once made,
   `mail-delivery/dkim@key`; `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
   `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`, `sip_port`, `sip_tls_port`, `sip_host`, `sip_registrar_enabled`,
   `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host`, `edge_ssh_tunnel_port`, `pass_backend_web_url`. A WebPKI

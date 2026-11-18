@@ -850,7 +850,7 @@ domain, an edge node's terminate hosts, the files in `runtime/cert`) and the cer
 its expiry and its file. A name with none gets no HTTPS.
 
 **From ACME.** Set up with ACME, on that screen, gets a name's certificate from an ACME authority: Let's Encrypt
-(`acme_directory_url`), its staging directory for a first try, or any other authority's directory URL. Nothing is ever
+(`acme@directory-url`), its staging directory for a first try, or any other authority's directory URL. Nothing is ever
 asked for a name nobody set up there.
 
 - **The challenge** is TLS-ALPN-01 on the HTTPS listener: the authority connects to the name on port 443, so 443 must
@@ -874,9 +874,9 @@ asked for a name nobody set up there.
 - **Cluster.** One member orders a name at a time (a lock row whose 15-minute lease is by each member's clock, so the
   clocks must agree); the challenge and the certificate are rows, the key encrypted, so any member answers the
   challenge and every member writes its own files within a minute.
-- **Account.** The account key is derived from `acme_account_key`, a secret generated into `runtime/.env`; the members
+- **Account.** The account key is derived from `acme@account-key`, a secret generated into `runtime/.env`; the members
   of a cluster share it in their shared `.env`, or each is a separate account. For a company's own authority,
-  `acme_directory_ca` names the root its HTTPS is checked against.
+  `acme@directory-ca` names the root its HTTPS is checked against.
 - **Not built:** HTTP-01 (port 80), DNS-01 and so wildcard names.
 
 ### Listen ports and URL ports

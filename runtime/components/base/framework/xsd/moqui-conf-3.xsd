@@ -20,6 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:sequence>
                 <xs:element minOccurs="0" ref="instance"/>
+                <xs:element minOccurs="0" ref="acme"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2049,6 +2050,16 @@ along with this software (see the LICENSE.md file). If not, see
                 front, front_edge, edge or all-in-one (plans/Edge-Node2.md §4.3).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="default-locale" type="xs:string" default="en_US"/>
             <xs:attribute name="default-time-zone" type="xs:string" default="UTC"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="acme">
+        <xs:annotation><xs:documentation>Certificates by ACME, set up in System › Certificates (plans/Edge-Node2.md
+            §4.8).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="directory-url" type="xs:string" default="https://acme-v02.api.letsencrypt.org/directory"><xs:annotation><xs:documentation>The authority's directory the Certificates screen fills in.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="directory-ca" type="xs:string"><xs:annotation><xs:documentation>A root (a PEM file, absolute or under the runtime) the authority's HTTPS is checked against in place of the system's.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="account-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env: the seed of the account's P-256 key.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="challenge-port" type="non-neg-int-expandable" default="443"><xs:annotation><xs:documentation>The port the set-up check connects to on the name, as the authority does.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

@@ -252,7 +252,7 @@ fn https_starts_for_a_name_set_up_with_acme_and_answers_only_its_challenge() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &https_port_text,
             ),
-            ("acme_directory_url", &directory),
+            ("moqui_conf__acme__directory_url", &directory),
         ],
     );
     let https = SocketAddr::from(([127, 0, 0, 1], https_port));
@@ -434,8 +434,8 @@ fn an_order_gets_a_certificate_the_listener_serves_and_the_job_renews_it() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &https_port_text,
             ),
-            ("acme_directory_url", &authority.directory),
-            ("acme_directory_ca", "acme-root.pem"),
+            ("moqui_conf__acme__directory_url", &authority.directory),
+            ("moqui_conf__acme__directory_ca", "acme-root.pem"),
         ],
         &[("acme-root.pem", &authority.root_pem)],
     );
@@ -768,9 +768,9 @@ fn acceptance_certificates_for_an_edge_node_and_its_local_node() {
     let authority = crate::acme_authority::start(&rt, edge_https);
     let edge_port_text = edge_port.to_string();
     let acme = [
-        ("acme_directory_url", authority.directory.as_str()),
-        ("acme_directory_ca", "acme-root.pem"),
-        ("acme_challenge_port", edge_port_text.as_str()),
+        ("moqui_conf__acme__directory_url", authority.directory.as_str()),
+        ("moqui_conf__acme__directory_ca", "acme-root.pem"),
+        ("moqui_conf__acme__challenge_port", edge_port_text.as_str()),
     ];
     let mut local_properties = vec![(
         "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",

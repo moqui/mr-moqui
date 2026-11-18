@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
             load). A name set up with ACME has acme: directoryUrl, contactEmail, renewing, statusId, lastAttemptDate,
             lastError, notAfter, setUpDate, ordering (this server is ordering it now) and shadowed (another tool's files
             for the name are served instead). Also listenPort (the HTTPS listener's port when it is bound), directoryUrl
-            (acme_directory_url), stagingUrl (Let's Encrypt's staging directory) and challengePort.</description>
+            (acme@directory-url), stagingUrl (Let's Encrypt's staging directory) and challengePort.</description>
         <out-parameters>
             <parameter name="certificateList" type="List"><parameter name="certificate" type="Map"/></parameter>
             <parameter name="listenPort" type="Integer"/>
@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
             takes the new authority, contact and terms, and renews again.</description>
         <in-parameters>
             <parameter name="hostName" required="true"/>
-            <parameter name="directoryUrl"><description>The authority's directory; acme_directory_url when empty.</description></parameter>
+            <parameter name="directoryUrl"><description>The authority's directory; acme@directory-url when empty.</description></parameter>
             <parameter name="contactEmail"/>
             <parameter name="termsAgreed" type="Boolean"/>
             <parameter name="skipCheck" type="Boolean"/>

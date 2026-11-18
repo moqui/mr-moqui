@@ -335,6 +335,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     for name in [
         // the instance's purpose, id, node role, locale and time zone (plans/Conf-Paths.md §6.1)
         "instance",
+        // certificates by ACME (plans/Edge-Node2.md §4.8)
+        "acme",
         "ssh-server",
         "terminal",
         "git-server",

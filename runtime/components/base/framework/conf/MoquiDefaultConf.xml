@@ -13,21 +13,21 @@
         zone, and the server's own times (the entity facade's database-time-zone is the zone times are stored in). -->
     <instance purpose="production" id="" node-role="" default-locale="en_US" default-time-zone="UTC"/>
 
+    <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
+        nobody set up there. directory-url fills in the authority's directory on that screen, Let's Encrypt's; the screen
+        offers its staging directory for a first try and takes any other authority's. account-key is the seed of the ACME
+        account's key (P-256), one account per authority, generated into runtime/.env (moqui_conf__acme__account_key); a
+        new one is a new account, and the certificates already issued stay valid. The members of a cluster share it (the
+        shared .env), or each is an account of its own. challenge-port is the port the set-up check connects to on the
+        name, as the authority does: 443, which the HTTPS listener must answer (a port forward to the webroot webapp's
+        https-listen-port, or an edge node's passthrough host); another port only for a test authority. directory-ca, when
+        set, is the root (a PEM file, absolute or under the runtime) the authority's HTTPS is checked against in place of
+        the system's, for a company's own ACME authority. -->
+    <acme directory-url="https://acme-v02.api.letsencrypt.org/directory" directory-ca="" account-key="CHANGEME"
+            challenge-port="443"/>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
-    <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
-        nobody set up there. acme_directory_url fills in the authority's directory on that screen, Let's Encrypt's; the
-        screen offers its staging directory for a first try and takes any other authority's. acme_account_key is the seed
-        of the ACME account's key (P-256), one account per authority; a new one is a new account, and the certificates
-        already issued stay valid. The members of a cluster share it (the shared .env), or each is an account of its own. acme_challenge_port is the port the set-up check connects to on the name, as the
-        authority does: 443, which the HTTPS listener must answer (a port forward to the webroot webapp's https-listen-port, or an edge
-        node's passthrough host); another port only for a test authority. acme_directory_ca, when set, is the root (a PEM
-        file, absolute or under the runtime) the authority's HTTPS is checked against in place of the system's, for a
-        company's own ACME authority. -->
-    <default-property name="acme_directory_url" value="https://acme-v02.api.letsencrypt.org/directory"/>
-    <default-property name="acme_directory_ca" value=""/>
-    <default-property name="acme_account_key" value="CHANGEME" is-secret="true"/>
-    <default-property name="acme_challenge_port" value="443"/>
     <!--
         Load runs from Tools (org.moqui.dev.LoadServices, plans/archive/LoadRunner.md §10). A run may reach this server (its https
         URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),

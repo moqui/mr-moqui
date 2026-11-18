@@ -37,7 +37,7 @@ with the front as well, for its names, XMPP domain and ports.
   of its first start (`edge_link_key` among them). A certificate in `cert/` for its own name and the sites' hosts, or
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
-  with `edge_link_key`, `turn_auth_secret`, `mail-delivery/dkim@key` and `acme_account_key`, `edge_mail_bounce_domain`,
+  with `edge_link_key`, `turn_auth_secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
   `sip_port`, `sip_tls_port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
   `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
   `front_node_url`, `front_node_key`, `front_node_pin` and `front_node_id`.

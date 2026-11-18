@@ -28,7 +28,7 @@ own mail, chat, calls and phones, or has none. The same front node before an edg
 
 - **Front node**: `webapp-list/webapp[webroot]@http-host` (its own name, where nodes pair), `edge_public_addresses` (its public addresses),
   and, made at its first start, `webapp-list/webapp[webroot]/session-config@cookie-key`, `moqui_conf__entity_facade__crypt_pass`, `edge_link_key` (the key the nodes
-  behind it pin) and `acme_account_key`. A WebPKI certificate in `cert/` for its own name and each terminate host, or
+  behind it pin) and `acme@account-key`. A WebPKI certificate in `cert/` for its own name and each terminate host, or
   System › Certificates with ACME. Ports: `edge_ssh_tunnel_port`, `edge_xmpp_port` and `edge_xmpp_tls_port` when used.
 - **Every member, the same**: the transactional datasource's `host`, `port`, `database`, `user`
   and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first member generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`,

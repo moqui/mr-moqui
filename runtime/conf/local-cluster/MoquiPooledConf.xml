@@ -21,7 +21,7 @@
         edge_node_url, edge_node_key (the pairing's key), edge_node_pin, edge_node_id and edge_node_pairing (the id the
         edge node knows the cluster by, which keys the outbox and its receipts) to that member's .env. Copy that whole
         .env to every other member (the secrets above, the pairing's lines, and the rest that must match, such as
-        acme_account_key, ssh-server@host-key and git-server@lfs-token-key), then add the member's own cluster_base_url; each links at
+        acme@account-key, ssh-server@host-key and git-server@lfs-token-key), then add the member's own cluster_base_url; each links at
         its next start. ssh-server@host-key and git-server@lfs-token-key must be the same on every member: the edge node sends an
         SSH connection or an LFS request to any member, and after a failover to another one, so with its own host key a
         member is a changed host to git clients, and with its own LFS key it refuses the others' LFS tokens. A member

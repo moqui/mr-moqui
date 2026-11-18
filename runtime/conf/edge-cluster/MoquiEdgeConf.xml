@@ -27,7 +27,7 @@
     <!-- The same .env on every member, made by the first member's first start and copied to each other one before its
         first start: webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert, cluster_tls_key, moqui_conf__entity_facade__crypt_pass and the link key,
         edge_link_key, so every member presents the one key a local node pinned at pairing (a member that generated a
-        key of its own is refused by every local node); also turn_auth_secret, mail-delivery/dkim@key and acme_account_key, and
+        key of its own is refused by every local node); also turn_auth_secret, mail-delivery/dkim@key and acme@account-key, and
         the public settings below that name the cluster as a whole.
         Each member's own in .env: cluster_base_url, https://(this member's private address):8444, which the other
         members reach (open 8444 between the members only); and edge_link_url, https://(this member's own public

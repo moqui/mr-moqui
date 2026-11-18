@@ -252,7 +252,7 @@ fn get_certificates(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacad
         ),
         (
             "directoryUrl".to_string(),
-            Value::string(moqui_lib::env::get_prop_or_env("acme_directory_url").trim()),
+            Value::string(moqui_core::context::conf_env::setting("acme@directory-url")),
         ),
         ("stagingUrl".to_string(), Value::string(STAGING_URL)),
         (
@@ -281,7 +281,7 @@ fn setup_acme_name(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade)
     }
     let mut directory_url = text(parameters, "directoryUrl");
     if directory_url.is_empty() {
-        directory_url = moqui_lib::env::get_prop_or_env("acme_directory_url").trim().to_string();
+        directory_url = moqui_core::context::conf_env::setting("acme@directory-url");
     }
     if !directory_url.starts_with("https://") {
         return refuse("badDirectory", "The authority's directory URL starts with https://");

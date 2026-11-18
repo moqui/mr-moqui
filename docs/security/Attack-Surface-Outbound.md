@@ -78,5 +78,5 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - Who can supply an `http://` resource location from a request was not traced.
 - Which callers can reach `fetch#LinkPage` and `discover#EmailServer` directly (a transition, a REST resource), and with what rate limit, was not traced.
 - The credentials and limits marked "was not read" in the table were not read.
-- rspamd, the SIP trunks, ACME (`acme_directory_url`, `acme_directory_ca`), the cluster, edge link and PASS gRPC clients, the SFTP client and SFTP backup mirrors, external databases (`crates/moqui-tools/src/ext.rs`), `crates/moqui-lib/src/remote_login.rs`, `crates/moqui-client`, the desktop updater and the `moq` script's downloads were not read.
+- rspamd, the SIP trunks, ACME (`acme@directory-url`, `acme@directory-ca`), the cluster, edge link and PASS gRPC clients, the SFTP client and SFTP backup mirrors, external databases (`crates/moqui-tools/src/ext.rs`), `crates/moqui-lib/src/remote_login.rs`, `crates/moqui-client`, the desktop updater and the `moq` script's downloads were not read.
 - The protocol tests in `crates/moqui-core/src/service/protocol_admin.rs` connect to a target and record whether an external target resolved to an internal address; whether that refuses the connect was not read.
