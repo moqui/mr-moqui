@@ -408,6 +408,14 @@ the bubble that scrolls sideways on a phone, and a card is at most 85 % of the s
 sideways with snap on every width. A call button opens the dialer (`tel:`). The rest is Chat's
 ([Comms](../tools/Comms.md#cards)).
 
+## Add to calendar
+
+A chat event's Add to calendar (plans/Comms-Messaging.md §18.3 phase 19), with no app that keeps calendars, is
+`moquiDesktop.calendarInsert({title, start, end, allDay, timeZone, place, description})` (the `calendar_insert` command,
+`CalendarIntent.kt`): the phone's calendar app opens on a new event filled in (`ACTION_INSERT`), and the person saves it
+there, so the app needs no calendar permission. It answers whether a calendar app took it; when none does (or in an APK
+before it), Chat downloads the event's `.ics` file instead.
+
 ## Screen security
 
 `moquiDesktop.secureScreen(reason, on)` (the `secure_screen` command, `ScreenSecurity.kt`) turns Android's `FLAG_SECURE`

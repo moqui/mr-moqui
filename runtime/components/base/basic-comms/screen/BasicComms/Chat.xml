@@ -419,6 +419,13 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="reportHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="setReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="cancelReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <!-- events with RSVP (plans/Comms-Messaging.md §18.3 phase 19) -->
+    <transition-include name="calEventFields" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="createCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="answerCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="updateCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="cancelCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="calEventIcs" location="component://basic-comms/template/ChatCalTransitions.xml"/>
     <!-- files for the next message: each stored on its own, or one sent in chunks (uploadId) -->
     <transition name="upload">
         <actions><script><![CDATA[

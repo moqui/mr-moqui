@@ -528,7 +528,7 @@ const messageTemplate = `
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <chat-rich v-else-if="item.event.rich" :item="item" :room="room"></chat-rich>
-            <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
+            <div v-else-if="item.bodyHtml && !item.poll && !item.event.calEvent" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
                     v-html="item.bodyHtml" @click="room.bodyClick($event)"></div>
             <!-- an answer to a button (content.postback: tapped here, or an RCS reply) -->
             <div v-if="item.event.postback" class="row items-center no-wrap text-caption m-muted q-mt-xs m-chat-postback">
@@ -542,6 +542,10 @@ const messageTemplate = `
                             v-html="item.forwardOf.body" @click="room.bodyClick($event)"></div>
                 </div>
             </div>
+            <chat-cal-card v-if="item.event.calEvent" :item="item" :room="room"></chat-cal-card>
+            <div v-if="item.event.calChange" class="row items-center no-wrap q-mt-xs m-chat-cal-changed">
+                <q-chip dense clickable outline color="primary" :icon="item.event.calChange.cancelled ? 'sym_o_event_busy' : 'sym_o_edit_calendar'" class="q-ma-none"
+                        @click.stop="room.jumpToEvent(item.event.calChange.eventSeq)">{{item.event.calChange.cancelled ? room.t('Event cancelled') : room.t('Event changed')}}</q-chip></div>
             <q-card v-if="item.poll" flat bordered class="q-mt-xs q-pa-sm m-chat-poll" style="max-width:440px">
                 <div class="row no-wrap items-start text-weight-medium q-mb-xs"><q-icon name="sym_o_ballot" size="18px" class="q-mr-xs text-primary"></q-icon>
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
@@ -750,6 +754,218 @@ const chatRich = {
     template: richTemplate
 };
 
+// ---- events with RSVP (Comms-Messaging §18.3 phase 19; org.moqui.chat.ChatCalServices, moqui.chat.cal) ----
+// An event's card: a date badge, the title, the time in the viewer's zone (and the event's own when it differs), the place
+// (a map search the person opens by tapping it; nothing is fetched), the details, Going / Maybe / No (a tap answers, the
+// same tap takes it back), who answered, a reminder and Add to calendar: an app's calendar, the phone's calendar app
+// (moquiDesktop.calendarInsert in the Android app), else the .ics file. Its creator and a moderator Change and Cancel it.
+const calCardTemplate = `
+<q-card v-if="cal" flat bordered class="q-mt-xs m-chat-cal" :data-cal-state="state" :style="room.mobile ? 'max-width:85vw' : 'max-width:400px'">
+    <div class="row no-wrap items-start q-pa-sm">
+        <div class="column items-center justify-center rounded-borders m-tonal q-mr-sm" style="min-width:48px;height:52px">
+            <div class="text-caption text-uppercase text-primary" style="line-height:1.2">{{badge.month}}</div>
+            <div class="text-h6" style="line-height:1">{{badge.day}}</div>
+        </div>
+        <div class="col" style="min-width:0">
+            <div class="text-weight-medium m-chat-cal-title" :class="{ 'text-strike': cal.cancelled }" style="overflow-wrap:anywhere">{{cal.title}}</div>
+            <div class="text-body2 m-chat-cal-when">{{when}}</div>
+            <div v-if="zoneNote" class="text-caption m-muted m-chat-cal-zone">{{zoneNote}}</div>
+            <div v-if="cal.place" class="row no-wrap items-center text-body2 m-chat-cal-place">
+                <q-icon name="sym_o_location_on" size="16px" class="q-mr-xs"></q-icon>
+                <a :href="placeUrl" target="_blank" rel="noopener noreferrer" class="ellipsis" :title="room.t('Find it on the map')" @click.stop>{{cal.place}}</a></div>
+        </div>
+        <q-btn flat round dense size="sm" icon="sym_o_more_vert" class="m-chat-cal-menu" :aria-label="room.t('Event actions')" @click.stop>
+            <q-menu><q-list style="min-width:200px">
+                <q-item v-if="canManage" clickable v-close-popup class="m-chat-cal-change" @click="room.openCalEvent(item.threadRootEventSeq || null, item)">
+                    <q-item-section avatar><q-icon name="sym_o_edit_calendar"></q-icon></q-item-section><q-item-section>{{room.t('Change')}}</q-item-section></q-item>
+                <q-item v-if="canManage" clickable v-close-popup class="m-chat-cal-cancel" @click="room.cancelCalEvent(item)">
+                    <q-item-section avatar><q-icon name="sym_o_event_busy" color="negative"></q-icon></q-item-section><q-item-section>{{room.t('Cancel the event')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup class="m-chat-cal-ics" @click="room.downloadCalEvent(item)">
+                    <q-item-section avatar><q-icon name="sym_o_download"></q-icon></q-item-section><q-item-section>{{room.t('Download .ics')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
+    </div>
+    <div v-if="cal.description" class="q-px-sm text-body2 cursor-pointer m-chat-cal-details" :class="{ 'ellipsis-3-lines': !more }" style="white-space:pre-wrap;overflow-wrap:anywhere"
+            @click.stop="more = !more">{{cal.description}}</div>
+    <div v-if="cal.cancelled" class="q-px-sm q-pt-sm text-negative text-weight-medium m-chat-cal-cancelled">{{room.t('Cancelled')}}</div>
+    <div v-else-if="ended" class="q-px-sm q-pt-sm m-muted text-weight-medium">{{room.t('Ended')}}</div>
+    <template v-else>
+        <div class="row no-wrap q-px-sm q-pt-sm" style="gap:4px">
+            <q-btn v-for="one in answers" :key="one.key" dense no-caps size="sm" color="primary" :outline="mine !== one.key" :unelevated="mine === one.key"
+                    :icon="one.icon" :label="one.label" :disable="!room.canPost || busy" class="m-chat-cal-answer" :data-answer="one.key" @click.stop="answer(one.key)"></q-btn>
+        </div>
+        <div v-if="mine === 'going' || mine === 'maybe'" class="row items-center no-wrap q-px-sm q-pt-xs" style="gap:4px">
+            <q-icon name="sym_o_alarm" size="16px" class="m-muted"></q-icon>
+            <q-select dense borderless options-dense emit-value map-options :model-value="remind" :options="remindOptions" class="m-chat-cal-remind"
+                    style="min-width:140px" :aria-label="room.t('Remind me')" @update:model-value="setRemind"></q-select>
+            <q-space></q-space>
+            <q-btn v-if="eventUrl" flat dense no-caps size="sm" color="primary" icon="sym_o_open_in_new" :label="room.t('Open in calendar')" :href="eventUrl" target="_blank" @click.stop></q-btn>
+            <q-btn v-else flat dense no-caps size="sm" color="primary" icon="sym_o_calendar_add_on" class="m-chat-cal-add" :label="room.t('Add to calendar')" :loading="busy" @click.stop="addToCalendar"></q-btn>
+        </div>
+    </template>
+    <div class="row items-center q-pa-sm text-caption m-muted cursor-pointer m-chat-cal-counts" @click.stop="who = true">
+        <span class="ellipsis">{{countLine}}</span>
+        <q-menu v-if="!room.mobile" v-model="who"><q-list dense style="min-width:220px" class="m-chat-cal-who">
+            <template v-for="group in groups" :key="group.key"><q-item-label header>{{group.label}}</q-item-label>
+                <q-item v-for="name in group.names" :key="name"><q-item-section>{{name}}</q-item-section></q-item></template>
+            <q-item v-if="!groups.length"><q-item-section class="m-muted">{{room.t('No answers yet')}}</q-item-section></q-item>
+        </q-list></q-menu>
+    </div>
+    <q-dialog v-if="room.mobile" v-model="who" position="bottom">
+        <q-card class="m-chat-sheet m-chat-cal-who" style="width:100%;max-width:560px;border-radius:16px 16px 0 0"><q-list dense>
+            <template v-for="group in groups" :key="group.key"><q-item-label header>{{group.label}}</q-item-label>
+                <q-item v-for="name in group.names" :key="name"><q-item-section>{{name}}</q-item-section></q-item></template>
+            <q-item v-if="!groups.length"><q-item-section class="m-muted">{{room.t('No answers yet')}}</q-item-section></q-item>
+        </q-list></q-card>
+    </q-dialog>
+</q-card>`;
+const chatCalCard = {
+    name: 'ChatCalCard',
+    props: { item: Object, room: Object },
+    data: () => ({ more: false, who: false, busy: false, eventUrl: null }),
+    computed: {
+        cal() { const cal = this.item.event.calEvent; return cal && typeof cal === 'object' && cal.start != null ? cal : null; },
+        helpers() { return (moqui.chat && moqui.chat.cal) || null; },
+        ended() { return !!this.cal && this.cal.end != null && this.cal.end <= this.room.tick; },
+        state() { return this.cal.cancelled ? 'cancelled' : this.ended ? 'ended' : 'open'; },
+        mine() { return this.cal && this.cal.mine ? this.cal.mine.answer || null : null; },
+        remind() { return this.cal && this.cal.mine && this.cal.mine.remindMinutes != null ? Number(this.cal.mine.remindMinutes) : 0; },
+        when() { return this.helpers ? this.helpers.when(this.cal) : ''; },
+        zoneNote() { return this.helpers ? this.helpers.zoneNote(this.cal) : ''; },
+        countLine() { return this.helpers ? this.helpers.countLine(this.cal) : ''; },
+        badge() {
+            const z = moqui.l10n;
+            const at = this.cal.allDay && this.helpers ? this.helpers.wallIn(String(z.formatTimestamp(this.cal.start, 'yyyy-MM-dd', this.cal.timeZone)), '12:00', this.cal.timeZone) : this.cal.start;
+            return { month: z.formatZoned(at, { month: 'short' }), day: z.formatZoned(at, { day: 'numeric' }) };
+        },
+        placeUrl() { return 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(this.cal.place || ''); },
+        canManage() { return !this.cal.cancelled && !this.ended && this.room.isMember && (this.cal.createdByUserId === this.room.me.userId || this.room.canModerate); },
+        answers() {
+            return [{ key: 'going', label: this.room.t('Going'), icon: 'sym_o_check_circle' }, { key: 'maybe', label: this.room.t('Maybe'), icon: 'sym_o_help' },
+                { key: 'no', label: this.room.t('No'), icon: 'sym_o_cancel' }];
+        },
+        remindOptions() {
+            const list = this.helpers ? this.helpers.remindChoices(this.cal, this.room.tick) : [];
+            const options = list.map((one) => ({ value: one.minutes, label: one.label }));
+            if (this.remind && !options.some((one) => one.value === this.remind)) options.push({ value: this.remind, label: fill(t('{count} minutes before'), { count: this.remind }) });
+            return options;
+        },
+        groups() {
+            const answers = this.cal.answers || {};
+            const nameOf = (id) => (id === this.room.me.userId ? t('You') : this.room.nameOf(id));
+            return [{ key: 'going', label: t('Going') }, { key: 'maybe', label: t('Maybe') }, { key: 'no', label: t("Can't go") }]
+                .map((group) => Object.assign(group, { names: (answers[group.key] || []).map(nameOf) })).filter((group) => group.names.length);
+        }
+    },
+    methods: {
+        answer(key) {
+            const next = this.mine === key ? '' : key;
+            // a first Going gets a reminder an hour before when there is still time; Maybe none; a changed answer keeps it
+            let remind = this.mine && next && next !== 'no' ? this.remind : 0;
+            if (!this.mine && next === 'going' && this.remindOptions.some((one) => one.value === 60)) remind = 60;
+            this.send({ answer: next, remindMinutes: next && next !== 'no' && remind ? remind : '' });
+        },
+        setRemind(minutes) { this.send({ answer: this.mine, remindMinutes: minutes || '' }); },
+        addToCalendar() {
+            if (this.room.calProvider) { this.send({ answer: this.mine, remindMinutes: this.remind || '', addToCalendar: 'true' }); return; }
+            this.room.calendarInsert(this.item);
+        },
+        send(params) {
+            if (needsConnection()) return;
+            this.busy = true;
+            this.room.answerCalEvent(this.item, params).then((json) => {
+                this.busy = false;
+                if (json && json.eventUrl) this.eventUrl = json.eventUrl;
+            }, () => { this.busy = false; });
+        }
+    },
+    template: calCardTemplate
+};
+
+// The box that makes or changes an event: title, all day, start and end (in the zone chosen: the user's first), place and
+// details. A room with a disappearing timer says the card goes with it.
+const calBoxTemplate = `
+<m-dialog :model-value="true" :title="item ? t('Change the event') : t('New event')" width="520" @update:model-value="(open) => { if (!open) $emit('close'); }">
+    <m-text-line v-model="title" :name="'calTitle' + uid" :label="t('Title')" maxlength="200" required></m-text-line>
+    <m-check v-model="allDay" :name="'calAllDay' + uid" toggle true-value="Y" false-value="N" :single-label="t('All day')" class="q-mt-xs"></m-check>
+    <div class="row q-gutter-sm q-mt-xs">
+        <m-date-time v-model="start" :name="'calStart' + uid" :type="allDay === 'Y' ? 'date' : 'date-time'" :label="t('Starts')" @update:model-value="startMoved"></m-date-time>
+        <m-date-time v-model="end" :name="'calEnd' + uid" :type="allDay === 'Y' ? 'date' : 'date-time'" :label="allDay === 'Y' ? t('Last day') : t('Ends')"></m-date-time>
+    </div>
+    <q-select v-model="timeZone" dense outlined stack-label use-input hide-selected fill-input input-debounce="0" :options="zoneOptions" :label="t('Time zone')"
+            class="q-mt-sm m-chat-cal-zone-pick" @filter="filterZones"></q-select>
+    <m-text-line v-model="place" :name="'calPlace' + uid" :label="t('Place (optional)')" maxlength="300" class="q-mt-sm"></m-text-line>
+    <m-text-area v-model="description" :name="'calDetails' + uid" :label="t('Details (optional)')" rows="3" autogrow class="q-mt-xs"></m-text-area>
+    <div v-if="room.timerNote" class="text-caption m-muted q-mt-sm m-chat-cal-timer">{{room.timerNote}}</div>
+    <div v-if="problem" class="text-caption text-negative q-mt-sm">{{problem}}</div>
+    <div class="row q-gutter-sm q-mt-md">
+        <q-btn unelevated no-caps color="primary" icon="sym_o_event" class="m-chat-cal-post" :label="item ? t('Save the change') : t('Post the event')"
+                :disable="!ready" :loading="busy" @click="save"></q-btn>
+        <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
+    </div>
+</m-dialog>`;
+const chatCalBox = {
+    name: 'ChatCalBox',
+    props: { room: Object, threadRoot: Number, item: Object },
+    emits: ['close'],
+    data() {
+        const cal = this.item && this.item.event && this.item.event.calEvent;
+        const helpers = moqui.chat && moqui.chat.cal;
+        const zone = (cal && cal.timeZone) || this.room.calZone || null;
+        let start = '', end = '';
+        if (cal && helpers) {
+            const fields = helpers.boxFields(cal);
+            start = cal.allDay ? fields.startDay : fields.startDay + ' ' + fields.startTime;
+            end = cal.allDay ? fields.endDay : fields.endDay + ' ' + fields.endTime;
+        }
+        return { uid: Math.random().toString(36).slice(2, 8), title: cal ? cal.title : '', allDay: cal && cal.allDay ? 'Y' : 'N', start, end, timeZone: zone,
+            place: cal ? cal.place || '' : '', description: cal ? cal.description || '' : '', zoneFilter: '', busy: false };
+    },
+    computed: {
+        zoneOptions() {
+            const all = this.room.calZones || [];
+            const term = this.zoneFilter.toLowerCase();
+            const first = this.room.calZone ? [this.room.calZone] : [];
+            const rest = all.filter((zone) => zone !== this.room.calZone && (!term || zone.toLowerCase().includes(term)));
+            return first.filter((zone) => !term || zone.toLowerCase().includes(term)).concat(rest).slice(0, 200);
+        },
+        times() {
+            const helpers = moqui.chat && moqui.chat.cal;
+            if (!helpers || !this.start || !this.timeZone) return null;
+            const day = (text) => String(text || '').slice(0, 10);
+            const clock = (text) => String(text || '').slice(11, 16);
+            return helpers.boxTimes({ timeZone: this.timeZone, allDay: this.allDay === 'Y', startDay: day(this.start), startTime: clock(this.start),
+                endDay: day(this.end || this.start), endTime: clock(this.end) });
+        },
+        problem() {
+            if (!this.start || (this.allDay !== 'Y' && !this.end)) return '';
+            if (!this.times) return t('It ends after it starts');
+            if (this.times.end <= Date.now()) return t('It ends later than now');
+            return '';
+        },
+        ready() { return !!String(this.title || '').trim() && !!this.times && !this.problem && !this.busy; }
+    },
+    methods: {
+        filterZones(value, update) { update(() => { this.zoneFilter = String(value || ''); }); },
+        // a new start moves the end with it: an hour later, or the same day for a whole day
+        startMoved(value) {
+            if (!value) return;
+            if (this.allDay === 'Y') { if (!this.end || this.end < value) this.end = value; return; }
+            const at = new Date(String(value).replace(' ', 'T') + ':00Z').getTime();
+            if (Number.isNaN(at)) return;
+            const later = new Date(at + 3600000).toISOString();
+            if (!this.end || this.end <= value) this.end = later.slice(0, 10) + ' ' + later.slice(11, 16);
+        },
+        save() {
+            if (!this.ready || needsConnection()) return;
+            this.busy = true;
+            const params = { title: String(this.title).trim(), startDate: this.times.start, endDate: this.times.end, timeZone: this.timeZone,
+                allDay: this.allDay === 'Y' ? 'true' : 'false', place: String(this.place || '').trim(), description: String(this.description || '').trim() };
+            this.room.saveCalEvent(this.item, this.threadRoot, params).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
+        }
+    },
+    template: calBoxTemplate
+};
+
 // The composer's Card: a title, words, a picture and up to 4 buttons (a reply, a link, a call); with no title and no
 // picture it is a text with buttons. It shows the text people without RCS get (moqui.chat.richFallback) as it is written.
 const cardBoxTemplate = `
@@ -906,6 +1122,13 @@ const composerTemplate = `
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_view_agenda" class="m-chat-card-btn-open" :aria-label="room.t('Make a card')" :disable="room.offline"
                 @click="room.openCard(threadRoot || null)"><q-tooltip>{{room.t('Make a card with buttons')}}</q-tooltip></q-btn>
+        <!-- More (Comms-Messaging §18.3 phases 19 and 20): an event, a location -->
+        <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_add_circle" class="m-chat-more-btn" :aria-label="room.t('More')" :disable="room.offline">
+            <q-tooltip>{{room.t('More')}}</q-tooltip>
+            <q-menu anchor="top left" self="bottom left"><q-list style="min-width:200px" class="m-chat-more-menu">
+                <q-item v-if="!room.sealed" clickable v-close-popup data-more="event" @click="room.openCalEvent(threadRoot || null, null)">
+                    <q-item-section avatar><q-icon name="sym_o_event"></q-icon></q-item-section><q-item-section>{{room.t('Event')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
         <!-- a voice note (Comms-Messaging §5.1): with no text, Send is the microphone; recording shows its time, Cancel and Send -->
@@ -1262,7 +1485,7 @@ const chatMessageMenu = {
 const chatMessage = {
     name: 'ChatMessage',
     props: { item: Object, room: Object, inThread: Boolean },
-    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich },
+    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich, 'chat-cal-card': chatCalCard },
     data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false, contextOpen: false }),
     watch: {
         actionsAvailable(value) {
@@ -1958,6 +2181,8 @@ const roomTemplate = `
 
     <!-- NewCard (Comms-Messaging §18.3 phase 13): a card or a text with buttons -->
     <chat-card-box v-if="cardBox.open" :room="self" :thread-root="cardBox.threadRoot" @close="cardBox = { open: false, threadRoot: null }"></chat-card-box>
+    <!-- NewEvent and Change the event (Comms-Messaging §18.3 phase 19) -->
+    <chat-cal-box v-if="calBox.open" :room="self" :thread-root="calBox.threadRoot" :item="calBox.item" @close="calBox = { open: false, threadRoot: null, item: null }"></chat-cal-box>
     <!-- NewPoll: a question, 2 to 10 options, more than one choice, anonymous, and when it closes -->
     <m-dialog v-model="pollBox.open" :title="t('New poll')" width="520">
         <m-text-line v-model="pollBox.question" :name="'pollQuestion' + uid" :label="t('Question')" required></m-text-line>
@@ -2134,7 +2359,7 @@ const chatRoom = {
         rooms: { type: Array, default: () => [] }, firstMessage: String },
     emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox,
-        'chat-when': chatWhen, 'chat-scheduled': chatScheduled },
+        'chat-when': chatWhen, 'chat-scheduled': chatScheduled, 'chat-cal-box': chatCalBox },
     data() {
         roomCount += 1;
         return {
@@ -2149,6 +2374,7 @@ const chatRoom = {
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
             cardBox: { open: false, threadRoot: null },
+            calBox: { open: false, threadRoot: null, item: null }, calZone: null, calZones: [], calProvider: false, calFieldsLoaded: false,
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0, secured: null },
@@ -2194,6 +2420,8 @@ const chatRoom = {
         // disappearing messages (Comms-Messaging §18.3 phase 16): the room's timer, and why it has none (a bridge cannot delete there)
         timerSeconds() { return (this.room && Number(this.room.messageTimerSeconds)) || 0; },
         timerLabel() { return moqui.chat.expiry.label(this.timerSeconds, t); },
+        // an event's box in a room with a timer (phase 19): its card goes with the message
+        timerNote() { return this.timerSeconds ? fill(t('This room\'s messages disappear after {time}: the event\'s card goes too'), { time: this.timerLabel }) : ''; },
         timerShort() { return moqui.chat.expiry.short(this.timerSeconds, t); },
         timerBlocked() {
             if (!this.room) return null;
@@ -3475,7 +3703,7 @@ const chatRoom = {
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             return this.hoverKey === key || this.tapKey === key;
         },
-        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
+        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && !item.event.calEvent && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
         canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)) && this.bridgeCaps.delete; },
         externalText(person) { return fill(t('On {network}'), { network: person.networkName || t('another network') }); },
         // ---- a message's delivery to the room's bridges ----
@@ -3524,7 +3752,7 @@ const chatRoom = {
             const me = this.me.userId;
             for (let i = this.events.length - 1; i >= 0; i--) {
                 const event = this.events[i];
-                if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll) continue;
+                if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll || event.calEvent) continue;
                 if (Date.now() - Number(event.sentDate || 0) >= EDIT_WINDOW || !this.canPost) return false;
                 if (!this.queues('chat-edit') && needsConnection()) return true;
                 this.editing = { seq: Number(event.eventSeq), body: event.body || '' };
@@ -4135,6 +4363,76 @@ const chatRoom = {
                 }, () => {});
             });
         },
+        // ---- events with RSVP (Comms-Messaging §18.3 phase 19) ----
+        // the box, for a new event (in the thread being written) or a change of item's; the zones and whether an app keeps
+        // calendars are read once
+        openCalEvent(threadRoot, item) {
+            if (needsConnection()) return;
+            const open = () => { this.calBox = { open: true, threadRoot: threadRoot || null, item: item || null }; };
+            if (this.calFieldsLoaded) { open(); return; }
+            this.get('calEventFields', {}).then((json) => {
+                this.calZone = json.timeZone || (Intl.DateTimeFormat().resolvedOptions().timeZone || null);
+                this.calZones = Array.isArray(json.timeZoneList) ? json.timeZoneList : [];
+                this.calProvider = json.calendarProvider === true;
+                this.calFieldsLoaded = true;
+                open();
+            }, () => { this.calFieldsLoaded = false; open(); });
+        },
+        saveCalEvent(item, threadRoot, params) {
+            if (item) {
+                return this.post('updateCalEvent', Object.assign({ chatRoomId: this.roomId, eventSeq: item.eventSeq }, params)).then((json) => {
+                    if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                    return json;
+                });
+            }
+            return this.post('createCalEvent', Object.assign({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot || '',
+                clientRef: moqui.chat && moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }, params)).then((json) => {
+                if (json.eventSeq == null) return Promise.reject(json);
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.calEvent) this.applyFields(json.eventSeq, { calEvent: json.calEvent || json.event.calEvent });
+                return json;
+            });
+        },
+        answerCalEvent(item, params) {
+            return this.post('answerCalEvent', Object.assign({ chatRoomId: this.roomId, eventSeq: item.eventSeq }, params)).then((json) => {
+                if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                if (json.reminderSkipped) moqui.notifyMessages([{ type: 'info', message: t('It starts too soon for that reminder') }]);
+                if (json.reminderFailed) moqui.notifyMessages([{ type: 'warning', message: t('Your answer is saved, but the reminder could not be set') }]);
+                if (json.calendarFailed) moqui.notifyMessages([{ type: 'warning', message: t('Your answer is saved, but your calendar could not be changed') }]);
+                return json;
+            });
+        },
+        cancelCalEvent(item) {
+            if (needsConnection()) return;
+            this.confirm(t('Cancel the event?'), t('Everyone in the room is told, and it cannot be undone.'), t('Cancel the event'), true).then(() => {
+                this.post('cancelCalEvent', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                    if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                }, () => {});
+            });
+        },
+        calIcsUrl(item) { return this.url('calEventIcs') + '?chatRoomId=' + encodeURIComponent(this.roomId) + '&eventSeq=' + encodeURIComponent(item.eventSeq); },
+        downloadCalEvent(item) {
+            const link = document.createElement('a');
+            link.href = this.calIcsUrl(item);
+            link.download = '';
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        },
+        // Add to calendar with no app's calendar: the phone's calendar app in the Android app, else the .ics file
+        calendarInsert(item) {
+            const cal = item.event.calEvent;
+            const desktop = window.moquiDesktop;
+            if (desktop && typeof desktop.calendarInsert === 'function') {
+                desktop.calendarInsert({ title: cal.title, start: cal.start, end: cal.end, allDay: !!cal.allDay, timeZone: cal.timeZone || '',
+                    place: cal.place || '', description: cal.description || '' }).then((opened) => { if (opened !== true) this.downloadCalEvent(item); },
+                    () => this.downloadCalEvent(item));
+                return;
+            }
+            this.downloadCalEvent(item);
+        },
+        jumpToEvent(seq) { if (seq != null) this.scrollToSeq(Number(seq), true); },
         // the sender takes the link previews off their message, for good
         removePreviews(item) {
             this.post('removePreviews', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then(() => this.applyFields(item.eventSeq, { linkPreviews: [] }), () => {});

@@ -1741,6 +1741,7 @@
         <load-entity location="component://framework/entity/VoiceEntities.xml"/>
         <load-entity location="component://framework/entity/ChatKeyEntities.xml"/>
         <load-entity location="component://framework/entity/ChatScheduleEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatCalEntities.xml"/>
         <load-entity location="component://framework/entity/TerminalEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>

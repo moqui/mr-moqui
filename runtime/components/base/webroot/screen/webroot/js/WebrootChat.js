@@ -2031,6 +2031,92 @@
         if (event && event.key === chat.leftOutKey()) { chat.leftOutTick = (chat.leftOutTick || 0) + 1; chat.emit("leftOut", {}); }
     });
 
+    // ---- events with RSVP (plans/Comms-Messaging.md phase 19; org.moqui.chat.ChatCalServices) ----
+    // An event's state is the server's get#CalEventStates: {title, start, end (millis), timeZone, allDay, place, description,
+    // revision, cancelled, ended, going, maybe, no, answers {going, maybe, no: [userId]}, mine {answer, remindMinutes} or null}.
+    const calWall = (millis, zone) => String(l10n().formatTimestamp(millis, "yyyy-MM-dd HH:mm", zone));
+    chat.cal = {
+        // The time stamp of a wall clock time (yyyy-MM-dd and HH:mm) in an IANA zone, across a daylight saving change.
+        wallIn(dayKey, time, zone) {
+            const day = /^(\d{4})-(\d\d)-(\d\d)$/.exec(String(dayKey || ""));
+            const clock = /^(\d{1,2}):(\d\d)$/.exec(String(time || "00:00"));
+            if (!day || !clock) return NaN;
+            const target = Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]), Number(clock[1]), Number(clock[2]));
+            let guess = target;
+            for (let pass = 0; pass < 3; pass++) {
+                const wall = calWall(guess, zone);
+                const seen = Date.UTC(Number(wall.slice(0, 4)), Number(wall.slice(5, 7)) - 1, Number(wall.slice(8, 10)), Number(wall.slice(11, 13)), Number(wall.slice(14, 16)));
+                if (seen === target) break;
+                guess += target - seen;
+            }
+            return guess;
+        },
+        // An event's start and end as the box edits them, in its own zone: {startDay, startTime, endDay, endTime}; an
+        // all-day event's end day is its last day.
+        boxFields(event) {
+            const start = calWall(event.start, event.timeZone);
+            const end = calWall(event.allDay ? event.end - 1 : event.end, event.timeZone);
+            return { startDay: start.slice(0, 10), startTime: start.slice(11, 16), endDay: end.slice(0, 10), endTime: event.allDay ? "00:00" : end.slice(11, 16) };
+        },
+        // The start and end millis of what the box holds, in zone; an all-day event is midnight to the midnight after its
+        // last day. Null when the box is not filled in or ends before it starts.
+        boxTimes(box) {
+            const zone = box.timeZone;
+            const start = chat.cal.wallIn(box.startDay, box.allDay ? "00:00" : box.startTime, zone);
+            let end;
+            if (box.allDay) {
+                const last = /^(\d{4})-(\d\d)-(\d\d)$/.exec(String(box.endDay || box.startDay || ""));
+                if (!last) return null;
+                const next = new Date(Date.UTC(Number(last[1]), Number(last[2]) - 1, Number(last[3])) + 86400000).toISOString().slice(0, 10);
+                end = chat.cal.wallIn(next, "00:00", zone);
+            } else end = chat.cal.wallIn(box.endDay || box.startDay, box.endTime, zone);
+            if (!(start > 0) || !(end > start)) return null;
+            return { start, end };
+        },
+        // The time line in the viewer's zone and language: "Sat, Nov 23, 2:00 – 4:00 PM", or the days of an all-day event
+        // (the event's own, which a whole day is in).
+        when(event) {
+            if (!event || event.start == null) return "";
+            const z = l10n();
+            const day = { weekday: "short", month: "short", day: "numeric" };
+            const time = { hour: "numeric", minute: "2-digit" };
+            if (event.allDay) {
+                const first = String(z.formatTimestamp(event.start, "yyyy-MM-dd", event.timeZone));
+                const last = String(z.formatTimestamp(event.end - 1, "yyyy-MM-dd", event.timeZone));
+                // a day by its noon there, which is the same day in any zone within 11 hours of it
+                const words = (key) => z.formatZoned(chat.cal.wallIn(key, "12:00", event.timeZone), day);
+                return first === last ? fillIn(tr("{day}, all day"), { day: words(first) }) : words(first) + " – " + words(last);
+            }
+            const sameDay = z.dayKey(event.start) === z.dayKey(event.end);
+            return z.formatZoned(event.start, Object.assign({}, day, time)) + " – " + (sameDay ? z.formatZoned(event.end, time) : z.formatZoned(event.end, Object.assign({}, day, time)));
+        },
+        // The event's own time when the viewer's zone shows it otherwise: "14:00 in America/Denver"; else "".
+        zoneNote(event) {
+            if (!event || event.allDay || !event.timeZone || event.start == null) return "";
+            const z = l10n();
+            const there = calWall(event.start, event.timeZone);
+            const wall = z.zonedWall(event.start);
+            const here = wall.dayKey + " " + String(wall.hour).padStart(2, "0") + ":" + String(wall.minute).padStart(2, "0");
+            return there === here ? "" : fillIn(tr("{time} in {zone}"), { time: there.slice(11, 16), zone: event.timeZone });
+        },
+        // "5 going · 2 maybe · 1 can't go", or "No answers yet".
+        countLine(event) {
+            if (!event) return "";
+            const parts = [];
+            if (event.going) parts.push(fillIn(tr("{count} going"), { count: event.going }));
+            if (event.maybe) parts.push(fillIn(tr("{count} maybe"), { count: event.maybe }));
+            if (event.no) parts.push(fillIn(tr("{count} can't go"), { count: event.no }));
+            return parts.length ? parts.join(" · ") : tr("No answers yet");
+        },
+        canAnswer(event, now) { return !!event && !event.cancelled && !(event.end != null && event.end <= now); },
+        // The reminders offered (minutes before the start), only those still more than a minute ahead; 0 is none.
+        remindChoices(event, now) {
+            const choices = [{ minutes: 15, label: tr("15 minutes before") }, { minutes: 60, label: tr("1 hour before") }, { minutes: 1440, label: tr("1 day before") }];
+            return [{ minutes: 0, label: tr("No reminder") }].concat(choices.filter((one) => event && event.start - one.minutes * MINUTE > now + MINUTE));
+        },
+        myAnswer(event) { return event && event.mine ? event.mine.answer || null : null; }
+    };
+
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----
 
     const labelsOf = (vm) => Object.assign({}, chat.labels, vm.$root && vm.$root.labels);

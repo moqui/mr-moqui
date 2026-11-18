@@ -482,7 +482,7 @@ along with this software (see the LICENSE.md file). If not, see
                 body: encrypted ? null : body, bodyText: encrypted ? null : bodyText || null,
                 encrypted: encrypted && content ? content.encrypted || null : null, mentions: (content && content.mentions) || [],
                 attachments: (content && content.attachments) || [], records: (content && content.records) || [],
-                forwardOf: (content && content.forwardOf) || null, poll: null, assist: (content && content.assist) || null, linkPreviews: [],
+                forwardOf: (content && content.forwardOf) || null, poll: null, calEvent: null, assist: (content && content.assist) || null, linkPreviews: [],
                 rich: (content && content.rich) || null, postback: (content && content.postback) || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
                 editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null,
@@ -2224,6 +2224,11 @@ along with this software (see the LICENSE.md file). If not, see
                     .map((row) => Number(row.eventSeq))
             const polls = pollSeqs.length ? (ec.service.sync().name('org.moqui.chat.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId,
                 eventSeqList: pollSeqs}).call().pollMap || {}) : {}
+            // the events, with my own answers (plans/Comms-Messaging.md §18.3 phase 19)
+            const calSeqs = rows.filter((row) => row.eventTypeEnumId === 'CetMessage' && !row.redactedDate && /"calEvent"/.test(row.contentJson || ''))
+                    .map((row) => Number(row.eventSeq))
+            const calEvents = calSeqs.length ? (ec.service.sync().name('org.moqui.chat.ChatCalServices.get#CalEventStates').parameters({chatRoomId: chatRoomId,
+                eventSeqList: calSeqs}).call().calEventMap || {}) : {}
             const previewsOf = (row) => {
                 const value = row.linkPreviewJson ? parse(row.linkPreviewJson) : null
                 return Array.isArray(value) ? value : []
@@ -2265,6 +2270,7 @@ along with this software (see the LICENSE.md file). If not, see
                     mentions: redacted ? [] : ((edit && edit.mentions) || content.mentions || []),
                     attachments: redacted ? [] : (content.attachments || []), records: redacted ? [] : (content.records || []),
                     forwardOf: redacted || !isMessage ? null : content.forwardOf || null, poll: redacted ? null : polls[seq] || null,
+                    calEvent: redacted ? null : calEvents[seq] || null, calChange: redacted || !isMessage ? null : content.calChange || null,
                     assist: redacted || !isMessage ? null : content.assist || null,
                     rich: redacted || !isMessage ? null : content.rich || null, postback: redacted || !isMessage ? null : content.postback || null,
                     linkPreviews: redacted || !isMessage ? [] : previewsOf(row),
@@ -2852,6 +2858,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (externalActor ? original.senderActorId !== externalActor.chatActorId : original.senderUserId !== me) {
                 ec.message.addError(ec.l10n.localize('You may edit only your own messages')); return }
             if (parse(original.contentJson).poll) { ec.message.addError(ec.l10n.localize('A poll is not edited: close it, or delete it and make another')); return }
+            if (parse(original.contentJson).calEvent) { ec.message.addError(ec.l10n.localize('An event is changed with Change, not edited')); return }
             if (original.viewOnce === 'Y') { ec.message.addError(ec.l10n.localize('A view-once photo is not edited')); return }
             if (parse(original.contentJson).rich) { ec.message.addError(ec.l10n.localize('A card is not edited: delete it and send another')); return }
             const windowMinutes = Number(System.getProperty('chat_edit_window_minutes') || 1440)
@@ -3098,6 +3105,8 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             for (const entity of ['moqui.chat.ChatPollVote', 'moqui.chat.ChatPollOption', 'moqui.chat.ChatPoll'])
                 ec.entity.find(entity).condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
+            // an event's rows and the reminders its answers made (plans/Comms-Messaging.md §18.3 phase 19)
+            ec.service.sync().name('org.moqui.chat.ChatCalServices.forget#CalEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
             mentionedUserIdList = Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId)
             ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()

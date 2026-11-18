@@ -175,6 +175,9 @@ external mappings (`ChatEventExternal`) dedupe its events after that.
   `ChatScheduleServices.send#DueMessages` sends it through `send#Message` as the sender, so its delivery rows are written
   then, and the adapter's checks (`check#SmsSend`: the destination, the opt-out, the day's limits; its capabilities and
   fallback) are those of that moment. Nothing about a bridge is decided when it is scheduled.
+- **An event** (phase 19) is a message whose text is the event (its title, its time in its zone, its place and details),
+  so every bridge sends that text; its changes and cancellation are messages of their own and go the same way. An answer
+  is no message and goes nowhere; an answer by text from another network is not read.
 - **Woken after the commit.** `wake#BridgeDelivery` wakes this node's worker once the transaction commits. The commit hook
   is in memory and a crash loses it, so the worker (a thread per node, started by the host after the cluster) also runs a
   round at start, and once a minute while any bridge exists.

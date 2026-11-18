@@ -278,6 +278,23 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
     its text: a plain room's notification shows the message's start (unless message previews are off), an encrypted
     room's does not. A reminder of a message deleted since, or of a room you can no longer read, does not come, nor one
     of an account closed or without the app; a sign-in lock only makes it wait.
+- **Events** (plans/Comms-Messaging.md §18.3 phase 19; `org.moqui.chat.ChatCalServices`). The composer's More menu (+)
+  has Event: a title, all day or a start and end, the time zone (yours first), a place and details. The event is a card
+  in the room: its date, the time in your zone (and the event's own when yours differs), the place (a tap searches
+  OpenStreetMap for it), Going, Maybe and No (a tap answers, the same tap takes it back), and how many answered; a tap on
+  the counts shows who. Once you answer Going or Maybe you can pick a reminder (15 minutes, an hour or a day before; an
+  hour by default for Going), which comes as a message reminder does, and Add to calendar:
+  - with an app that keeps calendars (IronStone: the event on your default calendar in Commons, Calendar, changed and
+    cancelled with the chat event, taken off when you answer No);
+  - in the Android app, the phone's calendar app opened on a new event filled in;
+  - else the event's `.ics` file, which the card's menu also downloads. Imported again after a change, it updates the
+    same entry.
+
+  Its creator and the room's moderators change it (at most 20 times) or cancel it (for good); each change or
+  cancellation is a message in the room, a reply to the event, so everyone sees it, and the reminders move or go with
+  it. Everyone else (the terminal, XMPP, SMS, bridges, notifications, search) gets the event as text: "Event: Picnic",
+  its time in its zone, "Where: …" and the details. An encrypted room has no events, as it has no polls: the server keeps
+  the answers and writes the text.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
@@ -455,6 +472,7 @@ records drive's folders by their records.
 | `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); one no refuses it, and without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out)). Also answerable from a component's conf (below): Mantle registers its consent records' answer there, so a campaign's text, sent with no user, is asked too |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 | `call-target` | Which users the current user may not call, transfer a call to or add to one (`userIdList`; answers `refusedUserIdList`): a refused user is answered as one that does not exist, a desk phone's REFER to one gets 403; with no provider any enabled user may be reached, and one that fails refuses (IronStone: the users of the parties the user may see, under the organization filter of `recipient-source`; a user with no party is in no organization and may be reached; the example gallery refuses users named `*.offlimits`) |
+| `chat-calendar` | A chat event's entry on the current user's calendar (`ProviderInterfaces.chat#CalendarEntry`: `chatRoomId`, `eventSeq`, `action` answer, change or cancel; answers `eventUrl`). Called by `ChatCalServices` after its writes are committed, each provider in a transaction of its own; one that fails is logged and the answer stands. It is given ids only and reads `ChatCalEvent` and the user's `ChatCalAnswer` itself. Without a provider Add to calendar is the `.ics` file (IronStone: one Mantle event per chat event, its `universalId` the chat event's UID) |
 | `chat-target` | Which users the current user may not find in the people search (`CommsServices.search#Users`), start a direct room with, add to a room or mention in a public room they are not in (`userIdList`; answers `refusedUserIdList`, the interface `chat#Target`, whose parameters are `call#Target`'s): a refused user is left out of the search and answered as one that does not exist; with no provider any enabled user may be reached, and one that fails refuses (`ChatServices.get#RefusedUsers`). The search leaves out every external user (`EXTERNAL_USER`), and an external user reaches only the people of their own rooms. The example gallery refuses users named `*.offlimits`; one service may answer both hooks |
 
 A provider runs with the app's authorization and entity filters; a read that fails is left out and named, and a mutation that fails is an error.

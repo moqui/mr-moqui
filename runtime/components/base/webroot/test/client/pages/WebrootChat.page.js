@@ -1556,3 +1556,34 @@ test("a held message's send: claimed, sealed and sent with its claim checked; a 
         chat.sealMessage = was.seal;
     }
 });
+
+test("an event's times: a wall clock in its zone, the box's start and end, the viewer's zone note, the reminders still ahead, the counts", () => {
+    const cal = chat.cal;
+    const start = Date.UTC(2030, 10, 23, 21, 0);
+    const event = { title: "Picnic", start, end: start + 7200000, timeZone: "America/Denver", allDay: false, going: 2, maybe: 0, no: 1 };
+    try {
+        moqui.l10n.setTimeZone("America/New_York");
+        assert.equal(cal.wallIn("2030-11-23", "14:00", "America/Denver"), start);
+        assert.equal(cal.wallIn("2030-07-04", "14:00", "America/Denver"), Date.UTC(2030, 6, 4, 20, 0), "summer time");
+        assert.equal(cal.zoneNote(event), "14:00 in America/Denver");
+        moqui.l10n.setTimeZone("America/Denver");
+        assert.equal(cal.zoneNote(event), "", "the same wall clock: no note");
+        assert.deepEqual(cal.boxFields(event), { startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "16:00" });
+        assert.deepEqual(cal.boxTimes({ timeZone: "America/Denver", allDay: false, startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "16:00" }),
+            { start, end: start + 7200000 });
+        assert.deepEqual(cal.boxTimes({ timeZone: "America/Denver", allDay: true, startDay: "2030-11-24", endDay: "2030-11-24" }),
+            { start: Date.UTC(2030, 10, 24, 7), end: Date.UTC(2030, 10, 25, 7) }, "a whole day: midnight to midnight there");
+        assert.equal(cal.boxTimes({ timeZone: "America/Denver", allDay: false, startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "13:00" }), null);
+        assert.deepEqual(cal.remindChoices(event, start - 30 * 60000).map((one) => one.minutes), [0, 15], "only those still ahead");
+        assert.deepEqual(cal.remindChoices(event, start - 3 * 86400000).map((one) => one.minutes), [0, 15, 60, 1440]);
+        assert.equal(cal.countLine(event), "2 going · 1 can't go");
+        assert.equal(cal.countLine({ going: 0, maybe: 0, no: 0 }), "No answers yet");
+        assert.equal(cal.canAnswer(event, start), true);
+        assert.equal(cal.canAnswer(event, start + 7200000), false, "over");
+        assert.equal(cal.canAnswer(Object.assign({}, event, { cancelled: true }), start), false);
+        assert.equal(cal.myAnswer(Object.assign({}, event, { mine: { answer: "maybe" } })), "maybe");
+        assert.ok(cal.when(event).length > 0);
+    } finally {
+        moqui.l10n.setTimeZone(null);
+    }
+});
