@@ -1,6 +1,6 @@
 # Conf Paths: settings by XML path, overridden from the environment
 
-Status 2026-11-18: phases 0 to 5 built. Phases 0 to 2: the path module, the conf schema, the overrides with
+Status 2026-11-18: phases 0 to 6 built. Phases 0 to 2: the path module, the conf schema, the overrides with
 `getConfValue`, `setConf`, the conf view's names and `moqui conf env`. Phase 3: the attributes the default conf filled
 from properties (3a entity facade and databases, 3b web, logging, caches and reports, 3c SSH, git, SMTP and mail, 3d
 search and LLM). Phase 4: every setting that was only a property, in the elements of §6.1 and §6.13 to §6.26; the
@@ -10,8 +10,9 @@ settings no section named (mail-delivery@bounce-domain, edge@public-addresses, t
 entity-facade@disable-fk-create, tools@database-audit-days, email-client@contact-service,
 telemetry/recovery@properties, dav-server@public-url without its property). Left as process properties: the switches a
 harness or a test binary sets for one run (`moqui_stop_on_stdin_close`, `terminal_exec_helper`,
-`moqui.tx_cache.strict`), the runtime state of §8, and a spec's own opt-in switches. Phases 6 to 8 to do
-([§7](#7-phases)): scripts and packaging, the removal of default-property and `${}`, and the docs. Until phase 7 a
+`moqui.tx_cache.strict`), the runtime state of §8, and a spec's own opt-in switches. Phase 6: `moq`'s `-D` completion from `moqui conf env
+--names`, its help, the hosted instance image's container names, the XSD's notes. Phases 7 and 8 to do
+([§7](#7-phases)): the removal of default-property and `${}`, and the docs. Until phase 7 a
 name table may hold both kinds of name: `conf_env::setting_or_property` reads a selector (it has an `@`) from the conf
 and anything else as a property.
 

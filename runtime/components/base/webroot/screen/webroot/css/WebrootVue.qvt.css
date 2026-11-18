@@ -161,7 +161,7 @@ pre { text-wrap: normal; white-space: pre-line; word-wrap: normal; word-break: n
 
 /* ====== shell ====== */
 
-/* A dev or test deployment marks the window with a small square in the corner (the color is the webapp_dev_marker_color conf
+/* A dev or test deployment marks the window with a small square in the corner (the color is the webapp-list/webapp[webroot]@dev-marker-color conf
    property, set on the body by the shell; an empty value turns it off). It never overrides the theme's colors. */
 body:is(.dev,.test)::after { content:""; position:fixed; right:10px; bottom:10px; width:12px; height:12px; background:var(--m-dev-marker); pointer-events:none; z-index:9000; }
 /* The page is a shade darker than its surfaces, as in dark mode (page --q-dark-page, surfaces --q-dark): a light grey page with

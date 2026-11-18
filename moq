@@ -718,8 +718,9 @@ help_test_client() {
     cat <<EOF
 Runs moqui test-client, the client specs in each component's test/client/ directory, against a
 server that is already running (./moq run in another terminal), over HTTP, WebSocket and headless
-Chromium (moqui_chromium_path, else the one of ./moq chromium-download, else an installed one). It opens
-no database, binds no port and writes only its output directory, so it runs beside the server in
+Chromium (moqui_conf__screen_facade__pdf__chromium_path, else the one of ./moq chromium-download,
+else an installed one). It opens no database, binds no port and writes only its output directory,
+so it runs beside the server in
 the same runtime directory. Arguments go to moqui test-client; the moq options below are read first
 and any other option is passed on:
   ./moq test-client framework
@@ -777,8 +778,8 @@ runtime/components/dev, moq or the scripts.
                                     the client specs of components/base and components/dev whose
                                     test/client/suite.js declares a server, each against it
 None of them runs an acceptance test (docs/Build-Test.md#the-two-suites). The Chromium is the one PDF
-and moqui test-client use: moqui_chromium_path, else runtime/chromium (./moq chromium-download), else an
-installed Chromium, Google Chrome or Edge.
+and moqui test-client use: moqui_conf__screen_facade__pdf__chromium_path, else runtime/chromium
+(./moq chromium-download), else an installed Chromium, Google Chrome or Edge.
 Left out: the timings (cargo test --release --test entity_speed and the other *_speed tests) and
 Clippy over every feature set (scripts/check-packages.sh, which runs tui_screens too).
 
@@ -1026,9 +1027,10 @@ help_opensearch_stop() {
 help_chromium_download() {
     cat <<'EOF'
 Downloads a Chromium snapshot build into runtime/chromium, replacing what is there. The server
-uses it for PDF when moqui_chromium_path is not set or names no file, before an installed Chromium,
-Google Chrome or Edge; the browser tests use it too. Without it an installed one is found on the
-PATH or where the OS installs it; set moqui_chromium_path to use another.
+uses it for PDF when screen-facade/pdf@chromium-path (moqui_conf__screen_facade__pdf__chromium_path)
+is not set or names no file, before an installed Chromium, Google Chrome or Edge; the browser tests
+use it too. Without it an installed one is found on the PATH or where the OS installs it; set
+moqui_conf__screen_facade__pdf__chromium_path to use another.
 
 The default build is the one at the main-branch position the current Stable release branched
 from (from chromiumdash.appspot.com), or the nearest snapshot before it; it has the Stable code
@@ -3216,7 +3218,7 @@ task_chromium_download() {
             dash=Mac
             zip=chrome-mac.zip
             ;;
-        *) die "no Chromium snapshot for $(uname -s) $(uname -m); install Chromium another way and set moqui_chromium_path" ;;
+        *) die "no Chromium snapshot for $(uname -s) $(uname -m); install Chromium another way and set moqui_conf__screen_facade__pdf__chromium_path" ;;
     esac
     need_tool curl unzip tar gzip
     # The snapshot repacked as a gzipped tar (modes and the macOS app's links kept) is kept in the cache an
@@ -5477,10 +5479,17 @@ data_types() {
     } | grep -v '^$' | sort -u
 }
 
+# The conf's environment names for -D, each with its =: moqui conf env --names of the first package built (none when
+# none is built); the binary merges this runtime's conf, its components' included.
 property_names() {
-    local framework=${MOQUI_FRAMEWORK:-$RUNTIME_DIR/$BASE_SET/framework}
-    grep -ho '<default-property name="[^"]*"' "$framework/conf/MoquiDefaultConf.xml" 2>/dev/null |
-        sed 's/.*name="\([^"]*\)"/\1=/' | sort -u
+    local package bin
+    for package in release debug lite enterprise; do
+        bin=$(binary_path "$package")
+        if [ -x "$bin" ]; then
+            (cd "$ROOT" && "$bin" conf env --names 2>/dev/null) | sed 's/$/=/'
+            return
+        fi
+    done
 }
 
 save_names() {

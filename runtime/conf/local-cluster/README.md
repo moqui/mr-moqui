@@ -47,5 +47,5 @@ which pools the members of a pairing and balances over them. Requirements, what 
 3. Copy that `.env` to each other member, add its own `cluster-member@base-url`, and start it. With an edge node each member
    links once its cluster lists it as live.
 4. Open 8444 between the members only.
-5. Check: `SELECT instance_id, cluster-member@base-url, heartbeat FROM cluster_member;` on the shared database. With an edge
+5. Check: `SELECT instance_id, cluster_base_url, heartbeat FROM cluster_member;` on the shared database. With an edge
    node, Edge Clients › Clients there lists each member, and System › Edge Node on a member lists its cluster.

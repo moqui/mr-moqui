@@ -100,6 +100,7 @@ echo "stub: $* conf=${MOQUI_CONF:-}" >>"$(dirname "$0")/calls.log"
 case $1 in
     embedded) [ "$2" = checksum ] && echo "0000000000000000000000000000000000000000000000000000000000000000  runtime" ;;
     save-db) echo "dump of $2" >"$3" ;;
+    conf) [ "$2" = env ] && printf '%s\n' moqui_conf__instance__purpose moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name ;;
     load-save) [ -f "$3" ] || exit 3; mkdir -p "$2/data"; cp "$3" "$2/data/restored" ;;
 esac
 EOF
@@ -126,8 +127,7 @@ cp "$R/target/release/moqui" "$R/target/release/moqui.keep"
 export PATH="$R/bin:$PATH"
 echo '<moqui-conf/>' >"$R/runtime/conf/MoquiDevConf.xml"
 echo '<moqui-conf/>' >"$R/runtime/conf/MoquiProductionConf.xml"
-echo '<moqui-conf><default-property name="webapp_http_port" value=""/><default-property name="entity_ds_db_conf" value=""/></moqui-conf>' \
-    >"$R/runtime/components/base/framework/conf/MoquiDefaultConf.xml"
+echo '<moqui-conf/>' >"$R/runtime/components/base/framework/conf/MoquiDefaultConf.xml"
 echo '<entity-facade-xml type="seed">' >"$R/runtime/components/base/framework/data/A.xml"
 echo '<entity-facade-xml type="seed-initial,demo">' >"$R/runtime/components/base/framework/data/B.xml"
 echo 'log' >"$R/runtime/log/moqui.log"
@@ -162,8 +162,8 @@ check "help partial" 0 './moq component-create' -- "$M" help c-cr
 
 # ========== run and load ==========
 
-check "run options" 0 'export moqui_conf__webapp_list__webapp__WEBROOT__http_port=8081' -- dry "$M" run -p 8081 -D entity_ds_db_conf=postgres lint --screens
-check "run -D" 0 'export entity_ds_db_conf=postgres' -- dry "$M" run -D entity_ds_db_conf=postgres
+check "run options" 0 'export moqui_conf__webapp_list__webapp__WEBROOT__http_port=8081' -- dry "$M" run -p 8081 -D moqui_conf__instance__purpose=test lint --screens
+check "run -D" 0 'export moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres' -- dry "$M" run -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 check "run -Dname=value" 0 'export a_b=c' -- dry "$M" run -Da_b=c
 check "run passthrough" 0 'moqui lint --screens$' -- dry "$M" run -p 8081 lint --screens
 check "run -- passthrough" 0 'moqui -x$' -- dry "$M" run -- -x
@@ -298,7 +298,7 @@ check "complete load types" 0 '^seed-initial$' -- "$M" __complete 2 load se
 check "complete load demo" 0 '^demo$' -- "$M" __complete 2 load d
 check "complete run binary commands" 0 '^lint$' -- "$M" __complete 2 run ''
 check "complete run options" 0 '^--debug$' -- "$M" __complete 2 run --d
-check "complete -D property" 0 '^entity_ds_db_conf=$' -- "$M" __complete 3 run -D ent
+check "complete -D property" 0 '^moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=$' -- "$M" __complete 3 run -D moqui_conf__ent
 check "complete alias task" 0 '^seed$' -- "$M" __complete 2 lP se
 check "complete help" 0 '^git-status$' -- "$M" __complete 2 help git-s
 check "complete autodoc kinds" 0 '^entity$' -- "$M" __complete 3 autodoc --kinds ''

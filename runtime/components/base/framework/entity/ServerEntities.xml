@@ -279,18 +279,18 @@ along with this software (see the LICENSE.md file). If not, see
                     is the app/project name and moqui_default is the network name; use plain 'bridge' or other instead of a network
                     name to use the default docker bridge or other network -->
                 <envs envName="VIRTUAL_HOST" envValue="${appInstance.hostName}"/>
-                <envs envName="webapp_http_host" envValue="${appInstance.hostName}"/>
-                <envs envName="webapp_http_port" envValue="80"/>
-                <envs envName="webapp_https_port" envValue="443"/>
-                <envs envName="webapp_https_enabled" envValue="true"/><!-- NOTE: change this to false for dev/test without https -->
+                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__http_host" envValue="${appInstance.hostName}"/>
+                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__http_port" envValue="80"/>
+                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__https_port" envValue="443"/>
+                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__https_enabled" envValue="true"/><!-- NOTE: change this to false for dev/test without https -->
 
-                <envs envName="entity_ds_db_conf" envValue="${appInstance.database?.type?.confName?:''}"/>
-                <envs envName="entity_ds_host" envValue="${appInstance.database?.instanceAddress ?: appInstance.database?.hostAddress ?: ''}"/>
-                <envs envName="entity_ds_port" envValue="${appInstance.database?.hostPort?:''}"/>
-                <envs envName="entity_ds_database" envValue="${appInstance.hostName.replace('.', '_')}"/>
-                <!-- <envs envName="entity_ds_schema" envValue=""/> -->
-                <envs envName="entity_ds_user" envValue="${appInstance.hostName.replace('.', '_')}"/>
-                <envs envName="entity_ds_password" envValue="${org.moqui.util.StringUtilities.getRandomString(15)}"/>
+                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name" envValue="${appInstance.database?.type?.confName?:''}"/>
+                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__host" envValue="${appInstance.database?.instanceAddress ?: appInstance.database?.hostAddress ?: ''}"/>
+                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__port" envValue="${appInstance.database?.hostPort?:''}"/>
+                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database" envValue="${appInstance.hostName.replace('.', '_')}"/>
+                <!-- <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__schema_name" envValue=""/> -->
+                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__user" envValue="${appInstance.hostName.replace('.', '_')}"/>
+                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__password" envValue="${org.moqui.util.StringUtilities.getRandomString(15)}"/>
 
                 <links instanceName="moqui-database"/>
 

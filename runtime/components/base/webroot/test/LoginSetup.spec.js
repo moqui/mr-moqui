@@ -69,7 +69,7 @@ feature("the Login screen renders in tui mode without the setup form while accou
         res.json != null
         !res.text.includes("InitialAdminForm")
         !res.text.includes("Welcome to your new system")
-        !res.text.includes("initial_admin_enabled")
+        !res.text.includes("moqui_conf__user_facade__login__initial_admin_enabled")
     },
 })
 

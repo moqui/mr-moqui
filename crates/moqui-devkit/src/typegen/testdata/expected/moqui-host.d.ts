@@ -879,7 +879,7 @@ interface MoquiUserFacade {
     initialAdminAllowed(setupSecret: string | null): boolean;
     /** With nobody logged in the session becomes anonymous; whether this call did that. */
     loginAnonymousIfNoUser(): boolean;
-    /** A token for the subject that checkServerGrant accepts for the same purpose until ttlSeconds (3600; 1 second to 7 days) have passed, `<expiry millis>.<HMAC hex>`, keyed by a key the server derives for the purpose from its own secret, which no script reads. An error with no purpose, or when the server has no session_cookie_key. */
+    /** A token for the subject that checkServerGrant accepts for the same purpose until ttlSeconds (3600; 1 second to 7 days) have passed, `<expiry millis>.<HMAC hex>`, keyed by a key the server derives for the purpose from its own secret, which no script reads. An error with no purpose, or when the server has no webapp-list/webapp[webroot]/session-config@cookie-key. */
     serverGrant(purpose: string, subject: string, ttlSeconds?: number | null): string;
     /** Whether the token is a serverGrant of this purpose and subject that has not expired; false for a null token. */
     checkServerGrant(purpose: string, subject: string, token: string | null): boolean;

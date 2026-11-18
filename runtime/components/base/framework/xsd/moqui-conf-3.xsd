@@ -315,7 +315,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="grpc-port" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>The gRPC
                 port; 0 is any free port. Default 4317.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="grpc-bind" type="xs:string"><xs:annotation><xs:documentation>The IP address the gRPC
-                receiver listens on. Default the HTTP listener's (webapp_http_bind).</xs:documentation></xs:annotation>
+                receiver listens on. Default the HTTP listener's (webapp-list/webapp[webroot]@http-bind).</xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="browser" minOccurs="0"><xs:complexType>
@@ -791,23 +791,23 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element minOccurs="0" name="connections"><xs:complexType>
                     <xs:attribute name="max" type="xs:string"><xs:annotation><xs:documentation>
-                        Connections served at once, HTTP and HTTPS together (webapp_max_connections, 4096). Past it new
+                        Connections served at once, HTTP and HTTPS together (webapp-list/webapp[webroot]/web-protection/connections@max, 4096). Past it new
                         connections wait until one closes.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-per-client" type="xs:string"><xs:annotation><xs:documentation>
                         Connections from one client address at once (64); past it a new one is closed. Trusted proxies
                         and exempt clients are not counted.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="header-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds for the request head, the TLS handshake, and an idle kept-alive connection
-                        (webapp_header_timeout, 30); 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
+                        (webapp-list/webapp[webroot]/web-protection/connections@header-timeout, 30); 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="write-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds a write to a client may take nothing before the connection, or the WebSocket on it, is
-                        closed (webapp_write_timeout, 60); a write that moves any bytes starts it again. Also the
+                        closed (webapp-list/webapp[webroot]/web-protection/connections@write-timeout, 60); a write that moves any bytes starts it again. Also the
                         connections' TCP_USER_TIMEOUT on Linux. 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="shutdown-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds open connections may take to finish after a stop (webapp_shutdown_timeout, 30).</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds open connections may take to finish after a stop (webapp-list/webapp[webroot]/web-protection/connections@shutdown-timeout, 30).</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="http2-max-streams" type="xs:string"><xs:annotation><xs:documentation>
                         Requests one HTTP/2 connection of the HTTPS listener may have open at once
-                        (webapp_http2_max_streams, 100). An HTTP/2 connection with no request for header-timeout is
+                        (webapp-list/webapp[webroot]/web-protection/connections@http2-max-streams, 100). An HTTP/2 connection with no request for header-timeout is
                         closed with a GOAWAY.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="requests"><xs:complexType>
@@ -821,23 +821,23 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="max-headers" type="xs:string"><xs:annotation><xs:documentation>
                         Most header fields in a request (100); more is answered 431.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-body" type="xs:string"><xs:annotation><xs:documentation>
-                        Largest request body that is not multipart, bytes or with a k, m or g suffix (webapp_max_body,
+                        Largest request body that is not multipart, bytes or with a k, m or g suffix (webapp-list/webapp[webroot]/web-protection/requests@max-body,
                         10m); larger is answered 413.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-upload" type="xs:string"><xs:annotation><xs:documentation>
-                        Largest multipart/form-data body (webapp_max_upload, 2g). A request with no user (no session
+                        Largest multipart/form-data body (webapp-list/webapp[webroot]/web-protection/requests@max-upload, 2g). A request with no user (no session
                         signed in, no api_key or login_key, no Basic credentials that hold) takes max-body instead,
                         unless its path is one of anonymous-upload-paths.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-spool" type="xs:string"><xs:annotation><xs:documentation>The bytes the files of the uploads being read hold together, or with a k, m or g suffix; an upload past it is answered 503. 4 GiB by default.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="anonymous-upload-paths" type="xs:string"><xs:annotation><xs:documentation>
                         Path prefixes, comma separated, of the uploads taken without a user, such as a public share's
-                        file drop (webapp_anonymous_upload_paths, /s/); an upload there may be max-upload with no user.
+                        file drop (webapp-list/webapp[webroot]/web-protection/requests@anonymous-upload-paths, /s/); an upload there may be max-upload with no user.
                     </xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="body-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds for a whole request body that is not an upload (webapp_body_timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds for a whole request body that is not an upload (webapp-list/webapp[webroot]/web-protection/requests@body-timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="upload-idle-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds an upload may send nothing (webapp_upload_idle_timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds an upload may send nothing (webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="request-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds from the request head to the response head (webapp_request_timeout, 300); then 504.</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds from the request head to the response head (webapp-list/webapp[webroot]/web-protection/requests@request-timeout, 300); then 504.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="overload"><xs:complexType>
                     <xs:attribute name="queue-timeout" type="xs:string"><xs:annotation><xs:documentation>
@@ -932,7 +932,7 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:complexType></xs:element>
             </xs:sequence>
             <xs:attribute name="enabled" type="xs:string"><xs:annotation><xs:documentation>
-                true or false for the per-client parts (webapp_web_protection); empty, on when the webapp has
+                true or false for the per-client parts (webapp-list/webapp[webroot]/web-protection@enabled); empty, on when the webapp has
                 trusted-proxies.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="client-ipv6-prefix" type="xs:string" default="64"><xs:annotation><xs:documentation>
                 IPv6 clients are counted by this many leading bits of their address.</xs:documentation></xs:annotation></xs:attribute>
@@ -3034,12 +3034,12 @@ along with this software (see the LICENSE.md file). If not, see
                 the commit the last attestation names.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="attestation-secret" type="xs:string"><xs:annotation><xs:documentation>The secret this
                 server issued to the source server (its environment's token), at least 32 characters; empty takes no
-                attested deploy. Set it from a property in runtime/.env (component_deploy_attestation_key).</xs:documentation></xs:annotation></xs:attribute>
+                attested deploy. Set it in runtime/.env (moqui_conf__component_deploy__attestation_secret).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-age-seconds" type="xs:string" default="300"><xs:annotation><xs:documentation>The
                 oldest attestation taken, by the time the source signed it.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="public-urls" type="xs:string"><xs:annotation><xs:documentation>This server's public
                 base URLs, separated by spaces or commas: an attestation's audience (the source environment's
-                targetUrl) must be one of them. Empty: the webroot webapp's URL when webapp_http_host is set; with
+                targetUrl) must be one of them. Empty: the webroot webapp's URL when webapp-list/webapp[webroot]@http-host is set; with
                 neither, every attestation is refused.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>

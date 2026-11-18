@@ -1560,7 +1560,7 @@ node](#a-local-cluster-with-an-edge-node).
 5. The conf writes each session change before the response (`<session-config flush="guarantee"/>`), for a load
    balancer that does not keep a client on one member. With sticky sessions it can go.
 6. Set `webapp-list/webapp[webroot]@trusted-proxies` and `webapp-list/webapp[webroot]@client-ip-header` for the load balancer, then start the other members.
-7. Check the cluster with `SELECT instance_id, cluster-member@base-url, heartbeat FROM cluster_member;` on the shared database.
+7. Check the cluster with `SELECT instance_id, cluster_base_url, heartbeat FROM cluster_member;` on the shared database.
 
 ### Transports
 
