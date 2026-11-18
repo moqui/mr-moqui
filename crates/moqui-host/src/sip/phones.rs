@@ -258,7 +258,7 @@ impl DeviceDirectory for ServiceDirectory {
 const MAX_DEVICE_RING: Duration = Duration::from_secs(300);
 
 /// How long a `ringDevice` rings its phone: `ringSeconds`, the call's time left to ring (a voicemail box's rings can make
-/// it longer than `call_ring_seconds`), at most [`MAX_DEVICE_RING`]; [`RING_TIMEOUT`] when it is missing.
+/// it longer than `calls@ring-seconds`), at most [`MAX_DEVICE_RING`]; [`RING_TIMEOUT`] when it is missing.
 pub(super) fn device_ring_timeout(body: &Json) -> Duration {
     number(body, "ringSeconds")
         .filter(|s| *s > 0)

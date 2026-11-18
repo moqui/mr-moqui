@@ -2,7 +2,7 @@
 // no account opens /call/<token>, gives a name and asks to join, waits in the lobby until john.doe lets them in from his
 // call view, then the two pages carry each other's audio and video through the server's SFU over the guest's own socket
 // (/callws), and the guest leaves. Chromium's fake camera and microphone stand in for devices. Needs a binary with the
-// rtc feature and a server holding call media (the suite's --serve server sets rtc_media_port).
+// rtc feature and a server holding call media (the suite's --serve server sets media-server@port).
 // Run: ./moq test-client basic-comms --serve --spec CallGuestFlow
 let host = null
 let visitor = null

@@ -289,8 +289,8 @@ fn record_push(report: &moqui_core::startup::StartupReport) {
 /// Call recording and captions: on by their properties, while call media runs.
 fn record_calls(report: &moqui_core::startup::StartupReport) {
     let names = [
-        ("Call recording", "call_recording_enabled"),
-        ("Call captions", "call_captions_enabled"),
+        ("Call recording", "calls/recording@enabled"),
+        ("Call captions", "calls/captions@enabled"),
     ];
     if !cfg!(feature = "rtc") {
         for (name, _) in names {
@@ -303,7 +303,7 @@ fn record_calls(report: &moqui_core::startup::StartupReport) {
         .iter()
         .any(|entry| entry.name == "Call media" && matches!(entry.state, State::On(_)));
     for (name, property) in names {
-        let on = moqui_lib::env::get_prop_or_env(property).trim() == "true";
+        let on = moqui_core::context::conf_env::setting_or_property(property) == "true";
         report.record_default(
             Section::Integration,
             name,

@@ -1678,7 +1678,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         lines.push(SetupLine::new(
             "calls",
             false,
-            "The edge node runs no media node (rtc_media_port), so calls stay on this node's own media nodes",
+            "The edge node runs no media node (media-server@port), so calls stay on this node's own media nodes",
         ));
     }
     // phones the same way: sipOn given (Discover passes it only when it offered phones), and the edge node's SIP

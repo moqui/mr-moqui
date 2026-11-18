@@ -652,7 +652,7 @@ function sendDtmf(p) {
 
 /**
  * Puts the call's phones on hold, or takes them off: the engine re-INVITEs each (sendonly), plays it hold music (the
- * deployment's call_hold_music_location, else a tone pattern) and keeps its audio from the others (V5: CallLeg heldDate).
+ * deployment's calls@hold-music-location, else a tone pattern) and keeps its audio from the others (V5: CallLeg heldDate).
  */
 function holdOrResume(p, action) {
   const mine = myPhoneLegs(p.callSessionId)
@@ -732,9 +732,9 @@ function under(location, root) {
   return rest !== '' && !rest.split('/').some((part) => part === '' || part === '.' || part === '..')
 }
 
-/** How long the edge node rings a number it forwards to (call_forward_ring_seconds, 10 to 120). */
+/** How long the edge node rings a number it forwards to (calls@forward-ring-seconds, 10 to 120). */
 function forwardRingSeconds() {
-  const seconds = Number(String(System.getProperty('call_forward_ring_seconds') || '').trim() || 30)
+  const seconds = Number(String(ec.factory.getConfValue('calls@forward-ring-seconds') || '').trim() || 30)
   return Math.min(Math.max(Number.isNaN(seconds) ? 30 : Math.round(seconds), 10), 120)
 }
 

@@ -502,7 +502,7 @@ pub fn is_own_listener(port: u16) -> bool {
 /// so a node never sends a signature of a key it has not published.
 #[must_use]
 pub fn key_configured() -> bool {
-    let text = moqui_lib::env::get_prop_or_env(DKIM_KEY);
+    let text = moqui_core::context::conf_env::setting(DKIM_KEY);
     let text = text.trim();
     !text.is_empty() && !text.ends_with("CHANGEME")
 }

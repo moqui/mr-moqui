@@ -35,7 +35,7 @@ function as(userId, name, parameters) {
     return Object.assign({errors}, out)
 }
 const captions = (userId, verb, parameters) => as(userId, "org.moqui.call.CallCaptionServices." + verb, parameters)
-const on = (run) => withProperty("call_captions_enabled", "true", run)
+const on = (run) => withConf("calls/captions@enabled", "true", run)
 function makeUser(userId) {
     sys(() => {
         if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() > 0) return
@@ -102,7 +102,7 @@ spec({
 
 feature("with the policy off captions are refused, and the call view has no CC button", {
     when() {
-        return withProperty("call_captions_enabled", "false", () => ({
+        return withConf("calls/captions@enabled", "false", () => ({
             started: captions(A, "start#Captions", theCall),
             state: captions(A, "get#CaptionState", theCall),
         }))

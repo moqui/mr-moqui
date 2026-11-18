@@ -135,8 +135,8 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "turn.listener",
         external: false,
-        hosts: &["turn_host", "rtc_media_host"],
-        ports: &["turn_port"],
+        hosts: &["media-server/turn-server@host", "media-server@host"],
+        ports: &["media-server/turn-server@port"],
         default_port: "",
     },
     Target {
@@ -156,8 +156,8 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "turn.public",
         external: true,
-        hosts: &["turn_public_host"],
-        ports: &["turn_port"],
+        hosts: &["media-server/turn-server@public-host"],
+        ports: &["media-server/turn-server@port"],
         default_port: "",
     },
     Target {

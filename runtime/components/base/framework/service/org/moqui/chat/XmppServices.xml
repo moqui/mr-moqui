@@ -864,7 +864,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="IceServers">
         <description>External services (XEP-0215) for the current user's own Jingle calls: the TURN URLs of a live media node
-            and turn_external_urls, with a credential keyed to the user (make#IceServers with callLegId xmpp.(userId)),
+            and media-server/turn-server@external-urls, with a credential keyed to the user (make#IceServers with callLegId xmpp.(userId)),
             each as type, host, port, transport, username, password and expires. The embedded TURN server relays such a
             credential to public addresses only (docs/interfaces/TURN.md). Empty, with reasonCode, while xmpp-server@turn-enabled
             is not true (turnOff), for an external user (EXTERNAL_USER; a failed check counts as external: notAllowed), and

@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="transfer" noun="Call">
         <description>The call's outside party (its phone) goes to targetType user, number or queue (targetId): mode
             blind (the user leaves at once; the far end hears ringing until the target answers; nobody answers in
-            call_transfer_ring_seconds: the target user's voicemail) or attended (the far end on hold while the user consults
+            calls@transfer-ring-seconds: the target user's voicemail) or attended (the far end on hold while the user consults
             the target; then complete#CallTransfer or cancel#CallTransfer). Refused: ringing, stale, transferring (one is
             open), noPhone, and a number the user may not call (internationalNotEnabled, premiumNotEnabled, emergency,
             outboundNotAllowed).</description>
@@ -130,7 +130,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="expire" noun="CallTransfer" authenticate="false" allow-remote="false">
-        <description>Internal (the SIP engine, call_transfer_ring_seconds after a blind transfer): a target that did not
+        <description>Internal (the SIP engine, calls@transfer-ring-seconds after a blind transfer): a target that did not
             answer missed it; answer is where the far end goes (mode voicemail with stepToken, end) or mode done.</description>
         <in-parameters>
             <parameter name="callTransferId" required="true"/>

@@ -365,12 +365,12 @@ fn backpressure_drops_the_oldest_waiting_chunk_and_marks_its_gap() {
 fn the_settings_come_from_the_properties_within_bounds() {
     let props = |name: &str| {
         match name {
-            "call_captions_chunk_seconds" => "99",
-            "call_captions_queue" => "3",
-            "call_captions_workers" => "0",
-            "call_captions_store" => "true",
-            "call_captions_provider" => "local",
-            "call_captions_language" => "de",
+            "calls/captions@chunk-seconds" => "99",
+            "calls/captions@queue" => "3",
+            "calls/captions@workers" => "0",
+            "calls/captions@store" => "true",
+            "calls/captions@provider" => "local",
+            "calls/captions@language" => "de",
             _ => "",
         }
         .to_string()

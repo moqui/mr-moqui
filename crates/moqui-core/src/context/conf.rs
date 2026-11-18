@@ -340,6 +340,20 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
             None => base.append_node(over_push.deep_copy()),
         }
     }
+    // call media, with its TURN server merged as one element
+    base.merge_child_with_child_key(over, "media-server", "turn-server", &[], None);
+    // calls, their queue, recording and captions each merged as one element
+    if let Some(over_calls) = over.first_named("calls") {
+        match base.first_named("calls") {
+            Some(base_calls) => {
+                base_calls.copy_attributes_from(&over_calls);
+                for child in ["queue", "recording", "captions"] {
+                    base_calls.merge_single_child(&over_calls, child);
+                }
+            }
+            None => base.append_node(over_calls.deep_copy()),
+        }
+    }
     // SIP, its limits and registrar each merged as one element
     if let Some(over_sip) = over.first_named("sip-server") {
         match base.first_named("sip-server") {
@@ -371,6 +385,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "load-runner",
         // this server as a cluster member (plans/archive/Cluster.md)
         "cluster-member",
+        // voicemail (docs/interfaces/Voicemail.md)
+        "voicemail",
         "ssh-server",
         "terminal",
         "git-server",

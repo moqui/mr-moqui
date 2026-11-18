@@ -68,14 +68,12 @@
     <channels webhooks-enabled="true"/>
 
     <!-- Calls (docs/interfaces/WebRTC.md, TURN.md): this node is the media node and TURN of every pairing's calls. Each
-        pairing gets a TURN secret of its own, made from turn_auth_secret and its id and handed over the link, so a
+        pairing gets a TURN secret of its own, made from media-server/turn-server@auth-secret and its id and handed over the link, so a
         revoked pairing loses its TURN access with nothing rotated. edge@call-legs-per-pairing caps one pairing's legs
-        at once (200 by default). Set rtc_public_address in .env; open UDP 10000, UDP and TCP 3478 and the relay range
-        turn_relay_ports (49152-65535). -->
-    <default-property name="rtc_media_port" value="10000"/>
-    <default-property name="rtc_media_host" value="0.0.0.0"/>
-    <default-property name="turn_port" value="3478"/>
-    <default-property name="call_recording_segment_mb" value="16"/>
+        at once (200 by default). Set media-server@public-address in .env; open UDP 10000, UDP and TCP 3478 and the relay range
+        media-server/turn-server@relay-ports (49152-65535). -->
+    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <calls><recording segment-mb="16"/></calls>
 
     <!-- SIP (docs/interfaces/SIP.md, Behind an edge node): every pairing's trunks register here, each keyed by its
         pairing; an inbound call goes to the pairing whose copies have the number, and a number two pairings have is

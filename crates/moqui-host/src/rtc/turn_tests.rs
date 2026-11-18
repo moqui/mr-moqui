@@ -38,10 +38,13 @@ fn of(pairs: &[(&str, &str)]) -> Result<Option<super::TurnSettings>, String> {
 #[test]
 fn turn_is_off_without_a_listener_and_needs_a_secret() {
     assert!(of(&[]).unwrap().is_none());
-    assert!(of(&[("turn_port", "3478")]).is_err());
-    let s = of(&[("turn_port", "3478"), ("turn_auth_secret", "s3cret")])
-        .unwrap()
-        .unwrap();
+    assert!(of(&[("media-server/turn-server@port", "3478")]).is_err());
+    let s = of(&[
+        ("media-server/turn-server@port", "3478"),
+        ("media-server/turn-server@auth-secret", "s3cret"),
+    ])
+    .unwrap()
+    .unwrap();
     assert_eq!(s.public_host, "203.0.113.5");
     assert_eq!(s.relay_ports, (49152, 65535));
     assert_eq!(
@@ -50,9 +53,12 @@ fn turn_is_off_without_a_listener_and_needs_a_secret() {
     );
     // another media node by address alone is on the media port, or as given
     let s = of(&[
-        ("turn_port", "3478"),
-        ("turn_auth_secret", "s3cret"),
-        ("turn_allowed_peers", "198.51.100.7, 198.51.100.8:11000"),
+        ("media-server/turn-server@port", "3478"),
+        ("media-server/turn-server@auth-secret", "s3cret"),
+        (
+            "media-server/turn-server@allowed-peers",
+            "198.51.100.7, 198.51.100.8:11000",
+        ),
     ])
     .unwrap()
     .unwrap();
@@ -62,10 +68,23 @@ fn turn_is_off_without_a_listener_and_needs_a_secret() {
 
 #[test]
 fn a_bad_range_or_address_is_an_error() {
-    let base = [("turn_port", "3478"), ("turn_auth_secret", "s3cret")];
-    assert!(of(&[base[0], base[1], ("turn_relay_ports", "60000-50000")]).is_err());
-    assert!(of(&[base[0], base[1], ("turn_tls443_host", "not an address")]).is_err());
-    assert!(of(&[base[0], base[1], ("turn_allowed_peers", "nope")]).is_err());
+    let base = [
+        ("media-server/turn-server@port", "3478"),
+        ("media-server/turn-server@auth-secret", "s3cret"),
+    ];
+    assert!(of(&[
+        base[0],
+        base[1],
+        ("media-server/turn-server@relay-ports", "60000-50000")
+    ])
+    .is_err());
+    assert!(of(&[
+        base[0],
+        base[1],
+        ("media-server/turn-server@tls443-host", "not an address")
+    ])
+    .is_err());
+    assert!(of(&[base[0], base[1], ("media-server/turn-server@allowed-peers", "nope")]).is_err());
 }
 
 /// Whether the server closed `stream` within `wait`, rather than keeping it open.
@@ -99,9 +118,9 @@ fn binding_request() -> Vec<u8> {
 #[test]
 fn tcp_connections_are_capped_per_source_and_closed_by_their_deadlines() {
     let mut s = of(&[
-        ("turn_port", "0"),
-        ("turn_host", "127.0.0.1"),
-        ("turn_auth_secret", "s3cret"),
+        ("media-server/turn-server@port", "0"),
+        ("media-server/turn-server@host", "127.0.0.1"),
+        ("media-server/turn-server@auth-secret", "s3cret"),
     ])
     .unwrap()
     .unwrap();
@@ -144,9 +163,9 @@ fn tcp_connections_are_capped_per_source_and_closed_by_their_deadlines() {
 #[test]
 fn a_stop_closes_open_connections() {
     let mut s = of(&[
-        ("turn_port", "0"),
-        ("turn_host", "127.0.0.1"),
-        ("turn_auth_secret", "s3cret"),
+        ("media-server/turn-server@port", "0"),
+        ("media-server/turn-server@host", "127.0.0.1"),
+        ("media-server/turn-server@auth-secret", "s3cret"),
     ])
     .unwrap()
     .unwrap();

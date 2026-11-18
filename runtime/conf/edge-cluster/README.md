@@ -28,13 +28,13 @@ queue, the pairings and the host names are rows the members share. A clustered a
   the transactional datasource's `host`, `port`, `database`, `user`
   and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first
   start generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster-member@tls-cert`, `cluster-member@tls-key`, `moqui_conf__entity_facade__crypt_pass`,
-  `edge@link-key` (the one link key local nodes pin), `turn_auth_secret`, `acme@account-key` and, once made,
+  `edge@link-key` (the one link key local nodes pin), `media-server/turn-server@auth-secret`, `acme@account-key` and, once made,
   `mail-delivery/dkim@key`; `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
   `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`, `sip-server@port`, `sip-server@tls-port`, `sip-server@host`, `sip-server/registrar@enabled`,
   `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host`, `edge@ssh-tunnel-port`, `pass_backend_web_url`. A WebPKI
   certificate in `cert/` for the names local nodes pair at; the links present the pinned link key, not it.
 - **Each edge member, its own**: `moqui_conf__cluster_member__base_url=https://<private address>:8444`, `moqui_conf__edge__link_url=https://<its own
-  public name>`, `smtp-server@hostname` (its MX name), `rtc_public_address`, `turn_public_host`, `sip-server@public-address`. Never
+  public name>`, `smtp-server@hostname` (its MX name), `media-server@public-address`, `media-server/turn-server@public-host`, `sip-server@public-address`. Never
   copy `runtime/db`: each member keeps its own instance id there.
 - **A local node**: as with one edge node. Pairing writes `edge/node@url`, `edge/node@key`, `edge/node@pin`,
   `edge/node@id` and `edge/node@pairing`; the list of edge members is kept in `runtime/db/edge_members`.

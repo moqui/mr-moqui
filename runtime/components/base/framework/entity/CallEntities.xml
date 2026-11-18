@@ -181,7 +181,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="endReasonEnumId" type="id"/>
         <field name="qualityJson" type="text-long"/>
         <field name="mediaNodeId" type="text-medium"><description>The node holding the leg's media (W7): the call's
-            mediaNodeId, or with rtc_cascade_enabled the node of its signaling socket (a leg node, which relays to the
+            mediaNodeId, or with media-server@cascade-enabled the node of its signaling socket (a leg node, which relays to the
             call's node), or a phone's SIP engine's node. Set as the leg binds; empty for a phone leg on the call's
             node.</description></field>
         <field name="mediaNodePinned" type="text-indicator"><description>Y when the leg's media stays on the call's node:
@@ -474,10 +474,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <entity entity-name="CallRecordingConsent" package="moqui.call" use="transactional" cache="never">
         <description>The recording notice one leg got, and its answer. recordingScope: what is recorded (perTrack or
-            mixed); policyRevision: the deployment's policy (call_recording_policy_revision) at the notice. noticeDate and
+            mixed); policyRevision: the deployment's policy (calls/recording@policy-revision) at the notice. noticeDate and
             noticeMethodEnumId: CnmWeb (the browser's indicator and prompt, the rtc recording frame) or CnmVoice (a voice
             prompt on a phone leg, notify#LegRecording). ackRequired: the policy asked this leg to acknowledge
-            (call_recording_ack_required); ackDate and ackMethodEnumId (CamClick, CamDtmf) once it did. Staying on the call
+            (calls/recording@ack-required); ackDate and ackMethodEnumId (CamClick, CamDtmf) once it did. Staying on the call
             after the notice is consent; withdrawnDate is set when the leg withdrew it, which pauses the recording. An
             acknowledgement after a withdrawal keeps the answer it replaces as a CallRecordingConsentHistory row.</description>
         <field name="callRecordingConsentId" type="id" is-pk="true"/>
@@ -537,7 +537,7 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="CallCaptions" package="moqui.call" use="transactional" cache="never">
         <description>Whether a call's live captions are on (CallCaptionServices start#Captions, stop#Captions), who turned
             them on or off and when, and the provider the notice named. The media node transcribes; nothing of the audio
-            is kept, and the text only when call_captions_store is true (as CallTranscript rows).</description>
+            is kept, and the text only when calls/captions@store is true (as CallTranscript rows).</description>
         <field name="callSessionId" type="id" is-pk="true"/>
         <field name="captionsOn" type="text-indicator"/>
         <field name="startedByUserId" type="id"/>
@@ -574,7 +574,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <entity entity-name="CallTranscript" package="moqui.call" use="transactional" cache="never">
         <description>Text transcribed from a call's audio: a live caption kept by the media node (callSessionId and
-            callLegId, only with call_captions_store), a segment of a recording (callRecordingId, W5) or a voicemail
+            callLegId, only with calls/captions@store), a segment of a recording (callRecordingId, W5) or a voicemail
             (voicemailId, V2). segment orders a source's pieces (for a live caption, the speaker's chunk number); speaker
             is the name shown. A transcript has its source's access policy: only those who may read the recording,
             voicemail or call reach it. statusId: CtsPending (waiting for the provider), CtsDone, CtsFailed (lastErrorText

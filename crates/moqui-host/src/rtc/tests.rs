@@ -27,12 +27,12 @@ fn config(pairs: &[(&str, &str)]) -> Result<Option<super::MediaConfig>, String> 
 #[test]
 fn media_is_off_without_a_port() {
     assert_eq!(config(&[]), Ok(None));
-    assert_eq!(config(&[("rtc_media_port", "  ")]), Ok(None));
+    assert_eq!(config(&[("media-server@port", "  ")]), Ok(None));
 }
 
 #[test]
 fn media_binds_loopback_by_default_and_advertises_its_bind() {
-    let c = config(&[("rtc_media_port", "10000")]).expect("valid").expect("on");
+    let c = config(&[("media-server@port", "10000")]).expect("valid").expect("on");
     assert_eq!(c.bind.to_string(), "127.0.0.1:10000");
     assert_eq!(c.public, c.bind);
 }
@@ -40,24 +40,31 @@ fn media_binds_loopback_by_default_and_advertises_its_bind() {
 #[test]
 fn a_public_address_is_an_ip_or_an_ip_and_port() {
     let c = config(&[
-        ("rtc_media_port", "10000"),
-        ("rtc_media_host", "0.0.0.0"),
-        ("rtc_public_address", "203.0.113.5"),
+        ("media-server@port", "10000"),
+        ("media-server@host", "0.0.0.0"),
+        ("media-server@public-address", "203.0.113.5"),
     ])
     .expect("valid")
     .expect("on");
     assert_eq!(c.bind.to_string(), "0.0.0.0:10000");
     assert_eq!(c.public.to_string(), "203.0.113.5:10000");
-    let c = config(&[("rtc_media_port", "10000"), ("rtc_public_address", "203.0.113.5:443")])
-        .expect("valid")
-        .expect("on");
+    let c = config(&[
+        ("media-server@port", "10000"),
+        ("media-server@public-address", "203.0.113.5:443"),
+    ])
+    .expect("valid")
+    .expect("on");
     assert_eq!(c.public.to_string(), "203.0.113.5:443");
 }
 
 #[test]
 fn a_bad_port_or_address_is_an_error() {
-    assert!(config(&[("rtc_media_port", "media")]).is_err());
-    assert!(config(&[("rtc_media_port", "10000"), ("rtc_public_address", "not an address")]).is_err());
+    assert!(config(&[("media-server@port", "media")]).is_err());
+    assert!(config(&[
+        ("media-server@port", "10000"),
+        ("media-server@public-address", "not an address")
+    ])
+    .is_err());
 }
 
 #[test]

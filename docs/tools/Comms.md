@@ -266,7 +266,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   person here goes straight between your devices when it can, and relayed it goes through the server, so they never
   see your network address ([WebRTC, The direct path](../interfaces/WebRTC.md#the-direct-path)). The call's header shows
   the connection's quality, "Reconnecting…" while it comes back, and "Your network is weak" when your side is the cause.
-  Calls need a media server (`rtc_media_port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it (and who is on hold), with Answer, Decline and Leave.
+  Calls need a media server (`media-server@port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it (and who is on hold), with Answer, Decline and Leave.
 - <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
   room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
   encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a
@@ -280,18 +280,18 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   keys use this browser's encryption device (Settings, My devices), which one tab holds at a time: answer the call in the
   tab that is not using it for something else, or close the other one. See [WebRTC, Encrypted
   calls](../interfaces/WebRTC.md#encrypted-calls).
-- **Recording.** When the server allows it (`call_recording_enabled`), the host of a call has a Record button: start,
+- **Recording.** When the server allows it (`calls/recording@enabled`), the host of a call has a Record button: start,
   pause, resume and stop. Everyone in the call sees that it is recorded, before they join too, and can withdraw their
   consent, which pauses the recording. Where the policy asks for it, each person acknowledges the notice, and the
   recording waits until all have. A phone in the call hears a tone instead, and presses 1 to acknowledge or hangs up to
   withdraw; it hears another tone when captions turn on. Calls, Recordings lists the recordings you made and those of calls you host: play one
   part with everyone's audio and video together, download each file, and delete your own. The terminal lists them with
   Delete. Recordings are deleted after the server's retention period ([Call recording](../interfaces/Call-Recording.md)).
-- **Captions.** Where the administrator turned them on (`call_captions_enabled`) and a speech to text model is set up,
+- **Captions.** Where the administrator turned them on (`calls/captions@enabled`) and a speech to text model is set up,
   anyone in a call can press CC. Everyone in the call, including people who join later, sees that captions are on and
   which service hears what they say; each line names its speaker. When the service is slow or down, the captions say
   they are unavailable and the call goes on. Captions are not kept unless the administrator asks for that
-  (`call_captions_store`). An end-to-end encrypted call has no captions. In the terminal a call shows whether captions
+  (`calls/captions@store`). An end-to-end encrypted call has no captions. In the terminal a call shows whether captions
   are on, who turned them on and which service hears them, with Turn on and Turn off; the lines show in the browser. See
   [WebRTC, Captions](../interfaces/WebRTC.md#captions).
 - <a id="phone"></a>**Phone calls.** Calls, Dialer (also the tray's Dialer tab): type a number or
@@ -309,7 +309,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   has Transfer (to a person, a number or a queue; Now hands the caller over and you leave, Talk to them first holds the
   caller while you talk to the person, then Complete transfer or Cancel transfer), Add a participant (a person, or a
   number), Merge another call (another call you are in joins this one as a meeting; both must be on one media server unless
-  cascading media servers are on, `rtc_cascade_enabled`)
+  cascading media servers are on, `media-server@cascade-enabled`)
   and Make it a meeting. A number you transfer to or add is a call you place, with your permissions and limits. A
   transfer needs the call answered, and if the call changed since you looked, try again. When a phone call rings you,
   the ring bar and the call show who is calling when an app knows the number (in IronStone, the contact and their open
@@ -322,7 +322,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   beep, and leaves a message of up to two minutes; `#` ends it. You are told at once (here, and on your devices by Web
   Push), and by email when you ask for it. Calls, History, Voicemail lists them, unheard first in bold, with the Inbox
   and the Trash; open one to play it, read its transcript (when the server transcribes voicemail), mark it heard or
-  unheard, call back, download or delete it. Deleted messages wait in the Trash for 30 days (`voicemail_trash_days`),
+  unheard, call back, download or delete it. Deleted messages wait in the Trash for 30 days (`voicemail@trash-days`),
   then go with their audio. Settings, Phone has your greeting (record it in the browser or upload a WAV or Ogg file),
   your PIN, the email notice and the number of rings. With a PIN you can listen by phone: call your number and press `*`
   during your greeting (or call the access number and enter your number and `#`), then the PIN and `#`; each new

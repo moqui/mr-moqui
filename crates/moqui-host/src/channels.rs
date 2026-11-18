@@ -104,7 +104,7 @@ async fn webhook(
         return response_of(WebhookResponse::not_signed());
     }
     let (parts, body) = request.into_parts();
-    let limit = moqui_lib::env::get_prop_or_env(MAX_BYTES_PROPERTY)
+    let limit = moqui_core::context::conf_env::setting(MAX_BYTES_PROPERTY)
         .trim()
         .parse::<usize>()
         .ok()

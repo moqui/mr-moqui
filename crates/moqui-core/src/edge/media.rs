@@ -20,7 +20,7 @@
 //!   state.
 //! - On a local node the link keeps the edge node's row from the Hello and the link's liveness, and keeps the edge
 //!   node's TURN secret in memory ([`set_peer_turn`]): the edge node's embedded TURN checks credentials with its own
-//!   `turn_auth_secret`, so `make#IceServers` signs the credentials of that node's TURN URLs with it ([`turn_secret`]).
+//!   `media-server/turn-server@auth-secret`, so `make#IceServers` signs the credentials of that node's TURN URLs with it ([`turn_secret`]).
 //!   The secret comes only in the up connection's Hello answer, on a link whose keys both ends pinned; it is never
 //!   logged, stored or shown.
 //! - Its SIP engine (E8) tells its addresses the same way ([`set_sip_advert`]), and the local node keeps its `SipNode`
@@ -197,7 +197,7 @@ const MAX_PEER_TURNS: usize = 64;
 /// On a local node, from a new link's Hello answer: the TURN secret of the edge node or edge cluster member
 /// `instance_id` (empty when its TURN is off, which forgets the one before), its pairing's own (E16), and `pairing`, the
 /// id this node paired as, which its credentials name ([`turn_username`]). Each member of an edge cluster is a media
-/// node of its own (plans/Edge-Node2.md §4.6), so each link keeps its member's; they share `turn_auth_secret` and the
+/// node of its own (plans/Edge-Node2.md §4.6), so each link keeps its member's; they share `media-server/turn-server@auth-secret` and the
 /// pairing row, so the secrets are the same. Unpairing forgets them ([`clear_peer_turn`]); a link that is only lost
 /// keeps its member's, for the credentials of calls going on.
 pub fn set_peer_turn(factory: &ExecutionContextFactory, instance_id: &str, secret: &str, pairing: &str) {
@@ -228,7 +228,7 @@ pub fn clear_peer_turn(factory: &ExecutionContextFactory) {
 }
 
 /// The secret the TURN servers of the media node `instance_id` check credentials with: its edge node's, when it is
-/// this local node's edge node or one of its edge cluster's members, else none (this node's own `turn_auth_secret` signs them).
+/// this local node's edge node or one of its edge cluster's members, else none (this node's own `media-server/turn-server@auth-secret` signs them).
 pub fn turn_secret(factory: &ExecutionContextFactory, instance_id: &str) -> Option<String> {
     turn_peer(factory, instance_id).map(|(secret, _)| secret)
 }

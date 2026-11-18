@@ -93,7 +93,7 @@ impl Conn {
 
 fn refused(server: SocketAddr) -> String {
     format!(
-        "The edge node's TURN at {server} refused the allocation: its turn_auth_secret is not the one its link handed \
+        "The edge node's TURN at {server} refused the allocation: its media-server/turn-server@auth-secret is not the one its link handed \
          this node, or the credential expired"
     )
 }
@@ -208,8 +208,8 @@ fn run<C: TurnClientApi>(
                 TurnEvent::PermissionCreateFailed(_, ip) if ip == peer.ip() => {
                     done = Some(Err(format!(
                         "The edge node's TURN allocated, but refused a permission for {ip}, the IP of its media address \
-                         {peer}: its TURN allows only its media node's address (rtc_public_address there, or \
-                         turn_allowed_peers)"
+                         {peer}: its TURN allows only its media node's address (media-server@public-address there, or \
+                         media-server/turn-server@allowed-peers)"
                     )));
                 }
                 _ => {}

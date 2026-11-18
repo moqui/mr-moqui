@@ -49,14 +49,12 @@
 
     <!-- Calls (plans/archive/Edge-Node.md §5.4, §10): this node registers its own CallMediaNode, as a normal node does, and is
         also the media node of the paired node's calls; rooms are keyed by node and call, so a call of each side never
-        meets the other's. TURN is shared by both. Set rtc_public_address in .env to this node's public address: the
+        meets the other's. TURN is shared by both. Set media-server@public-address in .env to this node's public address: the
         media socket binds every address, and does not start without it. The paired node's recordings are queued to it,
-        in segments of at most call_recording_segment_mb. Open UDP 10000 (media), UDP and TCP 3478 (TURN) and the relay
-        range turn_relay_ports (49152-65535). -->
-    <default-property name="rtc_media_port" value="10000"/>
-    <default-property name="rtc_media_host" value="0.0.0.0"/>
-    <default-property name="turn_port" value="3478"/>
-    <default-property name="call_recording_segment_mb" value="16"/>
+        in segments of at most calls/recording@segment-mb. Open UDP 10000 (media), UDP and TCP 3478 (TURN) and the relay
+        range media-server/turn-server@relay-ports (49152-65535). -->
+    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <calls><recording segment-mb="16"/></calls>
 
     <!-- SIP (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", §10): one SIP engine for both sides, routed by the dialled number
         and by the device domain: the server's own PhoneNumbers and sip-server@domain here, the paired node's numbers and

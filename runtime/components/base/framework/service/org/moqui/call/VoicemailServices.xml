@@ -125,7 +125,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="retry" noun="VoicemailTranscript">
         <description>Transcribe one of the current user's voicemail again after its transcription failed (or never ran):
-            the transcript goes back to pending and the job runs after the commit. Refused while voicemail_transcribe is off
+            the transcript goes back to pending and the job runs after the commit. Refused while voicemail@transcribe is off
             (transcriptionOff), for a voicemail without audio (noAudio) or one transcribed or pending (notFailed).</description>
         <in-parameters><parameter name="voicemailId" required="true"/></in-parameters>
         <out-parameters>
@@ -140,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="VoicemailSettings">
         <description>The current user's voicemail settings: box {hasPin, hasGreeting, greetingContentType,
             greetingDurationMs, notifyEmail, attachAudio, attachTranscript, rings} (the defaults before they have a box),
-            their numbers (myNumberList) and the access numbers (accessNumberList), ringSeconds (call_ring_seconds, used with no
+            their numbers (myNumberList) and the access numbers (accessNumberList), ringSeconds (calls@ring-seconds, used with no
             rings), ringSecondsEach, maxRings, maxSeconds (the longest message), transcribeOn and pinMinDigits (the fewest digits a
             new PIN has). With ringGroupId, the box of that ring group (voice admins only) and maxSeconds and transcribeOn.</description>
         <in-parameters><parameter name="ringGroupId"><description>A ring group's box in place of the user's own: for voice admins
@@ -162,7 +162,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="update" noun="VoicemailSettings">
         <description>The current user's voicemail notices and rings: notifyEmail (empty: no email), attachAudio and
-            attachTranscript (each off unless set, and only with an address), rings (1 to 10, empty for call_ring_seconds).
+            attachTranscript (each off unless set, and only with an address), rings (1 to 10, empty for calls@ring-seconds).
             Turning an attachment on answers a warning: mail cannot be recalled. With ringGroupId, the ring group's box (voice
             admins only; it has no rings of its own: the group rings by its seconds).</description>
         <in-parameters>
@@ -182,7 +182,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="set" noun="VoicemailPin">
-        <description>Set or change the current user's voicemail PIN (voicemail_pin_min_digits, 6 by default, to 12 digits, not
+        <description>Set or change the current user's voicemail PIN (voicemail@pin-min-digits, 6 by default, to 12 digits, not
             one digit repeated or a run like 123456), kept as an argon2 hash; clear true removes it (no phone access). Setting one clears the box's failed tries.</description>
         <in-parameters>
             <parameter name="pin"/>
@@ -238,7 +238,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="VoicemailRouting" authenticate="false" allow-remote="false">
         <description>Internal (VoiceServices receive#PhoneCall): busy when the user is in a call (UserStatus.inCall: the
-            caller goes straight to voicemail), voicemailSeconds (the box's rings, 6 seconds each, else call_ring_seconds) and
+            caller goes straight to voicemail), voicemailSeconds (the box's rings, 6 seconds each, else calls@ring-seconds) and
             ringExpireSeconds (a little longer, for expire#Calls).</description>
         <in-parameters><parameter name="userId" required="true"/></in-parameters>
         <out-parameters>
@@ -253,7 +253,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (the SIP engine): an inbound call goes to voicemail, reason noAnswer, busy, declined or access
             (the access number). The call moves there (CallServices, Calls.js phoneToVoicemail: the users rung missed it) and
             the answer is mode deposit with the box of the user it rang (made with the defaults when they have none): its
-            greetingLocation, hasPin, maxSeconds (voicemail_max_seconds), and the caller's fromNumber and fromName; or mode
+            greetingLocation, hasPin, maxSeconds (voicemail@max-seconds), and the caller's fromNumber and fromName; or mode
             access. V3: a call with a handling plan (CallHandlingServices, CallRoute) goes to its next step instead when it has
             one: mode ring with ringSeconds (a ring group's next member, a forward; the engine rings on with a new timer), or the
             plan's box (a ring group's shares it among its members); noRoute when the plan ends with no box (the call ends).
@@ -285,7 +285,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (the SIP engine): the message a caller left, spooled at tempPath (runtime/tmp/voicemail), as
             a Voicemail in the box's inbox with its audio at dbresource://moqui/call/voicemail/(box)/(voicemail).ogg. Audio that
             does not store leaves the message without it (status audioFailed, lastErrorText). Then the owner is told (a
-            chatUser push and Web Push "New voicemail from ..."), the transcription is queued when voicemail_transcribe is on,
+            chatUser push and Web Push "New voicemail from ..."), the transcription is queued when voicemail@transcribe is on,
             and the email notice when the box has notifyEmail.</description>
         <in-parameters>
             <parameter name="voicemailBoxId" required="true"/>
@@ -413,7 +413,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="transcribe" noun="Voicemail" authenticate="false" allow-remote="false">
         <description>Internal (after store#Voicemail and retry#VoicemailTranscript commit): the voicemail's audio to text by
             SpeechServices.transcribe#Audio, as its owner (purpose voicemail:(voicemailId)), into its CallTranscript: done with
-            the text, or failed with why (the audio is kept). Only while voicemail_transcribe is on (reasonCode
+            the text, or failed with why (the audio is kept). Only while voicemail@transcribe is on (reasonCode
             transcriptionOff otherwise). The email notice that waits for the transcript goes then.</description>
         <in-parameters><parameter name="voicemailId" required="true"/></in-parameters>
         <out-parameters>
@@ -436,7 +436,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="expire" noun="VoicemailTrash" authenticate="anonymous-all" transaction="ignore">
-        <description>The voicemail job (daily): messages in a trash longer than voicemail_trash_days (0 keeps them) are
+        <description>The voicemail job (daily): messages in a trash longer than voicemail@trash-days (0 keeps them) are
             deleted with their audio and transcripts, each on its own; failed-PIN counts a day old are deleted
             (expire#VoicemailPinFailures).</description>
         <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>

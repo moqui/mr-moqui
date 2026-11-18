@@ -22,12 +22,12 @@
 //!   a retry with the refusal tones first. The services answer the next menu, a queue, a ring step, voicemail or the end.
 //! - **A queue**: hold music looped in place of the call's audio, and `tick#QueueCall` every `tickSeconds` (offers to the
 //!   agents, the wait limit, the caller's place: a chime and a pip a place, the queue's position prompt, and digits
-//!   spoken only when the deployment uploaded `0.wav` to `9.wav` in `call_queue_prompt_location`).
+//!   spoken only when the deployment uploaded `0.wav` to `9.wav` in `calls/queue@prompt-location`).
 //! - **Ringing** after the IVR or during a blind transfer: a ringback tone looped, until someone answers.
 //! - **Hold**: hold music, and the phone's audio kept from the others, until resumed.
 //!
 //! Prompts and music are the admin's uploaded audio (`dbresource://moqui/call/prompt/`), else the deployment's
-//! `call_hold_music_location`, else tone patterns that are plainly synthetic. Moqui ships no recorded speech or music.
+//! `calls@hold-music-location`, else tone patterns that are plainly synthetic. Moqui ships no recorded speech or music.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -658,7 +658,7 @@ impl Engine {
         tokio::spawn(async move {
             let built = tokio::task::spawn_blocking(move || {
                 let intro = location_audio(&factory, &owner_leg, &intro);
-                let folder = moqui_lib::env::get_prop_or_env("call_queue_prompt_location")
+                let folder = moqui_core::context::conf_env::setting("calls/queue@prompt-location")
                     .trim()
                     .trim_end_matches('/')
                     .to_string();
@@ -713,7 +713,7 @@ impl Engine {
             let built = tokio::task::spawn_blocking(move || match kind {
                 LoopKind::Ringback => ringback(),
                 LoopKind::Music(own) => {
-                    let deployment = moqui_lib::env::get_prop_or_env("call_hold_music_location");
+                    let deployment = moqui_core::context::conf_env::setting("calls@hold-music-location");
                     own.as_deref()
                         .and_then(|location| location_audio(&factory, &owner_leg, location))
                         .or_else(|| location_audio(&factory, &owner_leg, deployment.trim()))

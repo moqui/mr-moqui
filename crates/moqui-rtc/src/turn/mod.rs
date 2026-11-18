@@ -16,7 +16,7 @@
 //! the caller owns the listeners (UDP, TCP, TLS) and the relay sockets, and hands in what arrives.
 //!
 //! - **Credentials** are the TURN REST form coturn's `use-auth-secret` takes: the username is `<expiry>:<legId>` (the
-//!   expiry in Unix seconds) and the password is base64 of HMAC-SHA1 of the username with `turn_auth_secret`
+//!   expiry in Unix seconds) and the password is base64 of HMAC-SHA1 of the username with `media-server/turn-server@auth-secret`
 //!   ([`password`]). The call services make them only for an admitted leg (`get#IceServers`). A username is taken the
 //!   first time it is seen while it has not expired and its leg is not revoked; an expired or revoked one is refused,
 //!   refreshes and new allocations included.
@@ -29,12 +29,12 @@
 //!   another port of a media node's address or of the listeners' own, so it cannot reach into the server's own networks
 //!   or the server itself.
 //! - **Pairings** (plans/Edge-Node2.md §4.1, E16): on an edge node a local node's legs are signed with a secret of
-//!   its pairing alone ([`pairing_secret`], derived from `turn_auth_secret`, the pairing's id and what changes each
+//!   its pairing alone ([`pairing_secret`], derived from `media-server/turn-server@auth-secret`, the pairing's id and what changes each
 //!   time it pairs), which its link hands it, and their usernames name the pairing (`<expiry>:<legId>@<pairing>`,
 //!   [`PAIRING_SEPARATOR`]; only with [`TurnConfig::pairings`], on a node that takes links). Only a pairing in
 //!   [`Turn::set_pairings`] is taken, with its secret then: revoking one, or pairing it again, refuses its usernames
 //!   from then on and closes its
-//!   relays, with no new `turn_auth_secret`. A leg of a pairing is never an XMPP user's own.
+//!   relays, with no new `media-server/turn-server@auth-secret`. A leg of a pairing is never an XMPP user's own.
 //! - **Quotas:** allocations per leg (whatever username of it asks) and in all, and a bandwidth per allocation, past
 //!   which data is dropped. The servers are given a username only for a request whose MESSAGE-INTEGRITY holds for it,
 //!   and an ALLOCATE is remembered only from such a request, until the server allocates for it or answers it otherwise.

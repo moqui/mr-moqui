@@ -53,10 +53,10 @@ const FRONT_NEVER: [&str; 10] = [
     "xmpp-server@tls-port",
     "sip-server@port",
     "sip-server@tls-port",
-    "turn_port",
-    "turn_tls_port",
-    "rtc_media_port",
-    "rtc_media_tcp_port",
+    "media-server/turn-server@port",
+    "media-server/turn-server@tls-port",
+    "media-server@port",
+    "media-server@tcp-port",
 ];
 
 /// The settings of this node's own listeners (a conf selector, or a property not yet moved to the conf), whose ports
@@ -74,10 +74,10 @@ const OWN_PORTS: [(&str, u16); 18] = [
     ("xmpp-server@tls-port", 5223),
     ("sip-server@port", 5060),
     ("sip-server@tls-port", 5061),
-    ("turn_port", 3478),
-    ("turn_tls_port", 5349),
-    ("rtc_media_port", 10000),
-    ("rtc_media_tcp_port", 0),
+    ("media-server/turn-server@port", 3478),
+    ("media-server/turn-server@tls-port", 5349),
+    ("media-server@port", 10000),
+    ("media-server@tcp-port", 0),
     ("edge@ssh-tunnel-port", 0),
     ("edge@xmpp-port", 0),
     ("edge@xmpp-tls-port", 0),
@@ -89,7 +89,7 @@ const WELL_KNOWN: [(u16, &str); 3] = [(465, "SMTPS"), (587, "mail submission"), 
 /// The port ranges of this node's own sockets, with their defaults: the SIP engine's RTP and the TURN relays.
 const OWN_RANGES: [(&str, &str); 2] = [
     ("sip-server@rtp-ports", "20000-20999"),
-    ("turn_relay_ports", "49152-65535"),
+    ("media-server/turn-server@relay-ports", "49152-65535"),
 ];
 
 /// A port row: connections to `port` go down the link of the pairing `paired_node_id` as a tunnel of `tunnel_kind`.

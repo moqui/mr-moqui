@@ -71,7 +71,7 @@ along with this software (see the LICENSE.md file). If not, see
         </box-body-nopad></container-box>
         <container-box><box-header title="Media servers"/><box-body-nopad>
             <section name="NoMediaNodes" condition="!mediaNodeList.length"><widgets>
-                <label type="p" style="m-muted q-pa-sm q-mb-none" text="No media server is running. A server starts one when rtc_media_port is set."/>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="No media server is running. A server starts one when media-server@port is set."/>
             </widgets></section>
             <form-list name="MediaNodes" list="mediaNodeList" skip-form="true" paginate="false">
                 <field name="instanceId"><default-field title="Server"><display/></default-field></field>

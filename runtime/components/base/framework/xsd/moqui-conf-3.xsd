@@ -29,6 +29,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" ref="xmpp-server"/>
                 <xs:element minOccurs="0" ref="sip-server"/>
+                <xs:element minOccurs="0" ref="calls"/>
+                <xs:element minOccurs="0" ref="media-server"/>
+                <xs:element minOccurs="0" ref="voicemail"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2220,6 +2223,83 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="rtp-host" type="xs:string"/>
             <xs:attribute name="public-address" type="xs:string"/>
             <xs:attribute name="domain" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="media-server">
+        <xs:annotation><xs:documentation>Call media (the rtc feature, docs/interfaces/WebRTC.md) and its TURN server (docs/interfaces/TURN.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="turn-server"><xs:complexType>
+                    <xs:attribute name="port" type="xs:string"/>
+                    <xs:attribute name="tls-port" type="xs:string"/>
+                    <xs:attribute name="tls443-host" type="xs:string"/>
+                    <xs:attribute name="host" type="xs:string"/>
+                    <xs:attribute name="public-host" type="xs:string"/>
+                    <xs:attribute name="relay-ports" type="xs:string" default="49152-65535"/>
+                    <xs:attribute name="credential-hours" type="xs:string" default="4"/>
+                    <xs:attribute name="external-urls" type="xs:string"/>
+                    <xs:attribute name="max-allocations" type="xs:string" default="1000"/>
+                    <xs:attribute name="max-kbps" type="xs:string" default="4000"/>
+                    <xs:attribute name="allowed-peers" type="xs:string"/>
+                    <xs:attribute name="auth-secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="host" type="xs:string" default="127.0.0.1"/>
+            <xs:attribute name="tcp-port" type="xs:string"/>
+            <xs:attribute name="public-address" type="xs:string"/>
+            <xs:attribute name="cascade-enabled" type="xs:string" default="false"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="calls">
+        <xs:annotation><xs:documentation>Calls: ringing, transfers, forwards, the queue, recording and captions (docs/interfaces/WebRTC.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="captions"><xs:complexType>
+                    <xs:attribute name="enabled" type="xs:string" default="false"/>
+                    <xs:attribute name="provider" type="xs:string" default="llm"/>
+                    <xs:attribute name="chunk-seconds" type="xs:string" default="5"/>
+                    <xs:attribute name="queue" type="xs:string" default="6"/>
+                    <xs:attribute name="workers" type="xs:string" default="2"/>
+                    <xs:attribute name="timeout-seconds" type="xs:string" default="20"/>
+                    <xs:attribute name="language" type="xs:string"/>
+                    <xs:attribute name="store" type="xs:string" default="false"/>
+                    <xs:attribute name="prompt-audio" type="xs:string"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="queue"><xs:complexType>
+                    <xs:attribute name="tick-seconds" type="xs:string" default="5"/>
+                    <xs:attribute name="prompt-location" type="xs:string"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="recording"><xs:complexType>
+                    <xs:attribute name="enabled" type="xs:string" default="false"/>
+                    <xs:attribute name="ack-required" type="xs:string" default="false"/>
+                    <xs:attribute name="policy-revision" type="xs:string" default="1"/>
+                    <xs:attribute name="retention-days" type="xs:string" default="90"/>
+                    <xs:attribute name="queue-frames" type="xs:string" default="4096"/>
+                    <xs:attribute name="segment-mb" type="xs:string" default="64"/>
+                    <xs:attribute name="segment-minutes" type="xs:string" default="30"/>
+                    <xs:attribute name="max-mb" type="xs:string" default="2048"/>
+                    <xs:attribute name="prompt-audio" type="xs:string"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="ring-seconds" type="xs:string" default="45"/>
+            <xs:attribute name="guest-joins-per-minute" type="xs:string" default="20"/>
+            <xs:attribute name="transfer-ring-seconds" type="xs:string" default="30"/>
+            <xs:attribute name="hold-music-location" type="xs:string"/>
+            <xs:attribute name="direct-path" type="xs:string" default="true"/>
+            <xs:attribute name="forward-ring-seconds" type="xs:string" default="30"/>
+            <xs:attribute name="forward-max-hops" type="xs:string" default="5"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="voicemail">
+        <xs:annotation><xs:documentation>Voicemail (docs/interfaces/Voicemail.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="max-seconds" type="xs:string" default="120"/>
+            <xs:attribute name="prompt-location" type="xs:string"/>
+            <xs:attribute name="trash-days" type="xs:string" default="30"/>
+            <xs:attribute name="transcribe" type="xs:string" default="false"/>
+            <xs:attribute name="transcribe-language" type="xs:string"/>
+            <xs:attribute name="pin-min-digits" type="xs:string" default="6"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

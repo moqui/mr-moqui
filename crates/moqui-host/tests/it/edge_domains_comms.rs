@@ -145,7 +145,7 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
             ("moqui_conf__edge__xmpp_tls_port", &tunnel_tls_port.to_string()),
             ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
             // narrow media ranges, so a free port is not one of them (a port row may not take this node's own)
-            ("turn_relay_ports", "51310-51320"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51310-51320"),
             ("moqui_conf__sip_server__rtp_ports", "42690-42699"),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
@@ -342,14 +342,14 @@ fn two_local_nodes_comms_stay_apart() {
             ("moqui_conf__edge__xmpp_port", &tunnel_port.to_string()),
             ("moqui_conf__edge__xmpp_tls_port", &tunnel_tls_port.to_string()),
             ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
-            ("rtc_media_port", &media_port.to_string()),
-            ("rtc_media_host", "127.0.0.1"),
-            ("rtc_public_address", &media),
-            ("turn_port", &turn_port.to_string()),
-            ("turn_host", "127.0.0.1"),
-            ("turn_public_host", "127.0.0.1"),
-            ("turn_relay_ports", "51410-51500"),
-            ("turn_auth_secret", EDGE_SECRET),
+            ("moqui_conf__media_server__port", &media_port.to_string()),
+            ("moqui_conf__media_server__host", "127.0.0.1"),
+            ("moqui_conf__media_server__public_address", &media),
+            ("moqui_conf__media_server__turn_server__port", &turn_port.to_string()),
+            ("moqui_conf__media_server__turn_server__host", "127.0.0.1"),
+            ("moqui_conf__media_server__turn_server__public_host", "127.0.0.1"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51410-51500"),
+            ("moqui_conf__media_server__turn_server__auth_secret", EDGE_SECRET),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );
@@ -443,7 +443,7 @@ fn two_local_nodes_comms_stay_apart() {
         "local-y's domain"
     );
 
-    // revoking local-x ends its TURN access, with no new turn_auth_secret, and its domain there; local-y goes on
+    // revoking local-x ends its TURN access, with no new media-server/turn-server@auth-secret, and its domain there; local-y goes on
     call(&edge, "revoke#EdgeClient", &[("pairedNodeId", "local-x")]).unwrap();
     wait_until(Duration::from_secs(8), "local-x's TURN credential refused", || {
         probe(&x_user, &x_credential).is_err()

@@ -67,7 +67,7 @@ fn a_held_udp_port_is_found() {
     let held_port = held.local_addr().unwrap().port();
     let busy = check(&[Target::optional(
         "Call media",
-        "rtc_media_port",
+        "media-server@port",
         "127.0.0.1",
         held_port,
         Proto::Udp,

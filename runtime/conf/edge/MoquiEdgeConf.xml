@@ -73,14 +73,12 @@
     <channels webhooks-enabled="true"/>
 
     <!-- Calls (docs/interfaces/WebRTC.md, The edge node as media node; TURN.md, On an edge node): this node is the media
-        node of its local node's calls, and their TURN. Set rtc_public_address in .env to this node's public address: the
+        node of its local node's calls, and their TURN. Set media-server@public-address in .env to this node's public address: the
         media socket binds every address, and does not start without it. Recordings are queued to the local node in
-        segments of at most call_recording_segment_mb (32 at most, under the queue's 64 MiB content cap). Open UDP 10000
-        (media), UDP and TCP 3478 (TURN) and the relay range turn_relay_ports (49152-65535). -->
-    <default-property name="rtc_media_port" value="10000"/>
-    <default-property name="rtc_media_host" value="0.0.0.0"/>
-    <default-property name="turn_port" value="3478"/>
-    <default-property name="call_recording_segment_mb" value="16"/>
+        segments of at most calls/recording@segment-mb (32 at most, under the queue's 64 MiB content cap). Open UDP 10000
+        (media), UDP and TCP 3478 (TURN) and the relay range media-server/turn-server@relay-ports (49152-65535). -->
+    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <calls><recording segment-mb="16"/></calls>
 
     <!-- SIP (docs/interfaces/SIP.md, Behind an edge node): trunks and outside phones reach this node's SIP engine, whose
         media is the call media above. Set in .env to take them (each listener is off until its port is set):

@@ -21,14 +21,14 @@
 //! - **Leaving a message.** The greeting (the user's own, else the default: a tone pattern and the deployment's
 //!   `greeting.wav`), a beep, then the caller's audio, decoded by the leg (M0) and written as Ogg Opus (W5's writer, through
 //!   [`super::audio::OpusFile`]) to a spool under `runtime/tmp/voicemail`, until the caller hangs up, presses `#`, or
-//!   `voicemail_max_seconds` passes. The file goes to `store#Voicemail`; one shorter than a second is dropped.
+//!   `voicemail@max-seconds` passes. The file goes to `store#Voicemail`; one shorter than a second is dropped.
 //! - **Phone access.** `*` during the greeting, or the access number after a box number and `#`, asks for the PIN and
 //!   `#` (`check#VoicemailPin`, which limits failures per box and per source). Then the new messages one by one: `7`
 //!   deletes, `9` saves (heard), `#` skips to the next; after the last, goodbye. Three refusals in a call, or a block, end
 //!   it. A caller who keys nothing for [`IDLE_SECONDS`] after a box-number or PIN prompt hears it again, and the third
 //!   time the call ends, so a silent caller does not hold a call.
 //!
-//! The prompts are tone patterns; the deployment's recorded speech plays after each when `voicemail_prompt_location`
+//! The prompts are tone patterns; the deployment's recorded speech plays after each when `voicemail@prompt-location`
 //! names a folder with `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`,
 //! `no-messages.wav` and `goodbye.wav` (any resource location; 16-bit PCM WAV). Moqui ships no recorded speech.
 //!
@@ -104,7 +104,7 @@ impl Say {
         }
     }
 
-    /// The file of its recorded speech in `voicemail_prompt_location`, if it has one.
+    /// The file of its recorded speech in `voicemail@prompt-location`, if it has one.
     pub(crate) fn file(&self) -> Option<&'static str> {
         Some(match self {
             Say::Greeting => "greeting.wav",
@@ -616,7 +616,7 @@ fn audio_for(
         Say::Message(location) => (location.clone(), MAX_PLAY_SECONDS),
         Say::Greeting if greeting.is_some() => (greeting.unwrap_or_default().to_string(), audio::MAX_GREETING_SECONDS),
         _ => {
-            let folder = moqui_lib::env::get_prop_or_env("voicemail_prompt_location")
+            let folder = moqui_core::context::conf_env::setting("voicemail@prompt-location")
                 .trim()
                 .to_string();
             let file = say.file()?;

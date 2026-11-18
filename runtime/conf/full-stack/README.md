@@ -37,12 +37,12 @@ with the front as well, for its names, XMPP domain and ports.
   of its first start (`edge@link-key` among them). A certificate in `cert/` for its own name and the sites' hosts, or
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
-  with `edge@link-key`, `turn_auth_secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
+  with `edge@link-key`, `media-server/turn-server@auth-secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
   `sip-server@port`, `sip-server@tls-port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
   `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
   `edge/front-node@url`, `edge/front-node@key`, `edge/front-node@pin` and `edge/front-node@id`.
 - **Each edge member, its own**: `cluster-member@base-url`, `moqui_conf__edge__link_url=https://edge1.example.com` (its link name, at the
-  front), `smtp-server@hostname` (its own address's reverse DNS name), `rtc_public_address`, `turn_public_host` and
+  front), `smtp-server@hostname` (its own address's reverse DNS name), `media-server@public-address`, `media-server/turn-server@public-host` and
   `sip-server@public-address` (its own address). Never copy `runtime/db`.
 - **Every local member, the same**: the database and secrets (for git hosting `ssh-server@host-key` and
   `git-server@lfs-token-key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge/node@url`,
@@ -56,7 +56,7 @@ with the front as well, for its names, XMPP domain and ports.
   cluster's own names (`erp.example.com`); each edge member's link name (`edge1.example.com`, `edge2.example.com`),
   which the front passes through to that member alone; the MX of each mail domain.
 - **At each edge member's own address**: the edge cluster's own name (`edge.example.com`, its `webapp-list/webapp[webroot]@http-host`, an
-  address record per member), its `turn_public_host`, its `smtp-server@hostname` (with reverse DNS for the address), and the
+  address record per member), its `media-server/turn-server@public-host`, its `smtp-server@hostname` (with reverse DNS for the address), and the
   SIP SRV records (`_sip._udp`, `_sip._tcp`, `_sips._tcp`) naming every member; with `front_edge` members the XMPP SRV
   records too (with `edge` members they name the front, whose ports take each local node's domain).
 - **Mail.** SPF for each mail domain lists every edge member's address (`ip4:`): mail out leaves from them, and the

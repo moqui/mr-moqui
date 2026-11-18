@@ -24,7 +24,7 @@
 
     <!-- The shared database and the shared .env, as in conf/edge-cluster: the transactional datasource's settings the same on every member, and the
         secrets the first member's first start makes (webapp-list/webapp[webroot]/session-config@cookie-key, cluster-member@tls-cert, cluster-member@tls-key,
-        moqui_conf__entity_facade__crypt_pass, edge@link-key, turn_auth_secret, mail-delivery/dkim@key, acme@account-key), with the front
+        moqui_conf__entity_facade__crypt_pass, edge@link-key, media-server/turn-server@auth-secret, mail-delivery/dkim@key, acme@account-key), with the front
         pairing's lines once it is made. Back the database up with its own tools. -->
     <cluster-member transport="" protocol=""/>
 
@@ -93,17 +93,15 @@
         terminate host; any member takes it and queues it once. -->
     <channels webhooks-enabled="true"/>
 
-    <!-- Calls and SIP, as in conf/edge-cluster, never through the front: rtc_public_address, turn_public_host and
-        sip-server@public-address per member in .env, each at the member's own public address (turn_public_host a name with its
+    <!-- Calls and SIP, as in conf/edge-cluster, never through the front: media-server@public-address, media-server/turn-server@public-host and
+        sip-server@public-address per member in .env, each at the member's own public address (media-server/turn-server@public-host a name with its
         own address record, not the front's), with UDP 10000, UDP and TCP 3478 and the relay range, and the SIP ports,
         open on each member. SRV records for SIP name every member.
         XMPP and SSH (.env, as in conf/edge-cluster): front_edge members listen on the tunnel ports at their own
         addresses, with SRV records naming each member; edge members bind none, and the front's ports take each local
         node's XMPP domain by its front pairing. -->
-    <default-property name="rtc_media_port" value="10000"/>
-    <default-property name="rtc_media_host" value="0.0.0.0"/>
-    <default-property name="turn_port" value="3478"/>
-    <default-property name="call_recording_segment_mb" value="16"/>
+    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <calls><recording segment-mb="16"/></calls>
 
     <entity-facade query-stats="true">
         <datasource group-name="transactional" database-conf-name="postgres"/>

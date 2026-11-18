@@ -20,18 +20,18 @@ port:
 
 | Property | Default | |
 | --- | --- | --- |
-| `rtc_media_port` | empty (off) | The UDP port browsers send media to; `0` is a free port |
-| `rtc_media_host` | `127.0.0.1` | The address it binds |
-| `rtc_public_address` | empty: the bound address | What browsers are told: an IP, or IP:port, for a server behind 1:1 NAT. Required when `rtc_media_host` binds every address |
-| `call_ring_seconds` | `45` | How long a call rings before it is missed |
-| `call_guest_joins_per_minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
-| `rtc_cascade_enabled` | `false` | Cascading media nodes ([Cluster](#cluster)): a leg's media goes to the node of its own socket, which relays to the call's node |
-| `call_direct_path` | `true` | One-to-one calls of two users go peer to peer first ([The direct path](#the-direct-path)); `false` keeps every call on the media server |
+| `media-server@port` | empty (off) | The UDP port browsers send media to; `0` is a free port |
+| `media-server@host` | `127.0.0.1` | The address it binds |
+| `media-server@public-address` | empty: the bound address | What browsers are told: an IP, or IP:port, for a server behind 1:1 NAT. Required when `media-server@host` binds every address |
+| `calls@ring-seconds` | `45` | How long a call rings before it is missed |
+| `calls@guest-joins-per-minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
+| `media-server@cascade-enabled` | `false` | Cascading media nodes ([Cluster](#cluster)): a leg's media goes to the node of its own socket, which relays to the call's node |
+| `calls@direct-path` | `true` | One-to-one calls of two users go peer to peer first ([The direct path](#the-direct-path)); `false` keeps every call on the media server |
 
-On a single server reachable at its own address, `rtc_media_port=10000` with `rtc_media_host` set to that address is
-enough. Behind 1:1 NAT, bind the private address and set `rtc_public_address` to the public one, then forward UDP 10000.
+On a single server reachable at its own address, `moqui_conf__media_server__port=10000` with `media-server@host` set to that address is
+enough. Behind 1:1 NAT, bind the private address and set `media-server@public-address` to the public one, then forward UDP 10000.
 The advertised address must be reachable from the browsers. A configured address does not prove it: test a call from
-outside the network. For browsers that cannot reach the UDP port, add ICE-TCP (`rtc_media_tcp_port`) and the embedded
+outside the network. For browsers that cannot reach the UDP port, add ICE-TCP (`media-server@tcp-port`) and the embedded
 TURN server, or coturn ([TURN](TURN.md)).
 
 The Calls screen says when calls are unavailable (`get#Capabilities`): supported (the binary has `rtc`), configured
@@ -151,7 +151,7 @@ A one-to-one call of two users of this server goes peer to peer when it can (dec
 §8.3 item 15). The call's view says so (`direct`, `Calls.js` `directPath`): a direct call (a direct room's call of two),
 every answered leg a browser's, two users of this server, neither of whom has **Always relay my calls** on (Settings,
 Calls; the user preference `CALL_ALWAYS_RELAY`, `get#CallPreferences` and `set#CallPreferences`), no recording or
-captions going on, and `call_direct_path` not `false`. A guest, a phone, a desk phone that answers, or a third person
+captions going on, and `calls@direct-path` not `false`. A guest, a phone, a desk phone that answers, or a third person
 rung in keeps the call on the media server.
 
 1. The page sends `{rtc: 'join', direct: true}` (no offer). `bind#Connection` with `direct` claims the leg's generation
@@ -199,28 +199,28 @@ minutes.
 
 ## Recording
 
-A call's host can record it when `call_recording_enabled` is on: each track as sent (Opus in Ogg, VP8 in WebM) and the
+A call's host can record it when `calls/recording@enabled` is on: each track as sent (Opus in Ogg, VP8 in WebM) and the
 mixed audio, made on the media node, with a notice to every leg and the `rtc` frame `recording`; a phone leg hears it
 as a prompt ([SIP, Notices](SIP.md#notices)). See [Call recording](Call-Recording.md).
 
 ## Captions
 
-Live captions are off unless `call_captions_enabled` is `true`, and they need a speech to text provider: a model bound
+Live captions are off unless `calls/captions@enabled` is `true`, and they need a speech to text provider: a model bound
 to the `transcribe` feature on an OpenAI-compatible endpoint (`POST /v1/audio/transcriptions`, such as a local Whisper
 server or a hosted one), set up as for the Assist drawer's dictation ([Assist](../ai/Assist.md)). Local transcription in
 the binary (`speech-local`, Whisper on candle) is not built yet.
 
 | Property | Default | |
 | --- | --- | --- |
-| `call_captions_enabled` | `false` | The switch: the CC button shows only when it is `true` |
-| `call_captions_provider` | `llm` | `llm` (the `transcribe` binding) or `local` (speech-local, which answers "not built in") |
-| `call_captions_chunk_seconds` | `5` | The longest chunk of one speaker's audio sent at once; a pause of 0.6 s ends one sooner |
-| `call_captions_queue` | `6` | Chunks waiting for the provider; past this the oldest is dropped and shown as a gap |
-| `call_captions_workers` | `2` | Chunks of one call transcribed at once, on the service pool; all calls on a node together use at most half its workers |
-| `call_captions_timeout_seconds` | `20` | How long one chunk may take |
-| `call_captions_language` | empty | An ISO 639-1 code; empty lets the model tell |
-| `call_captions_store` | `false` | `true` keeps each caption as a `CallTranscript` row; by default nothing is kept |
-| `call_captions_prompt_audio` | empty | A WAV file a phone leg hears after the captions tones ([SIP, Notices](SIP.md#notices)) |
+| `calls/captions@enabled` | `false` | The switch: the CC button shows only when it is `true` |
+| `calls/captions@provider` | `llm` | `llm` (the `transcribe` binding) or `local` (speech-local, which answers "not built in") |
+| `calls/captions@chunk-seconds` | `5` | The longest chunk of one speaker's audio sent at once; a pause of 0.6 s ends one sooner |
+| `calls/captions@queue` | `6` | Chunks waiting for the provider; past this the oldest is dropped and shown as a gap |
+| `calls/captions@workers` | `2` | Chunks of one call transcribed at once, on the service pool; all calls on a node together use at most half its workers |
+| `calls/captions@timeout-seconds` | `20` | How long one chunk may take |
+| `calls/captions@language` | empty | An ISO 639-1 code; empty lets the model tell |
+| `calls/captions@store` | `false` | `true` keeps each caption as a `CallTranscript` row; by default nothing is kept |
+| `calls/captions@prompt-audio` | empty | A WAV file a phone leg hears after the captions tones ([SIP, Notices](SIP.md#notices)) |
 
 How they work:
 
@@ -352,7 +352,7 @@ the reason "media server lost"; the users start a new call. There is no seamless
 
 ### Cascading media nodes
 
-With `rtc_cascade_enabled` (off by default; set it on every node) a call spans media nodes (W7):
+With `media-server@cascade-enabled` (off by default; set it on every node) a call spans media nodes (W7):
 
 - **Where a leg's media goes.** As a leg binds (`bind#Connection`), its media goes to the node of its own signaling
   socket when that node is a live media node that is not draining, else to the call's node. `CallLeg.mediaNodeId` keeps
@@ -385,7 +385,7 @@ With `rtc_cascade_enabled` (off by default; set it on every node) a call spans m
   room's origin. Each node keeps these for 10 minutes; a call's id is never used again.
 - **Calls across nodes merge** (`merge#Calls`): without cascading they are refused (`differentNodes`).
 
-The relay link uses the media ports of both nodes (`rtc_media_port`): the leg node sends from its port to the origin's
+The relay link uses the media ports of both nodes (`media-server@port`): the leg node sends from its port to the origin's
 public address, so the nodes must reach each other's media port. It carries no TCP or TURN fallback and does not share
 out a bandwidth estimate: the link between servers is not a browser's last mile.
 
@@ -426,13 +426,13 @@ the edge node is not a member of the local node's cluster:
   each local node's calls keep apart on one media node, and each has its own TURN secret. A local node has at most
   `edge@call-legs-per-pairing` legs there at once (200; 0 for no cap): a leg past it is refused (`rtcError`).
 - **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18): each member is a media node of its own,
-  with its own `rtc_public_address` and TURN. The local node keeps a `CallMediaNode` row for each, written by the
+  with its own `media-server@public-address` and TURN. The local node keeps a `CallMediaNode` row for each, written by the
   replication sender of a clustered local node from its link to that member, and keeps each member's TURN secret (the
-  same for all, as they share `turn_auth_secret` and the pairing row). A call's legs are all on the member its call
+  same for all, as they share `media-server/turn-server@auth-secret` and the pairing row). A call's legs are all on the member its call
   chose, and its signaling goes over the link to that member. Cascading between edge members is later work.
 - **Not through a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19): a front node is no media node and
   takes no call signaling, so a front pairing keeps no `CallMediaNode` row. Before an edge cluster
-  ([Run-Deploy, Full stack](../Run-Deploy.md#full-stack)) the edge members' `rtc_public_address` and media ports are
+  ([Run-Deploy, Full stack](../Run-Deploy.md#full-stack)) the edge members' `media-server@public-address` and media ports are
   their own; a local cluster behind a front alone has its own media nodes.
 - **An all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) registers its own `CallMediaNode` for its
   own calls and is also the local node's media node. Rooms of the local node's calls are keyed by node and call, and
@@ -445,7 +445,7 @@ the edge node is not a member of the local node's cluster:
   delegated or queued service refuses a call whose media is not on the edge node.
 - **Pinned, alone, not cascaded.** Pairing pins the edge node's link key, and its instance id (`edge/node@id`) is
   learned on a link with that key: the members of an edge cluster each, all with the one key (plans/Edge-Node2.md
-  §4.6); a link naming this node's own id or a cluster member's is refused. A call on the edge node does not cascade (`rtc_cascade_enabled`
+  §4.6); a link naming this node's own id or a cluster member's is refused. A call on the edge node does not cascade (`media-server@cascade-enabled`
   leaves its legs there).
 - **A clustered local node.** Only the member that holds the link has the route to the edge node. A frame or control
   for the edge node on another member is refused ("the edge link to .. is down"; a browser's frame gets `unavailable`),
@@ -455,7 +455,7 @@ the edge node is not a member of the local node's cluster:
   `startedDate`: a recording that began before an edge node restart is failed by `expire#Recordings`, as on any media
   node.
 
-Settings: `rtc_media_port`, `rtc_media_host` 0.0.0.0, `rtc_public_address` and `turn_port` on the edge node
+Settings: `media-server@port`, `media-server@host` 0.0.0.0, `media-server@public-address` and `media-server/turn-server@port` on the edge node
 (`conf/edge/MoquiEdgeConf.xml` sets all but the address); nothing on the local node, which needs no media port. W7 cascading
 between the edge node and a local media node is later work.
 

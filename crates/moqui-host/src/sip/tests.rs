@@ -171,8 +171,8 @@ fn each_notice_is_its_own_tone_pattern_then_the_deployments_audio() {
     assert_eq!(Notice::from_code("recordingAck"), Notice::RecordingAck);
     assert_eq!(Notice::from_code("captions"), Notice::Captions);
     assert_eq!(Notice::from_code(""), Notice::Recording);
-    assert_eq!(Notice::Captions.audio_property(), "call_captions_prompt_audio");
-    assert_eq!(Notice::RecordingAck.audio_property(), "call_recording_prompt_audio");
+    assert_eq!(Notice::Captions.audio_property(), "calls/captions@prompt-audio");
+    assert_eq!(Notice::RecordingAck.audio_property(), "calls/recording@prompt-audio");
 }
 
 #[test]

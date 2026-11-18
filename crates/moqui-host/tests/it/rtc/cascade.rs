@@ -13,7 +13,7 @@
  */
 
 //! Cascading media nodes (plans/archive/Comms-Framework.md W7): one call on two servers of one cluster, on one test database,
-//! each with its media port and `rtc_cascade_enabled`. The call's media is on the first (the origin); a leg whose
+//! each with its media port and `media-server@cascade-enabled`. The call's media is on the first (the origin); a leg whose
 //! socket is on the second has its media there (a leg node), which relays to the origin. Media goes both ways, a
 //! subscriber at the leg node changes its layer of a publisher at the origin, and losing the leg node ends only the leg
 //! node's legs.
@@ -39,14 +39,17 @@ const LEG_NODE_ENV: &str = "MOQUI_RTC_LEG_NODE_CLUSTER";
 const LEG_NODE_TEST: &str = "rtc::cascade::leg_node_process";
 /// How long the leg node's process may take to print its ready line.
 const LEG_NODE_START: Duration = Duration::from_secs(30);
-const PROPERTIES: [(&str, &str); 2] = [("rtc_media_port", "0"), ("rtc_cascade_enabled", "true")];
+const PROPERTIES: [(&str, &str); 2] = [
+    ("moqui_conf__media_server__port", "0"),
+    ("moqui_conf__media_server__cascade_enabled", "true"),
+];
 /// The generated secrets a second member of the cluster takes from the first.
 const SHARED_SECRETS: [&str; 5] = [
     "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
     "moqui_conf__cluster_member__tls_cert",
     "moqui_conf__cluster_member__tls_key",
     "moqui_conf__entity_facade__crypt_pass",
-    "turn_auth_secret",
+    "moqui_conf__media_server__turn_server__auth_secret",
 ];
 
 /// The second server, in its child process.

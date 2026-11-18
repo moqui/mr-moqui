@@ -181,7 +181,7 @@ feature("the terminal twin shows the call, its captions with Turn on while the p
     when() {
         login("john.doe")
         const held = post(root, "holdOwnLeg", {callSessionId: callId}).json
-        const shown = withProperty("call_captions_enabled", "true", () =>
+        const shown = withConf("calls/captions@enabled", "true", () =>
             sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/CallTui", {callSessionId: callId}, null)))
         const text = String(shown.output || "")
         ec.message.clearErrors()

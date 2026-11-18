@@ -221,7 +221,7 @@ URL is the capability, as XEP-0363 has it: anyone it is passed to can read the f
 
 ## Calls
 
-External services (XEP-0215) hand an XMPP client the embedded TURN server (and `turn_external_urls`) with a credential
+External services (XEP-0215) hand an XMPP client the embedded TURN server (and `media-server/turn-server@external-urls`) with a credential
 keyed to the user, for its own Jingle calls. Such a credential may relay to public addresses only ([TURN](TURN.md)).
 This is off unless `xmpp-server@turn-enabled` is true: while off, the feature is not advertised (service discovery's list goes
 through `features::offered`) and a request is answered with an empty list. Even on, an external user (`EXTERNAL_USER`)

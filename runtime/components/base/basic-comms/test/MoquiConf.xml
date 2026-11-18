@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     logs that it has none, and the specs that need it (requires: ["rtc"]) skip. The BasicCommsTexts spec's call-context
     provider: a test app root (test/screen/TextNamesApp.xml) and its service file. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="rtc_media_port" value="0"/>
+    <media-server port="0"/>
     <screen-facade>
         <screen location="component://webroot/screen/webroot/apps.xml">
             <subscreens-item name="textNamesTest" menu-title="Text names test" menu-index="99" location="component://basic-comms/test/screen/TextNamesApp.xml"/>

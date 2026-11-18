@@ -14,7 +14,7 @@
 
 //! Phone calls over SIP trunks (plans/archive/Comms-Framework.md §5.1, §5.2, §6.5; docs/interfaces/SIP.md): the SIP engine of
 //! this node. Off while `sip-server@port` and `sip-server@tls-port` are empty, like the other listeners, and only beside this node's
-//! call media (`rtc_media_port`), since a phone leg's audio joins the call's SFU room here.
+//! call media (`media-server@port`), since a phone leg's audio joins the call's SFU room here.
 //!
 //! - **Listeners.** `sip-server@port` (UDP and TCP) on `sip-server@host`, `sip-server@tls-port` (TLS, the certificate from `runtime/cert`
 //!   as TURN's) on `sip-server@tls-host`; each leg's RTP on a port of `sip-server@rtp-ports` on `sip-server@rtp-host`. `sip-server@public-address`
@@ -464,7 +464,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         return None;
     }
     if lock(&factory.extension(|_| crate::rtc::RtcAddress::default()).0).is_none() {
-        tracing::error!("SIP did not start: phone calls need this server's call media (rtc_media_port)");
+        tracing::error!("SIP did not start: phone calls need this server's call media (media-server@port)");
         return None;
     }
     let bind_any = |a: Option<SocketAddr>| a.is_some_and(|a| a.ip().is_unspecified());
@@ -796,7 +796,7 @@ async fn call_service(
 /// the notice plays its tones only.
 async fn notice_audio(factory: &Arc<ExecutionContextFactory>, notice: prompt::Notice) -> Option<Vec<i16>> {
     let property = notice.audio_property();
-    let location = moqui_lib::env::get_prop_or_env(property).trim().to_string();
+    let location = moqui_core::context::conf_env::setting_or_property(property);
     if location.is_empty() {
         return None;
     }

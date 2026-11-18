@@ -17,11 +17,11 @@ along with this software (see the LICENSE.md file). If not, see
     framework/entity/CallEntities.xml; the logic is CallRecordings.js beside this file. The recorder itself runs on the
     call's media node (moqui-host src/rtc/recorder.rs), told by send#MediaControl ({action: 'recording'}).
 
-    Policy (MoquiDefaultConf default-properties): call_recording_enabled (off by default: every start is refused with
-    reasonCode recordingOff), call_recording_ack_required (each leg must acknowledge the notice; the recording pauses while
-    a current leg has not, or after one withdraws), call_recording_policy_revision, call_recording_retention_days, and the
-    recorder's limits (call_recording_queue_frames, call_recording_segment_mb, call_recording_segment_minutes,
-    call_recording_max_mb).
+    Policy (MoquiDefaultConf default-properties): calls/recording@enabled (off by default: every start is refused with
+    reasonCode recordingOff), calls/recording@ack-required (each leg must acknowledge the notice; the recording pauses while
+    a current leg has not, or after one withdraws), calls/recording@policy-revision, calls/recording@retention-days, and the
+    recorder's limits (calls/recording@queue-frames, calls/recording@segment-mb, calls/recording@segment-minutes,
+    calls/recording@max-mb).
 
     Who. A host of the call (its starter, or the owner of the call link it was opened by) starts, pauses, resumes and
     stops its recording. A recording is read (listed, played, downloaded) only by its owner (who started it) and the
@@ -58,9 +58,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="start" noun="Recording">
-        <description>Start recording an active call (a host of it, with call_recording_enabled on). kind: perTrack (each
+        <description>Start recording an active call (a host of it, with calls/recording@enabled on). kind: perTrack (each
             track and the mixed audio, the default) or mixed (the mixed audio only). Every current leg gets the notice, logged
-            in CallRecordingConsent; the starter's own leg counts as acknowledged. With call_recording_ack_required it starts
+            in CallRecordingConsent; the starter's own leg counts as acknowledged. With calls/recording@ack-required it starts
             paused until every current leg acknowledged. A call already being recorded answers that recording (repeated).</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
@@ -150,7 +150,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="notify" noun="LegRecording" authenticate="false" allow-remote="false">
         <description>Internal: the hook that gives a leg that is not a browser (a phone number or a SIP device) the
             recording notice: a prompt played to it by its SIP engine (VoiceServices.notify#PhoneLeg: the recording tone, with
-            ackRequired the acknowledgement tone that asks for 1, then call_recording_prompt_audio when set). Its answer comes
+            ackRequired the acknowledgement tone that asks for 1, then calls/recording@prompt-audio when set). Its answer comes
             back as ack#LegRecordingNotice. Browser and guest legs get the rtc recording frame instead, so this does nothing
             for them.</description>
         <in-parameters>
@@ -335,7 +335,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="note" noun="RecorderEnd" authenticate="false" allow-remote="false">
         <description>Internal (the media node's recorder): the recorder ended on its own. outcome failed (a full queue, a
             file or store error: the recording fails with errorText as lastErrorText, its partial files already removed) or
-            limit (it reached call_recording_max_mb: it stops, with that as lastErrorText). Either way the call goes on and
+            limit (it reached calls/recording@max-mb: it stops, with that as lastErrorText). Either way the call goes on and
             every leg is told the recording stopped.</description>
         <in-parameters>
             <parameter name="callRecordingId" required="true"/>

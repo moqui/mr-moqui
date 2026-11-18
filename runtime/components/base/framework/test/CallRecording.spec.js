@@ -91,9 +91,9 @@ spec({
         for (const id of [A, B, C, D]) makeUser(id)
         endAll()
         sys(() => call(calls("register#MediaNode"), {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
-        setProperty("call_recording_enabled", "false")
-        setProperty("call_recording_ack_required", "false")
-        setProperty("call_recording_retention_days", "30")
+        setConf("calls/recording@enabled", "false")
+        setConf("calls/recording@ack-required", "false")
+        setConf("calls/recording@retention-days", "30")
     },
     cleanupSpec() {
         endAll()
@@ -126,7 +126,7 @@ feature("with the policy off, even the host's start is refused", {
 
 feature("the host records: each current leg gets the notice, logged; no one else may start it with the same call", {
     when() {
-        setProperty("call_recording_enabled", "true")
+        setConf("calls/recording@enabled", "true")
         const byMember = as(B, "start#Recording", {callSessionId: callId})
         const byStranger = as(D, "start#Recording", {callSessionId: callId})
         const started = as(A, "start#Recording", {callSessionId: callId})
@@ -223,7 +223,7 @@ feature("a guest is told of the recording before joining and while waiting in th
 feature("under the acknowledgement policy the recording waits for every current leg, and each resume is a new period", {
     when() {
         const stopped = as(A, "stop#Recording", {callSessionId: callId})
-        setProperty("call_recording_ack_required", "true")
+        setConf("calls/recording@ack-required", "true")
         const started = as(A, "start#Recording", {callSessionId: callId})
         recId = started.callRecordingId
         const bAck = as(B, "ack#RecordingNotice", {callSessionId: callId})
@@ -345,7 +345,7 @@ feature("a recorder failure ends the recording and not the call; a segment after
 
 feature("the call's end stops its recording, and retention deletes the files and rows, its transcripts too", {
     when() {
-        setProperty("call_recording_ack_required", "false")
+        setConf("calls/recording@ack-required", "false")
         const started = as(A, "start#Recording", {callSessionId: callId})
         const kept = storeSegment(started.callRecordingId, {callLegId: legOf(callId, A).callLegId})
         as(A, calls("end#Call"), {callSessionId: callId})
@@ -463,7 +463,7 @@ feature("a recording whose media node restarted since it began has no recorder: 
 
 feature("an edge node's recorder's segment and end come through the edge link's queue, stored from its copy, for the queue's user only", {
     when() {
-        setProperty("call_recording_enabled", "true")
+        setConf("calls/recording@enabled", "true")
         const started = as(A, calls("start#Call"), {calleeUserIdList: [B]})
         as(B, calls("answer#Call"), {callSessionId: started.callSessionId})
         const rec = as(A, "start#Recording", {callSessionId: started.callSessionId})

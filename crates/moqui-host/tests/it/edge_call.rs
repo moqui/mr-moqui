@@ -20,7 +20,7 @@
 //! with it and its link is a dialer the test drives, serving the local server (`local_web`).
 //!
 //! An outside browser stand-in, relayed by the edge node's TURN with the credential the local node signed with the
-//! edge node's secret (each node has its own `turn_auth_secret`), and an office one on UDP, in one call: both signal on
+//! edge node's secret (each node has its own `media-server/turn-server@auth-secret`), and an office one on UDP, in one call: both signal on
 //! the local node's `/notws`, the frames go to the edge node over the link and back, the media is on the edge node.
 //! The local node keeps the edge node's `CallMediaNode` row from the link, and the call's media events are delegated
 //! to it. The call is recorded on the edge node, and the segments reach the local node through the queue.
@@ -200,11 +200,11 @@ fn edge_node_process() {
         &[
             ("moqui_conf__instance__node_role", "front_edge"),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
-            ("rtc_media_port", "0"),
-            ("turn_port", "0"),
-            ("turn_relay_ports", "51200-51300"),
-            ("turn_auth_secret", EDGE_SECRET),
-            ("call_recording_enabled", "true"),
+            ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__media_server__turn_server__port", "0"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51200-51300"),
+            ("moqui_conf__media_server__turn_server__auth_secret", EDGE_SECRET),
+            ("moqui_conf__calls__recording__enabled", "true"),
         ],
         &[("cert/default.crt", cert), ("cert/default.key", key)],
     );
@@ -266,7 +266,10 @@ fn an_outside_and_an_office_browser_call_through_the_edge_node_and_the_recording
     let local = crate::common::start_with_properties(
         "edge-call-local",
         None,
-        &[("turn_auth_secret", LOCAL_SECRET), ("call_recording_enabled", "true")],
+        &[
+            ("moqui_conf__media_server__turn_server__auth_secret", LOCAL_SECRET),
+            ("moqui_conf__calls__recording__enabled", "true"),
+        ],
     );
     let edge = EdgeNode::ready(child, &ready);
     let http = local.server.address();

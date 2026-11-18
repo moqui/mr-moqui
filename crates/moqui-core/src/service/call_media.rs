@@ -353,7 +353,7 @@ fn store_spooled(
     }
     let mut size = 0;
     if !only_discard {
-        // streamed: a segment is up to call_recording_segment_mb, never read into memory whole
+        // streamed: a segment is up to calls/recording@segment-mb, never read into memory whole
         let mut file =
             std::fs::File::open(path).map_err(|e| LibError::new(format!("the spooled {what} {temp_path}: {e}")))?;
         size = file
@@ -376,12 +376,12 @@ fn store_spooled(
     Ok(out)
 }
 
-/// The secret TURN credentials are signed with, shared by every media node and any coturn (`turn_auth_secret`).
-const SECRET_PROPERTY: &str = "turn_auth_secret";
+/// The secret TURN credentials are signed with, shared by every media node and any coturn (`media-server/turn-server@auth-secret`).
+const SECRET_PROPERTY: &str = "media-server/turn-server@auth-secret";
 /// How long a leg's TURN credential lasts, in hours.
-const HOURS_PROPERTY: &str = "turn_credential_hours";
+const HOURS_PROPERTY: &str = "media-server/turn-server@credential-hours";
 /// TURN servers outside this one (coturn with use-auth-secret and the same secret), comma separated `turn:` URLs.
-const EXTERNAL_PROPERTY: &str = "turn_external_urls";
+const EXTERNAL_PROPERTY: &str = "media-server/turn-server@external-urls";
 
 /// `make#IceServers`: the ICE servers of a leg for its RTCPeerConnection: the TURN URLs of its call's media node
 /// (`turnUrls`, which the node registered) and any external ones, with a credential for this leg in the TURN REST form
@@ -407,16 +407,16 @@ fn make_ice_servers(
         Some(v) if !is_empty(v) => to_plain_string(v).split(',').map(str::to_string).collect(),
         _ => Vec::new(),
     };
-    let external: Vec<String> = moqui_lib::env::get_prop_or_env(EXTERNAL_PROPERTY)
+    let external: Vec<String> = crate::context::conf_env::setting(EXTERNAL_PROPERTY)
         .split(',')
         .map(str::to_string)
         .collect();
-    let own = moqui_lib::env::get_prop_or_env(SECRET_PROPERTY);
+    let own = crate::context::conf_env::setting(SECRET_PROPERTY);
     let edge_secret = crate::context::ExecutionContext::with_current(|ec| {
         crate::edge::media::turn_peer(ec.factory(), &text("mediaNodeId"))
     })
     .flatten();
-    let hours: u64 = moqui_lib::env::get_prop_or_env(HOURS_PROPERTY)
+    let hours: u64 = crate::context::conf_env::setting(HOURS_PROPERTY)
         .trim()
         .parse()
         .unwrap_or(4)

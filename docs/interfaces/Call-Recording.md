@@ -17,14 +17,14 @@ and only the host and the one who recorded it can play or download the files. Th
 
 | Property | Default | |
 | --- | --- | --- |
-| `call_recording_enabled` | `false` | Lets a call's host record it. Off: every start is refused (`recordingOff`) |
-| `call_recording_ack_required` | `false` | Each leg must acknowledge the notice; the recording pauses until every current leg has |
-| `call_recording_policy_revision` | `1` | Logged with each notice; change it when the policy's wording changes |
-| `call_recording_retention_days` | `90` | Recordings are deleted this long after they start; `0` keeps them |
-| `call_recording_queue_frames` | `4096` | Frames queued from the media thread to the recorder; a recorder further behind fails |
-| `call_recording_segment_mb`, `call_recording_segment_minutes` | `64`, `30` | When a file is cut and the next segment starts |
-| `call_recording_max_mb` | `2048` | A recording's total; it stops there |
-| `call_recording_prompt_audio` | empty | A WAV file a phone leg hears after the recording tone ([SIP, Notices](SIP.md#notices)) |
+| `calls/recording@enabled` | `false` | Lets a call's host record it. Off: every start is refused (`recordingOff`) |
+| `calls/recording@ack-required` | `false` | Each leg must acknowledge the notice; the recording pauses until every current leg has |
+| `calls/recording@policy-revision` | `1` | Logged with each notice; change it when the policy's wording changes |
+| `calls/recording@retention-days` | `90` | Recordings are deleted this long after they start; `0` keeps them |
+| `calls/recording@queue-frames` | `4096` | Frames queued from the media thread to the recorder; a recorder further behind fails |
+| `calls/recording@segment-mb`, `calls/recording@segment-minutes` | `64`, `30` | When a file is cut and the next segment starts |
+| `calls/recording@max-mb` | `2048` | A recording's total; it stops there |
+| `calls/recording@prompt-audio` | empty | A WAV file a phone leg hears after the recording tone ([SIP, Notices](SIP.md#notices)) |
 
 The policy must meet the deployment's jurisdiction. The notice alone does not.
 
@@ -52,7 +52,7 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
    tells the call's media node (`CallSession.mediaNodeId`) with `send#MediaControl`
    (`{action: 'recording', op: 'start', callRecordingId, kind, period, paused, maxBytes, notice}`) after the commit.
 2. The media node starts a recorder thread. It takes every frame of the room through a bounded queue
-   (`call_recording_queue_frames`) and decodes the audio for the mix on its own thread, never on the media thread. It
+   (`calls/recording@queue-frames`) and decodes the audio for the mix on its own thread, never on the media thread. It
    writes each file to a spool under `runtime/tmp/call-recording/`.
 3. Each closed segment goes back through `store#RecordingSegment`, which streams the file with `store#RecordingFile` to
    `dbresource://moqui/call/recording/<callRecordingId>/<segment id>.ogg` (or `.webm`) and writes its track and segment
@@ -71,22 +71,22 @@ recording's id, so it never overtakes a segment. The local node's `CallRecording
 only for the queue, as `_edge_`) stores each with `store#RecordingSegment` from the queue's copy (`fromLocation`, which
 `store#RecordingFile` takes only under `dbresource://moqui/edge/content/in/`). While the link is down they wait in the
 edge node's queue, kept 14 days. An edge node's segments are at most 32 MiB (`conf/edge/MoquiEdgeConf.xml` sets
-`call_recording_segment_mb` 16), under the queue's 64 MiB content cap.
+`calls/recording@segment-mb` 16), under the queue's 64 MiB content cap.
 
 **Failure ends the recording, not the call.** A full queue, a file error or a store error stops the recorder: its
 partial files are removed, and `note#RecorderEnd` marks the recording failed with `lastErrorText`. Reaching
-`call_recording_max_mb` stops it with that as its text. Either way every leg is told the recording stopped, and the
+`calls/recording@max-mb` stops it with that as its text. Either way every leg is told the recording stopped, and the
 call goes on.
 
 **The drive quota.** A recording's stored files count toward the quota of its owner's personal drive (My files,
 `ResourceDrive.quotaBytes`), with the drive's own files: the drive's usage (`get#DriveUsage`), uploads and copies into
 it count them (`get#RecordingBytes`). A host whose drive is full cannot start a recording (`quotaFull`). One that
-starts gets what is left as its recorder's limit (`maxBytes`), where it stops as at `call_recording_max_mb`; and a
+starts gets what is left as its recorder's limit (`maxBytes`), where it stops as at `calls/recording@max-mb`; and a
 stored segment that fills the drive (its other files grew meanwhile) stops it, "the drive quota of its owner is full".
 After each stored segment the recorder is told the room left (`op: limit`, `maxBytes`: what the recording stored and
 what the drive has left after it; never above the limit it started with), so files added to the drive during the call
 stop it within a segment. A drive with no quota limits nothing. The open segments may pass the quota by what the drive
-gained since the last segment was stored, at most a segment of each track (`call_recording_segment_mb`).
+gained since the last segment was stored, at most a segment of each track (`calls/recording@segment-mb`).
 
 ## The notice and consent
 
@@ -106,15 +106,15 @@ gained since the last segment was stored, at most a segment of each track (`call
   (`get#RecordingState`).
 - Phone legs (phone numbers, and SIP devices later) get the notice through `notify#LegRecording` as a prompt that their
   SIP engine plays over what the phone hears (`VoiceServices.notify#PhoneLeg`, [SIP, Notices](SIP.md#notices)): a
-  1400 Hz tone, then the audio that `call_recording_prompt_audio` names, if any. A phone that answers later hears it
+  1400 Hz tone, then the audio that `calls/recording@prompt-audio` names, if any. A phone that answers later hears it
   when it answers: a late joiner, and a leg that joins by a transfer, an added number or a merge (V5,
   [SIP, Transfer and merge](SIP.md#transfer-and-merge)); a browser leg that joins that way gets its frame when it binds.
-- **A phone acknowledges by pressing 1.** Under `call_recording_ack_required` its tone plays twice, which asks for the
-  key; set `call_recording_prompt_audio` to a recording that says so ("This call is recorded. Press 1 to accept, or hang
+- **A phone acknowledges by pressing 1.** Under `calls/recording@ack-required` its tone plays twice, which asks for the
+  key; set `calls/recording@prompt-audio` to a recording that says so ("This call is recorded. Press 1 to accept, or hang
   up."). The key comes back as the phone's DTMF (`note#PhoneLeg`), and `ack#LegRecordingNotice` logs it in the leg's
   `CallRecordingConsent` with the method `CamDtmf`. A 1 at any other time is the call's own key. A phone withdraws by
   hanging up: its leg leaves, and no longer holds the recording.
-- Staying on the call after the notice is consent. With `call_recording_ack_required`, the recording pauses while any
+- Staying on the call after the notice is consent. With `calls/recording@ack-required`, the recording pauses while any
   current leg has not acknowledged (`ack#RecordingNotice`, the Acknowledge button); the host's own leg counts as
   acknowledged when they start it. Any leg can withdraw (`withdraw#RecordingConsent`), which pauses the recording while
   it is in the call; acknowledging again takes it back. A leg that leaves no longer holds the recording. Resuming

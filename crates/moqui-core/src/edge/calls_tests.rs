@@ -45,7 +45,7 @@ fn a_media_address_outside_browsers_cannot_reach_is_named() {
         "[fe80::1]:10000",
     ] {
         let problem = media_address_problem(local).unwrap_or_default();
-        assert!(problem.contains("rtc_public_address"), "{local}: {problem}");
+        assert!(problem.contains("media-server@public-address"), "{local}: {problem}");
     }
     assert!(media_address_problem("edge.example.net")
         .unwrap()
@@ -58,7 +58,7 @@ fn a_link_that_is_down_or_without_media_names_no_media_node() {
     assert!(linked_media_node(&status).unwrap_err().contains("unpaired"));
     status.state = crate::edge::LinkState::Linked;
     status.peer.instance_id = "edge-1".to_string();
-    assert!(linked_media_node(&status).unwrap_err().contains("rtc_media_port"));
+    assert!(linked_media_node(&status).unwrap_err().contains("media-server@port"));
     status.peer.media_address = "203.0.113.5:10000".to_string();
     assert_eq!(linked_media_node(&status).unwrap().instance_id, "edge-1");
 }

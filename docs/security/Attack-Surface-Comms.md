@@ -86,7 +86,7 @@ has no per-client limit.
   people in the call and to the link's owner.
 - A meeting takes at most 50 guests with an open guest leg, waiting or in the call (`callFull`). A guest who leaves,
   whose credential runs out or whose offered leg times out no longer counts (SEC-COM-05). A link takes at most
-  `call_guest_joins_per_minute` (20) joins a minute whatever the client (`tooManyJoins`).
+  `calls@guest-joins-per-minute` (20) joins a minute whatever the client (`tooManyJoins`).
 - `/callws` holds at most 64 sockets on a node that have not yet sent a credential, 4 of them from one client address,
   each for up to 5 seconds (SEC-COM-04). Another socket is answered 503. A socket refused for its first frame (none,
   not a credential, or one that does not work) counts as a failed sign-in of its client for web protection.
@@ -100,7 +100,7 @@ has no per-client limit.
 ## Call captions
 
 Call captions (W6, [WebRTC](../interfaces/WebRTC.md#captions)) send call audio out to a speech provider, so they are off
-unless `call_captions_enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
+unless `calls/captions@enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
 `stopCaptions`) need a signed-in user with an answered leg in the call; anyone else gets `notFound`. An end-to-end
 encrypted call is refused. Every leg, a late joiner's and a guest's too, gets the notice naming the provider before its
 audio is captioned. The provider is the `transcribe` model binding, reached through `moqui-llm`'s address guard (a
@@ -109,13 +109,13 @@ as an `LlmCall`. No screen transition names `org.moqui.call.SpeechServices.trans
 other services call them (captions, voicemail transcription, mr-mantle's process checks;
 [services and `allow-remote`](Attack-Surface-Web.md#services-and-allow-remote)).
 `transcribe#Audio` reads any `audioLocation` it is given, so its caller decides what may be sent out. Captions are not
-stored unless `call_captions_store` is `true`.
+stored unless `calls/captions@store` is `true`.
 
 ## Call media
 
-Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
+Off unless `media-server@port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `media-server@host` (127.0.0.1 by default); browsers are told `media-server@public-address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
 
-Cascading media nodes (`rtc_cascade_enabled`, off by default) add relay links between the media nodes of a call on the
+Cascading media nodes (`media-server@cascade-enabled`, off by default) add relay links between the media nodes of a call on the
 same UDP sockets: one str0m peer a room on each side, DTLS-SRTP like a browser leg, negotiated only by `rtc-signal`
 messages on the cluster's client-certificate HTTPS transport (kind `relay`), so only a cluster member opens one. The
 origin takes at most 8 links a room and 64 in all, and refuses more (`tooManyRelays`); a message of an older link is
@@ -123,7 +123,7 @@ dropped, a room that ended takes no new link, and a link not connected within 10
 to the origin only its own legs' tracks; the origin decides nothing a leg node asks beyond the layers it sends it. Any
 cluster member may open a link for any room id: the cluster's members are trusted alike.
 
-ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000, and 64 from one
+ICE-TCP (`media-server@tcp-port`, off unless set) takes TCP connections on the same address: at most 1,000, and 64 from one
 source address. A connection that sends
 nothing for 30 seconds is closed. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
@@ -154,7 +154,7 @@ key the server gives only to its signed-in user (see Chat keys).
 
 ## Call recording
 
-Off unless `call_recording_enabled` is true ([Call recording](../interfaces/Call-Recording.md)). It opens no port. Only a
+Off unless `calls/recording@enabled` is true ([Call recording](../interfaces/Call-Recording.md)). It opens no port. Only a
 host of the call starts, pauses, resumes or stops it (`org.moqui.call.CallRecordingServices`). The recorder runs on the
 media node, takes frames from a bounded queue and spools under `runtime/tmp/call-recording/`. `store#RecordingFile`
 (called by the recorder in the server; no screen transition names it) refuses a spool path outside that directory and a
@@ -172,19 +172,19 @@ rows (`expire_Recordings_hourly`).
 ## TURN
 
 The embedded TURN server (`crates/moqui-rtc` `turn/`, host `rtc/turn.rs`) runs on the media node. Each listener is off
-unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_tls443_host`. TLS uses the
-`runtime/cert` certificates. Relays are UDP sockets in `turn_relay_ports`. The listeners bind `turn_host`, which is
-`rtc_media_host` when empty. The URLs given to clients name `turn_public_host`, the media node's public address when
+unless set: `media-server/turn-server@port` (UDP and TCP), `media-server/turn-server@tls-port` (TLS), and 443 on `media-server/turn-server@tls443-host`. TLS uses the
+`runtime/cert` certificates. Relays are UDP sockets in `media-server/turn-server@relay-ports`. The listeners bind `media-server/turn-server@host`, which is
+`media-server@host` when empty. The URLs given to clients name `media-server/turn-server@public-host`, the media node's public address when
 empty. Its rules:
 
-- **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `turn_auth_secret` (generated
+- **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `media-server/turn-server@auth-secret` (generated
   when unset; is-secret). They go only to an admitted leg (`get#IceServers`, `get#GuestIceServers`). An expired one
   is refused, and so is one of a leg that left (revoked by the media node, for 24 hours). On an edge node a local node's
   are `<expiry>:<legId>@<pairing>`, signed with that pairing's secret and taken only while it is active (E16). A credential
-  lasts `turn_credential_hours` (4; held to 1..24). `turn_external_urls` are handed out with the same username and a
+  lasts `media-server/turn-server@credential-hours` (4; held to 1..24). `media-server/turn-server@external-urls` are handed out with the same username and a
   credential under the same secret. A request with no credential is answered by `turn-server-proto` with a 401 and a
   nonce; a nonce lasts 600 seconds. An XMPP user's credential (`xmpp.<userId>`) is never revoked; it ends at its expiry.
-- **Relay peers** are only the media nodes' media ports (and `turn_allowed_peers`, by address and port). A permission
+- **Relay peers** are only the media nodes' media ports (and `media-server/turn-server@allowed-peers`, by address and port). A permission
   to any other address, or a channel to any other address or port, is dropped before the server sees it, and nothing
   is relayed to or from one, another port of a media node's address included. The exception is an XMPP user's own
   credential (`xmpp.<userId>`, from `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may
@@ -194,9 +194,9 @@ empty. Its rules:
   the media node's public
   address and its bind address when that is not a wildcard), nor the address a TURN listener is bound to
   (a relay there would come from the server itself, past a firewall that keeps the outside off those ports).
-  A public address of the host that is neither (the address behind `turn_public_host` when it differs from the media
+  A public address of the host that is neither (the address behind `media-server/turn-server@public-host` when it differs from the media
   address, another interface) is not refused.
-- **Limits:** two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way per
+- **Limits:** two allocations per credential, `media-server/turn-server@max-allocations` in all, and `media-server/turn-server@max-kbps` each way per
   allocation; excess data is dropped. A stream buffers at most 64 KiB without a whole message. No TCP relays to
   peers are offered.
   The two allocations are counted by the request's leg, over all of its usernames. A username is given to the server's
@@ -289,7 +289,7 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   engine checks the class and its calls at once again before the INVITE. A ring group's fallback number is set by a
   voice admin and checked against the deployment's policy. The caller ID of a forward is the number the call came in
   on, never one the caller supplied. A forward to one of this deployment's numbers is routed inside (no hairpin through
-  the trunk), a forward back to the caller's number is skipped, and a call takes at most `call_forward_max_hops`
+  the trunk), a forward back to the caller's number is skipped, and a call takes at most `calls@forward-max-hops`
   forwards, with a user or group already in its plan skipped, so rules cannot loop a call or fan it out without bound.
   Caller lists and rules are the user's own (another user's are "not found"); the rule's target is checked when it is
   saved and again when a call uses it.
@@ -347,8 +347,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   are cut. The engine registers its node (`SipNode`) every 20 seconds.
 - **Settings that name addresses and audio.** `sip-server@public-address` is the address put in Contact headers and SDP, and
   is required when a SIP host binds every address. `sip-server@domain` is the digest realm (`sip-server@public-address`, else `moqui`,
-  when empty). `voicemail_prompt_location`, `call_hold_music_location`, `call_recording_prompt_audio` and
-  `call_captions_prompt_audio` name resource locations (any scheme) whose files the engine reads and plays to callers.
+  when empty). `voicemail@prompt-location`, `calls@hold-music-location`, `calls/recording@prompt-audio` and
+  `calls/captions@prompt-audio` name resource locations (any scheme) whose files the engine reads and plays to callers.
   They are empty by default.
 
 ## XMPP
@@ -464,7 +464,7 @@ user's number that nobody answers, and on the access number (`PnrVoicemail`) whe
   then an hour). The source is a caller ID the caller can fake, so the box's limit is the one that holds: up to 480
   guesses a day (5 every 15 minutes), which tries every four-digit PIN in three weeks and every six-digit one in under
   six years, so a new PIN
-  has at least `voicemail_pin_min_digits` (6 by default) digits. A box that does not exist, has no PIN, or is blocked is refused in
+  has at least `voicemail@pin-min-digits` (6 by default) digits. A box that does not exist, has no PIN, or is blocked is refused in
   the same words after the same hash work and is counted the same way, so the answers say nothing of which boxes
   exist. Three refusals end the call, and a refusal whose answer says `blocked`
   ends it at once. Failures for a number with a box are counted on the box, failures for digits with no box on those
@@ -488,10 +488,10 @@ user's number that nobody answers, and on the access number (`PnrVoicemail`) whe
   unchecked.
 - **Mail out.** The email notice carries only a link unless the owner turns on the audio or the transcript in it; the
   screen warns that mail cannot be recalled. Transcription sends the audio to the speech provider only when
-  `voicemail_transcribe` is on.
-- **Limits.** A message is at most `voicemail_max_seconds` (120; at most 600), spooled to disk as it is recorded; one
+  `voicemail@transcribe` is on.
+- **Limits.** A message is at most `voicemail@max-seconds` (120; at most 600), spooled to disk as it is recorded; one
   under a second is dropped.
-  `voicemail_prompt_location` names a folder (any resource location) of prompts the engine plays; it is empty by
+  `voicemail@prompt-location` names a folder (any resource location) of prompts the engine plays; it is empty by
   default.
 
 ## Chat bridges
@@ -560,8 +560,8 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - mr-boss's own people search (`ironstone.shared.ChatterServices.search#Users`) was not read. Its `get#CallTarget` (`chat-target`, `call-target`) refuses a user whose party the Comms grant's entity filters (`MANTLE_USER_ORG`) keep out.
 - Which user and authorization the asynchronous call of `deliver#AgentMessage` runs with was not traced.
 - `ChatScreenServices.lookup#Records`, `createFrom` and `fileOnRecord` hand the request's `recordEntityName` and `recordId` to the apps' providers; the providers were not read.
-- Who reads a stored caption (`CallTranscript`, with `call_captions_store`) was not traced.
-- Whether a guest who waits in the lobby longer than `call_ring_seconds` can still be admitted was not traced (`expire#Calls` closes an offered leg after that time).
+- Who reads a stored caption (`CallTranscript`, with `calls/captions@store`) was not traced.
+- Whether a guest who waits in the lobby longer than `calls@ring-seconds` can still be admitted was not traced (`expire#Calls` closes an offered leg after that time).
 - Whether `web-protection` matches `/call/*/joinGuest` against the token route's path as written was not read (the guard's matcher), and whether its `max-per-client` connection cap applies to `/callws` was not traced.
 - `docs/interfaces/Chat-Keys.md`, `WebRTC.md` and `SMS.md` were not compared with the code statement by statement.
 - TURN: the `turn-server-proto` crate was not read (whether it compares MESSAGE-INTEGRITY in constant time, or answers an unauthenticated request with a reply larger than the request). stun-proto's `LongTermServerAuth` keeps a nonce per client address and never removes one, so UDP requests from many forged sources grow it. The rest of `turn_probe.rs` and the TURN tests were not read.
@@ -576,7 +576,7 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - SIP: `registrar.rs`, `sdp.rs` (parser limits, the `c=` address), `srtp.rs` (the replay window), `dial.rs` (the engine's class check), `resolve.rs` (SRV targets as trunk addresses), `race.rs`, `dtmf.rs`, and the host's `leg.rs`, `ivr.rs`, `edge.rs`, `owners.rs`, `trunk_lock.rs` and `prompt.rs` were not read; what this file says of them was not rechecked beyond the constants. Whether a leg sends RTP before it is answered was not read.
 - SIP: whether rsipstack drops a datagram whose Via does not match its source before a digest failure is counted was not read.
 - SIP: `secret_parameter` (`crates/moqui-core/src/context/identity.rs`) does not list `pin`, `ha1` or `response`. `setPin` posts `pin`. Where request or service parameters are recorded was not traced.
-- SIP: `VoicemailServices.expire#VoicemailTrash` is `authenticate="anonymous-all"`, takes no input and deletes only trash past `voicemail_trash_days`. Which callers name it was not traced.
+- SIP: `VoicemailServices.expire#VoicemailTrash` is `authenticate="anonymous-all"`, takes no input and deletes only trash past `voicemail@trash-days`. Which callers name it was not traced.
 - SIP: `receive#DeviceCall` and `refer#Call` call `internalLoginUser` inside a request-pool job of the engine. Whether each job gets a fresh execution context was not traced.
 - SIP: the Opus, G.722 and WAV decoders take untrusted input (RTP from phones and trunks, uploaded greetings and prompts). Whether `opus-rs` is Rust or a C binding, and its limits, were not read.
 - SIP: `CallHandling.js` `evaluate` builds any user's call plan with no ownership check. No screen or script under `runtime/components/base`, `addon` or `dev`, or in `crates`, names its service by grep; other callers were not traced. The bodies of `CallHandling.js` (plans and routing), `CallQueues.js`, `CallTransfers.js` and `Ivr.js` beyond their guards were not read.

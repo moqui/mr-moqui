@@ -90,7 +90,7 @@ function liveSipNodes() {
 }
 
 /** Cascading media nodes (W7, Calls.js cascadeOn): a phone may ring on another node than the call's. */
-const cascade = () => ['true', 'y', 'yes', '1'].includes(property('rtc_cascade_enabled').toLowerCase())
+const cascade = () => ['true', 'y', 'yes', '1'].includes(property('media-server@cascade-enabled').toLowerCase())
 
 /** A live media node that takes calls (CallMediaNode), for a phone's room there to relay to the call's node. */
 function liveMediaNode(instanceId) {
@@ -396,7 +396,7 @@ function expireRegistrations() {
 /**
  * Rings the devices of these users that are registered with the call's node (Calls.js ring, beside their tabs): a CltSipDevice
  * leg offered for each, which the engine forks to the device's live bindings. The first answer wins (Calls.js deviceEvent).
- * Nothing while the registrar is off, or the call's node has no SIP engine. With rtc_cascade_enabled (W7) a phone
+ * Nothing while the registrar is off, or the call's node has no SIP engine. With media-server@cascade-enabled (W7) a phone
  * registered with another node rings there too: its leg's media is on that node (CallLeg.mediaNodeId), whose room is
  * linked to the call's node first.
  */
@@ -417,7 +417,7 @@ function ringDevices(p) {
   if (p.fromUserId) fromUser = one('moqui.security.UserAccount', { userId: p.fromUserId })?.username || null
   if (!fromUser) fromUser = rows(LEG, { callSessionId: session.callSessionId, legTypeEnumId: 'CltPstn' })[0]?.phoneNumber || 'moqui'
   // a phone rings as long as the call may ring: until the session's ring expiry (a voicemail box's rings, V2, can make it
-  // longer than call_ring_seconds); voicemail or an answer cancels it sooner
+  // longer than calls@ring-seconds); voicemail or an answer cancels it sooner
   const ringSeconds = Math.max(1, Math.ceil(((ms(session.ringExpireDate) || now) - now) / 1000))
   let ringCount = 0
   for (const userId of Array.from(p.userIdList || [])) {

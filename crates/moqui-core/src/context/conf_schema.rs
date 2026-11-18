@@ -355,6 +355,14 @@ pub static CATALOG: &[Unit] = &[
     single("client-sync", Class::Live),
     single("chat", Class::Live).secrets(&[("store-key-secret", Secret::Generated)]),
     single("load-runner", Class::Live),
+    single("media-server", LISTENER)
+        .children(&[single("turn-server", LISTENER).secrets(&[("auth-secret", Secret::Generated)])]),
+    single("calls", Class::Live).children(&[
+        single("queue", Class::Live),
+        single("recording", Class::Live),
+        single("captions", Class::Live),
+    ]),
+    single("voicemail", Class::Live),
     single("sip-server", LISTENER).children(&[single("limits", LISTENER), single("registrar", Class::Live)]),
     single("xmpp-server", LISTENER)
         .secrets(&[("scram-decoy-key", Secret::Generated)])

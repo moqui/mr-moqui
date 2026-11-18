@@ -186,7 +186,7 @@ fn a_front_node_has_the_front_set_only() {
     let mut properties = front_properties(&port_text, &new_key().unwrap());
     // the edge set's services, set up as if this were an edge node: none starts on a front
     for name in [
-        "rtc_media_port",
+        "moqui_conf__media_server__port",
         "moqui_conf__sip_server__port",
         "moqui_conf__smtp_server__listen_port",
     ] {

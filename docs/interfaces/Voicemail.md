@@ -20,8 +20,8 @@ and can listen by phone with a PIN. The design is [plans/archive/Comms-Framework
 An inbound call to a user's number (`PhoneNumber` routed `PnrUser`, from `receive#PhoneCall`) goes to their box:
 
 - **No answer.** The engine starts a timer when the call rings: the box's `rings` (6 seconds each, 1 to 10), else
-  `call_ring_seconds`. Unanswered by then, it goes. The call's ring expiry is set 30 seconds later, so `expire#Calls`
-  neither ends it nor stops the user's ringing first when the box rings longer than `call_ring_seconds`.
+  `calls@ring-seconds`. Unanswered by then, it goes. The call's ring expiry is set 30 seconds later, so `expire#Calls`
+  neither ends it nor stops the user's ringing first when the box rings longer than `calls@ring-seconds`.
 - **Busy.** The user is in another call (`UserStatus.inCall`) with call waiting off, or in do not disturb: the call is
   not rung at all and goes at once (V3: unless their busy rule sends it elsewhere).
 - **Declined.** The user declines it and nobody else is rung for it (`decline#Call`, or the reject key of one of their
@@ -53,7 +53,7 @@ rings of its own: the group rings by its seconds.
 3. A beep (1000 Hz, half a second).
 4. The caller's audio, decoded by the leg (G.711 or Opus to 48 kHz), each 20 ms written as Opus in Ogg to a spool
    file under `runtime/tmp/voicemail` (a missing packet is silence, so the length is the call's).
-5. It ends when the caller hangs up, presses `#`, or `voicemail_max_seconds` passes; then goodbye and the hang-up.
+5. It ends when the caller hangs up, presses `#`, or `voicemail@max-seconds` passes; then goodbye and the hang-up.
 6. `store#Voicemail` moves the file (`store#VoicemailFile`, which takes only that spool and writes only under
    `dbresource://moqui/call/voicemail/`) and makes the `Voicemail` in the inbox. A message shorter than a second is
    dropped. Audio that does not store keeps the message without it (`VmsAudioFailed`, with why), so its owner still
@@ -71,10 +71,10 @@ Then the owner is told, each part on its own:
 
 ## Transcription
 
-Off unless `voicemail_transcribe` is `true`: the deployment's recording and transcription policy decides whether
+Off unless `voicemail@transcribe` is `true`: the deployment's recording and transcription policy decides whether
 voicemail audio goes to the speech provider. When on, after the message commits, `transcribe#Voicemail` sends the
 Ogg file to `SpeechServices.transcribe#Audio` (the model bound to `transcribe`; the owner's quota; purpose
-`voicemail:<id>`; `voicemail_transcribe_language`) and writes its `CallTranscript`: `CtsPending`, then `CtsDone` with
+`voicemail:<id>`; `voicemail@transcribe-language`) and writes its `CallTranscript`: `CtsPending`, then `CtsDone` with
 the text or `CtsFailed` with why. A failure never touches the audio. The owner sees the state and retries a failed one
 (`retry#VoicemailTranscript`, Retry on the screen).
 
@@ -99,7 +99,7 @@ After the last one, a tone and goodbye. With no key, the menu plays three times 
 a number or a PIN starts it again. With no key for 10 seconds after the number or PIN prompt, the prompt plays again;
 the third time the call ends, so a silent caller does not hold a call.
 
-**The PIN** is `voicemail_pin_min_digits` (6 by default) to 12 digits, not one digit repeated or a run like 123456,
+**The PIN** is `voicemail@pin-min-digits` (6 by default) to 12 digits, not one digit repeated or a run like 123456,
 kept as an argon2id hash (`pinHash`, the parameters of `hashPassword`). A PIN of 4 or more digits set before the
 minimum was raised still works. Over the phone, `check#VoicemailPin` answers accepted or not, never an error, so its
 counts commit:
@@ -115,7 +115,7 @@ counts commit:
 ## Prompts
 
 Moqui ships no recorded speech. Each prompt is a tone pattern, then the deployment's recording when
-`voicemail_prompt_location` names a folder (any resource location, such as `dbresource://voicemail/prompts`,
+`voicemail@prompt-location` names a folder (any resource location, such as `dbresource://voicemail/prompts`,
 uploaded through the Resources screen, or `component://my-component/prompts`). The files are 16-bit PCM WAV, mono or
 stereo, 8 to 48 kHz, at most a minute. A file that is missing plays the tones only.
 
@@ -153,7 +153,7 @@ default greeting removes it.
 ## Retention
 
 Delete moves a message to the trash; deleting it there, Empty trash, or `expire_VoicemailTrash_daily` (messages in a
-trash longer than `voicemail_trash_days`, 30 by default; 0 keeps them) delete it for good: its audio file, its
+trash longer than `voicemail@trash-days`, 30 by default; 0 keeps them) delete it for good: its audio file, its
 transcripts and its row.
 
 ## While the local node is away
@@ -176,13 +176,13 @@ engine's next start queues what the spool still holds.
 
 | Property | Default | |
 | --- | --- | --- |
-| `voicemail_max_seconds` | `120` | The longest message, 10 to 600 |
-| `voicemail_prompt_location` | empty | The folder of the prompts' recorded speech ([Prompts](#prompts)) |
-| `voicemail_trash_days` | `30` | Days in the trash before a message goes; 0 keeps them |
-| `voicemail_transcribe` | `false` | Send each message to the speech provider for a transcript |
-| `voicemail_transcribe_language` | empty | An ISO 639-1 code; empty lets the model tell |
-| `voicemail_pin_min_digits` | `6` | The fewest digits a new PIN has, 4 to 12 |
-| `call_ring_seconds` | `45` | How long a call rings before voicemail when the box has no `rings` |
+| `voicemail@max-seconds` | `120` | The longest message, 10 to 600 |
+| `voicemail@prompt-location` | empty | The folder of the prompts' recorded speech ([Prompts](#prompts)) |
+| `voicemail@trash-days` | `30` | Days in the trash before a message goes; 0 keeps them |
+| `voicemail@transcribe` | `false` | Send each message to the speech provider for a transcript |
+| `voicemail@transcribe-language` | empty | An ISO 639-1 code; empty lets the model tell |
+| `voicemail@pin-min-digits` | `6` | The fewest digits a new PIN has, 4 to 12 |
+| `calls@ring-seconds` | `45` | How long a call rings before voicemail when the box has no `rings` |
 
 ## Not yet
 
@@ -205,7 +205,7 @@ engine's next start queues what the spool still holds.
   leaves a message, stored as Ogg Opus in their inbox (`a_busy…`); a caller on the access number keys the box number and
   PIN, hears a message and deletes it with `7` (`the_access_number…`).
 - `./moq test framework --spec SipDevice`: a user with registered phones and a box: the tab and both phones still ring
-  past `call_ring_seconds`, voicemail times them all out, and a decline on one phone stops the others and goes to
+  past `calls@ring-seconds`, voicemail times them all out, and a decline on one phone stops the others and goes to
   voicemail.
 - `cargo test -p moqui-host --test it edge_sip::`: a message routed by the local node and one left while it was away,
   both recorded on the edge node and stored on the local node ([SIP, Tests](SIP.md#tests)); `./moq test framework

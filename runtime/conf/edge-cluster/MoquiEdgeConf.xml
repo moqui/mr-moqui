@@ -27,7 +27,7 @@
     <!-- The same .env on every member, made by the first member's first start and copied to each other one before its
         first start: webapp-list/webapp[webroot]/session-config@cookie-key, cluster-member@tls-cert, cluster-member@tls-key, moqui_conf__entity_facade__crypt_pass and the link key,
         edge@link-key, so every member presents the one key a local node pinned at pairing (a member that generated a
-        key of its own is refused by every local node); also turn_auth_secret, mail-delivery/dkim@key and acme@account-key, and
+        key of its own is refused by every local node); also media-server/turn-server@auth-secret, mail-delivery/dkim@key and acme@account-key, and
         the public settings below that name the cluster as a whole.
         Each member's own in .env: cluster-member@base-url, https://(this member's private address):8444, which the other
         members reach (open 8444 between the members only); and edge@link-url, https://(this member's own public
@@ -76,13 +76,11 @@
 
     <!-- Calls (docs/interfaces/WebRTC.md, TURN.md, An edge cluster): each member is a media node with its own public
         address and TURN; a local node keeps a CallMediaNode row for each member it links to, and a call's legs are all
-        on one member (no cascading between members). Per member in .env: rtc_public_address and turn_public_host, its
-        own; open UDP 10000, UDP and TCP 3478 and the relay range on each. turn_auth_secret the same on each, so a
+        on one member (no cascading between members). Per member in .env: media-server@public-address and media-server/turn-server@public-host, its
+        own; open UDP 10000, UDP and TCP 3478 and the relay range on each. media-server/turn-server@auth-secret the same on each, so a
         pairing's TURN secret is the same on every member, and a revoke ends it on all of them. -->
-    <default-property name="rtc_media_port" value="10000"/>
-    <default-property name="rtc_media_host" value="0.0.0.0"/>
-    <default-property name="turn_port" value="3478"/>
-    <default-property name="call_recording_segment_mb" value="16"/>
+    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <calls><recording segment-mb="16"/></calls>
 
     <!-- SIP (docs/interfaces/SIP.md, An edge cluster): every member runs an engine and loads every pairing's trunks;
         one member registers them at a time (the holder of the lock row sipTrunks, shown on Edge Clients › Edge cluster,

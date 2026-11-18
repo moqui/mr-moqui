@@ -24,14 +24,14 @@ const SECRET: &str = "edge-turn-secret";
 
 fn turn_node(media: SocketAddr) -> (super::super::turn::TurnNode, String) {
     let property = |name: &str| match name {
-        "turn_port" => "0".to_string(),
-        "turn_host" => "127.0.0.1".to_string(),
-        "turn_auth_secret" => SECRET.to_string(),
+        "media-server/turn-server@port" => "0".to_string(),
+        "media-server/turn-server@host" => "127.0.0.1".to_string(),
+        "media-server/turn-server@auth-secret" => SECRET.to_string(),
         _ => String::new(),
     };
     let settings = super::super::turn::settings(&property, media, media, &[])
         .unwrap()
-        .expect("turn_port is set");
+        .expect("media-server/turn-server@port is set");
     let dir = std::env::temp_dir();
     let node = super::super::turn::start(&dir, &settings).unwrap();
     let udp = node.bound.udp.expect("the UDP listener");

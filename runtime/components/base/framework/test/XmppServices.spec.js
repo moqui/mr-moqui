@@ -349,7 +349,7 @@ feature("TURN for XMPP apps is off by default; on, an external user and a user p
         // the same parameters for each user: none (the credential is keyed to the signed-in user)
         const ask = (userId) => as(userId, "get#IceServers", {})
         const off = withConf("xmpp-server@turn-enabled", null, () => ask(A))
-        return withProperty("turn_external_urls", "turn:turn.example.org:3478?transport=udp", () =>
+        return withConf("media-server/turn-server@external-urls", "turn:turn.example.org:3478?transport=udp", () =>
             withConf("xmpp-server@turn-enabled", "true", () => withConf("xmpp-server@turn-per-hour", "2", () => {
                 const allowed = ask(A)
                 const external = ask(D)

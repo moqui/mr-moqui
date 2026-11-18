@@ -13,8 +13,8 @@
  */
 
 //! The call media node (plans/archive/Comms-Framework.md §6.2, §6.5): the UDP media socket and one driver thread that owns it
-//! and the [`moqui_rtc::Sfu`]. Off while `rtc_media_port` is empty, like the other listeners. The socket binds
-//! `rtc_media_host` (127.0.0.1 by default) and advertises `rtc_public_address` (the bound address by default; a node
+//! and the [`moqui_rtc::Sfu`]. Off while `media-server@port` is empty, like the other listeners. The socket binds
+//! `media-server@host` (127.0.0.1 by default) and advertises `media-server@public-address` (the bound address by default; a node
 //! behind 1:1 NAT names its public one) as its ICE candidate.
 //!
 //! The driver takes commands from a bounded channel: the signaling frames of the legs whose media is here (from
@@ -35,7 +35,7 @@
 //! (`moqui_core::edge::media::room_key`, from the link's stamp on each message), so the two databases' call ids never
 //! meet; the room's work (media events, captions, recordings) goes to the room's owner.
 //!
-//! Cascading media nodes (W7, `rtc_cascade_enabled`): a leg's media may be on another node than the call's (a leg node,
+//! Cascading media nodes (W7, `media-server@cascade-enabled`): a leg's media may be on another node than the call's (a leg node,
 //! the node of its signaling socket). The leg node's SFU links the room to the call's node (its origin) with a relay
 //! link on the two nodes' media sockets, negotiated by `rtc-signal` messages of kind `relay`; the room's notices and
 //! relayed frames go between them as `roomFrame` (`driver.rs`). A leg node that stops ends only its legs
@@ -253,25 +253,25 @@ impl Drop for RtcNode {
 pub(crate) struct MediaConfig {
     pub bind: SocketAddr,
     pub public: SocketAddr,
-    /// The ICE-TCP port (`rtc_media_tcp_port`), on the same addresses.
+    /// The ICE-TCP port (`media-server@tcp-port`), on the same addresses.
     pub tcp_port: Option<u16>,
 }
 
-/// The media settings from the properties, `None` while `rtc_media_port` is empty.
+/// The media settings from the properties, `None` while `media-server@port` is empty.
 pub(crate) fn media_config() -> Result<Option<MediaConfig>, String> {
-    media_config_from(&moqui_lib::env::get_prop_or_env)
+    media_config_from(&moqui_core::context::conf_env::setting_or_property)
 }
 
 fn media_config_from(property: &dyn Fn(&str) -> String) -> Result<Option<MediaConfig>, String> {
-    let port = property("rtc_media_port");
+    let port = property("media-server@port");
     let port = port.trim();
     if port.is_empty() {
         return Ok(None);
     }
     let port: u16 = port
         .parse()
-        .map_err(|_| format!("rtc_media_port {port} is not a port"))?;
-    let host = property("rtc_media_host");
+        .map_err(|_| format!("media-server@port {port} is not a port"))?;
+    let host = property("media-server@host");
     let host = if host.trim().is_empty() {
         "127.0.0.1".to_string()
     } else {
@@ -279,10 +279,10 @@ fn media_config_from(property: &dyn Fn(&str) -> String) -> Result<Option<MediaCo
     };
     let bind = (host.as_str(), port)
         .to_socket_addrs()
-        .map_err(|e| format!("rtc_media_host {host}: {e}"))?
+        .map_err(|e| format!("media-server@host {host}: {e}"))?
         .next()
-        .ok_or_else(|| format!("rtc_media_host {host} has no address"))?;
-    let public = property("rtc_public_address");
+        .ok_or_else(|| format!("media-server@host {host} has no address"))?;
+    let public = property("media-server@public-address");
     let public = public.trim();
     let public = if public.is_empty() {
         None
@@ -291,17 +291,17 @@ fn media_config_from(property: &dyn Fn(&str) -> String) -> Result<Option<MediaCo
     } else {
         let ip: std::net::IpAddr = public
             .parse()
-            .map_err(|_| format!("rtc_public_address {public} is not an address"))?;
+            .map_err(|_| format!("media-server@public-address {public} is not an address"))?;
         Some(SocketAddr::new(ip, port))
     };
-    let tcp = property("rtc_media_tcp_port");
+    let tcp = property("media-server@tcp-port");
     let tcp = tcp.trim();
     let tcp_port = if tcp.is_empty() {
         None
     } else {
         Some(
             tcp.parse::<u16>()
-                .map_err(|_| format!("rtc_media_tcp_port {tcp} is not a port"))?,
+                .map_err(|_| format!("media-server@tcp-port {tcp} is not a port"))?,
         )
     };
     Ok(Some(MediaConfig {
@@ -316,7 +316,7 @@ pub(crate) const LISTENER: &str = "Call media";
 pub(crate) const TURN_LISTENER: &str = "TURN";
 
 /// The ports the media node and its TURN server will bind, for the port check before the framework is built: the
-/// media port (UDP), ICE-TCP, and TURN's UDP and TCP, TLS and TLS-on-443 ports. None while `rtc_media_port` is empty
+/// media port (UDP), ICE-TCP, and TURN's UDP and TCP, TLS and TLS-on-443 ports. None while `media-server@port` is empty
 /// or a setting does not parse ([`start`] reports that).
 pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     use crate::port_check::{Proto, Target};
@@ -326,13 +326,19 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     let host = config.bind.ip();
     let mut targets = vec![Target::optional(
         LISTENER,
-        "rtc_media_port",
+        "media-server@port",
         host,
         config.bind.port(),
         Proto::Udp,
     )];
     if let Some(port) = config.tcp_port {
-        targets.push(Target::optional(LISTENER, "rtc_media_tcp_port", host, port, Proto::Tcp));
+        targets.push(Target::optional(
+            LISTENER,
+            "media-server@tcp-port",
+            host,
+            port,
+            Proto::Tcp,
+        ));
     }
     if let Ok(Some(turn)) = turn::settings(
         &moqui_core::context::conf_env::setting_or_property,
@@ -343,14 +349,14 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
         if let Some(port) = turn.port {
             targets.push(Target::optional(
                 TURN_LISTENER,
-                "turn_port",
+                "media-server/turn-server@port",
                 turn.bind,
                 port,
                 Proto::Udp,
             ));
             targets.push(Target::optional(
                 TURN_LISTENER,
-                "turn_port",
+                "media-server/turn-server@port",
                 turn.bind,
                 port,
                 Proto::Tcp,
@@ -359,20 +365,26 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
         if let Some(port) = turn.tls_port {
             targets.push(Target::optional(
                 TURN_LISTENER,
-                "turn_tls_port",
+                "media-server/turn-server@tls-port",
                 turn.bind,
                 port,
                 Proto::Tcp,
             ));
         }
         if let Some(ip) = turn.tls443 {
-            targets.push(Target::optional(TURN_LISTENER, "turn_tls443_host", ip, 443, Proto::Tcp));
+            targets.push(Target::optional(
+                TURN_LISTENER,
+                "media-server/turn-server@tls443-host",
+                ip,
+                443,
+                Proto::Tcp,
+            ));
         }
     }
     targets
 }
 
-/// Starts the media node when `rtc_media_port` is set, and records it and its TURN server in the startup report. A
+/// Starts the media node when `media-server@port` is set, and records it and its TURN server in the startup report. A
 /// node that cannot start is logged; the server starts without calls.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     use moqui_core::startup::{Section, State};
@@ -388,7 +400,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         Section::Listener,
         TURN_LISTENER,
         State::off(if node.is_some() {
-            "turn_port, turn_tls_port and turn_tls443_host are not set"
+            "media-server/turn-server@port, media-server/turn-server@tls-port and media-server/turn-server@tls443-host are not set"
         } else {
             "call media is not running"
         }),
@@ -399,14 +411,14 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     use moqui_core::startup::{listener, State};
     let config = match media_config() {
-        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "rtc_media_port", true) => {
+        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "media-server@port", true) => {
             listener(factory, LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
             listener(factory, TURN_LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
             return None;
         }
         Ok(Some(config)) => config,
         Ok(None) => {
-            listener(factory, LISTENER, State::off("rtc_media_port is not set"));
+            listener(factory, LISTENER, State::off("media-server@port is not set"));
             listener(factory, TURN_LISTENER, State::off("call media is not running"));
             return None;
         }
@@ -422,7 +434,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     }
     if config.public.ip().is_unspecified() {
         tracing::error!(
-            "Call media did not start: rtc_media_host {} binds every address; set rtc_public_address to the one browsers reach",
+            "Call media did not start: media-server@host {} binds every address; set media-server@public-address to the one browsers reach",
             config.bind
         );
         return None;
@@ -464,7 +476,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
                     Err(err) => tracing::error!("ICE-TCP did not start: {err}"),
                 }
             }
-            Err(err) => tracing::error!("ICE-TCP did not start, rtc_media_tcp_port {port} did not bind: {err}"),
+            Err(err) => tracing::error!("ICE-TCP did not start, media-server@tcp-port {port} did not bind: {err}"),
         }
     }
     // the embedded TURN server, when its ports are set: one that does not start is logged, and calls go on without it

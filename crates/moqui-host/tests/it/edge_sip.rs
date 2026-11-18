@@ -73,7 +73,7 @@ fn edge_node_process() {
         &[
             ("moqui_conf__instance__node_role", "front_edge"),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
-            ("rtc_media_port", "0"),
+            ("moqui_conf__media_server__port", "0"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42600-42699"),
             ("moqui_conf__sip_server__registrar__enabled", "true"),

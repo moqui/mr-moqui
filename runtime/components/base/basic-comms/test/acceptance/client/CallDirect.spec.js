@@ -5,7 +5,7 @@
 // joins again after a move goes to the media server. An encrypted call stays SFrame-encrypted on both paths. With Always
 // relay my calls (Settings, Calls) set by the callee, the next call goes through the media server from the start. Both pages are in one Chromium, so their direct path is the
 // machine's own: this checks the flow, not a network (the network profiles are CallNetwork's). Needs a binary with the rtc
-// feature (the suite's --serve server sets rtc_media_port).
+// feature (the suite's --serve server sets media-server@port).
 // Run: ./moq accept basic-comms --spec CallDirect
 const CALLEE = "calls.client.b"
 const THIRD = "calls.client.c"

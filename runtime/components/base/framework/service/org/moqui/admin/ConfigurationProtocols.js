@@ -271,7 +271,7 @@ const protocols = [
         feature: "rtc",
         entry: "Call media",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: set(facts, "rtc_media_port"), reason: "rtc_media_port is not set"}),
+        on: facts => ({on: set(facts, "media-server@port"), reason: "media-server@port is not set"}),
         checks: ["configuration"]
     },
     {
@@ -282,8 +282,8 @@ const protocols = [
         entry: "TURN",
         settingGroup: "Protocols: calls",
         on: facts => ({
-            on: set(facts, "turn_port") || set(facts, "turn_tls_port") || set(facts, "turn_external_urls"),
-            reason: "turn_port, turn_tls_port and turn_external_urls are not set"
+            on: set(facts, "media-server/turn-server@port") || set(facts, "media-server/turn-server@tls-port") || set(facts, "media-server/turn-server@external-urls"),
+            reason: "media-server/turn-server@port, media-server/turn-server@tls-port and media-server/turn-server@external-urls are not set"
         }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "turn.listener",
@@ -311,7 +311,7 @@ const protocols = [
         feature: "rtc",
         entry: "Call recording",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: yes(facts.prop("call_recording_enabled")), reason: "call_recording_enabled is not true"})
+        on: facts => ({on: yes(facts.prop("calls/recording@enabled")), reason: "calls/recording@enabled is not true"})
     },
     {
         protocolKey: "captions",
@@ -320,7 +320,7 @@ const protocols = [
         feature: "rtc",
         entry: "Call captions",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: yes(facts.prop("call_captions_enabled")), reason: "call_captions_enabled is not true"})
+        on: facts => ({on: yes(facts.prop("calls/captions@enabled")), reason: "calls/captions@enabled is not true"})
     },
     {
         protocolKey: "speechLocal",

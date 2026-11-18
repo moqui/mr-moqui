@@ -18,7 +18,7 @@
 //! `send#MediaControl` to the call's media node; [`control`] takes it. Each carries the `notice` for the legs (the rtc
 //! `recording` frame), which the driver sends to every leg of the room and again to each leg that joins later. `start`
 //! starts a recorder thread: a [`media::Consumer`] of the room with every kind (`Kinds::All`) in a queue of
-//! `call_recording_queue_frames`, feeding a [`moqui_rtc::record::Recorder`], which writes each track and, from an
+//! `calls/recording@queue-frames`, feeding a [`moqui_rtc::record::Recorder`], which writes each track and, from an
 //! `AudioRoom` ticked every 20 ms, the mixed audio. `pause`, `resume` and `stop` go to that thread. A leg that leaves
 //! (`TapEvent::Left`) ends its tracks.
 //!
@@ -35,7 +35,7 @@
 //! A failure ends the recording, never the call: a queue that overflowed (more than [`MAX_DROPPED`] frames dropped),
 //! a file that could not be written, a store that failed or fell behind. The segments already closed are stored, the
 //! partial files removed, and `note#RecorderEnd` marks the recording failed with the reason; the call's media goes on.
-//! Reaching `call_recording_max_mb`, or what was left of the owner's drive quota at the start (`maxBytes`), stops the
+//! Reaching `calls/recording@max-mb`, or what was left of the owner's drive quota at the start (`maxBytes`), stops the
 //! recording the same way, as a stop.
 
 use std::collections::HashMap;
@@ -105,13 +105,13 @@ impl Limits {
                 .unwrap_or(default)
         };
         Limits {
-            queue_frames: number("call_recording_queue_frames", 4_096).clamp(64, 1 << 20) as usize,
+            queue_frames: number("calls/recording@queue-frames", 4_096).clamp(64, 1 << 20) as usize,
             record: RecordConfig {
                 tracks: !mixed_only,
                 mix: true,
-                max_segment_bytes: number("call_recording_segment_mb", 64) * 1024 * 1024,
-                max_segment_ms: number("call_recording_segment_minutes", 30) * 60_000,
-                max_total_bytes: number("call_recording_max_mb", 2_048) * 1024 * 1024,
+                max_segment_bytes: number("calls/recording@segment-mb", 64) * 1024 * 1024,
+                max_segment_ms: number("calls/recording@segment-minutes", 30) * 60_000,
+                max_total_bytes: number("calls/recording@max-mb", 2_048) * 1024 * 1024,
             },
         }
     }
@@ -201,7 +201,10 @@ pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
     match op.as_str() {
         "start" => {
             let paused = body.get("paused").and_then(Json::as_bool).unwrap_or(false);
-            let mut limits = Limits::from_properties(&moqui_lib::env::get_prop_or_env, text("kind") == "mixed");
+            let mut limits = Limits::from_properties(
+                &moqui_core::context::conf_env::setting_or_property,
+                text("kind") == "mixed",
+            );
             if keeper != Keeper::Here {
                 limits = limits.for_edge();
             }

@@ -21,7 +21,7 @@ call out as their user.
 The engine needs:
 
 - the `sip` feature, in the Maximal, Enterprise and Debug packages;
-- call media on the same server (`rtc_media_port`, [WebRTC](WebRTC.md)).
+- call media on the same server (`media-server@port`, [WebRTC](WebRTC.md)).
 
 Every listener is off until its setting is set.
 
@@ -46,12 +46,12 @@ Every listener is off until its setting is set.
 | `sip-server/registrar@min-expires`, `sip-server/registrar@max-expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
 | `sip-server/registrar@default-expires` | `600` | The expiry of a binding whose phone asks none |
 | `sip-server/registrar@nat-expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
-| `call_forward_max_hops` | `5` | The most forwards one call takes ([Call handling](#call-handling)): a user's to another user or group, a group's fallback group; past it the forward is skipped. 1 to 10 |
-| `call_forward_ring_seconds` | `30` | How long a forward to an outside number rings before the call goes on (to voicemail, or the next step). 10 to 120 |
-| `call_queue_tick_seconds` | `5` | How often the engine asks about each call waiting in a queue ([Queues](#queues)): offers that rang out, the next offer, the wait limit, the caller's place. 1 to 30 |
-| `call_transfer_ring_seconds` | `30` | How long a blind transfer's target rings before the far end goes to the target's voicemail ([Transfer and merge](#transfer-and-merge)). 10 to 120 |
-| `call_hold_music_location` | empty | Hold music for calls on hold and in queues without their own (any resource location; WAV or Ogg Opus, looped). Empty: a tone pattern. Use only audio you may use |
-| `call_queue_prompt_location` | empty | A folder with `0.wav` to `9.wav`: a queue caller's place spoken as digits. Without all ten, the place is pips |
+| `calls@forward-max-hops` | `5` | The most forwards one call takes ([Call handling](#call-handling)): a user's to another user or group, a group's fallback group; past it the forward is skipped. 1 to 10 |
+| `calls@forward-ring-seconds` | `30` | How long a forward to an outside number rings before the call goes on (to voicemail, or the next step). 10 to 120 |
+| `calls/queue@tick-seconds` | `5` | How often the engine asks about each call waiting in a queue ([Queues](#queues)): offers that rang out, the next offer, the wait limit, the caller's place. 1 to 30 |
+| `calls@transfer-ring-seconds` | `30` | How long a blind transfer's target rings before the far end goes to the target's voicemail ([Transfer and merge](#transfer-and-merge)). 10 to 120 |
+| `calls@hold-music-location` | empty | Hold music for calls on hold and in queues without their own (any resource location; WAV or Ogg Opus, looped). Empty: a tone pattern. Use only audio you may use |
+| `calls/queue@prompt-location` | empty | A folder with `0.wav` to `9.wav`: a queue caller's place spoken as digits. Without all ten, the place is pips |
 
 Trunks, numbers, caller-ID grants, fraud limits and emergency locations are records, set up in System, Voice:
 `VoiceTrunk`, `PhoneNumber`, `PhoneNumberUser`, `VoicePolicy`, `VoiceUserSetting` and `EmergencyLocation`.
@@ -259,7 +259,7 @@ Each provider is unverified until its own live check.
 - **Hold** is a re-INVITE either way.
   - The provider's `sendonly` or `inactive` is answered `recvonly` or `inactive`, and Moqui stops sending.
   - `hold#PhoneCall` and `resume#PhoneCall` (m-call's Hold) send Moqui's own re-INVITE (`sendonly`); the phone hears hold
-    music (`call_hold_music_location`, else a tone pattern) and is not heard by the others (`CallLeg.heldDate`, V5).
+    music (`calls@hold-music-location`, else a tone pattern) and is not heard by the others (`CallLeg.heldDate`, V5).
 - **Cancel and forks.**
   - A call the user gives up while it rings is canceled (CANCEL, 487).
   - An answer that crosses the CANCEL is ACKed and ended with a BYE, and the call counts as canceled.
@@ -302,7 +302,7 @@ is open or closed):
    `mobileScheduleId` when set), for their box's rings; then the no-answer rule's target, else voicemail.
 
 A target is an outside number, another user (their rules apply), a ring group, voicemail, or a refusal. Forwards are
-bounded: a user or group already in the plan is skipped (a loop), as is a forward past `call_forward_max_hops`, a
+bounded: a user or group already in the plan is skipped (a loop), as is a forward past `calls@forward-max-hops`, a
 forward back to the caller's own number, and an emergency number (never a target). A forward to one of this deployment's
 numbers routes inside, to its user or group, never through the trunk.
 
@@ -370,10 +370,10 @@ the admin's recordings or tones.
 A call goes into a queue (`CallQueue`; System, Voice, Queues) from a number routed to it (`PnrQueue`), an IVR option or
 a transfer: a `CallQueueEntry`, waiting.
 
-- **What the caller hears.** Hold music looped (the queue's uploaded audio, else `call_hold_music_location`, else a soft
+- **What the caller hears.** Hold music looped (the queue's uploaded audio, else `calls@hold-music-location`, else a soft
   four-tone figure), and every `announceSeconds` their place: a chime, the queue's position prompt when uploaded, then
-  the place as digits when `call_queue_prompt_location` has `0.wav` to `9.wav`, else a pip a place (a long tone past 9).
-- **Offers.** Every `call_queue_tick_seconds` the engine asks `tick#QueueCall`. The waiting calls are offered oldest
+  the place as digits when `calls/queue@prompt-location` has `0.wav` to `9.wav`, else a pip a place (a long tone past 9).
+- **Offers.** Every `calls/queue@tick-seconds` the engine asks `tick#QueueCall`. The waiting calls are offered oldest
   first to the queue's free agents (`CallQueueAgent`: logged in, not paused, not in a call, out of wrap-up, not ringing
   for another queue call) by its strategy: the agent idle longest (since their last queue call ended, else since they
   logged in), round robin (after the last one offered) or all at once. An offer rings the agents' tabs and phones as
@@ -399,7 +399,7 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
 
 - **Blind transfer** (`transfer#Call` mode `blind`): the call's outside party (its answered phone leg) goes to a user, an
   outside number or a queue, and the user's leg leaves at once (`CerTransferred`). The far end hears ringback until the
-  target answers; a target that does not answer in `call_transfer_ring_seconds` (the engine's timer, then
+  target answers; a target that does not answer in `calls@transfer-ring-seconds` (the engine's timer, then
   `expire#CallTransfer`), or declines, missed it, and the far end goes to the target user's voicemail (a number's: the
   call ends). A transfer to a queue puts the far end in it at once. The timer of a transfer that is over (answered, or
   the call moved on to a queue or another transfer) does nothing.
@@ -425,7 +425,7 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
 - **Merge** (`merge#Calls`): another call the user is in moves into this one, which becomes a meeting; its people and
   legs move (a browser joins the new room with the same leg, a phone leg is moved by its engine: the control `move`),
   its own legs on hold come back, and the other call ends (`CerMerged`). Calls on two media nodes merge only with
-  cascading media nodes on (`rtc_cascade_enabled`, [WebRTC](WebRTC.md#cascading-media-nodes)): the other call's phones
+  cascading media nodes on (`media-server@cascade-enabled`, [WebRTC](WebRTC.md#cascading-media-nodes)): the other call's phones
   stay on their node, which relays to this call's node; without it they are refused (`differentNodes`). **Make it a meeting** (`convert#CallToMeeting`): the call goes on as long as
   anyone is in it.
 - **A desk phone's transfer.** A registered phone's blind transfer (REFER, RFC 3515) is checked before it is
@@ -436,7 +436,7 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
   is refused (501): transfer from the browser instead.
 - **New legs hear the notices.** A leg that joins by a transfer, an add or a merge gets the recording and captions
   notices as a late joiner does: a browser leg when it binds, a phone leg when it answers (`notify#PhoneLeg`, and a 1 to
-  acknowledge under `call_recording_ack_required`).
+  acknowledge under `calls/recording@ack-required`).
 
 **Screen pop.** When a phone call rings a user or an agent, their ring bar (and m-call) asks `get#CallContext`, which
 calls the apps' `call-context` providers as that user (`ShellServices.call#Providers`: each read in its own transaction,
@@ -462,9 +462,9 @@ notice that comes while another plays waits for it.
 
 | Notice | When | Tones | Audio |
 | --- | --- | --- | --- |
-| `recording` | A recording starts, or the phone answers while one goes ([Call recording](Call-Recording.md#the-notice-and-consent)) | 1400 Hz, 400 ms | `call_recording_prompt_audio` |
-| `recordingAck` | The same, under `call_recording_ack_required` | 1400 Hz twice | `call_recording_prompt_audio` |
-| `captions` | Captions turn on, or the phone answers while they are on ([WebRTC, Captions](WebRTC.md#captions)) | 900 then 1200 Hz | `call_captions_prompt_audio` |
+| `recording` | A recording starts, or the phone answers while one goes ([Call recording](Call-Recording.md#the-notice-and-consent)) | 1400 Hz, 400 ms | `calls/recording@prompt-audio` |
+| `recordingAck` | The same, under `calls/recording@ack-required` | 1400 Hz twice | `calls/recording@prompt-audio` |
+| `captions` | Captions turn on, or the phone answers while they are on ([WebRTC, Captions](WebRTC.md#captions)) | 900 then 1200 Hz | `calls/captions@prompt-audio` |
 
 - **Acknowledging** a recording is pressing 1. The phone's DTMF comes back through `note#PhoneLeg`, and
   `CallRecordingServices.ack#LegRecordingNotice` logs it with the method `dtmf`. Other keys, and a 1 when nothing asks
@@ -535,7 +535,7 @@ Outbound instance and reg-id, when it expires and was last refreshed, and the ph
 **Calls to a phone.** When a call rings a user (a call from a colleague or a browser, or a call to their number
 through a trunk), each of their phones registered with the call's node gets a leg (`CltSipDevice`, offered), and the
 engine forks an INVITE to every live binding of it, beside the ring in their tabs. With cascading media nodes on
-(`rtc_cascade_enabled`), a phone registered with another node rings there too: its leg's media is on that node
+(`media-server@cascade-enabled`), a phone registered with another node rings there too: its leg's media is on that node
 (`CallLeg.mediaNodeId`), whose room relays to the call's node.
 
 - The offer is Opus, G.722 (wideband desk phones; 16 kHz audio on its 8000 RTP clock) and G.711, with
@@ -748,13 +748,13 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   - A desk phone's attended transfer (REFER with Replaces) is refused; transfer attended from the browser.
   - A transfer moves a phone call's outside party; between users in the browser, add the person instead.
   - Merging calls on two media nodes waits for cascading SFUs (W7).
-  - Queue offers are made on the engine's tick (`call_queue_tick_seconds`), so a waiting call may ring a newly free agent
+  - Queue offers are made on the engine's tick (`calls/queue@tick-seconds`), so a waiting call may ring a newly free agent
     a few seconds late; there are no skills, priorities or callbacks.
   - Not checked with a live provider or a real desk phone's REFER (403 and 202 with its NOTIFY are checked against the
     tests' fake far end).
 - **Registrar.**
   - Provisioning files for the common desk phones come later; a phone is set up by hand.
-  - Without `rtc_cascade_enabled` a phone rings only for calls whose media is on the node it registered with.
+  - Without `media-server@cascade-enabled` a phone rings only for calls whose media is on the node it registered with.
   - An extension is a colleague's username; there are no numeric extensions yet.
   - Not checked with a real desk phone or app yet: the in-memory phones of the tests play their part.
 - **Offers.**

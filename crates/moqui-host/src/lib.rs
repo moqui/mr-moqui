@@ -321,7 +321,7 @@ impl Server {
         }
     }
 
-    /// The call media socket's address, when this build has the `rtc` feature and `rtc_media_port` is set.
+    /// The call media socket's address, when this build has the `rtc` feature and `media-server@port` is set.
     #[must_use]
     pub fn rtc_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "rtc")]
@@ -1923,7 +1923,7 @@ fn boot_server_factory(
     llm::screens::install(&factory);
     #[cfg(feature = "print")]
     ipp::install();
-    // call media (rtc_media_port), after the cluster so the node registers under its instance id
+    // call media (media-server@port), after the cluster so the node registers under its instance id
     let rtc = rtc::start(&factory);
     // phone calls (sip-server@port, sip-server@tls-port), beside the call media they join
     let sip = sip::start(&factory);

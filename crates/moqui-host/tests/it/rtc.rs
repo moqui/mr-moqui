@@ -299,7 +299,7 @@ fn a_direct_call_over_the_socket_and_the_media_port() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = crate::common::start_with_properties("rtc", None, &[("rtc_media_port", "0")]);
+    let gate = crate::common::start_with_properties("rtc", None, &[("moqui_conf__media_server__port", "0")]);
     let http = gate.server.address();
     assert!(gate.server.rtc_address().is_some(), "the media socket is up");
     let factory = std::sync::Arc::clone(gate.server.factory());
@@ -463,7 +463,7 @@ fn a_guest_by_link_joins_over_its_own_socket_and_revoking_the_link_ends_it() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = crate::common::start_with_properties("rtc-guest", None, &[("rtc_media_port", "0")]);
+    let gate = crate::common::start_with_properties("rtc-guest", None, &[("moqui_conf__media_server__port", "0")]);
     let http = gate.server.address();
     let factory = std::sync::Arc::clone(gate.server.factory());
 
@@ -879,11 +879,14 @@ fn ice_tcp_and_a_turn_relay_carry_a_call_when_udp_does_not() {
         "rtc-turn",
         None,
         &[
-            ("rtc_media_port", "0"),
-            ("rtc_media_tcp_port", "0"),
-            ("turn_port", "0"),
-            ("turn_auth_secret", "rtc-turn-test-secret"),
-            ("turn_relay_ports", "51000-51100"),
+            ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__media_server__tcp_port", "0"),
+            ("moqui_conf__media_server__turn_server__port", "0"),
+            (
+                "moqui_conf__media_server__turn_server__auth_secret",
+                "rtc-turn-test-secret",
+            ),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51000-51100"),
         ],
     );
     let http = gate.server.address();
@@ -1047,7 +1050,10 @@ fn a_recorded_call_stores_each_leg_s_track_and_the_mixed_audio_in_segments() {
     let gate = crate::common::start_with_properties(
         "rtc-record",
         None,
-        &[("rtc_media_port", "0"), ("call_recording_enabled", "true")],
+        &[
+            ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__calls__recording__enabled", "true"),
+        ],
     );
     let http = gate.server.address();
     let factory = std::sync::Arc::clone(gate.server.factory());

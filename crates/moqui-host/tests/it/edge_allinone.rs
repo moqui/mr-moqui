@@ -1370,19 +1370,22 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
         "aio-call-server",
         CONF,
         &[
-            ("rtc_media_port", "0"),
-            ("turn_port", "0"),
-            ("turn_relay_ports", "51400-51500"),
-            ("turn_auth_secret", "all-in-one-turn-secret"),
-            ("call_recording_enabled", "true"),
+            ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__media_server__turn_server__port", "0"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51400-51500"),
+            (
+                "moqui_conf__media_server__turn_server__auth_secret",
+                "all-in-one-turn-secret",
+            ),
+            ("moqui_conf__calls__recording__enabled", "true"),
         ],
     );
     let local = crate::common::start_with_properties(
         "aio-call-local",
         None,
         &[
-            ("turn_auth_secret", "desk-turn-secret"),
-            ("call_recording_enabled", "true"),
+            ("moqui_conf__media_server__turn_server__auth_secret", "desk-turn-secret"),
+            ("moqui_conf__calls__recording__enabled", "true"),
         ],
     );
     let server = starting.ready();
@@ -1726,7 +1729,7 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
         "aio-sip-server",
         CONF,
         &[
-            ("rtc_media_port", "0"),
+            ("moqui_conf__media_server__port", "0"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42700-42799"),
             ("moqui_conf__sip_server__registrar__enabled", "true"),

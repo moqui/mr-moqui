@@ -87,7 +87,7 @@ ip -n "$CLI" route add default via 10.77.0.1
 
 echo "call-network: the server in $SRV (log $OUT/server.log)"
 exec 3<>"$STDIN"
-ip netns exec "$SRV" sudo -u "$USER_NAME" -H env rtc_media_host=10.77.0.1 rtc_media_port=10000 rtc_media_tcp_port=10001 \
+ip netns exec "$SRV" sudo -u "$USER_NAME" -H env moqui_conf__media_server__host=10.77.0.1 moqui_conf__media_server__port=10000 moqui_conf__media_server__tcp_port=10001 \
     "$BIN" test basic-comms --acceptance --spec CallClientFixtures,CryptoClientFixtures --db snapshot \
     --serve 10.77.0.1:8080 --ready-file "$READY" < "$STDIN" > "$OUT/server.log" 2>&1 &
 PIDS+=($!)

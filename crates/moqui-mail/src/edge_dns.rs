@@ -53,7 +53,7 @@ pub struct Expected {
     /// the edge node does not know).
     pub mta: String,
     pub xmpp: XmppExpected,
-    /// The host names of the edge node's TURN URLs (`turn_public_host` there), each checked for A and AAAA as the
+    /// The host names of the edge node's TURN URLs (`media-server/turn-server@public-host` there), each checked for A and AAAA as the
     /// host names are, against [`Expected::addresses`] and the address of its media node ([`Expected::media_ip`]).
     pub turn_hosts: Vec<String>,
     /// The address of the edge node's media node, which its TURN host defaults to.

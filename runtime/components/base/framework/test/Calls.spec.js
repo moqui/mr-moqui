@@ -1,7 +1,7 @@
 // Calls (org.moqui.call.CallServices and Calls.js; framework/entity/CallEntities.xml; plans/archive/Comms-Framework.md §5.4,
 // §6.3, W1): starting, ringing, the first answer winning, repeated requests, binding a socket with a fenced generation,
 // presence across two calls, leaving and ending, declining, ringing out, a lost connection and a lost media node, and a
-// room's group call. With cascading media nodes (W7, rtc_cascade_enabled) a leg's media goes to its signaling node, an
+// room's group call. With cascading media nodes (W7, media-server@cascade-enabled) a leg's media goes to its signaling node, an
 // leg node, unless that is no live media node or its relay was refused; losing the leg node ends only its legs. Every refusal has
 // its negative user with the same parameters as the positive one.
 // Run: ./moq test framework --spec Calls
@@ -616,7 +616,7 @@ feature("a link that lets guests straight in, guests who leave, and a meeting no
 })
 
 // SEC-COM-05: 50 guests who joined and left kept a link's meeting full; now a place is an open guest leg, and a link
-// takes call_guest_joins_per_minute (20) joins a minute whatever the client
+// takes calls@guest-joins-per-minute (20) joins a minute whatever the client
 feature("a link's places are held by guests with an open leg, and a link takes only so many joins a minute", {
     when() {
         const open = as(A, "create#CallLink", {name: "Busy door", policy: "link"})
@@ -687,9 +687,9 @@ feature("with cascading media nodes a leg's media is on its signaling node, and 
         const bLeg = as(B, "answer#Call", {callSessionId: id}).callLegId
         const cLeg = as(C, "answer#Call", {callSessionId: id}).callLegId
         // off: every leg's media is on the call's node, whatever its socket's
-        setProperty("rtc_cascade_enabled", "false")
+        setConf("media-server@cascade-enabled", "false")
         const off = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
-        setProperty("rtc_cascade_enabled", "true")
+        setConf("media-server@cascade-enabled", "true")
         const onLegNode = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
         const stranger = as(D, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
         const noMedia = as(A, "bind#Connection", {callSessionId: id, callLegId: started.callLegId, signalingNodeId: "calls-spec-nowhere"})
@@ -700,7 +700,7 @@ feature("with cascading media nodes a leg's media is on its signaling node, and 
         // the leg node is lost: C's leg leaves with that reason; the call and the others go on
         age("moqui.call.CallMediaNode", {instanceId: LEG_NODE}, "heartbeatDate", 120000)
         const expired = expire()
-        setProperty("rtc_cascade_enabled", "false")
+        setConf("media-server@cascade-enabled", "false")
         const leg = (legId) => sys(() => ec.entity.find(LEG).condition("callLegId", legId).one())
         const out = {off, onLegNode, stranger, noMedia, pinned, cOnLegNode, expired, row: session(id), b: leg(bLeg), c: leg(cLeg)}
         as(A, "end#Call", {callSessionId: id})

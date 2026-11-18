@@ -222,8 +222,8 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `screenTest(baseScreenPath)` | `ec.screen.makeTest()`, with the base screen path when given ([`screenTest`](#screentest)) |
 | `parallel(n, fn, args, opts)` | Run `fn(threadNum, args)` on `n` threads, each with its own `ec` ([`parallel`](#parallel)) |
 | `uploadedFile(fileName, text, contentType = "text/plain")` | The `FileItem` that services taking an upload expect, holding the text |
-| `setProperty(name, value)` | A process property, as a conf property would set it (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. It holds for the rest of the spec, for a policy switch its features share such as `call_recording_enabled` |
-| `withProperty(name, value, fn)` | The property only while `fn` runs, then the value it had before; returns what `fn` returned. For one feature, such as `call_captions_enabled` off |
+| `setProperty(name, value)` | A process property, as a conf property would set it (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. It holds for the rest of the spec, for a policy switch its features share such as `calls/recording@enabled` |
+| `withProperty(name, value, fn)` | The property only while `fn` runs, then the value it had before; returns what `fn` returned. For one feature, such as `calls/captions@enabled` off |
 | `setConf(selector, value)` | A conf attribute by its selector (`ssh-server@public-host`), set over the conf files as its environment name would set it ([Conf-Paths](../../plans/Conf-Paths.md#1-paths-and-names)): `ec.factory.getConfValue` and the server's readers of the conf see it; `null` puts back what the files and the environment give. It holds for the rest of the spec |
 | `withConf(selector, value, fn)` | The attribute only while `fn` runs, then as it was before; returns what `fn` returned |
 | `log` | `ec.logger`: `log.info(...)`, `log.warn(...)` |

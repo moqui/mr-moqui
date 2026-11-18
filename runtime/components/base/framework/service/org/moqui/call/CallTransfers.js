@@ -5,7 +5,7 @@
 //
 // - **Blind transfer** (transfer#Call mode blind): the call's outside party (its answered phone leg) goes to a user, an
 //   outside number or a queue, and the transferring leg leaves at once. The far end hears ringing (the engine's
-//   ringback) until the target answers; a target that does not answer in call_transfer_ring_seconds, or declines, sends
+//   ringback) until the target answers; a target that does not answer in calls@transfer-ring-seconds, or declines, sends
 //   the call to the target user's voicemail (a number's: the call ends).
 // - **Attended transfer** (mode attended): the far end is put on hold (hold music, its audio kept from the others) and
 //   the target rings in the same call; the user talks to them, then completes (complete#CallTransfer: the far end comes
@@ -46,7 +46,7 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const blank = (value) => value == null || String(value).trim() === ''
 const clamp = (value, low, high) => Math.min(Math.max(value, low), high)
-const ringSeconds = () => clamp(Math.round(Number(System.getProperty('call_transfer_ring_seconds') || 30)) || 30, 10, 120)
+const ringSeconds = () => clamp(Math.round(Number(ec.factory.getConfValue('calls@transfer-ring-seconds') || 30)) || 30, 10, 120)
 
 function calls(op, parameters) {
   return ec.resource.script(CALLS).execute(op, parameters) || {}
@@ -75,7 +75,7 @@ function userName(userId) {
 }
 
 /** Cascading media nodes (W7, Calls.js cascadeOn). */
-const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(System.getProperty('rtc_cascade_enabled') || '').trim().toLowerCase())
+const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(ec.factory.getConfValue('media-server@cascade-enabled') || '').trim().toLowerCase())
 
 /** Tells the SIP engine of the leg's node (its own, W7, else the call's) about one of its legs, after the commit; logged when it cannot. */
 function engine(session, message) {
@@ -361,7 +361,7 @@ function blindFallback(row) {
 }
 
 /**
- * Internal (the SIP engine, call_transfer_ring_seconds after a blind transfer): a target that did not answer missed it;
+ * Internal (the SIP engine, calls@transfer-ring-seconds after a blind transfer): a target that did not answer missed it;
  * answers where the far end goes (the target user's voicemail, or the end), or mode done when the transfer is over.
  */
 function expire(p) {
@@ -479,7 +479,7 @@ function addParticipant(p) {
 /**
  * merge#Calls: the other call (otherCallSessionId), which the user is in too, moves into this one, which becomes a
  * meeting; the legs on hold in it come back. Calls on two media nodes merge with cascading media nodes on
- * (rtc_cascade_enabled, W7): the other call's phones stay on their node, which relays to this call's node, and its
+ * (media-server@cascade-enabled, W7): the other call's phones stay on their node, which relays to this call's node, and its
  * browsers bind again (on their own node). Without it, both must be on one media node.
  */
 function merge(p) {
@@ -494,7 +494,7 @@ function merge(p) {
     if (openTransfer(s.callSessionId)) return refuse('transferring', 'A call being transferred is not merged')
   }
   if (session.mediaNodeId !== other.session.mediaNodeId && !cascadeOn()) {
-    return refuse('differentNodes', 'These calls are on different media servers, so they cannot be merged (turn on rtc_cascade_enabled)')
+    return refuse('differentNodes', 'These calls are on different media servers, so they cannot be merged (turn on media-server@cascade-enabled)')
   }
   const out = calls('mergeInto', { callSessionId: session.callSessionId, fromCallSessionId: other.session.callSessionId })
   if (out.reasonCode) return refuse(out.reasonCode, 'The call has ended')

@@ -99,12 +99,12 @@ fn a_port_of_this_nodes_own_listeners_is_no_rows() {
     // the usual ports of services whose properties are unset, and the mail relay beside an edge node
     assert_eq!(reserved(25).as_deref(), Some("smtp-server@listen-port"));
     assert_eq!(reserved(5060).as_deref(), Some("sip-server@port"));
-    assert_eq!(reserved(3478).as_deref(), Some("turn_port"));
+    assert_eq!(reserved(3478).as_deref(), Some("media-server/turn-server@port"));
     assert_eq!(reserved(10025).as_deref(), Some("mail-delivery@relay-port"));
     assert_eq!(reserved(587).as_deref(), Some("mail submission"));
     // the media ranges
     assert!(reserved(20500).is_some_and(|what| what.starts_with("sip-server@rtp-ports")));
-    assert!(reserved(50000).is_some_and(|what| what.starts_with("turn_relay_ports")));
+    assert!(reserved(50000).is_some_and(|what| what.starts_with("media-server/turn-server@relay-ports")));
     assert_eq!(reserved(47022), None);
 }
 

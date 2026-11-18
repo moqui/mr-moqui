@@ -274,48 +274,48 @@ along with this software (see the LICENSE.md file). If not, see
             operatorNote="Set moqui_conf__xmpp_server__tls_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaPort" title="Call media port" settingGroup="Protocols: calls"
             description="The UDP port of call media; empty keeps calls' media off" valueTypeEnumId="IsvText"
-            propertyName="rtc_media_port" restartRequired="Y" sequenceNum="3170"
-            operatorNote="Set rtc_media_port in the environment or the runtime conf and restart"/>
+            propertyName="media-server@port" restartRequired="Y" sequenceNum="3170"
+            operatorNote="Set moqui_conf__media_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaHost" title="Call media address" settingGroup="Protocols: calls"
             description="The address call media binds" valueTypeEnumId="IsvText"
-            propertyName="rtc_media_host" restartRequired="Y" sequenceNum="3180"
-            operatorNote="Set rtc_media_host in the environment or the runtime conf and restart"/>
+            propertyName="media-server@host" restartRequired="Y" sequenceNum="3180"
+            operatorNote="Set moqui_conf__media_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.publicAddress" title="Call media public address" settingGroup="Protocols: calls"
             description="The address browsers are told, for a server behind address translation" valueTypeEnumId="IsvText"
-            propertyName="rtc_public_address" restartRequired="Y" sequenceNum="3190"
-            operatorNote="Set rtc_public_address in the environment or the runtime conf and restart"/>
+            propertyName="media-server@public-address" restartRequired="Y" sequenceNum="3190"
+            operatorNote="Set moqui_conf__media_server__public_address in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaTcpPort" title="Call media TCP port" settingGroup="Protocols: calls"
             description="A TCP port for browsers that cannot reach the UDP one" valueTypeEnumId="IsvText"
-            propertyName="rtc_media_tcp_port" restartRequired="Y" sequenceNum="3200"
-            operatorNote="Set rtc_media_tcp_port in the environment or the runtime conf and restart"/>
+            propertyName="media-server@tcp-port" restartRequired="Y" sequenceNum="3200"
+            operatorNote="Set moqui_conf__media_server__tcp_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.turn.port" title="TURN port" settingGroup="Protocols: calls"
             description="The relay's UDP and TCP port; empty keeps it off" valueTypeEnumId="IsvText"
-            propertyName="turn_port" restartRequired="Y" sequenceNum="3210"
-            operatorNote="Set turn_port in the environment or the runtime conf and restart"/>
+            propertyName="media-server/turn-server@port" restartRequired="Y" sequenceNum="3210"
+            operatorNote="Set moqui_conf__media_server__turn_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.turn.tlsPort" title="TURN TLS port" settingGroup="Protocols: calls"
             description="The relay's TLS port" valueTypeEnumId="IsvText"
-            propertyName="turn_tls_port" restartRequired="Y" sequenceNum="3220"
-            operatorNote="Set turn_tls_port in the environment or the runtime conf and restart"/>
+            propertyName="media-server/turn-server@tls-port" restartRequired="Y" sequenceNum="3220"
+            operatorNote="Set moqui_conf__media_server__turn_server__tls_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.turn.publicHost" title="TURN public host" settingGroup="Protocols: calls"
             description="The name or address browsers are given for the relay" valueTypeEnumId="IsvText"
-            propertyName="turn_public_host" restartRequired="Y" sequenceNum="3230"
-            operatorNote="Set turn_public_host in the environment or the runtime conf and restart"/>
+            propertyName="media-server/turn-server@public-host" restartRequired="Y" sequenceNum="3230"
+            operatorNote="Set moqui_conf__media_server__turn_server__public_host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.turn.externalUrls" title="External TURN servers" settingGroup="Protocols: calls"
             description="TURN servers run elsewhere that browsers are also given" valueTypeEnumId="IsvText"
-            propertyName="turn_external_urls" restartRequired="Y" sequenceNum="3240"
-            operatorNote="Set turn_external_urls in the environment or the runtime conf and restart"/>
+            propertyName="media-server/turn-server@external-urls" restartRequired="Y" sequenceNum="3240"
+            operatorNote="Set moqui_conf__media_server__turn_server__external_urls in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.calls.recordingEnabled" title="Call recording" settingGroup="Protocols: calls"
             description="Whether a call's host may record it" valueTypeEnumId="IsvText"
-            propertyName="call_recording_enabled" restartRequired="Y" sequenceNum="3250"
-            operatorNote="Set call_recording_enabled in the environment or the runtime conf and restart"/>
+            propertyName="calls/recording@enabled" restartRequired="Y" sequenceNum="3250"
+            operatorNote="Set moqui_conf__calls__recording__enabled in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.calls.recordingRetentionDays" title="Days a recording is kept" settingGroup="Protocols: calls"
             description="Recordings are deleted this long after they start; 0 keeps them" valueTypeEnumId="IsvText"
-            propertyName="call_recording_retention_days" restartRequired="Y" sequenceNum="3260"
-            operatorNote="Set call_recording_retention_days in the environment or the runtime conf and restart"/>
+            propertyName="calls/recording@retention-days" restartRequired="Y" sequenceNum="3260"
+            operatorNote="Set moqui_conf__calls__recording__retention_days in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.calls.captionsEnabled" title="Live captions" settingGroup="Protocols: calls"
             description="Whether someone in a call may turn captions on" valueTypeEnumId="IsvText"
-            propertyName="call_captions_enabled" restartRequired="Y" sequenceNum="3270"
-            operatorNote="Set call_captions_enabled in the environment or the runtime conf and restart"/>
+            propertyName="calls/captions@enabled" restartRequired="Y" sequenceNum="3270"
+            operatorNote="Set moqui_conf__calls__captions__enabled in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.port" title="SIP port" settingGroup="Protocols: phone"
             description="The UDP and TCP port for trunks and phones; empty with the TLS port keeps phone calls off" valueTypeEnumId="IsvText"
             propertyName="sip-server@port" restartRequired="Y" sequenceNum="3280"

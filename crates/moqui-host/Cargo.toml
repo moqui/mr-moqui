@@ -87,7 +87,7 @@ xlsx = ["moqui-core/xlsx", "moqui-report/xlsx", "dep:moqui-calc"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]
 # Calls (crates/moqui-rtc, plans/archive/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
-# on /notws (src/notws/rtc.rs). The media socket starts only when rtc_media_port is set. In Maximal, Enterprise and
+# on /notws (src/notws/rtc.rs). The media socket starts only when media-server@port is set. In Maximal, Enterprise and
 # Debug; not Lite.
 rtc = ["axum", "dep:moqui-rtc", "dep:turn-client-proto"]
 # Local speech to text for call captions (Whisper on candle, plans/archive/Comms-Framework.md §6.4): not built yet, off in every
