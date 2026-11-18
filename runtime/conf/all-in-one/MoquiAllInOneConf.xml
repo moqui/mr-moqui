@@ -11,7 +11,7 @@
     recipients and bridges, its calls and numbers) go over the link. A name, address, number or bridge both sides claim
     is refused, with an error naming it, so the paired node cannot take one of the server's.
     Unlike conf/edge/MoquiEdgeConf.xml the runtime is a full one (the server's own components), and mr-pass keeps its
-    local authority: pass_backend_url is not edge: here, so the server's own PASS sites stay its own.
+    local authority: pass@backend-url is not edge: here, so the server's own PASS sites stay its own.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link. Per-host
     settings (names, addresses, ports) go in .env. The HTTPS listener needs a WebPKI certificate in runtime/cert, which
     the local node checks when it pairs; the links use edge@link-key, generated into .env at the first start (a changed

@@ -28,7 +28,7 @@
         pairing: the members forward the names. -->
 
     <!-- The PASS authority (mr-pass's docs/Deployment.md, Full stack): the wizard's PASS step writes edge/node@pass-client
-        (edge), pass_client_edge_sites and pass_client_edge_callback, the edge cluster as a PASS client with no secret,
+        (edge), pass-authority/client[edge]@sites and pass-authority/client[edge]@callback, the edge cluster as a PASS client with no secret,
         which the link authenticates. Every edge member calls the authority down its own link, balanced over the live
         members, sticky by the sign-in in progress. Create each site and bind its hosts and mounts here
         (mantle.public.SiteServices.create#Site, store#Mounts), the same hosts as the edge members' public-site

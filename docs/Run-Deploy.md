@@ -1186,7 +1186,7 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
 - **XMPP.** The server's XMPP server keeps `xmpp-server@port` and `xmpp-server@tls-port`. Give the local node's domain tunnel ports
   of their own, such as `moqui_conf__edge__xmpp_port=5242` and `moqui_conf__edge__xmpp_tls_port=5243`, named in that domain's SRV records. A
   tunnel port the same as the server's own is off, with an error logged.
-- **PASS.** The server's mr-pass keeps its local authority (`pass_backend_url` is not `edge:`). PASS sites for the
+- **PASS.** The server's mr-pass keeps its local authority (`pass@backend-url` is not `edge:`). PASS sites for the
   local node are not served here yet.
 - **Limits.** One paired node. Its load shares the server's CPU, bandwidth and media ports. The queue is in the
   server's database, so the server's backups cover it. Unpairing leaves the server's own services as they were.
@@ -1506,7 +1506,7 @@ cluster as in [An edge cluster](#an-edge-cluster).
   member's by the client its link names. A ban goes up only the links of the node that started it and is not told
   on: a local member's ban reaches its edge members (and the front only by its own front pairing, with `edge`
   members); an edge member's reaches the front, which refuses that client for the edge cluster's names.
-- **PASS.** The sites are on the edge members (`pass_backend_url=edge:`), each host the root of mr-pass's `Pass.xml`;
+- **PASS.** The sites are on the edge members (`moqui_conf__pass__backend_url=edge:`), each host the root of mr-pass's `Pass.xml`;
   every edge member calls the local cluster as the authority down its own link (mr-pass's `docs/Deployment.md`, Full
   stack).
 
@@ -1579,7 +1579,7 @@ values are in the conf's comments.
     the conf setting that says `runtime/git` is on storage every member mounts, and refused without it; else use
     `db` repositories ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
   - Files on disk are each member's own: the SFTP root (`runtime://sftp`), and any setting that names a directory,
-    such as `pass_media_root`. Share the directory between the members.
+    such as `pass@media-root`. Share the directory between the members.
   - The LLM gateway's requests-per-minute and the web protection's limits are counted on each member separately. A
     ban is shared: one a member starts is told to the others on the cluster topic `web-ban` and holds there too, and
     a member takes it only from a live member of its cluster. System › Security › Web Protection shows one member's
@@ -1614,13 +1614,13 @@ and the commands are in [runtime/conf/pass](../runtime/conf/pass/README.md), and
 setting does. Change their example names (the host, site id, client id and callback) to yours.
 
 In local mode, mr-pass runs in the same runtime as Mantle and makes in-process calls; that is the default when
-`pass_backend_url` is not set. Provisioning, mail, media, workers and imports are in mr-pass
+`pass@backend-url` is not set. Provisioning, mail, media, workers and imports are in mr-pass
 [docs/Deployment.md](../runtime/components/addon/mr-pass/docs/Deployment.md). This section covers the remote layout.
 
 The remote calls go over REST, which every package has and which is Lite's default, or over gRPC where the package has
 it (Maximal, Enterprise): direct to the authority's gRPC listener, or from an
-[edge node](#a-local-server-with-an-edge-node) to its local node over the edge link (`pass_backend_url=edge:`).
-`pass_backend_transport` chooses (`rest`, `grpc`, or empty for automatic); the settings are in Deployment.md. With an
+[edge node](#a-local-server-with-an-edge-node) to its local node over the edge link (`moqui_conf__pass__backend_url=edge:`).
+`pass@backend-transport` chooses (`rest`, `grpc`, or empty for automatic); the settings are in Deployment.md. With an
 edge node as the PASS server, the local node's Edge Node wizard writes the client properties for it.
 
 ### The authority
@@ -1629,8 +1629,7 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
    [cluster](#cluster). Use Maximal or Enterprise: forum thumbnails need `image`, and sign-in providers need `sso`.
    The site readiness check reports what is missing. The PASS jobs are in Mantle's data (`ForumSetupData.xml`) and run
    here. Add mr-pass only if this server also serves sites itself.
-2. Register each PASS deployment: in the conf its sites and exact SSO callback (`pass_client_<id>_sites`,
-   `pass_client_<id>_callback`), in `.env` its secret (`pass_client_<id>_secret`). The conf turns on gRPC for PASS
+2. Register each PASS deployment: in the conf its sites and exact SSO callback (`pass-authority/client[<id>]@sites`, `@callback`), in `.env` its secret (`pass-authority/client[<id>]@secret`). The conf turns on gRPC for PASS
    clients (`pass-authority@grpc-enabled`); the HTTPS listener takes the same calls over [HTTP/2](#http2), so no other
    port needs to be open.
 3. Create the sites and bind their hosts and mounts with `mantle.public.SiteServices.create#Site` and `store#Mounts`
@@ -1651,7 +1650,7 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
 2. Build it with any server package. PASS calls the authority for images and sign-in, so Lite, the smallest, is
    enough: `./moq archive --lite --no-data --conf conf/pass/MoquiPassConf.xml`.
 3. Set the authority's origin, the client id and the public site's host and mounts in the conf; they must match the
-   ones bound at the authority. Put `pass_client_secret` in `.env`.
+   ones bound at the authority. Put `pass@client-secret` in `.env`.
 4. Embedded Postgres is enough. The PASS server stores framework tables and sessions, and the sessions hold each
    visitor's delegation from the authority.
 5. Put the certificate for the public host in `cert/`. Behind a proxy, set `webapp-list/webapp[webroot]@trusted-proxies` and
@@ -1671,7 +1670,7 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
   share a Postgres as their own [cluster](#cluster). That cluster is separate from the authority's.
 - **The authority as a cluster**: delegations, SSO handoffs and rate-limit counts are rows, so any member can check
   them. The second factor and the SSO front channel use the authority's web session, so set `flush="guarantee"` or keep
-  a client on one member. `pass_media_root` and `pass_import_dir` must name storage that every member can read.
+  a client on one member. `pass@media-root` and `pass@import-dir` must name storage that every member can read.
 - **Latency**: each public page makes at least two calls to the authority, and nothing is cached. Keep the PASS servers
   close to it.
 

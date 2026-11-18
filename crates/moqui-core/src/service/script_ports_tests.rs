@@ -191,10 +191,10 @@ fn the_rest_client_sends_what_its_builder_says_and_reads_the_reply() {
     facade.set_sim_active(false);
 }
 
-/// SEC-SCR-03: a credential at another server (mr-pass's `pass_client_secret`) is not readable by a script; the script
+/// SEC-SCR-03: a credential at another server (mr-pass's `pass@client-secret`) is not readable by a script; the script
 /// names it to `addPropertyHeader`, and the host sends it only to a URL under the base URL property, with no redirect
 /// followed: refused for a path or host that only starts with the base's, another host, a user part naming another
-/// host, and a property that is not set, before anything is sent.
+/// host, a setting that is not set, and a key of this server's own, before anything is sent.
 #[test]
 fn a_property_header_goes_only_under_its_base_and_the_script_never_reads_it() {
     let (_facade, context) = setup();
@@ -209,21 +209,22 @@ fn a_property_header_goes_only_under_its_base_and_the_script_never_reads_it() {
             (200, "OK", r#"{"ok":true}"#),
         ],
     );
-    moqui_lib::env::set_property("pass_client_secret", "front-secret-for-header".to_string());
+    moqui_lib::env::set_property("moqui_conf__pass__client_secret", "front-secret-for-header".to_string());
     moqui_lib::env::set_property("script_ports_pass_base", format!("http://127.0.0.1:{port}/rest"));
     moqui_lib::env::set_property("script_ports_named_base", "http://pass.test:8443/rest".to_string());
     crate::script::run_actions(&format!(
         r#"<actions><script><![CDATA[
-            readValue = String(System.getProperty("pass_client_secret"))
-            isSet = System.isPropertySet("pass_client_secret")
+            readValue = String(System.getProperty("moqui_conf__pass__client_secret"))
+            confValue = String(ec.factory.getConfValue("pass@client-secret"))
+            isSet = ec.factory.isConfValueSet("pass@client-secret")
             const client = (uri) => ec.service.rest().uri(uri).method("GET").followRedirects(false)
                 .addHeader("x-pass-client", "front")
-                .addPropertyHeader("x-pass-client-secret", "pass_client_secret", "script_ports_pass_base")
+                .addPropertyHeader("x-pass-client-secret", "pass@client-secret", "script_ports_pass_base")
             redirected = client("http://127.0.0.1:{port}/rest/s1/pass").call().statusCode
             sent = client("http://127.0.0.1:{port}/rest/s1/again").send().statusCode
             const refusal = (uri, property, base) => {{
                 try {{
-                    ec.service.rest().uri(uri).addPropertyHeader("x-pass-client-secret", property || "pass_client_secret",
+                    ec.service.rest().uri(uri).addPropertyHeader("x-pass-client-secret", property || "pass@client-secret",
                         base || "script_ports_pass_base").call()
                     return "sent"
                 }} catch (e) {{ return String(e.message || e) }}
@@ -234,7 +235,8 @@ fn a_property_header_goes_only_under_its_base_and_the_script_never_reads_it() {
             userPart = refusal("http://pass.test:8443@evil.test:8443/rest/s1", null, "script_ports_named_base")
             otherHost = refusal("http://other.test:8443/rest/s1", null, "script_ports_named_base")
             notSet = refusal("http://127.0.0.1:{port}/rest/s1", "script_ports_unset_value")
-            secretBase = refusal("http://127.0.0.1:{port}/rest/s1", null, "pass_client_secret")
+            secretBase = refusal("http://127.0.0.1:{port}/rest/s1", null, "pass@client-secret")
+            ownKey = refusal("http://127.0.0.1:{port}/rest/s1", "entity-facade@crypt-pass")
         ]]></script></actions>"#
     ))
     .unwrap();
@@ -244,6 +246,11 @@ fn a_property_header_goes_only_under_its_base_and_the_script_never_reads_it() {
         value("readValue").as_deref(),
         Some("null"),
         "System.getProperty gives no value"
+    );
+    assert_eq!(
+        value("confValue").as_deref(),
+        Some("null"),
+        "getConfValue gives no secret"
     );
     assert_eq!(value("isSet").as_deref(), Some("true"));
     assert_eq!(
@@ -278,7 +285,12 @@ fn a_property_header_goes_only_under_its_base_and_the_script_never_reads_it() {
         "{:?}",
         value("secretBase")
     );
-    moqui_lib::env::set_property("pass_client_secret", String::new());
+    assert!(
+        value("ownKey").unwrap_or_default().contains("a key of this server"),
+        "{:?}",
+        value("ownKey")
+    );
+    moqui_lib::env::set_property("moqui_conf__pass__client_secret", String::new());
 }
 
 /// SEC-SCR-07: on a production instance `ec.service.rest()` refuses an internal address, `call()` and `send()` alike,

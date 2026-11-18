@@ -44,7 +44,7 @@ pub const NOT_BUILT: &str = "gRPC not built into this host";
 pub const SERVICE_PROPERTY: &str = "pass-authority@service";
 /// The authority service when [`SERVICE_PROPERTY`] is empty: Mantle's.
 pub const DEFAULT_SERVICE: &str = "mantle.pass.PassAuthorityServices.handle#Call";
-/// The property naming the PASS client the edge node is on its link (`pass_client_<id>_sites` lists its sites).
+/// The property naming the PASS client the edge node is on its link (`pass-authority/client[<id>]@sites` lists its sites).
 pub const EDGE_CLIENT_PROPERTY: &str = "edge/node@pass-client";
 /// The edge node's client id when [`EDGE_CLIENT_PROPERTY`] is empty.
 pub const DEFAULT_EDGE_CLIENT: &str = "edge";
@@ -70,7 +70,7 @@ pub struct Call {
     pub operation_id: String,
     /// The authority session of an account flow in progress.
     pub session_handle: String,
-    /// The registered client, on the direct listener; the sender fills it from `pass_client_id`.
+    /// The registered client, on the direct listener; the sender fills it from `pass@client-id`.
     pub client_id: String,
 }
 
@@ -305,7 +305,7 @@ pub struct Served {
 }
 
 /// Sends calls to a PASS authority on the host's gRPC: `endpoint` is `grpc://host:port` or `grpcs://host:port` (the
-/// authority's gRPC listener, the client named by `pass_client_id` with `pass_client_secret`), or `edge:` (on an edge
+/// authority's gRPC listener, the client named by `pass@client-id` with `pass@client-secret`), or `edge:` (on an edge
 /// node, its local node down the link). A transport failure is an error; the authority's refusal is a [`PassError`].
 pub trait PassSender: Send + Sync {
     fn call(&self, endpoint: &str, call: Call) -> Result<Reply, Error>;

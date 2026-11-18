@@ -56,9 +56,9 @@
         rows (System › Edge Clients › Ports), which every member reads. _xmpp-client._tcp and _xmpps-client._tcp name
         every member. -->
 
-    <!-- PASS: mr-pass on every member calls the pairing's local node as its authority down the link. pass_backend_web_url
+    <!-- PASS: mr-pass on every member calls the pairing's local node as its authority down the link. pass@backend-web-url
         in .env, as on one edge node. -->
-    <default-property name="pass_backend_url" value="edge:"/>
+    <pass backend-url="edge:"/>
 
     <!-- Mail (docs/interfaces/Mail-Inbound.md, The edge node as the gateway): each member takes port 25, answering RCPT
         TO from the recipients it builds from the shared copies (again when any member applies a change, told on the

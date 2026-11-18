@@ -37,10 +37,10 @@
         linked. With several, each gets a port of its own: a moqui.edge.EdgePort row (System › Edge Clients › Ports). -->
 
     <!-- PASS (plans/archive/Edge-Node.md §5.5): mr-pass here calls its local node as the PASS authority over gRPC down
-        the link, with no client secret (the link authenticates it). Set pass_backend_web_url in .env to the local node's
+        the link, with no client secret (the link authenticates it). Set pass@backend-web-url in .env to the local node's
         web address through this node (one of its host names), for the SSO front channel. While the link is down every
         PASS page fails as unavailable. -->
-    <default-property name="pass_backend_url" value="edge:"/>
+    <pass backend-url="edge:"/>
 
     <!-- XMPP (docs/interfaces/XMPP.md, Behind an edge node): no XMPP server runs here; XMPP clients' ports tunnel to the
         local node whose XMPP domain each connection names (the TLS server name, or the stream's to), which ends their

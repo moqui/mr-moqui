@@ -53,7 +53,7 @@ pub fn secret_parameter(key: &str) -> bool {
 /// (password, secret, token, credential, a `_key` ending), and a name that ends in `_pass` or `_pw` or holds `crypt`;
 /// each in lower case with `.` read as `_`, as the lookup reads a name both ways. A script that needs a secret uses a
 /// named host function (`System.isPropertySet`, `System.propertyMatches`, `System.secretCodeHash`), and one that sends
-/// a credential at another server (`pass_client_secret`) names it to `RestClient.addPropertyHeader`, which never gives
+/// a credential at another server (mr-pass's `pass@client-secret`) names it to `RestClient.addPropertyHeader`, which never gives
 /// it to the script.
 pub(crate) fn script_refused_property(name: &str, conf_secrets: &std::collections::BTreeSet<String>) -> bool {
     let lower = name.trim().to_ascii_lowercase();
@@ -190,18 +190,18 @@ mod tests {
             "GITHUB_TOKEN",
             "PGPASSWORD",
             "smtp_pw",
-            // the PASS frontend's credential at its authority: sent by RestClient.addPropertyHeader, never read
-            "pass_client_secret",
-            "PASS_CLIENT_SECRET",
+            // a credential at another server, by its name: sent by RestClient.addPropertyHeader, never read
+            "remote_client_secret",
+            "REMOTE_CLIENT_SECRET",
         ] {
             assert!(super::script_refused_property(name, &conf), "{name}");
         }
         assert!(super::conf_secret("FCM.SERVICE.ACCOUNT", &conf));
-        assert!(!super::conf_secret("pass_client_secret", &conf));
+        assert!(!super::conf_secret("remote_client_secret", &conf));
         for name in [
-            "pass_backend_url",
-            "pass_client_id",
-            "pass_client_web_sites",
+            "remote_backend_url",
+            "remote_client_id",
+            "remote_client_web_sites",
             "instance_purpose",
             "webapp_http_host",
             "mail_change_keep_days",

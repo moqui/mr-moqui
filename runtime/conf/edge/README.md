@@ -23,7 +23,7 @@ clients of the local node. Steps and limits: [Run-Deploy](../../../docs/Run-Depl
 - **Edge node**: `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses`; for mail `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`,
   `smtp-server@hostname`, `edge_mail_bounce_domain`; for calls `media-server@public-address`; for phones `sip-server@port`, `sip-server@tls-port`,
   `sip-server@host`, `sip-server@public-address`, `sip-server/registrar@enabled`; for XMPP `edge@xmpp-port`, `edge@xmpp-tls-port`; for SSH
-  `edge@ssh-tunnel-port`; for PASS `pass_backend_web_url`. Generated at the first start: `edge@link-key`, and
+  `edge@ssh-tunnel-port`; for PASS `pass@backend-web-url`. Generated at the first start: `edge@link-key`, and
   `mail-delivery/dkim@key` on first use. A WebPKI certificate goes in `cert/`.
 - **Local node**: `webapp-list/webapp[webroot]@http-host`, and a certificate in `cert/` for each passthrough name. Pairing writes
   `edge/node@url`, `edge/node@key`, `edge/node@pin`, `edge/node@id` and `edge/node@pairing` (copy this `.env` to each member of a local cluster, which then links too); the wizard writes the rest.

@@ -15,13 +15,13 @@
 
     <!-- The client forum: its secret goes in .env, never here, as
             moqui_conf__pass_authority__client__FORUM__secret=...
-        and the same value is the PASS server's pass_client_secret. -->
+        and the same value is the PASS server's pass@client-secret. -->
     <pass-authority grpc-enabled="true"><client id="forum" sites="FORUM_SITE" callback="https://forum.example.com/account/Sso"/></pass-authority>
 
     <!-- gRPC for PASS servers on Maximal or Enterprise (REST is always there): the gRPC listener, pass-authority@grpc-port
         (4317) on pass-authority@grpc-host, takes PASS calls with the client's id and secret in metadata and TLS from
         the HTTPS listener's certificate. The HTTPS listener takes the same calls over HTTP/2, so a PASS server's
-        pass_backend_grpc_url can name the HTTPS port and no other port needs to be open. With no certificate in cert/
+        pass@backend-grpc-url can name the HTTPS port and no other port needs to be open. With no certificate in cert/
         the listener is plain h2c and takes PASS calls only on a loopback address, unless
         moqui_conf__pass_authority__grpc_insecure=true says to send the secrets in clear. -->
 
@@ -37,7 +37,7 @@
 
     <!-- Backups: the nightly backup_EmbeddedDatabase_daily job, paused in the seed data, runs from each boot (false pauses
         it; docs/Run-Deploy.md, Backups). It backs up the embedded database only: back an external one up with its own
-        tools. On a cluster, pass_media_root and pass_import_dir must name storage every member reads. -->
+        tools. On a cluster, pass@media-root and pass@import-dir must name storage every member reads. -->
     <database-backup scheduled="true"/>
 
     <entity-facade query-stats="true"/>

@@ -15,16 +15,13 @@
         sign-in limits count by -->
 
     <!-- The authority: its final https origin, so that no call depends on a redirect. Unset is local mode, with Mantle in
-        this runtime. The deployment's client id is the one registered on the authority (pass_client_<id>_*); put its
+        this runtime. The deployment's client id is the one registered on the authority (pass-authority/client[<id>]); put its
         secret in .env, never here:
-            pass_client_secret=...
-        pass_backend_transport: rest, grpc, or empty for automatic: gRPC when the package has it (Maximal, Enterprise)
-        and pass_backend_grpc_url names the authority's gRPC listener, such as grpcs://boss.example.com:443 (its HTTPS
+            moqui_conf__pass__client_secret=...
+        pass@backend-transport: rest, grpc, or empty for automatic: gRPC when the package has it (Maximal, Enterprise)
+        and pass@backend-grpc-url names the authority's gRPC listener, such as grpcs://boss.example.com:443 (its HTTPS
         port takes gRPC over HTTP/2), else REST, which every package has. -->
-    <default-property name="pass_backend_url" value="https://boss.example.com"/>
-    <default-property name="pass_client_id" value="forum"/>
-    <default-property name="pass_backend_transport" value=""/>
-    <default-property name="pass_backend_grpc_url" value=""/>
+    <pass backend-url="https://boss.example.com" client-id="forum" backend-transport="" backend-grpc-url=""/>
 
     <entity-facade query-stats="true"/>
 

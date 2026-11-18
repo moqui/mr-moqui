@@ -35,9 +35,9 @@
 
     <!-- PASS (plans/Edge-Node2.md §4.1): mr-pass here asks for the authority by site. Each local node's Configure names
         its PASS sites, and a call for a site goes to the pairing that names it; a site no pairing names goes to the one
-        pairing when there is one, and is refused with several. Set pass_backend_web_url in .env to the web address,
+        pairing when there is one, and is refused with several. Set pass@backend-web-url in .env to the web address,
         through this node, of the pairing whose sign-in mr-pass's front channel uses. -->
-    <default-property name="pass_backend_url" value="edge:"/>
+    <pass backend-url="edge:"/>
 
     <!-- XMPP (docs/interfaces/XMPP.md, Behind an edge node): one pair of ports takes every pairing's XMPP domain, by the
         TLS server name on direct TLS and by the stream's to on STARTTLS; each local node sets its own xmpp-server@domain, and

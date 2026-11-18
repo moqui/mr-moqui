@@ -472,13 +472,14 @@ fn header_pairs(value: &Value) -> Vec<(String, String)> {
 pub(super) const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
 
 /// The headers `RestClient.addPropertyHeader(headerName, propertyName, baseUrlPropertyName)` named for a request to
-/// `url` (`propertyHeaders`: `[[headerName, propertyName, baseUrlPropertyName]]`), each with the property's value read
-/// here, so the script never sees it (a credential at another server, such as mr-pass's `pass_client_secret`;
-/// plans/Security-Review-Medium.md SEC-SCR-03). A header goes only to a URL under the base URL the other property holds
-/// (`moqui_lib::http::url_under_base`: the same scheme, host and port, a path at or below the base's). Refused, with
-/// nothing sent: a property that is not set, a base that is not set or is itself a secret, a URL outside the base, and a
-/// property the conf marks `is-secret` (this server's own keys). The caller sends the request without following a
-/// redirect, so the header goes to that URL alone.
+/// `url` (`propertyHeaders`: `[[headerName, propertyName, baseUrlPropertyName]]`), each with the setting's value read
+/// here, so the script never sees it (a credential at another server, such as mr-pass's `pass@client-secret`;
+/// plans/Security-Review-Medium.md SEC-SCR-03). Each name is a conf selector (it has an `@`) or a property. A header
+/// goes only to a URL under the base URL the other setting holds (`moqui_lib::http::url_under_base`: the same scheme,
+/// host and port, a path at or below the base's). Refused, with nothing sent: a setting that is not set, a base that is
+/// not set or is itself a secret, a URL outside the base, and a secret of this server's (an attribute the conf schema
+/// marks secret, such as the crypt pass or an LLM key, or a property the conf marks `is-secret`). The caller sends the
+/// request without following a redirect, so the header goes to that URL alone.
 pub(super) fn property_headers(
     request: &moqui_lib::object::ValueMap,
     url: &str,
@@ -503,17 +504,28 @@ pub(super) fn property_headers(
         if header.is_empty() || property.is_empty() || base.is_empty() {
             return Err(HostError::message(ARGUMENTS));
         }
-        if crate::context::identity::conf_secret_here(&property) {
+        use crate::context::conf_env;
+        let own_key = if property.contains('@') {
+            conf_env::declared_secret(&property)
+        } else {
+            crate::context::identity::conf_secret_here(&property)
+        };
+        if own_key {
             return Err(HostError::message(format!(
-                "addPropertyHeader does not send the property {property}: it is a key of this server"
+                "addPropertyHeader does not send the setting {property}: it is a key of this server"
             )));
         }
-        if crate::context::identity::script_refused_property_here(&base) {
+        let base_secret = if base.contains('@') {
+            conf_env::selector_secret(&base)
+        } else {
+            crate::context::identity::script_refused_property_here(&base)
+        };
+        if base_secret {
             return Err(HostError::message(format!(
                 "addPropertyHeader: {base} is a secret, not a base URL"
             )));
         }
-        let base_url = moqui_lib::env::get_prop_or_env(&base);
+        let base_url = conf_env::setting_or_property(&base);
         if base_url.trim().is_empty() {
             return Err(HostError::message(format!(
                 "addPropertyHeader: the base URL property {base} is not set"
@@ -525,7 +537,7 @@ pub(super) fn property_headers(
                 crate::outbound::redacted(url)
             )));
         }
-        let value = moqui_lib::env::get_prop_or_env(&property);
+        let value = conf_env::setting_or_property(&property);
         if value.trim().is_empty() || value.trim() == "CHANGEME" {
             return Err(HostError::message(format!(
                 "addPropertyHeader: the property {property} is not set"

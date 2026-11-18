@@ -428,7 +428,7 @@ impl SetupLine {
 ///   hosted or shared account sends through it (its own server, when it owns one with no incoming store, gets
 ///   `edge:`; else the account names [`EDGE_SERVER_ID`]). An account that syncs from another provider is left.
 /// - chat: [`CHAT_PUBLIC_URL`] in `env_file`, the edge node's address.
-/// - PASS: `edge/node@pass-client` and `pass_client_<id>_sites` and `_callback` in `env_file`.
+/// - PASS: `edge/node@pass-client` and `pass-authority/client[<id>]@sites` and `@callback` in `env_file`.
 ///
 /// An area that is `None` is left as it is. `env_file` is the server's `runtime/.env`.
 pub fn apply_local(

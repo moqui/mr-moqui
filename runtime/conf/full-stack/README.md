@@ -38,7 +38,7 @@ with the front as well, for its names, XMPP domain and ports.
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
   with `edge@link-key`, `media-server/turn-server@auth-secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
-  `sip-server@port`, `sip-server@tls-port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
+  `sip-server@port`, `sip-server@tls-port`, `pass@backend-web-url`), with `edge_public_addresses` set to the front's addresses, and
   `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
   `edge/front-node@url`, `edge/front-node@key`, `edge/front-node@pin` and `edge/front-node@id`.
 - **Each edge member, its own**: `cluster-member@base-url`, `moqui_conf__edge__link_url=https://edge1.example.com` (its link name, at the
@@ -47,7 +47,7 @@ with the front as well, for its names, XMPP domain and ports.
 - **Every local member, the same**: the database and secrets (for git hosting `ssh-server@host-key` and
   `git-server@lfs-token-key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge/node@url`,
   `edge/node@key`, `edge/node@pin`, `edge/node@id`, `edge/node@pairing`; with `edge` members also `front_node_*`; the
-  PASS client lines the wizard writes (`edge/node@pass-client`, `pass_client_edge_sites`, `pass_client_edge_callback`).
+  PASS client lines the wizard writes (`edge/node@pass-client`, `pass-authority/client[edge]@sites`, `pass-authority/client[edge]@callback`).
 - **Each local member, its own**: `cluster-member@base-url`. Never copy `runtime/db`.
 
 ## DNS

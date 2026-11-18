@@ -406,6 +406,25 @@ pub fn attribute_secret(path: &AttrPath) -> bool {
     conf_schema::attribute_secret(&names, &path.attribute)
 }
 
+/// Whether `selector` names a secret attribute, by the conf schema or by its name ([`attribute_secret`]); true for
+/// text that is no selector, so a caller refusing secrets refuses it too.
+#[must_use]
+pub fn selector_secret(selector: &str) -> bool {
+    AttrPath::parse(selector).map_or(true, |path| attribute_secret(&path))
+}
+
+/// Whether `selector` names an attribute the conf schema itself marks secret: this server's own keys and the
+/// framework's credentials (the crypt pass, a session key, an LLM endpoint's key), not an add-on's attribute that is a
+/// secret only by its name (mr-pass's `pass@client-secret`, a credential this server sends to another). True for text
+/// that is no selector.
+#[must_use]
+pub fn declared_secret(selector: &str) -> bool {
+    AttrPath::parse(selector).map_or(true, |path| {
+        let names: Vec<&str> = path.steps.iter().map(|step| step.element.as_str()).collect();
+        conf_schema::unit(&names).is_some_and(|unit| unit.secrets.iter().any(|(name, _)| *name == path.attribute))
+    })
+}
+
 /// Log what the environment did to the conf, once, at boot: each name set or added at INFO (never a secret's value),
 /// an attribute added to an element of the files at WARN, a refused name and two spellings of one name at ERROR.
 pub fn log_overrides(overrides: &[Override]) {

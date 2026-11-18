@@ -1215,9 +1215,10 @@ interface MoquiRestClient {
     addHeader(name: string, value: string): MoquiRestClient;
     addHeaders(headers: Record<string, string>): MoquiRestClient;
     /**
-     * A header whose value is the property `propertyName`, read by the host at send time and never given to the script;
-     * sent only to a URL under the base URL in the property `baseUrlPropertyName` (same scheme, host and port, a path at
-     * or below the base's), never on a redirect. Else the call fails and nothing is sent.
+     * A header whose value is the setting `propertyName` (a conf selector such as `pass@client-secret`, or a property),
+     * read by the host at send time and never given to the script; sent only to a URL under the base URL in the setting
+     * `baseUrlPropertyName` (same scheme, host and port, a path at or below the base's), never on a redirect. Else the
+     * call fails and nothing is sent.
      */
     addPropertyHeader(headerName: string, propertyName: string, baseUrlPropertyName: string): MoquiRestClient;
     /** The Authorization header of HTTP basic authentication. */

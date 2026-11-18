@@ -47,14 +47,14 @@
         front's public addresses, which the wizard checks a local node's host names against, since the names point at
         the front. -->
 
-    <!-- PASS: mr-pass on every member, its local cluster the authority down the link (pass_backend_url edge:). Each
+    <!-- PASS: mr-pass on every member, its local cluster the authority down the link (pass@backend-url edge:). Each
         site's host is the root of mr-pass's Pass.xml, with the framework's routes refused there, and the member gives
         the host to the front as a terminate host, so a browser stays on one member, sticky by the session cookie.
-        pass_backend_web_url (.env): the authority's web address through the stack, one of the local cluster's host
+        pass@backend-web-url (.env): the authority's web address through the stack, one of the local cluster's host
         names, for the SSO front channel. Change the example hosts and site ids to yours; they must match the sites'
         hosts and mounts at the authority (mantle.public.SiteServices.create#Site, store#Mounts). mr-pass's
         docs/Deployment.md, Full stack. -->
-    <default-property name="pass_backend_url" value="edge:"/>
+    <pass backend-url="edge:"/>
     <webapp-list>
         <webapp name="webroot">
             <web-protection enabled="true"/>

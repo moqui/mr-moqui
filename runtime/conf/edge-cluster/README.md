@@ -31,7 +31,7 @@ queue, the pairings and the host names are rows the members share. A clustered a
   `edge@link-key` (the one link key local nodes pin), `media-server/turn-server@auth-secret`, `acme@account-key` and, once made,
   `mail-delivery/dkim@key`; `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
   `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`, `sip-server@port`, `sip-server@tls-port`, `sip-server@host`, `sip-server/registrar@enabled`,
-  `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host`, `edge@ssh-tunnel-port`, `pass_backend_web_url`. A WebPKI
+  `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host`, `edge@ssh-tunnel-port`, `pass@backend-web-url`. A WebPKI
   certificate in `cert/` for the names local nodes pair at; the links present the pinned link key, not it.
 - **Each edge member, its own**: `moqui_conf__cluster_member__base_url=https://<private address>:8444`, `moqui_conf__edge__link_url=https://<its own
   public name>`, `smtp-server@hostname` (its MX name), `media-server@public-address`, `media-server/turn-server@public-host`, `sip-server@public-address`. Never

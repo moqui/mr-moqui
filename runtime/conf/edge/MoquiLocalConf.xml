@@ -18,7 +18,7 @@
         mail: an EmailServer EDGE with smtpHost edge:, SYSTEM's smtpHost set to edge: when chosen, and the chosen
             accounts sending through it (their host or server before is kept, and unpairing puts it back);
         chat and SMS: channels@public-url, the edge node's address, so MMS files are served there;
-        PASS: edge/node@pass-client (edge), pass_client_edge_sites and pass_client_edge_callback, the edge node as a PASS
+        PASS: edge/node@pass-client (edge), pass-authority/client[edge]@sites and pass-authority/client[edge]@callback, the edge node as a PASS
             client with no secret;
         calls: edge/node@calls-enabled (false keeps new calls on this node's own media nodes);
         phones: edge/node@sip-enabled (false sends the replicated trunks and fallbacks empty).
