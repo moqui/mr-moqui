@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Scheduled sends and message reminders in chat (plans/Comms-Messaging.md §18.3 phase 15; docs/tools/Comms.md "Send
+    later and reminders"). The entities are framework/entity/ChatScheduleEntities.xml and the logic is ChatSchedule.js
+    beside this file. No Java counterpart.
+
+    A message of a plain, phone or bridged room is held here and sent at its time as its sender (send#DueMessages, every
+    minute), through send#Message, so every bridge and its send checks apply then. One of an encrypted room is held by
+    the sender's own device, which encrypts it at its time: the server keeps a placeholder with no text, which the device
+    claims (claim#HeldMessage) and reports (complete#HeldMessage). A reminder keeps the room and the message's number only
+    and comes back at its time as an Activity row, a ChatReminder notification and a push (send#DueReminders). Each
+    service acts on the signed-in user's own rows: another's is "not found". A refusal has a reasonCode. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="schedule" noun="Message">
+        <description>A message from the signed-in user for sendDate (a minute to a year ahead; at most 100 waiting), with
+            the rules of send#Message now: a member of a room that is not archived, a body or files (the user's uploads of
+            the room not yet sent), a reply or a thread of the room, the record cards (recordList). In an encrypted room no
+            body, files or records: heldByDeviceId, a device of the user's, keeps the draft and sends it (reasonCode
+            encryptedRoom, noDevice). Refused: notMember, archived, badTime, tooMany, empty, tooLong, notFound. Out:
+            chatScheduledMessageId, scheduled (as get#ChatSchedule lists it).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="body" allow-html="safe"/>
+            <parameter name="replyToEventSeq" type="Integer"/>
+            <parameter name="threadRootEventSeq" type="Integer"/>
+            <parameter name="chatAttachmentIdList" type="List"/>
+            <parameter name="recordList" type="List"/>
+            <parameter name="sendDate" type="Timestamp" required="true"/>
+            <parameter name="heldByDeviceId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatScheduledMessageId"/>
+            <parameter name="scheduled" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('schedule', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="ScheduledMessage">
+        <description>A waiting message's new body or sendDate (its files stay). A held one (an encrypted room's): its time
+            only, from its device (deviceId). Refused: notScheduled (sent, or no longer waiting), notHolder, badTime.</description>
+        <in-parameters>
+            <parameter name="chatScheduledMessageId" required="true"/>
+            <parameter name="body" allow-html="safe"/>
+            <parameter name="sendDate" type="Timestamp"/>
+            <parameter name="deviceId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="scheduled" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('update', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="ScheduledMessage">
+        <description>Cancel a waiting or failed message, from any device of the sender; its files are removed. Refused
+            while a device sends it (sending).</description>
+        <in-parameters><parameter name="chatScheduledMessageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('cancel', context))</script></actions>
+    </service>
+
+    <service verb="dismiss" noun="ScheduledMessage">
+        <description>The sender has seen that a held message went late: it leaves the list.</description>
+        <in-parameters><parameter name="chatScheduledMessageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('dismiss', context))</script></actions>
+    </service>
+
+    <service verb="send" noun="ScheduledMessageNow">
+        <description>Send a waiting or failed message the server holds at once, by the path of its time. A held one is sent
+            by its device (notHolder). Out: eventSeq.</description>
+        <in-parameters><parameter name="chatScheduledMessageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('sendNow', context))</script></actions>
+    </service>
+
+    <service verb="deliver" noun="ScheduledMessage" allow-remote="false">
+        <description>Internal, in a transaction of its own (send#DueMessages, send#ScheduledMessageNow): the send of one
+            message the server holds that is due (or atOnce), its row locked, as its sender signed in (their rights now): not
+            when they are no longer a member (notMember), the room is archived (archived), they blocked its number or person
+            since (blocked) or their account cannot sign in (accountDisabled); else send#Message with clientRef
+            sched:(id), which a retry answers with the message it made, and CsmSent. A refusal is an error with reasonCode:
+            the send rolls back and the caller fails the row (fail#ScheduledMessage). skipped: not waiting or not due.</description>
+        <in-parameters>
+            <parameter name="chatScheduledMessageId" required="true"/>
+            <parameter name="atOnce" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="skipped" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="failText"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('deliver', context))</script></actions>
+    </service>
+
+    <service verb="fail" noun="ScheduledMessage" allow-remote="false">
+        <description>Internal, in a transaction of its own: a send that did not go. With a reasonCode it is CsmFailed and the
+            sender gets ChatScheduleFailed and their lists are told; without one it is tried again at the next run, 5 tries in
+            all. Out: failed.</description>
+        <in-parameters>
+            <parameter name="chatScheduledMessageId" required="true"/>
+            <parameter name="reasonCode"/>
+            <parameter name="failText" allow-html="any"/>
+        </in-parameters>
+        <out-parameters><parameter name="failed" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('fail', context))</script></actions>
+    </service>
+
+    <service verb="send" noun="DueMessages" transaction="ignore" authenticate="anonymous-all">
+        <description>The ServiceJob send_DueChatMessages_frequent, every minute: the waiting messages the server holds that
+            are due, oldest first, at most limit a run and none started after timeBudgetSeconds, each in a transaction of
+            its own (deliver#ScheduledMessage): one that fails is logged and the rest go on. A held message (an encrypted
+            room's) is its device's to send; one whose device was revoked fails (deviceGone).</description>
+        <in-parameters>
+            <parameter name="limit" type="Integer" default="200"/>
+            <parameter name="timeBudgetSeconds" type="Integer" default="45"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sentCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('sendDueMessages', context))</script></actions>
+    </service>
+
+    <service verb="claim" noun="HeldMessage">
+        <description>An encrypted room's held message, taken by its device (deviceId, the one that holds it) to send: when
+            due, or with atOnce (Send now), still waiting and with no live lease, a lease of 2 minutes; claimed true, and its
+            clientRef. sent true when the room already has its message (a report that was lost: it is marked sent). A sender
+            who is no longer a member, an archived room or a blocked conversation fails it (reasonCode). Refused:
+            notHolder.</description>
+        <in-parameters>
+            <parameter name="chatScheduledMessageId" required="true"/>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="atOnce" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="claimed" type="Boolean"/>
+            <parameter name="sent" type="Boolean"/>
+            <parameter name="clientRef"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('claimHeld', context))</script></actions>
+    </service>
+
+    <service verb="complete" noun="HeldMessage">
+        <description>The holding device's report: eventSeq, the sender's message of the room with clientRef sched:(id),
+            makes it CsmSent (sentLate when more than 5 minutes after its time); draftLost true fails it (draftLost: the
+            device no longer has the draft). Refused for another event, another device.</description>
+        <in-parameters>
+            <parameter name="chatScheduledMessageId" required="true"/>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="draftLost" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sent" type="Boolean"/>
+            <parameter name="sentLate" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('completeHeld', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ChatSchedule">
+        <description>The signed-in user's scheduledList (waiting and failed, and held ones sent late and not dismissed in the
+            last week; each with its room, time, status, body, files, reply, thread, held, heldByDeviceId and
+            heldByDeviceName, deviceGone, sentLate, reasonCode) and reminderList (pending, soonest first, in the rooms they
+            can read now: room, message, time, sender, and a plain room's snippet read now; an encrypted room's has none,
+            only its ciphertext, encryptedContent, for the browser).</description>
+        <out-parameters>
+            <parameter name="scheduledList" type="List"/>
+            <parameter name="reminderList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('getSchedule', context))</script></actions>
+    </service>
+
+    <service verb="set" noun="Reminder">
+        <description>A reminder for the signed-in user at remindDate (a minute to a year ahead; at most 200 pending) of a
+            message (not removed) of a room they can read now. It replaces their pending one of that message. It keeps
+            no text. Refused: notFound, badTime, tooMany.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="remindDate" type="Timestamp" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatMessageReminderId"/>
+            <parameter name="remindDate" type="Long"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('setReminder', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="Reminder">
+        <in-parameters><parameter name="chatMessageReminderId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('cancelReminder', context))</script></actions>
+    </service>
+
+    <service verb="fire" noun="Reminder" allow-remote="false">
+        <description>Internal, in a transaction of its own (send#DueReminders): a reminder that is due, as its user: dropped
+            (CrmDropped) when the message is gone (messageGone) or the room can no longer be read (noAccess); else a
+            CuaReminder Activity row, its push (queue#ReminderPush) and the ChatReminder notification, each logged when it
+            fails, and CrmFired. Out: fired, dropped.</description>
+        <in-parameters><parameter name="chatMessageReminderId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="fired" type="Boolean"/>
+            <parameter name="dropped" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('fire', context))</script></actions>
+    </service>
+
+    <service verb="send" noun="DueReminders" transaction="ignore" authenticate="anonymous-all">
+        <description>The ServiceJob send_DueChatReminders_frequent, every minute: each reminder due, oldest first, in a
+            transaction of its own (fire#Reminder): one that fails is logged and the rest go on.</description>
+        <in-parameters><parameter name="limit" type="Integer" default="500"/></in-parameters>
+        <out-parameters>
+            <parameter name="firedCount" type="Integer"/>
+            <parameter name="droppedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('sendDueReminders', context))</script></actions>
+    </service>
+
+    <service verb="queue" noun="ReminderPush" type="rust" location="moqui_core::service::chat_push::queue_reminder_push" allow-remote="false">
+        <description>Internal (fire#Reminder): a reminder's push to each device of userId (a PushOutbox row of kind
+            PokReminder), in the caller's transaction, the push worker woken after the commit: held during do not disturb,
+            not dropped by a read marker, with a collapse key and tag of its own; a notification push of title, and the
+            message's snippet as its body only in a plain room for a user whose previews are on (else hiddenBody).</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="chatMessageReminderId" required="true"/>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Long" required="true"/>
+            <parameter name="title" allow-html="any"/>
+            <parameter name="hiddenBody" allow-html="any"/>
+            <parameter name="nowMillis"/>
+        </in-parameters>
+        <out-parameters><parameter name="queuedCount" type="Integer"/></out-parameters>
+    </service>
+
+    <service verb="clean" noun="ScheduledMessages" authenticate="anonymous-all" transaction="ignore">
+        <description>The ServiceJob clean_ChatSchedule_daily: sent and cancelled messages and fired, cancelled and dropped
+            reminders after 7 days, failed messages after 30 with their files; each on its own.</description>
+        <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('clean', context))</script></actions>
+    </service>
+</services>

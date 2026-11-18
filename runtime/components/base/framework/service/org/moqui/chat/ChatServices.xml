@@ -3571,8 +3571,9 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             removedCount = 0
             const before = Number(ec.user.nowTimestamp) - Math.max(1, hours) * 3600000
-            const rows = ec.entity.find('moqui.chat.ChatAttachment').condition('eventSeq', null).condition('uploadedDate', 'less', String(before))
-                    .disableAuthz().list()
+            // a scheduled message's files wait with it (ChatScheduleServices, phase 15)
+            const rows = ec.entity.find('moqui.chat.ChatAttachment').condition('eventSeq', null).condition('chatScheduledMessageId', null)
+                    .condition('uploadedDate', 'less', String(before)).disableAuthz().list()
             for (const row of rows) {
                 try {
                     ec.service.sync().name('org.moqui.chat.ChatServices.remove#AttachmentFile').parameter('chatAttachmentId', row.chatAttachmentId).call()
@@ -4111,7 +4112,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="ChatActivity">
         <description>The current user's activity across rooms (ChatUserActivity, plans/Comms-Messaging.md §5.2), newest first:
-            items [{kind (mention, reply, threadReply, reaction), chatRoomId, roomName, roomTypeEnumId, eventSeq (the event
+            items [{kind (mention, reply, threadReply, reaction, reminder: a reminder the user set that came), chatRoomId, roomName, roomTypeEnumId, eventSeq (the event
             that made it: the message, the edit that added the mention, the reaction), messageEventSeq (the message it is
             about), threadRootEventSeq, actorUserId, actorName, snippet (the message's current text), reactionKey (a reaction
             in a plain room), date, encrypted}]. kinds (a List, or text with commas) keeps those kinds. Only rooms the user can
@@ -4139,8 +4140,8 @@ along with this software (see the LICENSE.md file). If not, see
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
-            const KINDS = {mention: 'CuaMention', reply: 'CuaReply', threadReply: 'CuaThreadReply', reaction: 'CuaReaction'}
-            const CODES = {CuaMention: 'mention', CuaReply: 'reply', CuaThreadReply: 'threadReply', CuaReaction: 'reaction'}
+            const KINDS = {mention: 'CuaMention', reply: 'CuaReply', threadReply: 'CuaThreadReply', reaction: 'CuaReaction', reminder: 'CuaReminder'}
+            const CODES = {CuaMention: 'mention', CuaReply: 'reply', CuaThreadReply: 'threadReply', CuaReaction: 'reaction', CuaReminder: 'reminder'}
             items = []; nextCursor = null
             const me = ec.user.userId
             if (!me) return

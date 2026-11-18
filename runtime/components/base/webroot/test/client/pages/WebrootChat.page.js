@@ -1242,3 +1242,70 @@ test("the mail lines are asked once for the page within five minutes, by room; a
     assert.equal(asked, 3);
     chat.mailCache = null;
 });
+
+// ---- scheduled sends and reminders (plans/Comms-Messaging.md phase 15) ----
+
+test("the times offered: Remind me in 20 minutes, an hour and tomorrow at 9; Send later's Monday morning only from a Friday or Saturday", () => {
+    // a Friday 15:30:20 and a Wednesday 15:30, in this browser's zone
+    const friday = new Date(2026, 10, 20, 15, 30, 20).getTime();
+    const wednesday = new Date(2026, 10, 18, 15, 30).getTime();
+    const remind = chat.whenChoices("remind", friday);
+    assert.deepEqual(remind.map((choice) => choice.key), ["minutes20", "hour", "tomorrow"]);
+    assert.equal(remind[0].at, new Date(2026, 10, 20, 15, 51).getTime(), "a whole minute, never before the 20 minutes");
+    assert.equal(remind[1].at, new Date(2026, 10, 20, 16, 31).getTime());
+    assert.equal(remind[2].at, new Date(2026, 10, 21, 9, 0).getTime());
+    const later = chat.whenChoices("send", friday);
+    assert.deepEqual(later.map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon", "monday"]);
+    assert.equal(later[3].at, new Date(2026, 10, 23, 8, 0).getTime());
+    assert.deepEqual(chat.whenChoices("send", wednesday).map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon"]);
+    assert.equal(chat.whenChoices("send", new Date(2026, 10, 21, 10, 0).getTime()).slice(-1)[0].at, new Date(2026, 10, 23, 8, 0).getTime(), "from a Saturday");
+    assert.ok(remind.concat(later).every((choice) => chat.timeAllowed(choice.at, friday)));
+    assert.equal(chat.timeAllowed(friday + 30000, friday), false, "less than a minute ahead");
+    assert.equal(chat.timeAllowed(friday - 60000, friday), false);
+    assert.equal(chat.timeAllowed(friday + 367 * 86400000, friday), false, "more than a year ahead");
+    assert.equal(chat.timeAllowed(NaN, friday), false);
+});
+
+test("a room's scheduled line, a message's reminder and this device's held messages due", () => {
+    const list = [{ chatScheduledMessageId: "S1", chatRoomId: "R1", status: "scheduled", sendDate: 5000 },
+        { chatScheduledMessageId: "S2", chatRoomId: "R1", status: "scheduled", sendDate: 3000, held: true, heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S3", chatRoomId: "R1", status: "failed", sendDate: 1000, reasonCode: "notMember" },
+        { chatScheduledMessageId: "S4", chatRoomId: "R1", status: "scheduled", sendDate: 2000, held: true, heldByDeviceId: "DEV2", deviceGone: true },
+        { chatScheduledMessageId: "S5", chatRoomId: "R1", status: "sent", sentLate: true, held: true, heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S6", chatRoomId: "R2", status: "scheduled", sendDate: 1000, held: true, heldByDeviceId: "DEV1" }];
+    assert.deepEqual(chat.scheduledLine(list, "R1"), { waiting: 2, failed: 2, late: 1, next: 3000, total: 5 });
+    assert.deepEqual(chat.scheduledLine(list, "R3"), { waiting: 0, failed: 0, late: 0, next: null, total: 0 });
+    assert.deepEqual(chat.dueHeld(list, "DEV1", 3000).map((row) => row.chatScheduledMessageId), ["S2", "S6"]);
+    assert.deepEqual(chat.dueHeld(list, "DEV1", 2999).map((row) => row.chatScheduledMessageId), ["S6"]);
+    assert.deepEqual(chat.dueHeld(list, "DEV2", 9000), [], "a device gone sends nothing");
+    assert.deepEqual(chat.dueHeld(list, null, 9000), []);
+    const reminders = [{ chatMessageReminderId: "M1", chatRoomId: "R1", eventSeq: 4, remindDate: 9000 }];
+    assert.equal(chat.reminderOf(reminders, "R1", "4").chatMessageReminderId, "M1");
+    assert.equal(chat.reminderOf(reminders, "R1", 5), null);
+    assert.equal(chat.reminderOf(reminders, "R2", 4), null);
+});
+
+test("a held draft is stored sealed, never as its text, opened again by its device, and dropped", async () => {
+    const seal = (text) => Promise.resolve({ v: 1, iv: "aXY", data: btoa(text.split("").reverse().join("")) });
+    const open = (sealed) => Promise.resolve(atob(sealed.data).split("").reverse().join(""));
+    const draft = { body: "<p>The secret plan</p>", replyToEventSeq: 7, threadRootEventSeq: null };
+    await chat.keepHeld("S9", draft, seal);
+    const stored = localStorage.getItem(chat.heldKey());
+    assert.ok(stored && !stored.includes("secret"), "only the sealed draft is stored");
+    assert.equal(chat.hasHeld("S9"), true);
+    assert.deepEqual(await chat.openHeld("S9", open), draft);
+    assert.equal(await chat.openHeld("S8", open), null, "none of another device's");
+    chat.dropHeld("S9");
+    assert.equal(chat.hasHeld("S9"), false);
+    assert.equal(localStorage.getItem(chat.heldKey()), null);
+    let refused = false;
+    try { await chat.keepHeld("S7", draft, () => Promise.reject(new Error("no key"))); } catch (err) { refused = true; }
+    assert.ok(refused, "a draft that cannot be sealed is not kept");
+    assert.equal(chat.hasHeld("S7"), false);
+});
+
+test("a schedule push to the user is answered so Chat reads the lists again", () => {
+    const state = freshState();
+    assert.deepEqual(chat.reduce(state, push("chatUser:ann", { kind: "schedule", chatRoomId: "R1", what: "reminder" }), "ann", 1),
+        { kind: "schedule", chatRoomId: "R1", what: "reminder" });
+});

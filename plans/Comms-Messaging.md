@@ -2307,7 +2307,8 @@ backup is not in a spec; `moqui-desktop`'s own tests were not run here (the crat
 
 #### Phase 15: scheduled send and message reminders
 
-Designed 2026-11-17 (§14.2, §14.3, §17 #3). A chat message gets a send time, and the server holds it and sends it then,
+Designed 2026-11-17 (§14.2, §14.3, §17 #3), with the user's change for encrypted rooms (§19.1); built 2026-11-18 (the
+status at the end of this entry). A chat message gets a send time, and the server holds it and sends it then,
 as mail's due drafts are sent (`EmailClientServices.send#DueDrafts`). "Remind me" on any message brings it back later as
 a notification and an Activity row.
 
@@ -2380,8 +2381,9 @@ someone else is "not found".
 
 **The send at its time** (`deliver#ScheduledMessage`):
 1. Lock the row; go on only if it is still `CsmScheduled` and due (another node or Send now took it otherwise).
-2. Sign in as the sender (`ec.user.internalLoginUser`, as `SmsSpam.js` `asUser` does), so the sender's rights are
-   checked at the send time with authorization on. A disabled account is `accountDisabled`.
+2. Sign in as the sender (`ec.user.internalLoginUser`, as `SmsSpam.js` `asUser` does), so the chat rules take the
+   sender at the send time. The artifact grants are not asked again (a job has no screen to inherit them from; the
+   user's screen checked them when the row was made). A disabled or ended account is `accountDisabled`.
 3. Refuse when the sender's place in the room is out of their sight (`filterEnumId` `CmfBlocked`: they blocked its
    number or its person since): reason `blocked`.
 4. `send#Message` with the row's body, reply, thread, files and records, `roomUrl` from `comms_app_root`, and
@@ -2437,10 +2439,10 @@ is answered with its `reasonCode` and errors, as `send` is.
 | Part | Phone (bubbles) | Desktop |
 |---|---|---|
 | Send later | A long press on Send (450 ms, with a short vibration) opens a sheet: "Send later…" | A narrow arrow beside Send, and a right click on Send, open a menu: "Send later…" |
-| When (`chat-when`) | Full-screen sheet. Send later: In 1 hour, Tomorrow morning (8:00), Tomorrow afternoon (13:00), Monday morning (8:00, from Friday to Sunday), Pick a date and time (`m-date-time`). The choices are in the device's zone, and the next step says the time picked ("Sends tomorrow at 8:00") | A 400 px dialog with the same list |
+| When (`chat-when`) | Full-screen sheet. Send later: In 1 hour, Tomorrow morning (8:00), Tomorrow afternoon (13:00), Monday morning (8:00, on a Friday or Saturday), Pick a date and time (`m-date-time`). The choices are in the device's zone, and the next step says the time picked ("Sends tomorrow at 8:00") | A 400 px dialog with the same list |
 | Scheduled bar | A line above the composer: "Scheduled: tomorrow at 8:00", or "3 scheduled messages", and "1 not sent" in red when one failed. A tap opens the list | Same |
 | The list (`chat-scheduled`) | Full screen. Each message: its time, its text (two lines), its files, the message it replies to, "in a thread"; Edit (the text in `m-rich-text` with mentions, and the time), Send now, Cancel (confirmed). A failed one shows its reason, with Send now and Cancel. An encrypted room's: its text from this device's sealed draft; on another device "Held on Firefox on Linux" with Cancel only; "Can't be sent: the draft was on …" when that device is gone; "Sent late, at 9:14" with a × | A 560 px dialog, the same rows |
-| Remind me | "Remind me…" in `messageActions`, after Mark unread from here, for a member and a sent message (not a pending or failed one): In 20 minutes, In 1 hour, Tomorrow (9:00), Pick a date and time. A message with a reminder says "Reminder at 15:40…" there, with Cancel the reminder in the picker; an alarm icon by its time | Same, from the hover toolbar's More and the right-click menu |
+| Remind me | "Remind me…" in `messageActions`, after Mark unread from here, for one who can read the room and a sent message (not a pending or failed one): In 20 minutes, In 1 hour, Tomorrow (9:00), Pick a date and time. A message with a reminder says "Reminder at 15:40…" there, with Cancel the reminder in the picker; an alarm icon by its time | Same, from the hover toolbar's More and the right-click menu |
 | Reminders | At the top of Activity: the pending reminders, each with its time, room, sender and text (an encrypted room's decrypted here), opening the message, and a × to cancel. A fired reminder is an Activity row (alarm icon, "Reminder: Ann's message") | Same |
 
 - Disabled with a reason, never hidden: Send later while offline ("Send later needs a connection"); while files go
@@ -2481,8 +2483,8 @@ messages.
 **Security and abuse.**
 - Only the sender sees or changes their scheduled messages and reminders. Another member learns of a message only when
   it is sent.
-- The rights are those at the send time: signed in as the sender, with authorization on. Membership, the archive and
-  the account are checked again; the mentions are resolved then.
+- The rules are those of the send time: signed in as the sender, membership, the archive, the sender's blocks and the
+  account are checked again, and the mentions are resolved then.
 - The server holds no text of an encrypted room's scheduled message: its placeholder has the time and the device
   only. The device's sealed draft opens only with the store key, which the server gives only to that device's signed-in
   user. A claim and a report are the sender's own, for a device of theirs that is not revoked; the report must name the
@@ -2562,6 +2564,17 @@ messages.
 
 **Done when.** The regression specs above pass within their budgets, and on a real phone the row of §18.4: a long press
 on Send, and a reminder's notification on the phone.
+
+**Status (2026-11-18): built.**
+- Regression: `ChatSchedule` (8 features, 0.2 s), `chat_push` (26 tests, the reminder's among them), `WebrootChat` (4
+  new features; webroot client 0.2 s of its spec), the precompiled screens regenerated.
+- The basic-comms suites, unchanged, measured 8.8 s of 9 (server) and 11.4 s of 12 (client). So the small `ShellSync`
+  check was not added: the composer's Send later, the bar, the list, Remind me and Activity's reminders have no client
+  walk.
+- Left:
+  - §18.4's row on a real phone;
+  - Android's reminder body and its link to the message (the next APK change);
+  - a held message's send from the phone app in the background.
 
 #### Phase 10 and later
 

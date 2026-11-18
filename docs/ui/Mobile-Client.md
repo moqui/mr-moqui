@@ -383,6 +383,13 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
   received, a stop since, the calling account for the phone's dialer and the contacts; each item that is off has a Fix that opens its system setting (battery optimization
   asks in place). "Send a test notification" asks the server for one (`/qapps/testClientPush`, `send#TestPush`, once a
   device in 10 seconds) and shows the time its own push took to arrive (its ack id among the recent ones).
+- **Reminders** (plans/Comms-Messaging.md phase 15). A message reminder comes as a `notification` push (topic
+  `ChatReminder`, its own tag `chat-reminder-<id>`): this app shows its title ("Reminder: Ann in Team") in the Other
+  channel and a tap opens the app, not the message. Its body (the message's start, in a plain room) and the link to the
+  message wait for the app's next change.
+- **Send later.** A long press on Send opens Send later, with a short vibration. In an encrypted room the app holds the
+  message and sends it at its time only while its WebView runs; closed, it sends it when it next opens Chat (the
+  message is then marked sent late for the sender).
 - **Stopped.** A force-stopped app gets no push until it is opened again; the app says once, at the next open, that it
   was stopped (Android 11+, `ApplicationExitInfo` `REASON_USER_REQUESTED`, which some makers also give for a swipe from
   the recent apps, so the notice says "stopped", not "force-stopped").
@@ -399,6 +406,7 @@ adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind debugCha
 What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans/Mobile-Desktop.md#android-track-md6)).
 
 - The counts and presence (`setCounts`, `setPresence`) do nothing.
+- A message reminder shows its title only and opens the app, not the message (above, Reminders).
 - UnifiedPush is not checked with a distributor: the emulator has none, and its opening (the account's keys) is the
   Rust tests'. A real distributor (ntfy) delivering to a phone is not tried yet. A chat push has no sender avatar (a
   picture would need a fetch the push path does not make).

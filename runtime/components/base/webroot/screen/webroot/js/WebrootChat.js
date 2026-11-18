@@ -352,6 +352,8 @@
                     if (message.action === "settings" && message.chatRoomId && message.filtered) state.unread[message.chatRoomId] = { unread: 0, mentions: 0 };
                     return { kind: "room", chatRoomId: message.chatRoomId, action: message.action };
                 }
+                // the user's scheduled messages or reminders changed (ChatSchedule.js told): read them again
+                if (message.kind === "schedule") return { kind: "schedule", chatRoomId: message.chatRoomId || null, what: message.what || null };
             }
             return null;
         },
@@ -1769,6 +1771,141 @@
         leftOutOf(roomId) { void chat.leftOutTick; return Object.assign({}, chat.readLeftOut().rooms[roomId] || {}); }
     });
     moqui.chat = chat;
+
+    // ---- scheduled sends and reminders (plans/Comms-Messaging.md phase 15; org.moqui.chat.ChatScheduleServices) ----
+    const MINUTE = 60 * 1000;
+    Object.assign(chat, {
+        // The times offered, at now (millis) in this device's zone: kind "send" (Send later) or "remind" (Remind me), each
+        // {key, at}. Send later: in 1 hour, tomorrow morning (8:00) and afternoon (13:00), and Monday morning (8:00) on a
+        // Friday or Saturday; Remind me: in 20 minutes, in 1 hour, tomorrow (9:00). A time in a minute is a whole minute.
+        whenChoices(kind, now) {
+            const dayAt = (days, hour) => {
+                const date = new Date(now);
+                date.setDate(date.getDate() + days);
+                date.setHours(hour, 0, 0, 0);
+                return date.getTime();
+            };
+            const ahead = (minutes) => Math.ceil((now + minutes * MINUTE) / MINUTE) * MINUTE;
+            if (kind === "remind") return [{ key: "minutes20", at: ahead(20) }, { key: "hour", at: ahead(60) }, { key: "tomorrow", at: dayAt(1, 9) }];
+            const list = [{ key: "hour", at: ahead(60) }, { key: "tomorrowMorning", at: dayAt(1, 8) }, { key: "tomorrowAfternoon", at: dayAt(1, 13) }];
+            const weekday = new Date(now).getDay();
+            if (weekday === 5 || weekday === 6) list.push({ key: "monday", at: dayAt(8 - weekday, 8) });
+            return list;
+        },
+        // A time to come as a choice says it, in the user's language and zone: the time today, the weekday and time this week,
+        // else the date and time.
+        whenText(at, now) {
+            const z = l10n(), days = z.dayNumber(Number(at)) - z.dayNumber(Number(now));
+            const options = days === 0 ? { hour: "numeric", minute: "2-digit" } : days > 0 && days < 7 ? { weekday: "long", hour: "numeric", minute: "2-digit" }
+                : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+            return z.formatZoned(Number(at), options);
+        },
+        // Whether a time picked may be used: a minute to a year ahead (the server says the same: badTime).
+        timeAllowed(at, now) {
+            const ahead = Number(at) - now;
+            return ahead >= MINUTE && ahead <= 366 * 86400 * 1000;
+        },
+        // A room's scheduled messages as its bar says them: waiting (to go), failed (not sent, or their device gone), late
+        // (sent late, not yet seen) and next (the soonest time waiting).
+        scheduledLine(list, roomId) {
+            const rows = (list || []).filter((row) => row && row.chatRoomId === roomId);
+            const waiting = rows.filter((row) => row.status === "scheduled" && !row.deviceGone);
+            return { waiting: waiting.length, failed: rows.filter((row) => row.status === "failed" || (row.status === "scheduled" && row.deviceGone)).length,
+                late: rows.filter((row) => row.status === "sent" && row.sentLate).length,
+                next: waiting.reduce((soonest, row) => (soonest == null || row.sendDate < soonest ? row.sendDate : soonest), null), total: rows.length };
+        },
+        // The pending reminder of a message, or null.
+        reminderOf(reminders, roomId, eventSeq) {
+            return (reminders || []).find((row) => row && row.chatRoomId === roomId && Number(row.eventSeq) === Number(eventSeq)) || null;
+        },
+        // This device's held messages (an encrypted room's) that are due: it sends them.
+        dueHeld(list, deviceId, now) {
+            if (!deviceId) return [];
+            return (list || []).filter((row) => row && row.held && row.status === "scheduled" && !row.deviceGone && row.heldByDeviceId === deviceId
+                && Number(row.sendDate) <= now);
+        },
+        // The drafts this device keeps for its held messages, in local storage under the user and the storage scope, each
+        // sealed ({v, iv, data}, moqui.crypto.sealLocal) by its chatScheduledMessageId: never the text itself.
+        heldKey() { return moqui.scopedKey("moqui.chat.held." + (chat.me || "")); },
+        readHeld() {
+            try {
+                const value = JSON.parse((root.localStorage && root.localStorage.getItem(chat.heldKey())) || "{}");
+                return moqui.isPlainObject(value) ? value : {};
+            } catch (err) { return {}; }
+        },
+        writeHeld(all) {
+            try {
+                if (Object.keys(all).length) root.localStorage.setItem(chat.heldKey(), JSON.stringify(all));
+                else root.localStorage.removeItem(chat.heldKey());
+                return true;
+            } catch (err) { return false; }
+        },
+        // Keep draft {body, replyToEventSeq, threadRootEventSeq} as id's, sealed by seal (text to a promise of the sealed);
+        // rejects when it cannot be kept.
+        keepHeld(id, draft, seal) {
+            return seal(JSON.stringify(draft)).then((sealed) => {
+                const all = chat.readHeld();
+                all[id] = sealed;
+                if (!chat.writeHeld(all)) throw { reasonCode: "noStorage", errors: "This browser cannot keep the message" };
+                return sealed;
+            });
+        },
+        // The draft id's, opened by open (the sealed to a promise of its text); null when this device has none.
+        openHeld(id, open) {
+            const sealed = chat.readHeld()[id];
+            return sealed ? open(sealed).then((text) => JSON.parse(text)) : Promise.resolve(null);
+        },
+        // The user's scheduled messages and reminders (chatSchedule), into state.schedule; a failure is logged and Chat
+        // goes on without them.
+        loadSchedule(url) {
+            return moqui.request(url("chatSchedule"), { params: {} }).then((result) => {
+                const json = (result && result.json) || {};
+                chat.state.schedule = { scheduledList: json.scheduledList || [], reminderList: json.reminderList || [], loaded: true };
+                return chat.state.schedule;
+            }, (err) => {
+                console.error("The scheduled messages and reminders were not read", err);
+                return chat.state.schedule;
+            });
+        },
+        hasHeld(id) { return !!chat.readHeld()[id]; },
+        dropHeld(id) {
+            const all = chat.readHeld();
+            if (all[id]) { delete all[id]; chat.writeHeld(all); }
+        },
+        // Send one held message of this device's (row as chatSchedule lists it): claimed on the server (claimHeld), its draft
+        // opened, encrypted for the room's members and sent with the clientRef the claim gave, then reported (completeHeld).
+        // url(name) is a Chat transition's URL; atOnce is Send now. Resolves to {sent}, {lost} (no draft here: reported, so
+        // every device shows it cannot be sent) or {waiting} (not claimed: not due, another try holds it, or refused); rejects
+        // when the send failed, the draft kept for the next try.
+        sendHeld(row, url, atOnce) {
+            const crypto = moqui.crypto;
+            const deviceId = crypto && crypto.thisDeviceId ? crypto.thisDeviceId() : null;
+            const id = row && row.chatScheduledMessageId;
+            if (!id || !deviceId || deviceId !== row.heldByDeviceId) return Promise.resolve({ waiting: true });
+            const post = (name, params) => moqui.request(url(name), { method: "POST", params }).then((result) => (result && result.json) || {});
+            const lost = () => post("completeHeld", { chatScheduledMessageId: id, deviceId, draftLost: true }).then(() => { chat.dropHeld(id); return { lost: true }; });
+            if (!chat.hasHeld(id)) return lost();
+            return post("claimHeld", { chatScheduledMessageId: id, deviceId, atOnce: atOnce ? "true" : "" }).then((claim) => {
+                if (claim.sent) { chat.dropHeld(id); return { sent: true }; }
+                if (!claim.claimed) return { waiting: true, reasonCode: claim.reasonCode || null };
+                // a draft that does not open with this device's key (its store key changed) is lost
+                return chat.openHeld(id, crypto.openLocal).catch((err) => (err && err.name === "OperationError" ? null : Promise.reject(err))).then((draft) => {
+                    if (!draft) return lost();
+                    return moqui.request(url("room"), { params: { chatRoomId: row.chatRoomId } }).then((result) => {
+                        const members = ((result && result.json && result.json.memberList) || []).filter((person) => person && person.userId).map((person) => person.userId);
+                        return chat.sealMessage(row.chatRoomId, members, draft.body || "", []);
+                    }).then((sealed) => post("send", { chatRoomId: row.chatRoomId, encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds,
+                        replyToEventSeq: draft.replyToEventSeq || "", threadRootEventSeq: draft.threadRootEventSeq || "", clientRef: claim.clientRef }))
+                        .then((json) => {
+                            const seq = json.event && json.event.eventSeq != null ? json.event.eventSeq : json.eventSeq;
+                            if (seq == null) return Promise.reject(json);
+                            return post("completeHeld", { chatScheduledMessageId: id, deviceId, eventSeq: seq }).then(() => { chat.dropHeld(id); return { sent: true }; });
+                        });
+                });
+            });
+        }
+    });
+    chat.state.schedule = { scheduledList: [], reminderList: [], loaded: false };
     // a sealed message's note follows its send, whichever page made it; another tab's notes show here too
     chat.on("sent", (payload) => chat.leftOutSent(payload));
     if (root.addEventListener) root.addEventListener("storage", (event) => {

@@ -1443,3 +1443,98 @@ fn a_ring_to_a_keyed_device_is_sealed() {
     assert_eq!(opened["ringSeconds"], "45");
     assert_eq!(body["message"]["android"]["priority"], "HIGH");
 }
+
+/// Rule 9 (plans/Comms-Messaging.md phase 15): a reminder pushes to each device of its user though they read past the
+/// message, as a notification with its own tag and collapse key, and a read's clear leaves it; during do not disturb it
+/// is held and goes when it ends; with previews off it says only that a message is due.
+#[test]
+fn a_reminder_pushes_though_read_and_is_held_by_do_not_disturb() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("alice");
+    let seq = send(&bed.room, "<p>Lunch at one?</p>", &[]);
+    run(bed.now);
+    bed.net.take();
+    login("bob");
+    ok(&format!("{CHAT}.mark#Read"), &[("chatRoomId", text(&bed.room))]);
+    run(bed.now + 1_000);
+    bed.net.take();
+    let remind = |id: &str, at: i64| {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let reminder = Reminder {
+            user: "bob",
+            reminder_id: id,
+            room_id: &bed.room,
+            event_seq: seq,
+            title: "Reminder: Alice in Team",
+            hidden_body: "A message you asked to be reminded of",
+        };
+        queue_reminder(&bed.facade, &reminder, at).unwrap()
+    };
+    assert_eq!(remind("R1", bed.now + 2_000), 2);
+    run(bed.now + 3_000);
+    let posts = bed.net.take();
+    assert_eq!(devices(&posts), set(["BOB-PHONE", "BOB-WEB"]), "sent though read");
+    let collapse = reminder_collapse_room(&bed.room, seq);
+    for post in &posts {
+        let said = payload(post);
+        assert_eq!(said["kind"], "notification");
+        assert_eq!(said["topic"], "ChatReminder");
+        assert_eq!(said["title"], "Reminder: Alice in Team");
+        assert_eq!(said["body"], "Lunch at one?");
+        assert_eq!(said["tag"], "chat-reminder-R1");
+        assert!(said["link"].as_str().unwrap().ends_with(&format!("&eventSeq={seq}")));
+        match &post.fcm {
+            Some(body) => {
+                assert_eq!(body["message"]["android"]["priority"], "HIGH");
+                let key = body["message"]["android"]["collapse_key"].as_str().unwrap();
+                assert_eq!(key, collapse_key("BOB-PHONE", &collapse, false));
+                assert_ne!(key, collapse_key("BOB-PHONE", &bed.room, false), "not the room's");
+            }
+            None => assert_eq!(post.topic, collapse_key("BOB-WEB", &collapse, false)),
+        }
+    }
+    // a read of the room since: its clear leaves the reminder as sent
+    login("alice");
+    send(&bed.room, "<p>Or two</p>", &[]);
+    login("bob");
+    ok(&format!("{CHAT}.mark#Read"), &[("chatRoomId", text(&bed.room))]);
+    run(bed.now + 4_000);
+    bed.net.take();
+    let reminders = rows(&bed.facade, OUTBOX, &[("userId", "bob"), ("kindEnumId", KIND_REMINDER)]);
+    assert_eq!(reminders.len(), 2);
+    assert!(reminders.iter().all(|row| field(row, "statusEnumId") == SENT));
+
+    // do not disturb and previews off: held, then sent, with no text
+    row(
+        &bed.facade,
+        "moqui.security.UserStatus",
+        &[("userId", text("bob")), ("statusEnumId", text("UpsDnd"))],
+    );
+    row(
+        &bed.facade,
+        "moqui.security.UserPreference",
+        &[
+            ("userId", text("bob")),
+            ("preferenceKey", text("CHAT_NOTIFY_PREVIEW")),
+            ("preferenceValue", text("N")),
+        ],
+    );
+    assert_eq!(remind("R2", bed.now + 5_000), 2);
+    run(bed.now + 6_000);
+    assert!(bed.net.take().is_empty(), "held during do not disturb");
+    update(
+        &bed.facade,
+        "moqui.security.UserStatus",
+        &[("userId", "bob")],
+        &[("statusEnumId", text("UpsOnline"))],
+    );
+    run(bed.now + 7_000);
+    let posts = bed.net.take();
+    assert_eq!(devices(&posts), set(["BOB-PHONE", "BOB-WEB"]));
+    for post in &posts {
+        let said = payload(post);
+        assert_eq!(said["tag"], "chat-reminder-R2");
+        assert_eq!(said["body"], "A message you asked to be reminded of");
+    }
+}

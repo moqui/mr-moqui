@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Scheduled sends and message reminders in chat (plans/Comms-Messaging.md §18.3 phase 15;
+    org.moqui.chat.ChatScheduleServices, ChatSchedule.js). No Java counterpart; mail's scheduled sends are
+    moqui.basic.email.EmailMessage's own (EmailClientServices.send#DueDrafts).
+
+    A scheduled message of a plain, phone or bridged room is held by the server and sent at its time as its sender, through
+    send#Message, so every bridge and its send checks apply then. One of an encrypted room is held by the sender's own
+    device, which keeps the draft sealed and encrypts it at the time: the server keeps a placeholder with no text, the
+    device that holds it and the lease of the device that sends it. A reminder keeps the room and the message's number
+    only, never its text. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="ChatScheduledMessage" package="moqui.chat" use="transactional" cache="never">
+        <description>A message its sender scheduled for sendDate. statusEnumId: CsmScheduled (waiting), CsmSent (sentEventSeq is
+            the message it made), CsmFailed (not sent: reasonCode and failText, kept for the sender to see, with Send now and
+            Cancel), CsmCancelled. In a plain room the server holds it (body, bodyText, the reply, the thread and the record
+            cards) and send#DueMessages sends it. In an encrypted room it is a placeholder with no body or text:
+            heldByDeviceId is the sender's ChatDevice that keeps the draft and sends it (claim#HeldMessage, a lease of
+            leaseDeviceId until leaseExpiresDate; complete#HeldMessage), sentLate Y when it went more than 5 minutes after its
+            time, which the sender sees until lateSeenDate. Files are ChatAttachment rows with its chatScheduledMessageId.</description>
+        <field name="chatScheduledMessageId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="senderUserId" type="id"/>
+        <field name="sendDate" type="date-time"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="body" type="text-very-long"><description>The composer's safe HTML, cleaned as send#Message cleans it;
+            empty for an encrypted room's placeholder</description></field>
+        <field name="bodyText" type="text-very-long"><description>Its text, for the list</description></field>
+        <field name="replyToEventSeq" type="number-integer"/>
+        <field name="threadRootEventSeq" type="number-integer"/>
+        <field name="recordsJson" type="text-long"><description>The record cards [{entity, id}] looked up at the schedule</description></field>
+        <field name="heldByDeviceId" type="id"><description>An encrypted room's: the sender's device that holds the draft</description></field>
+        <field name="heldByDeviceName" type="text-medium"/>
+        <field name="leaseDeviceId" type="id"/>
+        <field name="leaseExpiresDate" type="date-time"/>
+        <field name="sentEventSeq" type="number-integer"/>
+        <field name="sentDate" type="date-time"/>
+        <field name="sentLate" type="text-indicator"/>
+        <field name="lateSeenDate" type="date-time"/>
+        <field name="attemptCount" type="number-integer" default="0"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="failText" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one-nofk" title="Sender" related="moqui.security.UserAccount" short-alias="sender">
+            <key-map field-name="senderUserId" related="userId"/></relationship>
+        <relationship type="one" title="ChatScheduledMessageStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="CHAT_SCHED_DUE"><index-field name="statusEnumId"/><index-field name="sendDate"/></index>
+        <index name="CHAT_SCHED_SENDER"><index-field name="senderUserId"/><index-field name="statusEnumId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Scheduled Message Status" enumTypeId="ChatScheduledMessageStatus"/>
+            <moqui.basic.Enumeration description="Scheduled" enumId="CsmScheduled" enumCode="scheduled" enumTypeId="ChatScheduledMessageStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Sent" enumId="CsmSent" enumCode="sent" enumTypeId="ChatScheduledMessageStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Not sent" enumId="CsmFailed" enumCode="failed" enumTypeId="ChatScheduledMessageStatus" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Cancelled" enumId="CsmCancelled" enumCode="cancelled" enumTypeId="ChatScheduledMessageStatus" sequenceNum="4"/>
+            <!-- a fired reminder in the user's Activity (ChatUserActivity), and its push (PushOutbox) -->
+            <moqui.basic.Enumeration description="Reminder" enumId="CuaReminder" enumCode="reminder" enumTypeId="ChatUserActivityKind" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Reminder" enumId="PokReminder" enumCode="reminder" enumTypeId="PushOutboxKind" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+
+    <extend-entity entity-name="ChatAttachment" package="moqui.chat">
+        <field name="chatScheduledMessageId" type="id"><description>A file of a scheduled message, kept by
+            clean#PendingAttachments while it waits and removed when it is cancelled</description></field>
+    </extend-entity>
+
+    <entity entity-name="ChatMessageReminder" package="moqui.chat" use="transactional" cache="never">
+        <description>A reminder a user set on a message (eventSeq of chatRoomId) for remindDate. statusEnumId: CrmPending,
+            CrmFired (firedDate: its Activity row, notification and push were made), CrmCancelled, CrmDropped (not sent:
+            reasonCode messageGone or noAccess). It keeps no text of the message, in any room. One pending reminder a user
+            and message.</description>
+        <field name="chatMessageReminderId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="remindDate" type="date-time"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="firedDate" type="date-time"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="ChatMessageReminderStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="CHAT_REMIND_DUE"><index-field name="statusEnumId"/><index-field name="remindDate"/></index>
+        <index name="CHAT_REMIND_USER"><index-field name="userId"/><index-field name="statusEnumId"/></index>
+        <index name="CHAT_REMIND_MESSAGE"><index-field name="userId"/><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Message Reminder Status" enumTypeId="ChatMessageReminderStatus"/>
+            <moqui.basic.Enumeration description="Pending" enumId="CrmPending" enumCode="pending" enumTypeId="ChatMessageReminderStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Fired" enumId="CrmFired" enumCode="fired" enumTypeId="ChatMessageReminderStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Cancelled" enumId="CrmCancelled" enumCode="cancelled" enumTypeId="ChatMessageReminderStatus" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Not sent" enumId="CrmDropped" enumCode="dropped" enumTypeId="ChatMessageReminderStatus" sequenceNum="4"/>
+        </seed-data>
+    </entity>
+</entities>
