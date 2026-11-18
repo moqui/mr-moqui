@@ -60,6 +60,10 @@ impl Session {
                 if let Some(Overlay::Login(login)) = self.overlays.last_mut() {
                     let fields = login.labels().len();
                     if *at < fields {
+                        // a click on the ADMIN_ADV toggle flips it
+                        if login.is_toggle(*at) && login.at == *at {
+                            login.join_advanced = !login.join_advanced;
+                        }
                         login.at = *at;
                     } else if login.setup.is_some() {
                         // the key line is the button: setup sends from any field

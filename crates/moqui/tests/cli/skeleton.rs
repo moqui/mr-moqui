@@ -207,6 +207,9 @@ fn a_lone_binary_reads_its_built_in_files_in_place_and_loads_serves_and_extracts
             "off",
             "-D",
             "cluster_https_port=0",
+            // the first administrator's form is off unless this is set (MoquiDefaultConf.xml)
+            "-D",
+            "initial_admin_enabled=true",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -245,7 +248,7 @@ fn a_lone_binary_reads_its_built_in_files_in_place_and_loads_serves_and_extracts
     assert_eq!(home.status, 200, "{}", home.body);
     assert!(home.body.contains("skeleton runtime"), "{}", home.body);
 
-    // the first admin account, from the Login page's form with its session token
+    // the first admin account, from the Login page's form with its session token, in ADMIN_ADV too (joinAdvanced)
     let mut jar = BTreeMap::new();
     let login_page = request(port, "GET", "/Login", &jar, None);
     assert_eq!(login_page.status, 200, "{}", login_page.body);
@@ -270,6 +273,7 @@ fn a_lone_binary_reads_its_built_in_files_in_place_and_loads_serves_and_extracts
                 ("newPassword", "Skeleton-Admin-1"),
                 ("newPasswordVerify", "Skeleton-Admin-1"),
                 ("emailAddress", "skeleton.admin@example.com"),
+                ("joinAdvanced", "true"),
             ]),
         )),
     );
@@ -323,6 +327,14 @@ fn a_lone_binary_reads_its_built_in_files_in_place_and_loads_serves_and_extracts
         let page = request(port, "GET", path, &rest_jar, None);
         assert_eq!(page.status, 200, "{path}: {}", page.body);
         assert!(page.body.contains("/js/moqui-html.js"), "{path}: {}", page.body);
+        // the tools home names the sealed abilities: SQL is ADMIN_ADV's, which joinAdvanced gave the account
+        if path == "/apps/tools" {
+            assert!(
+                page.body.contains("You hold the permission SQL_RUNNER_WEB"),
+                "{}",
+                page.body
+            );
+        }
     }
     for path in [
         "/css/moqui-html.css",

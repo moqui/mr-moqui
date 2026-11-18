@@ -1269,6 +1269,85 @@ fn shares_and_public_links_with_password_expiry_revoke_and_a_file_drop() {
     assert!(actions.contains(&"version".to_string()), "{actions:?}");
 }
 
+/// SEC-FIL-06: a file dropped through a link is named by the last segment of its own name (no folders, never the
+/// trash), one call takes at most 20 files, and a link takes no more files than its cap, counted on its share row.
+#[test]
+fn a_link_upload_takes_a_files_last_name_and_is_capped() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    install();
+    users(&facade);
+    login("alice");
+    let team = drive("folder", "Drop", &[]);
+    let link = ok(
+        "share#Resource",
+        &[
+            ("driveId", text(&team)),
+            ("isLink", text("Y")),
+            ("permissionEnumId", text("RspEdit")),
+        ],
+    );
+    let token = out_text(&link, "linkToken");
+    let share_id = out_text(&link, "shareId");
+
+    logout();
+    let dropped = ok(
+        "upload#PublicShare",
+        &[
+            ("token", text(&token)),
+            (
+                "fileList",
+                files(&[("sub/dir/x.txt", "xx"), (".trash", "t"), ("a\\b.txt", "bbb")]),
+            ),
+        ],
+    );
+    let paths: Vec<String> = maps(&dropped, "uploadedList")
+        .iter()
+        .map(|row| field(row, "path"))
+        .collect();
+    assert_eq!(paths, ["x.txt", "upload", "b.txt"], "{dropped:?}");
+    let many: Vec<(String, &str)> = (0..21).map(|at| (format!("f{at}.txt"), "f")).collect();
+    let many: Vec<(&str, &str)> = many.iter().map(|(name, body)| (name.as_str(), *body)).collect();
+    refused(
+        "upload#PublicShare",
+        &[("token", text(&token)), ("fileList", files(&many))],
+        "Too much for one upload through a link",
+    );
+
+    let share = |facade: &EntityFacade| {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find("moqui.resource.ResourceShare")
+            .unwrap()
+            .condition(moqui_core::entity::Condition::equals("shareId", text(&share_id)))
+            .one()
+            .unwrap()
+            .unwrap()
+    };
+    let counted = share(&facade);
+    assert_eq!(number(counted.get("uploadCount")), 3);
+    assert_eq!(number(counted.get("uploadBytes")), 6);
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut row = share(&facade);
+        row.set("uploadCount", Value::I64(999));
+        row.update(&facade).unwrap();
+    }
+    refused(
+        "upload#PublicShare",
+        &[
+            ("token", text(&token)),
+            ("fileList", files(&[("y.txt", "y"), ("z.txt", "z")])),
+        ],
+        "This link has taken all the files it may",
+    );
+    ok(
+        "upload#PublicShare",
+        &[("token", text(&token)), ("file", upload("y.txt", b"y"))],
+    );
+    assert_eq!(number(share(&facade).get("uploadCount")), 1000);
+}
+
 /// The drive's hidden trash folder is not reached by its path: a public link to the whole drive (no share path) lists,
 /// downloads and uploads nothing under `.trash`, a member or a share reads it only through list#Trash, nothing is uploaded
 /// into it or shared from it, and its owner still opens it.

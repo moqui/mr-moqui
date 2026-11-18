@@ -189,6 +189,10 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="hasUserAccounts" from="!adminNeeded.needed"/>
         <!-- from another machine the first administrator takes the setup secret of the startup log (SEC-WEB-08) -->
         <set field="setupSecretRequired" from="adminNeeded.needed &amp;&amp; !ec.user.initialAdminLocal"/>
+        <!-- no account yet, but initial_admin_enabled is off: the login form, with a line on how to turn the setup on -->
+        <set field="initialAdminDisabled" from="adminNeeded.disabled === true"/>
+        <set field="advancedNote" value="Administrators - Advanced may log in as another user and use the SQL runner, the SSH admin shell and host terminal, conf editing, component deploy, load testing and hosted instances: they run code or reach data outside the apps. Leave it off unless this account needs them. Only a member of ADMIN_ADV can add a member later; with none, it takes a data load (moqui load)."/>
+        <set field="disabledNote" value="No user account exists yet. To create the first administrator, set initial_admin_enabled=true (in .env) and restart the server."/>
         <!-- the Test Login button: on a dev or test instance or a demo (demo_test_login), while the test user's password is
             still 'moqui' (SEC-RTE-17; the check is cached a minute) -->
         <service-call name="org.moqui.impl.UserServices.get#TestLoginOffered" out-map="testLoginOut"/>
@@ -204,6 +208,10 @@ along with this software (see the LICENSE.md file). If not, see
             <section name="NeedsSetupSection" condition="hasUserAccounts"><widgets>
                 <!-- primary scenario, main login screen -->
                 <render-mode><text type="html" location="component://webroot/screen/webroot/Login.html.fancy"/></render-mode>
+                <section name="InitialAdminDisabledSection" condition="initialAdminDisabled"><widgets>
+                    <render-mode><text type="html"><![CDATA[<p class="muted center" id="InitialAdminDisabled">${html(disabledNote)}</p>]]></text>
+                        <text type="tui"><![CDATA[[{"t":"text","id":"InitialAdminDisabled","style":"quote","text":${JSON.stringify(disabledNote)}}]]]></text></render-mode>
+                </widgets></section>
             </widgets><fail-widgets>
                 <!-- if there are no user accounts, other than the _NA_ UserAccount which is in seed data, show form to create admin account -->
                 <render-mode><text type="html"><![CDATA[
@@ -219,6 +227,9 @@ along with this software (see the LICENSE.md file). If not, see
             <input type="text" name="emailAddress" value="${html(ec.web.errorParameters.emailAddress || "")}" placeholder="Email Address" required>
             ${setupSecretRequired ? '<input type="password" name="setupSecret" placeholder="Setup Secret" required autocomplete="off">'
                 + '<p class="muted">From another machine the setup secret is needed: the server wrote it to its startup log (moqui.log), in the line that begins "No user account exists yet".</p>' : ''}
+            <label class="muted" style="display:block;text-align:left;margin:8px 0"><input type="checkbox" name="joinAdvanced" value="true"${ec.web.errorParameters.joinAdvanced == "true" ? " checked" : ""}>
+                Also join Administrators - Advanced (ADMIN_ADV)</label>
+            <p class="muted" id="InitialAdminAdvancedNote">${html(advancedNote)}</p>
             <button data-btn="primary" data-size="lg" type="submit">Create Initial Admin Account</button>
         </form>
     </div>
@@ -242,12 +253,16 @@ along with this software (see the LICENSE.md file). If not, see
         {"t":"field","id":"InitialAdminForm.emailAddress","name":"emailAddress","title":"Email Address","required":true,
             "w":{"kind":"textLine","value":${JSON.stringify(ec.web.errorParameters?.emailAddress || "")}}},
         ${setupSecretRequired ? '{"t":"field","id":"InitialAdminForm.setupSecret","name":"setupSecret","title":"Setup Secret","required":true,"w":{"kind":"password"}},' : ''}
+        {"t":"field","id":"InitialAdminForm.joinAdvanced","name":"joinAdvanced","title":"Advanced",
+            "w":{"kind":"check","value":${JSON.stringify(ec.web.errorParameters?.joinAdvanced == "true" ? '["true"]' : '[]')},
+                "options":[{"value":"true","label":"Also join Administrators - Advanced (ADMIN_ADV)"}]}},
         {"t":"field","id":"InitialAdminForm.submitButton","name":"submitButton","title":"Create Initial Admin Account",
             "w":{"kind":"submit","text":"Create Initial Admin Account"}}
     ]},
     {"t":"text","id":"InitialAdminRules","style":"quote","text":${JSON.stringify("The password: at least " + minLength
         + " characters, " + minDigits + (minDigits == 1 ? " digit, " : " digits, ") + minOthers + (minOthers == 1 ? " other" : " others"))}}${setupSecretRequired
-        ? ',{"t":"text","id":"InitialAdminSecretHint","style":"quote","text":' + JSON.stringify('The setup secret is in the startup log of the server (moqui.log), in the line that begins "No user account exists yet".') + '}' : ''}
+        ? ',{"t":"text","id":"InitialAdminSecretHint","style":"quote","text":' + JSON.stringify('The setup secret is in the startup log of the server (moqui.log), in the line that begins "No user account exists yet".') + '}' : ''},
+    {"t":"text","id":"InitialAdminAdvancedNote","style":"quote","text":${JSON.stringify(advancedNote)}}
 ]]]></text></render-mode>
             </fail-widgets></section>
 

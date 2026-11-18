@@ -12,7 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{choose_port, dev_purpose, purpose_properties, save_port, saved_port, set_dev_tools, PURPOSE_FILE};
+use super::{
+    choose_port, dev_purpose, purpose_properties, save_port, saved_port, set_dev_tools, setup_properties, PURPOSE_FILE,
+};
 use std::net::{Ipv4Addr, TcpListener};
 
 #[test]
@@ -104,6 +106,11 @@ fn the_dev_tools_follow_the_variable_then_the_purpose_file_and_are_off_by_defaul
     assert!(dev_purpose(Some(" "), Some("dev")), "an empty variable is passed over");
     assert_eq!(purpose_properties(true), vec![("instance_purpose", "dev".to_string())]);
     assert!(purpose_properties(false).is_empty(), "off leaves the conf's own purpose");
+    assert_eq!(
+        setup_properties(),
+        vec![("initial_admin_enabled", "true".to_string())],
+        "the first run offers the first administrator"
+    );
 
     let dir = std::env::temp_dir().join(format!("moqui-desktop-purpose-{}", std::process::id()));
     set_dev_tools(&dir, true).unwrap();

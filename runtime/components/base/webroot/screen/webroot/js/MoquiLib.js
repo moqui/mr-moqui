@@ -715,6 +715,16 @@
 
         // ---- notifications ----
 
+        // A link a message or notification may follow, cleaned as a browser reads it (tabs and line breaks dropped,
+        // leading controls and spaces cut): a path, or an http, https, mailto or tel URL; else null, never javascript:,
+        // data: or another scheme that runs script or carries a document (SEC-CLU-06).
+        followableLink: (link) => {
+            const text = String(link == null ? "" : link).replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "").trim();
+            if (!text) return null;
+            const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(text);
+            return !scheme || ["http", "https", "mailto", "tel"].includes(scheme[1].toLowerCase()) ? text : null;
+        },
+
         // A desktop notification when the user allowed them (from the account menu's Notifications, js/WebrootPush.js), else the
         // fallback (the page toast). Permission is only asked from a user's click. A stored notification is tagged with its id,
         // as its Web Push is, so the browser shows it once when both arrive. An app around the page (window.moquiDesktop)
@@ -733,7 +743,8 @@
             }
             const show = () => {
                 const notif = new Notification(jsonObj.title, options);
-                if (jsonObj.link && jsonObj.link.length) notif.onclick = () => root.open(jsonObj.link);
+                const link = moqui.followableLink(jsonObj.link);
+                if (link) notif.onclick = () => root.open(link, "_blank", "noopener");
                 if (moqui.webrootVue) moqui.webrootVue.addNotify(jsonObj.title, jsonObj.type);
             };
             if (Notification && Notification.permission === "granted") show();

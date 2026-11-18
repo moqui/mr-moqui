@@ -24,6 +24,10 @@
     <!-- This server's public base URLs an attestation must be addressed to (component-deploy public-urls), separated
         by spaces or commas; empty for the webroot webapp's URL when webapp_http_host is set. -->
     <default-property name="component_deploy_public_urls" value=""/>
+    <!-- The Login page's Create Initial Admin Account form, and create#InitialAdminAccount, while no account exists but
+        the seed ones: off unless true. Set initial_admin_enabled=true in runtime/.env (or the environment) to set up a
+        new system, and take it out once the first administrator is made (docs/Run-Deploy.md). -->
+    <default-property name="initial_admin_enabled" value="false"/>
 
     <!-- Locale and Time Zone Properties -->
     <default-property name="default_locale" value="en_US"/>

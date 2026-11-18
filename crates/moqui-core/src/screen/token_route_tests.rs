@@ -189,3 +189,44 @@ fn a_routes_token_is_redacted_within_text_and_json() {
     );
     assert_eq!(json["events"][0]["data"]["attributes"]["href"], "/tk/:token/files");
 }
+
+/// SEC-RTE-16: a token the route's service refuses is a failed credential, which the web protection counts against the
+/// client; an accepted token and a failing service are not.
+#[test]
+fn a_refused_token_is_noted_as_a_failed_credential() {
+    let path = std::env::temp_dir().join(format!("moqui-token-route-check-{}.xml", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"<services><service verb="check" noun="RouteToken">
+                <in-parameters><parameter name="token"/><parameter name="routeName"/></in-parameters>
+                <out-parameters><parameter name="valid" type="Boolean"/><parameter name="routeContext" type="Map"/></out-parameters>
+                <actions><script>valid = token == 'GoodToken0000'; routeContext = {}</script></actions>
+            </service></services>"#,
+    )
+    .unwrap();
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    ctx.factory().set_entity(crate::testing::open());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    let found = |token: &str, service: &str| RouteMatch {
+        route: TokenRoute {
+            token_service: service.to_string(),
+            ..route("tk")
+        },
+        token: token.to_string(),
+        target: RouteTarget::Shell,
+    };
+    crate::web::take_auth_failure();
+
+    assert!(check_token(&found("GoodToken0000", "check#RouteToken")).is_some());
+    assert!(!crate::web::take_auth_failure(), "an accepted token is no failure");
+    assert!(check_token(&found("WrongToken000", "check#RouteToken")).is_none());
+    assert!(crate::web::take_auth_failure(), "a refused token counts");
+    assert!(check_token(&found("WrongToken000", "no.such#Service")).is_none());
+    assert!(
+        !crate::web::take_auth_failure(),
+        "a failing service is not the client's guess"
+    );
+    let _ = std::fs::remove_file(&path);
+}

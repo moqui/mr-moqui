@@ -450,10 +450,11 @@ pub(crate) struct Thumbnail {
     pub(crate) png: Vec<u8>,
 }
 
-/// The image in `bytes` scaled to fit `max` by `max` (never up), as PNG.
+/// The image in `bytes` scaled to fit `max` by `max` (never up), as PNG. It is decoded within the limits of
+/// `convert#Image`, so an image claiming huge sides is refused rather than allocated (SEC-SCR-09).
 #[cfg(feature = "image")]
 pub(crate) fn thumbnail_png(bytes: &[u8], max: u32) -> Option<Thumbnail> {
-    let image = ::image::load_from_memory(bytes).ok()?;
+    let image = crate::service::decode_image(bytes)?;
     let small = if image.width() > max || image.height() > max {
         image.thumbnail(max, max)
     } else {
@@ -855,5 +856,16 @@ mod tests {
         assert_eq!((width, height), (100, 50));
         assert!(png.starts_with(b"\x89PNG"));
         assert!(thumbnail_png(b"not an image", 100).is_none());
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn a_thumbnail_is_not_made_of_an_image_with_a_side_over_the_decode_limit() {
+        let image = ::image::GrayImage::from_pixel(30_001, 1, ::image::Luma([0]));
+        let mut png = Cursor::new(Vec::new());
+        ::image::DynamicImage::ImageLuma8(image)
+            .write_to(&mut png, ::image::ImageFormat::Png)
+            .unwrap();
+        assert!(thumbnail_png(&png.into_inner(), 100).is_none());
     }
 }
