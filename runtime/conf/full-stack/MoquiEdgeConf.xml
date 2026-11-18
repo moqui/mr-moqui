@@ -43,7 +43,7 @@
         open between the members only. Never copy runtime/db: each member keeps its own instance id, member key, and
         the front's member list there.
         The shared names (.env): webapp-list/webapp[webroot]@http-host, the cluster's own name for its System app and for pairing, with an
-        address record at each member's own address (not the front's); edge_public_addresses, the
+        address record at each member's own address (not the front's); edge@public-addresses, the
         front's public addresses, which the wizard checks a local node's host names against, since the names point at
         the front. -->
 

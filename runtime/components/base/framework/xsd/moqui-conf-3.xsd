@@ -109,6 +109,8 @@ along with this software (see the LICENSE.md file). If not, see
                 Comma-separated list of component names to load on start, used with on-start-load-types.
                 Does not run if empty-db-load runs.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="database-audit-days" type="xs:string" default="90"><xs:annotation><xs:documentation>The
+                days the DatabaseAudit rows of the Tools database screens are kept, at least 1.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-queue" type="xs:integer"><xs:annotation><xs:documentation>
                 The maximum size of the worker queue.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
@@ -279,6 +281,9 @@ along with this software (see the LICENSE.md file). If not, see
                 policy when allow-automatic is true, through its adapter (in-process, webhook or manual), one active
                 action per scope, and is verified against the policy's checks. No action reverses committed business
                 transactions.</xs:documentation></xs:annotation>
+            <xs:attribute name="properties" type="xs:string"><xs:annotation><xs:documentation>The other process
+                properties a recovery adapter may read, secret ones among them, comma separated (one whose name starts
+                with recovery_ needs no listing).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="enabled" type="boolean"><xs:annotation><xs:documentation>false stops new decisions. Default true.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allow-automatic" type="boolean"><xs:annotation><xs:documentation>true lets a policy in automatic mode run its actions without approval. Default false: automatic policies wait for approval as approval policies do.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="verify-minutes" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>How long after an action takes effect its checks are read before it is verified, when its policy does not say. Default 15.</xs:documentation></xs:annotation></xs:attribute>
@@ -716,6 +721,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="https-enabled" default="false" type="xs:string"/>
             <xs:attribute name="https-port" type="xs:string"/>
             <xs:attribute name="https-host" type="xs:string"/>
+            <xs:attribute name="app-redirect-uris" type="xs:string"><xs:annotation><xs:documentation>The redirect URIs
+                the desktop and mobile apps' sign-in may return to, comma or space separated; empty for the apps' own.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="app-loopback-redirect" type="xs:string" default="true"><xs:annotation><xs:documentation>Whether
+                an app's sign-in may also return to a loopback address (http://127.0.0.1:port), as a desktop app
+                does.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="http-port" type="xs:string"/>
             <xs:attribute name="http-host" type="xs:string"/>
             <xs:attribute name="handle-cors" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>
@@ -1761,6 +1771,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="dci-topic-factory" type="xs:string">
                 <xs:annotation><xs:documentation>Topic factory for distributed cache invalidate</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sequenced-id-prefix" type="xs:string"/>
+            <xs:attribute name="disable-fk-create" type="xs:string" default="false"><xs:annotation><xs:documentation>true
+                creates no foreign keys when tables are made or checked.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sql-name-style" type="xs:string">
                 <xs:annotation><xs:documentation>Rust only: java (default), or legacy to retain pre-compatibility quoted Rust table and column names.</xs:documentation></xs:annotation>
             </xs:attribute>
@@ -1801,6 +1813,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:annotation><xs:documentation>The mail client (org.moqui.mail.EmailClientServices).</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="oauth-provider"/></xs:sequence>
+            <xs:attribute name="contact-service" type="xs:string"><xs:annotation><xs:documentation>The service that
+                finds a user's contacts for the mail client's address completion, over the qapps theme's value.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>Comma separated hostnames and IPs poll#EmailServer and send#Email may connect
                 to; empty allows any host. smtp.example.com matches example.com; notexample.com does not.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="idle-enabled" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>IMAP IDLE on the Inbox of each active account, so new mail shows at once; false relies on the sync job only.</xs:documentation></xs:annotation></xs:attribute>
@@ -2393,6 +2407,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="mta" type="xs:string"><xs:annotation><xs:documentation>On an edge node: moqui for the MTA in moqui, empty or postfix for the relay to Postfix at relay-host and relay-port.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="relay-host" type="xs:string" default="127.0.0.1"><xs:annotation><xs:documentation>The Postfix beside an edge node.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="relay-port" type="non-neg-int-expandable" default="10025"/>
+            <xs:attribute name="bounce-domain" type="xs:string"><xs:annotation><xs:documentation>On an edge node, the
+                domain of the envelope sender of mail it sends out (bounce+item@domain), whose bounces the SMTP listener
+                takes back to the message; empty sends from the message's own sender.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="retry-seconds" type="non-neg-int-expandable" default="300"><xs:annotation><xs:documentation>The MTA's first retry wait, doubled each time to 4 hours.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="days" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>When a message not delivered goes back as a bounce.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="mx-require-tls" type="xs:string"><xs:annotation><xs:documentation>The recipient domains whose MX gets mail only over STARTTLS with a certificate valid for the host, comma separated, * for every domain; empty: STARTTLS when offered, any certificate, else clear text.</xs:documentation></xs:annotation></xs:attribute>
@@ -2495,6 +2512,9 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:complexType>
                 </xs:element>
             </xs:sequence>
+            <xs:attribute name="public-addresses" type="xs:string"><xs:annotation><xs:documentation>An edge node's public
+                IP addresses, comma or space separated, which its offer gives the local node for its DNS records (every
+                member's on an edge cluster).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="queue-retention-days" type="non-neg-int-expandable" default="14">
                 <xs:annotation><xs:documentation>Days a delivered or failed item (from its delivery or failure) and a
                     receipt are kept; an item still waiting after that fails. Both nodes should keep the same period.

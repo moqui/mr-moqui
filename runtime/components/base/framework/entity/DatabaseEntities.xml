@@ -100,7 +100,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>What ran outside the entity facade (§14.2): every SQL statement, reads included, jobs, cancels and
             terminates, grid saves, loads, ETL runs and stats resets. Written in a transaction of its own, so it survives a
             rollback of what it records, and for failed statements too. For a grid save detailJson has the entity and the
-            counts, not the values. Kept 90 days by default (database_audit_days).</description>
+            counts, not the values. Kept 90 days by default (tools@database-audit-days).</description>
         <field name="auditId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
         <field name="visitId" type="id"/>

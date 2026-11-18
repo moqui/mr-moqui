@@ -26,10 +26,10 @@
 //! app with `error=` and its state. MR Moqui stays a relying party of the provider: this is a handoff to its own
 //! client, not an authorization server.
 //!
-//! The redirect URIs an app may give are the property `webapp_app_redirect_uris` (spaces or commas between them),
+//! The redirect URIs an app may give are the property `webapp-list/webapp[webroot]@app-redirect-uris` (spaces or commas between them),
 //! by default the desktop app's `org.moqui.desktop:/sso` and the mobile app's `org.moqui.mobile:/sso`, and any
 //! loopback one (RFC 8252 §7.3 and §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
-//! `localhost`, which a hosts file or a resolver may send elsewhere), unless `webapp_app_loopback_redirect` is false (on
+//! `localhost`, which a hosts file or a resolver may send elsewhere), unless `webapp-list/webapp[webroot]@app-loopback-redirect` is false (on
 //! by default: a dev instance signs in to its group server so, with its own address as the redirect,
 //! plans/design-dev-aide.md 21.2, F17). Any program on the user's computer can listen on a loopback port, so the
 //! confirmation names the port the code goes to and says the app's name is the app's own word.
@@ -530,9 +530,9 @@ pub(crate) struct Redirects {
 }
 
 impl Redirects {
-    /// `webapp_app_redirect_uris` (the desktop and mobile apps' when empty) and `webapp_app_loopback_redirect`.
+    /// `webapp-list/webapp[webroot]@app-redirect-uris` (the desktop and mobile apps' when empty) and `@app-loopback-redirect`.
     fn configured() -> Self {
-        let configured = moqui_lib::env::get_prop_or_env("webapp_app_redirect_uris");
+        let configured = crate::context::conf_env::setting("webapp-list/webapp[webroot]@app-redirect-uris");
         let text = if configured.trim().is_empty() {
             DEFAULT_REDIRECTS.to_string()
         } else {
@@ -544,7 +544,8 @@ impl Redirects {
                 .filter(|uri| !uri.is_empty())
                 .map(str::to_string)
                 .collect(),
-            loopback: moqui_lib::env::get_prop_or_env("webapp_app_loopback_redirect").trim() != "false",
+            loopback: crate::context::conf_env::setting("webapp-list/webapp[webroot]@app-loopback-redirect").trim()
+                != "false",
         }
     }
 

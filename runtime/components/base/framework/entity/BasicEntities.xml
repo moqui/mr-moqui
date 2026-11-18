@@ -1226,7 +1226,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="internalBodyHtml" type="text-very-long"/>
         <field name="replyOncePerDays" type="number-integer"/>
         <field name="replyAudienceEnumId" type="id"><description>Who gets the reply; empty for everyone. A contact is a
-            sender the hook service names (EmailClientServices.filter#ContactAddresses: the email_contact_service property,
+            sender the hook service names (EmailClientServices.filter#ContactAddresses: the email-client@contact-service property,
             else the owner's theme value STRT_EMAIL_CONTACT_SERVICE); with no hook none is, so the reply goes to internal
             senders only.</description></field>
         <field name="internalDomains" type="text-medium"><description>More domains whose senders are internal, comma

@@ -264,7 +264,7 @@ fn flag(row: &DbRow, name: &str) -> bool {
 
 /// What the comparison of one table needs besides the model and the catalog.
 pub(crate) struct Rules<'a> {
-    /// Foreign keys are compared: the facade's and the load's `disable-fk-create` and `entity_disable_fk_create` are
+    /// Foreign keys are compared: the facade's and the load's `disable-fk-create` and `entity-facade@disable-fk-create` are
     /// off, as for the table check.
     pub(crate) foreign_keys: bool,
     /// Whether two entity groups share a database: no foreign key crosses databases.
@@ -557,8 +557,8 @@ pub(crate) fn compare(facade: &EntityFacade, names: &[&str]) -> Result<SchemaDif
     } else {
         super::meta::expand(facade, names)?
     };
-    let skip_fk =
-        super::fk::fk_create_disabled(facade) || moqui_lib::env::get_prop_or_env("entity_disable_fk_create") == "true";
+    let skip_fk = super::fk::fk_create_disabled(facade)
+        || (crate::hooks::get().conf_setting)("entity-facade", "disable-fk-create") == "true";
     let same_database = |group: Option<&str>, other: Option<&str>| facade.same_database(group, other);
     let rules = Rules {
         foreign_keys: !skip_fk,

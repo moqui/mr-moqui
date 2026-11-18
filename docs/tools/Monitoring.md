@@ -1227,7 +1227,7 @@ changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. T
   recovery actions `MONITOR_RECOVER`; policies, adapters and the emergency stop `MONITOR_RECOVER_ADMIN`. ADMIN holds
   all three. Changing runtime settings needs `MONITOR_SETTINGS`; letting a check or scrape target reach the private
   network, `MONITOR_PRIVATE_NETWORK`. A recovery webhook adapter reads only `recovery_` properties, or the ones the
-  conf property `monitor_recovery_properties` lists, and sends no property the conf marks secret unless it is listed. Editing eval datasets and scorers and scoring runs
+  conf property `telemetry/recovery@properties` lists, and sends no property the conf marks secret unless it is listed. Editing eval datasets and scorers and scoring runs
   needs `MONITOR_EVAL`; starting and cancelling experiments, which start agent runs that cost money,
   `MONITOR_EVAL_RUN`. Their views and changes are logged on the `moqui.monitor.audit` target.
 

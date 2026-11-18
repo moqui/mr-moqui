@@ -169,7 +169,7 @@ fn shared_between_pairings(kind: ClaimKind) -> bool {
 /// another holder has: on an all-in-one node the server ([`own_claim`]: a chat bridge, its XMPP domain, its SIP domain,
 /// and a mail domain the server holds whole), and on any such node another active pairing ([`pairing_claim`]: its XMPP
 /// or SIP domain, its PASS sites; the first claim holds). A mail domain is split by address (§10): the server holds
-/// one whole only as its own bounce domain (`edge_mail_bounce_domain`, or a subdomain of it), and one it merely has
+/// one whole only as its own bounce domain (`mail-delivery@bounce-domain`, or a subdomain of it), and one it merely has
 /// addresses in is kept and noted in [`SetupClaims::shared_domains`]; between pairings a domain is split the same way.
 /// An item whose check fails is refused, logged, as the node cannot tell.
 pub fn check_setup_claims(
@@ -230,7 +230,7 @@ pub fn check_setup_claims(
             _ => {}
         }
     }
-    let bounce = domain_property("edge_mail_bounce_domain");
+    let bounce = domain_property("mail-delivery@bounce-domain");
     if let serde_json::Value::Array(domains) = &mut setup["mailDomains"] {
         domains.retain(|domain| {
             let Some(name) = domain
@@ -347,7 +347,7 @@ pub fn own_host_names(factory: &ExecutionContextFactory) -> Vec<String> {
     let mut names: Vec<String> = [
         "webapp-list/webapp[webroot]@http-host",
         "smtp-server@hostname",
-        "edge_mail_bounce_domain",
+        "mail-delivery@bounce-domain",
     ]
     .iter()
     .map(|name| property(name))

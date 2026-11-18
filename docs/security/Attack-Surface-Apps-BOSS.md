@@ -251,7 +251,7 @@ The server-side requests Mantle makes are listed here by where the address and t
 | Calendar subscription | `mr-mantle/service/mantle/work/CalendarServices.xml` `fetch#CalendarSubscription` | `CalendarSubscription.url`, entered by a user | None | `https` only (webcal as https), `denyInternal` (redirects too) |
 | Google geocoding and places | `mr-mantle/service/mantle/ext/party/GooglePartyServices.xml` | Host `maps.googleapis.com`, port 443, fixed | Was not read | Fixed host |
 | Currency rates | `mr-mantle/service/mantle/ledger/Currencies.js` | `https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml`, a constant | None | Fixed host |
-| GitHub import | `mr-mantle/service/mantle/smithy/SmithyImport.js` | The system property `smithy_github_api`, default `https://api.github.com` | Was not read | Was not read |
+| GitHub import | `mr-mantle/service/mantle/smithy/SmithyImport.js` | The system property `mantle@smithy-github-api`, default `https://api.github.com` | Was not read | Was not read |
 
 **Where a gateway's credential is kept.** A payment or shipping gateway (`mantle.account.method.PaymentGatewayConfig`, `ShippingGatewayConfig`) names a `SystemMessageRemote`. That entity's `password` and `privateKey` fields are `encrypt="true"` and audit-logged on update; `sendUrl` is audit-logged on update (`runtime/components/base/framework/entity/ServiceEntities.xml` lines 379-397).
 

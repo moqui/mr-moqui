@@ -14,7 +14,7 @@
 
 //! `EmailClientServices.filter#ContactAddresses`: which senders are a user's contacts, for an automatic reply to
 //! contacts only (`send#OutOfOfficeReplies`). The framework has no contacts of its own (they are the app's, such as
-//! Mantle's parties), so it asks a hook service, as the shell counts do: the one the `email_contact_service` property
+//! Mantle's parties), so it asks a hook service, as the shell counts do: the one the `email-client@contact-service` property
 //! names, else the theme value `STRT_EMAIL_CONTACT_SERVICE` of the user's qapps theme. It is called with `userId` and
 //! `emailAddressList` and answers `contactAddressList`, the addresses of those that are a contact the user can see. No
 //! hook: `contactAddressList` is null, and no sender is known as a contact (an automatic reply to contacts then goes to
@@ -32,8 +32,8 @@ use crate::entity::EntityFacade;
 use crate::screen::sri::{theme_resource_values, user_theme_id, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE};
 use crate::service::rust_services::RustServiceFn;
 
-/// The property that names the hook; it wins over the theme value.
-const PROPERTY: &str = "email_contact_service";
+/// The conf attribute that names the hook; it wins over the theme value.
+const SETTING: &str = "email-client@contact-service";
 /// The theme value that names the hook.
 const THEME_VALUE: &str = "STRT_EMAIL_CONTACT_SERVICE";
 
@@ -81,9 +81,9 @@ fn addresses(value: Option<&Value>) -> Vec<String> {
     out
 }
 
-/// The hook service for `user_id`: the property, else the user's qapps theme value.
+/// The hook service for `user_id`: the conf's, else the user's qapps theme value.
 fn hook_service(user_id: &str) -> Option<String> {
-    let named = moqui_lib::env::get_prop_or_env(PROPERTY).trim().to_string();
+    let named = crate::context::conf_env::setting(SETTING).trim().to_string();
     if !named.is_empty() {
         return Some(named);
     }
@@ -162,7 +162,7 @@ fn filter_contact_addresses(
     let Some(service) = hook_service(&user_id) else {
         if first_time("none") {
             tracing::info!(
-                "No {PROPERTY} property or {THEME_VALUE} theme value: no sender counts as a contact, so an automatic reply to contacts goes to internal senders only"
+                "No {SETTING} setting or {THEME_VALUE} theme value: no sender counts as a contact, so an automatic reply to contacts goes to internal senders only"
             );
         }
         return Ok(answer(None, None, false));

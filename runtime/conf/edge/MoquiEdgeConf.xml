@@ -24,7 +24,7 @@
         port, and the listener binds webapp-list/webapp[webroot]@https-listen-port (8443 by default): bind 443 (docs/Run-Deploy.md, Listen
         ports and URL ports) or give the port in the address. The links use this node's own key, edge@link-key,
         generated into .env at the first start: a renewed web certificate does not touch them, a changed key means every
-        local node must pair again. edge_public_addresses: this node's public IPv4 and IPv6 addresses, comma-separated,
+        local node must pair again. edge@public-addresses: this node's public IPv4 and IPv6 addresses, comma-separated,
         which the wizard checks the local node's A and AAAA records against.
         A host name's mode is set on the local node (the wizard, or Edge Clients by hand). Passthrough, the default: this
         node reads the name before any TLS and sends the connection down the link with a PROXY header; the local node
@@ -57,7 +57,7 @@
         replicated accounts, so an unknown address is refused while it is away too, and each message is queued for it.
         Mail the local node sends through an EmailServer with smtpHost edge: is DKIM-signed here (mail-delivery/dkim@key, made
         into .env on first use) and delivered to each domain's MX, from bounce+(item)@ the domain
-        edge_mail_bounce_domain names (set it in .env, with its MX here).
+        mail-delivery@bounce-domain names (set it in .env, with its MX here).
         Postfix and Rspamd beside it instead (E5a): in .env moqui_conf__mail_delivery__mta=postfix, moqui_conf__smtp_server__internet=false,
         moqui_conf__smtp_server__listen_port=10024 and moqui_conf__smtp_server__allowed_addresses=127.0.0.1,::1, and protocol="lmtp" on the smtp-server below;
         mail out is relayed to Postfix on mail-delivery@relay-port. -->
@@ -82,10 +82,10 @@
 
     <!-- SIP (docs/interfaces/SIP.md, Behind an edge node): trunks and outside phones reach this node's SIP engine, whose
         media is the call media above. Set in .env to take them (each listener is off until its port is set):
-                                     <default-property name="sip-server@port" value="5060"/>
-                                     <default-property name="sip-server@tls-port" value="5061"/>
-                                     <default-property name="sip-server@host" value="0.0.0.0"/>
-                                     <default-property name="sip-server@public-address" value="(this node's address)"/>
+            moqui_conf__sip_server__port=5060
+            moqui_conf__sip_server__tls_port=5061
+            moqui_conf__sip_server__host=0.0.0.0
+            moqui_conf__sip_server__public_address=(this node's address)
         and moqui_conf__sip_server__registrar__enabled=true for desk and soft phones outside the office (they sign in only while the local
         node, which checks their passwords, is reachable). The trunks are the local node's, replicated here, so they
         register and take calls while it is away; a call then gets its number's replicated fallback, else 480, so set the

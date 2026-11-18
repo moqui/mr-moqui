@@ -30,7 +30,7 @@
         no TLS-terminating proxy before this node, since the links need ALPN and client certificates end to end. Bind
         443 (docs/Run-Deploy.md, Listen ports and URL ports): the listener binds webapp-list/webapp[webroot]@https-listen-port, 8443 by
         default. The links use this node's own key, edge@link-key, generated into .env at the first start; a changed key
-        means every node behind it must pair again. edge_public_addresses: this node's public IPv4 and IPv6 addresses,
+        means every node behind it must pair again. edge@public-addresses: this node's public IPv4 and IPv6 addresses,
         comma-separated, which the wizard checks the host names' A and AAAA records against.
         A host name's mode is set by the node behind that gives it. Passthrough: this node reads the name before any TLS
         and passes the connection down a member's link with a PROXY header; the member ends the TLS with its own

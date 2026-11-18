@@ -2247,7 +2247,7 @@ For a repository whose agreement is on (docs/dev/Contributions.md; Dogfood §10)
 
 
 
-**P11, built** (Nov 14, 2026): F17 (`/sso/appLogin` takes any loopback redirect, `webapp_app_loopback_redirect`, and
+**P11, built** (Nov 14, 2026): F17 (`/sso/appLogin` takes any loopback redirect, `webapp-list/webapp[webroot]@app-loopback-redirect`, and
 with no `authFlowId` the server's own login after a sign-out), F18 (`/rest/s1/moqui/hosting/offer|repository|agreement`;
 `git-server offer-service` and `agreement-check-service`), Dogfood F9 (the hosting REST in `moqui.rest.xml`,
 `org.moqui.git.GitRestServices`, merge requests and runs by number, `git-server rest-write-check-service` with

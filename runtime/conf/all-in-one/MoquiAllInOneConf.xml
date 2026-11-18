@@ -15,7 +15,7 @@
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link. Per-host
     settings (names, addresses, ports) go in .env. The HTTPS listener needs a WebPKI certificate in runtime/cert, which
     the local node checks when it pairs; the links use edge@link-key, generated into .env at the first start (a changed
-    key means pairing again). Set edge_public_addresses in .env to this node's public IPv4 and IPv6 addresses, which
+    key means pairing again). Set edge@public-addresses in .env to this node's public IPv4 and IPv6 addresses, which
     the local node's wizard checks its A and AAAA records against. The local node runs conf/edge/MoquiLocalConf.xml, as
     with a dedicated edge node. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
@@ -34,7 +34,7 @@
         own accounts is delivered here; mail to the paired node's replicated recipients is queued for it, and a message
         with recipients on both sides is delivered once to each. The paired node's mail out (an EmailServer with smtpHost
         edge: there) is DKIM-signed here and delivered to each domain's MX, from bounce+(item)@ the domain
-        edge_mail_bounce_domain names. A mail domain may be split between the sides by address, since its MX is this
+        mail-delivery@bounce-domain names. A mail domain may be split between the sides by address, since its MX is this
         host. The settings and DNS to publish: docs/interfaces/Mail-Inbound.md, The edge node as the gateway. -->
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
         trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
@@ -59,10 +59,10 @@
     <!-- SIP (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", §10): one SIP engine for both sides, routed by the dialled number
         and by the device domain: the server's own PhoneNumbers and sip-server@domain here, the paired node's numbers and
         domain delegated to it. Set in .env to take them (each listener is off until its port is set):
-                                     <default-property name="sip-server@port" value="5060"/>
-                                     <default-property name="sip-server@tls-port" value="5061"/>
-                                     <default-property name="sip-server@host" value="0.0.0.0"/>
-                                     <default-property name="sip-server@public-address" value="(this node's address)"/>
+            moqui_conf__sip_server__port=5060
+            moqui_conf__sip_server__tls_port=5061
+            moqui_conf__sip_server__host=0.0.0.0
+            moqui_conf__sip_server__public_address=(this node's address)
         Open sip-server@port (UDP, TCP), sip-server@tls-port (TCP) and sip-server@rtp-ports (UDP, 20000-20999). -->
 
     <!-- Backups: the server's own data and the link's queue (the paired node's items until delivered) are both here.

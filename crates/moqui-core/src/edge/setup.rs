@@ -189,7 +189,7 @@ pub struct EdgeOffer {
     pub ssh: SshOffer,
     /// Areas not built yet: none now.
     pub not_available: Vec<String>,
-    /// The edge node's public addresses, when it names them (`edge_public_addresses`).
+    /// The edge node's public addresses, when it names them (`edge@public-addresses`).
     pub addresses: Vec<String>,
     /// The asking node's host names on the edge node now.
     pub node_hosts: Vec<EdgeHostInfo>,

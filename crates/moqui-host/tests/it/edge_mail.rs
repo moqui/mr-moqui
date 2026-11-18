@@ -391,7 +391,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
             ("moqui_conf__smtp_server__hostname", "edge.example.com"),
             // not reached at first: a port nothing listens on
             ("moqui_conf__mail_delivery__relay_port", &closed_port),
-            ("edge_mail_bounce_domain", "bounce.test"),
+            ("mail-delivery@bounce-domain", "bounce.test"),
             ("moqui_conf__mail_delivery__mta", "postfix"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
@@ -704,7 +704,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
             ("moqui_conf__smtp_server__listen_port", "0"),
             ("moqui_conf__smtp_server__hostname", "edge.example.com"),
             ("moqui_conf__mail_delivery__mta", "moqui"),
-            ("edge_mail_bounce_domain", "bounce.test"),
+            ("mail-delivery@bounce-domain", "bounce.test"),
             ("moqui_conf__mail_delivery__mx_override", &mx_override),
             ("moqui_conf__mail_delivery__retry_seconds", "0.2"),
             ("moqui_conf__mail_delivery__dns_offline", "true"),

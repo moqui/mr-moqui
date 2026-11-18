@@ -27,7 +27,7 @@ use sha2::Digest;
 
 use crate::http::{client, form_body, reason};
 
-/// The desktop app's redirect URI, as the server allows it by default (`webapp_app_redirect_uris`).
+/// The desktop app's redirect URI, as the server allows it by default (`webapp-list/webapp[webroot]@app-redirect-uris`).
 pub const DESKTOP_REDIRECT: &str = "org.moqui.desktop:/sso";
 
 /// The mobile app's redirect URI (its Android intent filter), allowed by the server by default too.

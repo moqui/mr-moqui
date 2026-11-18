@@ -198,7 +198,7 @@ along with this software (see the LICENSE.md file). If not, see
                 user who is not a member may read and join it; without one only members reach such a room -->
             <moqui.basic.Enumeration description="Record Visible Service (service name, called with recordEntityName, recordId and checkOnly, answers recordVisible)" enumId="STRT_RECORD_VISIBLE_SERVICE" enumTypeId="ScreenThemeResourceType"/>
             <!-- Mail (org.moqui.mail.EmailClientServices.filter#ContactAddresses): which senders are a user's contacts, for an
-                automatic reply to contacts only; the email_contact_service property wins over it -->
+                automatic reply to contacts only; the email-client@contact-service property wins over it -->
             <moqui.basic.Enumeration description="Email Contact Service (service name, called with userId and emailAddressList, answers contactAddressList)" enumId="STRT_EMAIL_CONTACT_SERVICE" enumTypeId="ScreenThemeResourceType"/>
             <!-- Appearance of the /qapps shell (docs/ui/Qvt-Client.md, Appearance; crates/moqui-core/src/screen/sri/appearance.rs):
                 the scheme a user who has chosen none gets, what a user may change, and services that adjust both by station,

@@ -91,13 +91,13 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             .map(|name| format!("https://{name}"))
             .unwrap_or_default(),
     };
-    let addresses = property("edge_public_addresses")
+    let addresses = property("edge@public-addresses")
         .split([',', ' '])
         .filter(|text| !text.is_empty())
         .filter_map(|text| match text.parse::<IpAddr>() {
             Ok(ip) => Some(ip.to_string()),
             Err(_) => {
-                tracing::error!("edge_public_addresses: {text} is not an IP address; it is left out");
+                tracing::error!("edge@public-addresses: {text} is not an IP address; it is left out");
                 None
             }
         })
@@ -119,7 +119,7 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             mta: mta.to_string(),
             listener,
             mx_host,
-            bounce_domain: property("edge_mail_bounce_domain"),
+            bounce_domain: property("mail-delivery@bounce-domain"),
             dkim_selector,
             dkim_record,
         }),

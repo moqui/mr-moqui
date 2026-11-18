@@ -507,7 +507,7 @@ fn a_lock_holds_another_users_client_on_the_same_file_and_not_the_file_beside_it
     assert_eq!(body(&got), "bob");
 }
 
-/// The DAV server's public URL follows the webapp's listener, an explicit `dav_public_url`, and the request's origin
+/// The DAV server's public URL follows the webapp's listener, an explicit `dav-server@public-url`, and the request's origin
 /// (moved from moqui-core's web tests).
 #[test]
 fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins() {
@@ -517,7 +517,7 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
         "moqui_conf__webapp_list__webapp__WEBROOT__http_host",
         "moqui_conf__webapp_list__webapp__WEBROOT__https_enabled",
         "moqui_conf__webapp_list__webapp__WEBROOT__https_port",
-        "dav_public_url",
+        "moqui_conf__dav_server__public_url",
     ];
     struct Restore(Vec<(&'static str, String)>);
     impl Drop for Restore {
@@ -568,7 +568,7 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     request.set_header("host", "public.example:10443");
     moqui_core::web::set_request_info(&request);
     check("https://public.example:10443");
-    moqui_lib::env::set_property("dav_public_url", "https://dav.example/base/");
+    moqui_lib::env::set_property("moqui_conf__dav_server__public_url", "https://dav.example/base/");
     assert_eq!(super::public_base_url(factory), "https://dav.example/base");
 }
 

@@ -145,7 +145,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="deliver" noun="EdgeOutboundMail" type="rust" location="moqui_mail::deliver_edge_outbound_mail"
             allow-remote="false">
         <description>On an edge node, the queue kind mailOut: a message its local node sent through an EmailServer with
-            smtpHost edge:, sent from the VERP sender bounce+(item id)@(edge_mail_bounce_domain) when that is set. With
+            smtpHost edge:, sent from the VERP sender bounce+(item id)@(mail-delivery@bounce-domain) when that is set. With
             mail-delivery@mta moqui (the default) it is DKIM-signed and recorded as one moqui.edge.EdgeMailDelivery per
             recipient domain in this item's transaction, which the MX delivery thread delivers (moqui_mail::mx); the
             answers come back as mailStatus from there. With mail-delivery@mta postfix it is relayed to the MTA beside the

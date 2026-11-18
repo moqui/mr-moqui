@@ -259,7 +259,8 @@
     <tools worker-queue="65535" worker-pool-core="16" worker-pool-max="22" worker-pool-alive="60"
             request-pool-max="16" request-queue="64"
             empty-db-load="seed,seed-initial,install"
-            on-start-load-types="none" on-start-load-components="">
+            on-start-load-types="none" on-start-load-components=""
+            database-audit-days="90">
         <!-- Native components select linked ToolFactory implementations here.
              The cache facade is built in; Java H2/JCR/SMTP factories do not run in MR. -->
         <!-- The framework's own: vCard parse and write, iCalendar parse, write and RRULE expansion (moqui_core::pim) -->
@@ -422,7 +423,8 @@
                 https-listen-port="" http-bind="" allowed-hosts="" http2="true"
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
-                dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4">
+                dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"
+            app-redirect-uris="" app-loopback-redirect="true">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
             <error-screen error="unauthorized" screen-path="error/Unauthorized"/>
@@ -989,7 +991,8 @@
     -->
     <email-client allowed-hosts="" idle-enabled="true" idle-max="8" sync-interval="5" sync-batch="500" flag-scan="15"
             sync-push-now="true" mailbox-quota="10737418240" autoconfig-urls="" dns-server="" tls-ca-file=""
-            oauth-redirect-uri="" capture-sends="false">
+            oauth-redirect-uri="" capture-sends="false"
+            contact-service="">
         <oauth-provider id="google" client-id="" client-secret=""/>
         <oauth-provider id="microsoft" client-id="" client-secret="" tenant=""/>
     </email-client>
@@ -1190,6 +1193,9 @@
     <!--
         Mail delivery and DKIM (plans/archive/Edge-Node.md §5.4, E5b). mta: on an edge node, moqui for the MTA in moqui
         (set in conf/edge/MoquiEdgeConf.xml), empty or postfix for E5a's relay to Postfix at relay-host and relay-port.
+        bounce-domain: on an edge node, the domain of the envelope sender of mail it sends out (bounce+<item>@ it, VERP),
+        whose bounces the SMTP listener takes back to the message, and which no paired node may claim; empty sends from
+        the message's own sender.
         retry-seconds: the first retry wait, doubled each time to 4 hours; days: when a message not delivered goes back as
         a bounce. mx-require-tls: the recipient domains whose MX gets mail only over STARTTLS with a certificate valid for
         the host, comma-separated, * for every domain (as an MTA-STS enforce policy, whatever the domain publishes); an MX
@@ -1203,8 +1209,8 @@
         (the TXT record to publish at selector._domainkey.domain is org.moqui.mail.EmailServices.get#DkimRecord's).
         domains: the domains signed for, comma-separated; empty for the hosted and shared accounts' domains.
     -->
-    <mail-delivery mta="" relay-host="127.0.0.1" relay-port="10025" retry-seconds="300" days="5" mx-require-tls=""
-            mx-override="" dns-offline="false">
+    <mail-delivery mta="" relay-host="127.0.0.1" relay-port="10025" bounce-domain="" retry-seconds="300" days="5"
+            mx-require-tls="" mx-override="" dns-offline="false">
         <dkim key="" selector="moqui" domains=""/>
     </mail-delivery>
 
@@ -1258,7 +1264,8 @@
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-content-files="10000" queue-max-attempts="10"
             queue-retry-seconds="5" replica-max-rows="1000000" link-key="CHANGEME" link-url="" offline-page=""
             ssh-tunnel-port="" ssh-tunnel-host="" smtp-tunnel-host="" xmpp-port="" xmpp-tls-port="" xmpp-host=""
-            call-legs-per-pairing="">
+            call-legs-per-pairing=""
+            public-addresses="">
         <node url="" key="" pin="" id="" pairing="" calls-enabled="" sip-enabled="" pass-client=""/>
         <front-node url="" key="" pin="" id=""/>
         <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
@@ -1377,7 +1384,8 @@
             rest-max-page-size="1000" screen-max-rows="100000"
             crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128"
             crypt-pass="MoquiDefaultPassword:CHANGEME" crypt-pass-old="MoquiDefaultPassword:CHANGEME"
-            crypt-read-plain="false">
+            crypt-read-plain="false"
+            disable-fk-create="false">
         <!-- crypt-read-plain: true reads the stored text of an encrypted field that is not ciphertext as its value
             (logged), for a migration of values stored before their field was encrypted; off, such text is
             _DECRYPT_FAILED_ (SEC-DAT-10) -->

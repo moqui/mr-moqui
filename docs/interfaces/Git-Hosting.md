@@ -128,12 +128,12 @@ first branch pushed) its default branch.
   confirms (the form answers only the sign-in it was shown for, not one another start put in its place), on a page that names the port the code goes to and
   says the app's name is the app's own word; the code goes to the redirect URI and the app takes it at `/sso/appToken`
   with its verifier for the key (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors
-  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp_app_redirect_uris` exactly, or any loopback one
+  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp-list/webapp[webroot]@app-redirect-uris` exactly, or any loopback one
   by its IP literal (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
-  `localhost`) unless `webapp_app_loopback_redirect` is false. It is on by default: any program on the user's computer
+  `localhost`) unless `webapp-list/webapp[webroot]@app-loopback-redirect` is false. It is on by default: any program on the user's computer
   may listen on a loopback port, which is why the confirmation names the port and the code is good only with the
   app's PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that
-  is not on loopback is listed in `webapp_app_redirect_uris`, or its users paste a token.
+  is not on loopback is listed in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token.
 - **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens only the LLM gateway
   (`UserLoginKey.scope` `gateway`): every other login (the web, REST, git, a socket) refuses it, and it is in the
   user's device list. A client that is let go ends what it held with `revoke#UserHeldKey` (the key itself, the user's

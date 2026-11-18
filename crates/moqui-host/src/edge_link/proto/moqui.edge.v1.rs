@@ -24,7 +24,7 @@ pub struct Hello {
     #[prost(string, tag = "7")]
     pub node_name: ::prost::alloc::string::String,
     /// The edge node's, when it is a media node of its local nodes' calls (plans/archive/Edge-Node.md §5.4, E7): the address
-    /// browsers send media to (rtc_public_address, else the media socket's), empty when its media socket is off.
+    /// browsers send media to (media-server@public-address, else the media socket's), empty when its media socket is off.
     #[prost(string, tag = "8")]
     pub media_address: ::prost::alloc::string::String,
     /// The edge node's: its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
@@ -48,7 +48,7 @@ pub struct Hello {
     pub sip_domain: ::prost::alloc::string::String,
     #[prost(bool, tag = "14")]
     pub sip_registrar: bool,
-    /// The edge node's node_role (front, front_edge, edge, all-in-one; plans/Edge-Node2.md §4.3): a local node keeps a
+    /// The edge node's instance@node-role (front, front_edge, edge, all-in-one; plans/Edge-Node2.md §4.3): a local node keeps a
     /// pairing with a front node as its front pairing, whose link carries web access and ports only (§4.7). Empty from a
     /// node before E19.
     #[prost(string, tag = "15")]
@@ -140,7 +140,7 @@ pub struct HelloReply {
     /// The link generation of this up connection; the down connection names it.
     #[prost(uint64, tag = "2")]
     pub generation: u64,
-    /// The edge node's turn_auth_secret, when its embedded TURN is on (E7): the local node signs its legs' TURN
+    /// The edge node's media-server/turn-server@auth-secret, when its embedded TURN is on (E7): the local node signs its legs' TURN
     /// credentials for the edge node's TURN with it. Only here, on an up connection whose key the edge node pinned, never
     /// in a Hello (which Probe tells anyone); the local node keeps it in memory and never logs or stores it.
     #[prost(string, tag = "3")]
@@ -457,13 +457,13 @@ pub struct MailOffer {
     /// moqui (the MTA in moqui) or postfix (Postfix and Rspamd beside it).
     #[prost(string, tag = "2")]
     pub mta: ::prost::alloc::string::String,
-    /// The SMTP listener is on: smtp_listen_port is set.
+    /// The SMTP listener is on: smtp-server@listen-port is set.
     #[prost(bool, tag = "3")]
     pub listener: bool,
-    /// The host name a local node's MX records name: smtp_hostname, else the edge node's web host name.
+    /// The host name a local node's MX records name: smtp-server@hostname, else the edge node's web host name.
     #[prost(string, tag = "4")]
     pub mx_host: ::prost::alloc::string::String,
-    /// The domain of the VERP bounce addresses (edge_mail_bounce_domain); empty when not set.
+    /// The domain of the VERP bounce addresses (mail-delivery@bounce-domain); empty when not set.
     #[prost(string, tag = "5")]
     pub bounce_domain: ::prost::alloc::string::String,
     /// The DKIM selector and TXT record of the edge node's key, which signs the local node's mail (moqui MTA only).
@@ -517,7 +517,7 @@ pub struct CallsOffer {
     /// Its media socket is up.
     #[prost(bool, tag = "1")]
     pub available: bool,
-    /// The address browsers send call media to (rtc_public_address, ip:port).
+    /// The address browsers send call media to (media-server@public-address, ip:port).
     #[prost(string, tag = "2")]
     pub media_address: ::prost::alloc::string::String,
     /// Its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
@@ -581,7 +581,7 @@ pub struct Offer {
     /// Areas not built on this edge node yet: none now (sip, calls and xmpp before their areas).
     #[prost(string, repeated, tag = "5")]
     pub not_available: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
+    /// The edge node's public addresses (edge@public-addresses), which the local node's A and AAAA records name; empty
     /// when not set, and then the addresses of its web host name are expected.
     #[prost(string, repeated, tag = "6")]
     pub addresses: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
@@ -598,7 +598,7 @@ pub struct Offer {
     pub ssh: ::core::option::Option<SshOffer>,
 }
 /// SSH (E16): the edge node's tunnel port to the asking node's SSH server, and the host its SSH clients reach it at, so
-/// the local node's clone URLs name them when its own ssh_public_host and ssh_public_port are not set.
+/// the local node's clone URLs name them when its own ssh-server@public-host and ssh-server@public-port are not set.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SshOffer {
     /// A tunnel port goes to the asking node.

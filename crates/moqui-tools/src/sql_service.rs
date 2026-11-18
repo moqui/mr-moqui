@@ -655,10 +655,10 @@ fn delete_saved_query(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     none()
 }
 
-/// The days `DatabaseAudit` rows are kept: the `database_audit_days` property, 90 by default, at least 1.
+/// The days `DatabaseAudit` rows are kept: `tools@database-audit-days`, 90 by default, at least 1.
 #[must_use]
 pub fn audit_days() -> i64 {
-    moqui_lib::env::get_prop_or_env("database_audit_days")
+    moqui_core::context::conf_env::setting("tools@database-audit-days")
         .trim()
         .parse::<i64>()
         .ok()

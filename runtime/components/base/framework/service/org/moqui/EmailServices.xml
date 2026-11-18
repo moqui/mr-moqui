@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fromName"><description>The From name over the template's</description></parameter>
             <parameter name="bounceAddress" allow-html="any"><description>The envelope sender (Return-Path) of this message over the
                 template's: a bounce address of its own, such as a VERP address bounces+(key)@(bounce domain) that finds the delivery
-                its bounce is for. A value with a line break or without an @ is left out. An edge relay with edge_mail_bounce_domain
+                its bounce is for. A value with a line break or without an @ is left out. An edge relay with mail-delivery@bounce-domain
                 set replaces it with its own, as it does the template's.</description></parameter>
             <parameter name="emailServerId"><description>The EmailServer this message goes out through over the template's, such as
                 a business sending profile's relay; the caller checks it may use it (this service is internal).</description></parameter>

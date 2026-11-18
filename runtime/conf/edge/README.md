@@ -20,8 +20,8 @@ clients of the local node. Steps and limits: [Run-Deploy](../../../docs/Run-Depl
 
 ## `.env`
 
-- **Edge node**: `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses`; for mail `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`,
-  `smtp-server@hostname`, `edge_mail_bounce_domain`; for calls `media-server@public-address`; for phones `sip-server@port`, `sip-server@tls-port`,
+- **Edge node**: `webapp-list/webapp[webroot]@http-host`, `edge@public-addresses`; for mail `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`,
+  `smtp-server@hostname`, `mail-delivery@bounce-domain`; for calls `media-server@public-address`; for phones `sip-server@port`, `sip-server@tls-port`,
   `sip-server@host`, `sip-server@public-address`, `sip-server/registrar@enabled`; for XMPP `edge@xmpp-port`, `edge@xmpp-tls-port`; for SSH
   `edge@ssh-tunnel-port`; for PASS `pass@backend-web-url`. Generated at the first start: `edge@link-key`, and
   `mail-delivery/dkim@key` on first use. A WebPKI certificate goes in `cert/`.

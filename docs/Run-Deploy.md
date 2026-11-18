@@ -444,10 +444,10 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
 | `edge@call-legs-per-pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
 | `edge@offline-page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
-| `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
+| `edge@public-addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
 | `mail-delivery@mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
 | `mail-delivery@relay-host`, `mail-delivery@relay-port` | `127.0.0.1`, `10025` | On an edge node with `moqui_conf__mail_delivery__mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
-| `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
+| `mail-delivery@bounce-domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
 | `smtp-server@internet`, `smtp-server@rspamd-url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in `conf/edge/MoquiEdgeConf.xml`), with Rspamd's HTTP API for its spam verdict when the URL is set; its hourly limits per client address and per sender are `smtp-server` `internet-messages-per-hour` and `internet-bytes-per-hour` (1000, 1 GiB) ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-in)) |
 | `mail-delivery/dkim@key`, `mail-delivery/dkim@selector`, `mail-delivery/dkim@domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
 | `smtp-server@arc-trusted-sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
@@ -1172,14 +1172,14 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
 - **Conf.** Run `conf/all-in-one/MoquiAllInOneConf.xml` (`moqui_conf__instance__node_role=all-in-one`) with the server's full runtime, on
   the Maximal package. The `.env` names and the commands are in
   [runtime/conf/all-in-one](../runtime/conf/all-in-one/README.md). It needs what an edge node needs: a WebPKI
-  certificate on the HTTPS listener, `edge_public_addresses`, and the edge node's mail, calls and SIP properties in
+  certificate on the HTTPS listener, `edge@public-addresses`, and the edge node's mail, calls and SIP properties in
   `.env`. It takes the link and never dials an edge node itself. Its conf sets the backup job running: the queue is in
   the server's database.
 - **Each item has one owner.** The server's own host names, mail accounts, chat bridges, numbers, calls and XMPP
   domain are served here as on a normal node; the local node's `EdgeHost` names, recipients, bridges, numbers and calls
   go over the link. A mail domain may be split by address.
 - **Claims both sides make.** The server's own items win. The wizard's Configure refuses the local node's bridges,
-  XMPP domain, SIP domain, numbers and a mail domain the server holds whole (its `edge_mail_bounce_domain`). A
+  XMPP domain, SIP domain, numbers and a mail domain the server holds whole (its `mail-delivery@bounce-domain`). A
   replicated record that claims a server's item is not applied: System › Edge Clients › Domains lists it under Replica conflicts,
   with Check again. The server's own setup refuses an address, bridge or number the local node holds. An address both
   sides hold gets 451 at `RCPT TO`, and a bridge both hold gets 409 at its webhook; each is logged.
@@ -1784,7 +1784,7 @@ url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_
 4. Network git (fetch, pull, push, clone) is off on a shared server until an admin turns it on in Dev AIDE › Settings,
    with a deploy token or per-user tokens from the group server. Each user connects to the group server as
    themselves (Settings › Group servers); a shared server's address is not loopback, so the group server lists its
-   `/qapps/dev/Settings/serverSignedIn` URL in `webapp_app_redirect_uris`, or its users paste a token. Connect's
+   `/qapps/dev/Settings/serverSignedIn` URL in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token. Connect's
    `myaddons.xml` and `.env` items are not offered on a shared server.
 5. Commits carry the logged-in user as author. A save checks the file on disk by its hash, so a save over another
    user's change offers Compare instead of overwriting it.

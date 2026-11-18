@@ -552,7 +552,7 @@ cancel, table maintenance or entity sources.
   - `work-mem`, `maintenance-work-mem` and `effective-cache-size` (empty keeps Postgres's defaults).
   - Each is a size such as `64MB`, and applies when this process starts the cluster. Database › Settings shows the
     conf value beside the running one.
-- **`database_audit_days`** (property, 90): how long `DatabaseAudit` rows are kept. The `DatabaseAuditPurge` ServiceJob
+- **`tools@database-audit-days`** (property, 90): how long `DatabaseAudit` rows are kept. The `DatabaseAuditPurge` ServiceJob
   also removes expired SQL tokens.
 
 ```xml

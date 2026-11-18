@@ -22,7 +22,7 @@ address, number or bridge both sides claim is refused. Steps and limits:
 ## `.env`
 
 - **All-in-one node**: what an edge node needs ([../edge/README.md](../edge/README.md)): `webapp-list/webapp[webroot]@http-host`,
-  `edge_public_addresses`, the mail, calls and SIP settings, and a WebPKI certificate in `cert/`. The server's own
+  `edge@public-addresses`, the mail, calls and SIP settings, and a WebPKI certificate in `cert/`. The server's own
   `xmpp-server@port` and `xmpp-server@tls-port` take the local nodes' XMPP domains too, by the domain each connection names.
 - **Local node**: as with an edge node; pairing and the wizard write the rest.
 

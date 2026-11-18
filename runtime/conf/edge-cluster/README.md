@@ -29,7 +29,7 @@ queue, the pairings and the host names are rows the members share. A clustered a
   and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first
   start generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster-member@tls-cert`, `cluster-member@tls-key`, `moqui_conf__entity_facade__crypt_pass`,
   `edge@link-key` (the one link key local nodes pin), `media-server/turn-server@auth-secret`, `acme@account-key` and, once made,
-  `mail-delivery/dkim@key`; `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
+  `mail-delivery/dkim@key`; `webapp-list/webapp[webroot]@http-host`, `edge@public-addresses` (every member's addresses), `mail-delivery@bounce-domain`,
   `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`, `sip-server@port`, `sip-server@tls-port`, `sip-server@host`, `sip-server/registrar@enabled`,
   `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host`, `edge@ssh-tunnel-port`, `pass@backend-web-url`. A WebPKI
   certificate in `cert/` for the names local nodes pair at; the links present the pinned link key, not it.

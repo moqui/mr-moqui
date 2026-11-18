@@ -26,7 +26,7 @@ own mail, chat, calls and phones, or has none. The same front node before an edg
 
 ## `.env`
 
-- **Front node**: `webapp-list/webapp[webroot]@http-host` (its own name, where nodes pair), `edge_public_addresses` (its public addresses),
+- **Front node**: `webapp-list/webapp[webroot]@http-host` (its own name, where nodes pair), `edge@public-addresses` (its public addresses),
   and, made at its first start, `webapp-list/webapp[webroot]/session-config@cookie-key`, `moqui_conf__entity_facade__crypt_pass`, `edge@link-key` (the key the nodes
   behind it pin) and `acme@account-key`. A WebPKI certificate in `cert/` for its own name and each terminate host, or
   System › Certificates with ACME. Ports: `edge@ssh-tunnel-port`, `edge@xmpp-port` and `edge@xmpp-tls-port` when used.

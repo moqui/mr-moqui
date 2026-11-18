@@ -24,7 +24,7 @@
 //!   edge node instead ([`enqueue_outbound`]), so a send does not wait on or fail with the link; it is Sent once
 //!   queued. The edge node's `deliver#EdgeOutboundMail` relays it to the MTA beside it (Postfix at
 //!   `mail-delivery@relay-host` and `mail-delivery@relay-port`, which signs it with DKIM through Rspamd and delivers it to the
-//!   MX), with the envelope sender `bounce+<item id>@<edge_mail_bounce_domain>` (VERP) when that is set. A relay that
+//!   MX), with the envelope sender `bounce+<item id>@<mail-delivery@bounce-domain>` (VERP) when that is set. A relay that
 //!   cannot be reached, answers 4xx or drops the connection answers `retryLater`: the item waits, not counted, to the
 //!   end of the retention period. An answer, accepted or refused with 5xx, goes back as kind `mailStatus` for the
 //!   `mailOut` item, queued in a transaction of its own right after the relay, so a later failure never relays twice.
@@ -78,11 +78,11 @@ fn retry_later(reason: String) -> BTreeMap<String, Value> {
     BTreeMap::from([("retryLater".to_string(), Value::string(reason))])
 }
 
-/// The domain of the VERP envelope sender of relayed mail (`edge_mail_bounce_domain`), empty for none: then the
+/// The domain of the VERP envelope sender of relayed mail (`mail-delivery@bounce-domain`), empty for none: then the
 /// message's own sender gets the remote MX's bounces.
 #[must_use]
 pub fn bounce_domain() -> String {
-    moqui_lib::env::get_prop_or_env("edge_mail_bounce_domain")
+    moqui_core::context::conf_env::setting("mail-delivery@bounce-domain")
         .trim()
         .to_ascii_lowercase()
 }
@@ -572,7 +572,7 @@ fn relayed_before(facade: &EntityFacade, node: &str, item: &str) -> Result<bool,
 }
 
 /// `deliver#EdgeOutboundMail`, on the edge node: a message its local node sent, relayed to the MTA beside it, from the
-/// VERP sender when `edge_mail_bounce_domain` is set. The answer is queued back (`mailStatus`) in a transaction of its
+/// VERP sender when `mail-delivery@bounce-domain` is set. The answer is queued back (`mailStatus`) in a transaction of its
 /// own right after the relay, and an apply that finds it queued does not relay again. A relay that cannot take it now
 /// answers `retryLater`, so the item waits, not counted.
 pub(super) fn deliver_edge_outbound_mail(

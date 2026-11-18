@@ -261,7 +261,7 @@ certificate), a 4xx tried again from 5 minutes (`mail-delivery@retry-seconds`) d
   STARTTLS with a certificate valid for the MX host: without it the try waits as for a 4xx, and the message bounces
   after `mail-delivery@days`. Empty by default.
 
-- **Bounces.** Set `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the edge node) and each message
+- **Bounces.** Set `mail-delivery@bounce-domain` (as `bounces.example.com`, with its MX at the edge node) and each message
   goes from `bounce+<item>@` that domain, so a remote server's later bounce names the message. This replaces an app's
   own bounce address (`send#EmailTemplate`'s `bounceAddress`), so an app that reads its own bounces also reads the
   message the edge marks bounced (`ES_BOUNCED`), as Mantle's delivery ledger does.

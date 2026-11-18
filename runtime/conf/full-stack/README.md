@@ -33,12 +33,12 @@ with the front as well, for its names, XMPP domain and ports.
 
 ## `.env`
 
-- **Front node**: `webapp-list/webapp[webroot]@http-host` (`front.example.com`), `edge_public_addresses` (its addresses), and the secrets
+- **Front node**: `webapp-list/webapp[webroot]@http-host` (`front.example.com`), `edge@public-addresses` (its addresses), and the secrets
   of its first start (`edge@link-key` among them). A certificate in `cert/` for its own name and the sites' hosts, or
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
-  with `edge@link-key`, `media-server/turn-server@auth-secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
-  `sip-server@port`, `sip-server@tls-port`, `pass@backend-web-url`), with `edge_public_addresses` set to the front's addresses, and
+  with `edge@link-key`, `media-server/turn-server@auth-secret`, `mail-delivery/dkim@key` and `acme@account-key`, `mail-delivery@bounce-domain`,
+  `sip-server@port`, `sip-server@tls-port`, `pass@backend-web-url`), with `edge@public-addresses` set to the front's addresses, and
   `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
   `edge/front-node@url`, `edge/front-node@key`, `edge/front-node@pin` and `edge/front-node@id`.
 - **Each edge member, its own**: `cluster-member@base-url`, `moqui_conf__edge__link_url=https://edge1.example.com` (its link name, at the

@@ -401,7 +401,7 @@ fn address_row(host: &str, addresses: &[IpAddr], lookup: &dyn Lookup) -> DnsRow 
             }
             ips.ok = checked && ok;
             if addresses.is_empty() {
-                ips.note = "The edge node's addresses are not known: set edge_public_addresses there".to_string();
+                ips.note = "The edge node's addresses are not known: set edge@public-addresses there".to_string();
             } else if !ips.ok && !found.is_empty() {
                 ips.note = "An address that is not the edge node's, or a family it lists with none".to_string();
             }

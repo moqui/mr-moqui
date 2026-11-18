@@ -30,15 +30,18 @@ fn an_adapter_reads_only_recovery_properties_and_sends_no_conf_secret() {
     assert!(property_allowed("recovery_auth", true).is_ok());
     // a secret, by the conf or by its name, is not sent; it may key the HMAC, which is not sent
     let refused = property_allowed("recovery_token", true).unwrap_err();
-    assert!(refused.contains("monitor_recovery_properties"), "{refused}");
+    assert!(refused.contains("telemetry/recovery@properties"), "{refused}");
     assert!(property_allowed("recovery_signing_key", true).is_err());
     assert!(property_allowed("recovery_signing_key", false).is_ok());
     // the conf's list names any other, secret or not
-    moqui_lib::env::set_property("monitor_recovery_properties", "recovery_token, OPS_HOOK_TOKEN");
+    moqui_lib::env::set_property(
+        "moqui_conf__telemetry__recovery__properties",
+        "recovery_token, OPS_HOOK_TOKEN",
+    );
     let listed = (
         property_allowed("recovery_token", true),
         property_allowed("OPS_HOOK_TOKEN", true),
     );
-    moqui_lib::env::clear_property("monitor_recovery_properties");
+    moqui_lib::env::clear_property("moqui_conf__telemetry__recovery__properties");
     assert!(listed.0.is_ok() && listed.1.is_ok(), "{listed:?}");
 }

@@ -499,9 +499,9 @@ impl EntityDbMeta<'_> {
                 }
             }
         }
-        // As Java's `shouldCreateFks`: the facade or load flag, or `entity_disable_fk_create`.
+        // As Java's `shouldCreateFks`: the facade or load flag, or `entity-facade@disable-fk-create`.
         let skip_fk = super::fk::fk_create_disabled(self.facade)
-            || moqui_lib::env::get_prop_or_env("entity_disable_fk_create") == "true";
+            || (crate::hooks::get().conf_setting)("entity-facade", "disable-fk-create") == "true";
         let started = std::time::Instant::now();
         let mut totals = Counts::default();
         let mut groups: Vec<String> = batches.keys().cloned().collect();

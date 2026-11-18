@@ -1,14 +1,19 @@
 # Conf Paths: settings by XML path, overridden from the environment
 
-Status 2026-11-18: phases 0 to 4 built. Phases 0 to 2: the path module, the conf schema, the overrides with
+Status 2026-11-18: phases 0 to 5 built. Phases 0 to 2: the path module, the conf schema, the overrides with
 `getConfValue`, `setConf`, the conf view's names and `moqui conf env`. Phase 3: the attributes the default conf filled
 from properties (3a entity facade and databases, 3b web, logging, caches and reports, 3c SSH, git, SMTP and mail, 3d
 search and LLM). Phase 4: every setting that was only a property, in the elements of §6.1 and §6.13 to §6.26; the
-default conf has no default-property left. Phase 5 (started): the generic merge of an add-on's own element,
-the comms, demo and dev-aide settings, and mr-pass's pass element (with `RestClient.addPropertyHeader` taking
-selectors); mr-mantle's element to do. Phases 5 to 8 to do ([§7](#7-phases)): the component elements, scripts and
-packaging, the removal of default-property and `${}`, and the docs. Until phase 7 a name table may hold both kinds of
-name: `conf_env::setting_or_property` reads a selector (it has an `@`) from the conf and anything else as a property.
+default conf has no default-property left. Phase 5: the generic merge of an add-on's own element; comms, demo and
+dev-aide; mr-pass's pass (with `RestClient.addPropertyHeader` taking selectors) and mr-mantle's mantle; and the
+settings no section named (mail-delivery@bounce-domain, edge@public-addresses, the webapp's app redirects,
+entity-facade@disable-fk-create, tools@database-audit-days, email-client@contact-service,
+telemetry/recovery@properties, dav-server@public-url without its property). Left as process properties: the switches a
+harness or a test binary sets for one run (`moqui_stop_on_stdin_close`, `terminal_exec_helper`,
+`moqui.tx_cache.strict`), the runtime state of §8, and a spec's own opt-in switches. Phases 6 to 8 to do
+([§7](#7-phases)): scripts and packaging, the removal of default-property and `${}`, and the docs. Until phase 7 a
+name table may hold both kinds of name: `conf_env::setting_or_property` reads a selector (it has an `@`) from the conf
+and anything else as a property.
 
 The conf was configured through about 330 flat `default-property` entries (279 in `MoquiDefaultConf.xml`, the rest in
 `runtime/conf/**` and component `MoquiConf.xml` files). Attributes referred to them by `${name}` and `${a ?: b}`,
@@ -452,7 +457,7 @@ another's setting gets null when that component is absent.
 | `comms_app_root` (basic-comms, mr-boss overrides) | `comms@app-root` |
 | `demo_shared_user_ids`, `demo_test_login` | `demo@shared-user-ids`, `@test-login` |
 | `dev_aide_shared`, `dev_aide_site_component` | `dev-aide@shared`, `@site-component` |
-| `mantle_content_root`, `mantle_content_large_root` | `mantle@content-root`, `@content-large-root` |
+| `mantle_content_root`, `mantle_content_large_root` | none: the user preferences `mantle.content.root` and `mantle.content.large.root`, which a process property or the environment sets for everyone (`user/preference.rs`); the empty default-properties are deleted |
 | `pass_backend_url`, `pass_client_id`, `pass_client_secret` (secret), `pass_backend_transport`, `pass_backend_grpc_url`, `pass_backend_web_url`, `pass_backend_insecure`, `pass_notification_endpoint` | `pass@backend-url`, `@client-id`, `@client-secret`, `@backend-transport`, `@backend-grpc-url`, `@backend-web-url`, `@backend-insecure`, `@notification-endpoint` |
 | `pass_media_root`, `pass_import_dir`, `pass_scanner_service`, `pass_classifier_service`, `pass_test_scanner`, `pass_route_domains`, `pass_sender_addresses`, `pass_mail_template_ids`, `pass_preview_frame_origins`, `pass_mbox_max_message_bytes`, `pass_authority_name` | `pass@media-root`, `@import-dir`, `@scanner-service`, `@classifier-service`, `@test-scanner`, `@route-domains`, `@sender-addresses`, `@mail-template-ids`, `@preview-frame-origins`, `@mbox-max-message-bytes`, `@authority-name` |
 | `smithy_github_api`, `smithy_agreement_max_commits`, `mantle.calendar.email.from` (mr-mantle) | `mantle@smithy-github-api`, `@smithy-agreement-max-commits`, `@calendar-email-from` |

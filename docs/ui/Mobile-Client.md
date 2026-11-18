@@ -78,7 +78,7 @@ own `/qapps`), never both:
   `device-mode="shared"`.
 - **Sign-in** by password as on the desktop. **SSO** opens the system browser (an Android `VIEW` intent) and comes back
   as `org.moqui.mobile:/sso`, an intent filter of the activity, which the server allows by default
-  (`webapp_app_redirect_uris`).
+  (`webapp-list/webapp[webroot]@app-redirect-uris`).
 - **Requests** are moqui-client's, in Rust, with TLS checked by Android's trust manager (rustls-platform-verifier). They
   do not go through Android's network security config: plain `http://` is refused but to this device
   (`account::base_url`), so a development server is reached through `adb reverse tcp:8080 tcp:8080` as

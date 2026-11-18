@@ -25,7 +25,7 @@
 //!   its own thread. A try ends within 10 minutes (each command a minute at most), inside the row's 15-minute lease. A
 //!   panic is caught per row and per round. A domain's MX hosts are tried by preference (its address when it has no
 //!   MX; a null MX refuses), each host's addresses in turn, until one answers. The session is EHLO, STARTTLS when
-//!   offered (opportunistic: any certificate), MAIL FROM (the VERP sender of E5a when `edge_mail_bounce_domain` is
+//!   offered (opportunistic: any certificate), MAIL FROM (the VERP sender of E5a when `mail-delivery@bounce-domain` is
 //!   set), RCPT TO each recipient, DATA. Rows of a local node that is no longer paired fail, logged.
 //! - **TLS policy.** MTA-STS (RFC 8461): the `_mta-sts` TXT record names the policy's id; the policy (64 KiB at most) is
 //!   fetched over HTTPS and kept until its `max_age` (fetched again when the id changes). With `mode: enforce` only MX

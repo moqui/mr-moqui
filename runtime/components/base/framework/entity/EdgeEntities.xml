@@ -234,7 +234,7 @@ along with this software (see the LICENSE.md file). If not, see
             domain's MX; the domain "(local node)" is the recipients queued back to the local node itself. Written in
             the transaction that applies the mailOut item, so the item is delivered once these rows are there.
             recipientsJson is the addresses still to deliver; mailFrom the envelope sender (the VERP address when
-            edge_mail_bounce_domain is set); contentLocation the signed message, shared by the rows of one message and
+            mail-delivery@bounce-domain is set); contentLocation the signed message, shared by the rows of one message and
             removed with its last report. statusEnumId: EmdPending (nextAttemptDate is the next try), EmdSent, EmdBounced
             (bouncedCount refused for good, or not delivered within mail-delivery@days). sentCount and refusedText (each
             refused address with the answer) are what the report says; reportPending is Y while the report (the

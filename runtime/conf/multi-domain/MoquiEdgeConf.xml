@@ -22,7 +22,7 @@
         front, name it in webapp-list/webapp[webroot]@trusted-proxies (.env) -->
     <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
-    <!-- The link and web access (.env): webapp-list/webapp[webroot]@http-host, this node's own public name, and edge_public_addresses, its
+    <!-- The link and web access (.env): webapp-list/webapp[webroot]@http-host, this node's own public name, and edge@public-addresses, its
         public IPv4 and IPv6 addresses, which each local node's wizard checks its A and AAAA records against. A WebPKI
         certificate for this node's own name in runtime/cert, and for each terminate host name of any pairing. Each
         pairing's host names go to it alone: its wizard asks for them, or the operator adds them on Edge Clients ›
@@ -54,7 +54,7 @@
         both have gets 451 and is logged until one lets it go. A domain may be split between pairings by address. Mail
         out is signed with the one DKIM key, published in each domain's DNS, and only for the pairing's own domains; the
         delivery gives each pairing with mail due an even share of its sessions, so one pairing's backlog does not hold
-        the others' mail. Bounces come back to edge_mail_bounce_domain, shared. -->
+        the others' mail. Bounces come back to mail-delivery@bounce-domain, shared. -->
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
         trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
     <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
