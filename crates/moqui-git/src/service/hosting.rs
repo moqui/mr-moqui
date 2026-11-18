@@ -731,14 +731,28 @@ fn get_compare(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         &head,
         head_repository.as_deref(),
         with_diffs,
+        text(parameters, "path").filter(|path| !path.is_empty()).as_deref(),
         flag(parameters, "checkMergeable"),
     ) {
         Ok(Some(compared)) => {
             let (mut insertions, mut deletions) = (0, 0);
+            // the diffs a caller asks for: one file's (path), at most maxDiffLines changed lines in all and at most
+            // maxFileDiffLines in one file (0: no bound; a file past either is listed with diffOmitted and no diff, and
+            // the files after it are still given), and the html only with withHtml
+            let only = text(parameters, "path").filter(|path| !path.is_empty());
+            let max_lines = number(parameters, "maxDiffLines", 0);
+            let max_file_lines = number(parameters, "maxFileDiffLines", 0);
+            let with_html =
+                text(parameters, "withHtml").is_none_or(|value| matches!(value.as_str(), "true" | "Y" | "y"));
+            let mut given = 0usize;
             let files: Vec<Value> = compared
                 .files
                 .iter()
-                .map(|(change, file)| {
+                .enumerate()
+                .map(|(position, (change, file))| {
+                    // past the first files, only the one asked for has its lines (the others their counts)
+                    let full = position < crate::hosting::MAX_COMPARE_FILES
+                        || only.as_deref().is_some_and(|path| path == change.path);
                     let mut value = match file {
                         Some(file) => change_value(change, Some(file)),
                         None => change_value(change, None),
@@ -747,13 +761,22 @@ fn get_compare(parameters: &Parameters, _facade: &EntityFacade) -> Out {
                     {
                         insertions += text.stats.insertions;
                         deletions += text.stats.deletions;
-                        if with_diffs {
-                            entries.insert("html".to_string(), Value::string(text.render_html()));
+                        let changed = text.stats.insertions + text.stats.deletions;
+                        let wanted = only.as_deref().is_none_or(|path| path == change.path);
+                        let within = (max_lines == 0 || given + changed <= max_lines)
+                            && (max_file_lines == 0 || changed <= max_file_lines);
+                        if with_diffs && wanted && within && full {
+                            given += changed;
+                            if with_html {
+                                entries.insert("html".to_string(), Value::string(text.render_html()));
+                            }
                             if let Value::Map(diff) = text.to_value() {
                                 if let Some(hunks) = diff.get("hunks") {
                                     entries.insert("hunks".to_string(), hunks.clone());
                                 }
                             }
+                        } else if with_diffs && wanted {
+                            entries.insert("diffOmitted".to_string(), Value::Bool(true));
                         }
                     }
                     if let Value::Map(entries) = &mut value {
@@ -1505,7 +1528,7 @@ fn queue_webhook_push(parameters: &Parameters, facade: &EntityFacade) -> Out {
         let mut commits = Vec::new();
         let mut total = 0;
         if let Some(new) = new.as_deref().filter(|_| event == "push") {
-            let range = provider.compare(&id, old.as_deref().unwrap_or(""), new, None, false, false);
+            let range = provider.compare(&id, old.as_deref().unwrap_or(""), new, None, false, None, false);
             if let (Some(_), Ok(Some(compared))) = (&old, &range) {
                 total = compared.ahead;
                 commits = compared.commits.iter().rev().take(20).rev().cloned().collect();
