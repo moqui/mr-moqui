@@ -15,10 +15,10 @@
 //! The embedded Postgres of a scratch runtime stopped however a run ends.
 //!
 //! `pg_ctl` starts the postmaster in a session of its own, so it outlives the test process: a run stopped by SIGINT,
-//! SIGTERM or SIGHUP (Ctrl-C, a `timeout` wrapper, a closed terminal) skips the fixture's drop and leaves the
-//! postmaster running on a `/tmp/mt-<pid>-<nanos>` directory. Once a scratch runtime is tracked, those signals stop
-//! its postmasters and remove it (a kept one stays), then end the process. A run that is killed outright is cleaned up
-//! by the next one: [`remove_stale`] stops the postmasters of the scratch runtimes whose process is gone.
+//! SIGTERM or SIGHUP, or by Ctrl-C on Windows, skips the fixture's drop and leaves the postmaster running on a
+//! `/tmp/mt-<pid>-<nanos>` directory. Once a scratch runtime is tracked, those signals stop its postmasters and
+//! remove it (a kept one stays), then end the process. A run that is killed outright is cleaned up by the next one:
+//! [`remove_stale`] stops the postmasters of the scratch runtimes whose process is gone.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,10 +29,7 @@ use moqui_lib::sync::lock;
 /// A tracked scratch runtime, the install whose `pg_ctl` stops its postmasters, and whether `--keep` keeps it.
 struct Tracked {
     dir: PathBuf,
-    // Read when a signal stops the scratch postmaster. Windows has no such handler.
-    #[cfg_attr(not(unix), allow(dead_code))]
     install: PathBuf,
-    #[cfg_attr(not(unix), allow(dead_code))]
     keep: bool,
 }
 
@@ -117,17 +114,91 @@ pub(super) fn remove_stale(install: &Path) {
             "Removing the scratch runtime {} of process {pid}, which is gone",
             dir.display()
         );
-        match std::fs::remove_dir_all(&dir) {
-            Ok(()) => {}
-            // another run's sweep removed it first (test runs start side by side)
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display()),
-        }
+        remove_scratch(&dir);
     }
 }
 
 /// The file in a scratch runtime kept with `--keep`, which [`remove_stale`] leaves in place.
 pub(super) const KEEP_MARK: &str = ".moqui-test-keep";
+
+/// Remove `dir`. A directory link inside it (a symlink, or a junction on Windows) is taken off first, so the
+/// directory it names stays. What is left, the copied conf and the database, then goes. A directory that is already
+/// gone is not an error. A link that is still there on Windows is left in place: removing the tree would follow it.
+pub(super) fn remove_scratch(dir: &Path) {
+    if !detach_links(dir) {
+        tracing::warn!(
+            "could not remove the scratch runtime {}: a link inside it is still there",
+            dir.display()
+        );
+        return;
+    }
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        // another run's sweep removed it first (test runs start side by side)
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display()),
+    }
+}
+
+/// `true` when every directory link under `dir` is gone. A real directory is left for [`std::fs::remove_dir_all`].
+/// The names are what a scratch runtime links: a component set as one directory, each add-on component on its own,
+/// the install and Chromium. The add-on directory itself is real, so its children are the links.
+fn detach_links(dir: &Path) -> bool {
+    let mut clear = true;
+    for name in [
+        "components/base",
+        "components/dev",
+        "components/test",
+        "install",
+        "chromium",
+    ] {
+        clear &= detach_dir(&dir.join(name));
+    }
+    // the old set directories, so a scratch runtime from before `components/` is still safe to remove
+    for name in ["base-component", "dev-component"] {
+        clear &= detach_dir(&dir.join(name));
+    }
+    for name in ["components/addon", "component"] {
+        if let Ok(entries) = std::fs::read_dir(dir.join(name)) {
+            for entry in entries.flatten() {
+                clear &= detach_dir(&entry.path());
+            }
+        }
+    }
+    for name in ["MoquiConf.xml", "components/components.xml"] {
+        let path = dir.join(name);
+        let _ = std::fs::remove_file(&path);
+        // a file link that did not go must not be followed either
+        if is_link(&path) {
+            clear = false;
+        }
+    }
+    clear
+}
+
+/// Remove a directory link at `path`. A path that is not there counts as done. On Windows a link that
+/// [`std::fs::remove_dir`] leaves behind stops the removal of the tree; elsewhere the tree removal does not follow a
+/// link, so a link left here is still safe.
+fn detach_dir(path: &Path) -> bool {
+    if std::fs::symlink_metadata(path).is_err() {
+        return true;
+    }
+    if std::fs::remove_dir(path).is_ok() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        !is_link(path)
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
 
 #[cfg(unix)]
 fn owned(dir: &Path) -> bool {
@@ -137,20 +208,34 @@ fn owned(dir: &Path) -> bool {
     std::fs::symlink_metadata(dir).is_ok_and(|meta| meta.uid() == uid)
 }
 
-#[cfg(not(unix))]
+/// This process can write in `dir`, which on Windows is how a scratch runtime of this user is told from another
+/// user's. The probe file goes as soon as it is created.
+#[cfg(windows)]
+fn owned(dir: &Path) -> bool {
+    let probe = dir.join(format!(".moqui-test-owned-{}", std::process::id()));
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn owned(_dir: &Path) -> bool {
     false
 }
 
 /// Clean up what is tracked, then end the process with the status of the signal.
-#[cfg(unix)]
 fn interrupted(status: i32) -> ! {
     let tracked = std::mem::take(&mut *lock(&TRACKED));
     for Tracked { dir, install, keep } in tracked {
         eprintln!("Interrupted, stopping the test database in {}", dir.display());
         stop_postmasters(&dir, &install, keep);
         if !keep {
-            let _ = std::fs::remove_dir_all(&dir);
+            remove_scratch(&dir);
         }
     }
     std::process::exit(status);
@@ -204,7 +289,52 @@ fn watch_signals() {
     });
 }
 
-#[cfg(not(unix))]
+/// Listen for Ctrl-C, once. The handler is registered before this returns.
+#[cfg(windows)]
+fn watch_signals() {
+    static WATCHING: std::sync::Once = std::sync::Once::new();
+    WATCHING.call_once(|| {
+        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime,
+            Err(err) => {
+                tracing::warn!("Not watching for signals, an interrupted run may leave its database running: {err}");
+                return;
+            }
+        };
+        let ctrl = {
+            let _entered = runtime.enter();
+            match tokio::signal::windows::ctrl_c() {
+                Ok(ctrl) => ctrl,
+                Err(err) => {
+                    tracing::warn!(
+                        "Not watching for signals, an interrupted run may leave its database running: {err}"
+                    );
+                    return;
+                }
+            }
+        };
+        let started = std::thread::Builder::new()
+            .name("moqui-test-signals".to_string())
+            .spawn(move || {
+                runtime.block_on(async {
+                    let mut ctrl = ctrl;
+                    loop {
+                        if ctrl.recv().await.is_none() {
+                            break;
+                        }
+                        if !SERVING.load(Ordering::Relaxed) {
+                            interrupted(130);
+                        }
+                    }
+                });
+            });
+        if let Err(err) = started {
+            tracing::warn!("Not watching for signals, an interrupted run may leave its database running: {err}");
+        }
+    });
+}
+
+#[cfg(not(any(unix, windows)))]
 fn watch_signals() {}
 
 #[cfg(test)]
