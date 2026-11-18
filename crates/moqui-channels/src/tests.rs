@@ -2197,6 +2197,190 @@ fn a_text_in_a_providers_conversation_comes_to_its_room() {
     assert!(bed.room(OTHER).is_none(), "not the sender's pair room");
 }
 
+/// Mark our number for room texts (`PhoneNumber.roomTextsEnabled`), or not.
+fn room_texts(bed: &Bed, on: bool) {
+    let _authz = bed.ctx.disable_authz();
+    let mut row = bed
+        .facade
+        .find("moqui.call.PhoneNumber")
+        .unwrap()
+        .eq("phoneNumber", text(OURS))
+        .one()
+        .unwrap()
+        .unwrap();
+    row.set("roomTextsEnabled", if on { text("Y") } else { Value::Null });
+    row.update(&bed.facade).unwrap();
+}
+
+#[test]
+fn a_text_member_gets_the_rooms_messages_with_the_senders_name_and_its_reply_comes_back() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    room_texts(&bed, true);
+    login("alice");
+    let room = out_text(
+        &ok(
+            "org.moqui.chat.ChatServices.create#Room",
+            &[
+                ("roomTypeEnumId", text("CrtPrivate")),
+                ("roomName", text("Soccer parents")),
+                ("memberUserIdList", Value::List(vec![text("bob")])),
+            ],
+        ),
+        "chatRoomId",
+    );
+    let added = ok(
+        "org.moqui.call.SmsRoomServices.add#TextMember",
+        &[
+            ("chatRoomId", text(&room)),
+            ("phoneNumber", text(THEIRS)),
+            ("memberName", text("Dee")),
+            ("consent", text("Y")),
+        ],
+    );
+    assert_eq!(out_text(&added, "ourNumber"), OURS);
+    // the welcome: straight to the provider, naming the room and how to leave
+    let sends = bed.fake.sends();
+    assert_eq!(sends.len(), 1);
+    let welcome: Json = serde_json::from_str(&sends[0].body).unwrap();
+    assert_eq!(welcome["to"], THEIRS);
+    assert!(welcome["text"].as_str().unwrap().contains("Soccer parents"));
+    assert!(welcome["text"].as_str().unwrap().contains("Reply STOP"));
+
+    // a message of the room: as a text that names its sender, checked and counted as the room's
+    let seq = bed.send(&room, "Practice at six", &[]);
+    bed.round(0);
+    let sends = bed.fake.sends();
+    assert_eq!(sends.len(), 2);
+    let sent: Json = serde_json::from_str(&sends[1].body).unwrap();
+    assert_eq!((sent["from"].as_str(), sent["to"].as_str()), (Some(OURS), Some(THEIRS)));
+    assert_eq!(sent["text"], "ALICE: Practice at six");
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    assert_eq!(
+        bed.count(
+            "moqui.call.SmsSendCount",
+            &[("counterKey", text(&format!("room:{room}")))]
+        ),
+        1
+    );
+    let room_count = |bed: &Bed| {
+        bed.one(
+            "moqui.call.SmsSendCount",
+            &[("counterKey", text(&format!("room:{room}")))],
+        )["sentCount"]
+            .clone()
+    };
+    assert_eq!(room_count(&bed), "2", "the welcome and the message");
+    // the adder's day counts them too: the room's texts go on alice, who added the member
+    assert_eq!(
+        bed.one("moqui.call.SmsSendCount", &[("counterKey", text("user:alice"))])["sentCount"],
+        "2"
+    );
+
+    // the member's reply: in the room as the member, and nothing back to them
+    bed.text_in(THEIRS, "Running late", json!([]));
+    assert_eq!(
+        bed.messages(&room).last().map(|(_, body)| body.as_str()),
+        Some("Running late")
+    );
+    assert!(bed.room(THEIRS).is_none(), "not the pair room");
+    bed.round(0);
+    assert_eq!(bed.fake.sends().len(), 2);
+
+    // the number no longer carries room texts: refused before the provider, its place given back
+    room_texts(&bed, false);
+    let refused = bed.send(&room, "Anyone?", &[]);
+    bed.round(0);
+    let (state, reason, ..) = bed.delivery(&room, refused);
+    assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "roomTextsOff"));
+    assert_eq!(bed.fake.sends().len(), 2);
+    assert_eq!(room_count(&bed), "2");
+
+    // a group text with the member goes as ever (inRoomByText is a pair room's), and the pair room's text is refused
+    room_texts(&bed, true);
+    let group = out_text(
+        &ok(
+            "org.moqui.call.SmsServices.open#PairRoom",
+            &[
+                ("fromNumber", text(OURS)),
+                ("toNumber", text(&format!("{THEIRS},+15557778899"))),
+            ],
+        ),
+        "chatRoomId",
+    );
+    let grouped = bed.send(&group, "Both of you", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&group, grouped).0, "CdsAccepted");
+    assert_eq!(bed.fake.sends().len(), 3);
+    let pair = out_text(
+        &ok(
+            "org.moqui.call.SmsServices.open#PairRoom",
+            &[("fromNumber", text(OURS)), ("toNumber", text(THEIRS))],
+        ),
+        "chatRoomId",
+    );
+    let paired = bed.send(&pair, "Just you", &[]);
+    bed.round(0);
+    let (state, reason, ..) = bed.delivery(&pair, paired);
+    assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "inRoomByText"));
+    assert_eq!(bed.fake.sends().len(), 3);
+}
+
+#[test]
+fn a_member_mappings_room_id_reads_as_its_pair_and_its_text_names_its_sender() {
+    use crate::sms::{member_of, member_request, numbers_of, pair_of};
+    let id = format!("{OURS}/{THEIRS}#100200");
+    assert_eq!(
+        member_of(&id),
+        Some((OURS.to_string(), THEIRS.to_string(), "100200".to_string()))
+    );
+    assert_eq!(numbers_of(&id), Some((OURS.to_string(), vec![THEIRS.to_string()])));
+    assert_eq!(pair_of(&id), Some((OURS.to_string(), THEIRS.to_string())));
+    assert_eq!(member_of(&format!("{OURS}/{THEIRS}")), None);
+    assert_eq!(member_of(&format!("{OURS}/{THEIRS}#")), None);
+    assert_eq!(member_of(&format!("{OURS}/{THEIRS},+15557778889#1")), None);
+    let request = moqui_core::service::chat_bridge::DeliveryRequest {
+        chat_bridge_delivery_id: "1".to_string(),
+        idempotency_key: "k".to_string(),
+        chat_room_id: "100200".to_string(),
+        event_seq: 3,
+        external_room_id: id,
+        external_thread_id: None,
+        kind: moqui_core::service::chat_bridge::DeliveryKind::Message,
+        text: Some("See the schedule".to_string()),
+        html: None,
+        sender_name: Some("A very long sender name that goes past thirty".to_string()),
+        sender_user_id: None,
+        attachments: vec![
+            moqui_core::service::chat_bridge::DeliveryAttachment {
+                chat_attachment_id: "a".to_string(),
+                file_name: Some("photo.png".to_string()),
+                content_type: Some("image/png".to_string()),
+                file_size: Some(1000),
+            },
+            moqui_core::service::chat_bridge::DeliveryAttachment {
+                chat_attachment_id: "b".to_string(),
+                file_name: Some("report.pdf".to_string()),
+                content_type: Some("application/pdf".to_string()),
+                file_size: Some(1000),
+            },
+        ],
+        target_remote_id: None,
+        reaction_key: None,
+        rich: None,
+        attempt: 1,
+    };
+    let shaped = member_request(&request, 1600, 10, 5_000_000);
+    assert_eq!(
+        shaped.text.as_deref(),
+        Some("A very long sender name that g: See the schedule\n[report.pdf: a file, not sent by text]")
+    );
+    assert_eq!(shaped.attachments.len(), 1);
+    let cut = member_request(&request, 20, 10, 5_000_000);
+    assert_eq!(cut.text.as_deref().map(|text| text.chars().count()), Some(20));
+    assert!(cut.text.unwrap().ends_with('…'));
+}
+
 mod rcs;
 mod sinch;
 mod twilio;

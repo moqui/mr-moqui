@@ -339,6 +339,8 @@
                     }
                     return { kind: "event", chatRoomId: roomId, event };
                 }
+                // the join requests waiting, for the room's moderators (Comms-Messaging §18.3 phase 17)
+                if (message.kind === "joinRequests") return { kind: "joinRequests", chatRoomId: roomId, pendingCount: Number(message.pendingCount || 0) };
                 return null;
             }
             if (topic.indexOf("chatUser:") === 0) {

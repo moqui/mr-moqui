@@ -3216,6 +3216,9 @@ const systemText = (event, nameOf) => {
     const who = nameOf(content.userId || content.chatActorId);
     const roles = { CmrOwner: t('an owner'), CmrModerator: t('a moderator'), CmrMember: t('a member'), CmrAgent: t('an agent') };
     if (event.type === 'membership') {
+        // joined by an invite link, added by text, left by STOP (moqui.chat.invites, Comms-Messaging §18.3 phases 17 and 18)
+        const joinLine = moqui.chat && moqui.chat.invites ? moqui.chat.invites.membershipLine(content, who, by) : null;
+        if (joinLine) return [joinLine, content.via === 'text' ? 'sym_o_sms' : content.action === 'leave' ? 'sym_o_logout' : 'sym_o_link'];
         if (content.action === 'join') return [fill(t('{user} joined'), { user: who }), 'sym_o_login'];
         if (content.action === 'add') return [fill(t('{by} added {user}'), { by, user: who }), 'sym_o_person_add'];
         if (content.action === 'leave') return [fill(t('{user} left'), { user: who }), 'sym_o_logout'];
@@ -4194,6 +4197,11 @@ const roomTemplate = `
                     <q-item v-if="isMember" clickable v-close-popup class="m-chat-timer-item" @click="openTimer">
                         <q-item-section avatar><q-icon name="sym_o_timer"></q-icon></q-item-section><q-item-section>{{t('Disappearing messages')}}</q-item-section>
                         <q-item-section side class="text-caption">{{timerLabel}}</q-item-section></q-item>
+                    <q-item v-if="inviteOffered" clickable v-close-popup class="m-chat-invites-item" @click="openInvites">
+                        <q-item-section avatar><q-icon name="sym_o_qr_code_2"></q-icon></q-item-section><q-item-section>{{t('Invite links')}}</q-item-section></q-item>
+                    <q-item v-if="canModerate && joinUi.count > 0" clickable v-close-popup @click="joinUi.requests = true">
+                        <q-item-section avatar><q-icon name="sym_o_person_add"></q-icon></q-item-section>
+                        <q-item-section>{{fill(t('Join requests ({count})'), { count: joinUi.count })}}</q-item-section></q-item>
                     <!-- a plain direct chat: its encrypted chat with the same people (Comms-Messaging §6.5) -->
                     <q-item v-if="encryptOffered" clickable v-close-popup class="m-chat-start-encrypted-item" @click="startEncrypted">
                         <q-item-section avatar><q-icon name="sym_o_lock"></q-icon></q-item-section>
@@ -4299,6 +4307,13 @@ const roomTemplate = `
                 </div>
                 <div class="q-px-md text-caption m-muted ellipsis" style="min-height:20px">{{typingText}}</div>
                 <div class="q-px-sm q-pb-sm">
+                    <!-- join requests waiting, for a moderator (Comms-Messaging §18.3 phase 17) -->
+                    <q-banner v-if="joinUi.count > 0 && canModerate" dense rounded class="text-caption m-tonal q-mb-xs m-chat-join-banner">
+                        <template v-slot:avatar><q-icon name="sym_o_person_add" color="info"></q-icon></template>
+                        {{joinUi.count === 1 ? t('1 person asks to join') : fill(t('{count} people ask to join'), { count: joinUi.count })}}
+                        <template v-slot:action><q-btn dense flat no-caps color="primary" :label="t('Review')" @click="joinUi.requests = true"></q-btn></template></q-banner>
+                    <!-- a room's text members get each message as a text (Comms-Messaging §18.3 phase 18) -->
+                    <div v-if="textCostLine && access.canPost" class="text-caption m-muted q-px-xs m-chat-text-cost"><q-icon name="sym_o_sms" size="14px" class="q-mr-xs"></q-icon>{{textCostLine}}</div>
                     <q-banner v-if="offline && access.canPost" dense rounded class="text-caption m-tonal q-mb-xs m-chat-offline"><template v-slot:avatar><q-icon name="sym_o_cloud_off" color="warning"></q-icon></template>
                         {{t('You are offline. Messages wait here and go when you are back; files wait for the connection.')}}</q-banner>
                     <q-banner v-if="access.isArchived" dense rounded class="text-caption m-muted"><template v-slot:avatar><q-icon name="sym_o_archive"></q-icon></template>
@@ -4493,8 +4508,9 @@ const roomTemplate = `
                     <div class="col"><m-drop-down v-model="addPeople.userIds" name="addUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('Add people')"></m-drop-down></div>
                     <q-btn dense unelevated no-caps color="primary" :label="t('Add')" :loading="addPeople.busy" :disable="!(addPeople.userIds || []).length" @click="addMembers"></q-btn>
                 </div>
+                <m-chat-text-members v-if="!isDirect" :base="base" :room-id="roomId" :can-moderate="canModerate" @changed="reloadMeta"></m-chat-text-members>
                 <q-list dense>
-                    <q-item v-for="person in members" :key="person.userId || person.chatActorId">
+                    <q-item v-for="person in members.filter((one) => !one.textMember)" :key="person.userId || person.chatActorId">
                         <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId || undefined" size="32px"></m-avatar></q-item-section>
                         <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId && person.userId === me.userId" class="m-muted"> ({{t('you')}})</span>
                                 <q-icon v-if="personVerified(person.userId)" name="sym_o_verified" size="14px" class="text-positive q-ml-xs m-chat-person-verified" :aria-label="t('Verified')"></q-icon></q-item-label>
@@ -4571,6 +4587,9 @@ const roomTemplate = `
     </div>
 
     <!-- RoomSettings: name and topic (moderators), who may join and the archive (owners) -->
+    <!-- invite links and join requests (Comms-Messaging §18.3 phase 17; WebrootChatJoin.js) -->
+    <m-chat-invites v-if="inviteOffered" v-model="joinUi.links" :base="base" :room-id="roomId" :room-name="room && room.roomName"></m-chat-invites>
+    <m-chat-join-requests v-if="canModerate" v-model="joinUi.requests" :base="base" :room-id="roomId" @changed="loadJoinCount"></m-chat-join-requests>
     <m-dialog v-model="settings.open" :title="t('Room settings')" width="560">
         <div class="q-mb-sm text-caption row no-wrap items-start m-chat-room-label" :data-e2ee="label.state">
             <q-icon :name="label.icon" size="16px" class="q-mr-xs" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon><span class="col">{{label.banner || label.text}}</span></div>
@@ -4945,6 +4964,7 @@ const chatRoom = {
         roomCount += 1;
         return {
             uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {}, block: null,
+            joinUi: { links: false, requests: false, count: 0 },
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false }, editing: null, replyTo: null, side: null,
@@ -5034,6 +5054,14 @@ const chatRoom = {
         },
         canModerate() { return !!this.access.canModerate; },
         isOwner() { return !!this.access.isOwner; },
+        // invite links (Comms-Messaging §18.3 phase 17): a private room's moderators, a public room's members
+        inviteOffered() {
+            const type = this.room && this.room.roomTypeEnumId;
+            if (!this.access.isMember || this.access.isArchived || (this.room && this.room.recordEntityName)) return false;
+            return (type === 'CrtPrivate' && this.canModerate) || type === 'CrtPublic';
+        },
+        textMemberCount() { return this.members.filter((person) => person.textMember).length; },
+        textCostLine() { return moqui.chat && moqui.chat.texts ? moqui.chat.texts.costLine(this.textMemberCount) : ''; },
         roomBridges() { return (this.room && this.room.bridges) || []; },
         directionOptions() {
             return [{ value: 'CrbBoth', label: t('Both ways') }, { value: 'CrbIn', label: t('Only in: from there to here') }, { value: 'CrbOut', label: t('Only out: from here to there') }];
@@ -5608,6 +5636,14 @@ const chatRoom = {
             if (moqui.chat) moqui.chat.watchUsers(this.members.map((person) => person.userId));
             this.loadTrust();
             this.loadBlock();
+            this.loadJoinCount();
+        },
+        // the join requests a moderator sees (Comms-Messaging §18.3 phase 17): the banner, moved by the room's pushes
+        openInvites() { if (!needsConnection()) this.joinUi.links = true; },
+        loadJoinCount() {
+            if (!this.canModerate || noConnection()) { this.joinUi.count = 0; return; }
+            const roomId = this.roomId;
+            this.get('joinRequestCount', { chatRoomId: roomId }).then((json) => { if (roomId === this.roomId) this.joinUi.count = Number(json.pendingCount || 0); }, () => {});
         },
         // what Block blocks and why a room is in Spam (roomBlock): for a phone room or a direct chat
         loadBlock() {
@@ -6563,7 +6599,8 @@ const chatRoom = {
         },
         redact(item) {
             if (!this.queues('chat-redact') && needsConnection()) return;
-            this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.'), t('Delete'), true).then(() => {
+            this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.')
+                + (this.textMemberCount ? ' ' + t('Text members already got it as a text.') : ''), t('Delete'), true).then(() => {
                 // through the app's outbox it shows as waiting under the message until it is answered
                 this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
                     if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
@@ -7320,6 +7357,7 @@ const chatRoom = {
             this.unsubscribe.push(moqui.chat.on('room', (payload) => this.onRoomSignal(payload)));
             this.unsubscribe.push(moqui.chat.on('update', (payload) => this.onUpdate(payload)));
             this.unsubscribe.push(moqui.chat.on('expired', (payload) => this.onExpired(payload)));
+            this.unsubscribe.push(moqui.chat.on('joinRequests', (payload) => { if (payload.chatRoomId === this.roomId) this.joinUi.count = Number(payload.pendingCount || 0); }));
             this.unsubscribe.push(moqui.chat.on('sent', (payload) => this.onSent(payload)));
             this.unsubscribe.push(moqui.chat.on('changed', (payload) => this.onChangeAnswered(payload)));
             this.unsubscribe.push(moqui.chat.on('rooms', (payload) => this.onRoomsChanged(payload)));
@@ -7364,7 +7402,7 @@ module.exports = {
         return {
             loaded: false, height: 600, me: {}, prefs: {}, rooms: [], spamRooms: [], filteredCount: 0, filter: 'all', search: '', drafts: {}, roomId: null, seq: null, thread: null,
             newDirect: { open: false, userIds: [], busy: false, name: '', fromNumber: '', numbers: [] }, newRoom: { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false },
-            browse: { open: false, search: '', list: [], loading: false },
+            browse: { open: false, search: '', list: [], loading: false, listed: [] },
             // the folded groups of the rail, by key (kept per user: foldKey), the Activity or Threads feed and each direct
             // chat's mail line, by room
             folded: {}, feed: { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 }, mailLines: {},
@@ -7499,6 +7537,7 @@ module.exports = {
     },
     methods: {
         t,
+        fill,
         shortWhen,
         chatPath() {
             const list = this.$root.currentPathList || [];
@@ -7956,15 +7995,23 @@ module.exports = {
                 this.replaceRoom(json.chatRoomId);
             }, () => this.replaceRoom(null));
         },
-        openBrowse() { if (needsConnection()) return; this.browse = { open: true, search: '', list: [], loading: false }; this.loadBrowse(); },
+        openBrowse() { if (needsConnection()) return; this.browse = { open: true, search: '', list: [], loading: false, listed: [] }; this.loadBrowse(); },
         loadBrowse() {
             this.browse.loading = true;
+            this.get('listedRooms', { searchText: this.browse.search || '' }).then((json) => { this.browse.listed = json.roomList || []; }, () => {});
             this.get('rooms', { joinableOnly: 'true', searchText: this.browse.search || '' }).then((json) => {
                 this.browse.list = json.roomList || [];
                 this.browse.loading = false;
             }, () => { this.browse.loading = false; });
         },
         viewBrowsed(room) { this.browse.open = false; this.openRoom(room.chatRoomId); },
+        // a listed private room: a join request for its moderators, with an optional note (Comms-Messaging §18.3 phase 17)
+        askToJoin(room) {
+            this.$q.dialog({ title: fill(t('Ask to join {room}'), { room: room.roomName || '' }), message: t('A note for the moderators (optional)'), cancel: true,
+                prompt: { model: '', type: 'text', attrs: { maxlength: 200 } } }).onOk((note) => {
+                this.post('requestJoin', { chatRoomId: room.chatRoomId, note: note || '' }).then((json) => { if (json.outcome) room.pending = true; }, () => {});
+            });
+        },
         joinBrowsed(room) {
             this.post('join', { chatRoomId: room.chatRoomId }).then(() => {
                 this.browse.open = false;
@@ -9400,6 +9447,86 @@ module.exports = {
                           ]),
                           _: 1
                         }),
+                        (_ctx.browse.listed && _ctx.browse.listed.length)
+                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                              _createElementVNode("div", { class: "text-subtitle2 q-mt-md" }, _toDisplayString(_ctx.t('Private rooms you can ask to join')), 1),
+                              _createVNode(_component_q_list, {
+                                dense: "",
+                                separator: ""
+                              }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.browse.listed, (room) => {
+                                    return (_openBlock(), _createBlock(_component_q_item, {
+                                      key: room.chatRoomId,
+                                      class: "q-px-xs m-chat-listed-room"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_avatar, {
+                                              size: "32px",
+                                              rounded: "",
+                                              class: "m-tonal text-primary",
+                                              icon: "sym_o_lock_person"
+                                            })
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_label, { class: "text-weight-medium" }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(room.roomName), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            _createVNode(_component_q_item_label, {
+                                              caption: "",
+                                              class: "ellipsis-2-lines"
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(room.topic || _ctx.fill(_ctx.t('{count} members'), { count: room.memberCount })), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        _createVNode(_component_q_item_section, { side: "" }, {
+                                          default: _withCtx(() => [
+                                            (room.pending)
+                                              ? (_openBlock(), _createBlock(_component_q_chip, {
+                                                  key: 0,
+                                                  dense: "",
+                                                  square: "",
+                                                  class: "m-tonal"
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Asked')), 1)
+                                                  ]),
+                                                  _: 1
+                                                }))
+                                              : (_openBlock(), _createBlock(_component_q_btn, {
+                                                  key: 1,
+                                                  unelevated: "",
+                                                  dense: "",
+                                                  "no-caps": "",
+                                                  color: "primary",
+                                                  label: _ctx.t('Ask to join'),
+                                                  onClick: $event => (_ctx.askToJoin(room))
+                                                }, null, 8, ["label", "onClick"]))
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                                  }), 128))
+                                ]),
+                                _: 1
+                              })
+                            ], 64))
+                          : _createCommentVNode("", true),
                         _createVNode(_component_q_inner_loading, {
                           showing: _ctx.browse.loading
                         }, null, 8, ["showing"])
@@ -9442,8 +9569,11 @@ module.exports = {
                   const _component_q_img = _resolveComponent("q-img")
                   const _component_m_chat_person = _resolveComponent("m-chat-person")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
+                  const _component_m_chat_text_members = _resolveComponent("m-chat-text-members")
                   const _component_m_text_line = _resolveComponent("m-text-line")
                   const _component_m_record_card = _resolveComponent("m-record-card")
+                  const _component_m_chat_invites = _resolveComponent("m-chat-invites")
+                  const _component_m_chat_join_requests = _resolveComponent("m-chat-join-requests")
                   const _component_m_text_area = _resolveComponent("m-text-area")
                   const _component_q_toggle = _resolveComponent("q-toggle")
                   const _component_q_space = _resolveComponent("q-space")
@@ -10383,9 +10513,60 @@ module.exports = {
                                               [_directive_close_popup]
                                             ])
                                           : _createCommentVNode("", true),
-                                        (_ctx.encryptOffered)
+                                        (_ctx.inviteOffered)
                                           ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                               key: 10,
+                                              clickable: "",
+                                              class: "m-chat-invites-item",
+                                              onClick: _ctx.openInvites
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_qr_code_2" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Invite links')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"])), [
+                                              [_directive_close_popup]
+                                            ])
+                                          : _createCommentVNode("", true),
+                                        (_ctx.canModerate && _ctx.joinUi.count > 0)
+                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                              key: 11,
+                                              clickable: "",
+                                              onClick: $event => (_ctx.joinUi.requests = true)
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_person_add" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.fill(_ctx.t('Join requests ({count})'), { count: _ctx.joinUi.count })), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"])), [
+                                              [_directive_close_popup]
+                                            ])
+                                          : _createCommentVNode("", true),
+                                        (_ctx.encryptOffered)
+                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                              key: 12,
                                               clickable: "",
                                               class: "m-chat-start-encrypted-item",
                                               onClick: _ctx.startEncrypted
@@ -10410,7 +10591,7 @@ module.exports = {
                                             ])
                                           : _createCommentVNode("", true),
                                         (_ctx.isMember)
-                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 11 }, [
+                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 13 }, [
                                               _createVNode(_component_q_separator),
                                               _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 clickable: "",
@@ -10880,9 +11061,51 @@ module.exports = {
                                       style: {"min-height":"20px"}
                                     }, _toDisplayString(_ctx.typingText), 1),
                                     _createElementVNode("div", { class: "q-px-sm q-pb-sm" }, [
-                                      (_ctx.offline && _ctx.access.canPost)
+                                      (_ctx.joinUi.count > 0 && _ctx.canModerate)
                                         ? (_openBlock(), _createBlock(_component_q_banner, {
                                             key: 0,
+                                            dense: "",
+                                            rounded: "",
+                                            class: "text-caption m-tonal q-mb-xs m-chat-join-banner"
+                                          }, {
+                                            avatar: _withCtx(() => [
+                                              _createVNode(_component_q_icon, {
+                                                name: "sym_o_person_add",
+                                                color: "info"
+                                              })
+                                            ]),
+                                            action: _withCtx(() => [
+                                              _createVNode(_component_q_btn, {
+                                                dense: "",
+                                                flat: "",
+                                                "no-caps": "",
+                                                color: "primary",
+                                                label: _ctx.t('Review'),
+                                                onClick: $event => (_ctx.joinUi.requests = true)
+                                              }, null, 8, ["label", "onClick"])
+                                            ]),
+                                            default: _withCtx(() => [
+                                              _createTextVNode(" " + _toDisplayString(_ctx.joinUi.count === 1 ? _ctx.t('1 person asks to join') : _ctx.fill(_ctx.t('{count} people ask to join'), { count: _ctx.joinUi.count })) + " ", 1)
+                                            ]),
+                                            _: 1
+                                          }))
+                                        : _createCommentVNode("", true),
+                                      (_ctx.textCostLine && _ctx.access.canPost)
+                                        ? (_openBlock(), _createElementBlock("div", {
+                                            key: 1,
+                                            class: "text-caption m-muted q-px-xs m-chat-text-cost"
+                                          }, [
+                                            _createVNode(_component_q_icon, {
+                                              name: "sym_o_sms",
+                                              size: "14px",
+                                              class: "q-mr-xs"
+                                            }),
+                                            _createTextVNode(_toDisplayString(_ctx.textCostLine), 1)
+                                          ]))
+                                        : _createCommentVNode("", true),
+                                      (_ctx.offline && _ctx.access.canPost)
+                                        ? (_openBlock(), _createBlock(_component_q_banner, {
+                                            key: 2,
                                             dense: "",
                                             rounded: "",
                                             class: "text-caption m-tonal q-mb-xs m-chat-offline"
@@ -10901,7 +11124,7 @@ module.exports = {
                                         : _createCommentVNode("", true),
                                       (_ctx.access.isArchived)
                                         ? (_openBlock(), _createBlock(_component_q_banner, {
-                                            key: 1,
+                                            key: 3,
                                             dense: "",
                                             rounded: "",
                                             class: "text-caption m-muted"
@@ -10916,7 +11139,7 @@ module.exports = {
                                           }))
                                         : (_ctx.access.canJoin)
                                           ? (_openBlock(), _createBlock(_component_q_banner, {
-                                              key: 2,
+                                              key: 4,
                                               dense: "",
                                               rounded: "",
                                               class: "text-caption"
@@ -10944,7 +11167,7 @@ module.exports = {
                                             }))
                                           : (_ctx.filtered)
                                             ? (_openBlock(), _createBlock(_component_q_banner, {
-                                                key: 3,
+                                                key: 5,
                                                 dense: "",
                                                 rounded: "",
                                                 class: "text-caption m-tonal m-chat-filtered",
@@ -11001,7 +11224,7 @@ module.exports = {
                                                 _: 1
                                               }, 8, ["data-filtered"]))
                                             : (_ctx.access.canPost)
-                                              ? (_openBlock(), _createElementBlock(_Fragment, { key: 4 }, [
+                                              ? (_openBlock(), _createElementBlock(_Fragment, { key: 6 }, [
                                                   (_ctx.nudge)
                                                     ? (_openBlock(), _createElementBlock("div", {
                                                         key: 0,
@@ -11934,9 +12157,18 @@ module.exports = {
                                                     }, null, 8, ["label", "loading", "disable", "onClick"])
                                                   ]))
                                                 : _createCommentVNode("", true),
+                                              (!_ctx.isDirect)
+                                                ? (_openBlock(), _createBlock(_component_m_chat_text_members, {
+                                                    key: 2,
+                                                    base: _ctx.base,
+                                                    "room-id": _ctx.roomId,
+                                                    "can-moderate": _ctx.canModerate,
+                                                    onChanged: _ctx.reloadMeta
+                                                  }, null, 8, ["base", "room-id", "can-moderate", "onChanged"]))
+                                                : _createCommentVNode("", true),
                                               _createVNode(_component_q_list, { dense: "" }, {
                                                 default: _withCtx(() => [
-                                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.members, (person) => {
+                                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.members.filter((one) => !one.textMember), (person) => {
                                                     return (_openBlock(), _createBlock(_component_q_item, {
                                                       key: person.userId || person.chatActorId
                                                     }, {
@@ -12440,6 +12672,26 @@ module.exports = {
                           ], 6))
                         : _createCommentVNode("", true)
                     ]),
+                    (_ctx.inviteOffered)
+                      ? (_openBlock(), _createBlock(_component_m_chat_invites, {
+                          key: 3,
+                          modelValue: _ctx.joinUi.links,
+                          "onUpdate:modelValue": $event => ((_ctx.joinUi.links) = $event),
+                          base: _ctx.base,
+                          "room-id": _ctx.roomId,
+                          "room-name": _ctx.room && _ctx.room.roomName
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "base", "room-id", "room-name"]))
+                      : _createCommentVNode("", true),
+                    (_ctx.canModerate)
+                      ? (_openBlock(), _createBlock(_component_m_chat_join_requests, {
+                          key: 4,
+                          modelValue: _ctx.joinUi.requests,
+                          "onUpdate:modelValue": $event => ((_ctx.joinUi.requests) = $event),
+                          base: _ctx.base,
+                          "room-id": _ctx.roomId,
+                          onChanged: _ctx.loadJoinCount
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "base", "room-id", "onChanged"]))
+                      : _createCommentVNode("", true),
                     _createVNode(_component_m_dialog, {
                       modelValue: _ctx.settings.open,
                       "onUpdate:modelValue": $event => ((_ctx.settings.open) = $event),
@@ -13012,7 +13264,7 @@ module.exports = {
                     }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
                     (_ctx.sealed)
                       ? (_openBlock(), _createBlock(_component_m_chat_device_setup, {
-                          key: 3,
+                          key: 5,
                           ref: "setupCard",
                           modelValue: _ctx.setupOpen,
                           "onUpdate:modelValue": $event => ((_ctx.setupOpen) = $event),
@@ -13357,7 +13609,7 @@ module.exports = {
                     }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
                     (_ctx.cardBox.open)
                       ? (_openBlock(), _createBlock(_component_chat_card_box, {
-                          key: 4,
+                          key: 6,
                           room: _ctx.self,
                           "thread-root": _ctx.cardBox.threadRoot,
                           onClose: $event => (_ctx.cardBox = { open: false, threadRoot: null })

@@ -315,12 +315,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="blocks" type="Boolean" default="false"><description>Also refuse the users who blocked the current
                 user (ChatUserBlock, plans/Comms-Messaging.md §18.3 phase 11): for a direct room, or a private room they
                 make or add to; never a public or record room, or the people search</description></parameter>
+            <parameter name="answerWithAuthzOff" type="Boolean" default="false"><description>Internal
+                (ChatInviteServices.get#RefusedUsersAs, which runs this as an invite link's maker): answer for the current
+                user even with authorization disabled</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
         <actions><script><![CDATA[
             refusedUserIdList = []
             const ids = Array.from(new Set(Array.from(userIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
-            if (!ids.length || ec.artifactExecution.authzDisabled()) return
+            if (!ids.length || (ec.artifactExecution.authzDisabled() && !answerWithAuthzOff)) return
             const me = ec.user.userId
             if (!me) { refusedUserIdList = ids; return }
             const asked = ids.filter((id) => id !== me)
@@ -472,7 +475,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (account) senderName = account.userFullName || account.username || senderUserId
             } else if (senderActorId) {
                 const actor = (ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames').parameter('chatActorIdList', [senderActorId])
-                        .call()?.actorMap || {})[senderActorId]
+                        .parameter('chatRoomId', chatRoomId).call()?.actorMap || {})[senderActorId]
                 if (actor) { senderName = actor.name; senderExternal = actor.external ? {network: actor.network, networkName: actor.networkName} : null }
             }
             const body = content && content.body != null ? content.body : null
@@ -543,7 +546,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (BRIDGED.includes(eventTypeEnumId) && !encrypted && room.encrypted !== 'Y') {
                 const mappings = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
                         .condition('directionEnumId', 'in', ['CrbBoth', 'CrbOut']).disableAuthz().list())
-                        .filter((mapping) => !sourceChatBridgeId || mapping.chatBridgeId !== sourceChatBridgeId)
+                        // a text member's mapping (SmsRoom.js): messages only, and never its own member's; another's echo is by bridge
+                        .filter((mapping) => mapping.memberChatActorId ? eventTypeEnumId === 'CetMessage' && mapping.memberChatActorId !== senderActorId
+                            : !sourceChatBridgeId || mapping.chatBridgeId !== sourceChatBridgeId)
                 const target = eventTypeEnumId === 'CetEdit' ? editsEventSeq : eventTypeEnumId === 'CetMessage' ? null : relatesToEventSeq
                 let queued = 0
                 for (const mapping of mappings) {
@@ -1052,8 +1057,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="ActorNames" allow-remote="false">
         <description>Internal: the actors of chatActorIdList as the screens show them: actorMap chatActorId to {chatActorId,
             userId, name, external, network (the bridge type's code), networkName, chatBridgeId}. A local actor's name is its
-            user's; an external actor's its display name, else its id on the network. The caller has checked access.</description>
-        <in-parameters><parameter name="chatActorIdList" type="List" required="true"/></in-parameters>
+            user's; an external actor's its display name, else its id on the network. With chatRoomId, a text member of that
+            room (plans/Comms-Messaging.md §18.3 phase 18) is named as the room named them, with textMember and phoneNumber.
+            The caller has checked access.</description>
+        <in-parameters><parameter name="chatActorIdList" type="List" required="true"/><parameter name="chatRoomId"/></in-parameters>
         <out-parameters><parameter name="actorMap" type="Map"/></out-parameters>
         <actions><script><![CDATA[
             actorMap = {}
@@ -1092,6 +1099,17 @@ along with this software (see the LICENSE.md file). If not, see
                         network: network.network || null, networkName: network.networkName || null, chatBridgeId: external.chatBridgeId || null}
                 }
             }
+            // a room's text members: the room's own name for them (SmsRoom.js), never the shared external user's
+            if (chatRoomId && externalIds.length) {
+                for (const row of ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
+                        .condition('memberChatActorId', 'in', ids).disableAuthz().list()) {
+                    const actor = actorMap[row.memberChatActorId]
+                    if (!actor) continue
+                    actor.phoneNumber = (externals[actors.find((a) => a.chatActorId === row.memberChatActorId)?.chatExternalUserId] || {}).externalUserId || null
+                    actor.textMember = true
+                    if (row.memberName) actor.name = row.memberName
+                }
+            }
         ]]></script></actions>
     </service>
 
@@ -1100,18 +1118,24 @@ along with this software (see the LICENSE.md file). If not, see
             chatBridgeId, name, network, networkName, statusId, connected, externalRoomName, externalRoomUrl, directionEnumId,
             outbound, encryption}], the active mappings (encryption: its adapter's, None, Transport, BridgeDecrypted or
             EndToEnd, for the room's label: plans/Comms-Messaging.md §6.2); and capabilityMap chatRoomId to {edit, delete, reaction}: what every outbound
-            bridge of the room carries (all true for a room with none). The caller has checked access.</description>
+            bridge of the room carries (all true for a room with none). A room's text members (plans/Comms-Messaging.md §18.3
+            phase 18) are in neither: they get messages only; textMemberMap counts them. The caller has checked access.</description>
         <in-parameters><parameter name="chatRoomIdList" type="List" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="bridgeMap" type="Map"/>
             <parameter name="capabilityMap" type="Map"/>
+            <parameter name="textMemberMap" type="Map"/>
         </out-parameters>
         <actions><script><![CDATA[
-            bridgeMap = {}; capabilityMap = {}
+            bridgeMap = {}; capabilityMap = {}; textMemberMap = {}
             const ids = Array.from(new Set(Array.from(chatRoomIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
             if (!ids.length) return
             const mappings = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', 'in', ids).condition('thruDate', null)
-                    .disableAuthz().list())
+                    .disableAuthz().list()).filter((row) => {
+                if (!row.memberChatActorId) return true
+                textMemberMap[row.chatRoomId] = (textMemberMap[row.chatRoomId] || 0) + 1
+                return false
+            })
             if (!mappings.length) return
             const bridgeIds = Array.from(new Set(mappings.map((row) => row.chatBridgeId)))
             const bridges = {}
@@ -1161,8 +1185,9 @@ along with this software (see the LICENSE.md file). If not, see
                     .selectField('chatBridgeId').disableAuthz().list()) bridgeIds.add(row.chatBridgeId)
             if (!bridgeIds.size) return
             // only the bridges the room still sends to
+            // a text member's mapping is not counted: its changes stay in the room (SmsRoom.js)
             const live = new Set(Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
-                    .condition('directionEnumId', 'in', ['CrbBoth', 'CrbOut']).selectField('chatBridgeId').disableAuthz().list()).map((row) => row.chatBridgeId))
+                    .condition('directionEnumId', 'in', ['CrbBoth', 'CrbOut']).condition('memberChatActorId', null).selectField('chatBridgeId').disableAuthz().list()).map((row) => row.chatBridgeId))
             const ids = Array.from(bridgeIds).filter((id) => live.has(id))
             if (!ids.length) return
             const caps = ec.service.sync().name('org.moqui.chat.ChatServices.get#BridgeCapabilities').parameter('chatBridgeIdList', ids)
@@ -1452,7 +1477,7 @@ along with this software (see the LICENSE.md file). If not, see
             // an external actor of a bridge: its name and network (C1)
             const externalIds = rows.filter((row) => !row.userId).map((row) => row.chatActorId)
             const actors = externalIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
-                    .parameter('chatActorIdList', externalIds).call()?.actorMap || {} : {}
+                    .parameter('chatActorIdList', externalIds).parameter('chatRoomId', chatRoomId).call()?.actorMap || {} : {}
             // the read marker of a member who turned read receipts off is not shown to others
             const me = ec.user.userId
             const others = localIds.filter((id) => id !== me)
@@ -1464,7 +1489,8 @@ along with this software (see the LICENSE.md file). If not, see
                     name: row.userId ? names[row.userId] || row.userId : actor.name || row.chatActorId, roleEnumId: row.roleEnumId ?? null,
                     joinedDate: toMillis(row.joinedDate), lastReadEventSeq: !row.userId || receiptsOff.has(row.userId) ? null : Number(row.lastReadEventSeq || 0),
                     isAgent: row.roleEnumId === 'CmrAgent', external: !row.userId, network: actor ? actor.network ?? null : null,
-                    networkName: actor ? actor.networkName ?? null : null}
+                    networkName: actor ? actor.networkName ?? null : null, textMember: actor ? actor.textMember === true : false,
+                    phoneNumber: actor && actor.textMember ? actor.phoneNumber ?? null : null}
             })
             // its connectors
             const bridgesOut = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomBridges').parameter('chatRoomIdList', [chatRoomId]).call()
@@ -1936,6 +1962,8 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const now = ec.user.nowTimestamp
             row.set('leftDate', now)
+            // who took them out: such a person comes back by an invite link only through a request (ChatInvites.js)
+            row.set('removedByUserId', self ? null : me)
             row.update()
             let leftSeq = null
             if (!isDirect) {
@@ -2236,7 +2264,7 @@ along with this software (see the LICENSE.md file). If not, see
             const externalActorIds = Array.from(new Set(Object.values(replied).concat(rows).filter((row) => !row.senderUserId && row.senderActorId)
                     .map((row) => row.senderActorId)))
             const actors = externalActorIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
-                    .parameter('chatActorIdList', externalActorIds).call()?.actorMap || {} : {}
+                    .parameter('chatActorIdList', externalActorIds).parameter('chatRoomId', chatRoomId).call()?.actorMap || {} : {}
             const nameOf = (row) => row.senderUserId ? names[row.senderUserId] || row.senderUserId : (actors[row.senderActorId]?.name ?? null)
             const externalOf = (row) => !row.senderUserId && actors[row.senderActorId]
                     ? {network: actors[row.senderActorId].network, networkName: actors[row.senderActorId].networkName} : null
@@ -3911,7 +3939,7 @@ along with this software (see the LICENSE.md file). If not, see
                 names[account.userId] = account.userFullName || account.username || account.userId
             const actorIds = Array.from(new Set(rows.filter((row) => !row.senderUserId && row.senderActorId).map((row) => row.senderActorId)))
             const actors = actorIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
-                    .parameter('chatActorIdList', actorIds).call()?.actorMap || {} : {}
+                    .parameter('chatActorIdList', actorIds).parameter('chatRoomId', chatRoomId).call()?.actorMap || {} : {}
             const nowMillis = Number(ec.user.nowTimestamp)
             for (const row of rows) {
                 // past its time (phase 16): nothing of it is summed up
@@ -4034,7 +4062,7 @@ along with this software (see the LICENSE.md file). If not, see
                 names[account.userId] = account.userFullName || account.username || account.userId
             const actorIds = Array.from(new Set(Object.values(events).filter((row) => !row.senderUserId && row.senderActorId).map((row) => row.senderActorId)))
             const actors = actorIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
-                    .parameter('chatActorIdList', actorIds).call()?.actorMap || {} : {}
+                    .parameter('chatActorIdList', actorIds).parameter('chatRoomId', chatRoomId).call()?.actorMap || {} : {}
             for (const row of rows) {
                 const event = events[Number(row.eventSeq)]
                 if (!event || event.redactedDate) continue

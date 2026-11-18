@@ -58,6 +58,7 @@ pub(in crate::service) fn register(
     rust_service!(map, push_signal)?;
     rust_service!(map, check_record_visible)?;
     rust_service!(map, get_external_users)?;
+    rust_service!(map, get_refused_users_as)?;
     Ok(())
 }
 
@@ -217,6 +218,64 @@ fn get_external_users(
         ("anyExternal".to_string(), Value::Bool(!external.is_empty())),
         ("externalUserIdList".to_string(), Value::List(external)),
     ]))
+}
+
+/// `ChatInviteServices.get#RefusedUsersAs` (plans/Comms-Messaging.md §18.3 phase 17): `get#RefusedUsers` of `userIdList`
+/// asked as `userId` (an invite link's maker), with authorization on, so a joiner the maker could not add (an app's
+/// chat-target provider, an external maker's reach, `blocks`) is refused as `add#Member` refuses them. Every user is
+/// refused when `userId` has no account or the question fails: a refusal is never lost to an error.
+fn get_refused_users_as(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let asked: Vec<Value> = super::shell::user_ids(parameters.get("userIdList"))
+        .into_iter()
+        .map(Value::string)
+        .collect();
+    let everyone = |asked: &[Value]| {
+        Ok(BTreeMap::from([(
+            "refusedUserIdList".to_string(),
+            Value::List(asked.to_vec()),
+        )]))
+    };
+    let user = parameters
+        .get("userId")
+        .map(to_plain_string)
+        .filter(|user| !user.is_empty());
+    let Some(user) = user else {
+        return everyone(&asked);
+    };
+    if asked.is_empty() {
+        return Ok(BTreeMap::from([(
+            "refusedUserIdList".to_string(),
+            Value::List(Vec::new()),
+        )]));
+    }
+    let call = BTreeMap::from([
+        ("userIdList".to_string(), Value::List(asked.clone())),
+        (
+            "blocks".to_string(),
+            parameters.get("blocks").cloned().unwrap_or(Value::Bool(false)),
+        ),
+        // the maker holds no grant of the internal service; its providers are asked with authorization on all the same
+        // (call#Providers requires it), as the maker
+        ("answerWithAuthzOff".to_string(), Value::Bool(true)),
+    ]);
+    let answer = crate::user::as_user(&user, || {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        crate::service::sync("org.moqui.chat.ChatServices.get#RefusedUsers", &call)
+    });
+    match answer {
+        Some(Ok(out)) => Ok(BTreeMap::from([(
+            "refusedUserIdList".to_string(),
+            out.get("refusedUserIdList").cloned().unwrap_or(Value::List(Vec::new())),
+        )])),
+        Some(Err(err)) => {
+            tracing::warn!("The users {user} may reach were not known, every one is refused: {err}");
+            everyone(&asked)
+        }
+        None => everyone(&asked),
+    }
 }
 
 /// Send one push. Outside an execution context (a commit callback should have one) a context of the factory is made.

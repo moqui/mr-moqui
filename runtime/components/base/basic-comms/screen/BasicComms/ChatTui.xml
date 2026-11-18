@@ -101,6 +101,10 @@ along with this software (see the LICENSE.md file). If not, see
                 const user = nameOf(content.userId || content.chatActorId)
                 const roles = {CmrOwner: 'an owner', CmrModerator: 'a moderator', CmrMember: 'a member', CmrAgent: 'an agent'}
                 if (event.type === 'membership') {
+                    // by an invite link, by text, by STOP (Comms-Messaging §18.3 phases 17 and 18)
+                    if (content.action === 'join' && content.via === 'link') return fill('{user} joined by an invite link', {user})
+                    if (content.action === 'add' && content.via === 'text') return fill('{by} added {user} by text', {by, user})
+                    if (content.action === 'leave' && content.via === 'stop') return fill('{user} left by replying STOP', {user})
                     if (content.action === 'join') return fill('{user} joined', {user})
                     if (content.action === 'add') return fill('{by} added {user}', {by, user})
                     if (content.action === 'leave') return fill('{user} left', {user})

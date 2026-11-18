@@ -70,6 +70,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="routeId" type="id"/>
         <field name="emergencyLocationId" type="id"/>
         <field name="description" type="text-medium"/>
+        <field name="roomTextsEnabled" type="text-indicator"><description>Y: the number may carry the text members of rooms
+            (plans/Comms-Messaging.md §18.3 phase 18, org.moqui.call.SmsRoomServices): one room per outside number on it,
+            and that number's texts to it go to the room while it is a member; empty: no</description></field>
         <relationship type="one" related="moqui.call.VoiceTrunk" short-alias="trunk"/>
         <relationship type="one" title="PhoneNumberRoute" related="moqui.basic.Enumeration" short-alias="routeType">
             <key-map field-name="routeTypeEnumId"/></relationship>
@@ -829,6 +832,12 @@ along with this software (see the LICENSE.md file). If not, see
             number (30 days when empty)</description></field>
         <field name="smsSpamLookupMaxPerDay" type="number-integer"><description>Lookups a day at most (100 when empty),
             counted in SmsSendCount as lookup</description></field>
+        <field name="smsRoomMaxMembers" type="number-integer"><description>Text members a room has at most (10 when empty;
+            plans/Comms-Messaging.md §18.3 phase 18)</description></field>
+        <field name="smsRoomMaxPerDay" type="number-integer"><description>Texts a room sends its text members a day (500 when
+            empty), counted in SmsSendCount as room:chatRoomId and in all</description></field>
+        <field name="smsRoomAddsPerDay" type="number-integer"><description>Text members one user adds a day (20 when empty),
+            counted as roomAdds:userId</description></field>
     </extend-entity>
     <entity entity-name="SmsSpamRule" package="moqui.call" use="configuration" cache="never">
         <description>A rule of the spam filter of texts from outside numbers (plans/Comms-Messaging.md §18.3 phase 11): a

@@ -1,0 +1,88 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+use super::*;
+
+const TOKEN: &str = "Abc_def-0123456789xyzABCDEFGHIJKL";
+
+fn url(text: &str) -> tauri::Url {
+    tauri::Url::parse(text).unwrap()
+}
+
+fn account(id: &str, server: &str) -> Account {
+    Account {
+        id: id.to_string(),
+        server: server.to_string(),
+        username: "ann".to_string(),
+        user_id: "ANN".to_string(),
+        display: "Ann".to_string(),
+        server_name: String::new(),
+        device_mode: None,
+    }
+}
+
+#[test]
+fn a_join_link_takes_a_host_and_a_token() {
+    let link = url(&format!("org.moqui.mobile:/join?host=Chat.Example.com&token={TOKEN}"));
+    assert!(is_join_link(&link));
+    assert_eq!(
+        join_link_of(&link),
+        Some(("chat.example.com".to_string(), TOKEN.to_string()))
+    );
+    let with_port = url(&format!("org.moqui.mobile:/join?host=localhost:8443&token={TOKEN}"));
+    assert_eq!(
+        join_link_of(&with_port).map(|(host, _)| host).as_deref(),
+        Some("localhost:8443")
+    );
+    assert_eq!(join_path(TOKEN), format!("/join/{TOKEN}"));
+}
+
+#[test]
+fn a_join_link_refuses_another_path_scheme_host_or_token() {
+    for text in [
+        format!("org.moqui.mobile:/room?host=chat.example.com&token={TOKEN}"),
+        format!("https://chat.example.com/join?host=chat.example.com&token={TOKEN}"),
+        format!("org.moqui.mobile:/join?host=evil.example.com/path&token={TOKEN}"),
+        format!("org.moqui.mobile:/join?host=..example.com&token={TOKEN}"),
+        format!("org.moqui.mobile:/join?host=chat.example.com:99999&token={TOKEN}"),
+        format!("org.moqui.mobile:/join?host=chat.example.com:&token={TOKEN}"),
+        format!("org.moqui.mobile:/join?token={TOKEN}"),
+        "org.moqui.mobile:/join?host=chat.example.com&token=short".to_string(),
+        "org.moqui.mobile:/join?host=chat.example.com&token=has%20a%20space%20in%20it%20here".to_string(),
+        "org.moqui.mobile:/join?host=chat.example.com".to_string(),
+    ] {
+        assert_eq!(join_link_of(&url(&text)), None, "{text}");
+    }
+}
+
+#[test]
+fn a_join_link_opens_in_the_current_account_on_its_host_else_the_first_and_none_elsewhere() {
+    let accounts = [
+        account("other-1", "https://other.example.com"),
+        account("chat-1", "https://chat.example.com"),
+        account("chat-2", "https://chat.example.com"),
+        account("dev-1", "http://localhost:8443"),
+    ];
+    assert_eq!(
+        account_for(&accounts, Some("chat-2"), "chat.example.com").as_deref(),
+        Some("chat-2")
+    );
+    assert_eq!(
+        account_for(&accounts, Some("other-1"), "chat.example.com").as_deref(),
+        Some("chat-1")
+    );
+    assert_eq!(account_for(&accounts, None, "localhost:8443").as_deref(), Some("dev-1"));
+    assert_eq!(account_for(&accounts, None, "localhost"), None);
+    assert_eq!(account_for(&accounts, None, "nowhere.example.com"), None);
+}

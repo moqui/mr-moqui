@@ -3447,6 +3447,433 @@
               }, 8, ["model-value", "maximized", "onUpdate:modelValue"]))
             }
         } },
+        "m-chat-invites": { hash: "86ac85fd", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_linear_progress = _resolveComponent("q-linear-progress")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_chip = _resolveComponent("q-chip")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_select = _resolveComponent("q-select")
+              const _component_q_toggle = _resolveComponent("q-toggle")
+              const _component_q_separator = _resolveComponent("q-separator")
+              const _component_m_dialog = _resolveComponent("m-dialog")
+
+              return (_openBlock(), _createBlock(_component_m_dialog, {
+                "model-value": _ctx.modelValue,
+                "onUpdate:modelValue": $event => (_ctx.$emit('update:modelValue', $event)),
+                title: _ctx.t('Invite links'),
+                width: "560",
+                class: "m-chat-invites"
+              }, {
+                default: _withCtx(() => [
+                  (_ctx.loading)
+                    ? (_openBlock(), _createBlock(_component_q_linear_progress, {
+                        key: 0,
+                        indeterminate: "",
+                        color: "primary"
+                      }))
+                    : _createCommentVNode("", true),
+                  (_ctx.qr)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 1,
+                        class: "column items-center q-gutter-y-sm m-chat-invite-qr"
+                      }, [
+                        (_ctx.qr.svg)
+                          ? (_openBlock(), _createElementBlock("img", {
+                              key: 0,
+                              src: _ctx.qrSrc(),
+                              alt: _ctx.t('QR code of the invite link'),
+                              style: {"width":"240px","height":"240px","background":"#fff","padding":"8px"}
+                            }, null, 8, ["src", "alt"]))
+                          : (!_ctx.qr.loading)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 1,
+                                class: "m-muted"
+                              }, _toDisplayString(_ctx.t('No QR code')), 1))
+                            : _createCommentVNode("", true),
+                        _createElementVNode("div", {
+                          class: "text-caption",
+                          style: {"word-break":"break-all"}
+                        }, _toDisplayString(_ctx.qr.url), 1),
+                        _createElementVNode("div", { class: "row q-gutter-x-sm" }, [
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            "no-caps": "",
+                            icon: "sym_o_content_copy",
+                            label: _ctx.t('Copy'),
+                            onClick: $event => (_ctx.copy(_ctx.qr.link))
+                          }, null, 8, ["label", "onClick"]),
+                          (_ctx.qr.svg)
+                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 0,
+                                flat: "",
+                                "no-caps": "",
+                                icon: "sym_o_download",
+                                label: _ctx.t('Download'),
+                                href: _ctx.qrSrc(),
+                                download: "invite-qr.svg"
+                              }, null, 8, ["label", "href"]))
+                            : _createCommentVNode("", true),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            "no-caps": "",
+                            icon: "sym_o_arrow_back",
+                            label: _ctx.t('Back'),
+                            onClick: $event => (_ctx.qr = null)
+                          }, null, 8, ["label", "onClick"])
+                        ])
+                      ]))
+                    : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                        _createVNode(_component_q_list, {
+                          dense: "",
+                          separator: ""
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.links, (link) => {
+                              return (_openBlock(), _createBlock(_component_q_item, {
+                                key: link.chatInviteLinkId,
+                                class: "q-px-xs m-chat-invite-link",
+                                "data-link": link.chatInviteLinkId
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_item_section, null, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_label, { class: "text-weight-medium" }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(link.label || _ctx.t('Invite link')), 1),
+                                          (link.approvalRequired)
+                                            ? (_openBlock(), _createBlock(_component_q_chip, {
+                                                key: 0,
+                                                dense: "",
+                                                square: "",
+                                                class: "m-tonal q-ml-xs"
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Approval')), 1)
+                                                ]),
+                                                _: 1
+                                              }))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.expiryText(link)) + " · " + _toDisplayString(_ctx.usesText(link)), 1),
+                                          (link.createdByName)
+                                            ? (_openBlock(), _createElementBlock("span", { key: 0 }, " · " + _toDisplayString(link.createdByName), 1))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  _createVNode(_component_q_item_section, { side: "" }, {
+                                    default: _withCtx(() => [
+                                      _createElementVNode("div", { class: "row no-wrap" }, [
+                                        _createVNode(_component_q_btn, {
+                                          flat: "",
+                                          round: "",
+                                          dense: "",
+                                          icon: "sym_o_content_copy",
+                                          "aria-label": _ctx.t('Copy'),
+                                          onClick: $event => (_ctx.copy(link))
+                                        }, null, 8, ["aria-label", "onClick"]),
+                                        _createVNode(_component_q_btn, {
+                                          flat: "",
+                                          round: "",
+                                          dense: "",
+                                          icon: "sym_o_qr_code_2",
+                                          "aria-label": _ctx.t('QR code'),
+                                          onClick: $event => (_ctx.showQr(link))
+                                        }, null, 8, ["aria-label", "onClick"]),
+                                        (_ctx.canShare)
+                                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: 0,
+                                              flat: "",
+                                              round: "",
+                                              dense: "",
+                                              icon: "sym_o_share",
+                                              "aria-label": _ctx.t('Share'),
+                                              onClick: $event => (_ctx.share(link))
+                                            }, null, 8, ["aria-label", "onClick"]))
+                                          : _createCommentVNode("", true),
+                                        _createVNode(_component_q_btn, {
+                                          flat: "",
+                                          round: "",
+                                          dense: "",
+                                          icon: "sym_o_link_off",
+                                          color: "negative",
+                                          "aria-label": _ctx.t('Revoke'),
+                                          onClick: $event => (_ctx.revoke(link))
+                                        }, null, 8, ["aria-label", "onClick"])
+                                      ])
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1032, ["data-link"]))
+                            }), 128)),
+                            (!_ctx.loading && !_ctx.links.length)
+                              ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('No invite links')), 1)
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true)
+                          ]),
+                          _: 1
+                        }),
+                        (_ctx.canMake)
+                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                              _createElementVNode("div", { class: "text-subtitle2 q-mt-md" }, _toDisplayString(_ctx.t('New link')), 1),
+                              _createElementVNode("div", { class: "row q-col-gutter-sm items-end" }, [
+                                _createElementVNode("div", { class: "col-12 col-sm-6" }, [
+                                  _createVNode(_component_q_input, {
+                                    modelValue: _ctx.form.label,
+                                    "onUpdate:modelValue": $event => ((_ctx.form.label) = $event),
+                                    dense: "",
+                                    outlined: "",
+                                    "stack-label": "",
+                                    maxlength: "100",
+                                    label: _ctx.t('Label (optional)'),
+                                    name: "inviteLabel"
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "label"])
+                                ]),
+                                _createElementVNode("div", { class: "col-6 col-sm-3" }, [
+                                  _createVNode(_component_q_select, {
+                                    modelValue: _ctx.form.expiryHours,
+                                    "onUpdate:modelValue": $event => ((_ctx.form.expiryHours) = $event),
+                                    options: _ctx.expiryOptions,
+                                    "emit-value": "",
+                                    "map-options": "",
+                                    dense: "",
+                                    outlined: "",
+                                    "stack-label": "",
+                                    label: _ctx.t('Ends'),
+                                    name: "inviteExpiry"
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label"])
+                                ]),
+                                _createElementVNode("div", { class: "col-6 col-sm-3" }, [
+                                  _createVNode(_component_q_select, {
+                                    modelValue: _ctx.form.maxUses,
+                                    "onUpdate:modelValue": $event => ((_ctx.form.maxUses) = $event),
+                                    options: _ctx.useOptions,
+                                    "emit-value": "",
+                                    "map-options": "",
+                                    dense: "",
+                                    outlined: "",
+                                    "stack-label": "",
+                                    label: _ctx.t('Takes'),
+                                    name: "inviteUses"
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label"])
+                                ])
+                              ]),
+                              (_ctx.roomKind === 'private')
+                                ? (_openBlock(), _createBlock(_component_q_toggle, {
+                                    key: 0,
+                                    modelValue: _ctx.form.approvalRequired,
+                                    "onUpdate:modelValue": $event => ((_ctx.form.approvalRequired) = $event),
+                                    label: _ctx.t('A moderator approves each person'),
+                                    class: "q-mt-xs"
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
+                                : _createCommentVNode("", true),
+                              _createElementVNode("div", { class: "text-caption m-muted q-mt-xs" }, _toDisplayString(_ctx.roomKind === 'public' ? _ctx.t('Anyone with an account here may join a public room: the link is a shortcut.') : _ctx.t('People need an account on this server to join.')), 1),
+                              _createElementVNode("div", { class: "row justify-end q-mt-sm" }, [
+                                _createVNode(_component_q_btn, {
+                                  unelevated: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  icon: "sym_o_add_link",
+                                  label: _ctx.t('Make a link'),
+                                  loading: _ctx.making,
+                                  class: "m-chat-invite-make",
+                                  onClick: _ctx.make
+                                }, null, 8, ["label", "loading", "onClick"])
+                              ])
+                            ], 64))
+                          : _createCommentVNode("", true),
+                        (_ctx.canList)
+                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                              _createVNode(_component_q_separator, { class: "q-my-md" }),
+                              _createVNode(_component_q_toggle, {
+                                "model-value": _ctx.listed,
+                                "onUpdate:modelValue": _ctx.setListed,
+                                label: _ctx.t('List in Browse: people can ask to join'),
+                                class: "m-chat-listed"
+                              }, null, 8, ["model-value", "onUpdate:modelValue", "label"])
+                            ], 64))
+                          : _createCommentVNode("", true)
+                      ], 64))
+                ]),
+                _: 1
+              }, 8, ["model-value", "onUpdate:modelValue", "title"]))
+            }
+        } },
+        "m-chat-join-requests": { hash: "7caf6953", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, createElementVNode: _createElementVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_linear_progress = _resolveComponent("q-linear-progress")
+              const _component_m_avatar = _resolveComponent("m-avatar")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_m_dialog = _resolveComponent("m-dialog")
+
+              return (_openBlock(), _createBlock(_component_m_dialog, {
+                "model-value": _ctx.modelValue,
+                "onUpdate:modelValue": $event => (_ctx.$emit('update:modelValue', $event)),
+                title: _ctx.t('Join requests'),
+                width: "560",
+                class: "m-chat-join-requests"
+              }, {
+                default: _withCtx(() => [
+                  (_ctx.loading)
+                    ? (_openBlock(), _createBlock(_component_q_linear_progress, {
+                        key: 0,
+                        indeterminate: "",
+                        color: "primary"
+                      }))
+                    : _createCommentVNode("", true),
+                  _createVNode(_component_q_list, {
+                    dense: "",
+                    separator: ""
+                  }, {
+                    default: _withCtx(() => [
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.requests, (request) => {
+                        return (_openBlock(), _createBlock(_component_q_item, {
+                          key: request.chatJoinRequestId,
+                          class: "q-px-xs m-chat-join-request",
+                          "data-user": request.userId
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_q_item_section, { avatar: "" }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_m_avatar, {
+                                  name: request.name,
+                                  "user-id": request.userId,
+                                  size: "32px"
+                                }, null, 8, ["name", "user-id"])
+                              ]),
+                              _: 2
+                            }, 1024),
+                            _createVNode(_component_q_item_section, null, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_item_label, { class: "text-weight-medium" }, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(request.name), 1)
+                                  ]),
+                                  _: 2
+                                }, 1024),
+                                (request.note)
+                                  ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                      key: 0,
+                                      class: "ellipsis-2-lines"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(request.note), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                                  : _createCommentVNode("", true),
+                                _createVNode(_component_q_item_label, { caption: "" }, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(_ctx.when(request.requestedDate)) + " · " + _toDisplayString(_ctx.source(request)), 1),
+                                    (request.wasRemoved)
+                                      ? (_openBlock(), _createElementBlock("span", {
+                                          key: 0,
+                                          class: "text-warning"
+                                        }, " · " + _toDisplayString(_ctx.t('Was taken out of this room')), 1))
+                                      : _createCommentVNode("", true)
+                                  ]),
+                                  _: 2
+                                }, 1024)
+                              ]),
+                              _: 2
+                            }, 1024),
+                            _createVNode(_component_q_item_section, { side: "" }, {
+                              default: _withCtx(() => [
+                                _createElementVNode("div", { class: "row no-wrap q-gutter-x-xs" }, [
+                                  _createVNode(_component_q_btn, {
+                                    flat: "",
+                                    dense: "",
+                                    "no-caps": "",
+                                    color: "negative",
+                                    label: _ctx.t('Deny'),
+                                    disable: _ctx.busy,
+                                    onClick: $event => (_ctx.decide([request], 'deny'))
+                                  }, null, 8, ["label", "disable", "onClick"]),
+                                  _createVNode(_component_q_btn, {
+                                    unelevated: "",
+                                    dense: "",
+                                    "no-caps": "",
+                                    color: "primary",
+                                    label: _ctx.t('Approve'),
+                                    disable: _ctx.busy,
+                                    class: "m-chat-join-approve",
+                                    onClick: $event => (_ctx.decide([request], 'approve'))
+                                  }, null, 8, ["label", "disable", "onClick"])
+                                ])
+                              ]),
+                              _: 2
+                            }, 1024)
+                          ]),
+                          _: 2
+                        }, 1032, ["data-user"]))
+                      }), 128)),
+                      (!_ctx.loading && !_ctx.requests.length)
+                        ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.t('Nobody is waiting to join')), 1)
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }))
+                        : _createCommentVNode("", true)
+                    ]),
+                    _: 1
+                  }),
+                  (_ctx.requests.length > 1)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 1,
+                        class: "row justify-end q-mt-sm"
+                      }, [
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          "no-caps": "",
+                          color: "primary",
+                          label: _ctx.t('Approve all'),
+                          disable: _ctx.busy,
+                          onClick: $event => (_ctx.decide(_ctx.requests, 'approve'))
+                        }, null, 8, ["label", "disable", "onClick"])
+                      ]))
+                    : _createCommentVNode("", true)
+                ]),
+                _: 1
+              }, 8, ["model-value", "onUpdate:modelValue", "title"]))
+            }
+        } },
         "m-chat-networks": { hash: "e4ba9f73", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
@@ -4201,6 +4628,269 @@
                     _: 1
                   }))
                 : _createCommentVNode("", true)
+            }
+        } },
+        "m-chat-text-members": { hash: "c407eae1", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, createBlock: _createBlock, createCommentVNode: _createCommentVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, createElementVNode: _createElementVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_avatar = _resolveComponent("q-avatar")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_chip = _resolveComponent("q-chip")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_q_menu = _resolveComponent("q-menu")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_select = _resolveComponent("q-select")
+              const _component_q_checkbox = _resolveComponent("q-checkbox")
+              const _component_m_dialog = _resolveComponent("m-dialog")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_openBlock(), _createElementBlock("div", { class: "m-chat-text-members" }, [
+                (_ctx.members.length)
+                  ? (_openBlock(), _createBlock(_component_q_list, {
+                      key: 0,
+                      dense: ""
+                    }, {
+                      default: _withCtx(() => [
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.members, (member) => {
+                          return (_openBlock(), _createBlock(_component_q_item, {
+                            key: member.chatActorId,
+                            class: "m-chat-text-member",
+                            "data-actor": member.chatActorId
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_avatar, {
+                                    size: "32px",
+                                    class: "m-tonal text-primary",
+                                    icon: "sym_o_sms"
+                                  })
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_item_section, null, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_item_label, null, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(member.memberName || member.phoneNumber), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  _createVNode(_component_q_item_label, { caption: "" }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(member.memberName ? member.phoneNumber + ' · ' : '') + _toDisplayString(_ctx.t('by text from')) + " " + _toDisplayString(member.ourNumber), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1024),
+                                  (_ctx.stateText(member))
+                                    ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                        key: 0,
+                                        caption: "",
+                                        class: "text-warning"
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.stateText(member)), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024))
+                                    : _createCommentVNode("", true)
+                                ]),
+                                _: 2
+                              }, 1024),
+                              _createVNode(_component_q_item_section, {
+                                side: "",
+                                class: "row no-wrap items-center"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_chip, {
+                                    dense: "",
+                                    square: "",
+                                    icon: "sym_o_sms",
+                                    class: "m-tonal text-info"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.t('Text')), 1)
+                                    ]),
+                                    _: 1
+                                  }),
+                                  (_ctx.canModerate)
+                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                        key: 0,
+                                        flat: "",
+                                        round: "",
+                                        dense: "",
+                                        size: "sm",
+                                        icon: "sym_o_more_vert",
+                                        "aria-label": _ctx.t('Member')
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_menu, {
+                                            anchor: "bottom right",
+                                            self: "top right"
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_list, {
+                                                dense: "",
+                                                style: {"min-width":"180px"}
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                    clickable: "",
+                                                    onClick: $event => (_ctx.rename(member))
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_section, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Rename')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  }, 8, ["onClick"])), [
+                                                    [_directive_close_popup]
+                                                  ]),
+                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                    clickable: "",
+                                                    onClick: $event => (_ctx.remove(member))
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_section, { class: "text-negative" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Take out of the room')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  }, 8, ["onClick"])), [
+                                                    [_directive_close_popup]
+                                                  ])
+                                                ]),
+                                                _: 2
+                                              }, 1024)
+                                            ]),
+                                            _: 2
+                                          }, 1024)
+                                        ]),
+                                        _: 2
+                                      }, 1032, ["aria-label"]))
+                                    : _createCommentVNode("", true)
+                                ]),
+                                _: 2
+                              }, 1024)
+                            ]),
+                            _: 2
+                          }, 1032, ["data-actor"]))
+                        }), 128))
+                      ]),
+                      _: 1
+                    }))
+                  : _createCommentVNode("", true),
+                (_ctx.canAdd)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 1,
+                      class: "q-px-sm q-pb-sm"
+                    }, [
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        "no-caps": "",
+                        color: "primary",
+                        icon: "sym_o_add_call",
+                        label: _ctx.t('Add by phone number'),
+                        class: "m-chat-text-add",
+                        onClick: _ctx.openAdd
+                      }, null, 8, ["label", "onClick"])
+                    ]))
+                  : _createCommentVNode("", true),
+                _createVNode(_component_m_dialog, {
+                  modelValue: _ctx.adding,
+                  "onUpdate:modelValue": $event => ((_ctx.adding) = $event),
+                  title: _ctx.t('Add by phone number'),
+                  width: "480"
+                }, {
+                  default: _withCtx(() => [
+                    _createVNode(_component_q_input, {
+                      modelValue: _ctx.form.phoneNumber,
+                      "onUpdate:modelValue": $event => ((_ctx.form.phoneNumber) = $event),
+                      type: "tel",
+                      dense: "",
+                      outlined: "",
+                      "stack-label": "",
+                      autofocus: "",
+                      label: _ctx.t('Phone number'),
+                      name: "textMemberNumber",
+                      onBlur: _ctx.check,
+                      onKeyup: _withKeys(_ctx.check, ["enter"])
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "onBlur", "onKeyup"]),
+                    _createVNode(_component_q_input, {
+                      modelValue: _ctx.form.memberName,
+                      "onUpdate:modelValue": $event => ((_ctx.form.memberName) = $event),
+                      dense: "",
+                      outlined: "",
+                      "stack-label": "",
+                      maxlength: "60",
+                      class: "q-mt-sm",
+                      label: _ctx.t('Their name in this room'),
+                      name: "textMemberName"
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                    (_ctx.numberOptions.length > 1)
+                      ? (_openBlock(), _createBlock(_component_q_select, {
+                          key: 0,
+                          modelValue: _ctx.form.ourNumber,
+                          "onUpdate:modelValue": $event => ((_ctx.form.ourNumber) = $event),
+                          options: _ctx.numberOptions,
+                          "emit-value": "",
+                          "map-options": "",
+                          dense: "",
+                          outlined: "",
+                          "stack-label": "",
+                          class: "q-mt-sm",
+                          label: _ctx.t('Text from'),
+                          name: "textMemberFrom"
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label"]))
+                      : _createCommentVNode("", true),
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.takenChoices, (choice) => {
+                      return (_openBlock(), _createElementBlock("div", {
+                        key: choice.phoneNumber,
+                        class: "text-caption text-warning q-mt-xs m-chat-text-taken"
+                      }, _toDisplayString(choice.phoneNumber) + ": " + _toDisplayString(_ctx.takenText(choice)), 1))
+                    }), 128)),
+                    (_ctx.pairWarning)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 1,
+                          class: "text-caption text-warning q-mt-xs m-chat-text-pair-warning"
+                        }, _toDisplayString(_ctx.pairWarningText()), 1))
+                      : _createCommentVNode("", true),
+                    _createVNode(_component_q_checkbox, {
+                      modelValue: _ctx.form.consent,
+                      "onUpdate:modelValue": $event => ((_ctx.form.consent) = $event),
+                      class: "q-mt-sm",
+                      label: _ctx.t('This person agreed to get the room\'s texts'),
+                      name: "textMemberConsent"
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                    _createElementVNode("div", { class: "text-caption m-muted q-mt-sm" }, _toDisplayString(_ctx.costNote), 1),
+                    _createElementVNode("div", { class: "row justify-end q-mt-md" }, [
+                      _createVNode(_component_q_btn, {
+                        unelevated: "",
+                        "no-caps": "",
+                        color: "primary",
+                        label: _ctx.t('Add'),
+                        disable: !_ctx.canSubmit,
+                        loading: _ctx.busy,
+                        class: "m-chat-text-submit",
+                        onClick: _ctx.add
+                      }, null, 8, ["label", "disable", "loading", "onClick"])
+                    ])
+                  ]),
+                  _: 1
+                }, 8, ["modelValue", "onUpdate:modelValue", "title"])
+              ]))
             }
         } },
         "m-chat-verification": { hash: "2f682fbe", make: function (Vue) {

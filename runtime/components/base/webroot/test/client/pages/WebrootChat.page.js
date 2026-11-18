@@ -1667,3 +1667,64 @@ test("a held message's send: claimed, sealed and sent with its claim checked; a 
         chat.sealMessage = was.seal;
     }
 });
+
+// ---- invite links and text members (Comms-Messaging §18.3 phases 17 and 18; js/WebrootChatJoin.js) ----
+
+test("an invite link's expiry and uses read as words, its state follows them, and its URL is on this origin", () => {
+    const invites = chat.invites;
+    const now = 1000000000;
+    assert.equal(invites.expiryText(null, now), "No end");
+    assert.equal(invites.expiryText(now - 1, now), "Expired");
+    assert.equal(invites.expiryText(now + 10 * 60000, now), "Ends in 10 min");
+    assert.equal(invites.expiryText(now + 5 * 3600000, now), "Ends in 5 h");
+    assert.equal(invites.expiryText(now + 7 * 86400000, now), "Ends in 7 days");
+    assert.equal(invites.usesText(3, null), "3 used");
+    assert.equal(invites.usesText(3, 10), "3 of 10 used");
+    assert.equal(invites.linkState({ expiryDate: now - 1 }, now), "expired");
+    assert.equal(invites.linkState({ maxUses: 5, useCount: 5 }, now), "usedUp");
+    assert.equal(invites.linkState({ maxUses: 5, useCount: 4, expiryDate: null }, now), "ok");
+    assert.equal(invites.urlOf("/join/abc", "https://chat.example.com/"), "https://chat.example.com/join/abc");
+    assert.deepEqual(invites.EXPIRY_CHOICES.map((choice) => choice.value), [1, 24, 168, 720, 0]);
+});
+
+test("the membership lines of a join by link, an add by text and a leave by STOP; others are left to the room", () => {
+    const invites = chat.invites;
+    assert.equal(invites.membershipLine({ action: "join", via: "link" }, "Ann", "Bo"), "Ann joined by an invite link");
+    assert.equal(invites.membershipLine({ action: "add", via: "text" }, "Dee", "Bo"), "Bo added Dee by text");
+    assert.equal(invites.membershipLine({ action: "leave", via: "stop" }, "Dee", null), "Dee left by replying STOP");
+    assert.equal(invites.membershipLine({ action: "join" }, "Ann", null), null);
+    assert.equal(invites.membershipLine(null, "Ann", null), null);
+});
+
+test("a room's text members: the composer's cost line, the add dialog's note, the one-room limit and a member's state", () => {
+    const texts = chat.texts;
+    assert.equal(texts.costLine(0), "");
+    assert.equal(texts.costLine(1), "Also sent as a text to 1 number");
+    assert.equal(texts.costLine(3), "Also sent as a text to 3 numbers");
+    assert.ok(texts.costNote(3).includes("With 3 text members, one message is 3 texts"));
+    assert.equal(texts.takenText("Choir"), "This person is already a text member of Choir on this number; another number is needed.");
+    assert.ok(texts.takenText("Choir", true).includes("Choir, which is archived"));
+    assert.ok(texts.pairWarning().includes("comes to this room instead of that conversation"));
+    assert.equal(texts.stateText({}), "");
+    assert.equal(texts.stateText({ optedOut: true, lastFailure: "x" }), "Replied STOP: gets no texts");
+    assert.equal(texts.stateText({ roomTextsOff: true }), "Texts off: the number no longer carries room texts");
+    assert.equal(texts.stateText({ lastFailure: "dailyLimit" }), "The last text was not sent (dailyLimit)");
+    assert.equal(texts.stateText({ welcomeReasonCode: "retry" }), "The welcome text was not sent (retry)");
+    assert.equal(texts.stateText({ welcomeReasonCode: "uncertain", welcomeDate: 5 }), "");
+});
+
+test("a joinRequests push to a room's moderators passes through the store with its count", () => {
+    const state = freshState();
+    assert.deepEqual(chat.reduce(state, push("chatRoom:R1", { kind: "joinRequests", chatRoomId: "R1", pendingCount: 3 }), "ann", 1),
+        { kind: "joinRequests", chatRoomId: "R1", pendingCount: 3 });
+});
+
+test("the join components compile, and WebrootVue.qvt.js registers them", () => {
+    for (const name of ["m-chat-invites", "m-chat-join-requests", "m-chat-text-members"]) {
+        const comp = moqui.qvt.components[name];
+        assert.ok(comp && comp.template, name);
+        const errors = [];
+        compiler.compile(comp.template, { mode: "function", onError: (err) => errors.push(err.message) });
+        assert.deepEqual(errors, [], name);
+    }
+});

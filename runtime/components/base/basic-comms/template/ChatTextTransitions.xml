@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of a room's text members in Chat (plans/Comms-Messaging.md §18.3 phase 18;
+    org.moqui.call.SmsRoomServices), each included by name in Chat.xml: textMembers, textMemberChoices, addTextMember and
+    renameTextMember (taking one out is removeMember with its chatActorId). A refusal is an answer with its reasonCode and
+    the errors. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="textMembers" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.SmsRoomServices.find#TextMembers').parameter('chatRoomId', chatRoomId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {memberList: out.memberList || [], canAdd: !!out.canAdd,
+                addRefusal: out.addRefusal || null, maxMembers: out.maxMembers ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="textMemberChoices" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.SmsRoomServices.get#TextMemberChoices').parameters({chatRoomId: chatRoomId || '', phoneNumber: phoneNumber || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {numberList: out.numberList || [], phoneNumber: out.phoneNumber || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="addTextMember">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.SmsRoomServices.add#TextMember').parameters({chatRoomId: chatRoomId || '', phoneNumber: phoneNumber || '',
+                memberName: memberName || null, ourNumber: ourNumber || null, consent: String(consent) === 'true' ? 'Y' : 'N'}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {chatActorId: out.chatActorId, ourNumber: out.ourNumber,
+                warning: out.warning || null, welcomeSent: !!out.welcomeSent})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="renameTextMember">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.call.SmsRoomServices.rename#TextMember').parameters({chatRoomId: chatRoomId || '', chatActorId: chatActorId || '',
+                memberName: memberName || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {memberName: out.memberName || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>
