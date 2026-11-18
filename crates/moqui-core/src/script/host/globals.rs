@@ -902,7 +902,7 @@ fn moqui_version(_: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `ec.factory.getConfValue(selector)`: the running conf's attribute at `selector` (`webapp-list/webapp[webroot]@http-port`,
-/// plans/Conf-Paths.md §1), or a process property of its environment name set since the boot
+/// plans/archive/Conf-Paths.md §1), or a process property of its environment name set since the boot
 /// ([`crate::context::conf_env::conf_value_now`]); null when the conf has none or it holds a secret, which a script
 /// never gets. A selector that does not parse is an error.
 fn get_conf_value(call: &mut Call<'_>) -> Result<Ret, HostError> {

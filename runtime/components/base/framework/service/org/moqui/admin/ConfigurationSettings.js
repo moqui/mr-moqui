@@ -62,7 +62,7 @@ const allowedList = setting =>
         .split(",")
         .map(value => value.trim())
         .filter(Boolean)
-// a conf attribute by its selector (it has an @: webapp-list/webapp[webroot]@http-host, plans/Conf-Paths.md §1), else a
+// a conf attribute by its selector (it has an @: webapp-list/webapp[webroot]@http-host, plans/archive/Conf-Paths.md §1), else a
 // process property or environment variable
 const property = name => (name ? text(String(name).includes("@") ? ec.factory.getConfValue(name) : System.getProperty(name)) : "")
 

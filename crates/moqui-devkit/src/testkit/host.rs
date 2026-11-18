@@ -152,7 +152,7 @@ fn set_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `setConf(selector, value)`: the running conf's attribute at the selector, over the conf files, as its environment
 /// name would set it (`null` puts back what the files and the environment give); what that name held before as a
 /// process property, or `null`. Under `setConf` and `withConf` (server.js), which keep what to put back when the spec
-/// ends, as for properties (plans/Conf-Paths.md §4).
+/// ends, as for properties (plans/archive/Conf-Paths.md §4).
 fn set_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let selector = call.text(0).unwrap_or_default().to_string();
     let value = call.text(1).map(str::to_string);

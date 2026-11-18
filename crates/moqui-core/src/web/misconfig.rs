@@ -31,7 +31,7 @@ fn webroot(conf: &MNode) -> MNode {
         .expect("webroot")
 }
 
-/// A webroot attribute as shipped, written literally (plans/Conf-Paths.md §5).
+/// A webroot attribute as shipped, written literally (plans/archive/Conf-Paths.md §5).
 fn shipped_attr(conf: &MNode, name: &str) -> String {
     webroot(conf)
         .attribute(name)

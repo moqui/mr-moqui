@@ -2217,7 +2217,7 @@ XMPP app's own blocklist (XEP-0191, `XmppBlockedJid`) stays its own.
     `setFilters` and `refilterPhoneRooms` change each room on its own.
 11. *Performance.* The day's lookup count is reserved in a transaction of its own, not held through the provider's
     answer, and given back when the lookup fails. `ChatRoomMember` has an index on `filterEnumId`.
-12. *Conventions.* `chat_spam_purge_days` is a `default-property` in MoquiDefaultConf.xml; System, Voice, Spam renders in
+12. *Conventions.* `chat@spam-purge-days` is an attribute of the `chat` element in MoquiDefaultConf.xml; System, Voice, Spam renders in
     qvt only in `BasicComms.spec.js` (no tui template of its own); its counts are localized.
 
 **Status (2026-11-18): built** as designed, with the purge and the XMPP filter above, and the review decisions.

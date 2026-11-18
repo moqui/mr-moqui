@@ -80,7 +80,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="value" type="xs:string"/>
             <xs:attribute name="conf" type="xs:string"><xs:annotation><xs:documentation>A conf attribute by its selector
                 (search-facade/cluster@url) whose value the servlet or filter gets when value is empty, a secret one
-                too: the server reads it, so a script's handler is given a credential the conf keeps once (plans/Conf-Paths.md
+                too: the server reads it, so a script's handler is given a credential the conf keeps once (plans/archive/Conf-Paths.md
                 §1). Read when the webapp's servlets are built.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>

@@ -468,7 +468,7 @@ pub fn start_with_conf_files_and_links(
 }
 
 /// The process property a test's name sets: a conf selector (`edge/node@url`, as the edge consts are) is set by its
-/// environment name, as an override is (plans/Conf-Paths.md §1); a property by its own name.
+/// environment name, as an override is (plans/archive/Conf-Paths.md §1); a property by its own name.
 pub fn property_name(name: &str) -> String {
     if name.contains('@') {
         moqui_core::context::conf_env::env_name_of(name)
@@ -495,7 +495,7 @@ impl PropertyReset {
     }
 }
 
-/// The conf secrets the gate's boot generated into its `runtime/.env` (`moqui_conf__...`, plans/Conf-Paths.md §3), as
+/// The conf secrets the gate's boot generated into its `runtime/.env` (`moqui_conf__...`, plans/archive/Conf-Paths.md §3), as
 /// process properties until the gate drops: a member started in this process takes them, as a cluster's members share
 /// one `.env` (conf/local-cluster/README.md); each runtime would otherwise generate keys of its own.
 fn share_generated_secrets(runtime: &Path, reset: &mut PropertyReset) {

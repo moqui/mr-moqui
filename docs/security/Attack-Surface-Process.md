@@ -63,7 +63,7 @@ The sets in `crates/moqui-host/Cargo.toml` are these. No `dev` set exists; its l
 
 ## Confs under `runtime/conf`
 
-The table gives the purpose, listener, address, role and switch properties each file sets as `default-property` values, and for the top-level files and `dev-group` their other elements. The other elements of the directory examples were not read.
+The table gives the purpose, listener, address, role and switch settings each file sets, and for the top-level files and `dev-group` their other elements. The other elements of the directory examples were not read.
 
 | Conf | For | Opens beyond the default |
 |---|---|---|

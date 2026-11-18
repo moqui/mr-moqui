@@ -300,7 +300,7 @@ impl ExecutionContextFactory {
                 framework_dir.display()
             )));
         }
-        // runtime/.env before the first merge, so its conf names (plans/Conf-Paths.md §3) are in every merge, component
+        // runtime/.env before the first merge, so its conf names (plans/archive/Conf-Paths.md §3) are in every merge, component
         // discovery's too; MOQUI_CONF was chosen without it
         let env_path = runtime_dir.join(".env");
         ensure_env_readable(&env_path)?;
@@ -878,7 +878,7 @@ impl ExecutionContextFactory {
     }
 
     /// The attribute of the running conf at `selector` (`webapp-list/webapp[webroot]@http-port`), names and keys compared
-    /// as environment names compare them (plans/Conf-Paths.md §1), with whether it holds a secret; `None` when the conf
+    /// as environment names compare them (plans/archive/Conf-Paths.md §1), with whether it holds a secret; `None` when the conf
     /// has no such attribute or `selector` is not one. A live override of it (Monitor › Settings) comes first while it
     /// lasts. The caller decides what a secret shows: a script never gets one (`ec.factory.getConfValue`).
     pub fn conf_value(&self, selector: &str) -> Option<super::conf_env::ConfValue> {

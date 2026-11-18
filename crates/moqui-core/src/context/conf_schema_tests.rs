@@ -34,7 +34,7 @@ fn keying_follows_the_units_and_takes_an_unknown_element_as_single() {
 }
 
 /// Every element the default conf repeats under one parent is keyed or a sequence in the schema, so an environment
-/// name never takes the first of several by accident (plans/Conf-Paths.md §1).
+/// name never takes the first of several by accident (plans/archive/Conf-Paths.md §1).
 #[test]
 fn every_repeated_element_of_the_default_conf_is_keyed_or_a_sequence() {
     let path = concat!(

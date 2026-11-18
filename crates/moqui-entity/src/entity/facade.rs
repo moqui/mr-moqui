@@ -469,7 +469,7 @@ impl EntityFacade {
 
     /// Install the cipher from `entity-facade` and its `decrypt-alt` children, and `crypt-read-plain`. A `decrypt-alt`
     /// with no `crypt-pass` takes the `entity-facade`'s, and one with `old="true"` its `crypt-pass-old`
-    /// (plans/Conf-Paths.md §6.6); one whose pass is empty is left out.
+    /// (plans/archive/Conf-Paths.md §6.6); one whose pass is empty is left out.
     ///
     /// Attributes expand through [`moqui_lib::env`]. An empty `crypt-pass` leaves encryption off.
     pub fn crypt_from_conf(&self, conf: &MNode) -> Result<(), Error> {

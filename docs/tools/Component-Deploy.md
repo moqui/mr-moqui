@@ -44,14 +44,14 @@ merge turns on). The files are listed in merge order at the top. Each element sh
 - its class chip: live, apply or restart, with the reason as the chip's tooltip;
 - the files and lines it came from: the element's own file first, then each file merged into it;
 - its attributes. An attribute set by a later file than the element's own shows that file. An attribute whose class
-  differs from the element's shows its class. A `${}` value also shows its expanded value.
+  differs from the element's shows its class. Each shows its environment name (with a copy button), and one an
+  environment name set shows which name and from where (`-D`, the environment or `runtime/.env`).
 - "not running yet" on a value the files hold that the running conf does not: one waiting for a restart, or one not
   reloaded yet;
-- for a `default-property` that the environment, `runtime/.env` or `-D` sets, the value that wins;
 - the default conf's comments above the element: two lines, and all of them when clicked.
 
-Secrets are masked as `••••••`: a secret `default-property` value, an attribute such as `password`, `crypt-pass` or
-`api-key`, and an expanded value that uses a secret property. Search keeps the elements whose name, key or an
+Secrets are masked as `••••••`: an attribute the conf schema marks secret (`entity-facade@crypt-pass`,
+`push/fcm@service-account`) or whose name reads as one (`password`, `api-key`), here and in a reload's report. Search keeps the elements whose name, key or an
 attribute matches. The terminal shows the same tree. Viewing needs the `ADMIN` group (`get#ConfView`).
 
 **Edit** changes one conf file at a time. Choose the file, or open it from a source on Settings, which goes to its
@@ -111,29 +111,21 @@ an `http-port` waits whole.
 | `webapp`: ports, `https-enabled`, `trusted-proxies`, `client-ip-header`, `transfer-workers`, `endpoint`, `after-startup`, session `flush` and `max` | restart |
 | `cache-list`: a new `cache` | apply |
 | `cache-list`: a changed or removed `cache` | restart |
-| `default-property`: a new property, or one whose value the conf set | apply |
 | `resource-facade`: `template-renderer` | apply |
 | `resource-facade`: `resource-reference` | restart |
 | `artifact-execution-facade`, `user-facade`, `screen-facade/pdf`, `service-file`, `report`, `terminal`, `email-client`, `dav-server`, `git-server` request settings, `dev-aide` | live |
 | `tools`, `telemetry`, `logging`, `transaction-facade`, `entity-facade`, `database-list`, `search-facade`, `llm-facade`, `service-facade` pools and `service-type`, `ssh-server`, `smtp-server`, `edge`, `dev-reload`, `component-list` | restart |
-| an element the catalog does not know | restart |
+| a component's own element, which the catalog does not know (basic-comms' `comms` is known; mr-pass's `pass` is not) | live |
 
 Monitor › Settings changes log levels and telemetry rates for a while
 ([Monitoring](Monitoring.md#changing-settings-for-a-while)).
 
-### Properties
+### Settings from the environment
 
-A `default-property` follows the boot rules:
-
-- A new property is set unless the environment, `runtime/.env` or `-D` already set it. Those win, and the change has
-  no effect.
-- A secret still at its `CHANGEME` default is generated and saved to `runtime/.env`, as at boot.
-- A changed value is set only while the property still has the value the conf set. Otherwise something else set it,
-  and that wins.
-- A removed property, and a changed secret, wait for a restart.
-- So does every property the process was set up with: `instance@purpose`, the datasources, cluster, edge, port, host, bind and key properties, time zones and locale, and the search backend.
-- A property that a restart-class setting reads also waits for a restart, so the two never disagree.
-- A setting that reads a property set live is listed with the change, as `property`.
+A reload merges the files again with the environment's names applied, as the boot does, so an attribute an environment
+name sets keeps that value. A name added to `runtime/.env` while the server runs is applied by the next reload, in its
+attribute's class. A conf that still has a `default-property` or a `${` in an attribute is refused whole, naming each
+(see [Run-Deploy](../Run-Deploy.md#settings-and-the-environment)).
 
 ## Loading a component
 

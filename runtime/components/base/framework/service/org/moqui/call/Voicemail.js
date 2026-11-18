@@ -59,7 +59,7 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const yes = (value) => value === true || value === 'Y' || value === 'true'
 const blank = (value) => value == null || String(value).trim() === ''
-// a conf attribute by its selector (it has an @, plans/Conf-Paths.md §1), else a property not yet moved to the conf
+// a conf attribute by its selector (it has an @, plans/archive/Conf-Paths.md §1), else a property not yet moved to the conf
 const property = (name, fallback) => {
   const value = String(name).includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)
   return value == null || String(value).trim() === '' ? fallback : String(value).trim()

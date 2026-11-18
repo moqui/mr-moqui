@@ -86,7 +86,7 @@ pub struct ViewAttr {
     pub set_by: Option<SetBy>,
 }
 
-/// An environment name that set an attribute over the conf files (plans/Conf-Paths.md §3).
+/// An environment name that set an attribute over the conf files (plans/archive/Conf-Paths.md §3).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetBy {

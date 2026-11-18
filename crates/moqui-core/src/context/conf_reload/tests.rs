@@ -219,7 +219,7 @@ fn every_top_level_element_of_the_default_conf_has_a_unit() {
 }
 
 /// A conf that still uses the retired properties, a `default-property` or an attribute with a `${}`, is refused whole
-/// with each named (plans/Conf-Paths.md, phase 7); nothing of it is applied.
+/// with each named (plans/archive/Conf-Paths.md, phase 7); nothing of it is applied.
 #[test]
 fn a_conf_with_a_retired_property_is_refused() {
     let factory = factory(RUNNING);

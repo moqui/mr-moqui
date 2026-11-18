@@ -22,8 +22,8 @@ This is not production policy. A production server loads no demo users and does 
 - **A dev instance**: `./moq run -D demo_disabled=false`, to try it. Never run a public demo as a dev instance: the Dev
   AIDE loads there, and `moqui tui --user` logs in with no password.
 
-`component.xml` has `disabled="${demo_disabled ?: 'true'}"`. The property is read before `runtime/.env` and the conf's
-default properties, so set it with `-D` or in the environment.
+`component.xml` has `disabled="${demo_disabled ?: 'true'}"`. That is a process property, read before `runtime/.env`,
+so set it with `-D` or in the environment.
 
 ## What it does
 

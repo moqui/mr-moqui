@@ -131,7 +131,7 @@ pub fn level_from_env() -> Level {
     parse_level(&crate::context::conf_env::setting(LEVEL)).unwrap_or(Level::INFO)
 }
 
-/// The `logging` `level` (plans/Conf-Paths.md §6.2).
+/// The `logging` `level` (plans/archive/Conf-Paths.md §6.2).
 pub const LEVEL: &str = "logging@level";
 
 static DISK: OnceLock<LogFilter> = OnceLock::new();

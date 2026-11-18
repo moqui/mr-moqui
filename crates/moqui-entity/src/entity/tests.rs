@@ -454,7 +454,7 @@ fn known_gap_an_empty_crypt_pass_turns_field_encryption_off() {
 }
 
 /// A `decrypt-alt` with no `crypt-pass` takes the `entity-facade`'s and one marked `old` its `crypt-pass-old`; an empty
-/// one is left out (plans/Conf-Paths.md §6.6).
+/// one is left out (plans/archive/Conf-Paths.md §6.6).
 #[test]
 fn a_decrypt_alt_takes_the_facade_pass_or_the_old_one() {
     let facade = open_fake();

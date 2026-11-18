@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The schema of the merged conf (plans/Conf-Paths.md §2): a tree of units by element name, each with how its
+//! The schema of the merged conf (plans/archive/Conf-Paths.md §2): a tree of units by element name, each with how its
 //! elements are told apart (its key), its class, the attributes whose class differs, and its child units. The merge
 //! keys repeated elements by it, an environment name or selector finds an element by it ([`keying`]), and the conf
 //! reload (plans/archive/Component-Deploy.md, Phase 1) reads what each part takes to change on a running server: read
@@ -73,7 +73,7 @@ impl Group {
     }
 }
 
-/// A secret attribute: kept as given, or generated when the conf leaves it at `CHANGEME` (plans/Conf-Paths.md §2).
+/// A secret attribute: kept as given, or generated when the conf leaves it at `CHANGEME` (plans/archive/Conf-Paths.md §2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Secret {
     /// Never logged or shown, and null to scripts.
@@ -160,7 +160,7 @@ const EDGE: Class = Class::Restart("the edge link starts at boot");
 /// The class of an element at the top of the conf that no unit names.
 pub const UNKNOWN: Class = Class::Restart("not known to the conf reload");
 
-/// A top-level element no unit names, a component's own settings (plans/Conf-Paths.md §6.27): live, as its readers
+/// A top-level element no unit names, a component's own settings (plans/archive/Conf-Paths.md §6.27): live, as its readers
 /// read the conf on each use (`ec.factory.getConfValue`).
 pub const COMPONENT: Class = Class::Live;
 
@@ -363,7 +363,7 @@ pub static CATALOG: &[Unit] = &[
         single("captions", Class::Live),
     ]),
     single("voicemail", Class::Live),
-    // the settings of basic-comms and demo, set in their MoquiConf.xml (plans/Conf-Paths.md §6.27)
+    // the settings of basic-comms and demo, set in their MoquiConf.xml (plans/archive/Conf-Paths.md §6.27)
     single("comms", Class::Live),
     single("demo", Class::Live),
     single("pass-authority", Class::Live)
@@ -454,7 +454,7 @@ pub fn unit(path: &[&str]) -> Option<&'static Unit> {
 }
 
 /// How the elements at `path` are told apart: their unit's key, or the first of the name ([`Key::Single`]) for an
-/// element no unit names. What an environment name or a selector walks by (plans/Conf-Paths.md §1).
+/// element no unit names. What an environment name or a selector walks by (plans/archive/Conf-Paths.md §1).
 #[must_use]
 pub fn keying(path: &[&str]) -> Key {
     unit(path).map_or(Key::Single, |unit| unit.key)

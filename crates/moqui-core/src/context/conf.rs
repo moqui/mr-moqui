@@ -261,7 +261,7 @@ pub fn merge_conf(base: &MNode, over: &MNode) {
 }
 
 /// A top-level element the conf schema does not know, a component's own settings (basic-comms's `comms`, mr-pass's
-/// `pass`; plans/Conf-Paths.md §6.27), merged as a settings element: its attributes replace the base's, and each child
+/// `pass`; plans/archive/Conf-Paths.md §6.27), merged as a settings element: its attributes replace the base's, and each child
 /// with a `name` or `id` merges into the base's child of that element name and key (its attributes replace, its
 /// children replace when it has any), any other child is added. A component reading another's setting gets nothing
 /// when that component is absent.
@@ -421,7 +421,7 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     base.merge_child_with_child_key(over, "mail-delivery", "dkim", &[], None);
     // elements of settings only: an attribute of the override replaces the base one
     for name in [
-        // the instance's purpose, id, node role, locale and time zone (plans/Conf-Paths.md §6.1)
+        // the instance's purpose, id, node role, locale and time zone (plans/archive/Conf-Paths.md §6.1)
         "instance",
         // certificates by ACME (plans/Edge-Node2.md §4.8)
         "acme",
@@ -475,7 +475,7 @@ fn merge_edge(base: &MNode, over: &MNode) {
         return;
     };
     base_edge.copy_attributes_from(&over_edge);
-    // the pairings, each one element (plans/Conf-Paths.md §6.19)
+    // the pairings, each one element (plans/archive/Conf-Paths.md §6.19)
     base_edge.merge_single_child(&over_edge, "node");
     base_edge.merge_single_child(&over_edge, "front-node");
     base_edge.merge_children_by_keys(&over_edge, "delegate", keys(&["edge", "delegate"]), None);

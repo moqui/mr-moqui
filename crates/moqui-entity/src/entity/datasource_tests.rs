@@ -96,7 +96,7 @@ fn h2_and_empty_are_embedded_with_the_postgres_pool() {
     }
 }
 
-/// The server and credentials are the datasource's own attributes (plans/Conf-Paths.md §6.6).
+/// The server and credentials are the datasource's own attributes (plans/archive/Conf-Paths.md §6.6).
 #[test]
 fn postgres_reads_the_datasource_attributes() {
     let node = conf(

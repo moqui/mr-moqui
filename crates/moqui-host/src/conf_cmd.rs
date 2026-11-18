@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui conf env` (plans/Conf-Paths.md §4): each attribute of the conf this runtime merges, with the environment
+//! `moqui conf env` (plans/archive/Conf-Paths.md §4): each attribute of the conf this runtime merges, with the environment
 //! name that sets it over the conf files (`moqui_conf__ssh_server__port`), its value (a secret masked) and, when an
 //! environment name set it, which one and from where. How a deployment finds a setting's name; `./moq -D` completes
 //! from `--names`.

@@ -3163,7 +3163,7 @@ pub fn derived_cookie_key(label: &str) -> Result<Vec<u8>, Error> {
 }
 
 /// The session cookie's HMAC key: the webroot webapp's `session-config` `cookie-key`, generated at the first start
-/// (plans/Conf-Paths.md §6.3).
+/// (plans/archive/Conf-Paths.md §6.3).
 pub const COOKIE_KEY: &str = "webapp-list/webapp[webroot]/session-config@cookie-key";
 
 fn cookie_key() -> Result<Vec<u8>, Error> {

@@ -1,6 +1,10 @@
 # Conf Paths: settings by XML path, overridden from the environment
 
-Status 2026-11-18: phases 0 to 7 built. Phases 0 to 2: the path module, the conf schema, the overrides with
+> Archived 2026-11-18: built, phases 0 to 8. The guide is [Run-Deploy, Settings and the
+> environment](../../docs/Run-Deploy.md#settings-and-the-environment); the names are in `moqui conf env` and the conf
+> schema (`crates/moqui-core/src/context/conf_schema.rs`).
+
+Status 2026-11-18: phases 0 to 8 built. Phases 0 to 2: the path module, the conf schema, the overrides with
 `getConfValue`, `setConf`, the conf view's names and `moqui conf env`. Phase 3: the attributes the default conf filled
 from properties (3a entity facade and databases, 3b web, logging, caches and reports, 3c SSH, git, SMTP and mail, 3d
 search and LLM). Phase 4: every setting that was only a property, in the elements of §6.1 and §6.13 to §6.26; the
@@ -14,7 +18,7 @@ harness or a test binary sets for one run (`moqui_stop_on_stdin_close`, `termina
 --names`, its help, the hosted instance image's container names, the XSD's notes. Phase 7: default-property and the `${}` expansion of conf attributes removed; the boot and
 a conf reload refuse a conf with either, naming each attribute and its environment name; reload reports mask secrets;
 a component's own element applies live. `conf_env::setting_or_property` stays for the lookups that read runtime state
-(a process property) beside selectors. Phase 8 to do ([§7](#7-phases)): the docs.
+(a process property) beside selectors. Phase 8: the docs (Run-Deploy's settings section, the security and UI docs, the README's redesigns, Sealed-Secrets' names).
 
 The conf was configured through about 330 flat `default-property` entries (279 in `MoquiDefaultConf.xml`, the rest in
 `runtime/conf/**` and component `MoquiConf.xml` files). Attributes referred to them by `${name}` and `${a ?: b}`,
@@ -483,9 +487,9 @@ One commit each, on master.
    add-on repository (mr-pass, mr-mantle, mr-boss, mr-marble).
 6. Scripts, packaging, the desktop app, CLI help and the rest of the test harness.
 7. Removal: `default-property`, `${}` expansion in conf readers, and the boot refusal of `${` in conf attributes.
-8. Docs: [Run-Deploy](../docs/Run-Deploy.md) "Properties" becomes "Settings and the environment"; the other guides,
-   the security docs and the `runtime/conf` READMEs; the README's redesign list; [Parity-Diffs](Parity-Diffs.md);
-   the names in [Sealed-Secrets](Sealed-Secrets.md) §2. Then this plan is archived.
+8. Docs: [Run-Deploy](../../docs/Run-Deploy.md) "Properties" becomes "Settings and the environment"; the other guides,
+   the security docs and the `runtime/conf` READMEs; the README's redesign list; [Parity-Diffs](../Parity-Diffs.md);
+   the names in [Sealed-Secrets](../Sealed-Secrets.md) §2. Then this plan is archived.
 
 ## 8. Decisions
 

@@ -316,7 +316,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     }
     let config = config()?;
     // the services read these, resolved from the conf (its defaults filled in): the bookmarks' room JIDs, the URLs of
-    // files sent to XMPP clients; runtime state, not settings (plans/Conf-Paths.md, Decisions)
+    // files sent to XMPP clients; runtime state, not settings (plans/archive/Conf-Paths.md, Decisions)
     moqui_lib::env::set_property("xmpp_resolved_rooms_domain", config.rooms_domain.clone());
     moqui_lib::env::set_property("xmpp_resolved_upload_url", config.upload_base_url.clone());
     moqui_lib::env::set_property("xmpp_resolved_upload_max_bytes", config.upload_max_bytes.to_string());

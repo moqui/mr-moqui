@@ -59,7 +59,7 @@ pub fn secret_parameter(key: &str) -> bool {
 pub(crate) fn script_refused_property(name: &str) -> bool {
     let lower = name.trim().to_ascii_lowercase();
     let under = lower.replace('.', "_");
-    // a conf attribute's environment name (plans/Conf-Paths.md §4)
+    // a conf attribute's environment name (plans/archive/Conf-Paths.md §4)
     moqui_lib::node::path::env_segments(name.trim()).is_some()
         || secret_parameter(&lower)
         || secret_parameter(&under)

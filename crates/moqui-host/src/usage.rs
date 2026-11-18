@@ -715,7 +715,7 @@ moqui conf env [--names] [text]
     runtime conf), as NAME=value  # selector, and for one an environment name set, which one and from where.
     NAME is the environment name that sets the attribute over every conf file: moqui_conf__, then each element
     from the root, a keyed element's key value next (in capitals), and the attribute last, with __ between them
-    (plans/Conf-Paths.md). Case and punctuation within a segment do not matter. Precedence: -D, then the
+    (plans/archive/Conf-Paths.md). Case and punctuation within a segment do not matter. Precedence: -D, then the
     environment, then runtime/.env. A secret's value is masked.
     --names  The names only, one per line
     text     Only the attributes whose name or selector holds the text
@@ -869,7 +869,7 @@ impl ServerOptions {
     }
 }
 
-/// The webroot webapp's `http-port` by its environment name, which `-p` sets (plans/Conf-Paths.md §1).
+/// The webroot webapp's `http-port` by its environment name, which `-p` sets (plans/archive/Conf-Paths.md §1).
 pub const HTTP_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_port";
 /// The webroot webapp's `https-listen-port` by its environment name, which `--https-port` sets.
 pub const HTTPS_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port";

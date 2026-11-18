@@ -13,7 +13,7 @@
  */
 
 //! A `<datasource>` of the merged conf. Its server and credentials are its own attributes (`host`, `port`,
-//! `database`, `user`, `password`, `sslmode`, `sslrootcert`; plans/Conf-Paths.md §6.6), and a group other than
+//! `database`, `user`, `password`, `sslmode`, `sslrootcert`; plans/archive/Conf-Paths.md §6.6), and a group other than
 //! `transactional` takes the transactional datasource's where it leaves one empty. A conf from Java gives them in the
 //! datasource's own `inline-jdbc` instead (`xa-properties`, or `jdbc-uri`), which then replaces the attributes, read the
 //! way Java's `EntityDatasourceFactoryImpl` and `TransactionInternalBitronix` read it. The pool settings come from the

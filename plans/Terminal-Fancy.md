@@ -332,11 +332,11 @@ No value turns one on for another purpose. The attributes go in `moqui-conf-3.xs
 change.
 
 `terminal_remote` defaults to `false` (D7). To turn remote access on, from the lightest touch up
-([Properties](../docs/Run-Deploy.md#properties)):
+([Settings and the environment](../docs/Run-Deploy.md#settings-and-the-environment)):
 
 - `terminal_remote=true` in `runtime/.env`: one line, this host only, and it stays through an upgrade;
 - the environment, or `-D terminal_remote=true` on the command line, for one run;
-- `<default-property name="terminal_remote" value="true"/>` in `MoquiDevConf.xml` or another runtime conf, for
+- `<terminal remote="true"/>` in `MoquiDevConf.xml` or another runtime conf, for
   every host that uses that conf.
 
 ### 5.9 Code

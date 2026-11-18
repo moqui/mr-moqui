@@ -195,8 +195,8 @@ permission hooks: start the server outside it, or `claude` with those variables 
 `terminal@command-line` and `terminal@host-sessions` are `dev` by default (on for a dev instance), `false` turns one
 off, and `true` turns it on for any purpose; any other value, empty included, is off, with an error in the log, so a
 typo never turns it on (and `true` on a production instance is a warning in the log). To reach them from another machine, `moqui_conf__terminal__remote=true` in
-`runtime/.env` (this host only), the environment for one run, or a `default-property` in a runtime conf
-([Run-Deploy](../Run-Deploy.md#properties)). A `host-profile` takes `command`, `args` (words, or a JSON list),
+`runtime/.env` (this host only), the environment for one run, or `<terminal remote="true"/>` in a runtime conf
+([Run-Deploy](../Run-Deploy.md#settings-and-the-environment)). A `host-profile` takes `command`, `args` (words, or a JSON list),
 `resume-args`, `directory`, `login`, `integration`, `agent` and `env` children.
 
 ## The Desktop and Mobile apps, and phones

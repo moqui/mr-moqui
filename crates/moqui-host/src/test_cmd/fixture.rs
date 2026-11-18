@@ -389,7 +389,7 @@ fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     hash_tree(&framework.join("entity"), &mut hasher);
     hash_tree(&framework.join("data"), &mut hasher);
     // the default conf: the datasources and which secrets the load generates under which names (its `.env` goes with
-    // the dump), so a snapshot of another conf is not restored into this one's keys (plans/Conf-Paths.md §5)
+    // the dump), so a snapshot of another conf is not restored into this one's keys (plans/archive/Conf-Paths.md §5)
     hash_tree(&framework.join("conf"), &mut hasher);
     let components = moqui_core::context::discover_components(scratch, framework)
         .map_err(|err| Error::new(format!("could not list the components of the test runtime: {err}")))?;

@@ -334,50 +334,64 @@ or SIGHUP, and the file watcher on a dev instance), and lists the rest as waitin
 component is the exception: `example_disabled=true` leaves it out. The demo dev component is off until
 `demo_disabled=false` or a conf names it ([Public demo server](#public-demo-server)).
 
-### Settings from the environment
+### Settings and the environment
 
-Any attribute of the merged conf can be set from the environment, over every conf file, by a name built from its path
-in the XML ([Conf-Paths](../plans/Conf-Paths.md), which is replacing the properties below):
+Every setting is an attribute of an element of the merged conf, with its default written in `MoquiDefaultConf.xml`
+(or, for a component's own settings, the component's `MoquiConf.xml`: basic-comms' `comms`, mr-pass's `pass`). A conf
+file sets one by its element: `<ssh-server port="2222"/>` in the runtime conf. Docs, scripts and System › Conf name a
+setting by its path, a selector: `ssh-server@port`, `webapp-list/webapp[webroot]@http-port` (a keyed element's key in
+brackets).
+
+Any attribute can also be set from the environment, over every conf file, by a name built from the same path:
 
 ```sh
-moqui_conf__ssh_server__port=2222                              # <ssh-server port="2222"/>
-moqui_conf__webapp_list__webapp__WEBROOT__http_port=8091       # <webapp-list><webapp name="webroot" http-port="8091">
+moqui_conf__ssh_server__port=2222                              # ssh-server@port
+moqui_conf__webapp_list__webapp__WEBROOT__http_port=8091       # webapp-list/webapp[webroot]@http-port
 moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 ```
 
 The name is `moqui_conf__`, then each element from the root with `__` between them, a keyed element's key value after
 it (in capitals by convention, so it stands out), and the attribute last. Case does not matter, nor punctuation within
-a segment (`http_port`, `HTTP_PORT` and `http-port` are one name). Precedence is the same as for a property: `-D`, then
-the environment, then `runtime/.env`; an empty value is not applied. A name for an element or attribute the conf does
-not have adds it, with a warning when its element is in the files (most often a misspelled name).
-`moqui conf env [text]` lists every attribute with its name and value (secrets masked), and System › Conf shows each
-attribute's name and what set it. A secret attribute left at `CHANGEME` is generated at startup and written to
-`runtime/.env` under its name.
-
-### Properties
-
-A `default-property` in a conf is a default only. A property is looked up in this order:
+a segment (`http_port`, `HTTP_PORT` and `http-port` are one name). A name is looked up in this order, and the first
+that is set wins over every conf file:
 
 1. a `-D name=value` on the command line (`./moq -D` sets it as an environment variable);
 2. the process environment;
-3. `runtime/.env`;
-4. the merged conf's `default-property`.
+3. `runtime/.env`.
 
-Use the underscore names (`webapp-list/webapp[webroot]@http-port`), not dotted ones. An empty value counts as unset, so it cannot clear a
-conf's default; to clear one, override the `default-property` in the runtime conf.
+An empty value is not applied, so it cannot clear a setting; to clear one, set the attribute empty in the runtime conf.
+A name for an element or attribute the conf does not have adds it, with a warning when its element is in the files
+(most often a misspelled name). `moqui conf env [text]` lists every attribute with its name and value (secrets masked)
+and where it was set, and System › Conf shows each attribute's name and what set it. The boot logs each name it applied.
 
 `runtime/.env` holds `KEY=value` lines. Blank lines and `#` comments are ignored, a matching pair of quotes is
-stripped, and `$` is not expanded. It is read after the conf merge, so it cannot select `MOQUI_CONF`. An archive made
-with `--no-data` leaves it out, so it is the place for per-host settings that should survive an upgrade.
+stripped, and `$` is not expanded. It is read before the conf merge, but cannot select `MOQUI_CONF`. An archive made
+with `--no-data` leaves it out, so it is the place for per-host settings and secrets that should survive an upgrade.
 
-When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
-covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `ssh-server@host-key`, `git-server@lfs-token-key`, `cluster-member@tls-cert`,
-`cluster-member@tls-key` and `edge@link-key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
-`mail-delivery/dkim@key` (empty by default) is made there too, the first time a server needs it.
+When a secret attribute is still `CHANGEME` at startup, a value is generated and written to `runtime/.env` under its
+name. This covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `entity-facade@crypt-pass`,
+`ssh-server@host-key`, `git-server@lfs-token-key`, the pair `cluster-member@tls-cert` and `cluster-member@tls-key`
+(made together), `edge@link-key` and the other keys the default conf leaves at `CHANGEME`. A new file gets mode 0600,
+and a `.env` that cannot be written fails the start. `mail-delivery/dkim@key` (empty by default) is made there too, the
+first time a server needs it. A secret is never logged, is masked wherever the conf is shown, and is null to a
+script's `ec.factory.getConfValue`.
 
-The properties most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
+A conf attribute holds its value as written: `${...}` is not expanded, and a conf that still has a `${` in an
+attribute, or a `default-property` element, refuses to start, naming each attribute and the environment name that
+sets it. Process properties remain for what is not configuration: the state the server sets as it runs, the switches
+of a test run, and the `${}` of a `component.xml` (`example_disabled`).
 
-| Property | Default | What it does |
+**Upgrading from properties.** Settings were once `default-property` entries with flat names (`entity_ds_crypt_pass`,
+`webapp_http_port`), referenced as `${name}` from attributes. Those names are no longer read, in the environment, in
+`runtime/.env` or in a conf file. Move each to its attribute's name (`moqui conf env` lists them); in particular copy
+the old secrets to their new names before the first start, or a new one is generated: `entity_ds_crypt_pass` to
+`moqui_conf__entity_facade__crypt_pass` (without it encrypted fields can no longer be read: `./moq clean-db` and
+`./moq load` for a dev runtime), the session cookie key, `ssh_host_key` (else the SSH host key changes) and the edge link
+key (else each local node must pair again).
+
+The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
+
+| Setting | Default | What it does |
 |---|---|---|
 | `instance@purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
 | `instance@default-locale`, `instance@default-time-zone`, `entity-facade@database-time-zone` | `en_US`, `UTC`, `UTC` | |
@@ -456,12 +470,12 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `mail-delivery@mx-override`, `mail-delivery@dns-offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
 | `logging@level`, `logging@dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search-facade@backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
-| `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
-| `demo_disabled` | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
+| `example_disabled` (a property its `component.xml` reads) | `false` | `true` leaves out the example component and its gallery on a dev instance |
+| `demo_disabled` (a property its `component.xml` reads) | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
 | `llm-facade/endpoint[default]@url`, `llm-facade/endpoint[default]@api-key`, `llm-facade/model[default]@name` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
 | `llm-facade@default-model`, `llm-facade/endpoint[anthropic]@api-key` | `default`, empty | The model of every feature whose `bind` names none (Assist, titles, summaries, classify, AI fields in the default conf), and in the dev conf the Claude API key of its `claude-haiku` model (Claude Haiku 5.5); `moqui_conf__llm_facade__default_model=claude-haiku` with `moqui_conf__llm_facade__endpoint__ANTHROPIC__api_key` in `runtime/.env` puts the dev instance's features on Claude. The startup report's LLM line names the model Assist is on |
 
-The database properties are in [Database and search](#database-and-search), and the cluster properties in
+The database settings are in [Database and search](#database-and-search), and the cluster settings in
 [Cluster](#cluster).
 
 ### Resource watch
@@ -628,7 +642,7 @@ embeds it.
 ### External Postgres or MySQL
 
 Set the transactional datasource's attributes, by their names in `runtime/.env` or the environment, or on the
-`datasource` element in the runtime conf ([Settings from the environment](#settings-from-the-environment)). There are
+`datasource` element in the runtime conf ([Settings and the environment](#settings-and-the-environment)). There are
 examples in `runtime/conf/MoquiDevConf.xml`. Use `mysql8` for MySQL 8 and `mysql` for MariaDB (which has no
 `LATERAL`) and MySQL 5.7. Both create `utf8mb4` tables, so any character (an emoji) can be stored; create the database
 with `CHARACTER SET utf8mb4`. A database made before, with 3-byte `utf8` tables, needs a fresh load or each table
@@ -1769,7 +1783,8 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
    not be reachable from the network.
 
 The same by hand, as before Connect: a `myaddons.xml` repository (`<repository name="team"><location type="git"
-url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_openai_*` lines in `runtime/.env`, a
+url="https://team.example.com/git/${name}.git"/></repository>`), the default LLM endpoint's three lines in `runtime/.env` (`moqui_conf__llm_facade__endpoint__DEFAULT__url`,
+`moqui_conf__llm_facade__endpoint__DEFAULT__api_key` and `moqui_conf__llm_facade__model__DEFAULT__name`), a
 `moqui-rest` task source with the token in Dev AIDE › Tasks, and the token in a git credential helper.
 
 ### The shared dev-aide server

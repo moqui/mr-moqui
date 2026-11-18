@@ -194,7 +194,7 @@ fn a_text_that_is_not_a_conf_file_is_a_problem() {
 }
 
 /// Each attribute has its environment name; one an environment name set says which, from where; a secret by the
-/// schema (the SSH host key) is masked as one by its name is (plans/Conf-Paths.md §4).
+/// schema (the SSH host key) is masked as one by its name is (plans/archive/Conf-Paths.md §4).
 #[test]
 fn the_view_names_each_attributes_environment_name_and_what_set_it() {
     let held = files();

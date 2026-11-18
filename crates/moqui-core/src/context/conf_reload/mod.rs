@@ -116,7 +116,7 @@ pub fn on_apply(
 }
 
 /// Set the attribute at `selector` in the running conf, from now on and over the conf files, as an environment name
-/// sets one (plans/Conf-Paths.md §3); `value` `None` puts back what the files and the environment give now. With
+/// sets one (plans/archive/Conf-Paths.md §3); `value` `None` puts back what the files and the environment give now. With
 /// `persist` the value is kept in `runtime/.env` under the attribute's environment name, for a server that writes its
 /// own settings (edge pairing, the DKIM key made on first use); without, a process property of that name holds it until
 /// the process ends (a spec's `setConf`). Readers of the conf see it at once; one that read it at start keeps what it

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Conf attributes set from the environment by their path (plans/Conf-Paths.md §3): each name of the form
+//! Conf attributes set from the environment by their path (plans/archive/Conf-Paths.md §3): each name of the form
 //! `moqui_conf__webapp_list__webapp__WEBROOT__http_port` in the process properties (`-D`), the OS environment or
 //! `runtime/.env` sets, or adds, the attribute it names in the merged conf, over every conf file. A secret attribute
 //! the conf leaves at `CHANGEME` is generated and kept in `runtime/.env` under its canonical name.
@@ -349,7 +349,7 @@ pub fn conf_attribute(conf: &MNode, selector: &str) -> String {
 
 /// A name of a table that lists settings: a conf selector (it has an `@`) read by [`setting`], else a process property:
 /// the state the server sets as it runs, which is not configuration (the XMPP server's resolved addresses, a cluster
-/// member's SSH address; plans/Conf-Paths.md, Decisions). For the name tables and the lookup closures that read both
+/// member's SSH address; plans/archive/Conf-Paths.md, Decisions). For the name tables and the lookup closures that read both
 /// (the edge's own ports, the protocol facts, the SIP and media settings); a selector's own text is its name in their
 /// messages.
 #[must_use]
@@ -440,7 +440,7 @@ pub fn declared_secret(selector: &str) -> bool {
     })
 }
 
-/// Refuse a merged conf that still uses the retired properties (plans/Conf-Paths.md, phase 7): a `default-property`,
+/// Refuse a merged conf that still uses the retired properties (plans/archive/Conf-Paths.md, phase 7): a `default-property`,
 /// which nothing reads, and an attribute holding `${`, which is not expanded (an `actions` block's XML actions are not
 /// conf attributes and keep theirs). Each is logged, naming its attribute and the environment name that sets it.
 ///
@@ -464,7 +464,7 @@ pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
         tracing::error!("Conf: {item}");
     }
     Err(Error::new(format!(
-        "the conf uses properties, which are retired (plans/Conf-Paths.md): {}",
+        "the conf uses properties, which are retired (plans/archive/Conf-Paths.md): {}",
         found.join("; ")
     )))
 }

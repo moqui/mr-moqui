@@ -77,7 +77,7 @@
     });
 
     // A conf attribute by its selector, as its environment name sets it over the conf files (null puts back what the
-    // files and the environment give): a setting the code under test reads from the conf (plans/Conf-Paths.md §4). Put
+    // files and the environment give): a setting the code under test reads from the conf (plans/archive/Conf-Paths.md §4). Put
     // back when the spec ends, as a property is (T.restoreProperties). What the attribute's environment name held
     // before as a process property, or null.
     const putConf = (selector, value) => {

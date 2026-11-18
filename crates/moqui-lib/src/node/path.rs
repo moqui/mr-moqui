@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Paths to an attribute of an element tree, in two forms (plans/Conf-Paths.md §1): the selector
+//! Paths to an attribute of an element tree, in two forms (plans/archive/Conf-Paths.md §1): the selector
 //! `webapp-list/webapp[webroot]@http-port`, and the environment name
 //! `moqui_conf__webapp_list__webapp__WEBROOT__http_port`. Names are matched without case and without any character but
 //! letters and digits, so `http-port`, `HTTP_PORT` and `httpPort` are one name. Which children are told apart by key

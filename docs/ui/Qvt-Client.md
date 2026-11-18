@@ -1239,7 +1239,7 @@ as a notification.
 | Safari on iOS and iPadOS 16.4+ | Only for the web app added to the Home Screen; a Safari tab has none, and the toggle says so |
 | Any browser without the Push API, or a server built without `web-push` | Desktop notifications only while a page is open |
 
-The server keeps its key in `push/web@vapid-key` (generated, an `is-secret` default-property shared by the cluster) and
+The server keeps its key in `push/web@vapid-key` (a generated conf secret, shared by the cluster through its `runtime/.env`) and
 names itself to the push services with `push/web@subject` (a `mailto:` or `https:` URL; set it in production).
 
 **Native apps (FCM, UnifiedPush).** The mobile app is not a browser and gets no Web Push. Signed in with its device key,
@@ -1275,7 +1275,7 @@ leaves it. 429 and 5xx are tried twice more with a growing wait, never past a ri
 token, the rest of that send is not tried and no device is counted against, so an outage disables nothing.
 
 The server signs in to FCM as a Firebase project's service account: `push/fcm@service-account` is its JSON key file's path
-or the JSON itself (an `is-secret` default-property, from the environment or `runtime/.env`, not generated), and
+or the JSON itself (a conf secret, set in the environment or `runtime/.env`, not generated), and
 `push/fcm@project-id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
 an access token, kept until five minutes before it expires. Unset, nothing goes to FCM and the log says so once.
 `push/fcm@base-url` replaces `https://fcm.googleapis.com`, for a test stand-in.

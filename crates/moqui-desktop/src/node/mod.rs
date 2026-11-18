@@ -279,7 +279,7 @@ impl Node {
 /// dials out, so nothing listens for it. The node in process sets them as process properties; the sidecar gets them
 /// as `-D name=value`. The HTTP listener answers only for its own loopback names, so a page of another site that
 /// rebinds its name to 127.0.0.1 is refused (the webroot webapp's `allowed-hosts`, SEC-CLI-01). The webapp's are
-/// conf attributes by their environment names (plans/Conf-Paths.md §1).
+/// conf attributes by their environment names (plans/archive/Conf-Paths.md §1).
 pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
     vec![
         (
