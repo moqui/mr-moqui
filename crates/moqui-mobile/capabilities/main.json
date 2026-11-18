@@ -44,6 +44,7 @@
     "allow-call-take-answer",
     "allow-call-audio",
     "allow-call-audio-route",
+    "allow-secure-screen",
     "allow-call-dial-account",
     "allow-call-dial-choice",
     "allow-call-dial-from",

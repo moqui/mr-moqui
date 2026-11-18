@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Disappearing messages and view-once media (plans/Comms-Messaging.md §18.3 phase 16; docs/tools/Comms.md "Disappearing
+    messages"). The logic is ChatExpiry.js beside this file; ChatServices calls its helpers. A room's timer makes each new
+    message go that long after it is sent, for everyone (ChatEvent.expireDate); the expiry worker
+    (crates/moqui-core/src/service/chat_expiry.rs) runs expire#DueMessages at the next due time, and the daily
+    clean#ChatRetention runs it too. A view-once photo or video opens once for each recipient. A bridged, phone or
+    federated room has neither. No Java counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="set" noun="RoomTimer">
+        <description>Set a room's disappearing messages: seconds from 30 to 2419200 (4 weeks), 0 or empty for off. Any member
+            of a direct room, a moderator or owner of another. New messages only. A change is a system event {action: timer,
+            seconds, byUserId} and a room change in the members' feeds. Refused (reasonCode): notAllowed, range, archived,
+            recordRoom (a record's room keeps its history), bridged (a mapping in force, or a phone room: a bridge cannot
+            delete on its network), federated.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="seconds" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="seconds" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('setRoomTimer', context))</script></actions>
+    </service>
+
+    <service verb="open" noun="ViewOnce">
+        <description>Open a view-once message (a current member who did not send it): its file (chatAttachmentId, fileName,
+            contentType, fileSize) is served by get#ViewOnceFile until until, 2 minutes after the first open, at most 3
+            times. The first open is a change of the message (the sender's Opened). Once every recipient opened it, its file
+            goes at the end of that window, and it stands as Opened. Refused (reasonCode): sender, opened (after the window),
+            gone (the file went).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="nowMillis" type="Long"><description>The tests' clock</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatAttachmentId"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="fileSize" type="Long"/>
+            <parameter name="until" type="Long"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('openViewOnce', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ViewOnceFile">
+        <description>The file of a view-once message, for the download transition (which sends the location, not cached): for a
+            recipient in the window of their open#ViewOnce, each download counted (3 at most). Else not found.</description>
+        <in-parameters>
+            <parameter name="chatAttachmentId" required="true"/>
+            <parameter name="nowMillis" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('viewOnceFile', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="DueMessages" authenticate="anonymous-all" transaction="ignore">
+        <description>The due events (expireDate at or before now), up to limit (chat_expiry_round_limit, 2000), each room by
+            expire#RoomMessages in its own transaction: one that fails is logged, and its events are still due next time; it is
+            skipped on this node for 5 minutes (the cache chat.expiry.failed), so it holds no round back. The
+            expiry worker runs it at the next due time; the daily clean#ChatRetention runs it too. more: there are more due
+            now (the worker runs again at once).</description>
+        <in-parameters>
+            <parameter name="nowMillis" type="Long"><description>The tests' clock</description></parameter>
+            <parameter name="limit" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="roomCount" type="Integer"/>
+            <parameter name="deletedCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+            <parameter name="skippedCount" type="Integer"><description>Rooms skipped as they failed lately on this node (5 minutes)</description></parameter>
+            <parameter name="more" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('expireDue', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="RoomMessages" allow-remote="false">
+        <description>Internal: a room's due events, with its row locked. A message goes with what clear#MessageContent
+            clears, the preview cache rows of its links that no other message links, its view-once opens and its room
+            changes; an edit, reaction or redaction of it goes too. A thread root that stands gets its count and last reply,
+            the room its last message. In an encrypted room, a Megolm session no event of the room has any more leaves every
+            user's key backup. A view-once message everyone opened loses only its file, and stands as Opened until its own
+            time. One room change, eventSeq empty {cause: expired, before}, says every event due at or before before is
+            gone; the members get their counts and the push {kind: expired, chatRoomId, before, eventSeqList}.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="nowMillis" type="Long"/>
+            <parameter name="limit" type="Integer" default="2000"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deletedCount" type="Integer"/>
+            <parameter name="before" type="Long"/>
+            <parameter name="more" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('expireRoom', context))</script></actions>
+    </service>
+
+    <service verb="wake" noun="ChatExpiry" type="rust" location="moqui_core::service::chat_expiry::wake_chat_expiry" allow-remote="false"
+            transaction="ignore">
+        <description>Internal: wake this node's expiry worker after the commit, for an event due at dueMillis.</description>
+        <in-parameters><parameter name="dueMillis"/></in-parameters>
+    </service>
+</services>

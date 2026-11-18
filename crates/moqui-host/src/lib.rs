@@ -1884,6 +1884,8 @@ fn boot_server_factory(
     moqui_core::service::chat_bridge::start(&factory);
     // the chat push worker (plans/Comms-Messaging.md §7.3), the same way: its first round takes what a crash left
     moqui_core::service::chat_push::start(&factory);
+    // the chat expiry worker (plans/Comms-Messaging.md §18.3 phase 16): disappearing messages at their time
+    moqui_core::service::chat_expiry::start(&factory);
     moqui_core::startup::integration(
         &factory,
         "Cluster notify",

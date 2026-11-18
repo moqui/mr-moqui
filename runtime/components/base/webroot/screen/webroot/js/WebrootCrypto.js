@@ -944,6 +944,13 @@
             const settings = new sdk.EncryptionSettings();
             settings.historyVisibility = sdk.HistoryVisibility.Shared;
             settings.sharingStrategy = onlyVerified ? sdk.CollectStrategy.onlyTrustedDevices() : sdk.CollectStrategy.allDevices();
+            // a room with disappearing messages (plans/Comms-Messaging.md §18.3 phase 16): a session lasts the timer (a week at
+            // most) or 100 messages, so no key outlives the messages it opens
+            const timer = root.moqui && root.moqui.chat && root.moqui.chat.expiry ? root.moqui.chat.expiry.timerOf(chatRoomId) : 0;
+            if (timer > 0) {
+                settings.rotationPeriod = BigInt(Math.min(timer, 604800)) * 1000000n;
+                settings.rotationPeriodMessages = 100n;
+            }
             // who the strategy leaves out: the devices that are not verified (the machine tells each one why, m.unverified)
             roomLeftOut.set(chatRoomId, onlyVerified ? (await devicesIn(ids)).filter((device) => !device.verified)
                 .map((device) => ({ userId: device.userId, deviceId: device.deviceId, displayName: device.displayName })) : []);

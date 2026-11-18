@@ -66,3 +66,32 @@ fn the_device_is_named_for_the_phones_model() {
         "MR Moqui on ".len() + 60
     );
 }
+
+/// Each of the app's own commands in the handler is in build.rs' `COMMANDS` (the app manifest) and allowed in the
+/// capability, so none is refused on the phone (secure_screen, plans/Comms-Messaging.md §18.3 phase 16, was not at
+/// first).
+#[test]
+fn every_command_of_the_handler_is_in_the_manifest_and_allowed() {
+    let lib = include_str!("lib.rs");
+    let build = include_str!("../build.rs");
+    let capability = include_str!("../capabilities/main.json");
+    let handled: Vec<&str> = lib
+        .split("            commands::")
+        .skip(1)
+        .filter_map(|rest| rest.split([',', ']', '\n']).next())
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+        .collect();
+    assert!(handled.contains(&"secure_screen"), "{handled:?}");
+    for name in handled {
+        assert!(
+            build.contains(&format!("\"{name}\"")),
+            "{name} is not in build.rs COMMANDS"
+        );
+        let allowed = format!("\"allow-{}\"", name.replace('_', "-"));
+        assert!(
+            capability.contains(&allowed),
+            "{allowed} is not in capabilities/main.json"
+        );
+    }
+}

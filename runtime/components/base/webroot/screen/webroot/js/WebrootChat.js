@@ -316,6 +316,11 @@
                     state.reads[roomId] = Object.assign({}, state.reads[roomId], { [message.userId]: message.lastReadEventSeq });
                     return { kind: "read", chatRoomId: roomId, userId: message.userId, lastReadEventSeq: message.lastReadEventSeq };
                 }
+                // events gone at their time (disappearing messages, plans/Comms-Messaging.md §18.3 phase 16; WebrootChatExpiry.js)
+                if (message.kind === "expired") {
+                    return { kind: "expired", chatRoomId: roomId, eventSeqList: Array.isArray(message.eventSeqList) ? message.eventSeqList.map(Number) : [],
+                        before: message.before != null ? Number(message.before) : null };
+                }
                 if (message.kind === "update" && moqui.isPlainObject(message.fields)) {
                     return { kind: "update", chatRoomId: roomId, eventSeq: message.eventSeq, threadRootEventSeq: message.threadRootEventSeq ?? null,
                         fields: message.fields };
@@ -605,6 +610,8 @@
             if (!done) return;
             // my message arrived: it waits no more (it was sent from another tab, or its answer was lost)
             if (done.kind === "event" && done.event.clientRef && done.event.senderUserId === chat.me) chat.dropOutbox(done.event.clientRef);
+            // a disappearing message is held for the page's timer (WebrootChatExpiry.js)
+            if (done.kind === "event" && chat.expiry) chat.expiry.pushed(done.chatRoomId, done.event);
             if (done.kind === "presence" && done.userId === chat.me) {
                 // do not disturb ended: a summary of what came meanwhile, as the server's pushes have (rule 4)
                 const quiet = chat.quiet();
@@ -716,7 +723,7 @@
             const seen = !!chat.state.openRooms[done.chatRoomId] && (host.windowSeen ? host.windowSeen() : !(root.document && root.document.hidden));
             const shown = chat.notification(done.event, done.chatRoomId, { me: chat.me, levels: chat.state.levels, quiet: chat.quiet(), seen,
                 defaultLevel: chat.levelOf(prefs.CHAT_NOTIFY_DEFAULT, false), roomNames: chat.state.roomNames,
-                preview: prefs.CHAT_NOTIFY_PREVIEW !== "N", appRoot: moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : null,
+                preview: prefs.CHAT_NOTIFY_PREVIEW !== "N" && done.event.expireDate == null, appRoot: moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : null,
                 localize: (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text) });
             if (!shown) return;
             chat.notifiedRooms[done.chatRoomId] = true;
@@ -948,6 +955,16 @@
                 delete chat.fileUrls[id];
                 delete chat.fileRooms[id];
                 Promise.resolve(made).then((url) => root.URL.revokeObjectURL(url), () => null);
+            }
+        },
+        // A room's events that went (disappearing messages, phase 16): their decrypted copies and reaction keys leave this page.
+        forgetEvents(roomId, seqs) {
+            const gone = new Set(Array.from(seqs || []).map(Number));
+            for (const seq of gone) delete chat.opened[roomId + ":" + seq];
+            const prefix = roomId + ":";
+            for (const name of Object.keys(chat.reactionKeys)) {
+                if (name.indexOf(prefix) !== 0) continue;
+                if (gone.has(Number(name.slice(prefix.length))) || gone.has(Number(chat.reactionKeys[name].messageSeq))) delete chat.reactionKeys[name];
             }
         },
         // my reaction with key to a message of a room (its eventSeq, to take it back), null when none
