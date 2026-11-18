@@ -91,7 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UserChanges').parameters({afterSeq: number(afterSeq),
                 limit: number(limit) || 200, heads: String(heads) !== 'false', headsSince: number(headsSince)}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {changes: out.changeList || [], lastSeq: out.lastSeq, more: !!out.more,
-                reset: !!out.reset, heads: out.headList ?? null, headsSince: out.headsSince ?? null})
+                reset: !!out.reset, heads: out.headList ?? null, headsSince: out.headsSince ?? null, serverNow: out.serverNow ?? null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -425,6 +425,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
                     && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: nothing is made from it')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
+            // a disappearing or view-once message is not copied into a record (plans/Comms-Messaging.md §18.3 phase 16)
+            if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead) {
+                const kind = ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('fileKind', {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)})
+                if (kind.viewOnce || kind.expiring) { ec.message.addError(ec.l10n.localize('A disappearing or view-once message is not copied into a record')); ec.web.sendJsonResponse({reasonCode: 'expiring'}); return } }
             const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'create-from', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), kind: kind || ''}}).call()
             const made = (out?.results || [])[0] || {}
@@ -443,6 +447,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
                     && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: it is not filed on a record')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
+            // a disappearing or view-once message is not filed on a record (plans/Comms-Messaging.md §18.3 phase 16)
+            if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead) {
+                const kind = ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('fileKind', {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)})
+                if (kind.viewOnce || kind.expiring) { ec.message.addError(ec.l10n.localize('A disappearing or view-once message is not filed on a record')); ec.web.sendJsonResponse({reasonCode: 'expiring'}); return } }
             const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'record-link', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), recordEntityName: recordEntityName || '',
                     recordId: recordId || ''}}).call()

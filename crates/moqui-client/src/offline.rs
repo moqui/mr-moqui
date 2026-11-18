@@ -210,6 +210,10 @@ pub fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u8]) {
         tracing::warn!("The answer of {bare} is not JSON; kept whole only");
         return;
     };
+    // the server's clock, which disappearing messages go by (a timeline page's and a room view's serverNow)
+    if let Some(server) = number(&json["serverNow"]).or_else(|| number(&json["timeline"]["serverNow"])) {
+        learn_server_time(server);
+    }
     let params = Params::of(query);
     let kept = match kind {
         Kind::ChatData => keep_chat_data(store, &params, &json),
@@ -248,7 +252,7 @@ pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<
     if kind == Kind::Compose {
         return compose_answer(store, bare, query, &params);
     }
-    let now = crate::store::now_ms();
+    let now = server_now();
     if matches!(
         kind,
         Kind::Timeline | Kind::RoomView | Kind::ChatData | Kind::Rooms | Kind::Room
@@ -276,6 +280,22 @@ pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<
 
 // ---- disappearing messages (plans/Comms-Messaging.md phase 16) ----
 
+/// The server's clock less this device's (ms), learned from the server's answers: disappearing messages go by the
+/// server's time, so a device whose clock is wrong neither keeps nor drops them early.
+static SERVER_OFFSET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// The server said its time is `server_ms` now (an answer just received).
+pub(crate) fn learn_server_time(server_ms: i64) {
+    if server_ms > 0 {
+        SERVER_OFFSET.store(server_ms - crate::store::now_ms(), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Now by the server's clock, as far as it is known.
+pub(crate) fn server_now() -> i64 {
+    crate::store::now_ms() + SERVER_OFFSET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Every kept event due by `now_ms` goes (`Store::expire_chat_events`), with the kept pages of each room it went from.
 /// Gives those rooms; a failure is logged, and the rows are due again next time.
 pub(crate) fn sweep_expired(store: &Store, now_ms: i64) -> Vec<String> {
@@ -289,6 +309,24 @@ pub(crate) fn sweep_expired(store: &Store, now_ms: i64) -> Vec<String> {
     for room in &rooms {
         if let Err(err) = forget_room_pages(store, room) {
             tracing::warn!("The kept pages of chat room {room} not removed: {err}");
+        }
+    }
+    // a kept page may hold an event no row has (a page around a seq, pinned only): written again without what is due
+    for key in store.answer_keys("/") {
+        let Some((path, query)) = key.split_once('?') else {
+            continue;
+        };
+        if !(path.ends_with("/Chat/timeline") || path.ends_with("/Chat/roomView")) {
+            continue;
+        }
+        let Some(kept) = store.answer(path, query) else {
+            continue;
+        };
+        let body = without_due(kept.body.clone(), now_ms);
+        if body != kept.body {
+            if let Err(err) = store.put_answer(path, query, &kept.content_type, &body) {
+                tracing::warn!("The kept page {key} not written without its expired events: {err}");
+            }
         }
     }
     rooms
@@ -308,8 +346,8 @@ pub(crate) fn expire_room(store: &Store, room: &str, before: Option<i64>, seqs: 
     Ok(gone)
 }
 
-/// The kept whole answers of a room's `timeline` and `roomView` (under any comms app's path), which may show an event
-/// that went; offline they are built from the rows again.
+/// The kept whole answers of a room's `timeline`, `roomView` and `room` (under any comms app's path), and the room lists
+/// (`chatData`, `rooms`), which may show an event that went or its snippet; offline they are built from the rows again.
 ///
 /// # Errors
 ///
@@ -320,8 +358,10 @@ pub(crate) fn forget_room_pages(store: &Store, room: &str) -> Result<(), String>
             let Some((path, query)) = key.split_once('?') else {
                 return false;
             };
-            (path.ends_with("/Chat/timeline") || path.ends_with("/Chat/roomView"))
-                && Params::of(query).text("chatRoomId") == Some(room)
+            ((path.ends_with("/Chat/timeline") || path.ends_with("/Chat/roomView") || path.ends_with("/Chat/room"))
+                && Params::of(query).text("chatRoomId") == Some(room))
+                || path.ends_with("/Chat/chatData")
+                || path.ends_with("/Chat/rooms")
         })
         .map(|_| ())
         .map_err(|err| err.to_string())

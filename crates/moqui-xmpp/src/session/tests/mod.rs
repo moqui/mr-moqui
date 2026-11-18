@@ -24,6 +24,7 @@ use std::sync::Arc;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use minidom::Element;
+use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::{Out, Session, Transport};
@@ -468,6 +469,35 @@ async fn a_room_message_reaches_the_other_member_and_reflects_with_its_id() {
         fin.contains("<first>1</first>") || fin.contains("<first>2</first>"),
         "{fin}"
     );
+}
+
+/// A disappearing message (plans/Comms-Messaging.md §18.3 phase 16) is in no XMPP history, though its room is served
+/// now (its timer turned off), and a room with a timer has no history at all.
+#[tokio::test]
+async fn history_leaves_out_disappearing_messages_and_rooms_with_a_timer() {
+    let (server, fake) = server();
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    {
+        let mut state = fake.state.lock().unwrap();
+        for room_id in ["r1", "TIMED"] {
+            let room = state.rooms.iter_mut().find(|room| room.id == room_id).unwrap();
+            for (seq, body, expires) in [(1_i64, "kept", None), (2, "gone soon", Some(1_800_000_000_000_i64))] {
+                room.events.push(json!({"chatRoomId": room_id, "eventSeq": seq, "type": "message", "senderUserId": "U1",
+                    "sentDate": 1_700_000_000_000_i64 + seq * 1000, "content": {}, "bodyText": body, "expireDate": expires}));
+            }
+        }
+    }
+    let out = jane
+        .send("<iq type='set' id='q1' to='r1@rooms.moqui.local'><query xmlns='urn:xmpp:mam:2' queryid='a1'/></iq>")
+        .await;
+    let text = text_of(&out);
+    assert!(text.contains("kept"), "{text}");
+    assert!(!text.contains("gone soon"), "{text}");
+    let out = jane
+        .send("<iq type='set' id='q2' to='x-54494d4544@rooms.moqui.local'><query xmlns='urn:xmpp:mam:2' queryid='a2'/></iq>")
+        .await;
+    let text = text_of(&out);
+    assert!(text.contains("item-not-found") && !text.contains("kept"), "{text}");
 }
 
 #[tokio::test]

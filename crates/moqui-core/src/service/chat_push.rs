@@ -984,8 +984,11 @@ fn queue_message(
         .cloned();
     // a disappearing message's push is not sent past the message's own time (phase 16)
     let ttl_end = now + MESSAGE_TTL_SECONDS * 1000;
-    let expire = stamp(content.expires.map_or(ttl_end, |end| end.min(ttl_end)));
+    let ends = content.expires.map_or(ttl_end, |end| end.min(ttl_end));
+    let expire = stamp(ends);
     if let Some(mut row) = open {
+        // merged, the push stands for the earlier messages too: it lasts as long as the longest of them
+        let expire = stamp(millis_of(&row, "expireDate").map_or(ends, |kept| kept.max(ends)));
         let before = count_of(&row, "messageCount").max(1);
         let count = if content.edit { before } else { before + 1 };
         let mention = push.mention || text_of(&row, "mention").as_deref() == Some("Y");

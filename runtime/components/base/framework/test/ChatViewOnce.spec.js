@@ -132,7 +132,8 @@ feature("a recipient opens it once, in a window, and the sender never gets the f
         file.location.endsWith("photo.jpg")
         senderFile.errors.includes("not found")
         late.errors.includes("not found")
-        again.reasonCode == "opened"
+        // after the window it is refused (everyone opened it, so the message is due then too)
+        again.errors != ""
         mine.viewOnce.openedByMe == true
         sender.viewOnce.openedCount == 1
         sender.viewOnce.recipientCount == 1
@@ -160,5 +161,30 @@ feature("once everyone opened it its file goes and it stands as Opened; one nobo
         video.viewOnce.kind == "video"
         goneVideo == null
         goneFirst == null
+    }
+})
+
+feature("Opened shows only when read receipts are on on both sides", {
+    when() {
+        const pref = (userId, value) => sys(() => {
+            const find = ec.entity.find("moqui.security.UserPreference").condition({userId, preferenceKey: "CHAT_READ_RECEIPTS"})
+            if (value == null) find.deleteAll()
+            else ec.entity.makeValue("moqui.security.UserPreference").setFields({userId, preferenceKey: "CHAT_READ_RECEIPTS", preferenceValue: value}, true, null, null).createOrUpdate()
+        })
+        const seq = as(A, CHAT + "send#Message", {chatRoomId: shared.room, viewOnce: true, chatAttachmentIdList: [file(A, shared.room, "q.png", "image/png")]}).eventSeq
+        pref(B, "N")
+        as(B, EXPIRY + "open#ViewOnce", {chatRoomId: shared.room, eventSeq: seq})
+        const theirsOff = message(A, shared.room, seq).viewOnce.openedCount
+        pref(B, null)
+        pref(A, "N")
+        const mineOff = message(A, shared.room, seq).viewOnce.openedCount
+        pref(A, null)
+        const bothOn = message(A, shared.room, seq).viewOnce.openedCount
+        return {theirsOff, mineOff, bothOn}
+    },
+    then({theirsOff, mineOff, bothOn}) {
+        theirsOff == 0
+        mineOff == 0
+        bothOn == 1
     }
 })

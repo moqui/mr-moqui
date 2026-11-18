@@ -258,7 +258,7 @@ along with this software (see the LICENSE.md file). If not, see
             read), else of the user's direct rooms (withUserId: the one with that user), merged by time. afterSeq and
             beforeSeq page by eventSeq (with afterRoomId and beforeRoomId in the user's own archive, where the date of
             that event is the bound); startDate and endDate (Unix milliseconds) limit by time; latest gives the last
-            limit messages. Each message as get#Timeline has it (edits applied, deleted ones left out), with clientRef
+            limit messages; a disappearing message (expireDate) is never in it. Each message as get#Timeline has it (edits applied, deleted ones left out), with clientRef
             for every sender and, for an OMEMO message, content.xmppEncrypted. complete says nothing is past the page in
             its direction; count is the total.</description>
         <in-parameters>
@@ -298,8 +298,9 @@ along with this software (see the LICENSE.md file). If not, see
             // a sender the user blocked in chat (ChatBlocks.js) is left out, as in get#Timeline
             const hidden = Array.from(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || [])
             const base = () => {
+                // a disappearing message is in no XMPP history, a room's timer on or off (plans/Comms-Messaging.md §18.3 phase 16)
                 let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', 'in', rooms).condition('eventTypeEnumId', 'CetMessage')
-                        .condition('redactedDate', null).disableAuthz()
+                        .condition('redactedDate', null).condition('expireDate', null).disableAuthz()
                 if (hidden.length) find = find.condition(ec.entity.conditionFactory.makeCondition([ec.entity.conditionFactory.makeCondition('senderUserId', 'is-null', null),
                     ec.entity.conditionFactory.makeCondition('senderUserId', 'not-in', hidden)], 'or'))
                 if (startDate != null) find = find.condition('sentDate', '>=', new Date(Number(startDate)))

@@ -21,7 +21,9 @@
 //!   round: `ChatExpiryServices.expire#DueMessages`, again at once while it answers `more`.
 //! - `append#Event` calls `wake#ChatExpiry` with an event's due time: once the transaction commits, the worker wakes
 //!   when that time is sooner than its planned wake.
-//! - A round that fails is logged; the next starts within [`SWEEP`]. The rooms of a round are each on their own (the
+//! - A round that fails is logged; the next starts within [`SWEEP`]. A round that deleted nothing while a room failed
+//!   or was skipped (it failed lately: the service skips it a while on this node) waits by [`backoff`] instead of the
+//!   next due time, which is that room's and past, so a failing room never spins the worker. The rooms of a round are each on their own (the
 //!   service's rule). In a cluster two nodes may run the same round: the room row is locked first, so the second finds
 //!   nothing left.
 
@@ -130,17 +132,51 @@ fn next_due(facade: &EntityFacade) -> Result<Option<i64>, LibError> {
     Ok(rows.values().first().and_then(|row| millis_of(row, "expireDate")))
 }
 
-/// One round and its follow-ups while there is more; the errors are the round's, logged by the caller.
-fn rounds() -> Result<(), LibError> {
+/// What the rounds did: whether a room failed or was skipped (it failed lately) with nothing deleted, so the worker
+/// waits before it looks again rather than at the next due time, which is that room's and past.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Rounds {
+    pub deleted: i64,
+    pub failed: i64,
+    pub skipped: i64,
+}
+
+impl Rounds {
+    /// Nothing went and something is held back (failed now or lately): the next due time cannot be trusted.
+    pub fn stuck(&self) -> bool {
+        self.deleted == 0 && (self.failed > 0 || self.skipped > 0)
+    }
+}
+
+/// The wait after `rounds` that were stuck `times` times in a row: 5 s, doubled, at most [`SWEEP`].
+pub fn backoff(times: u32) -> Duration {
+    let millis = 5_000_u64.saturating_mul(1_u64 << times.min(10));
+    Duration::from_millis(millis).min(SWEEP)
+}
+
+fn count(out: &BTreeMap<String, Value>, key: &str) -> i64 {
+    out.get(key)
+        .map(moqui_lib::object::to_plain_string)
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(0)
+}
+
+/// One round and its follow-ups while there is more (none after a failure); the errors are the round's, logged by the
+/// caller.
+fn rounds() -> Result<Rounds, LibError> {
+    let mut done = Rounds::default();
     for _ in 0..MAX_ROUNDS {
         let out = super::call::sync_checked(ROUND_SERVICE, &BTreeMap::new(), &super::call::CallOptions::default())
             .map_err(|err| LibError::new(err.to_string()))?;
+        done.deleted += count(&out, "deletedCount");
+        done.failed += count(&out, "failedCount");
+        done.skipped += count(&out, "skippedCount");
         let more = out.get("more").is_some_and(|more| matches!(more, Value::Bool(true)));
         if !more {
             break;
         }
     }
-    Ok(())
+    Ok(done)
 }
 
 /// Start this node's worker thread, once (the host calls it after the cluster starts). Its first round runs at once:
@@ -158,6 +194,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
         .name("moqui-chat-expiry".to_string())
         .spawn(move || {
             let mut planned: Option<i64> = Some(0);
+            let mut stuck_times: u32 = 0;
             loop {
                 let worker = {
                     let Some(factory) = weak.upgrade() else {
@@ -202,16 +239,30 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
                 let _entered = context.enter();
                 let _authz = context.disable_authz();
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(rounds));
-                match outcome {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => tracing::error!("the chat expiry round failed: {error}"),
-                    Err(_) => tracing::error!("the chat expiry round panicked"),
-                }
-                planned = match next_due(&facade) {
-                    Ok(next) => next,
-                    Err(error) => {
-                        tracing::error!("the chat expiry worker could not read the next due time: {error}");
-                        None
+                let stuck = match outcome {
+                    Ok(Ok(done)) => done.stuck(),
+                    Ok(Err(error)) => {
+                        tracing::error!("the chat expiry round failed: {error}");
+                        true
+                    }
+                    Err(_) => {
+                        tracing::error!("the chat expiry round panicked");
+                        true
+                    }
+                };
+                planned = if stuck {
+                    // a failing room's due time is past: waiting for it would spin; wait more each time instead
+                    let wait = backoff(stuck_times);
+                    stuck_times = stuck_times.saturating_add(1);
+                    Some(now_millis() + i64::try_from(wait.as_millis()).unwrap_or(60_000))
+                } else {
+                    stuck_times = 0;
+                    match next_due(&facade) {
+                        Ok(next) => next,
+                        Err(error) => {
+                            tracing::error!("the chat expiry worker could not read the next due time: {error}");
+                            None
+                        }
                     }
                 };
             }

@@ -17,7 +17,10 @@
 //   MAX_DOWNLOADS downloads; its sender never gets the file. Once every recipient opened it, the message is due at the
 //   end of that window: its file goes then and the message stands, as Opened, to its viewOnceUntil.
 // - Bridges: a bridged, phone or federated room gets no timer and no view-once (a bridge cannot delete there), and a
-//   room with a timer is not bridged.
+//   room with a timer is not bridged (checkBridge, with the room row locked as setRoomTimer locks it). No service sets
+//   ChatRoom.federationEnabled (it is data only): one that does must refuse a room with a timer, as checkBridge does.
+// - A failing room is skipped for FAILED_SKIP_MILLIS on this node and the worker waits before it tries again, so one
+//   room never spins the worker or holds the others back.
 
 const ROOM = 'moqui.chat.ChatRoom'
 const EVENT = 'moqui.chat.ChatEvent'
@@ -44,6 +47,15 @@ const MESSAGES = ['CetMessage', 'CetPoll']
 const RELATIONS = { CetEdit: 'editsEventSeq', CetReaction: 'relatesToEventSeq', CetRedaction: 'relatesToEventSeq', CetPin: 'relatesToEventSeq' }
 /** The most seqs an 'expired' push names; `before` covers the rest. */
 const PUSH_SEQS = 200
+/** The most rooms a round takes. */
+const ROUND_ROOMS = 200
+/** A room whose delete failed is skipped this long on this node (the cache below), so one room cannot hold a round. */
+const FAILED_SKIP_MILLIS = 5 * 60000
+const FAILED_CACHE = 'chat.expiry.failed'
+/** A Megolm session's backup goes this long after its newest use past the room's rotation period: it may be in use till then. */
+const SESSION_MARGIN_MILLIS = 10 * 60000
+const WEEK_MILLIS = 7 * 86400000
+const PENDING_SESSION = 'moqui.chat.ChatExpirySession'
 
 const find = (entity) => ec.entity.find(entity).disableAuthz()
 const one = (entity, fields) => find(entity).condition(fields).one()
@@ -163,7 +175,7 @@ function setRoomTimer(p) {
 
 /** A bridge mapping of a room with a timer is refused (store#RoomBridge). */
 function checkBridge(p) {
-  const room = one(ROOM, { chatRoomId: p.chatRoomId })
+  const room = find(ROOM).condition('chatRoomId', p.chatRoomId).forUpdate(true).one()
   if (room && Number(room.messageTimerSeconds) > 0)
     return refuse('timerOn', 'This room has disappearing messages: turn them off before it is bridged')
   return {}
@@ -177,21 +189,52 @@ function recipientsOf(chatRoomId, senderUserId) {
     .filter((row) => row.userId && row.userId !== senderUserId && row.roleEnumId !== 'CmrAgent').map((row) => row.userId)
 }
 
-function viewOnceMessage(chatRoomId, eventSeq) {
-  const row = one(EVENT, { chatRoomId, eventSeq })
-  return row && row.viewOnce === 'Y' && MESSAGES.includes(row.eventTypeEnumId) && !row.redactedDate ? row : null
+function viewOnceMessage(chatRoomId, eventSeq, now, lock) {
+  const row = find(EVENT).condition({ chatRoomId, eventSeq }).forUpdate(!!lock).one()
+  const standing = row && (row.expireDate == null || String(row.expireDate) === '' || millis(row.expireDate) > now)
+  return standing && row.viewOnce === 'Y' && MESSAGES.includes(row.eventTypeEnumId) && !row.redactedDate ? row : null
+}
+
+/** Whose read receipts are off of userIdList (CHAT_READ_RECEIPTS N): an open by them, or seen by them, is not told. */
+function receiptsOff(userIdList) {
+  const ids = Array.from(new Set(Array.from(userIdList || []).filter((id) => id)))
+  if (!ids.length) return new Set()
+  return new Set(ec.service.sync().name(CHAT + '.get#ReceiptsOffUsers').parameter('userIdList', ids).call()?.offUserIdList || [])
+}
+
+/**
+ * A view-once message changed (opened, its file gone): a change of it in the room's feed and an update push, so each
+ * client reads it again. Not pushed to its sender when the opener's read receipts, or the sender's, are off (the sender
+ * reads it again only from the feed, and sees no Opened then).
+ */
+function viewOnceChanged(row, openerId) {
+  const recorded = ec.service.sync().name(CHAT + '.record#RoomChange').parameters({ chatRoomId: row.chatRoomId, eventSeq: Number(row.eventSeq),
+    change: { cause: 'update', threadRootEventSeq: row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null } }).call()
+  if (ec.message.hasError()) return
+  const off = openerId ? receiptsOff([openerId, row.senderUserId]) : new Set()
+  const quietToSender = openerId && (off.has(openerId) || off.has(row.senderUserId))
+  const room = one(ROOM, { chatRoomId: row.chatRoomId })
+  const isDirect = room && room.roomTypeEnumId === 'CrtDirect'
+  const users = Array.from(find(MEMBER).condition('chatRoomId', row.chatRoomId).selectField('userId').selectField('leftDate').selectField('filterEnumId').list())
+    .filter((member) => member.userId && (isDirect || !member.leftDate) && !member.filterEnumId && !(quietToSender && member.userId === row.senderUserId))
+    .map((member) => member.userId)
+  if (users.length) ec.service.sync().name(CHAT + '.push#Signal').parameters({ topic: 'chatRoom:' + row.chatRoomId, userIdList: users,
+    message: { kind: 'update', chatRoomId: row.chatRoomId, eventSeq: Number(row.eventSeq),
+      threadRootEventSeq: row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null, fields: { viewOnceChanged: true },
+      roomChangeSeq: recorded && recorded.roomChangeSeq != null ? recorded.roomChangeSeq : null } }).call()
 }
 
 function openViewOnce(p) {
   const me = ec.user.userId
   const access = ec.service.sync().name(CHAT + '.get#RoomAccess').parameter('chatRoomId', p.chatRoomId).call()
   if (ec.message.hasError()) return {}
-  const row = access && access.isMember ? viewOnceMessage(p.chatRoomId, p.eventSeq) : null
+  const now = nowMillis(p)
+  // the message's row locked first: two last opens at once cannot both miss that everyone opened it
+  const row = access && access.isMember ? viewOnceMessage(p.chatRoomId, p.eventSeq, now, true) : null
   if (!row) { ec.message.addError(`Message ${p.eventSeq} not found`); return {} }
   if (row.senderUserId === me) return refuse('sender', 'Your view-once photo is for the others in the room')
   const file = find(ATTACHMENT).condition('chatRoomId', p.chatRoomId).condition('eventSeq', p.eventSeq).orderBy('attachmentSeq').list()[0]
   if (!file) return refuse('gone', 'This view-once photo is no longer here')
-  const now = nowMillis(p)
   let open = find(OPEN).condition({ chatRoomId: p.chatRoomId, eventSeq: p.eventSeq, userId: me }).forUpdate(true).one()
   if (open) {
     const opened = millis(open.openedDate)
@@ -201,7 +244,7 @@ function openViewOnce(p) {
     open.setFields({ chatRoomId: p.chatRoomId, eventSeq: p.eventSeq, userId: me, openedDate: now, downloadCount: 0 }, true, null, null)
     open.create()
     // the sender's Opened, and the opener's other devices drop it: one change of the message
-    ec.service.sync().name(CHAT + '.push#Update').parameters({ chatRoomId: p.chatRoomId, eventSeq: Number(p.eventSeq), fields: { viewOnceChanged: true } }).call()
+    viewOnceChanged(row, me)
     if (ec.message.hasError()) return {}
     // everyone opened it: its file goes at the end of this window (expireRoom), the message stands as Opened
     const recipients = recipientsOf(p.chatRoomId, row.senderUserId)
@@ -224,9 +267,9 @@ function viewOnceFile(p) {
   const me = ec.user.userId
   const file = one(ATTACHMENT, { chatAttachmentId: p.chatAttachmentId })
   const missing = () => { ec.message.addError(`Chat file ${p.chatAttachmentId} not found`); return {} }
-  if (!file || file.eventSeq == null || !viewOnceMessage(file.chatRoomId, file.eventSeq)) return missing()
-  const open = find(OPEN).condition({ chatRoomId: file.chatRoomId, eventSeq: file.eventSeq, userId: me }).forUpdate(true).one()
   const now = nowMillis(p)
+  if (!file || file.eventSeq == null || !viewOnceMessage(file.chatRoomId, file.eventSeq, now, false)) return missing()
+  const open = find(OPEN).condition({ chatRoomId: file.chatRoomId, eventSeq: file.eventSeq, userId: me }).forUpdate(true).one()
   if (!open || now > millis(open.openedDate) + WINDOW_MILLIS || Number(open.downloadCount || 0) >= MAX_DOWNLOADS) return missing()
   if (!ec.service.sync().name(CHAT + '.get#RoomAccess').parameter('chatRoomId', file.chatRoomId).call()?.isMember) return missing()
   open.set('downloadCount', Number(open.downloadCount || 0) + 1)
@@ -238,7 +281,8 @@ function viewOnceFile(p) {
 function fileKind(p) {
   if (p.chatRoomId == null || p.eventSeq == null || p.eventSeq === '') return {}
   const row = find(EVENT).condition('chatRoomId', p.chatRoomId).condition('eventSeq', p.eventSeq).selectField('viewOnce').selectField('expireDate').one()
-  return { viewOnce: !!row && row.viewOnce === 'Y', expiring: !!row && row.expireDate != null && String(row.expireDate) !== '' }
+  const expiring = !!row && row.expireDate != null && String(row.expireDate) !== ''
+  return { viewOnce: !!row && row.viewOnce === 'Y', expiring, due: expiring && millis(row.expireDate) <= nowMillis(p) }
 }
 
 /**
@@ -262,9 +306,10 @@ function timelineView(p) {
       openedByMe: mine.some((open) => open.userId === me), gone: !files.has(seq) }
     if (item.senderUserId === me) {
       const recipients = recipientsOf(p.chatRoomId, me)
-      if (off == null) off = new Set(recipients.length ? ec.service.sync().name(CHAT + '.get#ReceiptsOffUsers').parameter('userIdList', recipients).call()?.offUserIdList || [] : [])
+      // read receipts off on either side: the sender's own setting too, as for read markers
+      if (off == null) off = receiptsOff(recipients.concat([me]))
       state.recipientCount = recipients.length
-      state.openedCount = mine.filter((open) => recipients.includes(open.userId) && !off.has(open.userId)).length
+      state.openedCount = off.has(me) ? 0 : mine.filter((open) => recipients.includes(open.userId) && !off.has(open.userId)).length
     }
     item.viewOnce = state
     item.attachments = []
@@ -278,34 +323,45 @@ function timelineView(p) {
 function expireDue(p) {
   const now = nowMillis(p)
   const limit = Math.max(1, Number(p.limit) || Number(property('chat_expiry_round_limit')) || 2000)
-  const due = Array.from(find(EVENT).condition('expireDate', 'less-equals', new Date(now)).selectField('chatRoomId').selectField('eventSeq')
-    .orderBy('expireDate').limit(limit + 1).list())
-  const more = due.length > limit
-  const rooms = Array.from(new Set(due.slice(0, limit).map((row) => row.chatRoomId)))
-  let roomCount = 0, deletedCount = 0, failedCount = 0, roomMore = false
+  // the rooms with events due (grouped by room: one room's many rows do not fill a round; each room is emptied in its
+  // turn, so the rounds come to every room), and the rooms whose backed-up sessions are due to go
+  const due = Array.from(find('moqui.chat.ChatEventDueRoom').condition('expireDate', 'less-equals', new Date(now)).selectField('chatRoomId')
+    .selectField('firstDue').limit(ROUND_ROOMS + 1).list())
+  const more = due.length > ROUND_ROOMS
+  const rooms = Array.from(new Set(due.slice(0, ROUND_ROOMS).map((row) => row.chatRoomId)))
+  for (const row of find(PENDING_SESSION).condition('dueDate', 'less-equals', new Date(now)).selectField('chatRoomId').limit(ROUND_ROOMS).list())
+    if (!rooms.includes(row.chatRoomId)) rooms.push(row.chatRoomId)
+  // a room that failed lately on this node waits (the cache is this node's), so it cannot hold the others back
+  const failed = ec.cache.getCache(FAILED_CACHE)
+  let roomCount = 0, deletedCount = 0, failedCount = 0, skippedCount = 0, roomMore = false
   for (const chatRoomId of rooms) {
+    const failedAt = Number(failed.get(chatRoomId) || 0)
+    if (failedAt && now - failedAt < FAILED_SKIP_MILLIS) { skippedCount++; continue }
     ec.message.pushErrors()
     try {
       const out = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.expire#RoomMessages').parameters({ chatRoomId, nowMillis: now, limit })
         .requireNewTransaction(true).disableAuthz().call()
       if (ec.message.hasError()) {
         failedCount++
+        failed.put(chatRoomId, String(now))
         ec.logger.error(`Could not delete the disappearing messages of chat room ${chatRoomId}: ${ec.message.errorsString}`)
       } else {
         roomCount++
+        if (failedAt) failed.remove(chatRoomId)
         deletedCount += Number((out && out.deletedCount) || 0)
         if (out && out.more) roomMore = true
       }
     } catch (err) {
       failedCount++
+      failed.put(chatRoomId, String(now))
       ec.logger.error(`Could not delete the disappearing messages of chat room ${chatRoomId}: ${message(err)}`)
     } finally {
       ec.message.clearErrors()
       ec.message.popErrors()
     }
   }
-  if (deletedCount || failedCount) ec.logger.info(`Chat expiry: ${deletedCount} events deleted in ${roomCount} rooms, ${failedCount} rooms failed`)
-  return { roomCount, deletedCount, failedCount, more: (more || roomMore) && roomCount > 0 }
+  if (deletedCount || failedCount) ec.logger.info(`Chat expiry: ${deletedCount} events deleted in ${roomCount} rooms, ${failedCount} rooms failed, ${skippedCount} skipped`)
+  return { roomCount, deletedCount, failedCount, skippedCount, more: (more || roomMore) && roomCount > 0 && failedCount === 0 }
 }
 
 /** A view-once message everyone opened: its file goes, and it stands as Opened until its own time. */
@@ -323,7 +379,16 @@ function retireViewOnce(row, now) {
   row.update()
   for (const field of ['editsEventSeq', 'relatesToEventSeq'])
     find(EVENT).condition('chatRoomId', row.chatRoomId).condition(field, row.eventSeq).updateAll({ expireDate: standsTo })
-  ec.service.sync().name(CHAT + '.push#Update').parameters({ chatRoomId: row.chatRoomId, eventSeq: Number(row.eventSeq), fields: { viewOnceChanged: true } }).call()
+  viewOnceChanged(row, null)
+}
+
+/** The room's sessions whose wait is over: their backup goes, unless an event of the room uses them again. */
+function pendingSessions(chatRoomId, now) {
+  for (const row of Array.from(find(PENDING_SESSION).condition('chatRoomId', chatRoomId).condition('dueDate', 'less-equals', new Date(now)).list())) {
+    if (!find(EVENT).condition('chatRoomId', chatRoomId).condition('megolmSessionId', row.sessionId).count())
+      find(BACKUP_SESSION).condition('roomId', matrixRoomId(chatRoomId)).condition('sessionId', row.sessionId).deleteAll()
+    find(PENDING_SESSION).condition({ chatRoomId, sessionId: row.sessionId }).deleteAll()
+  }
 }
 
 function expireRoom(p) {
@@ -331,7 +396,10 @@ function expireRoom(p) {
   const now = nowMillis(p)
   const limit = Math.max(1, Number(p.limit) || 2000)
   const room = find(ROOM).condition('chatRoomId', chatRoomId).forUpdate(true).one()
-  if (!room) return { deletedCount: 0 }
+  // events of a room that is gone: deleted, with nothing of the room to change
+  if (!room) return { deletedCount: find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll() }
+  const rotationMillis = Math.min(WEEK_MILLIS, (Number(room.messageTimerSeconds) || 0) * 1000 || WEEK_MILLIS)
+  pendingSessions(chatRoomId, now)
   let due = Array.from(find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now))
     .orderBy('expireDate').orderBy('eventSeq').limit(limit + 1).list())
   if (!due.length) return { deletedCount: 0 }
@@ -358,10 +426,11 @@ function expireRoom(p) {
         if (!doomed.has(Number(row.eventSeq))) doomed.set(Number(row.eventSeq), row)
   const all = Array.from(doomed.keys()).sort((a, b) => a - b)
   const counted = new Set()
-  const sessions = new Set()
+  // each Megolm session of what goes, with its newest use
+  const sessions = new Map()
   const roots = new Set()
   for (const row of doomed.values()) {
-    if (row.megolmSessionId) sessions.add(row.megolmSessionId)
+    if (row.megolmSessionId) sessions.set(row.megolmSessionId, Math.max(sessions.get(row.megolmSessionId) || 0, millis(row.sentDate) || 0))
     if (!MESSAGES.includes(row.eventTypeEnumId)) continue
     if (row.threadRootEventSeq != null) roots.add(Number(row.threadRootEventSeq))
     // its links' preview cache rows that no other message links
@@ -403,12 +472,14 @@ function expireRoom(p) {
       lastMessageSnippet: row && text ? (text.length > 140 ? text.slice(0, 139) + '…' : text) : null }, true, null, null)
     room.update()
   }
-  // an encrypted room's key backup: a session no event of the room uses any more goes from every user's backup
-  if (sessions.size) {
-    const roomId = matrixRoomId(chatRoomId)
-    for (const sessionId of sessions)
-      if (!find(EVENT).condition('chatRoomId', chatRoomId).condition('megolmSessionId', sessionId).count())
-        find(BACKUP_SESSION).condition('roomId', roomId).condition('sessionId', sessionId).deleteAll()
+  // an encrypted room's key backup: a session no event of the room uses any more goes from every user's backup, once it
+  // can be in use no more (its newest use past the room's rotation period and a margin); till then it waits
+  // (ChatExpirySession, pendingSessions)
+  for (const [sessionId, lastUsed] of sessions) {
+    if (find(EVENT).condition('chatRoomId', chatRoomId).condition('megolmSessionId', sessionId).count()) continue
+    const dueAt = lastUsed + rotationMillis + SESSION_MARGIN_MILLIS
+    if (dueAt <= now) find(BACKUP_SESSION).condition('roomId', matrixRoomId(chatRoomId)).condition('sessionId', sessionId).deleteAll()
+    else ec.entity.makeValue(PENDING_SESSION).setFields({ chatRoomId, sessionId, lastUsedDate: lastUsed, dueDate: dueAt }, true, null, null).createOrUpdate()
   }
   // the marker in the room's feed: every event of the room due at or before `before` is gone
   const before = more ? millis(due[due.length - 1] ? due[due.length - 1].expireDate : now) - 1 : now

@@ -28,8 +28,8 @@
     const LABELS = { 0: "Off", 30: "30 seconds", 300: "5 minutes", 3600: "1 hour", 28800: "8 hours", 86400: "1 day", 604800: "1 week", 2419200: "4 weeks" };
     // a setTimeout's longest wait
     const MAX_WAIT = 2147483647;
-    // a pushed event's sentDate counts as the server's clock only when it is this fresh (a push is not a page of old events)
-    const FRESH = 10000;
+    // the server's clock: the largest of the last offsets of fresh answers
+    const OFFSETS_KEPT = 10;
 
     const expiry = {
         offset: 0,
@@ -41,42 +41,53 @@
         // ---- the pure parts ----
 
         // the dialog's choices: {value (seconds, 0 off), label (to localize)}
-        options() { return CHOICES.map((value) => ({ value, label: LABELS[value] })); },
-        // a timer in words, to localize: a choice's label, else the largest whole unit
-        label(seconds) {
+        options(t) { return CHOICES.map((value) => ({ value, label: (t || ((text) => text))(LABELS[value]) })); },
+        // a timer in words, localized by t (the keys: a choice's label, else "{count} weeks" and the other units)
+        label(seconds, t) {
+            const tr = t || ((text) => text);
             const value = Number(seconds) || 0;
-            if (LABELS[value]) return LABELS[value];
-            if (value % 604800 === 0) return value / 604800 + " weeks";
-            if (value % 86400 === 0) return value / 86400 + " days";
-            if (value % 3600 === 0) return value / 3600 + " hours";
-            if (value % 60 === 0) return value / 60 + " minutes";
-            return value + " seconds";
+            if (LABELS[value]) return tr(LABELS[value]);
+            const [count, unit] = expiry.unit(value);
+            return tr("{count} " + { w: "weeks", d: "days", h: "hours", m: "minutes", s: "seconds" }[unit]).replace("{count}", count);
         },
+        // the largest whole unit of seconds: [count, unit] (w, d, h, m, s)
+        unit(value) {
+            if (value && value % 604800 === 0) return [value / 604800, "w"];
+            if (value && value % 86400 === 0) return [value / 86400, "d"];
+            if (value && value % 3600 === 0) return [value / 3600, "h"];
+            if (value && value % 60 === 0) return [value / 60, "m"];
+            return [value, "s"];
+        },
+        // a count of a unit as the chip and the time left show it, localized by t (the keys "{count}s" ... "{count}w")
+        unitText(count, unit, t) { return (t || ((text) => text))("{count}" + unit).replace("{count}", count); },
         // a timer as the header's chip shows it: 30s, 5m, 1h, 8h, 1d, 1w, 4w
-        short(seconds) {
+        short(seconds, t) {
             const value = Number(seconds) || 0;
             if (!value) return "";
-            if (value % 604800 === 0) return value / 604800 + "w";
-            if (value % 86400 === 0) return value / 86400 + "d";
-            if (value % 3600 === 0) return value / 3600 + "h";
-            if (value % 60 === 0) return value / 60 + "m";
-            return value + "s";
+            const [count, unit] = expiry.unit(value);
+            return expiry.unitText(count, unit, t);
         },
         // the time a message has left at now: "45s", "4m", "2h", "3d" (rounded up; "0s" once due)
-        left(expireDate, now) {
+        left(expireDate, now, t) {
             const ms = Math.max(0, Number(expireDate) - Number(now));
             const seconds = Math.ceil(ms / 1000);
-            if (seconds < 60) return seconds + "s";
-            if (seconds < 3600) return Math.ceil(seconds / 60) + "m";
-            if (seconds < 86400) return Math.ceil(seconds / 3600) + "h";
-            return Math.ceil(seconds / 86400) + "d";
+            if (seconds < 60) return expiry.unitText(seconds, "s", t);
+            if (seconds < 3600) return expiry.unitText(Math.ceil(seconds / 60), "m", t);
+            if (seconds < 86400) return expiry.unitText(Math.ceil(seconds / 3600), "h", t);
+            return expiry.unitText(Math.ceil(seconds / 86400), "d", t);
         },
-        // the server's clock from a time it gave at local time at (now by default)
+        // The server's clock from a time it gave in an answer received at local time at (now by default). An answer kept
+        // on the device, or one late on the way, is behind: of the last offsets the largest is the clock, so one such
+        // answer never moves it back.
+        offsets: [],
         learn(serverNow, at) {
             const value = Number(serverNow);
             if (!Number.isFinite(value) || value <= 0) return;
-            expiry.offset = value - (at === undefined ? Date.now() : Number(at));
+            expiry.offsets = expiry.offsets.concat([value - (at === undefined ? Date.now() : Number(at))]).slice(-OFFSETS_KEPT);
+            expiry.offset = Math.max.apply(null, expiry.offsets);
         },
+        // a fresh start of the clock (tests; a server changed)
+        resetClock() { expiry.offsets = []; expiry.offset = 0; },
         // now by the server's clock
         now(at) { return (at === undefined ? Date.now() : Number(at)) + expiry.offset; },
         // the events of a list due at now: their eventSeqs
@@ -100,7 +111,8 @@
         seen(json, roomId) {
             if (!json) return;
             const timeline = json.timeline || json;
-            if (timeline.serverNow != null) expiry.learn(timeline.serverNow);
+            // an answer the device kept (offline) is no clock
+            if (timeline.serverNow != null && !json.offline && !timeline.offline) expiry.learn(timeline.serverNow);
             const room = json.room || (json.timeline && json.timeline.room);
             if (room && roomId) expiry.timers[roomId] = Number(room.messageTimerSeconds) || 0;
             const lists = [json.eventList, json.timeline && json.timeline.eventList].filter((list) => Array.isArray(list));
@@ -108,11 +120,9 @@
         },
         // a room's timer in seconds, 0 for none (or not known here)
         timerOf(roomId) { return Number(expiry.timers[roomId]) || 0; },
-        // a pushed event: a fresh one sets the clock; an expiring one is held
+        // a pushed event: an expiring one is held (a push may come late: it is no clock)
         pushed(roomId, event) {
             if (!event) return;
-            const sent = Number(event.sentDate);
-            if (Number.isFinite(sent) && Math.abs(expiry.now() - sent) > FRESH && Math.abs(Date.now() - sent) < 24 * 3600000) expiry.learn(sent);
             expiry.track(roomId, [event]);
         },
         // the expiring events of a room the page shows, held for the timer

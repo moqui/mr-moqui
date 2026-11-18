@@ -300,6 +300,24 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <index name="CHAT_ATTACH_EVENT"><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
     </entity>
+    <view-entity entity-name="ChatEventDueRoom" package="moqui.chat">
+        <description>The rooms with events due (phase 16, expire#DueMessages): find with expireDate up to now, select
+            chatRoomId and firstDue (grouped by room), so a round takes rooms, not one room's rows.</description>
+        <member-entity entity-alias="CE" entity-name="moqui.chat.ChatEvent"/>
+        <alias entity-alias="CE" name="chatRoomId"/>
+        <alias entity-alias="CE" name="expireDate"/><!-- filter only -->
+        <alias entity-alias="CE" name="firstDue" field="expireDate" function="min"/>
+    </view-entity>
+    <entity entity-name="ChatExpirySession" package="moqui.chat" use="transactional" cache="never">
+        <description>A Megolm session of an encrypted room whose last message went (phase 16) while the session could still be
+            in use: its key backup (ChatKeyBackupSession) goes at dueDate, its newest use plus the room's rotation period and a
+            margin, unless an event of the room uses it again.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="sessionId" type="text-medium" is-pk="true"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <field name="dueDate" type="date-time"/>
+        <index name="CHAT_EXPIRY_SESSION_DUE"><index-field name="dueDate"/></index>
+    </entity>
     <entity entity-name="ChatViewOnceOpen" package="moqui.chat" use="transactional" cache="never">
         <description>A recipient's open of a view-once message (plans/Comms-Messaging.md §18.3 phase 16; open#ViewOnce): the
             file is served to them for 2 minutes after openedDate, at most 3 times (downloadCount). The rows go with the

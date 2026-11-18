@@ -76,7 +76,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="expire" noun="DueMessages" authenticate="anonymous-all" transaction="ignore">
         <description>The due events (expireDate at or before now), up to limit (chat_expiry_round_limit, 2000), each room by
-            expire#RoomMessages in its own transaction: one that fails is logged, and its events are still due next time. The
+            expire#RoomMessages in its own transaction: one that fails is logged, and its events are still due next time; it is
+            skipped on this node for 5 minutes (the cache chat.expiry.failed), so it holds no round back. The
             expiry worker runs it at the next due time; the daily clean#ChatRetention runs it too. more: there are more due
             now (the worker runs again at once).</description>
         <in-parameters>
@@ -87,6 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="roomCount" type="Integer"/>
             <parameter name="deletedCount" type="Integer"/>
             <parameter name="failedCount" type="Integer"/>
+            <parameter name="skippedCount" type="Integer"><description>Rooms skipped as they failed lately on this node (5 minutes)</description></parameter>
             <parameter name="more" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('expireDue', context))</script></actions>

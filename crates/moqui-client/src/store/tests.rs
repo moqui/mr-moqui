@@ -1116,3 +1116,47 @@ fn expiry_removes_only_due_events_and_takes_a_reply_off_its_root() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A store of an earlier schema revision (no migrations before 0.1.0, `SCHEMA_REV`): made again when it opens, its
+/// outbox and drafts copied across, its cached chat gone (read again from the server), and no old file left.
+#[test]
+fn a_store_of_an_earlier_schema_is_made_again_with_its_outbox_and_drafts() {
+    let dir = dir("old-schema");
+    {
+        let store = Store::open(&dir, "a", 1 << 20).unwrap();
+        store.put_draft("k", "{\"text\":\"waiting\"}", &[]).unwrap();
+        store.outbox_add(&OutboxOp::new("c1", "chat-send", "R1", "{}")).unwrap();
+        store.put_chat_events(&[event("R1", 1, None)]).unwrap();
+        // the schema as it was before chat_event.expire_ms, of no revision
+        store
+            .conn
+            .execute_batch(
+                "DROP INDEX chat_event_expire; ALTER TABLE chat_event DROP COLUMN expire_ms; PRAGMA application_id = 0;",
+            )
+            .unwrap();
+    }
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    let rev: i32 = store
+        .conn
+        .query_row("PRAGMA application_id", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rev, super::SCHEMA_REV);
+    assert!(store.draft("k").is_some(), "the draft is kept");
+    assert!(store.outbox_get("c1").is_some(), "the outbox is kept");
+    assert!(store.chat_event("R1", 1).is_none(), "the cached chat is read again");
+    let columns: i64 = store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('chat_event') WHERE name = 'expire_ms'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(columns, 1);
+    assert!(!dir.join("data/a.db.old").exists(), "the old file is gone");
+    // a newer client's revision is not opened
+    store.conn.pragma_update(None, "application_id", 99).unwrap();
+    drop(store);
+    assert!(Store::open(&dir, "a", 1 << 20).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

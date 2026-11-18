@@ -2929,6 +2929,8 @@ actually sent.
 | `ChatEvent.viewOnce` | Y: a view-once message |
 | `ChatEvent.megolmSessionId` (index `CHAT_EVENT_SESSION`: `chatRoomId`, `megolmSessionId`) | `content.encrypted.session_id` of an encrypted event, set by `append#Event`. It tells when the server's key backup of a session can go |
 | `moqui.chat.ChatViewOnceOpen` (`chatRoomId`, `eventSeq`, `userId` pk; `openedDate`, `downloadCount`) | A recipient's open of a view-once message. Its rows go with the message |
+| `moqui.chat.ChatEventDueRoom` (view: `chatRoomId`, `min(expireDate)`) | The rooms with events due, so a round takes rooms, not one room's rows |
+| `moqui.chat.ChatExpirySession` (`chatRoomId`, `sessionId` pk; `lastUsedDate`, `dueDate`) | A session whose messages went while it may still be in use: its backup goes at `dueDate` |
 | `ChatKeyBackupSession` index `CHAT_BACKUP_ROOM_SESSION` (`roomId`, `sessionId`) | The rows of a session across users' backups, found in one query |
 | `ChatEventLink` index `CHAT_LINK_HASH` (`urlHash`) | Whether another message still links a URL whose preview cache row could go |
 | `ChatSetupData.xml` | No new job: the worker below runs the deletes, and the daily `clean#ChatRetention` also runs `expire#DueMessages` as a backstop |
@@ -3062,7 +3064,7 @@ holds:
 | Push payloads (`PushOutbox`) and stored mention notifications | No text in them. A push is not sent after the message's time |
 | The changes feeds (`ChatRoomChange`) | Its changes go; the marker stands for them |
 | The web page (Vue state; `moqui.chat`'s `opened`, `sealedTexts`, `reactionKeys`, and `fileUrls` revoked) | `moqui.chat.expiry` at the time; the `expired` push |
-| The offline store, desktop and Android (`moqui-client` SQLite) | `chat_event.expire_ms`, with an index (in the store's schema as is: no migrations before 0.1.0, so a store made before it is removed and read again) swept by `Store::expire_chat_events(now)` at each feed run, push fold and offline chat answer; an expired row is never answered. The room's kept `/timeline` and `/roomView` answers go, as for retention. The store sets `PRAGMA secure_delete`, so deleted rows do not stay in free pages |
+| The offline store, desktop and Android (`moqui-client` SQLite) | `chat_event.expire_ms`, with an index (in the store's schema as is: no migrations before 0.1.0; a store of an earlier `SCHEMA_REV`, kept in `PRAGMA application_id`, is made again when it opens, its outbox, drafts and uploads copied across) swept by `Store::expire_chat_events(now)`, by the server's clock, at each feed run, push fold and offline chat answer; an expired row is never answered. The room's kept `/timeline`, `/roomView` and `/room` answers and the kept room lists go, and a kept page holding an expired event is written again without it. The store sets `PRAGMA secure_delete`, so deleted rows do not stay in free pages |
 | The WebView's HTTP cache | The `attachment` transition sends `Cache-Control: no-store` for a file of an expiring or view-once message |
 | The browser outbox (`localStorage`) | A waiting message is held only until it is sent, as today; its timer starts then |
 | Agents and LLM logs | Not handed |
@@ -3202,9 +3204,29 @@ Status (2026-11-18): built. The specs above pass: `ChatExpiry` and `ChatViewOnce
 `WebrootChat` feature (the webroot offline suite measured 44.3 s of its 48 s), the Rust tests of `moqui-core`
 (`chat_expiry_tests`, `chat_push_tests`), `moqui-client` and `moqui-xmpp`; the basic-comms suites unchanged within
 budget (server 3.4 s of 9 s, client 10.6 s of 12 s). The `moqui-client` store's `expire_ms` column is in its schema as is
-(no migrations before 0.1.0): a desktop or phone store made before is removed and read again. Left: §18.4's row on a real
-phone; `moqui-mobile` is not built or linted here (it needs the Android toolchain), and the Android `ScreenSecurity` path is
-checked on the phone only.
+(no migrations before 0.1.0): a store of an earlier schema revision is made again when it opens. Left: §18.4's row on a real
+phone, and the Android `ScreenSecurity` path is checked on the phone only.
+
+Review fixes (2026-11-18):
+- XMPP history (`get#Archive`, the MAM loop) has no disappearing message in any room, and none of a room not served.
+- The Android command `secure_screen` is in `build.rs` and the capability (a test reads the three lists); the viewer's
+  note goes by what `secureScreen` answers.
+- The client store: `SCHEMA_REV` in `PRAGMA application_id`; an earlier store is made again with its outbox and drafts.
+  It deletes by the server's clock (`serverNow` of the timeline and the feed), writes kept pages again without expired
+  events, drops the kept room, room view and room-list answers with them, and folds a view-once change.
+- The worker: rooms by `ChatEventDueRoom` (grouped by room); a failing room is skipped 5 minutes on its node
+  (`chat.expiry.failed`); a round stuck on it waits by a backoff (5 s doubled, at most the sweep).
+- Readers leave out what is past its time and not yet deleted: `get#Timeline`, `get#Attachment`, `open#ViewOnce`, the
+  database search, `find#RoomFiles`, `get#MessageSummaries`, `find#RoomThreads` and the room list's last message.
+- `createFrom` and `fileOnRecord` refuse a disappearing or view-once message (`expiring`). The agent's thread context
+  (`moqui-llm` `thread_context`) leaves them out.
+- A session's key backup goes only once its newest use is past the rotation period and 10 minutes
+  (`ChatExpirySession`); every page that shows the room rotates on the timer's system event.
+- `open#ViewOnce` locks the message row; Opened needs read receipts on on both sides, and no change is pushed to the
+  sender otherwise; a view-once file is in no list and no summary.
+- A merged push keeps the longest time to live. The page's clock takes the largest of its last offsets, from fresh
+  answers only. `checkBridge` locks the room row; no service sets `federationEnabled` (said in `ChatExpiry.js`). The
+  timer's words go through `t()`, units as keys.
 
 #### Phase 10 and later
 

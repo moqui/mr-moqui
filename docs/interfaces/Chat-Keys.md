@@ -191,9 +191,12 @@ tracking them.
 **Key backup** (`m.megolm_backup.v1.curve25519-aes-sha2`; the server stores `session_data` as the browser made it).
 - **Disappearing messages** (plans/Comms-Messaging.md §18.3 phase 16). When the expiry deletes an encrypted room's
   messages, a backed-up session (room ID `!<chatRoomId>:<chat_server_name>`) that no event of the room still uses
-  (`ChatEvent.megolmSessionId`) goes from every user's backup. In a room with a timer the sending browser rotates its
-  session at the timer (a week at most) or every 100 messages, and a timer change starts a new one, so no session outlives
-  the messages it opens. The device's own store keeps its inbound copy: the SDK has no delete for one, and it opens nothing
+  (`ChatEvent.megolmSessionId`) goes from every user's backup, but only once it can be in use no more: its newest use
+  past the room's rotation period (the timer, a week at most) and 10 minutes. Till then it waits (`ChatExpirySession`,
+  its `dueDate`), and the expiry worker deletes it then, unless a newer message of the room uses it again. In a room with
+  a timer the sending browser rotates its session at the timer (a week at most) or every 100 messages; a timer change is
+  a system event, on which every member's page that shows the room starts a new session, and a browser with the room
+  closed starts one at its next send, as its encryption settings changed. So no session outlives the messages it opens. The device's own store keeps its inbound copy: the SDK has no delete for one, and it opens nothing
   once the ciphertext is gone.
 - **Versions.** Versions are `"1"`, `"2"`, … per user and never reused.
   - `backupVersionCreate` takes `{algorithm, auth_data}` and answers `{version}`; the new version is the current one.

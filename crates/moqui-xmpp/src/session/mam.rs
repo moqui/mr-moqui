@@ -112,6 +112,11 @@ impl Session {
             let Some(meta) = self.room(&event_room, false).await else {
                 continue;
             };
+            // a room not served (end-to-end encrypted, or with disappearing messages) is in no history, nor is a
+            // disappearing message of a room whose timer is off now (plans/Comms-Messaging.md §18.3 phase 16)
+            if meta.unserved().is_some() || event.get("expireDate").is_some_and(|expires| !expires.is_null()) {
+                continue;
+            }
             let Some(seq) = backend::number(&event, "eventSeq") else {
                 continue;
             };

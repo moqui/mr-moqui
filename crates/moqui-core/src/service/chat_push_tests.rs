@@ -1474,3 +1474,35 @@ fn a_ring_to_a_keyed_device_is_sealed() {
     assert_eq!(opened["ringSeconds"], "45");
     assert_eq!(body["message"]["android"]["priority"], "HIGH");
 }
+
+/// A disappearing message merged into a push that waits for an ordinary one: the push lasts as long as the ordinary
+/// message's, not as the shorter one's.
+#[test]
+fn a_merged_push_keeps_the_longer_time_to_live() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.net.answer(
+        "BOB-PHONE",
+        &[Sent::Retry {
+            after_millis: None,
+            error: "503".to_string(),
+        }],
+    );
+    login("alice");
+    send(&bed.room, "<p>Kept a while</p>", &[]);
+    run(bed.now);
+    bed.net.take();
+    ok(
+        "org.moqui.chat.ChatExpiryServices.set#RoomTimer",
+        &[("chatRoomId", text(&bed.room)), ("seconds", Value::I64(300))],
+    );
+    send(&bed.room, "<p>Gone soon</p>", &[]);
+    run(bed.now + 1_000);
+    let waiting = outbox(&bed.facade, "BOB-PHONE");
+    let ends = waiting
+        .iter()
+        .filter_map(|row| millis_of(row, "expireDate"))
+        .max()
+        .unwrap();
+    assert!(ends > bed.now + 27 * DAY, "the ordinary message's 4 weeks: {ends}");
+}

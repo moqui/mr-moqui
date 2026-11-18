@@ -3228,7 +3228,7 @@ const systemText = (event, nameOf) => {
         if (content.action === 'topic') return [content.topic ? fill(t('{by} set the topic: {topic}'), { by, topic: content.topic }) : fill(t('{by} cleared the topic'), { by }), 'sym_o_subject'];
         if (content.action === 'archived') return [fill(t('{by} archived the room'), { by }), 'sym_o_archive'];
         if (content.action === 'unarchived') return [fill(t('{by} took the room out of the archive'), { by }), 'sym_o_unarchive'];
-        if (content.action === 'timer') return [content.seconds ? fill(t('{by} set disappearing messages to {time}'), { by, time: t(moqui.chat.expiry.label(content.seconds)) })
+        if (content.action === 'timer') return [content.seconds ? fill(t('{by} set disappearing messages to {time}'), { by, time: moqui.chat.expiry.label(content.seconds, t) })
             : fill(t('{by} turned off disappearing messages'), { by }), 'sym_o_timer'];
         return [fill(t('{by} changed the room'), { by }), 'sym_o_info'];
     }
@@ -4070,7 +4070,7 @@ const roomTemplate = `
                     <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
                         <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
                     <q-chip v-if="timerSeconds" dense square clickable icon="sym_o_timer" class="m-tonal q-ml-xs m-chat-timer" :aria-label="t('Disappearing messages')" @click="openTimer">{{timerShort}}
-                        <q-tooltip>{{t('Disappearing messages')}}: {{t(timerLabel)}}</q-tooltip></q-chip>
+                        <q-tooltip>{{t('Disappearing messages')}}: {{timerLabel}}</q-tooltip></q-chip>
                     <q-chip v-if="room.notConnected" dense square icon="sym_o_link_off" class="m-tonal text-warning q-ml-xs m-chat-not-connected">{{t('Not connected')}}
                         <q-tooltip>{{t('Messages stay here and go out once it is back')}}</q-tooltip></q-chip>
                 </div>
@@ -4143,7 +4143,7 @@ const roomTemplate = `
                         <q-item-section avatar><q-icon name="sym_o_settings"></q-icon></q-item-section><q-item-section>{{t('Room settings')}}</q-item-section></q-item>
                     <q-item v-if="isMember" clickable v-close-popup class="m-chat-timer-item" @click="openTimer">
                         <q-item-section avatar><q-icon name="sym_o_timer"></q-icon></q-item-section><q-item-section>{{t('Disappearing messages')}}</q-item-section>
-                        <q-item-section side class="text-caption">{{t(timerLabel)}}</q-item-section></q-item>
+                        <q-item-section side class="text-caption">{{timerLabel}}</q-item-section></q-item>
                     <!-- a plain direct chat: its encrypted chat with the same people (Comms-Messaging §6.5) -->
                     <q-item v-if="encryptOffered" clickable v-close-popup class="m-chat-start-encrypted-item" @click="startEncrypted">
                         <q-item-section avatar><q-icon name="sym_o_lock"></q-icon></q-item-section>
@@ -4515,7 +4515,7 @@ const roomTemplate = `
         <m-text-line v-model="settings.roomName" :name="'settingsName' + uid" :label="t('Name')"></m-text-line>
         <m-text-area v-model="settings.topic" :name="'settingsTopic' + uid" rows="2" :label="t('Topic')" class="q-mt-xs"></m-text-area>
         <div class="row items-center no-wrap q-mt-sm m-chat-settings-timer"><q-icon name="sym_o_timer" size="18px" class="q-mr-sm m-muted"></q-icon>
-            <span class="col">{{t('Disappearing messages')}}: {{t(timerLabel)}}</span>
+            <span class="col">{{t('Disappearing messages')}}: {{timerLabel}}</span>
             <q-btn flat dense no-caps color="primary" :label="t('Change')" @click="openTimer"></q-btn></div>
         <template v-if="isOwner">
             <m-drop-down v-model="settings.visibility" :name="'settingsVisibility' + uid" :options="visibilityOptions" :label="t('Who may join')" class="q-mt-xs"></m-drop-down>
@@ -4604,7 +4604,7 @@ const roomTemplate = `
                         style="max-width:100%;max-height:100%" @ended="closeViewOnce"></video>
                 <q-spinner v-else size="40px"></q-spinner>
             </div>
-            <div v-if="!secureScreen" class="text-caption text-center q-pa-sm m-muted">{{t('Screenshots cannot be stopped here.')}}</div>
+            <div v-if="onceView.secured === false" class="text-caption text-center q-pa-sm m-muted m-chat-view-once-unsecured">{{t('Screenshots cannot be stopped here.')}}</div>
         </div>
     </q-dialog>
 
@@ -4791,7 +4791,7 @@ const chatRoom = {
             cardBox: { open: false, threadRoot: null },
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
-            timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0 },
+            timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0, secured: null },
             bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
             bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
@@ -4817,18 +4817,16 @@ const chatRoom = {
         sealed() { return !!this.room && !!this.room.encrypted; },
         // disappearing messages (Comms-Messaging §18.3 phase 16): the room's timer, and why it has none (a bridge cannot delete there)
         timerSeconds() { return (this.room && Number(this.room.messageTimerSeconds)) || 0; },
-        timerLabel() { return moqui.chat.expiry.label(this.timerSeconds); },
-        timerShort() { return moqui.chat.expiry.short(this.timerSeconds); },
+        timerLabel() { return moqui.chat.expiry.label(this.timerSeconds, t); },
+        timerShort() { return moqui.chat.expiry.short(this.timerSeconds, t); },
         timerBlocked() {
             if (!this.room) return null;
             if (this.room.bridged || this.room.roomTypeEnumId === 'CrtExternal') return 'bridged';
             return this.room.roomTypeEnumId === 'CrtRecord' ? 'recordRoom' : null;
         },
         canSetTimer() { return this.isMember && !(this.room && this.room.archivedDate) && !this.timerBlocked && (this.isDirect || this.canModerate); },
-        timerOptions() { return moqui.chat.expiry.options().map((option) => ({ value: option.value, label: t(option.label) })); },
+        timerOptions() { return moqui.chat.expiry.options(t); },
         timerBridgedText() { return fill(t('This room is bridged to {networks}: a message that went there cannot be deleted there, so it has no timer.'), { networks: this.bridgeNames || t('another network') }); },
-        // the app host stops screenshots (Android's FLAG_SECURE); a browser and the desktop app cannot
-        secureScreen() { return moqui.chat.expiry.canSecure(); },
         // a call from the room, where the server holds calls (config.calls) and the user may post in it
         // a call from the room, where the server holds calls and the user may post, with someone on this server to ring (a
         // bridged or texting room's other side is on another network: no empty call)
@@ -5008,6 +5006,8 @@ const chatRoom = {
     },
     watch: {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
+        // the room's timer, for the encrypted room's key rotation (WebrootCrypto.js)
+        timerSeconds(value) { moqui.chat.expiry.timers[this.roomId] = value || 0; },
         cryptoReady(value) { if (value) this.loadTrust(); },
         // the room shown: its first message (a dm link's) sent through the room's own send, sealed in an encrypted room
         state(value) {
@@ -5592,6 +5592,10 @@ const chatRoom = {
                     if (wants && this.prefs.sounds !== false && !(moqui.chat && moqui.chat.quiet()) && document.visibilityState !== 'visible') chime();
                 }
             }
+            // the timer changed (by anyone): an encrypted room's next message here starts a new key, so no session spans two
+            // timers (phase 16); a browser with the room closed rotates at its next send, its settings having changed
+            if (event.type === 'system' && event.content && event.content.action === 'timer' && this.sealed && moqui.crypto && moqui.crypto.rotateRoom)
+                moqui.crypto.rotateRoom(this.roomId).catch(() => null);
             if (event.type === 'membership' || event.type === 'system') { this.reloadMeta(); this.$emit('changed'); }
             if (this.side === 'pinned' && (event.type === 'pin' || event.type === 'redaction')) this.loadPinned();
             if (this.tabs[this.side] && this.tabTouched(this.side, event)) {
@@ -5749,7 +5753,7 @@ const chatRoom = {
             if (files.length && moqui.chat.releaseFiles) moqui.chat.releaseFiles(this.roomId, files);
             if (this.onceView.open && this.onceView.item && gone(this.onceView.item)) this.closeViewOnce();
         },
-        leftText(item) { return fill(t('Disappears in {time}'), { time: moqui.chat.expiry.left(item.expireDate, moqui.chat.expiry.now()) }); },
+        leftText(item) { return fill(t('Disappears in {time}'), { time: moqui.chat.expiry.left(item.expireDate, moqui.chat.expiry.now(), t) }); },
         openTimer() {
             this.timerBox = { open: true, value: this.timerSeconds, busy: false };
         },
@@ -5759,10 +5763,7 @@ const chatRoom = {
                 this.timerBox.busy = false;
                 if (json.errors) { moqui.notifyMessages([{ type: 'warning', message: json.errors }]); return; }
                 if (this.room) this.room.messageTimerSeconds = json.seconds || null;
-                moqui.chat.expiry.timers[this.roomId] = json.seconds || 0;
                 this.timerBox.open = false;
-                // an encrypted room's next message starts a new key: none of it outlives the timer
-                if (this.sealed && moqui.crypto && moqui.crypto.rotateRoom) moqui.crypto.rotateRoom(this.roomId).catch(() => null);
             }, () => { this.timerBox.busy = false; });
         },
         // a view-once message here: closed (may open), opened (by me), sent (mine), gone
@@ -5793,8 +5794,9 @@ const chatRoom = {
                     if (!response.ok) throw new Error('status ' + response.status);
                     return response.arrayBuffer();
                 }).then((data) => (this.sealed && kept && kept.sealed ? moqui.crypto.decryptFile(data, kept.sealed) : data));
-                this.onceView = { open: true, url: null, kind: /^video\//i.test(type || '') ? 'video' : 'photo', item, until: json.until };
-                moqui.chat.expiry.secureScreen('viewOnce', true);
+                this.onceView = { open: true, url: null, kind: /^video\//i.test(type || '') ? 'video' : 'photo', item, until: json.until, secured: null };
+                // what the app host answers: the note shows unless screenshots are blocked now
+                moqui.chat.expiry.secureScreen('viewOnce', true).then((held) => { if (this.onceView.open) this.onceView.secured = held; });
                 fetched.then((bytes) => {
                     if (!this.onceView.open) return;
                     this.onceView.url = URL.createObjectURL(new Blob([bytes], { type: moqui.chat.blobType ? moqui.chat.blobType(type) : type }));
@@ -5805,7 +5807,7 @@ const chatRoom = {
         closeViewOnce() {
             if (this.onceView.url) URL.revokeObjectURL(this.onceView.url);
             const item = this.onceView.item;
-            this.onceView = { open: false, url: null, kind: null, item: null, until: 0 };
+            this.onceView = { open: false, url: null, kind: null, item: null, until: 0, secured: null };
             moqui.chat.expiry.secureScreen('viewOnce', false);
             if (item && item.viewOnce) item.viewOnce = Object.assign({}, item.viewOnce, { openedByMe: true });
             if (item) this.rereadMessage(item.eventSeq);
@@ -9150,7 +9152,7 @@ module.exports = {
                                         _createTextVNode(_toDisplayString(_ctx.timerShort) + " ", 1),
                                         _createVNode(_component_q_tooltip, null, {
                                           default: _withCtx(() => [
-                                            _createTextVNode(_toDisplayString(_ctx.t('Disappearing messages')) + ": " + _toDisplayString(_ctx.t(_ctx.timerLabel)), 1)
+                                            _createTextVNode(_toDisplayString(_ctx.t('Disappearing messages')) + ": " + _toDisplayString(_ctx.timerLabel), 1)
                                           ]),
                                           _: 1
                                         })
@@ -9853,7 +9855,7 @@ module.exports = {
                                                   class: "text-caption"
                                                 }, {
                                                   default: _withCtx(() => [
-                                                    _createTextVNode(_toDisplayString(_ctx.t(_ctx.timerLabel)), 1)
+                                                    _createTextVNode(_toDisplayString(_ctx.timerLabel), 1)
                                                   ]),
                                                   _: 1
                                                 })
@@ -11908,7 +11910,7 @@ module.exports = {
                             size: "18px",
                             class: "q-mr-sm m-muted"
                           }),
-                          _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.t('Disappearing messages')) + ": " + _toDisplayString(_ctx.t(_ctx.timerLabel)), 1),
+                          _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.t('Disappearing messages')) + ": " + _toDisplayString(_ctx.timerLabel), 1),
                           _createVNode(_component_q_btn, {
                             flat: "",
                             dense: "",
@@ -12332,10 +12334,10 @@ module.exports = {
                                     size: "40px"
                                   }))
                           ]),
-                          (!_ctx.secureScreen)
+                          (_ctx.onceView.secured === false)
                             ? (_openBlock(), _createElementBlock("div", {
                                 key: 0,
-                                class: "text-caption text-center q-pa-sm m-muted"
+                                class: "text-caption text-center q-pa-sm m-muted m-chat-view-once-unsecured"
                               }, _toDisplayString(_ctx.t('Screenshots cannot be stopped here.')), 1))
                             : _createCommentVNode("", true)
                         ], 40, ["onContextmenu", "onKeydown"])

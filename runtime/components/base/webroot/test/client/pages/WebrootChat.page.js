@@ -1303,16 +1303,28 @@ test("disappearing messages: the timer in words, the server's clock, what is due
     assert.equal(expiry.left(61000, 0), "2m", "rounded up");
     assert.equal(expiry.left(5 * 3600000, 0), "5h");
     assert.equal(expiry.left(0, 5000), "0s");
-    // a device 10 minutes slow goes by the server's clock
+    // localized through t, the units as keys
+    const t = (key) => ({ "8 hours": "8 Stunden", "{count}m": "{count} Min.", "{count} days": "{count} Tage" })[key] || key;
+    assert.equal(expiry.label(28800, t), "8 Stunden");
+    assert.equal(expiry.label(172800, t), "2 Tage");
+    assert.equal(expiry.short(300, t), "5 Min.");
+    assert.equal(expiry.left(61000, 0, t), "2 Min.");
+    assert.equal(expiry.options(t)[4].label, "8 Stunden");
+    // a device 10 minutes slow goes by the server's clock; a late or kept answer does not move it back
+    expiry.resetClock();
     const local = Date.now();
     expiry.learn(local + 600000, local);
     assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5);
+    expiry.learn(local - 3600000, local);
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5, "the largest of the last offsets");
+    expiry.seen({ serverNow: local - 7200000, offline: { gapBefore: false } }, "RY");
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5, "an answer kept on the device is no clock");
     const events = [{ eventSeq: 1, expireDate: 100 }, { eventSeq: 2, expireDate: 300 }, { eventSeq: 3 }];
     assert.deepEqual(expiry.due(events, 200), [1]);
     assert.equal(expiry.nextDue(events, 200), 300);
     assert.equal(expiry.nextDue(events, 400), null);
     // the page's timer: a due event is signalled as the server's push is, and its decrypted copy goes
-    expiry.learn(Date.now());
+    expiry.resetClock();
     chat.opened["RX:7"] = { content: { body: "secret" } };
     const signals = [];
     const off = chat.on("expired", (done) => signals.push(done));
@@ -1334,5 +1346,5 @@ test("disappearing messages: the timer in words, the server's clock, what is due
     // no app host: screenshots cannot be stopped here
     assert.equal(expiry.canSecure(), false);
     assert.equal(await expiry.secureScreen("viewOnce", true), false);
-    expiry.learn(Date.now());
+    expiry.resetClock();
 });

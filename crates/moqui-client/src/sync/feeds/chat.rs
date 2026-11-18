@@ -63,7 +63,7 @@ pub(super) fn chat(run: &mut Run<'_, '_>) -> Result<(), Ended> {
     let base = chat_base(&run.job.comms_root);
     // the disappearing messages whose time came while no push or feed said so
     let expired = run
-        .store(|store| offline::sweep_expired(store, crate::store::now_ms()))
+        .store(|store| offline::sweep_expired(store, offline::server_now()))
         .unwrap_or_default();
     run.synced.rooms_changed.extend(expired);
     // what an earlier run left to read
@@ -89,6 +89,10 @@ pub(super) fn chat(run: &mut Run<'_, '_>) -> Result<(), Ended> {
         let Some(page) = run.json(&path)? else {
             return Ok(());
         };
+        // the server's clock, which disappearing messages go by
+        if let Some(server) = number(&page["serverNow"]) {
+            offline::learn_server_time(server);
+        }
         if page["reset"].as_bool() == Some(true) {
             let last = number(&page["lastSeq"]).unwrap_or(0);
             // a cursor the server no longer keeps (purged, another database): what is held may be stale. The drop and

@@ -38,8 +38,10 @@ Each installed client is a device with its own login key. The host keeps the key
   reads go; never the outbox, drafts, files, folders or cursors. Synchronous, one connection: the host shares a `Store`
   in a `Mutex`.
   `store::forget` removes an account's. A disappearing chat event keeps its due time (`expire_ms`) and goes when it
-  comes (`expire_chat_events`); deleted rows are overwritten (`secure_delete`). No migrations before 0.1.0: a store
-  made by an older schema is removed and read again.
+  comes (`expire_chat_events`, by the server's clock as its answers give it); deleted rows are overwritten
+  (`secure_delete`). No migrations before 0.1.0: the schema's revision is `SCHEMA_REV` in `PRAGMA application_id`, and
+  a store of an earlier one is made again when it opens, its outbox, drafts and chunked uploads copied across (logged;
+  the old file is kept as `.old` if a copy failed), the rest read again from the server.
 - `conf`: `ClientConf`, the client's settings from the `<client-conf>` element of the Moqui XML conf, which the host
   hands over: `device-mode` (choose, personal, shared), `mirror-days`, `prefetch-rooms`, `prefetch-mail` and
   `store-max-mb`; a bad value is logged and its default used.

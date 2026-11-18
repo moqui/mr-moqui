@@ -3,7 +3,8 @@
 // its edit's and reaction's; and expire#DueMessages, called directly with a clock past the time: the message goes with its
 // mentions, activity, links, the preview cache row no other message links, its thread root's count, the room's last
 // message and its room changes, for one marker change; an encrypted room's key backup of a session no event uses any
-// more; and a forward of an expiring message refused.
+// more, once its rotation period is past; past its time, a message answered nowhere (the timeline, search, summaries,
+// XMPP history) and filed nowhere; a failing room skipped while the others go; and a forward of an expiring message refused.
 // Run: ./moq test framework --spec ChatExpiry
 const A = "CHAT_EXPIRY_A"
 const B = "CHAT_EXPIRY_B"
@@ -46,6 +47,9 @@ function setup() {
         make("moqui.security.ArtifactAuthz", {artifactAuthzId: GROUP, userGroupId: GROUP, artifactGroupId: GROUP, authzTypeEnumId: "AUTHZT_ALWAYS",
             authzActionEnumId: "AUTHZA_ALL"})
         for (const userId of USERS) make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId, fromDate: new Date(Date.now() - 60000)})
+        // the Chat screen's transitions (createFrom, fileOnRecord), as the BasicComms users have them
+        if (ec.entity.find("moqui.security.UserGroup").condition("userGroupId", "BASIC_COMMS_USERS").count())
+            for (const userId of USERS) make("moqui.security.UserGroupMember", {userGroupId: "BASIC_COMMS_USERS", userId, fromDate: new Date(Date.now() - 60000)})
     })
 }
 const event = (roomId, seq) => sys(() => ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId: roomId, eventSeq: seq}).one())
@@ -88,7 +92,8 @@ feature("the timer: a direct room's member sets it, a group's moderator, and a b
                 externalRoomId: "elsewhere", directionEnumId: "CrbBoth", fromDate: ec.user.nowTimestamp}, true, null, null).createOrUpdate()
         })
         const onBridged = as(A, EXPIRY + "set#RoomTimer", {chatRoomId: bridged, seconds: 3600})
-        const checked = sys(() => ec.resource.script("component://framework/service/org/moqui/chat/ChatExpiry.js").execute("checkBridge", {chatRoomId: shared.group}))
+        const checked = sys(() => ec.transaction.runUseOrBegin(null, "spec", () =>
+            ec.resource.script("component://framework/service/org/moqui/chat/ChatExpiry.js").execute("checkBridge", {chatRoomId: shared.group})))
         ec.message.clearErrors()
         const record = as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Expiry record", memberUserIdList: [B]}).chatRoomId
         sys(() => { const row = ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", record).one(); row.set("roomTypeEnumId", "CrtRecord"); row.update() })
@@ -217,15 +222,88 @@ feature("an encrypted room: a session's key backup goes with its last event, and
                 make("moqui.chat.ChatKeyBackupSession", {userId: A, version: "1", roomId, sessionId, sessionDataJson: "{}", uploadedDate: ec.user.nowTimestamp})
         })
         const sessions = sys(() => ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId: room}).condition("megolmSessionId", "not-equals", null).count())
+        const backups = () => sys(() => Array.from(ec.entity.find("moqui.chat.ChatKeyBackupSession").condition({userId: A, roomId}).list())
+            .map((row) => row.sessionId).sort())
         expireAt(Date.now() + 120000)
-        const left = sys(() => Array.from(ec.entity.find("moqui.chat.ChatKeyBackupSession").condition({userId: A, roomId}).list()).map((row) => row.sessionId))
+        // its messages went, but the session may still be in use within its rotation period: its backup waits
+        const waiting = backups()
+        const pending = count("moqui.chat.ChatExpirySession", {chatRoomId: room})
         const events = count("moqui.chat.ChatEvent", {chatRoomId: room, eventTypeEnumId: "CetMessage"})
-        return {sessions, left, events}
+        expireAt(Date.now() + 15 * 60000)
+        const left = backups()
+        return {sessions, waiting, pending, left, events}
     },
-    then({sessions, left, events}) {
+    then({sessions, waiting, pending, left, events}) {
         sessions == 3
         events == 1
+        waiting.length == 2
+        pending == 1
         left.length == 1
         left[0] == "expiry-s1"
+    }
+})
+
+feature("past its time and not yet deleted, a message is answered nowhere, filed nowhere, and is in no XMPP history", {
+    when() {
+        const room = as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Expiry readers", memberUserIdList: [B]}).chatRoomId
+        as(A, EXPIRY + "set#RoomTimer", {chatRoomId: room, seconds: 3600})
+        const seq = as(A, CHAT + "send#Message", {chatRoomId: room, body: "<p>readers see zebrafish until its time</p>"}).eventSeq
+        const archived = Array.from(as(B, "org.moqui.chat.XmppServices.get#Archive", {chatRoomId: room}).eventList || []).length
+        // the timer off: its message is still in no XMPP history
+        as(A, EXPIRY + "set#RoomTimer", {chatRoomId: room, seconds: 0})
+        as(A, CHAT + "send#Message", {chatRoomId: room, body: "<p>kept for ever</p>"})
+        const afterOff = Array.from(as(B, "org.moqui.chat.XmppServices.get#Archive", {chatRoomId: room}).eventList || []).map((event) => event.bodyText)
+        // record links and Create from copy nothing of it
+        ec.user.internalLoginUser(username(A))
+        const root = "component://basic-comms/screen/BasicComms.xml"
+        const filed = ec.screen.makeTest().rootScreen(root).render("Chat/fileOnRecord", {chatRoomId: room, eventSeq: seq, recordEntityName: "x", recordId: "y"}, "post").jsonObject || {}
+        ec.message.clearErrors()
+        const made = ec.screen.makeTest().rootScreen(root).render("Chat/createFrom", {chatRoomId: room, eventSeq: seq, kind: "task"}, "post").jsonObject || {}
+        ec.message.clearErrors()
+        // its time passes before the worker came: nothing answers it
+        sys(() => ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId: room, eventSeq: seq}).updateAll({expireDate: Date.now() - 1000}))
+        const timeline = Array.from(as(B, CHAT + "get#Timeline", {chatRoomId: room}).eventList || []).filter((event) => event.type === "message").map((event) => event.eventSeq)
+        const found = Array.from(as(B, CHAT + "search#ChatEvents", {chatRoomId: room, searchText: "zebrafish"}).eventList || []).length
+        const summaries = sys(() => ec.service.sync().name(CHAT + "get#MessageSummaries").parameters({chatRoomId: room, eventSeqList: [seq]}).call().summaryMap)
+        return {seq, archived, afterOff, filed, made, timeline, found, summaries}
+    },
+    then({seq, archived, afterOff, filed, made, timeline, found, summaries}) {
+        archived == 0
+        afterOff.length == 1
+        afterOff[0] == "kept for ever"
+        filed.reasonCode == "expiring"
+        made.reasonCode == "expiring"
+        !timeline.includes(seq)
+        found == 0
+        summaries[String(seq)] == null
+    }
+})
+
+feature("a room that failed lately is skipped on this node, and the other rooms' messages still go", {
+    when() {
+        const make = (name) => {
+            const room = as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: name, memberUserIdList: [B]}).chatRoomId
+            as(A, EXPIRY + "set#RoomTimer", {chatRoomId: room, seconds: 30})
+            return {room, seq: as(A, CHAT + "send#Message", {chatRoomId: room, body: "<p>" + name + "</p>"}).eventSeq}
+        }
+        const failing = make("Expiry failing")
+        const other = make("Expiry other")
+        const cache = ec.cache.getCache("chat.expiry.failed")
+        cache.put(failing.room, String(Date.now()))
+        const round = expireAt(Date.now() + 60000)
+        const kept = event(failing.room, failing.seq) != null
+        const gone = event(other.room, other.seq) == null
+        // past the skip, it goes too
+        const later = expireAt(Date.now() + 6 * 60000)
+        const finally_ = event(failing.room, failing.seq) == null
+        cache.remove(failing.room)
+        return {round, kept, gone, later, finally_}
+    },
+    then({round, kept, gone, later, finally_}) {
+        round.skippedCount >= 1
+        round.failedCount == 0
+        kept
+        gone
+        finally_
     }
 })

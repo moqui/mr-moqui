@@ -70,7 +70,7 @@ pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) -> bool {
     }
     let (kept, wanted) = if let Some(room) = topic.strip_prefix("chatRoom:") {
         let room = message["chatRoomId"].as_str().unwrap_or(room).to_string();
-        crate::offline::sweep_expired(store, crate::store::now_ms());
+        crate::offline::sweep_expired(store, crate::offline::server_now());
         let kept = room_push(store, me, &room, &message);
         // a push that did not fold has the feeds read (where they are kept: a cursor of the room)
         let name = format!("{ROOM_CURSOR}{room}");
@@ -149,6 +149,15 @@ fn room_push(store: &Store, me: &str, room: &str, message: &Value) -> Result<(),
             let Some(fields) = message["fields"].as_object() else {
                 return Ok(());
             };
+            // a view-once message opened by someone (plans/Comms-Messaging.md phase 16): what could open it leaves the
+            // disk (the page asks the server again once online, and the room's feed reads the message again)
+            if fields.get("viewOnceChanged").and_then(Value::as_bool) == Some(true) {
+                change_event(store, room, seq, |target| {
+                    target["attachments"] = json!([]);
+                    target["encrypted"] = Value::Null;
+                })?;
+                return crate::offline::forget_room_pages(store, room);
+            }
             change_event(store, room, seq, |target| {
                 for (name, value) in fields {
                     target[name.as_str()] = value.clone();
