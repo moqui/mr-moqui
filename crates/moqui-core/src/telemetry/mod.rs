@@ -389,10 +389,7 @@ impl Config {
         let Ok(root) = MNode::parse_shared("telemetry-conf", text) else {
             return config;
         };
-        let setting = |node: &MNode, name: &str| {
-            node.attribute(name)
-                .map(|value| moqui_lib::env::expand(&value).unwrap_or(value))
-        };
+        let setting = |node: &MNode, name: &str| node.attribute(name);
         if let Some(stats) = root.first_named("server-stats") {
             if stats
                 .attribute("stats-skip-condition")

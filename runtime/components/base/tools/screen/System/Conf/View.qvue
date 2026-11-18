@@ -64,11 +64,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-chip v-if="row.node.pending" dense square class="q-ma-none m-tonal text-warning">not running yet
                     <q-tooltip>{{pendingText(row.node.pending)}}</q-tooltip></q-chip>
             </div>
-            <div v-if="shownAttrs(row.node).length || row.node.text || row.node.environment != null" class="m-conf-attrs">
+            <div v-if="shownAttrs(row.node).length || row.node.text" class="m-conf-attrs">
                 <div v-for="attr in shownAttrs(row.node)" :key="attr.name" class="row items-center q-gutter-x-xs">
                     <span class="text-mono m-muted">{{attr.name}}</span><span class="text-mono">=</span>
                     <span class="text-mono m-conf-value">"{{attr.value}}"</span>
-                    <span v-if="attr.expanded != null" class="text-mono m-muted">→ "{{attr.expanded}}"</span>
                     <q-chip v-if="attr.class" dense square class="q-ma-none m-tonal" :class="classColor(attr.class)">{{attr.class}}
                         <q-tooltip v-if="attr.reason">{{attr.reason}}</q-tooltip></q-chip>
                     <q-chip v-if="attr.source" dense square outline clickable class="q-ma-none text-mono" @click="openFile(attr.source.file, attr.source.line)">{{sourceText(attr.source)}}
@@ -80,11 +79,6 @@ along with this software (see the LICENSE.md file). If not, see
                     <q-btn v-if="attr.env" flat dense round size="xs" icon="content_copy" class="m-muted"
                             :aria-label="'Copy the environment name ' + attr.env" @click="copyEnv(attr.env)">
                         <q-tooltip>{{attr.env}}: the environment name that sets it over the conf files (copy)</q-tooltip></q-btn>
-                </div>
-                <div v-if="row.node.environment != null" class="row items-center q-gutter-x-xs">
-                    <q-chip dense square class="q-ma-none m-tonal text-info">environment</q-chip>
-                    <span class="text-mono">"{{row.node.environment}}"</span>
-                    <span class="text-caption m-muted">set by the environment, runtime/.env or -D, which wins over the conf</span>
                 </div>
                 <div v-if="row.node.text" class="text-mono m-conf-text">{{row.node.text}}</div>
             </div>
@@ -107,7 +101,7 @@ module.exports = {
             if (!term || !this.root) return null;
             const found = {};
             const matches = (node) => [node.name, node.key || '', node.path, node.text || ''].concat(
-                (node.attrs || []).map(attr => attr.name + '=' + attr.value + ' ' + (attr.expanded || ''))).join(' ').toLowerCase().includes(term);
+                (node.attrs || []).map(attr => attr.name + '=' + attr.value + ' ' + (attr.env || ''))).join(' ').toLowerCase().includes(term);
             const visit = (node) => {
                 let any = matches(node);
                 for (const child of node.children || []) if (visit(child)) any = true;

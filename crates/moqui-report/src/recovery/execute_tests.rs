@@ -14,21 +14,18 @@
 
 use super::property_allowed;
 
-/// SEC-TLS-12: an adapter reads a `recovery_` property, or one the conf lists; it sends none the conf marks secret
-/// unless listed, and never any other property the process holds.
+/// SEC-TLS-12: an adapter reads a `recovery_` property, or one the conf lists; it sends no secret (by its name) unless
+/// listed, and never any other property the process holds.
 #[test]
 fn an_adapter_reads_only_recovery_properties_and_sends_no_conf_secret() {
-    let ec = moqui_core::context::ExecutionContextFactory::test_context_with_conf(
-        r#"<moqui-conf><default-property name="recovery_token" value="" is-secret="true"/>
-            <default-property name="recovery_signing_key" value=""/></moqui-conf>"#,
-    );
+    let ec = moqui_core::context::ExecutionContextFactory::test_context_with_conf("<moqui-conf/>");
     let _entered = ec.enter();
     for sent in [true, false] {
         assert!(property_allowed("entity_ds_crypt_pass", sent).is_err());
         assert!(property_allowed("OPS_HOOK_TOKEN", sent).is_err());
     }
     assert!(property_allowed("recovery_auth", true).is_ok());
-    // a secret, by the conf or by its name, is not sent; it may key the HMAC, which is not sent
+    // a secret by its name is not sent; it may key the HMAC, which is not sent
     let refused = property_allowed("recovery_token", true).unwrap_err();
     assert!(refused.contains("telemetry/recovery@properties"), "{refused}");
     assert!(property_allowed("recovery_signing_key", true).is_err());

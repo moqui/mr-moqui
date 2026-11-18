@@ -1156,7 +1156,7 @@ pub fn json_object(text: &str) -> Result<serde_json::Value, String> {
 /// An attribute with `${name}` expanded and trimmed. Empty is `None`.
 fn attr(node: &MNode, name: &str) -> Option<String> {
     let raw = node.attribute(name)?;
-    let expanded = moqui_lib::env::expand(&raw).unwrap_or(raw);
+    let expanded = raw;
     let trimmed = expanded.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }

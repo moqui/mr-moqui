@@ -164,10 +164,6 @@ pub struct ExecutionContextFactory {
     conf_overlay: RwLock<std::collections::HashMap<String, String>>,
     /// The overlay has an entry, so [`Self::conf_setting`] looks there.
     conf_overlaid: AtomicBool,
-    property_names: Vec<String>,
-    /// The properties a `default-property` of the conf set, with the value it set: boot's, then a conf reload's. A conf
-    /// reload changes a property only while it still has that value (plans/archive/Component-Deploy.md, Phase 1).
-    conf_properties: std::sync::Mutex<std::collections::HashMap<String, String>>,
     extensions:
         std::sync::Mutex<std::collections::HashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>>,
     /// Entity facade for `dbresource://`. Empty until the host calls [`Self::set_entity`].
@@ -336,24 +332,17 @@ impl ExecutionContextFactory {
             conf::merge_component_confs_with(&framework_dir, &runtime_dir, &component_dirs, options.test_confs)?
                 .unwrap_or((conf_node, overrides));
         super::conf_env::log_overrides(&overrides);
+        super::conf_env::refuse_retired(&conf_node)?;
         let artifacts_only = options.artifacts_only;
         let native = crate::native::NativeRegistry::discover(&components, &conf_node, artifacts_only)?;
-        let (property_names, mut set_by_boot) = if artifacts_only {
-            let names = conf_node
-                .named_iter("default-property")
-                .filter_map(|node| node.attribute("name").filter(|name| !name.is_empty()))
-                .collect();
-            (names, PropertyRollback::default())
-        } else {
+        if !artifacts_only {
             super::conf_env::generate_secrets(&conf_node, &overrides, &env_path)?;
             check_session_cookie_key(&super::conf_env::conf_attribute(
                 &conf_node,
                 crate::user::session::COOKIE_KEY,
             ))?;
-            let applied = apply_default_properties(&conf_node, &env_path)?;
             log_instance_purpose(&conf_node, &overrides, &discovered_purpose);
-            applied
-        };
+        }
         if let Some(before_init) = &options.before_init {
             before_init(&conf_node)?;
         }
@@ -397,8 +386,6 @@ impl ExecutionContextFactory {
             tarpit_hits: std::sync::Mutex::default(),
             conf_overlay: RwLock::default(),
             conf_overlaid: AtomicBool::new(false),
-            property_names,
-            conf_properties: std::sync::Mutex::new(set_by_boot.values()),
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
             entity,
             pools,
@@ -422,7 +409,6 @@ impl ExecutionContextFactory {
         for extension in crate::extension::linked() {
             (extension.after_boot)(&factory);
         }
-        set_by_boot.keep();
         *write(&RUNNING) = Arc::downgrade(&factory);
         factory.pools.attach(&factory);
         // The host calls cluster::start after the entity facade is installed.
@@ -712,10 +698,6 @@ impl ExecutionContextFactory {
         &self.cache
     }
 
-    pub fn property_names(&self) -> &[String] {
-        &self.property_names
-    }
-
     /// State another facade keeps per factory, made on first use. `init` may use the factory but
     /// not ask for another extension of its own type.
     pub fn extension<T: std::any::Any + Send + Sync>(&self, init: impl FnOnce(&Self) -> T) -> Arc<T> {
@@ -772,7 +754,6 @@ impl ExecutionContextFactory {
         let conf = self.conf();
         let attr = |name: &str| {
             conf.webapp_attr(webapp_name, name)
-                .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
                 .map(|value| value.trim().to_string())
                 .unwrap_or_default()
         };
@@ -804,52 +785,47 @@ impl ExecutionContextFactory {
         let conf = self.conf();
         let attr = |name: &str| {
             conf.webapp_attr(webapp_name, name)
-                .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
                 .map(|value| value.trim().to_string())
                 .unwrap_or_default()
         };
         (attr("https-enabled") == "true").then(|| (attr("https-host"), attr("https-port")))
     }
 
-    /// A `webapp` attribute with `${}` expanded and trimmed; empty when the conf leaves it out.
+    /// A `webapp` attribute, trimmed; empty when the conf leaves it out.
     pub fn webapp_setting(&self, webapp_name: &str, name: &str) -> String {
         self.conf()
             .webapp_attr(webapp_name, name)
-            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
     }
 
-    /// An attribute of the `webapp`'s `web-protection` (`child` empty) or of its child element `child`, with `${}`
-    /// expanded and trimmed; empty when the conf leaves it out.
+    /// An attribute of the `webapp`'s `web-protection` (`child` empty) or of its child element `child`, trimmed;
+    /// empty when the conf leaves it out.
     pub fn web_protection_setting(&self, webapp_name: &str, child: &str, name: &str) -> String {
         self.conf()
             .protection_attr(webapp_name, child, name)
-            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
     }
 
-    /// An attribute of a `webapp` child element with `${}` expanded and trimmed: `child` is the element name
+    /// An attribute of a `webapp` child element, trimmed: `child` is the element name
     /// (`session-config`), or `endpoint <path>` for an `endpoint` (`endpoint /notws`). Empty when the conf leaves it out.
     pub fn webapp_child_setting(&self, webapp_name: &str, child: &str, name: &str) -> String {
         self.conf()
             .webapp_child_attr(webapp_name, child, name)
-            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
     }
 
     /// The `response-header` entries of a `webapp` for one response type (`screen-render`, `cors-actual`), as
-    /// `(name, value, add)` with `${}` expanded, Java's `WebappInfo.addHeaders`: an empty value is left out. A webapp that
+    /// `(name, value, add)`, Java's `WebappInfo.addHeaders`: an empty value is left out. A webapp that
     /// declares none gets the shipped `MoquiDefaultConf.xml` entries, so a conf without them still sends them.
     pub fn response_headers(&self, webapp_name: &str, kind: &str) -> Vec<(String, String, bool)> {
-        let expanded = |raw: &str| moqui_lib::env::expand(raw).unwrap_or_else(|_| raw.to_string());
         let headers: Vec<(String, String, bool)> = match self.conf().response_headers(webapp_name) {
             Some(entries) => entries
                 .iter()
                 .filter(|entry| entry.kind == kind)
-                .map(|entry| (entry.name.clone(), expanded(&entry.value), entry.add))
+                .map(|entry| (entry.name.clone(), entry.value.clone(), entry.add))
                 .collect(),
             None => return Self::default_response_headers(kind),
         };
@@ -869,8 +845,8 @@ impl ExecutionContextFactory {
             .collect()
     }
 
-    /// An attribute of the first conf element at `path` (`ssh-server`, `search-facade/cluster`, up to three names) with
-    /// `${}` expanded and trimmed; empty when the conf leaves it out.
+    /// An attribute of the first conf element at `path` (`ssh-server`, `search-facade/cluster`, up to three names),
+    /// trimmed; empty when the conf leaves it out.
     /// A live override of it (Monitor › Settings) comes first while it lasts.
     pub fn conf_setting(&self, path: &str, name: &str) -> String {
         if self.conf_overlaid.load(std::sync::atomic::Ordering::Acquire) {
@@ -897,7 +873,6 @@ impl ExecutionContextFactory {
     pub fn conf_setting_on_disk(&self, path: &str, name: &str) -> String {
         self.conf()
             .element_attr(path, name)
-            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
     }
@@ -1012,15 +987,10 @@ impl ExecutionContextFactory {
         self.conf.load().generation
     }
 
-    /// Whether the process property `name` is a secret as the merged conf declares it: its `default-property` has
-    /// `is-secret="true"`, or its name has `pass`, `pw` or `key` in it and no `is-secret="false"` (the masking of the
-    /// conf view). A name the conf does not declare is judged by its name.
+    /// Whether the process property `name` holds a secret: the environment name of a conf attribute that holds one
+    /// (`moqui_conf__entity_facade__crypt_pass`), or a name that says so (a token, a secret, `pass`, `pw` or `key`).
     pub fn conf_property_is_secret(&self, name: &str) -> bool {
-        let flag = MNode::parse_shared("moqui-conf", &self.conf_text())
-            .ok()
-            .and_then(|conf| conf.first_named_attrs("default-property", &[("name", name)]))
-            .and_then(|node| node.attribute("is-secret"));
-        is_secret(name, flag.as_deref())
+        property_is_secret(name)
     }
 
     /// Put `text` in place of the merged conf and answer its generation, one past the one before. A read in flight
@@ -1070,36 +1040,6 @@ impl ExecutionContextFactory {
             Ok(typed) => typed,
             Err(_) => unreachable!("conf-derived state is stored under its own type id"),
         }
-    }
-
-    /// The properties the conf set, with the value it set ([`Self::conf_properties`] field).
-    pub(crate) fn conf_properties(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, String>> {
-        lock(&self.conf_properties)
-    }
-
-    /// Set the property `name` from a `default-property` a conf reload found (plans/archive/Component-Deploy.md, Phase 1) as
-    /// boot sets one: `raw` expanded, or a secret at its `CHANGEME` default generated and saved to `runtime/.env`. It
-    /// is remembered as set by the conf, so a later reload may change it again. Answers the value set.
-    ///
-    /// # Errors
-    ///
-    /// When `raw` does not expand, or a generated secret cannot be saved.
-    pub(crate) fn set_conf_property(&self, name: &str, raw: &str, secret: bool) -> Result<String, Error> {
-        let mut value = if raw.is_empty() {
-            String::new()
-        } else {
-            env::expand(raw)?
-        };
-        if secret && value.ends_with("CHANGEME") && !leave_sentinel(name) {
-            value = generate_secret()?;
-            append_env_secrets(&self.runtime_dir.join(".env"), &[(name.to_string(), value.clone())])?;
-            tracing::info!("Generated secret property {name}");
-        } else {
-            log_property(name, &value, secret, true);
-        }
-        env::set_property(name, value.clone());
-        self.conf_properties().insert(name.to_string(), value.clone());
-        Ok(value)
     }
 
     /// Install the entity facade. `dbresource://` reads and writes through it.
@@ -1840,60 +1780,6 @@ fn log_instance_purpose(conf: &MNode, overrides: &[super::conf_env::Override], d
     }
 }
 
-/// Set each `default-property` of the merged conf as a process property unless one is set already. `runtime/.env` is
-/// loaded before the merge.
-fn apply_default_properties(conf_node: &MNode, env_path: &Path) -> Result<(Vec<String>, PropertyRollback), Error> {
-    let mut names = Vec::new();
-    let mut set_by_boot = PropertyRollback::default();
-    let mut generated = Vec::new();
-    let mut cert_slot = None;
-    let mut key_slot = None;
-    for node in conf_node.named_iter("default-property") {
-        let Some(name) = node.attribute("name").filter(|name| !name.is_empty()) else {
-            continue;
-        };
-        names.push(name.clone());
-        if name == "cluster_tls_cert" || name == "cluster_tls_key" {
-            let slot = read_tls_slot(&node, &name)?;
-            if name == "cluster_tls_cert" {
-                cert_slot = Some(slot);
-            } else {
-                key_slot = Some(slot);
-            }
-            continue;
-        }
-        let secret = is_secret(&name, node.attribute("is-secret").as_deref());
-        let resolved = env::get_prop_or_env(&name);
-        if !resolved.is_empty() {
-            log_property(&name, &resolved, secret, false);
-            continue;
-        }
-        let raw = node.attribute("value").unwrap_or_default();
-        let mut value = if raw.is_empty() {
-            String::new()
-        } else {
-            env::expand(&raw)?
-        };
-        if secret && value.ends_with("CHANGEME") && !leave_sentinel(&name) {
-            value = generate_secret()?;
-            env::set_property(&name, value.clone());
-            set_by_boot.remember(&name);
-            generated.push((name.clone(), value));
-            tracing::info!("Generated secret property {name}");
-            continue;
-        }
-        if value.is_empty() {
-            continue;
-        }
-        env::set_property(&name, value.clone());
-        set_by_boot.remember(&name);
-        log_property(&name, &value, secret, true);
-    }
-    install_tls_pair(&mut generated, &mut set_by_boot, cert_slot, key_slot)?;
-    append_env_secrets(env_path, &generated)?;
-    Ok((names, set_by_boot))
-}
-
 /// What names the session cookie key in the boot's messages.
 const SESSION_COOKIE_KEY: &str = "the session cookie key (session-config cookie-key)";
 
@@ -1928,124 +1814,16 @@ pub(super) fn check_session_cookie_key(raw: &str) -> Result<(), Error> {
     Ok(())
 }
 
-struct TlsSlot {
-    from_env: bool,
-    value: String,
-    secret: bool,
-}
-
-fn read_tls_slot(node: &MNode, name: &str) -> Result<TlsSlot, Error> {
-    let secret = is_secret(name, node.attribute("is-secret").as_deref());
-    let resolved = env::get_prop_or_env(name);
-    if !resolved.is_empty() {
-        return Ok(TlsSlot {
-            from_env: true,
-            value: resolved,
-            secret,
-        });
-    }
-    let raw = node.attribute("value").unwrap_or_default();
-    let value = if raw.is_empty() {
-        String::new()
-    } else {
-        env::expand(&raw)?
-    };
-    Ok(TlsSlot {
-        from_env: false,
-        value,
-        secret,
-    })
-}
-
-fn install_tls_pair(
-    generated: &mut Vec<(String, String)>,
-    set_by_boot: &mut PropertyRollback,
-    cert: Option<TlsSlot>,
-    key: Option<TlsSlot>,
-) -> Result<(), Error> {
-    let (cert, key) = match (cert, key) {
-        (Some(cert), Some(key)) => (cert, key),
-        (None, None) => return Ok(()),
-        _ => return Err(Error::new("cluster_tls_cert and cluster_tls_key must be set together")),
-    };
-    let cert_placeholder = cert.value.ends_with("CHANGEME");
-    let key_placeholder = key.value.ends_with("CHANGEME");
-    // Without `cluster-tls` (the browser build) the pair stays unset, as if empty. Cluster start
-    // then fails on the missing cert; nothing else reads it.
-    #[cfg(not(feature = "cluster-tls"))]
-    if cert_placeholder && key_placeholder {
-        let _ = generated;
-        return Ok(());
-    }
-    #[cfg(feature = "cluster-tls")]
-    if cert_placeholder && key_placeholder {
-        let (cert_b64, key_b64) = crate::cluster::generate_cert_pair()?;
-        remember_generated(generated, set_by_boot, "cluster_tls_cert", cert_b64);
-        remember_generated(generated, set_by_boot, "cluster_tls_key", key_b64);
-        return Ok(());
-    }
-    if cert.value.is_empty() && key.value.is_empty() {
-        return Ok(());
-    }
-    if cert_placeholder || key_placeholder || cert.value.is_empty() || key.value.is_empty() {
-        return Err(Error::new("cluster_tls_cert and cluster_tls_key must be set together"));
-    }
-    apply_configured(set_by_boot, "cluster_tls_cert", &cert);
-    apply_configured(set_by_boot, "cluster_tls_key", &key);
-    Ok(())
-}
-
-#[cfg(feature = "cluster-tls")]
-fn remember_generated(
-    generated: &mut Vec<(String, String)>,
-    set_by_boot: &mut PropertyRollback,
-    name: &str,
-    value: String,
-) {
-    env::set_property(name, value.clone());
-    set_by_boot.remember(name);
-    generated.push((name.to_string(), value));
-    tracing::info!("Generated secret property {name}");
-}
-
-fn apply_configured(set_by_boot: &mut PropertyRollback, name: &str, slot: &TlsSlot) {
-    log_property(name, &slot.value, slot.secret, !slot.from_env);
-    if slot.from_env {
-        return;
-    }
-    env::set_property(name, slot.value.clone());
-    set_by_boot.remember(name);
-}
-
-fn log_property(name: &str, value: &str, secret: bool, from_default: bool) {
-    if secret {
-        if from_default {
-            tracing::info!("Setting secret property {name} from default");
-        } else {
-            tracing::info!("Found secret property {name}");
-        }
-        return;
-    }
-    if from_default {
-        tracing::info!("Setting property {name} from default with value [{value}]");
-    } else {
-        tracing::info!("Found property {name} with value [{value}]");
-    }
-}
-
-/// Whether the `default-property` `name` is a secret: `is-secret="true"`, or a name with `pass`, `pw` or `key` in it
-/// unless `is-secret="false"`.
-pub(crate) fn property_is_secret(name: &str, flag: Option<&str>) -> bool {
-    is_secret(name, flag)
-}
-
-fn is_secret(name: &str, flag: Option<&str>) -> bool {
-    let flag = flag.unwrap_or("");
-    flag != "false" && (flag == "true" || name.contains("pass") || name.contains("pw") || name.contains("key"))
-}
-
-pub(super) fn leave_sentinel(name: &str) -> bool {
-    name == "entity_ds_crypt_pass_old"
+/// Whether the property `name` holds a secret: the environment name of a conf attribute that holds one, a name the
+/// request log calls a credential's ([`super::identity::secret_parameter`]: a token, a secret, a password), or a name
+/// with `pass`, `pw` or `key` in it.
+pub(crate) fn property_is_secret(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    super::conf_env::env_name_secret(name)
+        || super::identity::secret_parameter(&lower)
+        || lower.contains("pass")
+        || lower.contains("pw")
+        || lower.contains("key")
 }
 
 fn ensure_env_readable(path: &Path) -> Result<(), Error> {
@@ -2064,50 +1842,6 @@ pub(super) fn generate_secret() -> Result<String, Error> {
     getrandom::fill(&mut bytes)
         .map_err(|err| Error::new(format!("could not read random bytes for a secret property: {err}")))?;
     Ok(STANDARD.encode(bytes))
-}
-
-/// Write generated secrets to `runtime/.env`: added, or replacing an empty `name=` line (moqui_lib::env).
-fn append_env_secrets(path: &Path, pairs: &[(String, String)]) -> Result<(), Error> {
-    Ok(env::update_dotenv_file(path, pairs, &[])?)
-}
-
-#[derive(Default)]
-struct PropertyRollback {
-    names: Vec<String>,
-    rollback: bool,
-}
-
-impl PropertyRollback {
-    fn remember(&mut self, name: &str) {
-        self.names.push(name.to_string());
-        self.rollback = true;
-    }
-
-    fn keep(&mut self) {
-        self.rollback = false;
-    }
-
-    /// The names set, with the value each has now.
-    fn values(&self) -> std::collections::HashMap<String, String> {
-        self.names
-            .iter()
-            .filter_map(|name| env::get_property(name).map(|value| (name.clone(), value)))
-            .collect()
-    }
-
-    fn clear(&self) {
-        for name in &self.names {
-            env::clear_property(name);
-        }
-    }
-}
-
-impl Drop for PropertyRollback {
-    fn drop(&mut self) {
-        if self.rollback {
-            self.clear();
-        }
-    }
 }
 
 impl ExecutionContextFactory {
@@ -2185,8 +1919,6 @@ impl ExecutionContextFactory {
             tarpit_hits: std::sync::Mutex::default(),
             conf_overlay: RwLock::default(),
             conf_overlaid: AtomicBool::new(false),
-            property_names: Vec::new(),
-            conf_properties: std::sync::Mutex::default(),
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
             entity,
             pools,

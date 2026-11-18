@@ -48,13 +48,8 @@ fn startup_load_honors_all_including_demo() {
 }
 
 #[test]
-fn startup_load_expands_configured_property() {
-    let key = "moqui_host_test_empty_db_load";
-    moqui_lib::env::set_property(key, "seed, demo");
-    let result =
-        startup_load_flags(r#"<moqui-conf><tools empty-db-load="${moqui_host_test_empty_db_load}"/></moqui-conf>"#);
-    moqui_lib::env::clear_property(key);
-    let flags = result.unwrap();
+fn startup_load_reads_the_configured_types() {
+    let flags = startup_load_flags(r#"<moqui-conf><tools empty-db-load="seed, demo"/></moqui-conf>"#).unwrap();
     assert_eq!(load_options(&flags).data_types, ["seed", "demo"]);
     assert!(should_load_data(0, &flags, true));
     assert!(!should_load_data(1, &flags, true));

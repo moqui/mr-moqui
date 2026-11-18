@@ -524,8 +524,5 @@ fn conf_names(conf_text: &str, base: &str, selector: Option<&str>, attr: &str) -
         };
         node = found;
     }
-    node.attribute(attr).is_some_and(|value| {
-        let value = moqui_lib::env::expand(&value).unwrap_or(value);
-        !value.trim().is_empty()
-    })
+    node.attribute(attr).is_some_and(|value| !value.trim().is_empty())
 }

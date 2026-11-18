@@ -114,8 +114,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="derive" noun="ChatStoreKey" type="rust" location="moqui_core::service::chat_keys::derive_store_key"
             allow-remote="false">
         <description>Internal (get#ChatDeviceStoreKey answers it to the device's own user only): the store key of userId's
-            device deviceId at revision, HMAC-SHA-256 under the platform secret chat@store-key-secret (an is-secret
-            default-property, generated when unset) of userId|deviceId|revision, as 43 characters of URL-safe base64.</description>
+            device deviceId at revision, HMAC-SHA-256 under the platform secret chat@store-key-secret (a conf secret,
+            generated into runtime/.env when unset) of userId|deviceId|revision, as 43 characters of URL-safe base64.</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="deviceId" required="true"/>

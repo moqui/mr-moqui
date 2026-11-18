@@ -63,7 +63,7 @@ pub(crate) fn property_allowed(name: &str, sent: bool) -> Result<(), String> {
         .unwrap_or(true);
     if sent && secret {
         return Err(format!(
-            "property {name} is a secret in the conf; list it in {PROPERTY_LIST} to send it"
+            "property {name} holds a secret by its name; list it in {PROPERTY_LIST} to send it"
         ));
     }
     Ok(())

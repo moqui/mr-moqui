@@ -202,7 +202,7 @@ fn init_params(node: &MNode) -> BTreeMap<String, String> {
                 .filter(|selector| raw.is_empty() && !selector.is_empty())
             {
                 Some(selector) => crate::context::conf_env::conf_attribute(&conf, &selector),
-                None => moqui_lib::env::expand(&raw).unwrap_or(raw),
+                None => raw,
             };
             Some((name, value))
         })
@@ -394,7 +394,6 @@ impl WebappScripts {
             };
             let size_of = |attribute: &str| {
                 node.attribute(attribute).and_then(|text| {
-                    let text = moqui_lib::env::expand(&text).unwrap_or(text);
                     let size = super::parse_size(&text);
                     if size.is_none() && !text.trim().is_empty() {
                         tracing::error!("Ignoring the {attribute} {text} of {label}: not a size");

@@ -445,7 +445,6 @@ fn each_component_adds_authz_elements_and_keeps_the_defaults() {
 #[test]
 fn every_keyed_merge_has_its_key_in_the_conf_schema() {
     let text = r#"<moqui-conf>
-        <default-property name="p" value="1"/>
         <tools><tool-factory class="t"/></tools>
         <cache-list><cache name="c"/></cache-list>
         <telemetry><artifact type="AT_SERVICE"/><operations><operation service="s"/></operations></telemetry>

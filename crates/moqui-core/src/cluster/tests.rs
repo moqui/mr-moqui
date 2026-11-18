@@ -20,7 +20,6 @@ use std::time::{Duration, SystemTime};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use moqui_lib::env;
-use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 use moqui_lib::sync;
 
@@ -858,7 +857,7 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     let _lock = lock();
     let _clean = Clean;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let _env = ConfGuard::new(root.clone());
+    let _env = ConfGuard;
     let _example = crate::testing::ExampleOff::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("cluster-cert");
@@ -878,11 +877,7 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     assert!(env::get_prop_or_env("moqui_conf__instance__id").is_empty());
     assert_eq!(instance.len(), 36);
     assert!(instance.contains('-'));
-    let names = factory.property_names().to_vec();
     drop(factory);
-    for name in &names {
-        env::clear_property(name);
-    }
     env::clear_dotenv();
     let again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     assert_eq!(env::get_prop_or_env("moqui_conf__cluster_member__tls_cert"), cert);
@@ -923,9 +918,6 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
         0
     );
     assert_consecutive_pair(&env_again);
-    for name in again.property_names() {
-        env::clear_property(name);
-    }
     env::clear_dotenv();
 
     let blocked = TempRuntime::new("cluster-half");
@@ -963,31 +955,11 @@ fn assert_consecutive_pair(text: &str) {
     assert!(lines[cert_at + 1].starts_with("moqui_conf__cluster_member__tls_key="));
 }
 
-struct ConfGuard {
-    root: PathBuf,
-}
-
-impl ConfGuard {
-    fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-}
+/// Clears the `.env` table a boot test loaded.
+struct ConfGuard;
 
 impl Drop for ConfGuard {
     fn drop(&mut self) {
-        for relative in [
-            "runtime/components/base/framework/conf/MoquiDefaultConf.xml",
-            "runtime/conf/MoquiDevConf.xml",
-        ] {
-            let Ok(node) = MNode::parse_file(self.root.join(relative)) else {
-                continue;
-            };
-            for property in node.named_iter("default-property") {
-                if let Some(name) = property.attribute("name") {
-                    env::clear_property(&name);
-                }
-            }
-        }
         env::clear_dotenv();
     }
 }

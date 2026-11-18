@@ -56,8 +56,6 @@ pub enum Group {
     Derived,
     /// The `cache` entries: a new one is made; a changed one waits for a restart.
     Caches,
-    /// The `default-property` entries, set as boot sets them unless the environment set them.
-    Properties,
     /// The webapp's `web-protection` rules, which the host's guard takes in place, keeping its counters.
     WebProtection,
 }
@@ -70,7 +68,6 @@ impl Group {
             Self::Screens => "screens",
             Self::Derived => "derived",
             Self::Caches => "caches",
-            Self::Properties => "properties",
             Self::WebProtection => "web-protection",
         }
     }
@@ -163,10 +160,13 @@ const EDGE: Class = Class::Restart("the edge link starts at boot");
 /// The class of an element at the top of the conf that no unit names.
 pub const UNKNOWN: Class = Class::Restart("not known to the conf reload");
 
+/// A top-level element no unit names, a component's own settings (plans/Conf-Paths.md §6.27): live, as its readers
+/// read the conf on each use (`ec.factory.getConfValue`).
+pub const COMPONENT: Class = Class::Live;
+
 /// The units of the conf, by the top-level element. The classes follow what reads each setting; a setting is live
 /// only where its reader reads the conf on each use.
 pub static CATALOG: &[Unit] = &[
-    keyed("default-property", &["name"], Class::Apply(Group::Properties)),
     single(
         "tools",
         Class::Restart("the tool factories and the worker and request pools start at boot"),
@@ -502,30 +502,6 @@ pub(crate) fn merge_keys(path: &[&str]) -> &'static [&'static str] {
             &[]
         }
     }
-}
-
-/// Properties a conf reload never changes: what the process, its listeners, its databases or its keys were set up
-/// with at boot.
-const FIXED_PROPERTY_PREFIXES: &[&str] = &[
-    "entity_ds_",
-    "content_ds_",
-    "cluster_",
-    "edge_",
-    "elasticsearch_",
-    "entity_add_missing_",
-    "entity_on_start_",
-    "moqui_log_",
-];
-const FIXED_PROPERTY_SUFFIXES: &[&str] = &["_port", "_host", "_bind", "_key", "_secret", "_pass", "_password"];
-const FIXED_PROPERTIES: &[&str] = &["MOQUI_CONF"];
-
-/// Why the property `name` is not changed by a conf reload, or `None` when it may be.
-#[must_use]
-pub fn fixed_property(name: &str) -> Option<&'static str> {
-    let fixed = FIXED_PROPERTIES.contains(&name)
-        || FIXED_PROPERTY_PREFIXES.iter().any(|prefix| name.starts_with(prefix))
-        || FIXED_PROPERTY_SUFFIXES.iter().any(|suffix| name.ends_with(suffix));
-    fixed.then_some("the process, a listener, a database or a key was set up with it at boot")
 }
 
 #[cfg(test)]

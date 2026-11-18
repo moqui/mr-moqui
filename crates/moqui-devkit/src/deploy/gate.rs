@@ -119,7 +119,7 @@ pub(crate) fn same_url(url: &str) -> String {
     }
 }
 
-/// The `allow` entries of the conf's `component-deploy`, `${}` expanded; one that leaves out its component, URL or
+/// The `allow` entries of the conf's `component-deploy`; one that leaves out its component, URL or
 /// branch is left out, logged.
 fn allows(conf_text: &str) -> Vec<Allow> {
     let Ok(conf) = moqui_lib::node::MNode::parse_shared("moqui-conf", conf_text) else {
@@ -130,7 +130,7 @@ fn allows(conf_text: &str) -> Vec<Allow> {
     };
     let attribute = |node: &moqui_lib::node::MNode, name: &str| {
         let raw = node.attribute(name).unwrap_or_default();
-        moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string()
+        raw.trim().to_string()
     };
     let mut out = Vec::new();
     for node in element.children_named("allow") {

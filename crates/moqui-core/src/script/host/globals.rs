@@ -625,7 +625,7 @@ fn in_date_range(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `is-secret`; plans/Security-Review-Medium.md SEC-SCR-03).
 fn get_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = call.text_or_empty(0);
-    if crate::context::identity::script_refused_property_here(&name) {
+    if crate::context::identity::script_refused_property(&name) {
         return Ok(None::<String>.into());
     }
     let found = moqui_lib::env::get_prop_or_env(&name);

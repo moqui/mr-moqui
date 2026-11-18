@@ -36,7 +36,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="voicemail"/>
                 <xs:element minOccurs="0" ref="pass-authority"/>
                 <xs:element minOccurs="0" ref="database-backup"/>
-                <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
                 <xs:element minOccurs="0" ref="telemetry"/>
@@ -85,14 +84,6 @@ along with this software (see the LICENSE.md file). If not, see
                 §1). Read when the webapp's servlets are built.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
-    <xs:element name="default-property">
-        <xs:complexType>
-            <xs:attribute name="name" type="xs:string" use="required"/>
-            <xs:attribute name="value" type="xs:string" use="required"/>
-            <xs:attribute name="is-secret" type="boolean" default="false"/>
-        </xs:complexType>
-    </xs:element>
-
     <xs:element name="tools">
         <xs:complexType>
             <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="tool-factory"/></xs:sequence>
@@ -1481,8 +1472,8 @@ along with this software (see the LICENSE.md file). If not, see
             their attributes.</xs:documentation></xs:annotation>
         <xs:sequence>
             <xs:element name="endpoint" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
-                <xs:annotation><xs:documentation>A model server. The key is api-key (from a secret default-property) or
-                    the property or environment variable api-key-env names; no key sends no auth header (Ollama, LM
+                <xs:annotation><xs:documentation>A model server. The key is api-key (a secret, set in runtime/.env) or the
+                    environment variable api-key-env names; no key sends no auth header (Ollama, LM
                     Studio).</xs:documentation></xs:annotation>
                 <xs:sequence>
                     <xs:element name="header" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
@@ -3146,9 +3137,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="purpose" type="xs:string" use="optional"><xs:annotation><xs:documentation>
                 The instance purposes (instance@purpose) each component in the directory loads on, comma separated, such as dev; empty or
                 missing for every purpose. On another purpose each is left out with a WARN naming it. Read
-                when the components are discovered, before the default properties are applied: instance@purpose
-                comes from a -D option or environment variable, else runtime/.env, else the runtime conf's
-                default-property, never from a component's own conf. A component that loads on every purpose may
+                when the components are discovered: instance@purpose comes from a -D option or the environment
+                (moqui_conf__instance__purpose), else runtime/.env, else the runtime conf, never from a component's
+                own conf. A component that loads on every purpose may
                 not depend on one that loads only on some; it is left out with an error.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
@@ -3173,9 +3164,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="purpose" type="xs:string" use="optional"><xs:annotation><xs:documentation>
                 The instance purposes (instance@purpose) the component (in a component.xml, or on a component element that names it) loads on, comma separated, such as dev; empty or
                 missing for every purpose. On another purpose it is left out with a WARN naming it. Read
-                when the components are discovered, before the default properties are applied: instance@purpose
-                comes from a -D option or environment variable, else runtime/.env, else the runtime conf's
-                default-property, never from a component's own conf. A component that loads on every purpose may
+                when the components are discovered: instance@purpose comes from a -D option or the environment
+                (moqui_conf__instance__purpose), else runtime/.env, else the runtime conf, never from a component's
+                own conf. A component that loads on every purpose may
                 not depend on one that loads only on some; it is left out with an error.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>

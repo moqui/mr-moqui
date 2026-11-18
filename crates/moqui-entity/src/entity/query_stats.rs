@@ -69,7 +69,7 @@ pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
 }
 
-/// Read `entity-facade@query-stats` (`${}` expanded) of the merged conf `conf` (the `moqui-conf` root, or the
+/// Read `entity-facade@query-stats` of the merged conf `conf` (the `moqui-conf` root, or the
 /// `entity-facade` element itself) and turn counting on or off.
 pub fn configure(conf: &MNode) {
     let facade = if conf.has_name("entity-facade") {
@@ -80,14 +80,7 @@ pub fn configure(conf: &MNode) {
     let raw = facade
         .and_then(|node| node.attribute("query-stats"))
         .unwrap_or_default();
-    let on = match moqui_lib::env::expand(&raw) {
-        Ok(text) => text.trim() == "true",
-        Err(err) => {
-            tracing::error!(error = %err, "Could not expand entity-facade query-stats, statement stats stay off");
-            false
-        }
-    };
-    set_enabled(on);
+    set_enabled(raw.trim() == "true");
 }
 
 /// The most bytes of normalized text a key keeps; a longer statement keeps this much and a hash of the whole, so two

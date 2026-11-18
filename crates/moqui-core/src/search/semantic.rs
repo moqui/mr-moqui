@@ -156,7 +156,7 @@ impl SemanticConf {
         };
         let text = |name: &str| {
             node.attribute(name)
-                .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string())
+                .map(|raw| raw.trim().to_string())
                 .filter(|value| !value.is_empty())
         };
         let mut conf = Self {
@@ -178,11 +178,7 @@ impl SemanticConf {
         }
         conf.embedder = text("embedder");
         // Kept as written: a prefix ends with the space its model expects.
-        let raw = |name: &str| {
-            node.attribute(name)
-                .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
-                .unwrap_or_default()
-        };
+        let raw = |name: &str| node.attribute(name).unwrap_or_default();
         conf.query_prefix = raw("query-prefix");
         conf.document_prefix = raw("document-prefix");
         if let Some(value) = text("max-chars") {

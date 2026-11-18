@@ -388,7 +388,7 @@ pub(crate) struct GuardConf {
     agent_rules: Vec<AgentRule>,
 }
 
-/// An attribute of `node`'s child `child` (of `node` itself when `child` is empty), `${}` expanded and trimmed; empty
+/// An attribute of `node`'s child `child` (of `node` itself when `child` is empty), trimmed; empty
 /// when it is left out, as `moqui_core::web::protection_setting`.
 pub(crate) fn setting(node: Option<&MNode>, child: &str, name: &str) -> String {
     let element = match node {
@@ -398,7 +398,6 @@ pub(crate) fn setting(node: Option<&MNode>, child: &str, name: &str) -> String {
     };
     element
         .and_then(|element| element.attribute(name))
-        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
         .map(|value| value.trim().to_string())
         .unwrap_or_default()
 }
@@ -496,7 +495,6 @@ impl GuardConf {
         let attr = |element: &MNode, name: &str| {
             element
                 .attribute(name)
-                .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
                 .map(|value| value.trim().to_string())
                 .unwrap_or_default()
         };

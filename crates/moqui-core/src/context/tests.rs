@@ -24,34 +24,17 @@ pub(super) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-pub(super) struct EnvGuard {
-    root: PathBuf,
-}
+/// Clears what a boot test leaves in the process: the version properties and the `.env` table.
+pub(super) struct EnvGuard;
 
 impl EnvGuard {
-    pub(super) fn new(root: PathBuf) -> Self {
-        Self { root }
+    pub(super) fn new() -> Self {
+        Self
     }
 }
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        for relative in [
-            "runtime/components/base/framework/conf/MoquiDefaultConf.xml",
-            "runtime/conf/MoquiDevConf.xml",
-        ] {
-            let Ok(node) = MNode::parse_file(self.root.join(relative)) else {
-                continue;
-            };
-            for property in node.named_iter("default-property") {
-                if let Some(name) = property.attribute("name") {
-                    env::clear_property(&name);
-                }
-            }
-        }
-        env::clear_property("phase2_probe_secret");
-        env::clear_property("phase2_probe_unwritable");
-        env::clear_property("phase2_probe_newline");
         env::clear_property("moqui_version");
         env::clear_property("moqui.version");
     }
@@ -115,13 +98,11 @@ fn component_conf_mounts_and_runtime_conf_wins() {
     std::fs::create_dir_all(component.join("test")).unwrap();
     std::fs::write(
         component.join("test/MoquiConf.xml"),
-        r#"<moqui-conf><default-property name="app_test_overlay" value="test"/></moqui-conf>"#,
+        r#"<moqui-conf><app test-overlay="test"/></moqui-conf>"#,
     )
     .unwrap();
-    let overlay = |conf: &MNode| {
-        conf.first_named_attrs("default-property", &[("name", "app_test_overlay")])
-            .and_then(|node| node.attribute("value"))
-    };
+    // the component's own element, which the test conf sets
+    let overlay = |conf: &MNode| conf.first_named("app").and_then(|node| node.attribute("test-overlay"));
     let plain = super::merge_component_confs(
         &root.join("runtime/components/base/framework"),
         runtime.path(),
@@ -235,7 +216,7 @@ fn dev_conf_merge_sets_purpose_and_entity_definition_idle() {
 fn boot_registers_components_and_named_resource_errors() {
     let _lock = crate::user::session::cookie_property_lock();
     let root = workspace_root();
-    let _env = EnvGuard::new(root.clone());
+    let _env = EnvGuard::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("boot");
     std::fs::copy(
@@ -299,20 +280,17 @@ fn boot_registers_components_and_named_resource_errors() {
 fn generated_secret_is_stable_and_unwritable_env_fails() {
     let _lock = crate::user::session::cookie_property_lock();
     let root = workspace_root();
-    let _env = EnvGuard::new(root.clone());
+    let _env = EnvGuard::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("secret");
-    write_probe_conf(temp.path(), "phase2_probe_secret", "probe-secret-CHANGEME");
     let framework = root.join("runtime/components/base/framework");
-    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    let first = env::get_prop_or_env("phase2_probe_secret");
-    assert_eq!(first.len(), 44);
-    assert!(!first.ends_with("CHANGEME"));
-    assert!(!first.contains("probe-secret"));
+    let _factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
+    // the default conf's chat@store-key-secret is at CHANGEME, so the first boot makes it
     let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    assert!(env_text.contains("phase2_probe_secret="));
-    assert!(!env_text.contains("probe-secret-CHANGEME"));
-    assert!(!env_text.contains("entity_ds_crypt_pass_old="));
+    let first = probe_secret(&env_text);
+    assert_eq!(first.len(), 44, "{env_text}");
+    assert!(!first.ends_with("CHANGEME"));
+    assert!(!env_text.contains("CHANGEME"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -323,38 +301,24 @@ fn generated_secret_is_stable_and_unwritable_env_fails() {
         assert_eq!(mode & 0o777, 0o600);
     }
     assert_eq!(
-        env_text
-            .lines()
-            .filter(|line| line.starts_with("phase2_probe_secret="))
-            .count(),
+        env_text.lines().filter(|line| line.starts_with(PROBE_SECRET)).count(),
         1
     );
-    for name in factory.property_names() {
-        env::clear_property(name);
-    }
-    let again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    assert_eq!(env::get_prop_or_env("phase2_probe_secret"), first);
+    let _again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let env_again = std::fs::read_to_string(temp.path().join(".env")).unwrap();
+    assert_eq!(probe_secret(&env_again), first, "a second boot keeps the secret");
     assert_eq!(
-        env_again
-            .lines()
-            .filter(|line| line.starts_with("phase2_probe_secret="))
-            .count(),
+        env_again.lines().filter(|line| line.starts_with(PROBE_SECRET)).count(),
         1
     );
-    for name in again.property_names() {
-        env::clear_property(name);
-    }
 
     let blocked = TempRuntime::new("blocked");
-    write_probe_conf(blocked.path(), "phase2_probe_unwritable", "probe-secret-CHANGEME");
     std::fs::create_dir(blocked.path().join(".env")).unwrap();
     let err = match ExecutionContextFactory::boot_with_framework(blocked.path(), &framework) {
         Ok(_) => panic!("boot succeeded with an unwritable runtime environment file"),
         Err(err) => err,
     };
     let shown = format!("{err} {err:?}");
-    assert!(!shown.contains("probe-secret-CHANGEME"));
     assert!(!shown.contains("MoquiDefaultPassword"));
     assert!(!shown.contains("CHANGEME"));
     assert!(shown.contains("directory"));
@@ -365,31 +329,24 @@ fn generated_secret_is_stable_and_unwritable_env_fails() {
 fn generated_secret_starts_its_own_line_in_env_without_final_newline() {
     let _lock = crate::user::session::cookie_property_lock();
     let root = workspace_root();
-    let _env = EnvGuard::new(root.clone());
+    let _env = EnvGuard::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("secret-newline");
-    write_probe_conf(temp.path(), "phase2_probe_newline", "probe-secret-CHANGEME");
     // Host settings written before the first start (docs/Run-Deploy.md), the last line with no newline
     std::fs::write(temp.path().join(".env"), "phase2_probe_host=erp.example.com").unwrap();
     let framework = root.join("runtime/components/base/framework");
-    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
+    let _factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
     let lines: Vec<&str> = env_text.lines().collect();
     assert_eq!(lines.first(), Some(&"phase2_probe_host=erp.example.com"), "{env_text}");
-    assert!(
-        lines.iter().any(|line| line.starts_with("phase2_probe_newline=")),
-        "{env_text}"
-    );
+    assert!(lines.iter().any(|line| line.starts_with(PROBE_SECRET)), "{env_text}");
     assert_eq!(env::get_prop_or_env("phase2_probe_host"), "erp.example.com");
-    for name in factory.property_names() {
-        env::clear_property(name);
-    }
     env::clear_dotenv();
     assert_eq!(repo_env_stamp(&root), before);
 }
 
-/// A generated secret is 32 random bytes in standard base64, never the same twice; `entity_ds_crypt_pass_old` keeps
-/// its sentinel. A `default-property` is secret by its flag, or by `pass`, `pw` or `key` in its name.
+/// A generated secret is 32 random bytes in standard base64, never the same twice. A process property holds a secret
+/// when it is a secret conf attribute's environment name, or by `pass`, `pw` or `key` in its name.
 #[test]
 fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     use base64::Engine as _;
@@ -400,22 +357,18 @@ fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
         let bytes = base64::engine::general_purpose::STANDARD.decode(value).unwrap();
         assert_eq!(bytes.len(), 32);
     }
-    assert!(super::factory::leave_sentinel("entity_ds_crypt_pass_old"));
-    assert!(!super::factory::leave_sentinel("entity_ds_crypt_pass"));
-    assert!(!super::factory::leave_sentinel(
+    let secret = super::factory::property_is_secret;
+    assert!(secret("remote_db_pass"));
+    assert!(secret(
         "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key"
     ));
-
-    let secret = super::factory::property_is_secret;
-    assert!(secret("entity_ds_crypt_pass", None));
-    assert!(secret(
-        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
-        None
-    ));
-    assert!(secret("smtp_pw", None));
-    assert!(secret("fcm_service_account", Some("true")));
-    assert!(!secret("moqui_conf__webapp_list__webapp__WEBROOT__http_port", None));
-    assert!(!secret("moqui_conf__ssh_server__host_key", Some("false")));
+    assert!(secret("MOQUI_CONF__ENTITY_FACADE__CRYPT_PASS"));
+    assert!(
+        secret("moqui_conf__push__fcm__service_account"),
+        "secret by the schema, not its name"
+    );
+    assert!(secret("smtp_pw"));
+    assert!(!secret("moqui_conf__webapp_list__webapp__WEBROOT__http_port"));
 
     // the request log's rule: a PASS payment result's returnKey reads the attempt's outcome (SEC-PSA-09)
     let parameter = super::secret_parameter;
@@ -442,7 +395,7 @@ fn a_weak_session_cookie_key_stops_the_boot() {
     let _lock = crate::user::session::cookie_property_lock();
     let _clear = Clear;
     let root = workspace_root();
-    let _env = EnvGuard::new(root.clone());
+    let _env = EnvGuard::new();
     let framework = root.join("runtime/components/base/framework");
     let temp = TempRuntime::new("cookiekey");
     let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
@@ -456,23 +409,27 @@ fn a_weak_session_cookie_key_stops_the_boot() {
         assert!(!err.contains(&weak) || weak == "CHANGEME", "{err}");
     }
     env::set_property(KEY, encode(&[7_u8; 32]));
-    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    for name in factory.property_names() {
-        env::clear_property(name);
-    }
+    ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
 }
 
-fn write_probe_conf(runtime: &Path, name: &str, value: &str) {
-    let text =
-        format!("<moqui-conf><default-property name=\"{name}\" value=\"{value}\" is-secret=\"true\"/></moqui-conf>\n");
-    std::fs::write(runtime.join("conf/MoquiDevConf.xml"), text).unwrap();
+/// The `.env` line of the generated secret these tests look at: the default conf leaves `chat@store-key-secret` at
+/// `CHANGEME`.
+const PROBE_SECRET: &str = "moqui_conf__chat__store_key_secret=";
+
+/// The value of [`PROBE_SECRET`] in `.env` text, empty when it has none.
+fn probe_secret(env_text: &str) -> String {
+    env_text
+        .lines()
+        .find_map(|line| line.strip_prefix(PROBE_SECRET))
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[test]
 fn artifact_stack_allows_and_authz_depth_follows_the_guard() {
     let _lock = crate::user::session::cookie_property_lock();
     let root = workspace_root();
-    let _env = EnvGuard::new(root.clone());
+    let _env = EnvGuard::new();
     let _example = crate::testing::ExampleOff::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("artifact");

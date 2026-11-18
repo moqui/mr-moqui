@@ -961,10 +961,9 @@ fn settings(conf_text: &str) -> Result<Settings, Error> {
     })
 }
 
-/// An attribute as a number, `${}` expanded; `default` when it is missing, empty or not a number.
+/// An attribute as a number; `default` when it is missing, empty or not a number.
 fn usize_attr(node: &MNode, name: &str, default: usize) -> usize {
     node.attribute(name)
-        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
         .and_then(|text| text.trim().parse().ok())
         .unwrap_or(default)
 }

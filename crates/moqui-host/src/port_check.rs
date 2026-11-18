@@ -117,7 +117,7 @@ fn conf_setting(conf: &MNode, path: &str, name: &str) -> String {
         node = node.and_then(|node| node.first_named(step));
     }
     node.and_then(|node| node.attribute(name))
-        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string())
+        .map(|raw| raw.trim().to_string())
         .unwrap_or_default()
 }
 

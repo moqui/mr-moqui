@@ -21,7 +21,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use moqui_lib::env;
 use moqui_lib::node::{with_merge_sources, MNode, Source};
 use moqui_lib::xml_edit::comments::{element_comments, ElementComments};
 use serde::Serialize;
@@ -67,9 +66,6 @@ pub struct ViewAttr {
     pub name: String,
     /// As the file has it; masked for a secret.
     pub value: String,
-    /// The value with its `${}` expanded, where it has any; masked when a secret goes into it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expanded: Option<String>,
     /// The file and line it was set in, when not the element's own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<At>,
@@ -140,10 +136,6 @@ pub struct ViewNode {
     /// A change of the element itself (added, removed, its content) the files hold that is not running yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
-    /// For a `default-property`, the value the server has when something other than the conf set it to another value:
-    /// the environment, `runtime/.env` or `-D`; masked for a secret.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub environment: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<ViewNode>,
 }
@@ -251,21 +243,14 @@ pub fn view(factory: &ExecutionContextFactory) -> Result<ConfView, Error> {
     let env_file = factory.runtime_dir().join(".env");
     let (merged, overrides) = with_merge_sources(|| merge_files_with(&files, None, Some(&env_file)))?;
     let report = preview_conf(factory, &merged)?;
-    let set_by_conf = factory.conf_properties().clone();
-    Ok(build_view(&files, &merged, Some(&report), &set_by_conf, &overrides))
+    Ok(build_view(&files, &merged, Some(&report), &overrides))
 }
 
-/// [`view`] of a merged tree: `report` is the preview against the running conf, `set_by_conf` the properties the conf
-/// set at boot or since, by name, and `overrides` what the environment's names did in the merge.
+/// [`view`] of a merged tree: `report` is the preview against the running conf, and `overrides` what the
+/// environment's names did in the merge.
 #[must_use]
-pub fn build_view(
-    files: &[ConfFile],
-    merged: &MNode,
-    report: Option<&ConfReport>,
-    set_by_conf: &HashMap<String, String>,
-    overrides: &[Override],
-) -> ConfView {
-    let mut walk = Walk::new(files, report, set_by_conf);
+pub fn build_view(files: &[ConfFile], merged: &MNode, report: Option<&ConfReport>, overrides: &[Override]) -> ConfView {
+    let mut walk = Walk::new(files, report);
     walk.set_by = set_by_of(overrides);
     let root = walk.node(merged, None, "", UNKNOWN, None);
     let changes = report.map(|report| report.changes.as_slice()).unwrap_or_default();
@@ -352,8 +337,7 @@ fn line_column_of(message: &str) -> (usize, usize) {
 /// one for each, outermost first.
 #[must_use]
 pub fn file_lines(files: &[ConfFile], index: usize, merged: &MNode) -> Vec<LineInfo> {
-    let none = HashMap::new();
-    let walk = Walk::new(files, None, &none);
+    let walk = Walk::new(files, None);
     let mut out = Vec::new();
     walk.lines(merged, None, "", UNKNOWN, index, &mut out);
     // by line, the elements of one line outermost first; an element merged into two nodes (an override of a keyed
@@ -371,7 +355,6 @@ struct Walk<'a> {
     default_location: Option<String>,
     comments: HashMap<u32, ElementComments>,
     changes: &'a [ConfChange],
-    set_by_conf: &'a HashMap<String, String>,
     /// The attributes an environment name set, by [`compare_key`].
     set_by: HashMap<String, SetBy>,
 }
@@ -395,7 +378,7 @@ fn set_by_of(overrides: &[Override]) -> HashMap<String, SetBy> {
 }
 
 impl<'a> Walk<'a> {
-    fn new(files: &[ConfFile], report: Option<&'a ConfReport>, set_by_conf: &'a HashMap<String, String>) -> Self {
+    fn new(files: &[ConfFile], report: Option<&'a ConfReport>) -> Self {
         let default = files.iter().find(|file| file.role == ConfRole::Default);
         let comments = default
             .and_then(|file| std::fs::read_to_string(&file.path).ok())
@@ -413,7 +396,6 @@ impl<'a> Walk<'a> {
             default_location: default.map(ConfFile::location),
             comments,
             changes: report.map(|report| report.changes.as_slice()).unwrap_or_default(),
-            set_by_conf,
             set_by: HashMap::new(),
         }
     }
@@ -485,11 +467,6 @@ impl<'a> Walk<'a> {
                 }
             }
         }
-        let is_property = node.has_name("default-property") && path.starts_with("default-property[");
-        let property_name = is_property.then(|| node.attribute("name").unwrap_or_default());
-        let property_secret = property_name.as_deref().is_some_and(|name| {
-            crate::context::factory::property_is_secret(name, node.attribute("is-secret").as_deref())
-        });
         let own_change = unit.is_some().then(|| self.change(path, None)).flatten();
         let attrs = node
             .attributes()
@@ -501,7 +478,7 @@ impl<'a> Walk<'a> {
                     || conf_schema::secret_name(&name),
                     crate::context::conf_env::attribute_secret,
                 );
-                let secret = (property_secret && name == "value") || schema_secret;
+                let secret = schema_secret;
                 let env_name = attr_path.as_ref().and_then(AttrPath::env_name);
                 let set_by = attr_path
                     .as_ref()
@@ -510,16 +487,6 @@ impl<'a> Walk<'a> {
                     .attribute_source(&name)
                     .and_then(|source| self.at(&source))
                     .filter(|at| sources.first() != Some(at));
-                let expanded = value
-                    .contains("${")
-                    .then(|| env::expand(&value).unwrap_or_default())
-                    .map(|expanded| {
-                        if secret || refers_to_secret(&value) {
-                            MASKED.to_string()
-                        } else {
-                            expanded
-                        }
-                    });
                 let pending = unit.and_then(|_| self.change(path, Some(&name))).map(|change| Pending {
                     outcome: outcome_name(change),
                     running: change
@@ -529,13 +496,11 @@ impl<'a> Walk<'a> {
                     reason: change.reason.clone(),
                 });
                 ViewAttr {
-                    // a `${}` reference names the property, which is not secret; its expanded value is masked above
-                    value: if secret && !value.is_empty() && !value.contains("${") {
+                    value: if secret && !value.is_empty() {
                         MASKED.to_string()
                     } else {
                         value
                     },
-                    expanded,
                     source,
                     class: (attr_class != class).then_some(attr_class.name()),
                     reason: (attr_class != class)
@@ -548,19 +513,6 @@ impl<'a> Walk<'a> {
                 }
             })
             .collect();
-        let environment = property_name.and_then(|name| {
-            let current = env::get_prop_or_env(&name);
-            let by_conf = self.set_by_conf.get(&name).is_some_and(|value| *value == current);
-            // only a value other than the conf's own: the environment overriding it
-            let conf_value = env::expand(&node.attribute("value").unwrap_or_default()).unwrap_or_default();
-            (!current.is_empty() && !by_conf && current != conf_value).then(|| {
-                if property_secret {
-                    MASKED.to_string()
-                } else {
-                    current
-                }
-            })
-        });
         let comments = self.comments_of(node);
         let child_units = unit.map_or(&[][..], |unit| unit.children);
         let children = if path.is_empty() {
@@ -606,7 +558,6 @@ impl<'a> Walk<'a> {
                 running: None,
                 reason: change.reason.clone(),
             }),
-            environment,
             children,
         }
     }
@@ -689,17 +640,6 @@ fn outcome_name(change: &ConfChange) -> &'static str {
         super::Outcome::NoEffect => "no-effect",
         super::Outcome::Failed => "failed",
     }
-}
-
-/// Whether a `${}` in `value` names a secret property.
-fn refers_to_secret(value: &str) -> bool {
-    value.split("${").skip(1).any(|rest| {
-        let body = rest.split('}').next().unwrap_or_default();
-        body.split("?:")
-            .map(|term| term.trim())
-            .filter(|term| !term.starts_with('\'') && !term.is_empty())
-            .any(|name| crate::context::factory::property_is_secret(name, None))
-    })
 }
 
 #[cfg(test)]

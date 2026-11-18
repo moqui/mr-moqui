@@ -196,7 +196,7 @@ fn record_integrations(factory: &ExecutionContextFactory) {
 /// The model the merged conf binds Assist to, and that model's name, its properties expanded: (`claude-haiku`,
 /// `claude-haiku-5-5`). A binding an administrator saved (`LlmFeatureBinding`) is not read here.
 fn assist_model(conf_text: &str) -> Option<(String, String)> {
-    let expand = |raw: String| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string();
+    let expand = |raw: String| raw.trim().to_string();
     let conf = moqui_lib::node::MNode::parse_text("conf", conf_text).ok()?;
     let facade = conf.first_named("llm-facade")?;
     // the assist bind's model, else the facade's default-model, which a bind with no model takes

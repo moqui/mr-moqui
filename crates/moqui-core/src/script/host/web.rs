@@ -477,8 +477,8 @@ pub(super) const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
 /// plans/Security-Review-Medium.md SEC-SCR-03). Each name is a conf selector (it has an `@`) or a property. A header
 /// goes only to a URL under the base URL the other setting holds (`moqui_lib::http::url_under_base`: the same scheme,
 /// host and port, a path at or below the base's). Refused, with nothing sent: a setting that is not set, a base that is
-/// not set or is itself a secret, a URL outside the base, and a secret of this server's (an attribute the conf schema
-/// marks secret, such as the crypt pass or an LLM key, or a property the conf marks `is-secret`). The caller sends the
+/// not set or is itself a secret, a URL outside the base, a conf attribute's environment name, and a secret of this
+/// server's (an attribute the conf schema marks secret, such as the crypt pass or an LLM key). The caller sends the
 /// request without following a redirect, so the header goes to that URL alone.
 pub(super) fn property_headers(
     request: &moqui_lib::object::ValueMap,
@@ -505,11 +505,13 @@ pub(super) fn property_headers(
             return Err(HostError::message(ARGUMENTS));
         }
         use crate::context::conf_env;
-        let own_key = if property.contains('@') {
-            conf_env::declared_secret(&property)
-        } else {
-            crate::context::identity::conf_secret_here(&property)
-        };
+        if moqui_lib::node::path::env_segments(&property).is_some() {
+            return Err(HostError::message(format!(
+                "addPropertyHeader takes a conf setting by its selector (pass@client-secret), not {property}"
+            )));
+        }
+        // a selector the conf schema marks secret is this server's own key; a property never is
+        let own_key = property.contains('@') && conf_env::declared_secret(&property);
         if own_key {
             return Err(HostError::message(format!(
                 "addPropertyHeader does not send the setting {property}: it is a key of this server"
@@ -518,7 +520,7 @@ pub(super) fn property_headers(
         let base_secret = if base.contains('@') {
             conf_env::selector_secret(&base)
         } else {
-            crate::context::identity::script_refused_property_here(&base)
+            crate::context::identity::script_refused_property(&base)
         };
         if base_secret {
             return Err(HostError::message(format!(

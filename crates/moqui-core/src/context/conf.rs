@@ -268,6 +268,7 @@ pub fn merge_conf(base: &MNode, over: &MNode) {
 fn merge_component_elements(base: &MNode, over: &MNode) {
     for over_child in over.children() {
         let name = over_child.name().to_string();
+        // a default-property is refused at boot (conf_env::refuse_retired), not merged
         if name == "component-list" || name == "default-property" || super::conf_schema::is_known_element(&name) {
             continue;
         }
@@ -314,7 +315,6 @@ fn merge_config_component_nodes(base: &MNode, over: &MNode) {
 }
 
 fn merge_config_nodes(base: &MNode, over: &MNode) {
-    base.merge_children_by_keys(over, "default-property", keys(&["default-property"]), None);
     base.merge_child_with_child_key(over, "tools", "tool-factory", keys(&["tools", "tool-factory"]), None);
     base.merge_child_with_child_key(over, "cache-list", "cache", keys(&["cache-list", "cache"]), None);
     base.merge_child_with_child_key(over, "telemetry", "artifact", keys(&["telemetry", "artifact"]), None);

@@ -442,8 +442,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The instance setting registry and the instance preferences (mr-boss plan/design-admin.md §7 InstanceSettings, §17.2
         InstancePreference; impl-admin P8), read and changed through org.moqui.admin.ConfigurationServices. A setting is
         registered by seed data of the component that reads it: a preference (editable Y, its value an InstancePreference row
-        when one is set, else the conf property it names, else its default) or a deployment configuration value shown read
-        only (editable N, a default-property of the conf). The registration fixes the type, allowed values, limits and
+        when one is set, else the conf attribute it names, else its default) or a deployment configuration value shown read
+        only (editable N, a conf attribute). The registration fixes the type, allowed values, limits and
         default; there is no unregistered key, JSON or code value, and a secret is never a preference: a setting marked
         secret, or whose property name reads as one, is never returned, only whether it is set. -->
     <entity entity-name="InstanceSetting" package="moqui.server" use="configuration" cache="true">
@@ -460,8 +460,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="maxValue" type="number-integer"><description>The greatest whole number</description></field>
         <field name="maxLength" type="number-integer"><description>The longest text (255 when empty, never more)</description></field>
         <field name="defaultValue" type="text-medium"><description>The value with no preference and no conf property</description></field>
-        <field name="propertyName" type="text-medium"><description>The conf default-property (or environment variable) that
-            holds the value of a configuration setting, or is a preference's value until one is set</description></field>
+        <field name="propertyName" type="text-medium"><description>The conf attribute by its selector
+            (webapp-list/webapp[webroot]@http-host), or a process property or environment variable, that holds the value of a
+            configuration setting, or is a preference's value until one is set</description></field>
         <field name="confAttribute" type="text-medium"><description>For a configuration setting no property holds: the conf
             attribute it shows, one of those ConfigurationServices.get#SignInPolicyValues answers
             (user-facade/password/@min-length, webapp/session-config/@timeout); the value is the one the server runs

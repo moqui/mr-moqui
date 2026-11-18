@@ -27,13 +27,9 @@ fn a_save_replaces_the_file_whole_and_keeps_its_mode() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
     }
     let permissions = std::fs::metadata(&path).unwrap().permissions();
-    write_replacing(
-        &path,
-        "<moqui-conf>\n    <default-property name=\"a\" value=\"b\"/>\n</moqui-conf>\n",
-    )
-    .unwrap();
+    write_replacing(&path, "<moqui-conf>\n    <instance purpose=\"dev\"/>\n</moqui-conf>\n").unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.contains("name=\"a\""));
+    assert!(text.contains("purpose=\"dev\""));
     assert_eq!(std::fs::metadata(&path).unwrap().permissions(), permissions);
     // no file of the save is left beside it
     let names: Vec<String> = std::fs::read_dir(&dir)

@@ -347,9 +347,11 @@ pub fn conf_attribute(conf: &MNode, selector: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A name of a table that lists settings: a conf selector (it has an `@`) read by [`setting`], else a property not yet
-/// moved to the conf (plans/Conf-Paths.md §7), read as before. For the name tables (the edge's own ports, the protocol
-/// facts) while the settings move; a selector's own text is its name in their messages.
+/// A name of a table that lists settings: a conf selector (it has an `@`) read by [`setting`], else a process property:
+/// the state the server sets as it runs, which is not configuration (the XMPP server's resolved addresses, a cluster
+/// member's SSH address; plans/Conf-Paths.md, Decisions). For the name tables and the lookup closures that read both
+/// (the edge's own ports, the protocol facts, the SIP and media settings); a selector's own text is its name in their
+/// messages.
 #[must_use]
 pub fn setting_or_property(name: &str) -> String {
     if name.contains('@') {
@@ -406,6 +408,19 @@ pub fn attribute_secret(path: &AttrPath) -> bool {
     conf_schema::attribute_secret(&names, &path.attribute)
 }
 
+/// Whether `name` is the environment name of a secret conf attribute (`moqui_conf__entity_facade__crypt_pass`), by the
+/// conf schema or by its attribute's name ([`attribute_secret`]); its segments split as the schema keys them, with no
+/// conf tree needed. False for any other name.
+#[must_use]
+pub fn env_name_secret(name: &str) -> bool {
+    let Some(segments) = path::env_segments(name) else {
+        return false;
+    };
+    let scratch = MNode::new("moqui-conf");
+    path::resolve_env(&scratch, &segments, &conf_schema::keying, true)
+        .is_ok_and(|target| attribute_secret(&target.path))
+}
+
 /// Whether `selector` names a secret attribute, by the conf schema or by its name ([`attribute_secret`]); true for
 /// text that is no selector, so a caller refusing secrets refuses it too.
 #[must_use]
@@ -423,6 +438,59 @@ pub fn declared_secret(selector: &str) -> bool {
         let names: Vec<&str> = path.steps.iter().map(|step| step.element.as_str()).collect();
         conf_schema::unit(&names).is_some_and(|unit| unit.secrets.iter().any(|(name, _)| *name == path.attribute))
     })
+}
+
+/// Refuse a merged conf that still uses the retired properties (plans/Conf-Paths.md, phase 7): a `default-property`,
+/// which nothing reads, and an attribute holding `${`, which is not expanded (an `actions` block's XML actions are not
+/// conf attributes and keep theirs). Each is logged, naming its attribute and the environment name that sets it.
+///
+/// # Errors
+///
+/// When the conf has either.
+pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
+    let mut found = Vec::new();
+    for node in conf.children_named("default-property") {
+        found.push(format!(
+            "<default-property name=\"{}\"> is not read: set the attribute it fed (`moqui conf env` lists each \
+             attribute with its environment name)",
+            node.attribute("name").unwrap_or_default()
+        ));
+    }
+    expressions_in(conf, &mut found);
+    if found.is_empty() {
+        return Ok(());
+    }
+    for item in &found {
+        tracing::error!("Conf: {item}");
+    }
+    Err(Error::new(format!(
+        "the conf uses properties, which are retired (plans/Conf-Paths.md): {}",
+        found.join("; ")
+    )))
+}
+
+/// Each attribute under `node` that holds `${`, outside `actions` blocks.
+fn expressions_in(node: &MNode, found: &mut Vec<String>) {
+    for child in node.child_iter() {
+        if child.has_name("actions") || child.has_name("default-property") {
+            continue;
+        }
+        for (attribute, value) in child.attributes() {
+            if !value.contains("${") {
+                continue;
+            }
+            let path = AttrPath::of(&child, &attribute, &conf_schema::keying);
+            let selector = path
+                .as_ref()
+                .map_or_else(|| format!("{}@{attribute}", child.name()), AttrPath::selector);
+            let env_name = path.as_ref().and_then(AttrPath::env_name).unwrap_or_default();
+            found.push(format!(
+                "{selector} holds a ${{}}, which is not expanded: write its value, or set it from the environment \
+                 ({env_name})"
+            ));
+        }
+        expressions_in(&child, found);
+    }
 }
 
 /// Log what the environment did to the conf, once, at boot: each name set or added at INFO (never a secret's value),

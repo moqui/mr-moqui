@@ -161,13 +161,12 @@ impl SessionTable {
     }
 }
 
-/// An attribute of the `webroot` webapp's `session-config` in the merged conf, `${}` expanded and trimmed.
+/// An attribute of the `webroot` webapp's `session-config` in the merged conf, trimmed.
 fn session_config_attr(conf: &MNode, name: &str) -> String {
     conf.first_named("webapp-list")
         .and_then(|list| list.first_named_attrs("webapp", &[("name", "webroot")]))
         .and_then(|webapp| webapp.first_named("session-config"))
         .and_then(|config| config.attribute(name))
-        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
         .map(|value| value.trim().to_string())
         .unwrap_or_default()
 }

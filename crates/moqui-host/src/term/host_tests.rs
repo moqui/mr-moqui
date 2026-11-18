@@ -12,14 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::{argv, available, conf_profiles, directory, environment, own_profiles, EnvFor, Profile};
 
 const CONF: &str = r#"<moqui-conf>
     <instance purpose="dev"/>
-    <default-property name="entity_ds_password" value=""/>
     <terminal>
         <host-profile name="shell" title="My shell" integration="true"/>
         <host-profile name="sh" title="POSIX" command="sh" args="-c 'x'" login="true"/>
@@ -93,11 +91,9 @@ fn the_directory_is_the_asked_then_the_profiles_then_the_confs_then_above_the_ru
 }
 
 #[test]
-fn the_environment_leaves_out_the_confs_properties_and_sets_the_terminals() {
+fn the_environment_leaves_out_the_confs_names_and_sets_the_terminals() {
     let server = vec![
         ("PATH".to_string(), "/usr/bin".to_string()),
-        ("entity_ds_password".to_string(), "secret".to_string()),
-        ("ENTITY_DS_PASSWORD".to_string(), "secret".to_string()),
         ("MOQUI_CONF".to_string(), "conf/x.xml".to_string()),
         (
             "moqui_conf__entity_facade__crypt_pass".to_string(),
@@ -106,14 +102,12 @@ fn the_environment_leaves_out_the_confs_properties_and_sets_the_terminals() {
         ("MOQUI_CONF__SSH_SERVER__HOST_KEY".to_string(), "secret".to_string()),
         ("TERM".to_string(), "dumb".to_string()),
     ];
-    let properties: BTreeSet<String> = BTreeSet::from(["entity_ds_password".to_string()]);
     let profile = Profile {
         env: vec![("EDITOR".to_string(), "vi".to_string())],
         ..Profile::default()
     };
     let env = environment(&EnvFor {
         server,
-        properties: &properties,
         session_id: "s1",
         runtime: Path::new("/srv/runtime"),
         username: "john.doe",
@@ -121,8 +115,6 @@ fn the_environment_leaves_out_the_confs_properties_and_sets_the_terminals() {
     });
     let get = |name: &str| env.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_str());
     assert_eq!(get("PATH"), Some("/usr/bin"));
-    assert_eq!(get("entity_ds_password"), None);
-    assert_eq!(get("ENTITY_DS_PASSWORD"), None);
     assert_eq!(get("MOQUI_CONF"), None);
     assert_eq!(get("moqui_conf__entity_facade__crypt_pass"), None);
     assert_eq!(get("MOQUI_CONF__SSH_SERVER__HOST_KEY"), None);

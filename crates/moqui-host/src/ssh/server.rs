@@ -163,7 +163,7 @@ pub(crate) fn listen_target(conf: &MNode) -> Result<Option<(String, u16)>, Error
     configured_target(&|name: &str| {
         node.as_ref()
             .and_then(|node| node.attribute(name))
-            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string())
+            .map(|raw| raw.trim().to_string())
             .unwrap_or_default()
     })
 }

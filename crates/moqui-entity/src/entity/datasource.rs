@@ -58,16 +58,16 @@ pub fn datasource_factory(name: &str) -> Option<std::sync::Arc<dyn DatasourceFac
     moqui_lib::sync::read(factories()).get(name).cloned()
 }
 
-/// The `<datasource>` elements of the merged conf, `${}` left in their attributes.
+/// The `<datasource>` elements of the merged conf.
 pub fn datasource_nodes(conf: &MNode) -> Vec<MNode> {
     conf.first_named("entity-facade")
         .map(|entity| entity.children_named("datasource"))
         .unwrap_or_default()
 }
 
-/// A datasource attribute with `${}` expanded.
+/// A datasource attribute, trimmed.
 pub fn datasource_attribute(node: &MNode, name: &str) -> String {
-    expanded(node, name)
+    trimmed(node, name)
 }
 
 /// Which driver serves a datasource.
@@ -179,7 +179,7 @@ impl EmbeddedSettings {
     /// Names the datasource and the attribute whose value is not such a size.
     pub fn of(node: &MNode, group: &str) -> Result<Self, Error> {
         let read = |name: &str| -> Result<Option<String>, Error> {
-            let value = expanded(node, name);
+            let value = trimmed(node, name);
             if value.is_empty() {
                 return Ok(None);
             }
@@ -215,7 +215,7 @@ impl EmbeddedSettings {
             "maintenance-work-mem",
             "effective-cache-size",
         ] {
-            let value = expanded(node, name);
+            let value = trimmed(node, name);
             if !value.is_empty() {
                 tracing::debug!(
                     "Datasource {group} attribute {name} \"{value}\" is ignored: it sets the embedded cluster only"
@@ -356,7 +356,7 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         .into_iter()
         .find(|node| node.attribute_is("group-name", group))
         .ok_or_else(|| Error::new(format!("the conf has no datasource for group {group}")))?;
-    let conf_name = expanded(&datasource, "database-conf-name");
+    let conf_name = trimmed(&datasource, "database-conf-name");
     let kind = match conf_name.as_str() {
         "" | "embedded" | "h2" => DatasourceKind::Embedded,
         "postgres" => DatasourceKind::Postgres,
@@ -388,10 +388,10 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
     }
     // As Java's `EntityInfo`: `use-schemas="false"` puts no schema in front of the tables, so they are wherever the
     // connection puts them.
-    let schema = if expanded(&database_node, "use-schemas") == "false" {
+    let schema = if trimmed(&database_node, "use-schemas") == "false" {
         String::new()
     } else {
-        expanded(&datasource, "schema-name")
+        trimmed(&datasource, "schema-name")
     };
     let mut conf = DatasourceConf {
         group: group.to_string(),
@@ -409,19 +409,19 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         pool,
         isolation_level,
         // As Java's `EntityFacadeImpl` and `EntityDbMeta`.
-        startup_add_missing: match expanded(&datasource, "startup-add-missing").as_str() {
-            "" => expanded(&database_node, "default-startup-add-missing") == "true",
+        startup_add_missing: match trimmed(&datasource, "startup-add-missing").as_str() {
+            "" => trimmed(&database_node, "default-startup-add-missing") == "true",
             value => value == "true",
         },
-        runtime_add_missing: match expanded(&datasource, "runtime-add-missing").as_str() {
-            "" => expanded(&database_node, "default-runtime-add-missing") != "false",
+        runtime_add_missing: match trimmed(&datasource, "runtime-add-missing").as_str() {
+            "" => trimmed(&database_node, "default-runtime-add-missing") != "false",
             value => value != "false",
         },
-        runtime_add_fks: match expanded(&datasource, "runtime-add-fks").as_str() {
+        runtime_add_fks: match trimmed(&datasource, "runtime-add-fks").as_str() {
             "" => true,
             value => value == "true",
         },
-        pg_stat_statements: expanded(&datasource, "pg-stat-statements") == "true",
+        pg_stat_statements: trimmed(&datasource, "pg-stat-statements") == "true",
         preload_pg_stat_statements: false,
         embedded_settings: if kind == DatasourceKind::Embedded {
             EmbeddedSettings::of(&datasource, group)?
@@ -436,13 +436,13 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         // named by the datasource's `database`, or its own `xa-properties` `databaseName`; the transactional one is the
         // cluster's own
         if group != "transactional" {
-            conf.database = Some(expanded(&datasource, "database"))
+            conf.database = Some(trimmed(&datasource, "database"))
                 .filter(|database| !database.is_empty())
                 .or_else(|| {
                     datasource
                         .first_named("inline-jdbc")
                         .and_then(|own| own.first_named("xa-properties"))
-                        .map(|xa| expanded(&xa, "databaseName"))
+                        .map(|xa| trimmed(&xa, "databaseName"))
                 })
                 .unwrap_or_default();
         }
@@ -457,7 +457,7 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
             .flatten();
         let own_connection = datasource
             .first_named("inline-jdbc")
-            .filter(|own| own.first_named("xa-properties").is_some() || !expanded(own, "jdbc-uri").is_empty());
+            .filter(|own| own.first_named("xa-properties").is_some() || !trimmed(own, "jdbc-uri").is_empty());
         match own_connection {
             Some(own) => connection(&mut conf, &own)?,
             None => attributes(&mut conf, &datasource, transactional.as_ref())?,
@@ -485,9 +485,9 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
 /// is logged and does the same.
 fn isolation_level(group: &str, inline: Option<&MNode>, database: &MNode) -> Option<IsolationLevel> {
     let name = inline
-        .map(|node| expanded(node, "isolation-level"))
+        .map(|node| trimmed(node, "isolation-level"))
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| expanded(database, "default-isolation-level"));
+        .unwrap_or_else(|| trimmed(database, "default-isolation-level"));
     let level = IsolationLevel::from_conf(&name);
     if level.is_none() && !name.is_empty() && name != "None" {
         tracing::warn!("Datasource {group} isolation level {name} is not a level, leaving the server's default");
@@ -522,7 +522,7 @@ fn postgres_isolation_warning(group: &str, kind: DatasourceKind, level: Option<I
 /// seconds (Bitronix's default). `pool-reserve` is this port's, default 8.
 fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, Error> {
     let number = |name: &str, fallback: u32| -> Result<u32, Error> {
-        let raw = inline.map(|node| expanded(node, name)).unwrap_or_default();
+        let raw = inline.map(|node| trimmed(node, name)).unwrap_or_default();
         if raw.is_empty() {
             return Ok(fallback);
         }
@@ -530,9 +530,9 @@ fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, E
             .map_err(|_| Error::new(format!("inline-jdbc {name}=\"{raw}\" is not a whole number")))
     };
     let test_query = inline
-        .map(|node| expanded(node, "pool-test-query"))
+        .map(|node| trimmed(node, "pool-test-query"))
         .filter(|sql| !sql.is_empty())
-        .or_else(|| Some(expanded(database, "default-test-query")).filter(|sql| !sql.is_empty()));
+        .or_else(|| Some(trimmed(database, "default-test-query")).filter(|sql| !sql.is_empty()));
     let max = number("pool-maxsize", 50)?;
     Ok(PoolConfig {
         min: number("pool-minsize", 5)?.min(max),
@@ -547,7 +547,7 @@ fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, E
 
 /// The `inline-jdbc` `read-timeout`, in seconds; `None` when not given.
 fn read_timeout(inline: Option<&MNode>) -> Result<Option<Duration>, Error> {
-    let raw = inline.map(|node| expanded(node, "read-timeout")).unwrap_or_default();
+    let raw = inline.map(|node| trimmed(node, "read-timeout")).unwrap_or_default();
     if raw.is_empty() {
         return Ok(None);
     }
@@ -565,9 +565,9 @@ fn read_timeout(inline: Option<&MNode>) -> Result<Option<Duration>, Error> {
 /// `database-conf-name` for the content puts it on the transactional server.
 fn attributes(conf: &mut DatasourceConf, datasource: &MNode, fallback: Option<&MNode>) -> Result<(), Error> {
     let get = |name: &str| -> String {
-        let own = expanded(datasource, name);
+        let own = trimmed(datasource, name);
         if own.is_empty() && name != "database" {
-            fallback.map(|node| expanded(node, name)).unwrap_or_default()
+            fallback.map(|node| trimmed(node, name)).unwrap_or_default()
         } else {
             own
         }
@@ -591,7 +591,7 @@ fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
         let get = |names: &[&str]| -> String {
             names
                 .iter()
-                .map(|name| expanded(&xa, name))
+                .map(|name| trimmed(&xa, name))
                 .find(|value| !value.is_empty())
                 .unwrap_or_default()
         };
@@ -610,12 +610,12 @@ fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
         }
         return Ok(());
     }
-    let uri = expanded(inline, "jdbc-uri");
+    let uri = trimmed(inline, "jdbc-uri");
     if !uri.is_empty() {
         jdbc_uri(conf, &uri)?;
     }
-    conf.user = expanded(inline, "jdbc-username");
-    conf.password = expanded(inline, "jdbc-password");
+    conf.user = trimmed(inline, "jdbc-username");
+    conf.password = trimmed(inline, "jdbc-password");
     Ok(())
 }
 
@@ -701,9 +701,9 @@ pub fn tls_verify(mode: &str) -> TlsVerify {
     }
 }
 
-fn expanded(node: &MNode, name: &str) -> String {
+fn trimmed(node: &MNode, name: &str) -> String {
     let raw = node.attribute(name).unwrap_or_default();
-    moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string()
+    raw.trim().to_string()
 }
 
 #[cfg(test)]

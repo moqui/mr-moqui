@@ -2240,7 +2240,7 @@ fn startup_load_flags(conf_text: &str) -> Result<LoadFlags, moqui_lib::error::Er
         .and_then(|tools| tools.attribute("empty-db-load"))
         .unwrap_or_default();
     Ok(LoadFlags {
-        data_types: Some(split_csv(&moqui_lib::env::expand(&types)?)),
+        data_types: Some(split_csv(&types)),
         ..LoadFlags::default()
     })
 }
