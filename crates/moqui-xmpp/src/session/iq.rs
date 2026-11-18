@@ -282,7 +282,9 @@ impl Session {
                     .map(|found| backend::list(found, "roomList"))
                     .unwrap_or_default()
                 {
-                    if backend::flag(room, "encrypted") {
+                    if backend::flag(room, "encrypted")
+                        || backend::number(room, "messageTimerSeconds").is_some_and(|seconds| seconds > 0)
+                    {
                         continue;
                     }
                     let id = backend::text(room, "chatRoomId");

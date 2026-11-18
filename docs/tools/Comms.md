@@ -94,12 +94,33 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   as it scrolls, keeps what it loaded when something new comes in at the top, and opens the message, or the thread; an
   encrypted room's text is decrypted in the page. **All** groups the rooms: Pinned, Recent, Phone (a phone number's rooms) and Bridged (rooms a bridge carries
   to another network); a group's header folds it, kept per user in this browser. Phone is a filter too, and the phone's
-  home has All and Phone. **Mail on a person's row:** a direct chat with a user of this server shows their latest mail
-  thread of the last 180 days in the mail you may read (your accounts and those shared with you), matched by their
-  user account's mail address only (not a mail account they own or share), as a line "Email: subject", which says
-  "Email is not end-to-end encrypted" and opens the thread in the Inbox (a link: Tab and Enter reach it). Mail stays in the Inbox: there are no mail-only rows, and an outside person waits for
-  unified contacts (`find#DirectChatMail` of `org.moqui.comms.ChatScreenServices`, the `mailLines` transition, one query
+  home has All and Phone. **Mail on a person's row:** a person's rooms (below) show their latest mail thread of the last
+  180 days in the mail you may read (your accounts and those shared with you), as a line "Email: subject", which says
+  "Email is not end-to-end encrypted" and opens the thread in the Inbox (a link: Tab and Enter reach it). A user of this
+  server matches by their user account's mail address (not a mail account they own or share) and the addresses you
+  added to them; an outside person by their contact's addresses and those you added. Mail stays in the Inbox: there are
+  no mail-only rows (`find#DirectChatMail` of `org.moqui.comms.ChatScreenServices`, the `mailLines` transition, one query
   for the list).
+- <a id="people-across-networks"></a>**People across networks** (plans/Comms-Messaging.md §11.1, phase 22). Your rooms
+  with one person on different networks are that one person: a direct chat with a user of this server, a phone number's
+  SMS and RCS rooms, a GroupMe direct conversation. They are grouped by your own changes and by the contacts you can see
+  in the apps (with Mantle: your personal contacts, your books and those shared with you, your organizations'
+  directory). Each room stays a row of its own, with its network's icon and label, and shows the person's name. In a
+  person's room the composer starts with a **network button**: it lists their ways, the best first (MR Moqui chat for a
+  user of this server, end to end encrypted when they have a device; else the network they last wrote on; else their
+  text room with the latest message from either side, or a new text from your number; else mail), each with what it
+  encrypts. Choosing one opens that room, or starts it, with your draft added after the draft it already has; a draft
+  moved out of an encrypted chat says so, and a draft with files attached does not move (send or remove the files
+  first). A text or GroupMe room of a user of this server offers "chat there" above the composer. The People tab starts
+  with the person's **card**: Rename, Add (another conversation of theirs, a number or a mail address; a user of this
+  server takes only a number or address of one of your conversations), Not this person on each address, Undo my
+  changes, Open the contact. Your people are your own: nobody else sees them or is told. A user's phone number is never
+  shown through chat: of a user of this server you see only the numbers of your own rooms with them. A number on your
+  Blocked list, one that replied STOP or a bridge that is not connected shows dimmed with its reason and is never the
+  best; a person you blocked has no ways, and a user who blocked you, or whom an app keeps from you, is as one that does
+  not exist (no name or addresses from the contacts, no new chat). While the contacts cannot be asked (an hour's 60
+  asks used, or the app's hook failing), Rename and Add say to try again shortly
+  (`org.moqui.chat.ChatPeopleServices`, the `people` transition).
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). A new direct chat or private room is encrypted when everyone in it
   has a crypto device (Chat makes your browser's when it opens); otherwise it is plain, with the plain note. A direct chat
   you already have keeps opening; when it is plain and the other person has a device, its menu and its start offer Start
@@ -220,6 +241,27 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   - *Unblock.* Their messages show again, but the mentions and Activity they made during the block do not come back.
   - *Not covered.* A blocked person's reactions and poll votes still count in the totals; the XMPP blocklist of your
     XMPP app (XEP-0191) is its own.
+- <a id="disappearing-messages"></a>**Disappearing messages and view-once** (plans/Comms-Messaging.md §18.3 phase 16).
+  - *The timer.* A room's menu, its Room settings or the timer chip in its header opens Disappearing messages: Off, 30
+    seconds, 5 minutes, 1 hour, 8 hours, 1 day, 1 week or 4 weeks. Any member of a direct chat sets it, and a moderator or
+    owner of another room. A new message then goes that long after it is sent, read or not, on the server and on every
+    member's device: it leaves the timeline, its thread, the details tabs, search results, Activity and the room list, and
+    its files, links and link previews go with it. A change is a line in the room ("Ana set disappearing messages to 1
+    hour"), and messages sent before keep their own time. An expiring message has a timer by its time with the time it has
+    left. A bridged room, a phone room and a record's room have no timer: a bridge cannot delete a message that went to its
+    network, and a record keeps its history; a room with a timer cannot be bridged until it is off. XMPP clients are not
+    served a room with a timer, an expiring message is never put in the search index (without OpenSearch the database
+    search finds one while it stands), it is not handed to an agent, it cannot be forwarded, and its notifications and
+    pushes say only who sent it and where. In an encrypted room the server also drops the key backup of a session once no
+    message of the room uses it. Anyone in the room can still copy or photograph a message before it goes; a database
+    backup made while it stood keeps it until that backup is removed (a restored one deletes what is past due at once).
+    Chat has no export; an administrator's entity export or data transfer holds what stood at that moment.
+  - *View once.* With one photo or video waiting and no text, its chip has View once (not in a bridged room). Each
+    person in the room opens it once, full screen, with no download or forward; closing it ends it, and the message
+    then reads Opened. The sender sees Opened, or "Opened by 2 of 4" (people with read receipts off are not counted). The
+    server deletes the file once everyone has opened it, and a view-once message nobody opened goes after 14 days
+    (`chat_view_once_days`). While it is open the Android app blocks screenshots and screen recording; a browser and the
+    desktop app cannot, and the viewer says so.
 - **Send later and reminders** (plans/Comms-Messaging.md §18.3 phase 15; `org.moqui.chat.ChatScheduleServices`).
   - *Send later.* A long press on Send on a phone, or the arrow beside Send or a right click on it on a desktop, opens
     Send later: in an hour, tomorrow morning or afternoon, Monday morning (on a Friday or Saturday), or a date and time
@@ -257,6 +299,109 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
     its text: a plain room's notification shows the message's start (unless message previews are off), an encrypted
     room's does not. A reminder of a message deleted since, or of a room you can no longer read, does not come, nor one
     of an account closed or without the app; a sign-in lock only makes it wait.
+- **Events** (plans/Comms-Messaging.md §18.3 phase 19; `org.moqui.chat.ChatCalServices`). The composer's More menu (+)
+  has Event: a title, all day or a start and end, the time zone (yours first), a place and details. The event is a card
+  in the room: its date, the time in your zone (and the event's own when yours differs), the place (a tap searches
+  OpenStreetMap for it), Going, Maybe and No (a tap answers, the same tap takes it back), and how many answered; a tap on
+  the counts shows who. Once you answer Going or Maybe you can pick a reminder (15 minutes, an hour or a day before; an
+  hour by default for Going), which comes as a message reminder does, and Add to calendar:
+  - with an app that keeps calendars (IronStone: the event on your default calendar in Commons, Calendar, changed and
+    cancelled with the chat event, taken off when you answer No);
+  - in the Android app, the phone's calendar app opened on a new event filled in;
+  - else the event's `.ics` file, which the card's menu also downloads. Imported again after a change, it updates the
+    same entry.
+
+  Its creator and the room's moderators change it (at most 20 times) or cancel it (for good); each change or
+  cancellation is a message in the room, a reply to the event, so everyone sees it, and the reminders move or go with
+  it. Everyone else (the terminal, XMPP, SMS, bridges, notifications, search) gets the event as text: "Event: Picnic",
+  its time in its zone, "Where: …" and the details. An encrypted room has no events, as it has no polls: the server keeps
+  the answers and writes the text.
+- **Invite links and join requests** (plans/Comms-Messaging.md §18.3 phase 17; `org.moqui.chat.ChatInviteServices`).
+  - *Invite links.* The room menu's Invite links, in a private room for its moderators and owners, in a public room for
+    any member (there the link is a shortcut: anyone with an account may join a public room from Browse). A link is
+    `https://<server>/join/<token>`, with a label, an end (an hour, a day, a week by default, 30 days, or none) and a number
+    of people it takes (1 to 100, or no limit); in a private room it may ask a moderator to approve each person. The dialog
+    lists the links in force with Copy, QR code (large, for a phone's camera; Download as SVG), Share (a phone's share
+    sheet) and Revoke, which stops a link at once. A link also stops when its maker is no longer a moderator (or member),
+    when the room is archived, and at most 20 are in force a room. Direct, record and phone rooms take none.
+  - *The join page.* A link opens the room's name and member count. Signed out, it asks you to sign in and comes back
+    after; there are no guests: you need an account on the server. Signed in, Join puts you in the room ("joined by an
+    invite link"), or Ask to join with a note sends a request. Someone a member took out of the room comes back only by a
+    request. In an encrypted room you read what is sent after you join, on a device set up for encrypted chat. On Android
+    the page offers Open in the MR Moqui app, which opens the same page in the app's account on that server.
+  - *Join requests.* A moderator hears of a new request by the notification bell, and the room shows "2 people ask to
+    join · Review" above the composer; the dialog lists each person with their note and where they came from, with Approve,
+    Deny and Approve all. The person is told either way. A request waits 30 days; after a deny the person may ask again
+    in 7 days. Limits: 10 waiting requests a person, 100 a room, 30 joins and requests an hour.
+  - *List in Browse.* A private room's owner lists it in Browse (the Invite links dialog): its name, topic and member count
+    show to people who are not in it, under "Private rooms you can ask to join", and Ask to join sends a request. Its
+    messages stay its members'.
+  - *Who a link takes.* A link takes only people its maker could add to the room: someone the maker blocked, or an app keeps
+    from the maker (its chat-target provider, as for Add people), gets the page of a link that does not exist, before and
+    after signing in; nothing says why. A moderator who blocked you does not see your request, and their count leaves it
+    out; another moderator does. An approval is checked as the approving moderator's add. An outside user of an app
+    (`EXTERNAL_USER`) makes no links and gets "not found" for a public room's link. A disabled maker's links take no one.
+- **Text members** (plans/Comms-Messaging.md §18.3 phase 18; `org.moqui.call.SmsRoomServices`;
+  [SMS](../interfaces/SMS.md#text-members-of-a-room)). In a private room that is not encrypted and that not every user may read, a moderator's Add by phone
+  number (People) adds someone without the app: they get each message as a text, "Ann: …", from one of our numbers
+  marked for room texts, and their replies post to the room as them. The dialog asks for the number, their name in this
+  room (only this room shows it; elsewhere the number, or its name in your phone book, shows), and your confirmation that
+  they agreed to get the room's texts; it says what it costs ("With 3 text members, one message is 3 texts"). The room's
+  texts to them go on you: your permission for the number's destination, your grant of our number and your day's limit;
+  if you lose them, their texts stop and the room's moderators are told. A person
+  is a text member of one room on each of our numbers: for a second room the dialog picks another number, and when none
+  is free it says "This person is already a text member of <room> on this number; another number is needed." While they
+  are a member, their texts to that number go to the room, and your own texts to them from that number are not sent:
+  write in the room. They get a welcome text that says how to leave; STOP takes them out, HELP gets a short answer.
+  People shows them with a phone icon and their state (replied STOP, the welcome or the last text not sent); Rename and
+  Take out are a moderator's. Edits, reactions, deletes and polls stay in the room (the delete confirm says text members
+  already got the message), photos go as MMS, and other files as a line. A room with text members cannot get
+  disappearing messages, and an encrypted room cannot have text members.
+- **Stickers** (plans/Comms-Messaging.md §18.3 phase 20; `org.moqui.chat.ChatStickerServices`). The sticker button
+  beside the emoji button opens the picker: Recent, then each pack (yours first), and a search by emoji or words; a
+  tap sends the sticker, which shows large with no bubble. Your own packs are in Settings, Stickers (a pack, its
+  pictures with an emoji and a description each, Hide and Delete); the server's packs, offered to everyone, are in
+  System, Chat Stickers for a holder of `ChatStickerAdmin` (ADMIN has it). A sticker is a PNG, WebP or GIF picture,
+  animated ones too, of at most 512 KB (`chat_sticker_max_bytes`) and 512 px a side: its type is read from its bytes,
+  whatever its name says, and its sides from its header before it is decoded (a file claiming huge sides is refused
+  unread); at most 60 stickers a person an hour (`chat_sticker_uploads_per_hour`). A sent sticker is a copy in
+  its room, so deleting a pack removes no sticker already sent, and a pack of yours is seen by no one else; in an
+  encrypted room your device seals the picture as it seals any file (its size may still tell the server which known
+  sticker it is). Texts and other networks get the picture (MMS), or "Sticker 👍" where no picture can go. GIF search
+  waits for a provider.
+- **Locations** (phase 20; `org.moqui.chat.ChatLocationServices`). The More menu's (+) Share a location, and Location
+  in a phone's attach menu: Use my current location (the browser's or the phone's location permission, asked at first
+  use; the position is read only then), or enter it: coordinates, degrees and minutes, a `geo:` link, a pasted
+  OpenStreetMap, Google Maps or Apple Maps link (its coordinates read from the link, nothing fetched), or an address.
+  There is no map and no geocoding. The message is a card with the label, the address and the coordinates, Open in maps
+  (the phone's maps app in the Android app, OpenStreetMap elsewhere) and Copy. Everyone else gets "Location: …" and an
+  OpenStreetMap link; Sinch RCS its location message. A location someone shares with you over RCS shows the same way.
+  In an encrypted room the place is only in the ciphertext. Live location waits for the Maps app.
+- **Photos: compressed or original** (phase 21). A photo you attach (JPEG, PNG or WebP) is now drawn again in your
+  browser before it goes: a JPEG or WebP becomes a JPEG of at most 2048 px on its long side, also when that is no
+  smaller, and a PNG stays a PNG (made smaller only past 2048 px, so a screenshot keeps its sharp text); either way its
+  metadata (EXIF, a PNG's text chunks, the GPS location among them) is gone. **This changes how Chat worked before, when
+  every photo went at full size.** The file's chip in the composer has Original, which sends that photo as it is,
+  details and location included. A GIF, a video, and a photo the browser cannot read (HEIC on most) go as they are. In a
+  room that goes out by text, the message's files share the text's total limit (Telnyx 1 MiB, Twilio 5 MB, Sinch 1 MiB,
+  or the bridge's `maxMediaBytes`): each photo is fitted under its share, Original is offered only when the original
+  fits, and a message whose files are still over the limit is not sent and says to send fewer at a time.
+- **One-time codes** (phase 21; `org.moqui.chat.ChatPrivacyServices`). A code in a text that came in (SMS, MMS, RCS)
+  shows a "Code 482913" chip with Copy. Its notification has Copy too: on the web where the browser shows notification
+  actions (it opens the message and copies the code there, or lights Copy for one tap where the browser asks for one),
+  and in the Android app (its next APK) a Copy code button that puts it on the clipboard marked sensitive, with the lock
+  screen saying only "A code from …". The code goes in a notification only where the message's words do: message
+  previews on, a plain room, and a message that does not disappear. Settings, Chat, Privacy can delete a text's code a
+  day after it came, when everyone in its room asks the same, and only for a code that is the text's only one and within
+  about 20 characters of "code", "OTP", "verification", "passcode" or "security code" ("confirm", "login" and "PIN"
+  find a code for Copy but never delete it); the chip then says when, with Keep. Codes in chat between people are never
+  looked for.
+- **Screen security** (phase 21). Settings, Chat, Privacy: Off, Block screenshots in encrypted rooms, or everywhere in the
+  app (applied at once, on and off); an encrypted room's menu also has Block screenshots here, your own choice for that
+  room. With several accounts on one phone, any account set to everywhere keeps it on, and turning it off in that
+  account takes away only its own. It is Android's
+  `FLAG_SECURE`: no screenshot, no screen recording and a blank recent-apps thumbnail while it holds. Only the Android app
+  can do this; the web and the desktop app cannot stop a screenshot, and no app can stop a camera.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
@@ -434,6 +579,7 @@ records drive's folders by their records.
 | `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); one no refuses it, and without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out)). Also answerable from a component's conf (below): Mantle registers its consent records' answer there, so a campaign's text, sent with no user, is asked too |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 | `call-target` | Which users the current user may not call, transfer a call to or add to one (`userIdList`; answers `refusedUserIdList`): a refused user is answered as one that does not exist, a desk phone's REFER to one gets 403; with no provider any enabled user may be reached, and one that fails refuses (IronStone: the users of the parties the user may see, under the organization filter of `recipient-source`; a user with no party is in no organization and may be reached; the example gallery refuses users named `*.offlimits`) |
+| `chat-calendar` | A chat event's entry on the current user's calendar (`ProviderInterfaces.chat#CalendarEntry`: `chatRoomId`, `eventSeq`, `action` answer, change or cancel; answers `eventUrl`). Called by `ChatCalServices` after its writes are committed, each provider in a transaction of its own; one that fails is logged and the answer stands. It is given ids only and reads `ChatCalEvent` and the user's `ChatCalAnswer` itself. Without a provider Add to calendar is the `.ics` file (IronStone: one Mantle event per chat event, its `universalId` the chat event's UID, changed only by one who can read the chat room; it is shared, so an edit of it in Commons, Calendar is overwritten by the next change of the chat event). A change or cancel a provider failed is kept (`ChatCalEvent.calendarSyncPending`) and tried again at the event's next answer or change, after a wait that doubles from a minute to a day, ten times at most |
 | `chat-target` | Which users the current user may not find in the people search (`CommsServices.search#Users`), start a direct room with, add to a room or mention in a public room they are not in (`userIdList`; answers `refusedUserIdList`, the interface `chat#Target`, whose parameters are `call#Target`'s): a refused user is left out of the search and answered as one that does not exist; with no provider any enabled user may be reached, and one that fails refuses (`ChatServices.get#RefusedUsers`). The search leaves out every external user (`EXTERNAL_USER`), and an external user reaches only the people of their own rooms. The example gallery refuses users named `*.offlimits`; one service may answer both hooks |
 
 A provider runs with the app's authorization and entity filters; a read that fails is left out and named, and a mutation that fails is an error.
@@ -450,6 +596,18 @@ with no app root, in its `MoquiConf.xml` (only `sms-consent` today; another elem
 `call#Providers` asks such a provider after the apps' ones, for every caller, with authorization disabled (the conf
 that names it is trusted, so its service reads only what the hook asks), even when an app's provider has the same
 name, and `get#Providers` lists it with no app. For `sms-consent` a provider that fails refuses the text, as a no does.
+
+**The contacts hook of chat's people.** Which of a user's rooms are one person is asked of one service (not a provider:
+the framework keeps no contacts), named by the `chat_contact_service` property, else the theme value
+`STRT_CHAT_CONTACT_SERVICE` of the user's theme, as the mail contact hook (`STRT_EMAIL_CONTACT_SERVICE`) is.
+`ChatPeopleServices.find#ContactPeople` (Rust, `crates/moqui-core/src/service/contacts.rs`) calls it with authorization
+disabled, in its own transaction, with `userId` and `addressList` (`tel:+E.164`, `email:address`, `user:userId`; only
+the addresses of the user's own rooms, at most 300, at most 60 times an hour a user, its answer kept three minutes for
+the user's tabs, devices and mail lines), and it answers `contactList`, the contacts the user can see with one of them,
+each `{contactRef, name, url (a path on this server), addressList}` with its own addresses. The hook
+enforces the app's visibility itself. Without one, a user's people come from their rooms and their own changes. Mantle
+answers it (`mantle.party.ContactBookServices.find#ContactPeople`, the rules of `filter#ContactAddresses`) and IronStone
+names it. A person who is a user of this server shows none of the hook's numbers or addresses.
 
 **Declared actions and panels.** `<ext-action>` and `<ext-panel>` in a screen-extend add items to a slot of a screen
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is
@@ -470,7 +628,7 @@ IronStone BOSS is the worked example: `runtime/components/addon/mr-boss/screen/C
 `./moq test basic-comms`: the user search, the System Voice screens and no call into Mantle or an app component
 (`BasicComms`), a bridged room and System, Chat Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
 user with no party, Compose retried by `clientRef` (`BasicCommsComposeRef`), the change cursor, requests once by `clientRef`, conflicts and chunked uploads (`BasicCommsSync`), the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
-provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`). `cargo test -p moqui-channels`:
+provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`), people across networks (`BasicCommsPeople`). `cargo test -p moqui-channels`:
 texts and MMS against a fake Telnyx ([SMS, Tests](../interfaces/SMS.md#tests)). `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
 phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN

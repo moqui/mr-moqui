@@ -728,6 +728,8 @@ interface MoquiResourceFacade {
     /** A PNG thumbnail of an image, no side over maxSize (256); null when the bytes are not an image. */
     readonly imageAvailable: boolean;
     makeThumbnail(source: string, target: string, maxSize?: number | null): { width: number; height: number; contentType: string } | null;
+    /** A chat sticker's picture: its type from its bytes, its sides from its header before it is decoded, a small decode. */
+    makeStickerThumbnail(source: string, target: string, maxSide?: number | null, thumbSize?: number | null): { format?: string; contentType?: string; width?: number | null; height?: number | null; thumbWidth?: number; thumbHeight?: number; reasonCode?: "badType" | "tooLarge" };
     /** Page 1 of a PDF as a PNG at target, no side over maxSize (1024), with the page count; null when there is no PDF engine or the PDF does not open. */
     makePdfPreview(source: string, target: string, maxSize?: number | null): { width: number; height: number; pages: number; contentType: string } | null;
     /** The first rows of a sheet (the first when sheetName is empty), from the first used row and column; null when it is not a spreadsheet. */

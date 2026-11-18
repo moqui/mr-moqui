@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of events with RSVP in Chat (plans/Comms-Messaging.md §18.3 phase 19; org.moqui.chat.ChatCalServices),
+    each included by name in Chat.xml: calEventFields (the time zones, and whether an app keeps calendars), createCalEvent,
+    answerCalEvent, updateCalEvent, cancelCalEvent and calEventIcs (the event's .ics file, a download). A refusal is an
+    answer with its reasonCode and the errors, as send's is. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="calEventFields" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const providers = ec.service.sync().name('org.moqui.ui.ShellServices.get#Providers').parameters({hook: 'chat-calendar'}).call() || {}
+            ec.web.sendJsonResponse({timeZone: ec.user.timeZone || null, timeZoneList: Array.from(ec.l10n.getAvailableTimeZones() || []),
+                calendarProvider: Array.from(providers.providerList || []).length > 0})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="createCalEvent">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatCalServices.create#CalEvent').parameters({chatRoomId: chatRoomId || '', title: title || '',
+                startDate: startDate ? Number(startDate) : null, endDate: endDate ? Number(endDate) : null, timeZone: timeZone || null,
+                allDay: String(allDay) === 'true', place: place || null, description: description || null,
+                threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
+                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="answerCalEvent">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatCalServices.answer#CalEvent').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq || 0), answer: answer || null,
+                remindMinutes: remindMinutes != null && remindMinutes !== '' ? Number(remindMinutes) : null,
+                addToCalendar: String(addToCalendar) === 'true'}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {calEvent: out.calEvent, eventUrl: out.eventUrl || null,
+                reminderSkipped: out.reminderSkipped === true, reminderFailed: out.reminderFailed === true, calendarFailed: out.calendarFailed === true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="updateCalEvent">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatCalServices.update#CalEvent').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq || 0), title: title ?? null, startDate: startDate ? Number(startDate) : null,
+                endDate: endDate ? Number(endDate) : null, timeZone: timeZone || null,
+                allDay: allDay == null || allDay === '' ? null : String(allDay) === 'true', place: place ?? null, description: description ?? null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {calEvent: out.calEvent, changeEventSeq: out.changeEventSeq ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="cancelCalEvent">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatCalServices.cancel#CalEvent').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq || 0)}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {calEvent: out.calEvent, changeEventSeq: out.changeEventSeq ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="calEventIcs" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const request = ec.web.request
+            const port = Number(request.serverPort || 0)
+            const standard = !port || (request.scheme === 'https' && port === 443) || (request.scheme === 'http' && port === 80)
+            const baseUrl = request.scheme + '://' + request.serverName + (standard ? '' : ':' + port)
+            const out = ec.service.sync().name('org.moqui.chat.ChatCalServices.get#CalEventIcs').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq || 0), baseUrl: baseUrl}).call() || {}
+            if (ec.message.hasError() || !out.fileText) { ec.web.sendJsonResponse({reasonCode: out.reasonCode || null}); return }
+            ec.web.sendTextResponse(out.fileText, 'text/calendar; charset=utf-8', out.fileName || 'event.ics')
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>

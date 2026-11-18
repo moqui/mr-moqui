@@ -30,6 +30,8 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-index="6" server-static="qvt" menu-image="sym_o_chat" menu-image-type="icon">
 
+    <!-- screen security and one-time codes (plans/Comms-Messaging.md §18.3 phase 21) -->
+    <transition-include name="savePrivacy" location="component://basic-comms/template/ChatPrivacyTransitions.xml"/>
     <transition name="savePreferences">
         <service-call name="org.moqui.comms.ChatScreenServices.store#ChatPrefs" in-map="{enterSends:enterSends, sounds:sounds, readReceipts:readReceipts, typing:typing,
                 linkPreviews:linkPreviews, notifyPreview:notifyPreview, notifyDefault:(notifyDefault ?? ''), autoAwayMinutes:autoAwayMinutes, saveFlags:true}"/>
@@ -120,6 +122,7 @@ along with this software (see the LICENSE.md file). If not, see
             chatPrefs = {notifyDefault: prefs.notifyDefault || '', notifyPreview: yn(prefs.notifyPreview), sounds: yn(prefs.sounds), enterSends: yn(prefs.enterSends), readReceipts: yn(prefs.readReceipts),
                 typing: yn(prefs.typing), linkPreviews: yn(prefs.linkPreviews), autoAwayMinutes: String(prefs.autoAwayMinutes)}
             dndPrefs = {dndFrom: prefs.dndFrom || '', dndTo: prefs.dndTo || ''}
+            privacyPrefs = {screenSecurity: prefs.screenSecurity || 'off', otpDelete: yn(prefs.otpDelete)}
             hasDnd = !!(prefs.dndFrom && prefs.dndTo)
             allowedList = Array.from(prefs.dndAllowed || [])
             addAllowed = {allowedUserId: ''}
@@ -176,6 +179,16 @@ along with this software (see the LICENSE.md file). If not, see
                 </box-body></container-box>
             </row-col>
             <row-col lg="6" md="6">
+                <container-box><box-header title="Privacy"/><box-body>
+                    <form-single name="ChatPrivacy" transition="savePrivacy" map="privacyPrefs">
+                        <field name="screenSecurity"><default-field title="Screen security" tooltip="Only the Android app can stop screenshots and screen recording; a camera still can">
+                            <radio><option key="off" text="Off"/><option key="encrypted" text="Block screenshots in encrypted rooms"/>
+                                <option key="app" text="Block screenshots everywhere in the app"/></radio></default-field></field>
+                        <field name="otpDelete"><default-field title="One-time codes">
+                            <check><option key="Y" text="Delete a text's one-time code a day after it came (when everyone in its room asks the same). The provider and the phone network keep their own copies"/></check></default-field></field>
+                        <field name="saveButton"><default-field title="Save"><submit/></default-field></field>
+                    </form-single>
+                </box-body></container-box>
                 <section name="GroupMeSection" condition="showGroupMe"><widgets>
                     <container-box><box-header title="GroupMe"/><box-body>
                         <label type="p" text="${groupMeText}" style="text-body2"/>

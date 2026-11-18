@@ -23,9 +23,25 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="ChatMention" inboxEnumId="NinNotifications" description="Mentioned in a Chat Room" typeString="info"
             showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
             titleTemplate="${authorName} mentioned you in ${roomName}${summary ? ': ' + summary : ''}" linkTemplate=""/>
+    <!-- Join requests (plans/Comms-Messaging.md §18.3 phase 17, ChatInviteServices): a new request to a room's moderators
+        (roomName, chatRoomId, chatJoinRequestId, requesterName, note), and the decision to the person who asked (its title
+        set by the sender). The bell and the room's banner; no push. -->
+    <moqui.security.user.NotificationTopic topic="ChatJoinRequest" inboxEnumId="NinNotifications" description="Asks to join a chat room" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${requesterName} asks to join ${roomName}${note ? ': ' + note : ''}" linkTemplate=""/>
+    <!-- A room's text member whose texts stopped for a reason of the moderator who added them (plans/Comms-Messaging.md
+        §18.3 phase 18, SmsRoom.js noteAdderProblem): to the room's moderators, once a day for the member. -->
+    <moqui.security.user.NotificationTopic topic="ChatTextMember" inboxEnumId="NinNotifications" description="A chat room's text member gets no texts" typeString="warning"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${memberName} in ${roomName} gets no texts: ${reason}" linkTemplate=""/>
+    <moqui.security.user.NotificationTopic topic="ChatJoinDecision" inboxEnumId="NinNotifications" description="A chat room join request decided" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" titleTemplate="${roomName}" linkTemplate=""/>
     <!-- System, Push Health: every user's push devices with their counts (org.moqui.ui.NotificationServices.find#PushHealth) -->
     <moqui.security.UserPermission userPermissionId="PushHealthAdmin" description="See the push devices of every user and how their pushes go"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="PushHealthAdmin" fromDate="0"/>
+    <!-- the server's sticker packs (plans/Comms-Messaging.md §18.3 phase 20) -->
+    <moqui.security.UserPermission userPermissionId="ChatStickerAdmin" description="Keep the server's chat sticker packs"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatStickerAdmin" fromDate="0"/>
 
     <!-- A chat message in the search index: its room, its sender and its current text. ChatServices indexes it on
         send#Message and edit#Message and deletes it on redact#Message (no DataFeed); search#ChatEvents searches it with

@@ -91,7 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UserChanges').parameters({afterSeq: number(afterSeq),
                 limit: number(limit) || 200, heads: String(heads) !== 'false', headsSince: number(headsSince)}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {changes: out.changeList || [], lastSeq: out.lastSeq, more: !!out.more,
-                reset: !!out.reset, heads: out.headList ?? null, headsSince: out.headsSince ?? null})
+                reset: !!out.reset, heads: out.headList ?? null, headsSince: out.headsSince ?? null, serverNow: out.serverNow ?? null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -189,9 +189,11 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="attachment" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#Attachment').parameter('chatAttachmentId', chatAttachmentId || '').call()
-            if (ec.message.hasError()) ec.web.sendJsonResponse({})
+            if (ec.message.hasError()) { ec.web.sendJsonResponse({}); return }
+            // a disappearing message's file is kept in no cache (plans/Comms-Messaging.md §18.3 phase 16)
+            if (out.expiring) ec.web.response.setHeader('Cache-Control', 'no-store')
             // inline: a picture the room shows, or a sound or video its player plays (a voice note); anything else is a download
-            else ec.web.sendResourceResponse(out.location, String(inline) === 'true'
+            ec.web.sendResourceResponse(out.location, String(inline) === 'true'
                 && /^(image\/(png|jpe?g|gif|webp)|audio\/(webm|ogg|mpeg|mp4|aac|wav|x-m4a)|video\/(mp4|webm|ogg|quicktime))(\s*;.*)?$/i.test(out.contentType || ''))
         ]]></script></actions>
         <default-response type="none"/>
@@ -258,7 +260,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.send#ChatMessage').parameters({chatRoomId: chatRoomId || '', body: body || null,
                 replyToEventSeq: number(replyToEventSeq), threadRootEventSeq: number(threadRootEventSeq), chatAttachmentIds: chatAttachmentIds || null,
                 clientRef: clientRef || null, forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: number(forwardOfEventSeq),
-                encrypted: sealed, mentionUserIdList: mentionList}).call()
+                encrypted: sealed, mentionUserIdList: mentionList, viewOnce: String(viewOnce) === 'true'}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out?.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: out.clientRef, duplicate: out.duplicate})
         ]]></script></actions>
         <default-response type="none"/>
@@ -413,10 +415,42 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="sendScheduledNow" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="claimHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="completeHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <!-- invite links and join requests (Comms-Messaging §18.3 phase 17) -->
+    <transition-include name="inviteLinks" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="createInviteLink" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="revokeInviteLink" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="inviteQr" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="setRoomListed" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="joinRequests" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="joinRequestCount" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="decideJoinRequest" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="cancelJoinRequest" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="listedRooms" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="requestJoin" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <!-- a room's text members (Comms-Messaging §18.3 phase 18) -->
+    <transition-include name="textMembers" location="component://basic-comms/template/ChatTextTransitions.xml"/>
+    <transition-include name="textMemberChoices" location="component://basic-comms/template/ChatTextTransitions.xml"/>
+    <transition-include name="addTextMember" location="component://basic-comms/template/ChatTextTransitions.xml"/>
+    <transition-include name="renameTextMember" location="component://basic-comms/template/ChatTextTransitions.xml"/>
     <transition-include name="sendHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="reportHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="setReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="cancelReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <!-- events with RSVP (plans/Comms-Messaging.md §18.3 phase 19) -->
+    <transition-include name="calEventFields" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="createCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="answerCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="updateCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="cancelCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="calEventIcs" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <!-- one-time codes and screen security (plans/Comms-Messaging.md §18.3 phase 21) -->
+    <transition-include name="keepCode" location="component://basic-comms/template/ChatPrivacyTransitions.xml"/>
+    <transition-include name="roomScreenSecure" location="component://basic-comms/template/ChatPrivacyTransitions.xml"/>
+    <!-- stickers and locations (plans/Comms-Messaging.md §18.3 phase 20) -->
+    <transition-include name="stickerPacks" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="sendSticker" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="sendLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <!-- files for the next message: each stored on its own, or one sent in chunks (uploadId) -->
     <transition name="upload">
         <actions><script><![CDATA[
@@ -436,6 +470,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
                     && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: nothing is made from it')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
+            // a disappearing or view-once message is not copied into a record (plans/Comms-Messaging.md §18.3 phase 16)
+            if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead) {
+                const kind = ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('fileKind', {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)})
+                if (kind.viewOnce || kind.expiring) { ec.message.addError(ec.l10n.localize('A disappearing or view-once message is not copied into a record')); ec.web.sendJsonResponse({reasonCode: 'expiring'}); return } }
             const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'create-from', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), kind: kind || ''}}).call()
             const made = (out?.results || [])[0] || {}
@@ -454,6 +492,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
                     && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: it is not filed on a record')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
+            // a disappearing or view-once message is not filed on a record (plans/Comms-Messaging.md §18.3 phase 16)
+            if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead) {
+                const kind = ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('fileKind', {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)})
+                if (kind.viewOnce || kind.expiring) { ec.message.addError(ec.l10n.localize('A disappearing or view-once message is not filed on a record')); ec.web.sendJsonResponse({reasonCode: 'expiring'}); return } }
             const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'record-link', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), recordEntityName: recordEntityName || '',
                     recordId: recordId || ''}}).call()
@@ -528,6 +570,47 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.call.SmsServices.find#PhoneNames').parameters({numbers: numbers || ''}).call() || {}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({nameMap: out.nameMap || {}})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- my people across networks (org.moqui.chat.ChatPeopleServices, plans/Comms-Messaging.md §11.1): each with its rooms
+        and ways, the best first; merge, separate, rename and reset change my own list only -->
+    <transition name="people" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.find#ChatPeople').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {personList: out.personList || [], roomPersonMap: out.roomPersonMap || {},
+                hookFailed: out.hookFailed === true, contactsSkipped: out.contactsSkipped === true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="mergePeople">
+        <actions><script><![CDATA[
+            const list = (text) => String(text || '').split(',').map((part) => part.trim()).filter((part) => part)
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.merge#ChatPeople').parameters({personKeyList: list(personKeys),
+                addressKeyList: list(addressKeys)}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {personKey: out.personKey})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="separatePerson">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.separate#ChatPersonAddress').parameter('addressKey', addressKey || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {personKey: out.personKey})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="renamePerson">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.rename#ChatPerson').parameters({personKey: personKey || '',
+                displayName: displayName || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {personKey: out.personKey})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="resetPerson">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.chat.ChatPeopleServices.reset#ChatPerson').parameter('personKey', personKey || '').call()
+            ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -713,6 +796,41 @@ along with this software (see the LICENSE.md file). If not, see
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
             ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, verifiedDevicesOnly: !!out.verifiedDevicesOnly})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- disappearing messages and view-once media (plans/Comms-Messaging.md §18.3 phase 16; ChatExpiryServices): the room's
+        timer (seconds, 0 for off), a view-once message's open (its file, served by viewOnceFile in the open's window, kept in
+        no cache) -->
+    <transition name="setRoomTimer">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.set#RoomTimer').parameters({chatRoomId: chatRoomId || '',
+                seconds: seconds == null || seconds === '' ? 0 : Number(seconds)}).requireNewTransaction(true).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, seconds: out.seconds ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="openViewOnce">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.open#ViewOnce').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq) || 0}).requireNewTransaction(true).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(errors ? {reasonCode: out.reasonCode || null, errors} : {chatAttachmentId: out.chatAttachmentId, fileName: out.fileName,
+                contentType: out.contentType, fileSize: out.fileSize ?? null, until: out.until})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="viewOnceFile" method="get">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.get#ViewOnceFile').parameter('chatAttachmentId', chatAttachmentId || '')
+                    .requireNewTransaction(true).call() || {}
+            if (ec.message.hasError()) { ec.message.clearErrors(); ec.web.sendError(404, 'Not found'); return }
+            ec.web.response.setHeader('Cache-Control', 'no-store')
+            ec.web.sendResourceResponse(out.location, true)
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

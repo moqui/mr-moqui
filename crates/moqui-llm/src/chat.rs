@@ -356,7 +356,7 @@ pub fn room_name(facade: &EntityFacade, conversation_id: &str) -> Option<String>
 }
 
 /// The earlier messages of a thread (its root and the replies before `before`), oldest first, as untrusted text with
-/// each sender's name; the agent's own are left out. Empty when there are none.
+/// each sender's name; the agent's own and disappearing ones are left out. Empty when there are none.
 fn thread_context(
     facade: &EntityFacade,
     room_id: &str,
@@ -373,6 +373,8 @@ fn thread_context(
         ]))
         .condition(moqui_db::sql::Condition::less("eventSeq", Value::I64(before)))
         .eq("eventTypeEnumId", Value::string("CetMessage"))
+        // a disappearing message is never handed to an agent (plans/Comms-Messaging.md §18.3 phase 16)
+        .condition(moqui_db::sql::Condition::is_null("expireDate"))
         .order_by("eventSeq", true)
         .limit(i64::try_from(THREAD_MESSAGES).unwrap_or(10))
         .disable_authz()

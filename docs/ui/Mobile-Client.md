@@ -327,7 +327,10 @@ and `contact_names`.
   asks, after a dialog that says why; the names never ask (a room list opened is not a use), and the app does not ask
   again by itself: the notification check's Contacts row asks on a tap, or opens the app's settings once Android no
   longer asks. Contacts allowed later (the question, or Android's settings while the app was away) name the rooms again
-  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`).
+  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`). The phone's contacts name a person's rooms
+  only; they group nothing (people across networks, [Comms](../tools/Comms.md#people-across-networks)). In a person's
+  room the composer's network button opens their ways as a sheet from the bottom, and the People tab's card fills the
+  details pane, its Add a full-screen dialog.
 
 ## Chat notifications
 
@@ -371,6 +374,12 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
   Reply's mutable intent cannot have filled in. A tap opens the room at the message
   (`org.moqui.mobile:/room?account=...&chatRoomId=...&eventSeq=...&sig=...`): the activity is exported, so the link is
   signed by Rust (`Native.roomLink`, an HMAC with the app's own link key) and another app's opens nothing.
+- **A room's invite link** (plans/Comms-Messaging.md §18.3 phase 17). A link or QR code opens the room's join page in
+  the phone's browser; on Android the page's "Open in the MR Moqui app" is `org.moqui.mobile:/join?host=<host>&token=<token>`
+  (a `BROWSABLE` intent filter, `src/join.rs`). A web page makes it, so it is not signed, and it only opens a page: the
+  app opens `/join/<token>` in its account on that host (the current one when it is there, else the first), where the
+  person presses Join. With no account on that host the shell says so and adds none. Android App Links are not used:
+  each server has its own host.
 - **Clear and ack.** The server's `clear` (the room was read on another device) removes the room's notification, and
   the summary only when no other room's shows; a read in the app removes it too, Mark all read every room's of the
   account (the page's `notifyClear` reaches
@@ -407,6 +416,47 @@ A message's suggestion buttons (a card's, or a text's chips, plans/Comms-Messagi
 the bubble that scrolls sideways on a phone, and a card is at most 85 % of the screen's width; a carousel scrolls
 sideways with snap on every width. A call button opens the dialer (`tel:`). The rest is Chat's
 ([Comms](../tools/Comms.md#cards)).
+
+## Add to calendar
+
+A chat event's Add to calendar (plans/Comms-Messaging.md §18.3 phase 19), with no app that keeps calendars, is
+`moquiDesktop.calendarInsert({title, start, end, allDay, timeZone, place, description})` (the `calendar_insert` command,
+`CalendarIntent.kt`): the phone's calendar app opens on a new event filled in (`ACTION_INSERT`), and the person saves it
+there, so the app needs no calendar permission. It answers whether a calendar app took it; when none does (or in an APK
+before it), Chat downloads the event's `.ics` file instead.
+
+## Location and maps
+
+A chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20) is the WebView's
+`navigator.geolocation`: the manifest has `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`, and the patched wry
+`RustWebChromeClient` asks for them at the first use (refused, Chat says how to allow it and offers to enter the place).
+The app never reads the position in the background. Open in maps hands a `geo:` URI to Android
+(`moquiDesktop.openExternal`, which takes `geo:` beside http, https, mailto, tel and sip), so the person's maps app
+opens at the place.
+
+## Screen security
+
+`moquiDesktop.secureScreen(reason, on)` (the `secure_screen` command, `ScreenSecurity.kt`) turns Android's `FLAG_SECURE`
+on for a reason, and off once no reason holds it: no screenshot, no screen recording and a blank recent-apps thumbnail.
+Chat's view-once viewer holds `viewOnce` while it is open (plans/Comms-Messaging.md §18.3 phase 16); the reasons are a
+set, so a screen-security setting of the app or of a room can hold its own. Phase 21's are `room:<chatRoomId>`, held by
+Chat while an encrypted room is shown with Settings, Chat, Privacy on "in encrypted rooms" or the room's own Block
+screenshots here, and `app:<account>` (the page's storage scope), from "everywhere in the app": WebrootChat.js applies it
+when the shell loads and Chat opens, and the `CHAT_SCREEN_SECURITY` preference applier on each change, on and off at
+once. Each account holds its own: any account set to everywhere keeps the flag on, and turning it off in that account
+takes away only that account's reason. The `app:` reasons are remembered on the phone (`ScreenSecurity.kt`, its
+SharedPreferences, one forgotten when it is turned off), so from the next start the flag is on before the first frame,
+the splash and the account list included.
+
+### One-time codes
+
+A chat push of a text with a one-time code carries `otp {code}` (plans/Comms-Messaging.md §18.3 phase 21, §7.2 rule
+10). `ChatNotifications.showRoom` then adds Copy code: a `COPY` broadcast to `ChatActionReceiver` with the code in the
+action's data, which puts it on the clipboard (`ClipDescription.EXTRA_IS_SENSITIVE` on Android 13 and later, a "Code
+copied" toast before it). The notification is `VISIBILITY_PRIVATE`, its public version "A code from …", so the lock screen
+shows no code. An APK before this change shows the message without the button. It answers whether the flag is on; the
+desktop app has no such member, and the viewer says a screenshot cannot be stopped there. The app's store deletes
+disappearing messages at their time as the desktop's does ([Desktop-Client](Desktop-Client.md)).
 
 ## Known gaps (MT1)
 

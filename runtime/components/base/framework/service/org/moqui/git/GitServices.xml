@@ -254,16 +254,17 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="commit" type="Map"><description>As each map of get#GitLog commitList</description></parameter>
             <parameter name="fileList" type="List"><description>Maps: path, changeType (added, modified, deleted),
-                oldObjectId, newObjectId, and with stats binary, tooLarge, insertions, deletions (no counts past the
-                first 300 files, as get#GitCommitDiff)</description></parameter>
+                oldObjectId, newObjectId, and with stats binary, tooLarge, insertions, deletions (counts for the first
+                3000 files, as get#GitCommitDiff)</description></parameter>
             <parameter name="insertions" type="Integer"/>
             <parameter name="deletions" type="Integer"/>
         </out-parameters>
     </service>
     <service verb="get" noun="GitCommitDiff" type="rust" location="moqui_git::service::get_commit_diff">
         <description>The line diff of each file a commit changed, or of one file. A binary file, or a side over 1 MB,
-            has no diff; past the first git-server commit-max-diff-files (300, as a comparison) a file is listed with
-            tooLarge and no diff.</description>
+            has no diff. Past the first git-server commit-max-diff-files (300, as a comparison) a file is listed with its
+            counts and diffOmitted (up to 3000 files; after that tooLarge) and no diff, unless it is the path asked
+            for.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId" required="true"/>
@@ -698,6 +699,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="head" required="true"><description>The source</description></parameter>
             <parameter name="withDiffs" type="Boolean" default="false"/>
             <parameter name="checkMergeable" type="Boolean" default="false"/>
+            <parameter name="path"><description>With withDiffs only this file's diff, even past the first 300 files;
+                the other files are listed with no diff</description></parameter>
+            <parameter name="maxDiffLines" type="Integer" default="0"><description>With withDiffs at most this many
+                changed lines of diffs in all, files in order; a file that would pass it is listed with diffOmitted and
+                no diff. 0: no bound (still at most 300 files)</description></parameter>
+            <parameter name="maxFileDiffLines" type="Integer" default="0"><description>With withDiffs at most this
+                many changed lines in one file's diff; a larger file is listed with diffOmitted and no diff, and the
+                files after it are still given. 0: no bound</description></parameter>
+            <parameter name="withHtml" type="Boolean" default="true"><description>false: hunks only, no
+                moqui-diff html</description></parameter>
             <parameter name="headRepositoryId"><description>The repository head is a revision of: another one of the
                 fork network of repositoryId, which the user may view too (a fork compared with its parent). Empty:
                 repositoryId</description></parameter>
@@ -713,7 +724,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="commitList" type="List"><description>Maps as get#GitLog's</description></parameter>
             <parameter name="commitsTruncated" type="Boolean"/>
             <parameter name="fileList" type="List"><description>Maps: path, changeType, oldObjectId, newObjectId,
-                binary, tooLarge, insertions, deletions, diffed, and with withDiffs html and hunks (oldStart,
+                binary, tooLarge, insertions, deletions (for the first 3000 files), diffed, diffOmitted, and with withDiffs html and hunks (oldStart,
                 oldLines, newStart, newLines, lines: tag, oldNo, newNo, text)</description></parameter>
             <parameter name="insertions" type="Integer"/>
             <parameter name="deletions" type="Integer"/>

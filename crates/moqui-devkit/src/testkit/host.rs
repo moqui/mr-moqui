@@ -18,7 +18,8 @@
 //!
 //! ```text
 //! __moquiTestHost.parallel(n, source, argsJson, transaction, timeoutSeconds) -> '{"results": [...], "errors": [...]}'
-//! __moquiTestHost.uploadedFile(fileName, text, contentType?) -> an uploaded file
+//! __moquiTestHost.uploadedFile(fileName, text, contentType?, binary?) -> an uploaded file (binary: each character
+//!                                                                     a byte, 0 to 255)
 //! __moquiTestHost.setProperty(name, value | null) -> the property as it was, or null
 //! __moquiTestHost.call(name, argsJson) -> the client host's answer (moqui test-client)
 //! __moquiTestHost.settle(promise) -> {status: "fulfilled" | "rejected", value}
@@ -46,7 +47,7 @@ pub(super) static TEST_HOST: HostClass = HostClass {
         host_method!(
             "__moquiTestHost",
             "uploadedFile",
-            [Text, Text, OptNullableText],
+            [Text, Text, OptNullableText, OptBool],
             None,
             leaf,
             uploaded_file
@@ -128,6 +129,20 @@ fn uploaded_file(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let file_name = call.text(0).unwrap_or_default();
     let text = call.text(1).unwrap_or_default();
     let content_type = call.text(2).unwrap_or("text/plain");
+    // a picture or another binary file: each character's code a byte (a code over 255 is an error)
+    if call.bool(3).unwrap_or(false) {
+        let bytes = text
+            .chars()
+            .map(|c| u8::try_from(u32::from(c)))
+            .collect::<Result<Vec<u8>, _>>()
+            .map_err(|_| HostError::message("A binary uploadedFile has characters 0 to 255 only".to_string()))?;
+        return Ok(moqui_core::script::host::bytes_upload(
+            "contentFile",
+            file_name,
+            content_type,
+            bytes,
+        ));
+    }
     Ok(moqui_core::script::host::text_upload(
         "contentFile",
         file_name,

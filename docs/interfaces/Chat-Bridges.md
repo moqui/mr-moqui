@@ -31,6 +31,10 @@ with a `ChatExternalUser`). Exactly one identity is set, unique within its kind.
   read by user is one find. An external actor's rows have no userId.
 - An external actor has no login and no `UserAccount`. A verified puppet link (`ChatExternalUser.linkedUserId`) is
   provenance only: it gives no right to act as that user.
+- In a user's people across networks ([Comms](../tools/Comms.md#people-across-networks)) a bridge's person is the
+  address `ext:<chatExternalUserId>`: the person of a bridge's direct conversation (GroupMe's `dm:` mapping), whom the
+  user may put together with their other rooms. A bridge for another network's direct conversations gets it the same
+  way; nothing on the bridge changes.
 - Agents stay local service-user actors. An external actor's message reaches a room's agents only when the room's
   `agentsReadExternal` is Y. The framework's own agents (`AgentServices.handle#ChatMessage`) never run for one: a run is
   always its local sender's, and they do not act in a room an external actor is in.
@@ -175,6 +179,24 @@ external mappings (`ChatEventExternal`) dedupe its events after that.
   `ChatScheduleServices.send#DueMessages` sends it through `send#Message` as the sender, so its delivery rows are written
   then, and the adapter's checks (`check#SmsSend`: the destination, the opt-out, the day's limits; its capabilities and
   fallback) are those of that moment. Nothing about a bridge is decided when it is scheduled.
+- **A sticker and a location** (phase 20). A sticker is a message whose file is its picture (the room's copy) and whose
+  text is "Sticker 👍": a bridge that sends files gets the picture alone (`request_of` leaves the text out). When an
+  adapter refuses a message's files (`FILE_REFUSALS`: `mediaTooLarge`, `tooManyFiles`, `mmsNotSetUp`,
+  `filesUnsupported`, `noFiles`), the round sends the message's words alone in their place (`text_form`, the sticker's
+  words or a message's own text) and the delivery has that outcome; a message with no words stays refused. A location's text is "Location: label, address" and an OpenStreetMap link, which every
+  bridge sends; its place is the request's `location` (latitude, longitude, label, address), which only Sinch RCS reads
+  ([RCS](RCS.md#locations)).
+- **An event** (phase 19) is a message whose text is the event (its title, its time in its zone, its place and details),
+  so every bridge sends that text; its changes and cancellation are messages of their own and go the same way. An answer
+  is no message and goes nowhere; an answer by text from another network is not read.
+- <a id="text-members"></a>**Text members** (plans/Comms-Messaging.md §18.3 phase 18, [SMS](SMS.md#text-members-of-a-room)). A
+  mapping with `memberChatActorId` is one outside person in a room by text, its external room id
+  `<ours>/<theirs>#<chatRoomId>`. It gets a delivery for a message only, and never for its own member's message; the echo
+  rule for it is by actor, not by bridge, so one text member's reply reaches the others on the same bridge. Its mappings
+  are left out of `get#RoomBridges`' `bridgeMap` and `capabilityMap` (counted in `textMemberMap`) and out of
+  `check#BridgeSupport`, so the room keeps edits, reactions and deletes. A delivery names its sender by the room's name for
+  a text member (`chat_bridge.rs` `sender_name`: `ChatRoomBridge.memberName`), and the SMS adapter sends it as
+  `<sender>: <text>`, checked in room mode.
 - **Woken after the commit.** `wake#BridgeDelivery` wakes this node's worker once the transaction commits. The commit hook
   is in memory and a crash loses it, so the worker (a thread per node, started by the host after the cluster) also runs a
   round at start, and once a minute while any bridge exists.

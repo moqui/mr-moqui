@@ -243,6 +243,18 @@ object ChatNotifications {
                 .build()
         )
         builder.addAction(0, context.getString(R.string.chat_mute_hour), action(context, ChatActionReceiver.MUTE, room0, false))
+        // a text's one-time code (plans/Comms-Messaging.md §18.3 phase 21): Copy code, and a lock screen that shows no code
+        val code = payload.optJSONObject("otp")?.optString("code", "")?.takeIf { ChatActionReceiver.isCode(it) }
+        if (code != null) {
+            builder.addAction(0, context.getString(R.string.chat_copy_code), copyAction(context, room0, code))
+            builder.setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            builder.setPublicVersion(
+                NotificationCompat.Builder(context, channel)
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setContentTitle(context.getString(R.string.chat_code_received, sender))
+                    .build()
+            )
+        }
         notify(context, ChatRules.tag(account, room), ROOM_ID, builder)
         summary(context, account)
     }
@@ -398,6 +410,15 @@ object ChatNotifications {
             else -> 0
         }
         return PendingIntent.getBroadcast(context, 0, intent, flags)
+    }
+
+    /** Copy code: the code in the action's data (never its extras), to the receiver that puts it on the clipboard. */
+    private fun copyAction(context: Context, room: RoomAction, code: String): PendingIntent {
+        val intent = Intent(context, ChatActionReceiver::class.java)
+            .setAction(ChatActionReceiver.COPY)
+            .setData(ChatActionReceiver.actionUri(room.account, room.room, room.eventSeq).buildUpon()
+                .appendQueryParameter(ChatActionReceiver.CODE, code).build())
+        return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     private data class RoomAction(val account: String, val room: String, val eventSeq: Long)

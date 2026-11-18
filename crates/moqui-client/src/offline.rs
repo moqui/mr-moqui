@@ -35,6 +35,10 @@
 //!   cursor in the server's form, one store's or mr-mantle's several) and `thread` (its kept fields and messages). The
 //!   rest, and these when the rows do not cover the request, come from the kept answer. Nothing kept: none, and the
 //!   scheme answers 502 as before.
+//! - A disappearing message (its `expireDate`, plans/Comms-Messaging.md phase 16) is never answered once due: a chat
+//!   answer sweeps the due rows first ([`sweep_expired`], which drops the room's kept `timeline` and `roomView` answers
+//!   too), and a kept answer is given less its due events. The pushes and the feeds remove what the server says went
+//!   ([`expire_room`]).
 //! - `composeData` ([`compose_answer`]): the kept answer of the same query, else built as `get#ComposeData` answers
 //!   (BasicComms' and BOSS's, the same for email) from the new message's (no parameters, which the mirror reads; else
 //!   the identities of any kept `composeData`) and the rows: a reply or forward from the kept message it answers, a
@@ -206,6 +210,10 @@ pub fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u8]) {
         tracing::warn!("The answer of {bare} is not JSON; kept whole only");
         return;
     };
+    // the server's clock, which disappearing messages go by (a timeline page's and a room view's serverNow)
+    if let Some(server) = number(&json["serverNow"]).or_else(|| number(&json["timeline"]["serverNow"])) {
+        learn_server_time(server);
+    }
     let params = Params::of(query);
     let kept = match kind {
         Kind::ChatData => keep_chat_data(store, &params, &json),
@@ -244,6 +252,13 @@ pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<
     if kind == Kind::Compose {
         return compose_answer(store, bare, query, &params);
     }
+    let now = server_now();
+    if matches!(
+        kind,
+        Kind::Timeline | Kind::RoomView | Kind::ChatData | Kind::Rooms | Kind::Room
+    ) {
+        sweep_expired(store, now);
+    }
     let built = match kind {
         Kind::Timeline => timeline_json(store, &params),
         Kind::RoomView => room_view_json(store, &params),
@@ -253,9 +268,126 @@ pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<
         Kind::MailThread => thread_json(store, &params),
         _ => None,
     };
-    built
+    let answered = built
         .map(|json| json.to_string().into_bytes())
-        .or_else(|| store.answer(bare, &kept_query(kind, query)).map(|kept| kept.body))
+        .or_else(|| store.answer(bare, &kept_query(kind, query)).map(|kept| kept.body));
+    match kind {
+        // a kept answer may hold an event the sweep had no row of (a page around a seq, pinned only)
+        Kind::Timeline | Kind::RoomView => answered.map(|body| without_due(body, now)),
+        _ => answered,
+    }
+}
+
+// ---- disappearing messages (plans/Comms-Messaging.md phase 16) ----
+
+/// The server's clock less this device's (ms), learned from the server's answers: disappearing messages go by the
+/// server's time, so a device whose clock is wrong neither keeps nor drops them early.
+static SERVER_OFFSET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// The server said its time is `server_ms` now (an answer just received).
+pub(crate) fn learn_server_time(server_ms: i64) {
+    if server_ms > 0 {
+        SERVER_OFFSET.store(server_ms - crate::store::now_ms(), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Now by the server's clock, as far as it is known.
+pub(crate) fn server_now() -> i64 {
+    crate::store::now_ms() + SERVER_OFFSET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Every kept event due by `now_ms` goes (`Store::expire_chat_events`), with the kept pages of each room it went from.
+/// Gives those rooms; a failure is logged, and the rows are due again next time.
+pub(crate) fn sweep_expired(store: &Store, now_ms: i64) -> Vec<String> {
+    let rooms = match store.expire_chat_events(now_ms) {
+        Ok(rooms) => rooms,
+        Err(err) => {
+            tracing::warn!("Expired chat events not removed: {err}");
+            return Vec::new();
+        }
+    };
+    for room in &rooms {
+        if let Err(err) = forget_room_pages(store, room) {
+            tracing::warn!("The kept pages of chat room {room} not removed: {err}");
+        }
+    }
+    // a kept page may hold an event no row has (a page around a seq, pinned only): written again without what is due
+    for key in store.answer_keys("/") {
+        let Some((path, query)) = key.split_once('?') else {
+            continue;
+        };
+        if !(path.ends_with("/Chat/timeline") || path.ends_with("/Chat/roomView")) {
+            continue;
+        }
+        let Some(kept) = store.answer(path, query) else {
+            continue;
+        };
+        let body = without_due(kept.body.clone(), now_ms);
+        if body != kept.body {
+            if let Err(err) = store.put_answer(path, query, &kept.content_type, &body) {
+                tracing::warn!("The kept page {key} not written without its expired events: {err}");
+            }
+        }
+    }
+    rooms
+}
+
+/// The server says events of `room` went (its `expired` push, or the marker of its changes feed): those of `seqs`, and
+/// every one due by `before`, with the room's kept pages. Gives how many were kept here.
+///
+/// # Errors
+///
+/// Returns an error naming what was not removed.
+pub(crate) fn expire_room(store: &Store, room: &str, before: Option<i64>, seqs: &[i64]) -> Result<usize, String> {
+    let gone = store
+        .expire_room_events(room, before, seqs)
+        .map_err(|err| err.to_string())?;
+    forget_room_pages(store, room)?;
+    Ok(gone)
+}
+
+/// The kept whole answers of a room's `timeline`, `roomView` and `room` (under any comms app's path), and the room lists
+/// (`chatData`, `rooms`), which may show an event that went or its snippet; offline they are built from the rows again.
+///
+/// # Errors
+///
+/// Returns an error when an answer cannot be removed.
+pub(crate) fn forget_room_pages(store: &Store, room: &str) -> Result<(), String> {
+    store
+        .remove_answers("/", |key| {
+            let Some((path, query)) = key.split_once('?') else {
+                return false;
+            };
+            ((path.ends_with("/Chat/timeline") || path.ends_with("/Chat/roomView") || path.ends_with("/Chat/room"))
+                && Params::of(query).text("chatRoomId") == Some(room))
+                || path.ends_with("/Chat/chatData")
+                || path.ends_with("/Chat/rooms")
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+/// A timeline or room view answer less its events due by `now_ms`.
+fn without_due(body: Vec<u8>, now_ms: i64) -> Vec<u8> {
+    if !body.windows(12).any(|part| part == b"\"expireDate\"") {
+        return body;
+    }
+    let Ok(mut json) = serde_json::from_slice::<Value>(&body) else {
+        return body;
+    };
+    let mut dropped = false;
+    for pointer in ["/eventList", "/timeline/eventList"] {
+        if let Some(events) = json.pointer_mut(pointer).and_then(Value::as_array_mut) {
+            let before = events.len();
+            events.retain(|event| number(&event["expireDate"]).is_none_or(|due| due > now_ms));
+            dropped |= events.len() < before;
+        }
+    }
+    if dropped {
+        json.to_string().into_bytes()
+    } else {
+        body
+    }
 }
 
 /// A kept JSON object of a synthetic path, or none.

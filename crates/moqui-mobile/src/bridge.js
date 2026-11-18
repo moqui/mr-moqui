@@ -312,6 +312,11 @@
         // button's choice of a route (earpiece, speaker, wired, bluetooth); changes come by moqui.call.setHostAudio
         callAudio: () => shellAsk("call_audio").catch(() => ({ route: null, routes: [] })),
         callAudioRoute: (route) => shellAsk("call_audio_route", { route: String(route || "") }).catch(() => false),
+        // screen security (Android's FLAG_SECURE) for a reason, while a view-once photo is open (plans/Comms-Messaging.md §18.3
+        // phase 16): whether it is on now
+        // the phone's calendar app on a new event (plans/Comms-Messaging.md §18.3 phase 19): whether one opened
+        calendarInsert: (entry) => shellAsk("calendar_insert", { entry: entry || {} }).then((opened) => opened === true, () => false),
+        secureScreen: (reason, on) => shellAsk("secure_screen", { reason: String(reason || ""), on: on === true }).then((held) => held === true, () => false),
         // the phone's dialer through the app (plans/Comms-Messaging.md §9.1): whether this account has a number to call
         // from (the calling account is registered while one here has); a number waiting for the user's pick of the
         // account that calls it ({number, accounts: [{id, label}]}, or null), and the pick

@@ -299,6 +299,19 @@ run until it answers (five tries), so a stop or a failed read loses nothing.
   another change's message read again (`timeline` by `eventSeq`, a thread reply's root too, an event gone removed),
   in order, the room's cursor stopping at the first change not done; past 50 messages, or on a reset, the room's held
   events go and its latest page is read. A room with nothing held only takes its cursor.
+- **Disappearing messages** (plans/Comms-Messaging.md §18.3 phase 16): each held event keeps its `expireDate`
+  (`chat_event.expire_ms`). The store deletes what is due, by the server's clock (learned from its answers' and feed's
+  `serverNow`), at each feed run, at each chat push, and before any offline chat answer, which never gives an expired
+  event; a kept page that holds one is written again without it. A room's `expired` push and its feed's marker (a change
+  with no `eventSeq`, `{cause: 'expired', before}`) delete what they name, with the room's kept timeline, room view and
+  room answers and the kept room lists (built from the rows again offline). A view-once message opened by anyone loses
+  what could open it on the disk, and its room's feed reads it again. The store runs with `secure_delete`, so a deleted
+  row's bytes do not stay in the file.
+- **The store's schema before 0.1.0:** there are no migrations; a change raises `SCHEMA_REV` (`PRAGMA application_id`).
+  A store of an earlier revision is made again when it opens: its outbox, drafts and chunked uploads are copied across
+  by the columns both have, the old file and its WAL go, and the rest (rooms, events, answers, the feeds' cursors) is read
+  again from the server. It is logged; if a copy fails, the old file stays beside the new one as `<account>.db.old`. A
+  store of a later revision (a newer client's) is not opened.
 - **The mail feed:** each change makes the thread match: `deleted` removes it everywhere, `removedMessageIds` and the
   messages no longer in it go, the kept messages and the thread's rows take its state (read, flags, archived,
   folder, label, newest message), a row of a folder none of its messages is in leaves it, and a thread with a message
@@ -334,6 +347,9 @@ and the libraries they load (tiptap, the crypto library) are in `libs.txt`; a go
   first with no `#` (Comms-Messaging §3): two letters and Enter open a room, and a person with no direct chat gets a
   message, the chat made when it is sent. Ctrl+Enter opens the row in an app window (the root's `openNewTab`); offline,
   the palette says once that searching needs the server and still finds screens and actions.
+- **People across networks** ([Comms](../tools/Comms.md#people-across-networks)): the bundled Chat has the composer's
+  network button (a menu above the composer) and the person card in the People tab, as on the web; offline neither
+  shows, and the rooms work as before.
   Root listens for the keys of `moqui.keymap` as the web's root does, so Chat's own keys work in the shell too; the
   `KEYMAP` preference is not read here yet.
 - **In app windows:** every other screen, the server's own `/qapps`: Calls' History, Voicemail and Recordings; Settings,
@@ -459,6 +475,8 @@ leaves them alone (`pushDelivers`) and only tells the host which room shows (`ro
 - Send later (Send's arrow or a right click; plans/Comms-Messaging.md phase 15) needs a connection: a scheduled message
   is not an outbox operation. An encrypted room's scheduled message, which the device holds, goes only while a Chat
   window of the account is open, and when one next opens if none was (sent late).
+- Invite links, join requests and text members (plans/Comms-Messaging.md phases 17 and 18; `js/WebrootChatJoin.js`,
+  loaded by the shell's `index.html`) need a connection: their dialogs read the server, and nothing of them is kept.
 - The store's cap keeps no running total of its size: each check measures the rows and files again, a cost that
   grows with the store.
 - A reply or forward built offline quotes with English labels and this computer's time zone, not the user's locale and

@@ -10,8 +10,14 @@
         <webapp name="webroot">
             <token-route name="call" screen-location="component://basic-comms/screen/CallGuest.xml"
                     token-service="org.moqui.call.CallServices.check#CallLinkToken" title="Call"/>
+            <!-- a room's invite link (plans/Comms-Messaging.md §18.3 phase 17): /join/<token>, screen/ChatJoin.xml in the public
+                shell after org.moqui.chat.ChatInviteServices.check#InviteToken; a signed-in person joins or asks to -->
+            <token-route name="join" screen-location="component://basic-comms/screen/ChatJoin.xml"
+                    token-service="org.moqui.chat.ChatInviteServices.check#InviteToken" title="Join a room"/>
             <web-protection>
                 <rate-limit name="call-guest" path="/call/*/joinGuest" methods="POST" requests="10" seconds="60" burst="5"/>
+                <rate-limit name="chat-join" path="/join/*/join" methods="POST" requests="10" seconds="60" burst="5"/>
+                <rate-limit name="chat-join-sign-in" path="/join/*/signIn" methods="POST" requests="10" seconds="60" burst="5"/>
             </web-protection>
         </webapp>
     </webapp-list>
@@ -26,6 +32,8 @@
             <subscreens-item name="ChatBridges" menu-title="Chat Bridges" menu-index="18" menu-group="Integration" location="component://basic-comms/screen/System/ChatBridges.xml"/>
             <!-- every user's push devices and how their pushes go (plans/Comms-Messaging.md §7.3, Health) -->
             <subscreens-item name="PushHealth" menu-title="Push Health" menu-index="19" menu-group="Integration" location="component://basic-comms/screen/System/PushHealth.xml"/>
+            <!-- the server's chat sticker packs (plans/Comms-Messaging.md §18.3 phase 20) -->
+            <subscreens-item name="ChatStickers" menu-title="Chat Stickers" menu-index="20" menu-group="Integration" location="component://basic-comms/screen/System/ChatStickers.xml"/>
         </screen>
     </screen-facade>
 </moqui-conf>

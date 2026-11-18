@@ -691,17 +691,25 @@ fn get_commit_diff(
     let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "commitId").unwrap_or_default();
     let path = text(parameters, "path");
+    let most = crate::browse::commit_max_diff_files();
     match provider.commit_diffs(&id, &revision, path.as_deref()) {
         Ok(Some(diffs)) => Ok(out([(
             "fileDiffList",
             Value::List(
                 diffs
                     .iter()
-                    .map(|(change, diff)| {
+                    .enumerate()
+                    .map(|(position, (change, diff))| {
                         let mut value = change_value(change, Some(diff));
+                        // past the first files a file is counted, not shown (its hunks have no lines)
+                        let full = path.is_some() || position < most;
                         if let (Value::Map(entries), Some(text)) = (&mut value, &diff.diff) {
-                            entries.insert("unifiedDiff".to_string(), Value::string(text.unified()));
-                            entries.insert("html".to_string(), Value::string(text.render_html()));
+                            if full {
+                                entries.insert("unifiedDiff".to_string(), Value::string(text.unified()));
+                                entries.insert("html".to_string(), Value::string(text.render_html()));
+                            } else {
+                                entries.insert("diffOmitted".to_string(), Value::Bool(true));
+                            }
                         }
                         value
                     })

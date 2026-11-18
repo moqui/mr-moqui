@@ -845,6 +845,10 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="mergeRequestId" required="true"/>
             <parameter name="withDiffs" type="Boolean" default="true"/>
+            <parameter name="path"><description>As get#GitCompare's</description></parameter>
+            <parameter name="maxDiffLines" type="Integer" default="0"><description>As get#GitCompare's</description></parameter>
+            <parameter name="maxFileDiffLines" type="Integer" default="0"><description>As get#GitCompare's</description></parameter>
+            <parameter name="withHtml" type="Boolean" default="true"><description>As get#GitCompare's</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="baseCommitId"/>
@@ -875,7 +879,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const base = open ? 'refs/heads/' + mr.targetRef : (mr.baseCommitId || 'refs/heads/' + mr.targetRef)
                 const head = open ? sourceHead : (mr.headCommitId || sourceHead)
                 let call = ec.service.sync().name('org.moqui.git.GitServices.get#GitCompare')
-                        .parameters({repositoryId: mr.repositoryId, base, head, withDiffs, includeHidden: !!mr.hiddenDate && internal})
+                        .parameters({repositoryId: mr.repositoryId, base, head, withDiffs, path: path || null, maxDiffLines: maxDiffLines || 0, maxFileDiffLines: maxFileDiffLines || 0, withHtml: withHtml !== false, includeHidden: !!mr.hiddenDate && internal})
                 if (internal) call = call.disableAuthz()
                 const compared = call.call() || {}
                 baseCommitId = compared.baseCommitId; headCommitId = compared.headCommitId; mergeBaseId = compared.mergeBaseId

@@ -40,7 +40,8 @@ along with this software (see the LICENSE.md file). If not, see
             mentioned the user where, read by the framework's notify#Mention), autoAwayMinutes (CHAT_AUTO_AWAY_MINUTES,
             10, which the framework's presence reads), dndFrom and dndTo (CHAT_DND_FROM and CHAT_DND_TO, HH:mm in the
             user's time zone, apply#DndHours), dndAllowed (CHAT_DND_ALLOWED: the people whose calls still ring on do not
-            disturb, [{userId, name}], store#DndAllowed), and statusPresets (CHAT_STATUS_PRESETS, a JSON list of {emoji, text,
+            disturb, [{userId, name}], store#DndAllowed), screenSecurity (CHAT_SCREEN_SECURITY: off, encrypted or app) and
+            otpDelete (CHAT_OTP_DELETE, N; ChatPrivacyServices store#ChatPrivacyPrefs), and statusPresets (CHAT_STATUS_PRESETS, a JSON list of {emoji, text,
             clearAfter}: minutes, today, week or 0 for never; five presets until the user changes them; the account menu's
             status dialog, WebrootChat.js, reads the same preference).</description>
         <out-parameters><parameter name="prefs" type="Map"/></out-parameters>
@@ -63,6 +64,9 @@ along with this software (see the LICENSE.md file). If not, see
             prefs = {enterSends: flag('CHAT_ENTER_SENDS', true), sounds: flag('CHAT_SOUNDS', true), readReceipts: flag('CHAT_READ_RECEIPTS', true),
                 typing: flag('CHAT_TYPING', true), linkPreviews: flag('CHAT_LINK_PREVIEWS', true), notifyDefault: ['all', 'mentions', 'none'].includes(level) ? level : '', notifyPreview: flag('CHAT_NOTIFY_PREVIEW', true),
                 autoAwayMinutes: minutes > 0 ? minutes : 10, dndFrom: pref('CHAT_DND_FROM'), dndTo: pref('CHAT_DND_TO'), dndAllowed: dndAllowed,
+                // screen security and one-time codes (plans/Comms-Messaging.md §18.3 phase 21; ChatPrivacyServices)
+                screenSecurity: ['encrypted', 'app'].includes(pref('CHAT_SCREEN_SECURITY')) ? pref('CHAT_SCREEN_SECURITY') : 'off',
+                otpDelete: flag('CHAT_OTP_DELETE', false),
                 statusPresets: presets.filter((item) => item && (item.text || item.emoji)).slice(0, 12).map((item) => ({emoji: String(item.emoji || ''),
                     text: String(item.text || ''), clearAfter: String(item.clearAfter ?? '0')}))}
         ]]></script></actions>
@@ -464,7 +468,7 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const [id, actor] of Object.entries(actors)) userNames[id] = actor.name
             }
             page = {room: out.room, access: out.access, eventList: events, hasMoreBefore: !!out.hasMoreBefore, hasMoreAfter: !!out.hasMoreAfter,
-                lastReadEventSeq: out.lastReadEventSeq, memberList: out.memberList, userNames: userNames}
+                lastReadEventSeq: out.lastReadEventSeq, memberList: out.memberList, userNames: userNames, serverNow: out.serverNow ?? null}
         ]]></script></actions>
     </service>
 
@@ -693,6 +697,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="forwardOfEventSeq" type="Integer"/>
             <parameter name="encrypted" type="Map"/>
             <parameter name="mentionUserIdList" type="List"/>
+            <parameter name="viewOnce" type="Boolean" default="false"><description>A view-once photo or video (send#Message)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -709,7 +714,7 @@ along with this software (see the LICENSE.md file). If not, see
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null, chatAttachmentIdList: ids,
                 recordList: records, roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId), clientRef: clientRef || null,
                 forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: forwardOfEventSeq ?? null,
-                encrypted: encrypted || null, mentionUserIdList: mentionUserIdList || null}).call()
+                encrypted: encrypted || null, mentionUserIdList: mentionUserIdList || null, viewOnce: !!viewOnce}).call()
             reasonCode = out?.reasonCode || null
             if (ec.message.hasError()) return
             eventSeq = out.eventSeq; event = out.event; clientRef = out.clientRef; duplicate = !!out.duplicate
@@ -1000,15 +1005,18 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== The mail line on a person's row ========== -->
 
     <service verb="find" noun="DirectChatMail">
-        <description>The mail line of the Chat list (Comms-Messaging §3, §19.1): for each person the current user has a
-            direct chat of the two of them with (a member of it now), that person's latest mail thread among the mail the
-            user may read (get#EmailAccountAccess: owned accounts and those shared with the user, at any level), matched by
-            the mail address of the person's user account only (§19.1: a mail account they own or share, an alias, is not
-            theirs to be credited with): a message from that address, or with it in its To or Cc as a whole address. Drafts,
-            Spam and Trash are left out. mailList: [{userId, chatRoomId, subject, date, threadKey (email:rootEmailMessageId),
-            url (the thread in the Inbox under comms@app-root)}], one per person with mail. Read-only, in one query of the
-            mail for all of them: the last 180 days, the latest 300 matching messages (a person whose mail is older than
-            those has no line). An outside person (no user of this server) waits for unified contacts and has none.</description>
+        <description>The mail line of the Chat list (Comms-Messaging §3, §11.1, §19.1): for each person of the current
+            user's rooms (org.moqui.chat.ChatPeopleServices: a direct chat of the two of them, a phone room, a GroupMe direct
+            conversation, grouped into one person across them), that person's latest mail thread among the mail the user may
+            read (get#EmailAccountAccess: owned accounts and those shared with the user, at any level), on each of the
+            person's rooms. A user of this server matches by the mail address of their user account (§19.1: a mail account
+            they own or share, an alias, is not theirs to be credited with) and the addresses the current user linked to
+            them; an outside person by the addresses of the app's contact (the contacts hook) and those the current user
+            linked: a message from that address, or with it in its To or Cc as a whole address. Drafts, Spam and Trash are
+            left out. mailList: [{userId (empty for an outside person), personKey, chatRoomId, subject, date, threadKey
+            (email:rootEmailMessageId), url (the thread in the Inbox under comms@app-root)}], one thread per person with
+            mail. Read-only, in one query of the mail for all of them: the last 180 days, the latest 300 matching messages
+            (a person whose mail is older than those has no line).</description>
         <out-parameters><parameter name="mailList" type="List"><parameter name="mail" type="Map"/></parameter></out-parameters>
         <actions><script><![CDATA[
             mailList = []
@@ -1036,21 +1044,14 @@ along with this software (see the LICENSE.md file). If not, see
                 out.push(current)
                 return out.map((entry) => { const match = /<([^>]+)>\s*$/.exec(entry); return lower(match ? match[1] : entry.replace(/^"|"$/g, '')) }).filter((one) => one)
             }
-            // the people of my direct chats of two: the other member, a user of this server
-            const myRooms = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).condition('leftDate', null)
-                    .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
-            if (!myRooms.length) return
-            // a person's plain and encrypted direct chats both get the line
-            const directAll = Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms).condition('roomTypeEnumId', 'CrtDirect')
-                    .selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
-            if (!directAll.length) return
-            const membersOf = {}
-            for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', directAll).selectField('chatRoomId').selectField('userId')
-                    .disableAuthz().list()) if (row.userId) (membersOf[row.chatRoomId] = membersOf[row.chatRoomId] || new Set()).add(row.userId)
+            // the people of my rooms (ChatPeople.js mailPeople, Comms-Messaging §11.1): each person's rooms (their plain and
+            // encrypted direct chats, phone rooms, GroupMe direct conversation) and mail addresses
+            const grouped = ec.resource.script('component://framework/service/org/moqui/chat/ChatPeople.js').execute('mailPeople', {})
             const roomsOf = {}
-            for (const roomId of Object.keys(membersOf)) {
-                const others = Array.from(membersOf[roomId]).filter((id) => id !== me)
-                if (others.length === 1) (roomsOf[others[0]] = roomsOf[others[0]] || []).push(roomId)
+            const userOf = {}
+            for (const person of Array.from(grouped.personList || [])) {
+                roomsOf[person.personKey] = Array.from(person.chatRoomIdList || [])
+                userOf[person.personKey] = person.userId || null
             }
             const people = Object.keys(roomsOf)
             if (!people.length) return
@@ -1060,12 +1061,14 @@ along with this software (see the LICENSE.md file). If not, see
             if (!accountIds.length) return
             const mine = new Set([lower(ec.user.userAccount?.emailAddress)])
             for (const account of Array.from(access.accountList || [])) mine.add(lower(account.emailAddress))
-            // each person's address: their user account's alone
+            // each person's addresses: a user's account address and those I linked; an outside person's from the contacts and
+            // my links; never one of mine, and an address of two people is the first's
             const addressOwner = {}
-            for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', people).selectField('userId').selectField('emailAddress')
-                    .disableAuthz().list()) {
-                const one = lower(account.emailAddress)
-                if (one && one.includes('@') && !mine.has(one) && !addressOwner[one]) addressOwner[one] = account.userId
+            for (const person of Array.from(grouped.personList || [])) {
+                for (const address of Array.from(person.mailAddressList || [])) {
+                    const one = lower(address)
+                    if (one && one.includes('@') && !mine.has(one) && !addressOwner[one]) addressOwner[one] = person.personKey
+                }
             }
             const addresses = Object.keys(addressOwner)
             if (!addresses.length) return
@@ -1098,11 +1101,11 @@ along with this software (see the LICENSE.md file). If not, see
             for (const message of found) {
                 const involved = [lower(message.fromAddress)].concat(addressesOf(message.toAddresses), addressesOf(message.ccAddresses))
                 for (const address of involved) {
-                    const userId = addressOwner[address]
-                    if (!userId || done.has(userId)) continue
-                    done.add(userId)
+                    const personKey = addressOwner[address]
+                    if (!personKey || done.has(personKey)) continue
+                    done.add(personKey)
                     const threadKey = 'email:' + (message.rootEmailMessageId || message.emailMessageId)
-                    for (const chatRoomId of roomsOf[userId]) mailList.push({userId: userId, chatRoomId: chatRoomId, subject: message.subject ?? null,
+                    for (const chatRoomId of roomsOf[personKey]) mailList.push({userId: userOf[personKey], personKey: personKey, chatRoomId: chatRoomId, subject: message.subject ?? null,
                         date: toMillis(message.messageDate) ?? toMillis(message.sentDate), threadKey: threadKey,
                         url: inbox + '?view=all&thread=' + encodeURIComponent(threadKey)})
                 }

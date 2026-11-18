@@ -56,6 +56,8 @@ const DEFAULT_POLICY = {
   smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500, smsSystemNumber: null,
   // the promotional texts one of our numbers sends a day (a campaign's, apart from the system's budget)
   smsMaxPromotionalPerNumber: 1000,
+  // rooms' text members (plans/Comms-Messaging.md §18.3 phase 18): a room's members, its texts a day, a user's adds a day
+  smsRoomMaxMembers: 10, smsRoomMaxPerDay: 500, smsRoomAddsPerDay: 20,
 }
 const TRANSPORT_CODES = { VtrTls: 'tls', VtrTcp: 'tcp', VtrUdp: 'udp' }
 const MEDIA_CODES = { VmeSrtp: 'srtp', VmePlain: 'plain' }
@@ -115,7 +117,7 @@ function policy() {
   if (row) for (const key of Object.keys(DEFAULT_POLICY)) if (!blank(row[key])) out[key] = row[key]
   for (const key of ['maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay', 'maxCallsPerDay',
     'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay',
-    'smsMaxPromotionalPerNumber']) out[key] = Number(out[key])
+    'smsMaxPromotionalPerNumber', 'smsRoomMaxMembers', 'smsRoomMaxPerDay', 'smsRoomAddsPerDay']) out[key] = Number(out[key])
   out.homeCountryCode = String(out.homeCountryCode).replace(/\D/g, '') || '1'
   return out
 }
@@ -1129,6 +1131,7 @@ function findNumbers() {
           : n.routeTypeEnumId === 'PnrVoicemail' ? ec.l10n.localize('Voicemail access') : n.routeId,
       emergencyLocationId: n.emergencyLocationId, locationName: locations.get(n.emergencyLocationId) || null, description: n.description,
       messagingBridgeId: n.messagingBridgeId || null, messagingName: bridges.get(n.messagingBridgeId) || null,
+      roomTextsEnabled: n.roomTextsEnabled === 'Y' ? 'Y' : 'N',
     })),
   }
 }
@@ -1184,6 +1187,8 @@ function storeNumber(p) {
     emergencyLocationId: p.emergencyLocationId || null, description: p.description || null }
   // left as it is when not given (a caller from before C4-SMS)
   if (p.messagingBridgeId !== undefined) fields.messagingBridgeId = blank(p.messagingBridgeId) ? null : p.messagingBridgeId
+  // rooms' text members (plans/Comms-Messaging.md §18.3 phase 18): left as it is when not given
+  if (p.roomTextsEnabled !== undefined && p.roomTextsEnabled !== null) fields.roomTextsEnabled = flag(p.roomTextsEnabled) === 'Y' ? 'Y' : null
   const row = one(NUMBER, { phoneNumber })
   if (row) {
     row.setFields(fields, true, null, null)
@@ -1321,7 +1326,7 @@ function deleteLocation(p) {
 const POLICY_FIELDS = ['internationalEnabled', 'premiumEnabled', 'maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay',
   'maxCallsPerDay', 'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'homeCountryCode', 'emergencyNumbers',
   'premiumPrefixes', 'alertUserGroupId', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay', 'smsSystemNumber',
-  'smsMaxPromotionalPerNumber']
+  'smsMaxPromotionalPerNumber', 'smsRoomMaxMembers', 'smsRoomMaxPerDay', 'smsRoomAddsPerDay']
 
 function getPolicy() {
   const denied = notAdmin()
@@ -1346,7 +1351,7 @@ function updatePolicy(p) {
         return refuse('systemNumber', 'The system texts from a number on an SMS bridge; this number\'s texts go through RCS')
       }
       fields[key] = number
-    } else if (/^(max|auth|smsMax)/.test(key)) {
+    } else if (/^(max|auth|smsMax|smsRoom)/.test(key)) {
       const number = Number(p[key])
       if (!(Number.isInteger(number) && number >= 1)) return refuse('badPolicy', 'Limits are whole numbers of 1 or more')
       fields[key] = number

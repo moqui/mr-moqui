@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Event messages with RSVP in chat (plans/Comms-Messaging.md §18.3 phase 19; org.moqui.chat.ChatCalServices,
+    ChatCal.js). An event is a message (CetMessage, content.calEvent {title}) whose body is the event in words, so every
+    client, bridge and text shows it; its state and the members' answers are these rows, as a poll's are ChatPoll's. A
+    calendar entry is an app's (the chat-calendar provider hook), or the event's .ics file. No Java counterpart. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="ChatCalEvent" package="moqui.chat" use="transactional" cache="never">
+        <description>An event: the message eventSeq of chatRoomId. startDate and endDate are instants, shown and written in
+            timeZone (an IANA zone); allDay Y is whole days in that zone (endDate the start of the day after the last).
+            revision counts the changes (the .ics SEQUENCE); cancelledDate ends it for good. The counts are kept here, with
+            the row locked on each answer. A redaction or an expiry of the message removes it (forget#CalEvent).</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="startDate" type="date-time"/>
+        <field name="endDate" type="date-time"/>
+        <field name="timeZone" type="text-short"/>
+        <field name="allDay" type="text-indicator"/>
+        <field name="place" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="revision" type="number-integer"/>
+        <field name="cancelledDate" type="date-time"/>
+        <field name="cancelledByUserId" type="id"/>
+        <field name="lastChangeEventSeq" type="number-integer"><description>The last change or cancellation message</description></field>
+        <field name="goingCount" type="number-integer"/>
+        <field name="maybeCount" type="number-integer"/>
+        <field name="noCount" type="number-integer"/>
+        <field name="calendarSyncPending" type="text-indicator"><description>Y: the chat-calendar providers' last change or
+            cancel failed, and is tried again at the next answer or change once calendarSyncNextDate is past</description></field>
+        <field name="calendarSyncTries" type="number-integer"/>
+        <field name="calendarSyncNextDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
+        <relationship type="one-nofk" title="CreatedBy" related="moqui.security.UserAccount" short-alias="createdBy">
+            <key-map field-name="createdByUserId" related="userId"/></relationship>
+        <index name="CHAT_CAL_START"><index-field name="startDate"/></index>
+    </entity>
+
+    <entity entity-name="ChatCalAnswer" package="moqui.chat" use="transactional" cache="never">
+        <description>An actor's answer to an event: Going, Maybe or No (answerEnumId). userId is the local user of a local
+            actor. remindMinutes is the reminder the answer asked for (that long before the start), chatMessageReminderId
+            the phase 15 reminder it made, moved with the start and cancelled with the answer; calendarDate and
+            calendarRevision when an app's chat-calendar provider last put the entry.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="chatActorId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="answerEnumId" type="id"/>
+        <field name="answeredDate" type="date-time"/>
+        <field name="remindMinutes" type="number-integer"/>
+        <field name="chatMessageReminderId" type="id"/>
+        <field name="calendarDate" type="date-time"/>
+        <field name="calendarRevision" type="number-integer"/>
+        <relationship type="one" related="moqui.chat.ChatCalEvent" short-alias="calEvent"/>
+        <relationship type="one" related="moqui.chat.ChatActor" short-alias="actor"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="ChatCalAnswerType" related="moqui.basic.Enumeration" short-alias="answer">
+            <key-map field-name="answerEnumId"/></relationship>
+        <index name="CHAT_CAL_ANSWER_USER"><index-field name="userId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Event Answer" enumTypeId="ChatCalAnswerType"/>
+            <moqui.basic.Enumeration description="Going" enumId="CcaGoing" enumCode="going" enumTypeId="ChatCalAnswerType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Maybe" enumId="CcaMaybe" enumCode="maybe" enumTypeId="ChatCalAnswerType" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="No" enumId="CcaNo" enumCode="no" enumTypeId="ChatCalAnswerType" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+</entities>

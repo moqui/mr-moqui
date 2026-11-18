@@ -19,6 +19,9 @@ fn only_the_webs_and_the_handlers_links_open_outside_the_app() {
     assert!(external_url("https://www.moqui.org/").is_ok());
     assert!(external_url("mailto:joe@example.com").is_ok());
     assert!(external_url("tel:+15551234").is_ok());
+    // a chat location's Open in maps (phase 20)
+    assert!(external_url("geo:45.500000,-122.600000?q=45.500000,-122.600000(The%20shop)").is_ok());
+    assert!(external_url("geo:0,0?q=1%20Main%20St").is_ok());
     for bad in [
         "http://moqui-shell.localhost/",
         "http://moqui-app.localhost/qapps",

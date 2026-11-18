@@ -96,6 +96,23 @@ fn a_viewers_reads_are_held_to_their_limits() {
         .filter(|file| !matches!(entry(file, "unifiedDiff"), Value::Null))
         .count();
     assert_eq!(diffed, 2);
+    // the others are counted, not shown, and the last one asked for alone has its diff
+    let counted = files
+        .iter()
+        .filter(|file| entry(file, "diffOmitted") == &Value::Bool(true))
+        .count();
+    assert_eq!(counted, 2);
+    let last = text_of(entry(&files[3], "path"));
+    let alone = ok(
+        &fixture,
+        READER,
+        &git("get#GitCommitDiff"),
+        &[("repositoryId", s("site")), ("commitId", s(&first)), ("path", s(&last))],
+    );
+    assert!(
+        !matches!(entry(&list(&alone, "fileDiffList")[0], "unifiedDiff"), Value::Null),
+        "{alone:?}"
+    );
 
     // big.txt changed in the first commit only: four later commits are past the log's budget of three
     let log = ok(

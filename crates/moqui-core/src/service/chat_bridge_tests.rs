@@ -90,6 +90,7 @@ impl TestAdapter {
                 sends_per_minute: 0,
                 encryption: Encryption::BridgeDecrypted,
                 group_max: 0,
+                media_max_bytes: 0,
             },
             network: Mutex::new(Network::default()),
         })
@@ -1280,4 +1281,60 @@ fn a_bridge_with_no_number_lookup_answers_not_supported() {
         );
         assert_eq!(out_text(&out, "reasonCode"), "notSupported", "{id}");
     }
+}
+
+/// A message whose files the adapter refuses (too large for a text, too many, none taken) goes as its words alone when
+/// it has some (a sticker's "Sticker 👍", plans/Comms-Messaging.md §18.3 phase 20); another failure, or no words, stays.
+#[test]
+fn a_refused_file_goes_as_the_messages_words() {
+    let request = super::DeliveryRequest {
+        chat_bridge_delivery_id: "D1".to_string(),
+        idempotency_key: "moqui-chat:D1".to_string(),
+        chat_room_id: "R1".to_string(),
+        event_seq: 1,
+        external_room_id: "+15550001111/+15550002222".to_string(),
+        external_thread_id: None,
+        kind: super::DeliveryKind::Message,
+        text: None,
+        html: None,
+        sender_name: None,
+        sender_user_id: Some("alice".to_string()),
+        attachments: vec![super::DeliveryAttachment {
+            chat_attachment_id: "A1".to_string(),
+            file_name: Some("sticker.webp".to_string()),
+            content_type: Some("image/webp".to_string()),
+            file_size: Some(900_000),
+        }],
+        target_remote_id: None,
+        reaction_key: None,
+        rich: None,
+        location: None,
+        text_form: Some("Sticker 👍".to_string()),
+        attempt: 1,
+    };
+    let refused = |reason: &str| super::DeliveryOutcome::Failed {
+        reason_code: reason.to_string(),
+        error: "no".to_string(),
+    };
+    for reason in ["mediaTooLarge", "tooManyFiles", "mmsNotSetUp"] {
+        let words = super::words_instead(&request, &refused(reason)).expect(reason);
+        assert_eq!(words.text.as_deref(), Some("Sticker 👍"));
+        assert!(words.attachments.is_empty());
+    }
+    assert!(
+        super::words_instead(&request, &refused("optedOut")).is_none(),
+        "another refusal stays"
+    );
+    let silent = super::DeliveryRequest {
+        text_form: None,
+        ..request.clone()
+    };
+    assert!(
+        super::words_instead(&silent, &refused("mediaTooLarge")).is_none(),
+        "no words: it stays refused"
+    );
+    let accepted = super::DeliveryOutcome::Accepted {
+        remote_event_id: "x".to_string(),
+    };
+    assert!(super::words_instead(&request, &accepted).is_none());
 }

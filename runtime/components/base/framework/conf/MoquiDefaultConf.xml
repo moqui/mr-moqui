@@ -346,6 +346,12 @@
         <!-- the people a user asked the encryption default of (ChatKeyServices.get#EncryptionDefault): a slot per person, by
             user and hour, claimed with putIfAbsent; per node unless a distributed cache factory is configured -->
         <cache name="moqui.chat.encryption.default.asked" type="distributed" expire-time-live="3600" max-elements="200000" value-type="Long"/>
+        <!-- the times a user's people were grouped with the contacts hook (ChatPeopleServices.find#ChatPeople), by user and
+            hour, claimed with putIfAbsent: past 60 the people come without the hook -->
+        <cache name="moqui.chat.people.hook.asked" type="distributed" expire-time-live="3600" max-elements="200000" value-type="Long"/>
+        <!-- the contacts hook's last answer for a user (ChatPeopleServices.find#ChatPeople), JSON: shared by their tabs and
+            devices and by the people and mail line requests for three minutes, so the room list spends one hook slot -->
+        <cache name="moqui.chat.people.contacts" type="distributed" expire-time-live="180" max-elements="20000" value-type="String"/>
         <!-- whether the Login screen's Test Login still holds (UserServices.get#TestLoginOffered), by a digest of the
             test account's stored hash, so an anonymous render runs the password check at most once a minute -->
         <cache name="webroot.login.test" type="local" expire-time-live="60" max-elements="10" value-type="Boolean"/>
@@ -1510,7 +1516,11 @@
         <load-entity location="component://framework/entity/CallEntities.xml"/>
         <load-entity location="component://framework/entity/VoiceEntities.xml"/>
         <load-entity location="component://framework/entity/ChatKeyEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatPeopleEntities.xml"/>
         <load-entity location="component://framework/entity/ChatScheduleEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatCalEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatStickerEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatPrivacyEntities.xml"/>
         <load-entity location="component://framework/entity/TerminalEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>

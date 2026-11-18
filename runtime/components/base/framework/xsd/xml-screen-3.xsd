@@ -599,6 +599,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="sms-consent"/>
             <xs:element ref="call-target"/>
             <xs:element ref="chat-target"/>
+            <xs:element ref="chat-calendar"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="provider-attributes">
@@ -651,6 +652,11 @@ along with this software (see the LICENSE.md file). If not, see
         (refusedUserIdList), for an app that keeps them to the user's own organizations; a refused user is answered as one
         that does not exist. With no provider any enabled user may be reached, and a provider that fails refuses them
         all.</xs:documentation></xs:annotation></xs:element>
+
+    <xs:element name="chat-calendar" type="provider-type"><xs:annotation><xs:documentation>Puts a chat event on the current
+        user's calendar, changes or removes it (org.moqui.comms.ProviderInterfaces.chat#CalendarEntry, called by
+        org.moqui.chat.ChatCalServices): given only the event's room, message and an action, it reads the event and the
+        user's answer itself. With no provider a chat event is offered as an .ics file.</xs:documentation></xs:annotation></xs:element>
 
     <!-- ================ Declared actions and panels ================ -->
     <xs:attributeGroup name="ext-item-attributes">

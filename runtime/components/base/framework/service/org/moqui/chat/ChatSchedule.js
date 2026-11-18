@@ -690,6 +690,8 @@ function fire(p) {
   }
   const event = one(EVENT, { chatRoomId: row.chatRoomId, eventSeq: Number(row.eventSeq) })
   if (!event || event.eventTypeEnumId !== 'CetMessage' || event.redactedDate) return drop('messageGone')
+  // a disappearing message past its time is gone though the expiry has not deleted it yet (phase 16)
+  if (event.expireDate != null && String(event.expireDate) !== '' && Number(event.expireDate) <= now()) return drop('messageGone')
   // its user's access now: the account, the app's screens, the room
   const access = asSender(row.userId, 'get#RoomAccess', { chatRoomId: row.chatRoomId }, row.screenPathJson)
   if (access.state === 'locked') return { waiting: true }

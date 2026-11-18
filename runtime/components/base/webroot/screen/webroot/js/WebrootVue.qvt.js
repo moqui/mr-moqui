@@ -225,7 +225,9 @@
         QUASAR_LEFT_OPEN: (value, vm) => { if (vm && "leftOpen" in vm) vm.leftOpen = value === "true"; },
         QUASAR_LEFT_MINI: (value, vm) => { if (vm && "leftMini" in vm) vm.leftMini = value === "true"; },
         KEYMAP: (value) => { if (!moqui.keymap.setOverrides(value === undefined ? null : value)) console.info("The KEYMAP preference is not JSON of {scope: {action: keys}}, ignored"); },
-        SHELL_DENSITY: (value) => moqui.applyDensity(value)
+        SHELL_DENSITY: (value) => moqui.applyDensity(value),
+        // the whole app's screen security, on or off at once (plans/Comms-Messaging.md §18.3 phase 21; WebrootChat.js)
+        CHAT_SCREEN_SECURITY: (value) => { if (moqui.chat && moqui.chat.screen) moqui.chat.screen.applyApp(value || "off"); }
     };
     moqui.applyPreference = (key, value) => {
         if (!key) return;

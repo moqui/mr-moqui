@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of invite links and join requests in Chat (plans/Comms-Messaging.md §18.3 phase 17;
+    org.moqui.chat.ChatInviteServices), each included by name in Chat.xml: inviteLinks, createInviteLink, revokeInviteLink,
+    inviteQr (the QR code of a link's URL, on the conf's own scheme and host, never the request's Host), setRoomListed,
+    joinRequests, joinRequestCount, decideJoinRequest, cancelJoinRequest, listedRooms (Browse) and requestJoin. A refusal is
+    an answer with its reasonCode and the errors. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="inviteLinks" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.find#InviteLinks').parameter('chatRoomId', chatRoomId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {linkList: out.linkList || [], canMake: !!out.canMake,
+                roomKind: out.roomKind || null, canList: !!out.canList, listed: !!out.listed})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="createInviteLink">
+        <actions><script><![CDATA[
+            const number = (value) => value == null || value === '' ? null : Number(value)
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.create#InviteLink').parameters({chatRoomId: chatRoomId || '', label: label || null,
+                expiryHours: number(expiryHours), maxUses: number(maxUses), approvalRequired: String(approvalRequired) === 'true' ? 'Y' : 'N'}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {chatInviteLinkId: out.chatInviteLinkId, path: out.path})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="revokeInviteLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.revoke#InviteLink').parameter('chatInviteLinkId', chatInviteLinkId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null}
+                    : {revoked: !!out.revoked, messageInfos: [{type: 'success', message: ec.l10n.localize('The link is revoked')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="inviteQr" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.get#InviteQr').parameters({chatInviteLinkId: chatInviteLinkId || '',
+                baseUrl: ec.web.getWebappRootUrl(true, null) || ''}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {url: out.url || null, qrSvg: out.qrSvg || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="setRoomListed">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.set#RoomListed').parameters({chatRoomId: chatRoomId || '', listed: String(listed) === 'true' ? 'Y' : 'N'}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {listed: !!out.listed})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="joinRequests" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.find#JoinRequests').parameter('chatRoomId', chatRoomId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {requestList: out.requestList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="joinRequestCount" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.get#JoinRequestCount').parameter('chatRoomId', chatRoomId || '').call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({pendingCount: Number(out.pendingCount || 0)})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="decideJoinRequest">
+        <actions><script><![CDATA[
+            const ids = chatJoinRequestIds ? String(chatJoinRequestIds).split(',').map((id) => id.trim()).filter((id) => id) : []
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.decide#JoinRequest').parameters(ids.length ? {chatJoinRequestIdList: ids, decision: decision || ''}
+                : {chatJoinRequestId: chatJoinRequestId || '', decision: decision || ''}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null}
+                    : {decided: !!out.decided, decidedCount: out.decidedCount ?? null, failedList: out.failedList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="cancelJoinRequest">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.cancel#JoinRequest').parameter('chatJoinRequestId', chatJoinRequestId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {cancelled: !!out.cancelled})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="listedRooms" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.find#ListedRooms').parameter('searchText', searchText || null).call() || {}
+            ec.web.sendJsonResponse({roomList: out.roomList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="requestJoin">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.request#Join').parameters({chatRoomId: chatRoomId || '', note: note || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null}
+                    : {outcome: out.outcome || null, chatJoinRequestId: out.chatJoinRequestId || null,
+                        messageInfos: [{type: 'success', message: ec.l10n.localize('Your request went to the room\'s moderators')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>

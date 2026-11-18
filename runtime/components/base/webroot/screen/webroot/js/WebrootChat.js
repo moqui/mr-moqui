@@ -316,6 +316,11 @@
                     state.reads[roomId] = Object.assign({}, state.reads[roomId], { [message.userId]: message.lastReadEventSeq });
                     return { kind: "read", chatRoomId: roomId, userId: message.userId, lastReadEventSeq: message.lastReadEventSeq };
                 }
+                // events gone at their time (disappearing messages, plans/Comms-Messaging.md §18.3 phase 16; WebrootChatExpiry.js)
+                if (message.kind === "expired") {
+                    return { kind: "expired", chatRoomId: roomId, eventSeqList: Array.isArray(message.eventSeqList) ? message.eventSeqList.map(Number) : [],
+                        before: message.before != null ? Number(message.before) : null };
+                }
                 if (message.kind === "update" && moqui.isPlainObject(message.fields)) {
                     return { kind: "update", chatRoomId: roomId, eventSeq: message.eventSeq, threadRootEventSeq: message.threadRootEventSeq ?? null,
                         fields: message.fields };
@@ -334,6 +339,8 @@
                     }
                     return { kind: "event", chatRoomId: roomId, event };
                 }
+                // the join requests waiting, for the room's moderators (Comms-Messaging §18.3 phase 17)
+                if (message.kind === "joinRequests") return { kind: "joinRequests", chatRoomId: roomId, pendingCount: Number(message.pendingCount || 0) };
                 return null;
             }
             if (topic.indexOf("chatUser:") === 0) {
@@ -605,6 +612,8 @@
             if (!done) return;
             // my message arrived: it waits no more (it was sent from another tab, or its answer was lost)
             if (done.kind === "event" && done.event.clientRef && done.event.senderUserId === chat.me) chat.dropOutbox(done.event.clientRef);
+            // a disappearing message is held for the page's timer (WebrootChatExpiry.js)
+            if (done.kind === "event" && chat.expiry) chat.expiry.pushed(done.chatRoomId, done.event);
             if (done.kind === "presence" && done.userId === chat.me) {
                 // do not disturb ended: a summary of what came meanwhile, as the server's pushes have (rule 4)
                 const quiet = chat.quiet();
@@ -716,7 +725,7 @@
             const seen = !!chat.state.openRooms[done.chatRoomId] && (host.windowSeen ? host.windowSeen() : !(root.document && root.document.hidden));
             const shown = chat.notification(done.event, done.chatRoomId, { me: chat.me, levels: chat.state.levels, quiet: chat.quiet(), seen,
                 defaultLevel: chat.levelOf(prefs.CHAT_NOTIFY_DEFAULT, false), roomNames: chat.state.roomNames,
-                preview: prefs.CHAT_NOTIFY_PREVIEW !== "N", appRoot: moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : null,
+                preview: prefs.CHAT_NOTIFY_PREVIEW !== "N" && done.event.expireDate == null, appRoot: moqui.call && moqui.call.appRoot ? moqui.call.appRoot() : null,
                 localize: (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text) });
             if (!shown) return;
             chat.notifiedRooms[done.chatRoomId] = true;
@@ -904,12 +913,15 @@
         },
         // The send parameters of an encrypted room's message (or edit): {encryptedJson, mentionUserIds}. files are the
         // composer's uploads [{chatAttachmentId, fileName, contentType, fileSize, info}], their keys going in the ciphertext.
-        sealMessage(roomId, memberIds, html, files) {
+        sealMessage(roomId, memberIds, html, files, extra) {
             const text = chat.plainText(html);
             const list = (files || []).filter((file) => file && file.chatAttachmentId).map((file) => ({ chatAttachmentId: file.chatAttachmentId,
                 name: file.fileName || null, type: file.contentType || null, size: file.fileSize || null, file: file.info || null }));
             const content = { msgtype: !text && list.length ? "m.file" : "m.text", body: text, format: "org.matrix.custom.html", formatted_body: html || "" };
             if (list.length) content["io.moqui.files"] = list;
+            // a sticker or a place (plans/Comms-Messaging.md phase 20), only in the ciphertext
+            if (extra && extra.sticker) content["io.moqui.sticker"] = extra.sticker;
+            if (extra && extra.location) content["io.moqui.location"] = extra.location;
             return moqui.crypto.encryptRoom(roomId, memberIds, "m.room.message", content).then((encrypted) => ({
                 encryptedJson: JSON.stringify(encrypted), mentionUserIds: chat.mentionsIn(html).join(",") }));
         },
@@ -950,6 +962,16 @@
                 Promise.resolve(made).then((url) => root.URL.revokeObjectURL(url), () => null);
             }
         },
+        // A room's events that went (disappearing messages, phase 16): their decrypted copies and reaction keys leave this page.
+        forgetEvents(roomId, seqs) {
+            const gone = new Set(Array.from(seqs || []).map(Number));
+            for (const seq of gone) delete chat.opened[roomId + ":" + seq];
+            const prefix = roomId + ":";
+            for (const name of Object.keys(chat.reactionKeys)) {
+                if (name.indexOf(prefix) !== 0) continue;
+                if (gone.has(Number(name.slice(prefix.length))) || gone.has(Number(chat.reactionKeys[name].messageSeq))) delete chat.reactionKeys[name];
+            }
+        },
         // my reaction with key to a message of a room (its eventSeq, to take it back), null when none
         myReaction(roomId, messageSeq, key, me) {
             const prefix = roomId + ":";
@@ -980,6 +1002,9 @@
             const files = Array.isArray(content["io.moqui.files"]) ? content["io.moqui.files"] : [];
             const stored = Array.isArray(item.attachments) ? item.attachments : [];
             Object.assign(item, { body: html || null, bodyText: content.body || "", undecryptable: false, withheld: null, verifiedSender: !!opened.verified });
+            // a sticker or a place sent encrypted (phase 20), checked as the server checks a plain one's
+            if (content["io.moqui.sticker"]) item.sticker = chat.stickers.clean(content["io.moqui.sticker"]);
+            if (content["io.moqui.location"]) item.location = chat.place.clean(content["io.moqui.location"]);
             if (files.length || stored.length) {
                 item.attachments = stored.map((file) => {
                     const sealed = files.find((one) => one.chatAttachmentId === file.chatAttachmentId) || {};
@@ -1439,10 +1464,14 @@
         nameRooms(rooms) {
             const list = Array.isArray(rooms) ? rooms : [];
             chat.namedRooms = list;
-            const apply = () => list.forEach((room) => {
-                const numbers = chat.roomNumbers(room);
-                if (numbers.length) room.displayName = chat.phoneTitle(numbers, chat.phoneNames);
-            });
+            const apply = () => {
+                list.forEach((room) => {
+                    const numbers = chat.roomNumbers(room);
+                    if (numbers.length) room.displayName = chat.phoneTitle(numbers, chat.phoneNames);
+                });
+                // a person's own name over the phone names (§11.1)
+                chat.applyPeople(list);
+            };
             const merge = () => {
                 const names = {};
                 Object.keys(chat.serverNamesOf).forEach((number) => { if (chat.serverNamesOf[number]) names[number] = chat.serverNamesOf[number]; });
@@ -1487,6 +1516,128 @@
         // the user's numbers that text (Chat's textNumbers), as a picker's From options
         numberOptions(list) {
             return (list || []).map((number) => ({ value: number.phoneNumber, label: number.phoneNumber + (number.description ? " · " + number.description : "") }));
+        },
+        // ---- one person across networks (plans/Comms-Messaging.md §11.1, phase 22) ----
+        // The people of my rooms (Chat's people transition, ChatPeopleServices.find#ChatPeople: {personList, roomPersonMap}),
+        // asked once for the page and shared by Chat and the panel, as mailLines: a request within maxAge (five minutes)
+        // answers what the last one did; peopleChanged() (a merge, a split, a name) asks again. A failure keeps nothing.
+        peopleState: null,
+        people(url, request, maxAge) {
+            const now = Date.now();
+            const kept = chat.peopleCache;
+            if (kept && kept.url === url && now - kept.at < (kept.maxAge || maxAge || 300000)) return kept.promise;
+            const promise = (request || moqui.request)(url).then((result) => {
+                const json = (result && result.json) || {};
+                const state = { personList: Array.isArray(json.personList) ? json.personList : [], roomPersonMap: json.roomPersonMap || {},
+                    contactsAway: !!(json.hookFailed || json.contactsSkipped) };
+                // the contacts were away (the hook failed or its hour was used): asked again soon, not in five minutes
+                if (state.contactsAway && chat.peopleCache && chat.peopleCache.promise === promise) chat.peopleCache.maxAge = 30000;
+                chat.peopleState = state;
+                chat.applyPeople(chat.namedRooms);
+                return state;
+            }, () => { if (chat.peopleCache && chat.peopleCache.promise === promise) chat.peopleCache = null; return { personList: [], roomPersonMap: {} }; });
+            chat.peopleCache = { url, at: now, promise };
+            return promise;
+        },
+        peopleChanged() { chat.peopleCache = null; chat.mailCache = null; },
+        // the person of a room, or null
+        personOf(chatRoomId, state) {
+            const people = state || chat.peopleState;
+            if (!people || !chatRoomId) return null;
+            const key = (people.roomPersonMap || {})[chatRoomId];
+            return key ? (people.personList || []).find((person) => person.personKey === key) || null : null;
+        },
+        // A person's room in a list shows the person's name: the user's own name for them, a user's name, the phone's
+        // contacts, the app's contact, call-context, the number. A phone room's phone names are nameRooms'; this puts the
+        // user's own and a user's name over them, and the app's contact where the phone has none.
+        applyPeople(rooms, state) {
+            const people = state || chat.peopleState;
+            if (!people) return;
+            (Array.isArray(rooms) ? rooms : []).forEach((room) => {
+                const person = chat.personOf(room.chatRoomId, people);
+                if (!person || !person.name) return;
+                const numbers = chat.roomNumbers(room);
+                const phoneKnows = numbers.some((number) => chat.contactNamesOf[number]);
+                if (person.nameFrom === "mine" || (person.nameFrom === "user" && room.roomTypeEnumId !== "CrtDirect")
+                    || (person.nameFrom === "contact" && room.roomTypeEnumId !== "CrtDirect" && !phoneKnows)) room.displayName = person.name;
+            });
+        },
+        NETWORK_ICONS: { moqui: "sym_o_chat", sms: "sym_o_sms", rcs: "sym_o_verified", groupme: "sym_o_groups", mail: "sym_o_mail" },
+        networkName(network) {
+            return { moqui: tr("MR Moqui chat"), sms: tr("SMS"), rcs: tr("RCS"), groupme: "GroupMe", mail: tr("Email") }[network] || network || "";
+        },
+        // A way's E2EE label (§6.2), as the room it opens shows it: a new direct chat's from directEncrypted (the server's
+        // encryptionDefault for the person), unknown until asked.
+        wayLabel(way, directEncrypted) {
+            const it = way || {};
+            if (it.network === "mail") return chat.e2eeLabel({ mail: true });
+            if (it.network === "moqui") {
+                const encrypted = it.kind === "direct" ? directEncrypted === true : !!it.encrypted;
+                return chat.e2eeLabel({ roomTypeEnumId: "CrtDirect", visibilityEnumId: "CrvMembers", encrypted });
+            }
+            if (it.network === "rcs") return chat.e2eeLabel({ roomTypeEnumId: "CrtExternal", bridges: [{ network: "rcs", outbound: true }] });
+            if (it.network === "groupme") return chat.e2eeLabel({ bridges: [{ network: "groupme", networkName: "GroupMe", encryption: "NoneByNetwork" }] });
+            return chat.e2eeLabel({ roomTypeEnumId: "CrtExternal" });
+        },
+        // The ways of a person to show (the network button, the person card), in the server's order, the best first: each the
+        // way with key, icon, name, detail (the number, where a text goes from, the address), label (wayLabel), current (the
+        // room open now), reason (why it cannot be used now) and usable.
+        waysOf(person, currentRoomId, directEncrypted) {
+            const reasons = { optedOut: tr("They replied STOP"), notConnected: tr("Not connected") };
+            return ((person && person.ways) || []).map((way, index) => {
+                const parts = [];
+                if (way.number) parts.push(way.number);
+                if (way.fromNumber) parts.push(fillIn(tr("from {number}"), { number: way.fromNumber }));
+                if (way.address) parts.push(way.address);
+                if (way.kind === "direct") parts.push(tr("New chat"));
+                if (way.kind === "text") parts.push(tr("New text"));
+                const reason = way.blocked ? tr("Blocked") : way.reasonCode ? reasons[way.reasonCode] || way.reasonCode : null;
+                return Object.assign({}, way, { key: index + ":" + (way.chatRoomId || way.kind + ":" + (way.number || way.address || way.userId || "") + ":" + (way.fromNumber || "")),
+                    icon: chat.NETWORK_ICONS[way.network] || "sym_o_chat", name: chat.networkName(way.network), detail: parts.join(" · "),
+                    label: chat.wayLabel(way, directEncrypted), current: !!way.chatRoomId && way.chatRoomId === currentRoomId, reason, usable: !reason });
+            });
+        },
+        // The room a way opens: an existing room, the direct chat made (createDirect, no encrypted: the server decides), the
+        // number's room (textRoom), or none for mail (the Inbox opens). post(name, params) is the screen's. Resolves
+        // {chatRoomId, encrypted} (a made direct chat's as the server made it, never a guess) or {url} (mail); a refused way
+        // rejects, and its reason is the server's message.
+        openWay(way, post) {
+            const it = way || {};
+            if (it.kind === "room" && it.chatRoomId) return Promise.resolve({ chatRoomId: it.chatRoomId, encrypted: !!it.encrypted });
+            if (it.kind === "mail") return Promise.resolve({ url: it.url || null });
+            const made = (json) => (json && json.chatRoomId ? { chatRoomId: json.chatRoomId, encrypted: json.encrypted === true } : Promise.reject({ refused: "notMade" }));
+            if (it.kind === "direct" && it.userId) return post("createDirect", { userIds: it.userId }).then(made);
+            if (it.kind === "text" && it.number) return post("textRoom", { textTo: it.number, textFrom: it.fromNumber || "" }).then((json) => made(Object.assign({}, json, { encrypted: false })));
+            return Promise.reject({ refused: "none" });
+        },
+        // Moving a draft from the room open (fromSealed) to the room opened (toSealed, as openWay answered it): a note when the
+        // move leaves end-to-end encryption, which the user is told once, else null.
+        moveNote(fromSealed, toSealed, network) {
+            if (!fromSealed || toSealed) return null;
+            return fillIn(tr("Moved to {network}: not end-to-end encrypted"), { network: chat.networkName(network) });
+        },
+        // A draft moved into a room that has one: both kept, the room's first, a blank line between (never overwritten).
+        joinDrafts(existing, moved) {
+            const empty = (html) => !html || !String(html).replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+            if (empty(moved)) return existing || "";
+            if (empty(existing)) return moved;
+            return String(existing) + "<p><br></p>" + String(moved);
+        },
+        // The nudge in a person's text or bridge room when they are a user of this server: the Moqui chat way to offer, or
+        // null (it is the room's own network, the person has none, or it was closed for this room).
+        nudgeWay(person, room, closed) {
+            if (!person || !person.userId || person.reachable === false || !room || closed || person.blocked) return null;
+            const own = (person.rooms || []).find((one) => one.chatRoomId === room.chatRoomId);
+            if (!own || own.network === "moqui") return null;
+            return (person.ways || []).find((way) => way.network === "moqui" && !way.blocked && !way.reasonCode) || null;
+        },
+        nudgeKey(chatRoomId) { return "moqui.chat.nudge." + chatRoomId; },
+        nudgeClosed(chatRoomId) { try { return !!(root.localStorage && root.localStorage.getItem(chat.nudgeKey(chatRoomId))); } catch (err) { return false; } },
+        closeNudge(chatRoomId) { try { if (root.localStorage) root.localStorage.setItem(chat.nudgeKey(chatRoomId), "1"); } catch (err) { /* only a convenience */ } },
+        // A change to my people (merge, separate, rename, reset; Chat's transitions): post(name, params) is the screen's.
+        // Resolves the transition's JSON, and the next people() asks the server again.
+        changePeople(post, name, params) {
+            return post(name, params).then((json) => { chat.peopleChanged(); return json || {}; });
         },
         // ---- a message's Info (Comms-Messaging §4, COM-UI-008): only what the server knows ----
         // event: as get#Timeline gives it (eventSeq, sentDate, senderUserId, senderExternal, delivery, threadRootEventSeq);
@@ -2014,6 +2165,304 @@
         if (event && event.key === chat.leftOutKey()) { chat.leftOutTick = (chat.leftOutTick || 0) + 1; chat.emit("leftOut", {}); }
     });
 
+    // ---- events with RSVP (plans/Comms-Messaging.md phase 19; org.moqui.chat.ChatCalServices) ----
+    // An event's state is the server's get#CalEventStates: {title, start, end (millis), timeZone, allDay, place, description,
+    // revision, cancelled, ended, going, maybe, no, answers {going, maybe, no: [userId]}, mine {answer, remindMinutes} or null}.
+    const calWall = (millis, zone) => String(l10n().formatTimestamp(millis, "yyyy-MM-dd HH:mm", zone));
+    chat.cal = {
+        // The time stamp of a wall clock time (yyyy-MM-dd and HH:mm) in an IANA zone, across a daylight saving change.
+        wallIn(dayKey, time, zone) {
+            const day = /^(\d{4})-(\d\d)-(\d\d)$/.exec(String(dayKey || ""));
+            const clock = /^(\d{1,2}):(\d\d)$/.exec(String(time || "00:00"));
+            if (!day || !clock) return NaN;
+            const target = Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]), Number(clock[1]), Number(clock[2]));
+            let guess = target;
+            for (let pass = 0; pass < 3; pass++) {
+                const wall = calWall(guess, zone);
+                const seen = Date.UTC(Number(wall.slice(0, 4)), Number(wall.slice(5, 7)) - 1, Number(wall.slice(8, 10)), Number(wall.slice(11, 13)), Number(wall.slice(14, 16)));
+                if (seen === target) break;
+                guess += target - seen;
+            }
+            return guess;
+        },
+        // An event's start and end as the box edits them, in its own zone: {startDay, startTime, endDay, endTime}; an
+        // all-day event's end day is its last day.
+        boxFields(event) {
+            const start = calWall(event.start, event.timeZone);
+            const end = calWall(event.allDay ? event.end - 1 : event.end, event.timeZone);
+            return { startDay: start.slice(0, 10), startTime: start.slice(11, 16), endDay: end.slice(0, 10), endTime: event.allDay ? "00:00" : end.slice(11, 16) };
+        },
+        // The start and end millis of what the box holds, in zone; an all-day event is midnight to the midnight after its
+        // last day. Null when the box is not filled in or ends before it starts.
+        boxTimes(box) {
+            const zone = box.timeZone;
+            const start = chat.cal.wallIn(box.startDay, box.allDay ? "00:00" : box.startTime, zone);
+            let end;
+            if (box.allDay) {
+                const last = /^(\d{4})-(\d\d)-(\d\d)$/.exec(String(box.endDay || box.startDay || ""));
+                if (!last) return null;
+                const next = new Date(Date.UTC(Number(last[1]), Number(last[2]) - 1, Number(last[3])) + 86400000).toISOString().slice(0, 10);
+                end = chat.cal.wallIn(next, "00:00", zone);
+            } else end = chat.cal.wallIn(box.endDay || box.startDay, box.endTime, zone);
+            if (!(start > 0) || !(end > start)) return null;
+            return { start, end };
+        },
+        // The time line in the viewer's zone and language: "Sat, Nov 23, 2:00 – 4:00 PM", or the days of an all-day event
+        // (the event's own, which a whole day is in).
+        when(event) {
+            if (!event || event.start == null) return "";
+            const z = l10n();
+            const day = { weekday: "short", month: "short", day: "numeric" };
+            const time = { hour: "numeric", minute: "2-digit" };
+            if (event.allDay) {
+                const first = String(z.formatTimestamp(event.start, "yyyy-MM-dd", event.timeZone));
+                const last = String(z.formatTimestamp(event.end - 1, "yyyy-MM-dd", event.timeZone));
+                // a day by its noon there, which is the same day in any zone within 11 hours of it
+                const words = (key) => z.formatZoned(chat.cal.wallIn(key, "12:00", event.timeZone), day);
+                return first === last ? fillIn(tr("{day}, all day"), { day: words(first) }) : words(first) + " – " + words(last);
+            }
+            const sameDay = z.dayKey(event.start) === z.dayKey(event.end);
+            return z.formatZoned(event.start, Object.assign({}, day, time)) + " – " + (sameDay ? z.formatZoned(event.end, time) : z.formatZoned(event.end, Object.assign({}, day, time)));
+        },
+        // The event's own time when the viewer's zone shows it otherwise: "14:00 in America/Denver"; else "".
+        zoneNote(event) {
+            if (!event || event.allDay || !event.timeZone || event.start == null) return "";
+            const z = l10n();
+            const there = calWall(event.start, event.timeZone);
+            const wall = z.zonedWall(event.start);
+            const here = wall.dayKey + " " + String(wall.hour).padStart(2, "0") + ":" + String(wall.minute).padStart(2, "0");
+            return there === here ? "" : fillIn(tr("{time} in {zone}"), { time: there.slice(11, 16), zone: event.timeZone });
+        },
+        // "5 going · 2 maybe · 1 can't go", or "No answers yet".
+        countLine(event) {
+            if (!event) return "";
+            const parts = [];
+            if (event.going) parts.push(fillIn(tr("{count} going"), { count: event.going }));
+            if (event.maybe) parts.push(fillIn(tr("{count} maybe"), { count: event.maybe }));
+            if (event.no) parts.push(fillIn(tr("{count} can't go"), { count: event.no }));
+            return parts.length ? parts.join(" · ") : tr("No answers yet");
+        },
+        canAnswer(event, now) { return !!event && !event.cancelled && !(event.end != null && event.end <= now); },
+        // The reminders offered (minutes before the start), only those still more than a minute ahead; 0 is none.
+        remindChoices(event, now) {
+            const choices = [{ minutes: 15, label: tr("15 minutes before") }, { minutes: 60, label: tr("1 hour before") }, { minutes: 1440, label: tr("1 day before") }];
+            return [{ minutes: 0, label: tr("No reminder") }].concat(choices.filter((one) => event && event.start - one.minutes * MINUTE > now + MINUTE));
+        },
+        myAnswer(event) { return event && event.mine ? event.mine.answer || null : null; }
+    };
+
+    // ---- stickers and locations (plans/Comms-Messaging.md phase 20; org.moqui.chat.ChatStickerServices, ChatLocationServices) ----
+    const fixed6 = (number) => Number(number).toFixed(6);
+    chat.place = {
+        // A place from what a person typed or pasted: coordinates ("40.7452, -111.875", or degrees, minutes and seconds
+        // with N/S/E/W), a geo: URI, or an OpenStreetMap, Google Maps or Apple Maps link (its coordinates read from the
+        // link's text, nothing fetched); any other text is an address. {latitude, longitude} or {address}, or null.
+        parse(text) {
+            const input = String(text == null ? "" : text).trim();
+            if (!input) return null;
+            const inRange = (lat, lon) => Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+            const pair = (lat, lon) => (inRange(lat, lon) ? { latitude: Number(fixed6(lat)), longitude: Number(fixed6(lon)) } : null);
+            let match = /^geo:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i.exec(input);
+            if (match) {
+                const at = pair(Number(match[1]), Number(match[2]));
+                const query = /[?&]q=([^&]*)/.exec(input);
+                if (at && (at.latitude !== 0 || at.longitude !== 0)) return at;
+                if (query) return chat.place.parse(decodeURIComponent(query[1].replace(/\+/g, " ")).replace(/\(.*\)$/, "").trim());
+                return at;
+            }
+            if (/^https?:\/\//i.test(input)) {
+                const patterns = [/[?&#]mlat=(-?\d+(?:\.\d+)?)&mlon=(-?\d+(?:\.\d+)?)/, /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+                    /[?&](?:q|ll|query|sll)=(-?\d+(?:\.\d+)?)(?:,|%2C)\s*(-?\d+(?:\.\d+)?)/i, /#map=\d+\/(-?\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)/];
+                for (const pattern of patterns) {
+                    match = pattern.exec(input);
+                    if (match) return pair(Number(match[1]), Number(match[2]));
+                }
+                return null;
+            }
+            match = /^(-?\d{1,2}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(input);
+            if (match) return pair(Number(match[1]), Number(match[2]));
+            // degrees, minutes and seconds: 40°44'42.8"N 111°52'30.0"W
+            const dms = /^(\d{1,2})°\s*(\d{1,2})?['′]?\s*(\d{1,2}(?:\.\d+)?)?["″]?\s*([NS])[,\s]+(\d{1,3})°\s*(\d{1,2})?['′]?\s*(\d{1,2}(?:\.\d+)?)?["″]?\s*([EW])$/i.exec(input);
+            if (dms) {
+                const part = (deg, min, sec, hemi) => (Number(deg) + Number(min || 0) / 60 + Number(sec || 0) / 3600) * (/[SW]/i.test(hemi) ? -1 : 1);
+                return pair(part(dms[1], dms[2], dms[3], dms[4]), part(dms[5], dms[6], dms[7], dms[8]));
+            }
+            return { address: input.replace(/\s+/g, " ").slice(0, 300) };
+        },
+        // the map link: OpenStreetMap at the coordinates, or its search for the address (as ChatLocation.js linkOf)
+        osmUrl(place) {
+            if (!place) return "";
+            if (place.latitude != null && place.longitude != null) {
+                const lat = fixed6(place.latitude), lon = fixed6(place.longitude);
+                return "https://www.openstreetmap.org/?mlat=" + lat + "&mlon=" + lon + "#map=17/" + lat + "/" + lon;
+            }
+            return place.address ? "https://www.openstreetmap.org/search?query=" + encodeURIComponent(place.address) : "";
+        },
+        // the geo: URI the phone's maps app opens (RFC 5870, with Android's q and its label)
+        geoUri(place) {
+            if (!place) return "";
+            const label = place.label ? "(" + encodeURIComponent(place.label) + ")" : "";
+            if (place.latitude != null && place.longitude != null) {
+                const at = fixed6(place.latitude) + "," + fixed6(place.longitude);
+                return "geo:" + at + "?q=" + at + label;
+            }
+            return place.address ? "geo:0,0?q=" + encodeURIComponent(place.address) : "";
+        },
+        // the words of a place, the same as the server's (ChatLocation.js fallbackText): an encrypted room's message
+        fallback(place) {
+            if (!place) return "";
+            const name = [place.label, place.address].filter((word) => word && String(word).trim()).join(", ");
+            const coordinates = place.latitude != null ? fixed6(place.latitude) + ", " + fixed6(place.longitude) : "";
+            return [fillIn(tr("Location: {name}"), { name: name || coordinates || tr("a place") }), chat.place.osmUrl(place)].filter((line) => line).join("\n");
+        },
+        coordinatesText(place) {
+            if (!place || place.latitude == null) return "";
+            const accuracy = place.accuracy != null ? " ± " + Math.round(Number(place.accuracy)) + " m" : "";
+            return fixed6(place.latitude).replace(/0+$/, "").replace(/\.$/, "") + ", " + fixed6(place.longitude).replace(/0+$/, "").replace(/\.$/, "") + accuracy;
+        },
+        // a decrypted message's place, checked as the server checks a sent one (or null)
+        clean(given) {
+            if (!given || typeof given !== "object") return null;
+            const out = {};
+            if (given.latitude != null || given.longitude != null) {
+                const lat = Number(given.latitude), lon = Number(given.longitude);
+                if (!(Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return null;
+                out.latitude = Number(fixed6(lat));
+                out.longitude = Number(fixed6(lon));
+            }
+            if (given.label) out.label = String(given.label).slice(0, 100);
+            if (given.address) out.address = String(given.address).slice(0, 300);
+            if (given.accuracy != null && Number.isFinite(Number(given.accuracy))) out.accuracy = Math.round(Number(given.accuracy));
+            if (out.latitude == null && !out.address) return null;
+            out.source = ["here", "typed", "network"].includes(given.source) ? given.source : "typed";
+            return out;
+        }
+    };
+    chat.stickers = {
+        // the stickers whose emoji or description has the words, across the packs
+        search(packs, text) {
+            const term = String(text || "").trim().toLowerCase();
+            const all = [];
+            (packs || []).forEach((pack) => (pack.stickers || []).forEach((sticker) => all.push(Object.assign({ chatStickerPackId: pack.chatStickerPackId }, sticker))));
+            if (!term) return all;
+            return all.filter((sticker) => String(sticker.emoji || "").includes(term) || String(sticker.altText || "").toLowerCase().includes(term));
+        },
+        recentKey(userId) { return moqui.scopedKey ? moqui.scopedKey("moqui.chat.recentStickers." + (userId || "")) : "moqui.chat.recentStickers." + (userId || ""); },
+        // the ids of the stickers sent last, newest first, at most 24 (the page's storage; none when it has none)
+        recent(userId) {
+            try {
+                const list = JSON.parse((root.localStorage && root.localStorage.getItem(chat.stickers.recentKey(userId))) || "[]");
+                return Array.isArray(list) ? list.filter((id) => typeof id === "string").slice(0, 24) : [];
+            } catch (err) { return []; }
+        },
+        remember(userId, chatStickerId) {
+            const list = [chatStickerId].concat(chat.stickers.recent(userId).filter((id) => id !== chatStickerId)).slice(0, 24);
+            try { if (root.localStorage) root.localStorage.setItem(chat.stickers.recentKey(userId), JSON.stringify(list)); } catch (err) { /* no storage: none kept */ }
+            return list;
+        },
+        // a decrypted message's sticker, checked (or null)
+        clean(given) {
+            if (!given || typeof given !== "object") return null;
+            const number = (value) => (value == null || !Number.isFinite(Number(value)) ? null : Math.max(1, Math.min(512, Math.round(Number(value)))));
+            return { chatStickerId: given.chatStickerId ? String(given.chatStickerId).slice(0, 40) : null, emoji: given.emoji ? String(given.emoji).slice(0, 16) : null,
+                altText: given.altText ? String(given.altText).slice(0, 80) : null, packName: given.packName ? String(given.packName).slice(0, 60) : null,
+                width: number(given.width), height: number(given.height) };
+        }
+    };
+
+    // ---- screen security, one-time codes and photos (plans/Comms-Messaging.md phase 21; org.moqui.chat.ChatPrivacyServices) ----
+    chat.screen = {
+        // whether a room asks for Android's FLAG_SECURE: the whole app's setting, an encrypted room with "in encrypted
+        // rooms", or the member's own switch for the room
+        wanted(setting, room, member) {
+            if (setting === "app") return true;
+            if (!room || !room.encrypted) return !!(member && member.screenSecure === "Y");
+            return setting === "encrypted" || !!(member && member.screenSecure === "Y");
+        },
+        // a reason on or off through the app host (phase 16's ScreenSecurity); whether the flag holds (false on the web)
+        set(reason, on) {
+            const host = root.moquiDesktop;
+            if (!host || typeof host.secureScreen !== "function") return Promise.resolve(false);
+            return Promise.resolve(host.secureScreen(reason, on === true)).then((held) => held === true, () => false);
+        },
+        available() { return !!(root.moquiDesktop && typeof root.moquiDesktop.secureScreen === "function"); },
+        // the whole app's reason of this account (its storage scope): each account on the phone holds its own, so any one
+        // with "everywhere" keeps the flag on, and turning it off there takes only that account's away
+        appReason() {
+            const host = root.moquiDesktop;
+            const scope = typeof moqui.storageScope === "string" ? moqui.storageScope : (host && host.storageScope) || "";
+            return ("app:" + String(scope).replace(/[^A-Za-z0-9_-]/g, "")).slice(0, 64);
+        },
+        // the whole app's setting applied at once, on or off (CHAT_SCREEN_SECURITY: its preference applier, and Chat)
+        applyApp(setting) { return chat.screen.set(chat.screen.appReason(), setting === "app"); }
+    };
+    chat.otp = {
+        // a message's code chip: "Code 482913", and when it is to disappear "Deletes tomorrow at 15:40"
+        line(event) { return event && event.otp && event.otp.code ? fillIn(tr("Code {code}"), { code: event.otp.code }) : ""; },
+        copy(code) {
+            if (!code || !root.navigator || !root.navigator.clipboard) return Promise.resolve(false);
+            return root.navigator.clipboard.writeText(String(code)).then(() => true, () => false);
+        }
+    };
+    chat.photos = {
+        // a still photo the composer may make smaller: JPEG, PNG or WebP (a GIF may move; a video is no photo)
+        compressible(file) { return !!file && /^image\/(jpeg|png|webp)$/i.test(file.type || "") && Number(file.size || 0) > 0; },
+        // the sizes and qualities tried, the long side first: 2048 px at 0.85, then smaller and lower until it fits maxBytes
+        steps(maxBytes) {
+            const all = [[2048, 0.85], [2048, 0.7], [1600, 0.7], [1600, 0.55], [1280, 0.55], [1024, 0.5]];
+            return maxBytes > 0 ? all : all.slice(0, 1);
+        },
+        // The photo drawn again in the browser (createImageBitmap with its orientation, a canvas, toBlob), so its metadata (its
+        // GPS among it: EXIF, and a PNG's eXIf, tEXt, iTXt and zTXt chunks) never goes: a JPEG or WebP becomes a JPEG of at
+        // most 2048 px a side, also when that is no smaller; a PNG stays a PNG (a screenshot's text stays sharp), made
+        // smaller only past 2048 px. With maxBytes it steps down until it fits. The file as it was only when it is no still
+        // photo or the browser cannot read it (HEIC on most): the composer then says it goes as it is.
+        compress(file, options) {
+            const opts = options || {};
+            if (!chat.photos.compressible(file) || typeof root.createImageBitmap !== "function") return Promise.resolve(file);
+            const maxBytes = Number(opts.maxBytes || 0);
+            const png = /png$/i.test(file.type);
+            return root.createImageBitmap(file, { imageOrientation: "from-image" }).then((bitmap) => {
+                const encode = (side, quality, asPng) => {
+                    const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+                    const width = Math.max(1, Math.round(bitmap.width * scale)), height = Math.max(1, Math.round(bitmap.height * scale));
+                    const canvas = typeof root.OffscreenCanvas === "function" ? new root.OffscreenCanvas(width, height)
+                        : Object.assign(root.document.createElement("canvas"), { width, height });
+                    const context = canvas.getContext("2d");
+                    if (!asPng) { context.fillStyle = "#fff"; context.fillRect(0, 0, width, height); }
+                    context.drawImage(bitmap, 0, 0, width, height);
+                    const type = asPng ? "image/png" : "image/jpeg";
+                    if (canvas.convertToBlob) return canvas.convertToBlob({ type, quality });
+                    return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+                };
+                // a PNG stays a PNG while it fits; past the limit it goes as a JPEG, which steps down
+                const steps = chat.photos.steps(maxBytes);
+                const tryStep = (index, asPng) => encode(steps[index][0], steps[index][1], asPng).then((blob) => {
+                    if (blob && maxBytes > 0 && blob.size > maxBytes) {
+                        if (asPng) return tryStep(0, false);
+                        if (index + 1 < steps.length) return tryStep(index + 1, false);
+                    }
+                    return blob;
+                });
+                return tryStep(0, png).then((blob) => {
+                    if (bitmap.close) bitmap.close();
+                    if (!blob) return file;
+                    const asPng = /png$/i.test(blob.type || "");
+                    const name = String(file.name || "photo").replace(/\.[^.]*$/, "") + (asPng ? ".png" : ".jpg");
+                    return new root.File([blob], name, { type: blob.type || (asPng ? "image/png" : "image/jpeg") });
+                });
+            }, () => file);
+        },
+        // the most bytes one more photo may have so the message's files stay within a text's total limit: the limit shared
+        // by the files the message will have (0 for no limit)
+        budget(maxBytes, fileCount) { return maxBytes > 0 ? Math.floor(maxBytes / Math.max(1, fileCount)) : 0; }
+    };
+    // the account's whole-app screen security, once the shell has its preferences (phase 21)
+    try {
+        const prefs = (moqui.config && moqui.config.preferences) || {};
+        if (prefs.CHAT_SCREEN_SECURITY) chat.screen.applyApp(prefs.CHAT_SCREEN_SECURITY);
+    } catch (err) { /* no config yet: Chat applies it when it opens */ }
+
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----
 
     const labelsOf = (vm) => Object.assign({}, chat.labels, vm.$root && vm.$root.labels);
@@ -2394,6 +2843,158 @@
                     '</q-card-actions>' +
                 '</q-card>' +
             '</q-dialog>'
+    };
+
+    // ---- one person across networks (plans/Comms-Messaging.md §11.1, phase 22) ----
+    // A list of a person's ways (moqui.chat.waysOf): each with its network, where it goes and its E2EE label, the best marked.
+    const waysListTemplate =
+        '<q-list class="m-chat-ways" style="min-width:260px">' +
+            '<q-item v-for="way in ways" :key="way.key" :clickable="way.usable && !way.current" :disable="!way.usable" :active="way.current" ' +
+                    ':data-way="way.network + \':\' + way.kind" v-close-popup="closes" @click="choose(way)">' +
+                '<q-item-section avatar><q-icon :name="way.icon"></q-icon></q-item-section>' +
+                '<q-item-section>' +
+                    '<q-item-label>{{way.name}}<q-badge v-if="way.best" color="primary" class="q-ml-xs m-chat-way-best">{{t(\'Best\')}}</q-badge>' +
+                        '<span v-if="way.current" class="text-caption m-muted q-ml-xs">{{t(\'Here\')}}</span></q-item-label>' +
+                    '<q-item-label v-if="way.detail" caption class="ellipsis">{{way.detail}}</q-item-label>' +
+                    '<q-item-label caption class="row no-wrap items-center m-chat-way-label">' +
+                        '<q-icon v-if="way.label.icon" :name="way.label.icon" size="14px" class="q-mr-xs"></q-icon>' +
+                        '<span class="ellipsis">{{way.label.text || way.label.banner}}</span></q-item-label>' +
+                '</q-item-section>' +
+                '<q-item-section v-if="way.reason" side class="text-caption">{{way.reason}}</q-item-section>' +
+            '</q-item>' +
+        '</q-list>';
+
+    // The network button of a person's room (at the start of its composer): the room's network, and a choice of the
+    // person's ways, best first; choose emits the way, and the room opens or makes it and moves the draft there. A sheet
+    // from the bottom on a phone, a menu above the composer on a desktop.
+    components["m-chat-networks"] = {
+        name: "mChatNetworks",
+        props: { person: Object, roomId: String, directEncrypted: { type: Boolean, default: null } },
+        emits: ["choose"],
+        data() { return { sheet: false, closes: true }; },
+        computed: {
+            phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
+            ways() { return chat.waysOf(this.person, this.roomId, this.directEncrypted); },
+            current() { return this.ways.find((way) => way.current) || null; },
+            icon() { return this.current ? this.current.icon : "sym_o_chat"; },
+            title() { return this.current ? fillIn(tr("Sending with {network}: choose another"), { network: this.current.name }) : tr("Choose how to send"); }
+        },
+        methods: {
+            choose(way) {
+                this.sheet = false;
+                if (way && way.usable && !way.current) this.$emit("choose", way);
+            }
+        },
+        template:
+            '<q-btn v-if="ways.length > 1" flat round dense size="sm" :icon="icon" class="m-chat-networks" :aria-label="title" @click="phone ? (sheet = true) : null">' +
+                '<q-tooltip>{{title}}</q-tooltip>' +
+                '<q-menu v-if="!phone" anchor="top left" self="bottom left">' + waysListTemplate + '</q-menu>' +
+                '<q-dialog v-if="phone" v-model="sheet" position="bottom">' +
+                    '<q-card class="full-width"><q-card-section class="text-subtitle2 q-pb-none">{{t(\'Send with\')}}</q-card-section>' + waysListTemplate + '</q-card>' +
+                '</q-dialog>' +
+            '</q-btn>'
+    };
+
+    // A person's card, at the top of the People tab of their room: their name (Rename), their ways with labels (open or
+    // start one), their mail line, their addresses (Not this person), Add (another conversation of theirs, a number or a
+    // mail address) and Undo my changes. It emits what the room does: open (a way), merge ({personKeys, addressKeys}),
+    // separate (an addressKey), rename (a name), reset. others: the other people of the user's list, to pick one to add.
+    components["m-chat-person"] = {
+        name: "mChatPerson",
+        props: { person: Object, roomId: String, mail: Object, directEncrypted: { type: Boolean, default: null }, others: { type: Array, default: () => [] } },
+        emits: ["open", "merge", "separate", "rename", "reset", "mail"],
+        data() { return { renaming: false, nameText: "", adding: false, addText: "", closes: true }; },
+        computed: {
+            phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
+            ways() { return chat.waysOf(this.person, this.roomId, this.directEncrypted); },
+            title() {
+                const person = this.person || {};
+                const first = (person.addresses || []).find((one) => one.label);
+                return person.name || (first ? first.label : tr("This person"));
+            },
+            username() { const user = ((this.person && this.person.addresses) || []).find((one) => one.kind === "user"); return user ? user.label : null; },
+            // the addresses that can be taken out: all of them when there are two or more
+            addresses() {
+                const list = ((this.person && this.person.addresses) || []).filter((one) => one.label);
+                return list.length > 1 ? list : [];
+            },
+            mailLabel() { return chat.e2eeLabel({ mail: true }); },
+            addTitle() { return fillIn(tr("Add to {name}"), { name: this.title }); },
+            typedLabel() { return fillIn(tr("Add {address}"), { address: String(this.addText || "").trim() }); },
+            picks() {
+                const text = String(this.addText || "").trim().toLowerCase();
+                const mine = this.person ? this.person.personKey : null;
+                return (this.others || []).filter((other) => other && other.personKey !== mine && (!text
+                    || [other.name].concat((other.addresses || []).map((one) => one.label)).join(" ").toLowerCase().indexOf(text) >= 0)).slice(0, 8);
+            },
+            typed() {
+                const text = String(this.addText || "").trim();
+                if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return "email:" + text;
+                if (/^\+?[0-9 ()./-]{5,20}$/.test(text) && text.replace(/\D/g, "").length >= 5) return "tel:" + text;
+                return null;
+            }
+        },
+        methods: {
+            choose(way) { if (way && way.usable && !way.current) this.$emit("open", way); },
+            startRename() { this.nameText = (this.person && this.person.nameFrom === "mine" && this.person.name) || ""; this.renaming = true; },
+            saveName() { this.renaming = false; this.$emit("rename", String(this.nameText || "").trim()); },
+            addPerson(other) { this.adding = false; this.addText = ""; this.$emit("merge", { personKeys: [this.person.personKey, other.personKey], addressKeys: [] }); },
+            addTyped() { if (!this.typed) return; const key = this.typed; this.adding = false; this.addText = ""; this.$emit("merge", { personKeys: [this.person.personKey], addressKeys: [key] }); },
+            otherLabel(other) {
+                const first = (other.addresses || []).find((one) => one.label);
+                return [other.name, first && first.label !== other.name ? first.label : null].filter((part) => part).join(" · ");
+            },
+            notThis(address) { return fillIn(tr("Not {name}"), { name: this.title }) + ": " + address.label; }
+        },
+        template:
+            '<q-card v-if="person" flat bordered class="m-chat-person q-ma-sm">' +
+                '<q-card-section class="row items-center no-wrap q-py-sm">' +
+                    '<div class="col" style="min-width:0">' +
+                        '<div class="text-subtitle2 ellipsis m-chat-person-name">{{title}}</div>' +
+                        '<div v-if="username" class="text-caption m-muted ellipsis">{{username}}</div>' +
+                    '</div>' +
+                    '<q-btn flat round dense icon="sym_o_more_vert" class="m-chat-person-menu" :aria-label="t(\'Person\')">' +
+                        '<q-menu><q-list style="min-width:200px">' +
+                            '<q-item clickable v-close-popup data-person="rename" @click="startRename"><q-item-section>{{t(\'Rename\')}}</q-item-section></q-item>' +
+                            '<q-item clickable v-close-popup data-person="add" @click="adding = true"><q-item-section>{{t(\'Add a conversation, number or address\')}}</q-item-section></q-item>' +
+                            '<q-item v-if="person.contactUrl" clickable v-close-popup tag="a" :href="person.contactUrl" data-person="contact"><q-item-section>{{t(\'Open the contact\')}}</q-item-section></q-item>' +
+                            '<q-item v-if="person.edited" clickable v-close-popup data-person="reset" @click="$emit(\'reset\')"><q-item-section>{{t(\'Undo my changes\')}}</q-item-section></q-item>' +
+                        '</q-list></q-menu></q-btn>' +
+                '</q-card-section>' +
+                '<q-card-section v-if="renaming" class="row items-center no-wrap q-gutter-x-sm q-pt-none">' +
+                    '<q-input v-model="nameText" dense outlined autofocus class="col" maxlength="100" name="personName" :label="t(\'Your name for them\')" @keyup.enter="saveName"></q-input>' +
+                    '<q-btn unelevated no-caps dense color="primary" :label="t(\'Save\')" class="m-chat-person-save" @click="saveName"></q-btn>' +
+                    '<q-btn flat no-caps dense :label="t(\'Cancel\')" @click="renaming = false"></q-btn>' +
+                '</q-card-section>' +
+                '<div v-if="person.blocked" class="q-px-md q-pb-sm text-caption">{{t(\'You blocked this person\')}}</div>' +
+                waysListTemplate +
+                '<q-item v-if="mail" clickable class="m-chat-person-mail" @click="$emit(\'mail\', mail)">' +
+                    '<q-item-section avatar><q-icon name="sym_o_mail"></q-icon></q-item-section>' +
+                    '<q-item-section><q-item-label class="ellipsis">{{t(\'Email\')}}: {{mail.subject || t(\'(no subject)\')}}</q-item-label>' +
+                        '<q-item-label caption>{{mailLabel.text}}</q-item-label></q-item-section>' +
+                '</q-item>' +
+                '<template v-if="addresses.length"><q-separator></q-separator>' +
+                    '<q-item v-for="address in addresses" :key="address.addressKey" dense>' +
+                        '<q-item-section><q-item-label caption class="ellipsis">{{address.label}}</q-item-label></q-item-section>' +
+                        '<q-item-section side><q-btn flat dense no-caps size="sm" :label="t(\'Not this person\')" :aria-label="notThis(address)" ' +
+                            ':data-separate="address.addressKey" @click="$emit(\'separate\', address.addressKey)"></q-btn></q-item-section>' +
+                    '</q-item></template>' +
+                '<q-dialog v-model="adding" :maximized="phone">' +
+                    '<q-card :style="phone ? \'\' : \'width:420px;max-width:95vw\'" class="m-chat-person-add">' +
+                        '<q-card-section class="text-subtitle1">{{addTitle}}</q-card-section>' +
+                        '<q-card-section class="q-pt-none">' +
+                            '<q-input v-model="addText" dense outlined autofocus name="personAdd" :label="t(\'A name, a number or a mail address\')" @keyup.enter="addTyped"></q-input>' +
+                            '<q-list dense class="q-mt-sm">' +
+                                '<q-item v-if="typed" clickable data-add="typed" @click="addTyped"><q-item-section avatar><q-icon :name="typed.indexOf(\'email:\') === 0 ? \'sym_o_mail\' : \'sym_o_call\'"></q-icon></q-item-section>' +
+                                    '<q-item-section>{{typedLabel}}</q-item-section></q-item>' +
+                                '<q-item v-for="other in picks" :key="other.personKey" clickable :data-add="other.personKey" @click="addPerson(other)">' +
+                                    '<q-item-section>{{otherLabel(other)}}</q-item-section></q-item>' +
+                            '</q-list>' +
+                        '</q-card-section>' +
+                        '<q-card-actions align="right"><q-btn flat no-caps :label="t(\'Cancel\')" v-close-popup></q-btn></q-card-actions>' +
+                    '</q-card>' +
+                '</q-dialog>' +
+            '</q-card>'
     };
 
     if (typeof module !== "undefined" && module.exports) module.exports = chat;

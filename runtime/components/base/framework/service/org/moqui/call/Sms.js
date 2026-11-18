@@ -21,6 +21,7 @@
 
 const VOICE = 'component://framework/service/org/moqui/call/Voice.js'
 const CHAT_BLOCKS = 'component://framework/service/org/moqui/chat/ChatBlocks.js'
+const SMS_ROOM = 'component://framework/service/org/moqui/call/SmsRoom.js'
 const NUMBER = 'moqui.call.PhoneNumber'
 const GRANT = 'moqui.call.PhoneNumberUser'
 const OPT_OUT = 'moqui.call.SmsOptOut'
@@ -36,7 +37,8 @@ const BRIDGE = 'moqui.chat.ChatBridge'
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'OPTOUT', 'REVOKE']
 const START_WORDS = ['START', 'UNSTOP', 'YES', 'OPTIN']
 const HELP_WORDS = ['HELP', 'INFO']
-const DEFAULT_LIMITS = { smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500, smsMaxPromotionalPerNumber: 1000 }
+const DEFAULT_LIMITS = { smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500, smsMaxPromotionalPerNumber: 1000,
+  smsRoomMaxPerDay: 500, smsRoomMaxMembers: 10, smsRoomAddsPerDay: 20 }
 
 const ms = (value) => {
   if (value == null || value === '') return null
@@ -416,7 +418,10 @@ function consented(fromNumber, toNumber) {
 /**
  * Internal (the adapter, before the provider; send#SmsMessage): whether a text from fromNumber to toNumber may go now, sent
  * by userId (none: the system). allowed, or reasonCode and message: badNumber, emergency, numberNotGranted, noMessaging,
- * internationalNotEnabled, premiumNotEnabled, optedOut, consentRequired, dailyLimit.
+ * internationalNotEnabled, premiumNotEnabled, optedOut, consentRequired, dailyLimit. Room mode (chatRoomId: a room's text
+ * to its text member, plans/Comms-Messaging.md §18.3 phase 18): the room sends, so no user's grant; the number must carry
+ * room texts (roomTextsOff), and it counts in the room's day (room:chatRoomId, smsRoomMaxPerDay) and all users'. inRoom (a
+ * user's text in a pair room): refused inRoomByText while the number is a text member of a room on ours.
  */
 function checkSend(p) {
   const no = (reasonCode, text) => ({ allowed: false, reasonCode, message: ec.l10n.localize(text) })
@@ -426,9 +431,40 @@ function checkSend(p) {
   const dest = voice('classify', { phoneNumber: p.toNumber })
   if (!dest.number) return no('badNumber', 'That is not a phone number')
   if (dest.destinationClass === 'emergency') return no('emergency', 'Texts to emergency numbers are not sent from here; call them')
-  const userId = blank(p.userId) ? null : p.userId
-  if (userId && !Array.from(voice('grants', { userId }).numberList || []).includes(from)) {
+  const chatRoomId = blank(p.chatRoomId) ? null : String(p.chatRoomId)
+  if (chatRoomId && number.roomTextsEnabled !== 'Y') return no('roomTextsOff', 'This number no longer carries rooms\' texts')
+  // room mode: the room's texts to its member go on the moderator who added them, with their grant, their permissions and
+  // their day; when the adder can no longer text, the member's texts stop and the room's moderators hear of it
+  let userId = blank(p.userId) ? null : p.userId
+  if (chatRoomId) {
+    const mapping = Array.from(find(MAPPING).condition('externalRoomId', from + '/' + dest.number + '#' + chatRoomId).condition('thruDate', null).list())[0]
+    if (!mapping) return no('notMember', 'This number is not a text member of the room')
+    userId = mapping.addedByUserId || null
+    const adderNo = (reasonCode, text) => {
+      const refused = no(reasonCode, text)
+      try {
+        ec.resource.script(SMS_ROOM).execute('noteAdderProblem', { chatRoomBridgeId: mapping.chatRoomBridgeId, message: refused.message })
+      } catch (err) {
+        ec.logger.error(`The moderators of room ${chatRoomId} were not told that a text member's texts stopped: ${err && err.message ? err.message : err}`)
+      }
+      return refused
+    }
+    const account = userId ? one('moqui.security.UserAccount', { userId }) : null
+    if (!account || account.disabled === 'Y' || (account.terminateDate && ms(account.terminateDate) <= nowMs())) {
+      return adderNo('adderNotAllowed', 'The person who added this text member can no longer send texts: a moderator adds them again')
+    }
+    if (!Array.from(voice('grants', { userId }).numberList || []).includes(from)) {
+      return adderNo('adderNotAllowed', 'The person who added this text member may no longer text from this number: a moderator adds them again')
+    }
+    const adderClass = destinationRefusal(dest, userId)
+    if (adderClass) return adderNo(adderClass.reasonCode, adderClass.text)
+  } else if (userId && !Array.from(voice('grants', { userId }).numberList || []).includes(from)) {
     return no('numberNotGranted', 'You may not text from that number')
+  }
+  if (!chatRoomId && isTrue(p.inRoom)) {
+    const roomName = ec.resource.script(SMS_ROOM).execute('memberRoomName', { chatBridgeId: number.messagingBridgeId, ourNumber: from, theirNumber: dest.number }).roomName
+    if (roomName != null) return { allowed: false, reasonCode: 'inRoomByText',
+      message: ec.resource.expand('This number is in ${roomName} by text: write there, or take them out of it', '', { roomName }) }
   }
   const classRefusal = destinationRefusal(dest, userId)
   if (classRefusal) return no(classRefusal.reasonCode, classRefusal.text)
@@ -440,7 +476,8 @@ function checkSend(p) {
   }
   const limits = smsPolicy()
   const reserve = p.reserve === true || p.reserve === 'true' || p.reserve === 'Y'
-  const counters = countersOf(userId, from, promotional)
+  const counters = countersOf(userId, from, promotional, chatRoomId)
+  const counterUserId = userId
   const day = today()
   // reserve: the check and the count are one step, under the lock of the day's count of all users' texts, of the
   // system's, or of the number's promotional texts (made at 0 when there is none yet), so sends at once cannot pass a
@@ -455,11 +492,12 @@ function checkSend(p) {
   }
   const limitOf = { all: limits.smsMaxPerDay, system: limits.smsSystemMaxPerDay }
   const over = counters.keys.some((counterKey) => sentToday(counterKey, day) >= (counterKey.startsWith('user:')
-    ? limits.smsMaxPerUserPerDay : counterKey.startsWith('promo:') ? limits.smsMaxPromotionalPerNumber : limitOf[counterKey]))
+    ? limits.smsMaxPerUserPerDay : counterKey.startsWith('promo:') ? limits.smsMaxPromotionalPerNumber
+      : counterKey.startsWith('room:') ? limits.smsRoomMaxPerDay : limitOf[counterKey]))
   if (over) return no('dailyLimit', 'The limit of texts for a day is reached')
   if (reserve) countSent(counters.keys, day, 1)
   return { allowed: true, ourNumber: from, theirNumber: dest.number, chatBridgeId: number.messagingBridgeId, destinationClass: dest.destinationClass,
-    counterDay: reserve ? day : null }
+    counterDay: reserve ? day : null, counterUserId }
 }
 
 /**
@@ -467,7 +505,9 @@ function checkSend(p) {
  * user's and all users'; the system's, its own budget (sign-in codes); a promotional text also its number's
  * (promo:<number>), and a promotional text with no user (a campaign's) that alone, so it never spends the system's budget.
  */
-function countersOf(userId, fromNumber, promotional) {
+function countersOf(userId, fromNumber, promotional, chatRoomId) {
+  // a room's text to its text member: its adder's day, the room's day and all users'
+  if (chatRoomId) return { keys: (userId ? ['user:' + userId] : []).concat(['room:' + chatRoomId, 'all']), locks: ['all'] }
   const promo = promotional && fromNumber ? 'promo:' + fromNumber : null
   if (userId) return { keys: promo ? ['user:' + userId, 'all', promo] : ['user:' + userId, 'all'], locks: promo ? ['all', promo] : ['all'] }
   if (promo) return { keys: [promo], locks: [promo] }
@@ -502,7 +542,7 @@ function noteSent(p) {
 
 /** Internal: a text check#SmsSend reserved (counted) on counterDay did not reach the provider: it no longer counts. */
 function releaseSend(p) {
-  countSent(countersOf(blank(p.userId) ? null : p.userId, promoNumber(p), isTrue(p.isPromotional)).keys,
+  countSent(countersOf(blank(p.userId) ? null : p.userId, promoNumber(p), isTrue(p.isPromotional), blank(p.chatRoomId) ? null : p.chatRoomId).keys,
     blank(p.counterDay) ? today() : String(p.counterDay), -1)
   return {}
 }
@@ -562,14 +602,41 @@ function noteOptSignal(p) {
   return { outcome: 'noted' }
 }
 
-/** A shared place as words: its label or address, and a map link built from its coordinates (never a link it came with). */
+/**
+ * A step after a text was taken in (its place, its code: phases 20 and 21), in the receive's transaction: its failure is
+ * logged and the text stays; the receive's own messages are set aside while it runs and given back after, so nothing of
+ * the receive's is cleared.
+ */
+function sideStep(what, name, parameters) {
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name(name).parameters(parameters).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.error(`${what} was not kept: ${ec.message.errorsString}`)
+  } catch (err) {
+    ec.logger.error(`${what} was not kept: ${err && err.message ? err.message : err}`)
+  }
+  ec.message.clearErrors()
+  ec.message.popErrors()
+}
+
+/**
+ * A shared place as words: its label or address, and a map link built from its coordinates (never a link it came with),
+ * the same words a location sent from here has (ChatLocation.js, plans/Comms-Messaging.md §18.3 phase 20).
+ */
 function placeText(place) {
-  const lat = Number(place.latitude)
-  const lon = Number(place.longitude)
-  const name = [place.label, place.address].filter((word) => !blank(word)).map((word) => String(word).slice(0, 200)).join(', ')
-  const link = Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
-    ? `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}` : ''
-  return [ec.resource.expand('Location: ${name}', '', { name: name || ec.l10n.localize('a place') }), link].filter((line) => line).join('\n')
+  // the receive's own errors set aside while the words are made, and given back after
+  ec.message.pushErrors()
+  let out = {}
+  try {
+    out = ec.service.sync().name('org.moqui.chat.ChatLocationServices.words#Location').parameters({ location: place }).disableAuthz().call() || {}
+  } catch (err) {
+    ec.logger.error(`An inbound place's words were not made: ${err && err.message ? err.message : err}`)
+  }
+  const failed = ec.message.hasError()
+  if (failed) ec.logger.error(`An inbound place's words were not made: ${ec.message.errorsString}`)
+  ec.message.clearErrors()
+  ec.message.popErrors()
+  return (!failed && out.text) || ec.l10n.localize('Location: a place')
 }
 
 /**
@@ -644,6 +711,13 @@ function receive(p) {
   if (keyword === 'HELP') sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
   else if (keyword) sub('org.moqui.call.SmsServices.note#SmsOptSignal', { chatBridgeId: p.chatBridgeId,
     eventId: 'text:' + String(p.messageId), ourNumber: ours, theirNumber: theirs, keyword })
+  // a room's text member (plans/Comms-Messaging.md §18.3 phase 18): a pair text from a number that is one on ours goes to
+  // its room as the member, unjudged (a moderator added it with its consent); STOP takes it out, HELP is answered. A route
+  // that fails, or a room that refuses the text, leaves it to the pair room below
+  if (!groupNumbers && !threadList) {
+    const routed = memberText(p, ours, theirs, keyword, sub)
+    if (routed) return routed
+  }
   // the blocks and the spam filter (SmsSpam.js judge, in a transaction of its own): what each user's room is (in sight,
   // blocked, spam); one that fails lets the text in unfiltered
   let verdict = { memberFilterMap: {}, spam: false, judged: false }
@@ -693,6 +767,18 @@ function receive(p) {
       ec.message.clearErrors()
     }
   }
+  // a shared place (Comms-Messaging §18.3 phase 20): the message is a location, its card as a sent one's; the text stays
+  // when it fails
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && extra && extra.location) {
+    sideStep(`SMS ${p.messageId}: its place`, 'org.moqui.chat.ChatLocationServices.mark#Location', { chatRoomId: pair.chatRoomId,
+      eventSeq: first.eventSeq, location: extra.location })
+  }
+  // a one-time code (Comms-Messaging §18.3 phase 21): kept on the message for its Copy, and its delete after a day when
+  // everyone in the room asks; the text stays when it fails
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && item.text) {
+    sideStep(`SMS ${p.messageId}: its code`, 'org.moqui.chat.ChatPrivacyServices.mark#OneTimeCode', { chatRoomId: pair.chatRoomId,
+      eventSeq: first.eventSeq, text: item.text })
+  }
   // an RCS reply to a suggestion (Comms-Messaging §18.3 phase 13): its postback on the message, for the app that sent
   // the buttons (a SECA on note#SuggestionReply); the text stays when it fails
   if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && extra && extra.postback) {
@@ -710,6 +796,44 @@ function receive(p) {
   // a webhook sent again answers as the first did, as a duplicate
   return { outcome: out.duplicate === true ? 'duplicate' : first.outcome || 'waiting', reasonCode: first.reasonCode || null, message: first.message || null,
     duplicate: out.duplicate === true, chatRoomId: pair.chatRoomId, eventSeq: first.eventSeq ?? null }
+}
+
+/** A text member's text (receive): into its room, or null for the pair room (no member, a failure, a refusal). */
+function memberText(p, ours, theirs, keyword, sub) {
+  let mapping = null
+  try {
+    mapping = ec.resource.script(SMS_ROOM).execute('routeOf', { chatBridgeId: p.chatBridgeId, ourNumber: ours, theirNumber: theirs }).mapping || null
+  } catch (err) {
+    ec.logger.error(`SMS ${p.messageId}: the text member's room was not found, kept in the pair room: ${err && err.message ? err.message : err}`)
+    ec.message.clearErrors()
+    return null
+  }
+  if (!mapping) return null
+  if (keyword === 'STOP' || keyword === 'HELP') {
+    try {
+      sub('org.moqui.call.SmsRoomServices.note#MemberKeyword', { chatRoomBridgeId: mapping.chatRoomBridgeId, keyword })
+    } catch (err) {
+      // the pair is opted out all the same: nothing more is sent
+      ec.logger.error(`SMS ${p.messageId}: the text member's ${keyword} was not applied to its room: ${err && err.message ? err.message : err}`)
+      ec.message.clearErrors()
+    }
+    return { outcome: 'noted', reasonCode: null, message: null, duplicate: false, chatRoomId: mapping.chatRoomId, eventSeq: null }
+  }
+  const item = { itemId: String(p.messageId), type: 'message', externalRoomId: mapping.externalRoomId, externalEventId: String(p.messageId),
+    externalUserId: theirs, displayName: theirs, text: p.text || null, originDate: p.originMillis != null ? Number(p.originMillis) : null,
+    media: Array.from(p.mediaList || []).map((file) => ({ url: file.url, contentType: file.contentType || null, fileName: file.fileName || null,
+      maxBytes: file.maxBytes != null ? Number(file.maxBytes) : null })) }
+  // a transaction of its own name, so a refused text can still go to the pair room as the provider's transaction
+  const out = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.ingest#Event').parameters({ chatBridgeId: p.chatBridgeId,
+    transactionId: 'member:' + String(p.eventId), transportVerified: true, itemList: [item] }).disableAuthz().call() || {}
+  if (ec.message.hasError()) return { outcome: 'failed', reasonCode: out.reasonCode || 'failed' }
+  const first = Array.from(out.outcomeList || [])[0] || {}
+  if (first.outcome === 'rejected') {
+    ec.logger.warn(`SMS ${p.messageId}: the text member's room refused it (${first.reasonCode}); kept in the pair room`)
+    return null
+  }
+  return { outcome: out.duplicate === true ? 'duplicate' : first.outcome || 'waiting', reasonCode: first.reasonCode || null, message: first.message || null,
+    duplicate: out.duplicate === true, chatRoomId: mapping.chatRoomId, eventSeq: first.eventSeq ?? null }
 }
 
 // ---------- the system's own texts ----------
@@ -770,8 +894,9 @@ const NAMES_PER_HOUR = 600
 
 /** Whether the number is one of a phone room the user is in (a pair's or a group's mapping), so it may be named. */
 function inMyPhoneRoom(me, number) {
+  // a text member's mapping (ours/theirs#room) names its number as a pair's does
   const mappings = Array.from(find(MAPPING).condition('externalRoomId', 'like', '%' + number + '%').condition('thruDate', null).list())
-    .filter((m) => String(m.externalRoomId).split('/')[1]?.split(',').includes(number))
+    .filter((m) => String(m.externalRoomId).split('#')[0].split('/')[1]?.split(',').includes(number))
   return mappings.some((m) => find(MEMBER).condition({ chatRoomId: m.chatRoomId, userId: me }).condition('leftDate', null).count() > 0)
 }
 
@@ -812,6 +937,11 @@ const operations = {
   usersOf: (p) => {
     const number = blank(p.phoneNumber) ? null : one(NUMBER, { phoneNumber: p.phoneNumber })
     return { userIdList: number ? usersOf(number) : [] }
+  },
+  // a destination's class refused for userId (international, premium), as check#SmsSend refuses it (SmsRoom.js)
+  destinationRefusal: (p) => {
+    const dest = voice('classify', { phoneNumber: p.phoneNumber })
+    return (dest.number ? destinationRefusal(dest, blank(p.userId) ? null : p.userId) : null) || {}
   },
   ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, releaseSend, noteKeyword, noteOptSignal, receive, sendMessage, myTextNumbers,
   syncNumberRooms, phoneNames,

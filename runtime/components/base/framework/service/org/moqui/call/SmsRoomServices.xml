@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Text members of a room (plans/Comms-Messaging.md §18.3 phase 18; docs/interfaces/SMS.md "Text members of a room"): an
+    outside number in a private room, by text. The logic is SmsRoom.js beside this file; Sms.js routes their texts
+    (receive#Sms) and checks the room's texts (check#SmsSend in room mode); the SMS adapter sends them ("Ann: ...").
+    The SECA in SmsRoom.secas.xml ends a member's mapping when remove#Member takes them out. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="add" noun="TextMember">
+        <description>Add an outside number to a private room as a text member (a moderator or owner, with consent Y): it gets each of the room's messages as a text, "Ann: ...", from ourNumber (one of the adder's granted numbers marked for room texts; the first free one when empty), and its replies post to the room as it. One room per outside number on each of our numbers. A welcome text names the room and says how to leave. memberName is the room's name for them. Refused (reasonCode): notAllowed, notFound, roomType (only a private room), encrypted, timerOn, archived, badNumber, emergency, internationalNotEnabled, premiumNotEnabled, consentRequired, blocked (the adder blocked the number), alreadyMember, tooManyMembers (smsRoomMaxMembers), dailyLimit (smsRoomAddsPerDay), noRoomNumber, numberNotGranted, noFreeNumber ("This person is already a text member of the room on this number; another number is needed."), optedOut. warning pairRoomActive: the number's pair room on ours had a text in the last 30 days.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="memberName"/>
+            <parameter name="ourNumber"/>
+            <parameter name="consent"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatActorId"/>
+            <parameter name="chatRoomBridgeId"/>
+            <parameter name="ourNumber"/>
+            <parameter name="warning"/>
+            <parameter name="welcomeSent" type="Boolean"/>
+            <parameter name="welcomeReasonCode"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('addTextMember', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="TextMember" allow-remote="false">
+        <description>Internal (add#TextMember, in a transaction of its own): the external user (its display name the number) and actor of theirNumber on ourNumber's bridge, the member row, the mapping (ours/theirs#chatRoomId, memberChatActorId) and the membership event (via text).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="ourNumber" required="true"/>
+            <parameter name="theirNumber" required="true"/>
+            <parameter name="memberName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatRoomBridgeId"/>
+            <parameter name="chatActorId"/>
+            <parameter name="chatBridgeId"/>
+            <parameter name="externalRoomId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('storeTextMember', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="TextMemberChoices">
+        <description>The add dialog's choices of our number for phoneNumber: the signed-in moderator's numbers for room texts, each {phoneNumber, description, free, takenRoomName (the room this person is already a text member of on it), pairRoomActive}.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="phoneNumber"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="numberList" type="List"/>
+            <parameter name="phoneNumber"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('textMemberChoices', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="TextMembers">
+        <description>A room's text members, for its members: each {chatActorId, memberName, phoneNumber, ourNumber, addedByName, addedDate, welcomeDate, welcomeReasonCode, optedOut, roomTextsOff, lastFailure}; canAdd and addRefusal for the signed-in user; maxMembers.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="memberList" type="List"/>
+            <parameter name="canAdd" type="Boolean"/>
+            <parameter name="addRefusal"/>
+            <parameter name="maxMembers" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('findTextMembers', context))</script></actions>
+    </service>
+
+    <service verb="rename" noun="TextMember">
+        <description>A moderator renames a text member in this room only (ChatRoomBridge.memberName); empty shows the number.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="chatActorId" required="true"/>
+            <parameter name="memberName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="memberName"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('renameTextMember', context))</script></actions>
+    </service>
+
+    <service verb="note" noun="MemberKeyword" allow-remote="false">
+        <description>Internal (receive#Sms, after the opt-out is kept): a text member's STOP takes them out of the room (the mapping ends, the event "left by replying STOP"); HELP is answered once a day.</description>
+        <in-parameters>
+            <parameter name="chatRoomBridgeId" required="true"/>
+            <parameter name="keyword" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="done" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('noteMemberKeyword', context))</script></actions>
+    </service>
+
+    <service verb="end" noun="TextMember" allow-remote="false">
+        <description>Internal (the SECA after remove#Member of an external actor): a text member taken out of the room has its mapping ended, so its texts go to the pair room again.</description>
+        <in-parameters>
+            <parameter name="chatRoomId"/>
+            <parameter name="chatActorId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ended" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('endTextMember', context))</script></actions>
+    </service>
+</services>
