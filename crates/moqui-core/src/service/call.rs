@@ -215,7 +215,8 @@ pub fn sync_checked(
 
 /// The multi call of Java's `ServiceCallSyncImpl`: for each row `N` (from 0, until a row has none of the in-parameters
 /// as `name_N`), the service is called with that row's values, then the plain parameters and the results so far for the
-/// rest. With `_useRowSubmit` (or `_useRowSubmit_N`) only rows with `_rowSubmit_N` run. All rows run in one transaction,
+/// rest. A posted row value does not replace a plain value the caller set apart from the request
+/// ([`pinned_over_posted_row`]). With `_useRowSubmit` (or `_useRowSubmit_N`) only rows with `_rowSubmit_N` run. All rows run in one transaction,
 /// which an error rolls back; the first error stops the rows. The results of the rows are merged.
 ///
 /// # Errors
@@ -268,6 +269,11 @@ pub fn sync_multi(
                 continue;
             }
             for parameter in &in_names {
+                if let Some(pinned) = pinned_over_posted_row(parameters, parameter, index, &row) {
+                    row.insert(parameter.clone(), pinned);
+                }
+            }
+            for parameter in &in_names {
                 if row.get(parameter).is_some_and(|value| !is_empty(value)) {
                     continue;
                 }
@@ -294,6 +300,31 @@ pub fn sync_multi(
         Err(_) if has_error() => Ok(result),
         Err(err) => Err(err.into()),
     }
+}
+
+/// The plain value of `parameter` that row `index` of a multi call keeps in place of its `<parameter>_<index>`: the
+/// row's value is the request parameter of that name, and the caller's plain value is not empty and is not the request
+/// parameter `<parameter>` (the screen's always-actions, a `parameter from` or an in-map set it). Java takes the row's
+/// value first, so a posted `userId_0` replaced a `userId` the screen pinned to the user (SEC-RTE-81). A row the caller
+/// built itself, outside a request or with values the request did not post, still takes its own values first.
+fn pinned_over_posted_row(
+    parameters: &BTreeMap<String, Value>,
+    parameter: &str,
+    index: usize,
+    row: &BTreeMap<String, Value>,
+) -> Option<Value> {
+    use moqui_lib::object::to_plain_string;
+    let plain = parameters.get(parameter).filter(|value| !is_empty(value))?;
+    let from_row = row.get(parameter)?;
+    let posted = crate::web::parameter(&format!("{parameter}_{index}"))?;
+    if to_plain_string(&posted) != to_plain_string(from_row) {
+        return None;
+    }
+    let requested = crate::web::parameter(parameter).filter(|value| !is_empty(value));
+    if requested.is_some_and(|requested| to_plain_string(&requested) == to_plain_string(plain)) {
+        return None;
+    }
+    Some(plain.clone())
 }
 
 /// What [`prepare_async`] decided for an async call.

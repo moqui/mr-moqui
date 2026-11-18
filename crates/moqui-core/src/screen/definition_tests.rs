@@ -534,3 +534,72 @@ fn menu_include_literals_near_literals_and_expressions() {
     );
     assert_eq!(of("ec.user.hasPermission("), (false, None));
 }
+
+/// A transition's `service-call` shortcut is a multi call for a post with `_isMulti=true` only when it writes
+/// `multi="parameter"` or a multi form of the screen posts to it: a `form-list` with `multi="true"` (its own or the
+/// one it extends), or a `row-selection` action not in `list-mode`. Any other shortcut stays one call, so a posted
+/// `<name>_0` cannot stand in for an id the screen pinned (SEC-RTE-81). A transition taken by `transition-include`
+/// becomes a multi call when a multi form of the including screen posts to it.
+#[test]
+fn a_shortcut_is_a_multi_call_only_when_written_or_a_multi_form_posts_to_it() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-multi-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let shared = dir.join("Shared.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &shared,
+        r#"<screen require-authentication="false">
+                <transition name="saveShared"><service-call name="save#Shared"/><default-response type="none"/></transition>
+                <widgets/></screen>"#,
+    )
+    .unwrap();
+    let screen = format!(
+        r#"<screen require-authentication="false">
+                <transition name="plain"><service-call name="update#Account"/><default-response type="none"/></transition>
+                <transition name="written"><service-call name="update#Account" multi="parameter"/><default-response type="none"/></transition>
+                <transition name="never"><service-call name="update#Account" multi="false"/><default-response type="none"/></transition>
+                <transition name="fromList"><service-call name="update#Row"/><default-response type="none"/></transition>
+                <transition name="fromBase"><service-call name="update#Row"/><default-response type="none"/></transition>
+                <transition name="fromSelection"><service-call name="update#Row"/><default-response type="none"/></transition>
+                <transition name="fromListMode"><service-call name="update#Row"/><default-response type="none"/></transition>
+                <transition name="fromSingle"><service-call name="update#Row"/><default-response type="none"/></transition>
+                <transition name="queued"><service-call name="update#Row" async="true"/><default-response type="none"/></transition>
+                <transition-include name="saveShared" location="{shared}"/>
+                <widgets>
+                    <form-list name="Rows" list="rows" transition="fromList" multi="true"/>
+                    <form-list name="Base" list="rows" transition="fromBase" multi="true"/>
+                    <form-list name="Extending" list="rows" extends="Base"/>
+                    <form-list name="SharedRows" list="rows" transition="saveShared" multi="true"/>
+                    <form-list name="Queued" list="rows" transition="queued" multi="true"/>
+                    <form-list name="Selected" list="rows">
+                        <row-selection id-field="rowId"><action><form-single name="Act" transition="fromSelection"/></action></row-selection>
+                        <field name="rowId"><default-field><display/></default-field></field></form-list>
+                    <form-list name="Listed" list="rows">
+                        <row-selection id-field="rowId" list-mode="true"><action><form-single name="ActList" transition="fromListMode"/></action></row-selection>
+                        <field name="rowId"><default-field><display/></default-field></field></form-list>
+                    <form-single name="One" transition="fromSingle"/>
+                </widgets>
+            </screen>"#
+    );
+    std::fs::write(dir.join("Multi.xml"), screen).unwrap();
+    let context = ExecutionContextFactory::test_context();
+    let facade = ScreenFacade::of(context.factory());
+    let def = facade
+        .screen_def(context.factory(), &dir.join("Multi.xml").to_string_lossy())
+        .unwrap();
+    let source = facade.screen_def(context.factory(), &shared).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let multi = |name: &str| {
+        def.transition(name, Some("post"))
+            .map(|transition| transition.multi_parameter)
+    };
+    for name in ["written", "fromList", "fromBase", "fromSelection", "saveShared"] {
+        assert_eq!(multi(name), Some(true), "{name}");
+    }
+    for name in ["plain", "never", "fromListMode", "fromSingle", "queued"] {
+        assert_eq!(multi(name), Some(false), "{name}");
+    }
+    assert!(
+        !source.transition("saveShared", Some("post")).unwrap().multi_parameter,
+        "the included screen's own transition keeps its default"
+    );
+}

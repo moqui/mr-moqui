@@ -19,7 +19,7 @@
 //! into an `MNode` on the calling thread, which is how the macro walker reads them. A request that
 //! only reads a fragment takes [`XmlFragment::shared_node`], the tree this thread parsed before.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -300,6 +300,13 @@ pub struct TransitionDef {
     /// fails with this message before either part runs.
     pub actions_error: Option<String>,
     pub single_service: Option<String>,
+    /// The `service-call` shortcut is a multi call when the request says `_isMulti=true`: written on it
+    /// (`multi="parameter"`), or by default when a multi form of the screen posts to this transition (SEC-RTE-81).
+    pub multi_parameter: bool,
+    /// The shortcut with its `in-map` and `out-map` defaults, when it writes no `multi` and is not async: a screen
+    /// that takes this transition by `transition-include` and has a multi form posting to it compiles it again as a
+    /// multi call ([`Self::as_multi_target`]).
+    defaultable_shortcut: Option<XmlFragment>,
     pub conditional_responses: Vec<ResponseDef>,
     pub default_response: ResponseDef,
     pub error_response: Option<ResponseDef>,
@@ -361,6 +368,8 @@ impl TransitionDef {
             actions: None,
             actions_error: None,
             single_service: None,
+            multi_parameter: false,
+            defaultable_shortcut: None,
             conditional_responses: Vec::new(),
             default_response: ResponseDef::none(),
             error_response: None,
@@ -377,7 +386,9 @@ impl TransitionDef {
             .collect()
     }
 
-    fn of(node: &MNode, screen_location: &str) -> Result<Self, Error> {
+    /// The transition `node` of the screen at `screen_location`. `multi_targets` are the transitions a multi form of the
+    /// screen posts to ([`multi_form_targets`]).
+    fn of(node: &MNode, screen_location: &str, multi_targets: &BTreeSet<String>) -> Result<Self, Error> {
         let name = node.attribute("name").unwrap_or_default();
         let label = format!("{screen_location} transition {name}");
         let method = node
@@ -390,9 +401,14 @@ impl TransitionDef {
         let mut actions = None;
         let mut actions_error = None;
         let mut has_actions = false;
-        // The service-call shortcut defaults in-map, out-map, and multi as the Java screen does.
-        // It is compiled apart from `<actions>`: the generated call returns on an error, and that
-        // return would skip the actions if they were one script (ScreenDefinition.groovy).
+        let mut multi_parameter = false;
+        let mut defaultable_shortcut = None;
+        // The service-call shortcut defaults in-map and out-map as the Java screen does. Java also defaults `multi` to
+        // `parameter`, which made any shortcut a multi call for a post with `_isMulti=true`, and a multi call took a
+        // posted `<name>_0` in place of an id the screen pinned (SEC-RTE-81). Here the default is `parameter` only when
+        // a multi form of the screen posts to this transition; elsewhere the shortcut is a multi call only by its own
+        // `multi`. It is compiled apart from `<actions>`: the generated call returns on an error, and that return would
+        // skip the actions if they were one script (ScreenDefinition.groovy).
         if let Some(call) = node.first_named("service-call") {
             has_actions = true;
             let call = call.deep_copy();
@@ -401,11 +417,14 @@ impl TransitionDef {
                     call.set_attribute(key, value);
                 }
             }
-            if call.attribute("multi").is_none_or(|text| text.is_empty()) && !call.attribute_is("async", "true") {
-                call.set_attribute("multi", "parameter");
+            let written = call.attribute("multi").filter(|text| !text.is_empty());
+            let defaultable = written.is_none() && !call.attribute_is("async", "true");
+            if defaultable {
+                defaultable_shortcut = Some(XmlFragment::of(&call));
             }
+            multi_parameter = written.as_deref() == Some("parameter") || (defaultable && multi_targets.contains(&name));
             single_service = call.attribute("name").filter(|text| !text.is_empty());
-            match compile_actions(vec![call], &label) {
+            match compile_shortcut(&call, defaultable && multi_parameter, &label) {
                 Ok(compiled) => service_actions = Some(compiled),
                 Err(message) => actions_error = Some(message),
             }
@@ -468,12 +487,109 @@ impl TransitionDef {
             actions,
             actions_error,
             single_service,
+            multi_parameter,
+            defaultable_shortcut,
             conditional_responses,
             default_response,
             error_response,
             implicit: Implicit::None,
         })
     }
+
+    /// This transition, taken by `transition-include` into a screen with a multi form that posts to it: a shortcut that
+    /// writes no `multi` becomes a multi call when the request says `_isMulti=true`, as one of the screen's own would.
+    fn as_multi_target(&self) -> Result<Self, Error> {
+        let mut out = self.clone();
+        let Some(shortcut) = &self.defaultable_shortcut else {
+            return Ok(out);
+        };
+        if self.multi_parameter || self.actions_error.is_some() {
+            return Ok(out);
+        }
+        let label = format!("{} transition {}", self.screen_location, self.name);
+        match compile_shortcut(&shortcut.node()?, true, &label) {
+            Ok(compiled) => out.service_actions = Some(compiled),
+            Err(message) => {
+                out.actions_error = Some(message);
+                out.service_actions = None;
+                out.actions = None;
+            }
+        }
+        out.multi_parameter = true;
+        Ok(out)
+    }
+}
+
+/// The shortcut `call` as its own script, with `multi="parameter"` when `multi` is set.
+fn compile_shortcut(call: &MNode, multi: bool, label: &str) -> Result<Actions, String> {
+    let call = call.deep_copy();
+    if multi {
+        call.set_attribute("multi", "parameter");
+    }
+    compile_actions(vec![call], label)
+}
+
+/// The transitions a multi form of the screen posts to, from its forms (its own, those of a `screen-extend` and those a
+/// `section-include` brings): a `form-list` with `multi="true"`, its own or that of the form of the screen it extends,
+/// posts every row as `<name>_<N>` with `_isMulti=true`, and so does each action `form-single` of a `row-selection` not
+/// in `list-mode`. A transition of these is the only one whose `service-call` shortcut is a multi call by default.
+fn multi_form_targets(forms: &BTreeMap<String, FormDef>) -> BTreeSet<String> {
+    let mut targets = BTreeSet::new();
+    for form in forms.values().filter(|form| form.list) {
+        if form_attribute(forms, &form.name, "multi", 0).as_deref() == Some("true") {
+            if let Some(transition) = form_attribute(forms, &form.name, "transition", 0) {
+                targets.insert(transition);
+            }
+        }
+        for node in form_nodes(form, "row-selection") {
+            for selection in node.children_named("row-selection") {
+                if selection.attribute_is("list-mode", "true") {
+                    continue;
+                }
+                for action in selection.children_named("action") {
+                    for single in action.children_named("form-single") {
+                        if let Some(transition) = single.attribute("transition").filter(|text| !text.is_empty()) {
+                            targets.insert(transition);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    targets
+}
+
+/// The form's element and its `screen-extend` ones after it, each parsed only when its text has `word`.
+fn form_nodes(form: &FormDef, word: &str) -> Vec<MNode> {
+    std::iter::once(&form.node)
+        .chain(&form.extensions)
+        .filter(|fragment| fragment.text().contains(word))
+        .filter_map(|fragment| match fragment.node() {
+            Ok(node) => Some(node),
+            Err(err) => {
+                tracing::error!("form {} not read for its multi transition: {err}", form.name);
+                None
+            }
+        })
+        .collect()
+}
+
+/// `attribute` of the form `name` as the last of its elements that writes it, else of the form of this screen it
+/// `extends`, as the assembled form has it (`form.rs`).
+fn form_attribute(forms: &BTreeMap<String, FormDef>, name: &str, attribute: &str, depth: usize) -> Option<String> {
+    let form = forms.get(name)?;
+    let written = form_nodes(form, attribute)
+        .into_iter()
+        .filter_map(|node| node.attribute(attribute).filter(|text| !text.is_empty()))
+        .next_back();
+    if written.is_some() || depth >= MAX_INCLUDE_DEPTH {
+        return written;
+    }
+    let base = form
+        .extends
+        .as_deref()
+        .filter(|base| !base.contains('#') && !base.contains("${"))?;
+    form_attribute(forms, base, attribute, depth + 1)
 }
 
 #[derive(Clone, Debug)]
@@ -1032,41 +1148,6 @@ impl ScreenDef {
             None => None,
         };
 
-        let mut transitions: Vec<TransitionDef> = Vec::new();
-        for transition in node.named_iter("transition") {
-            transitions.push(TransitionDef::of(&transition, location)?);
-        }
-        for include in node.named_iter("transition-include") {
-            let (name, from) = (
-                include.attribute("name").unwrap_or_default(),
-                include.attribute("location").unwrap_or_default(),
-            );
-            let other = facade.screen_def_at(factory, &from, depth + 1)?;
-            let method = include.attribute("method");
-            let Some(found) = other.transition(&name, method.as_deref()) else {
-                return Err(Error::new(format!(
-                    "{location}: transition-include could not find transition {name} in {from}"
-                )));
-            };
-            let mut included = found.clone();
-            included.screen_location = location.to_string();
-            transitions.push(included);
-            sources.extend(other.sources.iter().cloned());
-        }
-
-        for implicit in [
-            Implicit::Actions,
-            Implicit::FormSelectColumns,
-            Implicit::FormSaveFind,
-            Implicit::ScreenDoc,
-            Implicit::ScanResolve,
-        ] {
-            let transition = TransitionDef::implicit(location, implicit);
-            if !transitions.iter().any(|item| item.name == transition.name) {
-                transitions.push(transition);
-            }
-        }
-
         // Read before the rows, so a write while they load makes this definition stale.
         let config_generation = screen_config_generation(factory);
         let (subscreens, rows_read) = load_subscreens(facade, factory, node, location, &mut sources)?;
@@ -1156,6 +1237,47 @@ impl ScreenDef {
             let name = item.attribute("name").unwrap_or_default();
             let label = format!("{location} extended section {name}");
             sections.insert(name.clone(), SectionDef::of(item, &name, &label)?);
+        }
+
+        // The transitions after the forms: a shortcut's multi default depends on the multi forms that post to it.
+        let multi_targets = multi_form_targets(&forms);
+        let mut transitions: Vec<TransitionDef> = Vec::new();
+        for transition in node.named_iter("transition") {
+            transitions.push(TransitionDef::of(&transition, location, &multi_targets)?);
+        }
+        for include in node.named_iter("transition-include") {
+            let (name, from) = (
+                include.attribute("name").unwrap_or_default(),
+                include.attribute("location").unwrap_or_default(),
+            );
+            let other = facade.screen_def_at(factory, &from, depth + 1)?;
+            let method = include.attribute("method");
+            let Some(found) = other.transition(&name, method.as_deref()) else {
+                return Err(Error::new(format!(
+                    "{location}: transition-include could not find transition {name} in {from}"
+                )));
+            };
+            let mut included = if multi_targets.contains(&name) {
+                found.as_multi_target()?
+            } else {
+                found.clone()
+            };
+            included.screen_location = location.to_string();
+            transitions.push(included);
+            sources.extend(other.sources.iter().cloned());
+        }
+
+        for implicit in [
+            Implicit::Actions,
+            Implicit::FormSelectColumns,
+            Implicit::FormSaveFind,
+            Implicit::ScreenDoc,
+            Implicit::ScanResolve,
+        ] {
+            let transition = TransitionDef::implicit(location, implicit);
+            if !transitions.iter().any(|item| item.name == transition.name) {
+                transitions.push(transition);
+            }
         }
 
         let mut server_static = list_attr("server-static");

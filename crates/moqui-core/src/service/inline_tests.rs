@@ -48,6 +48,14 @@ const SERVICES: &str = r#"<services>
             <entity-create value-field="made"/>
         </actions>
     </service>
+    <service verb="inline" noun="Record" authenticate="false">
+        <in-parameters><parameter name="id"/><parameter name="medium"/></in-parameters>
+        <actions>
+            <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+            <script>made.set("testId", id); made.set("testMedium", medium);</script>
+            <entity-create value-field="made"/>
+        </actions>
+    </service>
     <service verb="inline" noun="IgnoreFail" authenticate="false" transaction="ignore">
         <actions><return error="true" message="ignore failed"/></actions>
     </service>
@@ -351,6 +359,53 @@ fn a_multi_call_runs_each_row_in_one_transaction() {
     assert_eq!(medium(&facade, "MV0"), None, "row 0 rolled back with the failed row 1");
     assert_eq!(medium(&facade, "MV2"), None, "the rows after the error do not run");
     ctx.message().clear();
+}
+
+/// In a multi call a row's posted `name_N` does not replace the plain value the caller set apart from the request (a
+/// value the screen pinned, which is not the request parameter of that name): it would let a post with `_isMulti=true`
+/// and `userId_0` reach another user's account (SEC-RTE-81). A plain value that is the request's own, and a row the
+/// caller built itself, keep Java's order: the row's value first.
+#[test]
+fn a_posted_row_value_does_not_replace_a_value_the_caller_pinned() {
+    let (facade, ctx) = inline_context();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let record = |id: &str, plain: &str, posted: &[(&str, &str)], row: &str| {
+        let request: BTreeMap<String, Value> = posted
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), Value::string(*value)))
+            .collect();
+        let _web = (!posted.is_empty()).then(|| crate::web::install(request));
+        let mut parameters = BTreeMap::new();
+        parameters.insert("id_0".to_string(), Value::string(id));
+        parameters.insert("medium_0".to_string(), Value::string(row));
+        parameters.insert("medium".to_string(), Value::string(plain));
+        super::call::sync_multi("inline#Record", &parameters, &super::call::CallOptions::default()).unwrap();
+        medium(&facade, id)
+    };
+    // pinned by the screen: the request has no plain value, or another one
+    let pinned = record("PIN0", "pinned", &[("id_0", "PIN0"), ("medium_0", "posted")], "posted");
+    assert_eq!(pinned.as_deref(), Some("pinned"));
+    let other = record(
+        "PIN1",
+        "pinned",
+        &[("id_0", "PIN1"), ("medium_0", "posted"), ("medium", "sent")],
+        "posted",
+    );
+    assert_eq!(other.as_deref(), Some("pinned"));
+    // the plain value is the request's own (a hidden parameter of the form): the row's value wins, as Java's
+    let hidden = record(
+        "PIN2",
+        "sent",
+        &[("id_0", "PIN2"), ("medium_0", "posted"), ("medium", "sent")],
+        "posted",
+    );
+    assert_eq!(hidden.as_deref(), Some("posted"));
+    // a row the caller built, outside a request or apart from what it posted
+    assert_eq!(record("PIN3", "plain", &[], "own").as_deref(), Some("own"));
+    let built = record("PIN4", "plain", &[("id_0", "PIN4"), ("medium_0", "posted")], "own");
+    assert_eq!(built.as_deref(), Some("own"));
+    assert!(ctx.message().errors().is_empty(), "{:?}", ctx.message().errors());
 }
 
 const AUTHZ_SERVICES: &str = r#"<services>

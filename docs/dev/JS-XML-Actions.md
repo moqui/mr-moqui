@@ -159,7 +159,7 @@ if (true) {
 | `out-map` | The name the results are assigned to, merged over what it holds. With `out-map-add-to-existing="false"` it is replaced. `context` puts each result in the context by name |
 | `transaction` | `ignore`, `force-new`, `cache`, `force-cache`; `transaction-timeout` in seconds |
 | `disable-authz="true"` | The call runs with authorization off |
-| `multi="true"` | A multi call: once for each row of `name_0`, `name_1` parameters. `multi="parameter"` does that when the request's `_isMulti` is `true` |
+| `multi="true"` | A multi call: once for each row of `name_0`, `name_1` parameters, each row's value first and the plain one for a name the row lacks; a plain value the caller set apart from the request (not the request parameter of that name: the always-actions, a `parameter from`, the in-map) is not replaced by a posted `name_N` (SEC-RTE-81). `multi="parameter"` does that when the request's `_isMulti` is `true` |
 | `ignore-error="true"` | An error the call leaves is logged and cleared. Otherwise the actions return |
 | `async="true"` | `ec.service.async().name(...).parameters(...).call()`. `async="distribute"` is refused when the actions load |
 | `web-send-json-response` | `true` sends the results as the JSON response, a name sends that out-parameter; sent before the error check |

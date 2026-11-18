@@ -1414,8 +1414,10 @@ fn a_dynamic_drop_down_shows_the_transition_label_of_its_value() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A multi form-list posts `name_N` for each row with `_isMulti=true`; the transition's service-call shortcut (whose `multi`
-/// defaults to `parameter`) then calls the service once for each row.
+/// A multi form-list posts `name_N` for each row with `_isMulti=true`; the service-call shortcut of the transition it posts
+/// to (whose `multi` then defaults to `parameter`) calls the service once for each row. A shortcut no multi form posts to
+/// is one call with `_isMulti=true` too, and in a row a value the always-actions pinned is not replaced by a posted
+/// `name_N` (SEC-RTE-81).
 #[test]
 fn a_multi_form_post_calls_the_transition_service_for_each_row() {
     let dir = std::env::temp_dir().join(format!("moqui-forms-multi-{}", std::process::id()));
@@ -1437,7 +1439,22 @@ fn a_multi_form_post_calls_the_transition_service_for_each_row() {
         &root,
         r#"<screen require-authentication="false">
     <transition name="saveRows" require-session-token="false"><service-call name="save#Row"/><default-response type="none"/></transition>
-    <widgets><label text="rows"/></widgets>
+    <widgets><form-list name="Rows" list="rows" transition="saveRows" multi="true">
+        <field name="testId"><default-field><display/></default-field></field>
+        <field name="testMedium"><default-field><text-line/></default-field></field></form-list></widgets>
+</screen>"#,
+        )
+        .unwrap();
+    let pinned = dir.join("Pinned.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &pinned,
+        r#"<screen require-authentication="false">
+    <always-actions><set field="testMedium" value="pinned"/></always-actions>
+    <transition name="saveOne" require-session-token="false"><service-call name="save#Row"/><default-response type="none"/></transition>
+    <transition name="saveRows" require-session-token="false"><service-call name="save#Row"/><default-response type="none"/></transition>
+    <widgets><form-list name="Rows" list="rows" transition="saveRows" multi="true">
+        <field name="testId"><default-field><display/></default-field></field>
+        <field name="testMedium"><default-field><text-line/></default-field></field></form-list></widgets>
 </screen>"#,
     )
     .unwrap();
@@ -1471,6 +1488,29 @@ fn a_multi_form_post_calls_the_transition_service_for_each_row() {
     };
     assert_eq!(medium("R0").as_deref(), Some("first"));
     assert_eq!(medium("R1").as_deref(), Some("second"));
+    // no multi form posts to saveOne: the post is one call with the screen's values, and the rows reach nothing
+    let one = serve_at(
+        &world.factory,
+        form_post(
+            "/saveOne",
+            "testId=S1&testMedium=posted&_isMulti=true&testId_0=S2&testMedium_0=posted",
+        ),
+        &pinned,
+    );
+    assert!(one.status < 400, "{}", one.body_text());
+    assert_eq!(medium("S1").as_deref(), Some("pinned"));
+    assert_eq!(medium("S2"), None, "a posted row of a single call");
+    // a multi form's rows run, each with the pinned value in place of the posted one
+    let rows = serve_at(
+        &world.factory,
+        form_post(
+            "/saveRows",
+            "testMedium=posted&_isMulti=true&testId_0=P0&testMedium_0=posted",
+        ),
+        &pinned,
+    );
+    assert!(rows.status < 400, "{}", rows.body_text());
+    assert_eq!(medium("P0").as_deref(), Some("pinned"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

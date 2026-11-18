@@ -97,8 +97,12 @@ For a request to a transition (`render.rs` `run_transition_steps`), in one trans
 6. The response.
 
 The `service-call` of a transition has defaults a `service-call` in actions does not: `in-map="true"` (the whole
-context, of which the service takes its declared parameters), `out-map="context"` (each result is a context name
-after the call), and `multi="parameter"` (a multi call when the request has `_isMulti=true`). It is compiled apart
+context, of which the service takes its declared parameters) and `out-map="context"` (each result is a context name
+after the call). Java also defaults it to `multi="parameter"` (a multi call when the request has `_isMulti=true`); here
+that is the default only when a multi form of the screen posts to the transition (a `form-list` with `multi="true"`, or
+a `row-selection` action not in `list-mode`; its own, a `section-include`'s or a `screen-extend`'s), so any other
+shortcut is one call whatever the request says, and a posted `<name>_0` cannot stand in for an id the screen pinned
+(SEC-RTE-81). Write `multi="parameter"` on a shortcut that another screen's multi form posts to. It is compiled apart
 from the `<actions>`, since the call returns when it leaves an error and that must not skip the actions.
 
 ```xml
