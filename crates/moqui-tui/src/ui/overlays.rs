@@ -188,6 +188,10 @@ pub fn draw(paint: &mut Painter, session: &Session, breakpoints: &Breakpoints, c
                                 "."
                             });
                         }
+                        if login.is_toggle(at) {
+                            let check = if login.join_advanced { "x" } else { " " };
+                            return format!("{} {dotted} : [{check}]", mark(at));
+                        }
                         format!("{} {dotted} : [{value:<20}]", mark(at))
                     })
                     .collect();
@@ -202,7 +206,19 @@ pub fn draw(paint: &mut Painter, session: &Session, breakpoints: &Breakpoints, c
                                 "  The setup secret is in the server's startup log (moqui.log), in the line that begins \"No user account exists yet\"".to_string(),
                             );
                         }
-                        lines.push("Enter=Next  Ctrl+S=Create and log in  Tab=Next  Esc=Cancel".to_string());
+                        let note = fields + 1 + usize::from(setup.secret_required);
+                        lines.insert(
+                            note,
+                            "  ADMIN_ADV: login as another user, SQL, SSH shell, conf edit, deploy and more."
+                                .to_string(),
+                        );
+                        lines.insert(
+                            note + 1,
+                            "  Leave it off unless needed; only a member can add a member later.".to_string(),
+                        );
+                        lines.push(
+                            "Enter=Next  Space=Toggle  Ctrl+S=Create and log in  Tab=Next  Esc=Cancel".to_string(),
+                        );
                         "Welcome to your new system: create the first administrator"
                     }
                     None => {

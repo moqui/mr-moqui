@@ -44,24 +44,27 @@ const LOGIN_ELEMENTS: [(&str, &str); 4] = [
     ("login.submit", "Log in"),
 ];
 
-/// The setup's elements, while the dialog creates the first administrator: its five fields and its button.
-const SETUP_ELEMENTS: [(&str, &str); 6] = [
+/// The setup's elements, while the dialog creates the first administrator: its five fields, the ADMIN_ADV check and
+/// its button.
+const SETUP_ELEMENTS: [(&str, &str); 7] = [
     ("login.username", "Username"),
     ("login.password", "Password"),
     ("login.verify", "Password again"),
     ("login.fullName", "Full name"),
     ("login.email", "Email"),
+    ("login.joinAdvanced", crate::session::JOIN_ADVANCED),
     ("login.submit", "Create and log in"),
 ];
 
 /// The setup's elements from another machine: the setup secret of the server's startup log too.
-const SETUP_SECRET_ELEMENTS: [(&str, &str); 7] = [
+const SETUP_SECRET_ELEMENTS: [(&str, &str); 8] = [
     ("login.username", "Username"),
     ("login.password", "Password"),
     ("login.verify", "Password again"),
     ("login.fullName", "Full name"),
     ("login.email", "Email"),
     ("login.setupSecret", "Setup secret"),
+    ("login.joinAdvanced", crate::session::JOIN_ADVANCED),
     ("login.submit", "Create and log in"),
 ];
 
@@ -1012,7 +1015,7 @@ impl<L: ScreenLink> Agent<L> {
                 .map(|(at, (id, label))| {
                     let mut element = json!({
                         "n": at + 1,
-                        "kind": if at < fields { "text" } else { "button" },
+                        "kind": if login.is_toggle(at) { "check" } else if at < fields { "text" } else { "button" },
                         "id": id,
                         "label": label,
                         "focused": login.at == at,
@@ -1157,9 +1160,16 @@ impl<L: ScreenLink> Agent<L> {
                 _ => Ok(()),
             };
         }
+        // a check is set by do, as on a screen; a text field keeps its value
         let value = self
             .login()
-            .map(|login| login.field(at).to_string())
+            .map(|login| {
+                if login.is_toggle(at) {
+                    "yes".to_string()
+                } else {
+                    login.field(at).to_string()
+                }
+            })
             .unwrap_or_default();
         self.view.session_mut().set_login_field(at, &value);
         Ok(())

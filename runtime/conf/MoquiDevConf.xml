@@ -12,6 +12,8 @@
         comes with credentials. -->
     <default-property name="webapp_allow_origins" value="localhost,127.0.0.1"/>
     <default-property name="entity_empty_db_load" value="all"/>
+    <!-- the first administrator's form on an empty database (off by default, MoquiDefaultConf.xml) -->
+    <default-property name="initial_admin_enabled" value="true"/>
     <default-property name="entity_lock_track" value="true"/>
     <!-- The built-in SSH server on localhost (ssh_host defaults to 127.0.0.1): the apps in the terminal over SSH for
         every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/ui/TUI.md "Over SSH" -->

@@ -52,6 +52,8 @@ pub mod git_eca;
 mod idle;
 #[cfg(feature = "image")]
 mod images;
+#[cfg(feature = "image")]
+pub(crate) use images::decode_limited as decode_image;
 pub mod http_fixtures;
 pub mod info;
 #[cfg(test)]

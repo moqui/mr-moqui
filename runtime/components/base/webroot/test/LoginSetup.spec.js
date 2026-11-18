@@ -16,6 +16,9 @@
 // Login screen's anonymous initialAdminNeeded transition answer needed false and nothing else (no password rules, no
 // session token), and the Login screen in tui mode renders without the setup form (the NeedsSetupSection's tui text is
 // in its fail-widgets). The refusal of create#InitialAdminAccount itself is framework/test/client/SecurityAuthn.spec.js.
+// initial_admin_enabled (off by default) does not matter once accounts exist: needed and disabled are both false, and
+// the Login screen has no hint to turn it on. The empty database (needed with it on, ADMIN_ADV by joinAdvanced) is
+// crates/moqui/tests/cli/skeleton.rs, an acceptance test.
 // Run: ./moq test webroot --spec LoginSetup
 const WEBROOT = "component://webroot/screen/webroot.xml"
 
@@ -36,11 +39,16 @@ function anonymousRender(path, mode, method) {
 
 feature("with accounts, initialAdminNeeded answers needed false and hands out no token or rules", {
     when() {
-        const out = ec.service.sync().name("org.moqui.impl.UserServices.get#InitialAdminNeeded").call()
-        return {out, res: anonymousRender("Login/initialAdminNeeded", null, "get")}
+        const needed = () => ec.service.sync().name("org.moqui.impl.UserServices.get#InitialAdminNeeded").call()
+        const out = needed()
+        return {out, on: withProperty("initial_admin_enabled", "true", needed),
+            off: withProperty("initial_admin_enabled", "false", needed), res: anonymousRender("Login/initialAdminNeeded", null, "get")}
     },
-    then({out, res}) {
+    then({out, on, off, res}) {
         out.needed === false
+        out.disabled === false
+        on.needed === false && on.disabled === false
+        off.needed === false && off.disabled === false
         out.minLength == null
         res.status == 200 && res.errors == ""
         res.json != null
@@ -61,6 +69,7 @@ feature("the Login screen renders in tui mode without the setup form while accou
         res.json != null
         !res.text.includes("InitialAdminForm")
         !res.text.includes("Welcome to your new system")
+        !res.text.includes("initial_admin_enabled")
     },
 })
 

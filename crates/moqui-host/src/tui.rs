@@ -132,6 +132,7 @@ pub(crate) fn create_initial_admin_over<T: Transport + ?Sized>(
         ("userFullName".to_string(), account.full_name.clone()),
         ("emailAddress".to_string(), account.email.clone()),
         ("setupSecret".to_string(), account.setup_secret.clone()),
+        ("joinAdvanced".to_string(), account.join_advanced.to_string()),
     ]);
     let output = transport.send(Ask {
         path: "/Login/createInitialAdminAccount".to_string(),
@@ -615,6 +616,7 @@ impl Transport for InProcess {
     /// `create#InitialAdminAccount` with no user, as the Login screen's form posts it; it refuses once any account
     /// exists.
     fn create_initial_admin(&self, account: &AdminAccount) -> Result<(), LinkError> {
+        let join_advanced = account.join_advanced.to_string();
         let parameters: BTreeMap<String, Value> = [
             ("username", &account.username),
             ("newPassword", &account.password),
@@ -622,6 +624,7 @@ impl Transport for InProcess {
             ("userFullName", &account.full_name),
             ("emailAddress", &account.email),
             ("setupSecret", &account.setup_secret),
+            ("joinAdvanced", &join_advanced),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), Value::string(value)))
