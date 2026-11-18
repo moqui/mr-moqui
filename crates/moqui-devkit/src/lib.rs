@@ -105,3 +105,6 @@ mod tests;
 #[cfg(test)]
 #[path = "runtime_conf_tests.rs"]
 mod runtime_conf_tests;
+#[cfg(test)]
+#[path = "tracked_files_tests.rs"]
+mod tracked_files_tests;
