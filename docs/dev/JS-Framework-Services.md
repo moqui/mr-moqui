@@ -181,7 +181,7 @@ Data documents and feeds, entity snapshots, and sync between servers.
 | `create#DataDocument`, `clone#DataDocument`, `create#DataDocumentField` | Defining data documents in the database |
 | `export#EntityDataSnapshot` | `fromDate`, `thruDate`, `entitiesToInclude`, `entitiesToSkip`, `baseFilename`, `fileType` → `recordsWritten` |
 | `import#EntityDataSnapshot` | `zipFilename*`, `dummyFks`, `useTryInsert`, `disableEntityEca`, ... → `recordsLoaded` |
-| `rewrite#EntityEncryptedFields` | `entityName*` → `recordsUpdated`: after a change of encryption key; values stored as plain text before their field was encrypted are read (and sealed) only while `entity_ds_crypt_read_plain=true` (`entity-facade` `crypt-read-plain`), else skipped as `_DECRYPT_FAILED_` |
+| `rewrite#EntityEncryptedFields` | `entityName*` → `recordsUpdated`: after a change of encryption key; values stored as plain text before their field was encrypted are read (and sealed) only while ``entity-facade@crypt-read-plain`=true` (`entity-facade` `crypt-read-plain`), else skipped as `_DECRYPT_FAILED_` |
 | `EntitySyncServices.run#EntitySync` | `entitySyncId*`: one sync of an `EntitySync` record, push or pull |
 
 The top-level `org.moqui.EntityServices` has the interfaces a feed or a document names: `receive#DataFeed` (`documentList*`, `dataFeedId`, `feedStamp`), `receive#DataFeedDelete`, `add#ManualDocumentData`, `transform#DocumentMapping`; and `process#DataFeedPending`, the job that delivers pending feed rows.

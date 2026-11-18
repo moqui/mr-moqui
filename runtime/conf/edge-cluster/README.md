@@ -25,8 +25,9 @@ queue, the pairings and the host names are rows the members share. A clustered a
 ## `.env`
 
 - **Every edge member, the same** (the first member's, copied before each other one's first start):
-  `entity_ds_host`, `entity_ds_port`, `entity_ds_database`, `entity_ds_user`, `entity_ds_password`; the secrets the first
-  start generates, `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key`, `entity_ds_crypt_pass`,
+  the transactional datasource's `host`, `port`, `database`, `user`
+  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first
+  start generates, `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key`, `moqui_conf__entity_facade__crypt_pass`,
   `edge_link_key` (the one link key local nodes pin), `turn_auth_secret`, `acme_account_key` and, once made,
   `mail_dkim_key`; `webapp_http_host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
   `smtp_listen_port=25`, `smtp_listen_host`, `sip_port`, `sip_tls_port`, `sip_host`, `sip_registrar_enabled`,

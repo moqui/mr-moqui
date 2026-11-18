@@ -467,7 +467,9 @@ impl EntityFacade {
         *slot = Some((primary, alts));
     }
 
-    /// Install the cipher from `entity-facade` and its `decrypt-alt` children, and `crypt-read-plain`.
+    /// Install the cipher from `entity-facade` and its `decrypt-alt` children, and `crypt-read-plain`. A `decrypt-alt`
+    /// with no `crypt-pass` takes the `entity-facade`'s, and one with `old="true"` its `crypt-pass-old`
+    /// (plans/Conf-Paths.md §6.6); one whose pass is empty is left out.
     ///
     /// Attributes expand through [`moqui_lib::env`]. An empty `crypt-pass` leaves encryption off.
     pub fn crypt_from_conf(&self, conf: &MNode) -> Result<(), Error> {
@@ -483,10 +485,15 @@ impl EntityFacade {
         if pass.is_empty() {
             return Ok(());
         }
-        let primary = crypt_config_from(&facade, pass)?;
+        let old_pass = moqui_lib::env::expand(&facade.attribute("crypt-pass-old").unwrap_or_default())?;
+        let primary = crypt_config_from(&facade, pass.clone())?;
         let mut alts = Vec::new();
         for child in facade.named_iter("decrypt-alt") {
-            let alt_pass = moqui_lib::env::expand(&child.attribute("crypt-pass").unwrap_or_default())?;
+            let alt_pass = match child.attribute("crypt-pass") {
+                Some(own) => moqui_lib::env::expand(&own)?,
+                None if child.attribute_is("old", "true") => old_pass.clone(),
+                None => pass.clone(),
+            };
             if alt_pass.is_empty() {
                 continue;
             }

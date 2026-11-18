@@ -298,7 +298,7 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
     Ok(None)
 }
 
-/// The loader's `runtime/.env`, kept beside a snapshot's dump: the secrets the load generated, `entity_ds_crypt_pass`
+/// The loader's `runtime/.env`, kept beside a snapshot's dump: the secrets the load generated, `moqui_conf__entity_facade__crypt_pass`
 /// among them, which the encrypted fields of the dump were written with.
 const RUNTIME_ENV: &str = "runtime.env";
 
@@ -373,7 +373,7 @@ fn prune_snapshots(save: &Path, kept: &Path) {
 /// A hash of the crate version and of what the load of `scratch` reads: the components a factory on it loads, by name
 /// in load order (the conf and the instance purpose decide them: a dev component such as example loads only on a dev
 /// instance), and the name, size and change time of each one's entity and data files, which hold the schema and the
-/// data. A snapshot is made again when a file changes or a run loads another set of components: a server on a conf
+/// data, and of the framework's conf files. A snapshot is made again when a file changes or a run loads another set of components: a server on a conf
 /// without the dev components once saved a snapshot that a run with example then restored, without example's tables.
 /// The day is part of the key: the demo data is dated from its load, so a snapshot is good for the day it was made.
 /// The binary is not part of the key, so a relink keeps the snapshots (plans/archive/Test-Reduction.md, "Cheaper
@@ -388,6 +388,9 @@ fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     jiff::Zoned::now().date().to_string().hash(&mut hasher);
     hash_tree(&framework.join("entity"), &mut hasher);
     hash_tree(&framework.join("data"), &mut hasher);
+    // the default conf: the datasources and which secrets the load generates under which names (its `.env` goes with
+    // the dump), so a snapshot of another conf is not restored into this one's keys (plans/Conf-Paths.md §5)
+    hash_tree(&framework.join("conf"), &mut hasher);
     let components = moqui_core::context::discover_components(scratch, framework)
         .map_err(|err| Error::new(format!("could not list the components of the test runtime: {err}")))?;
     for component in components {

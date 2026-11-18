@@ -12,9 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The entity database a conf names. The `transactional` datasource is the embedded cluster unless
-//! `entity_ds_db_conf` (or the datasource) names `postgres`, `mysql` or `mysql8`; then it is that
-//! server, and no postmaster starts for it (`plans/archive/EmbeddedPostgres.md`).
+//! The entity database a conf names. The `transactional` datasource is the embedded cluster unless its
+//! `database-conf-name` names `postgres`, `mysql` or `mysql8`; then it is that server at its `host`, and no postmaster starts for it (`plans/archive/EmbeddedPostgres.md`).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -308,7 +307,7 @@ fn open_embedded(
     _pool_max: u32,
 ) -> Result<EntityDb, Error> {
     Err(Error::new(
-        "embedded postgres is not in this build; set entity_ds_db_conf to postgres or mysql",
+        "embedded postgres is not in this build; set the transactional datasource's database-conf-name to postgres or mysql",
     ))
 }
 

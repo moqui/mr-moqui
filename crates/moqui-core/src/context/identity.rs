@@ -173,6 +173,9 @@ mod tests {
         let conf: std::collections::BTreeSet<String> =
             ["fcm_service_account", "cluster_tls_cert"].iter().map(|name| name.to_string()).collect();
         for name in [
+            // a conf attribute's environment name, whatever it holds: scripts read the conf by selector
+            "moqui_conf__entity_facade__crypt_pass",
+            "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__HTTP_PORT",
             "entity_ds_crypt_pass",
             "entity_ds_crypt_pass_old",
             "entity_ds_password",

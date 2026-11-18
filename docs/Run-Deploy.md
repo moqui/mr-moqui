@@ -99,7 +99,8 @@ On the server:
    secret, which the server writes to its log at startup (`moqui.log`, the line that begins "No user account exists
    yet"). Check **Also join Administrators - Advanced** only if this account needs the advanced tools
    ([the first administrator](#the-first-administrator)). Then take `initial_admin_enabled=true` out of `.env`.
-6. Back up `/opt/moqui/.env` with the database. It holds `entity_ds_crypt_pass`, the key of the encrypted fields.
+6. Back up `/opt/moqui/.env` with the database. It holds `moqui_conf__entity_facade__crypt_pass`, the key of the encrypted
+   fields.
 
 Upgrades, backups, binding port 443 and the rest are in [One production server](#one-production-server).
 
@@ -157,7 +158,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run the dev server | `./moq run` | `./gradlew run` |
 | Run on another port | `./moq run -p 8081` | `java -jar moqui.war port=8081` |
 | Run with the production conf | `./moq run-production` | `./gradlew runProduction` |
-| Set a property for one run | `./moq run -D entity_ds_db_conf=postgres` | `-Dentity_ds_db_conf=postgres` |
+| Set a conf attribute for one run | `./moq run -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres` | `-Dmoqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres` |
 | Load every data type | `./moq load` | `./gradlew load` |
 | Load some types | `./moq load seed seed-initial install` | `./gradlew load -Ptypes=seed,seed-initial,install` |
 | Load one component's data | `./moq load seed components=mr-mantle` | `java -jar moqui.war load components=...` |
@@ -211,7 +212,8 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 - **Purpose**: `instance_purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Secrets**: the first start writes generated secrets to `runtime/.env` with mode 0600. Keep the file private and back
-  it up. Without `entity_ds_crypt_pass` the encrypted fields cannot be read ([conf](#runtime-directory-and-conf)).
+  it up. Without `moqui_conf__entity_facade__crypt_pass` the encrypted fields cannot be read
+  ([conf](#runtime-directory-and-conf)).
 - **Data**: no demo data, so no `john.doe` with password `moqui` ([first start](#data-and-the-first-start)).
 - **HTTPS**: a certificate in `runtime/cert`, or a proxy in front with `webapp_trusted_proxies` set
   ([HTTPS](#https-ports-and-proxies)).
@@ -361,7 +363,7 @@ A `default-property` in a conf is a default only. A property is looked up in thi
 3. `runtime/.env`;
 4. the merged conf's `default-property`.
 
-Use the underscore names (`entity_ds_db_conf`), not dotted ones. An empty value counts as unset, so it cannot clear a
+Use the underscore names (`webapp_http_port`), not dotted ones. An empty value counts as unset, so it cannot clear a
 conf's default; to clear one, override the `default-property` in the runtime conf.
 
 `runtime/.env` holds `KEY=value` lines. Blank lines and `#` comments are ignored, a matching pair of quotes is
@@ -369,7 +371,7 @@ stripped, and `$` is not expanded. It is read after the conf merge, so it cannot
 with `--no-data` leaves it out, so it is the place for per-host settings that should survive an upgrade.
 
 When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
-covers `entity_ds_crypt_pass`, `session_cookie_key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
+covers `session_cookie_key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
 `cluster_tls_key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
 `mail_dkim_key` (empty by default) is made there too, the first time a server needs it.
 
@@ -554,8 +556,8 @@ Found 0 Enumeration records, loading empty-db-load data types (seed,seed-initial
 Data loaded into empty DB, re-initializing ExecutionContextFactory
 ```
 
-Every start checks the tables. `entity_add_missing_startup` (default `true`) creates missing tables and adds missing
-columns and indexes. Columns are never dropped or changed.
+Every start checks the tables. A datasource's `startup-add-missing` (default `true`) creates missing tables and adds
+missing columns and indexes. Columns are never dropped or changed.
 
 While the only accounts are the seeded ones nobody logs in as (`_NA_` and the agents' chat users) and
 `initial_admin_enabled` is `true`, the login page shows **Create Initial Admin Account**
@@ -612,7 +614,8 @@ moqui load location=$PWD/adv.xml
 
 ### Embedded Postgres
 
-Without `entity_ds_db_conf` (or with Moqui Java's `h2`), the server runs its own Postgres. Every package but Enterprise
+With the transactional datasource's `database-conf-name` `embedded` (the default; empty and Moqui Java's `h2` are the
+same), the server runs its own Postgres. Every package but Enterprise
 embeds it.
 
 - **Data**: `runtime/db/embedded`, with two databases: `moqui` for the entities and `moqui_content` for the stored
@@ -624,26 +627,37 @@ embeds it.
 
 ### External Postgres or MySQL
 
-Set `entity_ds_db_conf` and the other `entity_ds_*` properties, in the environment, `.env` or the runtime conf. There
-are examples in `runtime/conf/MoquiDevConf.xml`. Use `mysql8` for MySQL 8 and `mysql` for MariaDB (which has no
+Set the transactional datasource's attributes, by their names in `runtime/.env` or the environment, or on the
+`datasource` element in the runtime conf ([Settings from the environment](#settings-from-the-environment)). There are
+examples in `runtime/conf/MoquiDevConf.xml`. Use `mysql8` for MySQL 8 and `mysql` for MariaDB (which has no
 `LATERAL`) and MySQL 5.7. Both create `utf8mb4` tables, so any character (an emoji) can be stored; create the database
 with `CHARACTER SET utf8mb4`. A database made before, with 3-byte `utf8` tables, needs a fresh load or each table
 converted by hand (`ALTER TABLE ... CONVERT TO CHARACTER SET utf8mb4`). Loading every data type into each was checked
 ([MySQL-Issues](../plans/archive/MySQL-Issues.md)).
 
-| Property | Example | What it does |
-|---|---|---|
-| `entity_ds_db_conf` | `postgres` | `postgres`, `mysql` or `mysql8`; empty is embedded Postgres |
-| `entity_ds_host` | `db.internal` | Default `127.0.0.1` |
-| `entity_ds_port` | | Empty is 5432 or 3306 |
-| `entity_ds_database` | `moqui` | |
-| `entity_ds_schema` | | Empty for the default schema |
-| `entity_ds_user`, `entity_ds_password` | `moqui`, ... | |
-| `entity_ds_sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
-| `entity_ds_sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
-| `entity_ds_crypt_pass` | generated | The key of encrypted fields; it must move with the database |
+```sh
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__host=db.internal
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__user=moqui
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
+```
 
-The content datasource has its own `content_ds_*` properties ([Content database](#content-database)).
+| Attribute of `entity-facade/datasource[transactional]` | Example | What it does |
+|---|---|---|
+| `database-conf-name` | `postgres` | `postgres`, `mysql` or `mysql8`; `embedded` (the default) is embedded Postgres |
+| `host` | `db.internal` | Default `127.0.0.1` |
+| `port` | | Empty is 5432 or 3306 |
+| `database` | `moqui` | |
+| `schema-name` | | Empty for the default schema |
+| `user`, `password` | `moqui`, ... | |
+| `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+| `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
+
+`entity-facade@crypt-pass` (`moqui_conf__entity_facade__crypt_pass`), generated at the first start, is the key of
+encrypted fields; it must move with the database. A datasource's own `inline-jdbc` with `xa-properties` or a `jdbc-uri`,
+as a conf from Moqui Java has it, replaces these attributes.
+
+The content datasource has the same attributes ([Content database](#content-database)).
 
 Each connection to an external database sets the datasource's transaction isolation level for its session: the
 `inline-jdbc` `isolation-level`, else the database's `default-isolation-level`, `ReadCommitted` for Postgres and MySQL
@@ -668,16 +682,17 @@ Mail attachments, chat files, call recordings, voicemail, drives, wiki pages and
 Only the resource implementations (`dbresource://`, the blob store, git) read and write these entities. Code everywhere
 else uses `ec.resource`. No foreign key or view-entity crosses between the content database and the main one.
 
-| `content_ds_db_conf` | Where the content database is |
+| `entity-facade/datasource[content]@database-conf-name` | Where the content database is |
 |---|---|
-| empty, embedded transactional database (default) | the `content_ds_database` database (`moqui_content`) in the embedded cluster |
+| empty, embedded transactional database (default) | the database its `database` names (`moqui_content`) in the embedded cluster |
 | empty, external transactional database | the transactional database itself, with no second database |
-| `postgres`, `mysql` or `mysql8` | `content_ds_database` on that server |
+| `postgres`, `mysql` or `mysql8` | its `database` on that server |
 
-For a server of its own, set `content_ds_host`, `content_ds_port`, `content_ds_user`, `content_ds_password`,
-`content_ds_sslmode` and `content_ds_sslrootcert`. Each one left empty takes its `entity_ds_` value. So setting only
-`content_ds_db_conf=postgres` puts the content in a `moqui_content` database on the transactional server, which must
-exist. `content_ds_schema` names a schema, as `entity_ds_schema` does.
+For a server of its own, set its `host`, `port`, `user`, `password`, `sslmode` and `sslrootcert`
+(`moqui_conf__entity_facade__datasource__CONTENT__host` and the rest). Each one left empty takes the transactional
+datasource's. So setting only `moqui_conf__entity_facade__datasource__CONTENT__database_conf_name=postgres` puts the
+content in a `moqui_content` database on the transactional server, which must exist. Its `schema-name` names a schema,
+as the transactional one's does.
 
 One transaction spans both databases, as Moqui Java's transaction spans every datasource, but without two-phase commit:
 
@@ -1510,7 +1525,7 @@ Sessions are rows in the shared database, so any member can serve any request.
            +----------+----------+
        member 1   member 2   member 3    conf/local-cluster/MoquiLocalConf.xml; 8444 between members only
            +----------+----------+
-              shared Postgres            entity_ds_db_conf=postgres
+              shared Postgres            database-conf-name=postgres
 ```
 
 Every member runs `conf/local-cluster/MoquiLocalConf.xml`; the `.env` names and the commands are in
@@ -1522,9 +1537,9 @@ node](#a-local-cluster-with-an-edge-node).
 
 - **One external database.** Postgres, or MySQL with the default transport. The Enterprise package has no embedded
   Postgres, so a member cannot start on a database of its own by mistake. The content database shares it unless
-  `content_ds_db_conf` names another ([Content database](#content-database)).
+  the content datasource's `database-conf-name` names another ([Content database](#content-database)).
 - **The same secrets on every member**: `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key` and
-  `entity_ds_crypt_pass`. Startup fails when a live member has a different session key or certificate, with
+  `moqui_conf__entity_facade__crypt_pass`. Startup fails when a live member has a different session key or certificate, with
   "session_cookie_key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
   For git hosting, `ssh_host_key` and `git_lfs_token_key` too: behind a load balancer or an edge node's pool a client's
   SSH connections and LFS requests reach any member, and another one after a failover, so a member with its own host
@@ -1780,7 +1795,7 @@ url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_
 A shared dev database is not supported. Every serving process joins the cluster of its database, so dev instances
 with their own generated secrets refuse to start on one. If they did start, one developer's entity changes would alter
 everyone's schema, and any instance could run the team's jobs. Each dev instance keeps its own embedded Postgres. To
-hand a database to someone else, send a `./moq save-db` save and the matching `entity_ds_crypt_pass`.
+hand a database to someone else, send a `./moq save-db` save and the matching `moqui_conf__entity_facade__crypt_pass`.
 
 **Not built**:
 - Moqui is not an identity provider, so a dev instance's own users do not log in through the group server (Connect
@@ -1827,7 +1842,7 @@ load it on a running server, with its data, when it has no Rust code
 | `java -jar moqui.war load types=...` | `moqui load types=...`, or `./moq load ...` |
 | `./gradlew addRuntime`, moqui-plus-runtime.war | `./moq archive`: a directory with the binary, not a WAR |
 | `MoquiInit.properties`, `-Dmoqui.runtime`, `-Dmoqui.conf` | `MOQUI_RUNTIME`, `MOQUI_CONF`, or `--conf` |
-| H2 by default | Embedded Postgres by default; `entity_ds_db_conf=h2` also means embedded |
+| H2 by default | Embedded Postgres by default; a `database-conf-name` of `h2` also means embedded |
 | JDBC driver jars in `runtime/lib` | Built in: Postgres in every package, MySQL in Maximal and Enterprise |
 | Tomcat, Elastic Beanstalk with a WAR | One process: the binary serves HTTP and HTTPS itself |
 | Docker Compose with nginx-proxy | Podman stacks, and no proxy container ([podman/README.md](../podman/README.md)) |

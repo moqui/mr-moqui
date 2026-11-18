@@ -28,7 +28,7 @@ use serde::Serialize;
 
 use super::diff::{join, keyed};
 use super::{conf_files, preview_conf, restart_reason, ConfChange, ConfReport};
-use crate::context::conf::{merge_files, merge_files_with, ConfFile, ConfRole};
+use crate::context::conf::{merge_files_with, ConfFile, ConfRole};
 use crate::context::conf_env::{compare_key, Override};
 use crate::context::conf_schema;
 use crate::context::conf_schema::{Class, Key, Unit, CATALOG, UNKNOWN};
@@ -248,7 +248,8 @@ fn writable(path: &Path) -> bool {
 /// When a conf file does not parse, or the running conf does not.
 pub fn view(factory: &ExecutionContextFactory) -> Result<ConfView, Error> {
     let files = files(factory)?;
-    let (merged, overrides) = with_merge_sources(|| merge_files_with(&files, None))?;
+    let env_file = factory.runtime_dir().join(".env");
+    let (merged, overrides) = with_merge_sources(|| merge_files_with(&files, None, Some(&env_file)))?;
     let report = preview_conf(factory, &merged)?;
     let set_by_conf = factory.conf_properties().clone();
     Ok(build_view(&files, &merged, Some(&report), &set_by_conf, &overrides))
@@ -300,7 +301,8 @@ pub fn check_file(factory: &ExecutionContextFactory, index: usize, text: &str) -
             ..FileCheck::default()
         });
     }
-    let merged = with_merge_sources(|| merge_files(&files, Some((&file.path, text))))?;
+    let env_file = factory.runtime_dir().join(".env");
+    let merged = with_merge_sources(|| merge_files_with(&files, Some((&file.path, text)), Some(&env_file)))?.0;
     let report = preview_conf(factory, &merged)?;
     Ok(FileCheck {
         problems,

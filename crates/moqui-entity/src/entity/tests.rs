@@ -435,7 +435,7 @@ fn locale_defaults_to_en_and_crypt_stays_unset() {
 }
 
 /// An empty `crypt-pass` leaves field encryption off with no error, so `encrypt="true"` fields are then written as
-/// plaintext. Startup fills `entity_ds_crypt_pass` when it is the `CHANGEME` default, not when it is set empty.
+/// plaintext. Startup fills `entity-facade@crypt-pass` when it is the `CHANGEME` default, not when it is set empty.
 ///
 /// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
 #[test]
@@ -451,6 +451,28 @@ fn known_gap_an_empty_crypt_pass_turns_field_encryption_off() {
     .unwrap();
     facade.crypt_from_conf(&set).unwrap();
     assert!(facade.crypt().is_some());
+}
+
+/// A `decrypt-alt` with no `crypt-pass` takes the `entity-facade`'s and one marked `old` its `crypt-pass-old`; an empty
+/// one is left out (plans/Conf-Paths.md §6.6).
+#[test]
+fn a_decrypt_alt_takes_the_facade_pass_or_the_old_one() {
+    let facade = open_fake();
+    let conf = MNode::parse_text(
+        "conf",
+        r#"<entity-facade crypt-pass="current" crypt-pass-old="before" crypt-salt="20201202" crypt-iter="10">
+            <decrypt-alt crypt-salt="SkcorIuqom" crypt-iter="10" crypt-algo="PBEWithMD5AndDES"/>
+            <decrypt-alt crypt-salt="SkcorIuqom" crypt-iter="10" crypt-algo="PBEWithMD5AndDES" old="true"/>
+            <decrypt-alt crypt-salt="x" crypt-iter="10" crypt-pass="own"/>
+            <decrypt-alt crypt-salt="x" crypt-iter="10" crypt-pass=""/>
+        </entity-facade>"#,
+    )
+    .unwrap();
+    facade.crypt_from_conf(&conf).unwrap();
+    let (primary, alts) = facade.crypt().unwrap();
+    assert_eq!(primary.pass, "current");
+    let passes: Vec<&str> = alts.iter().map(|alt| alt.pass.as_str()).collect();
+    assert_eq!(passes, ["current", "before", "own"]);
 }
 
 #[test]

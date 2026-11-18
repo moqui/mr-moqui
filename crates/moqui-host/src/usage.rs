@@ -63,10 +63,10 @@ Server options
   --no-run-es        Do not start OpenSearch (opensearch_run=false). Also: no-run-es, -no-run-es.
   -D name=value      Set a conf property for this run, or a conf attribute by its environment name
                      (moqui_conf__ssh_server__port; moqui help conf). Repeatable. Use underscore names
-                     (entity_ds_db_conf), not dotted ones.
+                     (webapp_http_port), not dotted ones.
 
   moqui --port 8081 --conf conf/MoquiProductionConf.xml
-  moqui -p 8081 -D entity_ds_db_conf=postgres
+  moqui -p 8081 -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 
 Environment
   MOQUI_RUNTIME      Runtime directory (default: runtime in the working directory when it has a
@@ -85,7 +85,8 @@ Environment
                      The checksum each part built in must have, checked at startup (moqui help embedded)
   webapp_http_port   HTTP port (default 8080). webapp_https_listen_port defaults to 8443 and cluster_https_port
                      to 8444. webapp_https_port is the HTTPS port in generated URLs (empty is 443).
-  entity_ds_db_conf  postgres, mysql, or mysql8 for an external server; otherwise embedded
+  moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name
+                     postgres, mysql, or mysql8 for an external server; otherwise embedded (moqui help conf)
 
 Other conf properties are environment variables with underscore names.
 ";
@@ -169,7 +170,7 @@ moqui save-db <cluster-dir> <dump-file>
 Writes a custom-format dump of the embedded moqui database in that cluster directory. Starts the
 postmaster when it is not running, and stops a postmaster this command started. A postmaster that
 was already running keeps running. This is the embedded cluster only, not an external database
-selected by entity_ds_db_conf. The usual directory is runtime/db/embedded.
+selected by the transactional datasource's database-conf-name. The usual directory is runtime/db/embedded.
 ./moq save-db also copies OpenSearch data. This command does not.
 
   moqui save-db runtime/db/embedded runtime/save/before-upgrade/moqui.dump

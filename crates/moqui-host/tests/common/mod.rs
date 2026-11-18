@@ -478,6 +478,26 @@ impl PropertyReset {
     }
 }
 
+impl PropertyReset {
+    /// Clears this property too when it drops.
+    fn add(&mut self, name: &str) {
+        self.0.push(name.to_string());
+    }
+}
+
+/// The conf secrets the gate's boot generated into its `runtime/.env` (`moqui_conf__...`, plans/Conf-Paths.md §3), as
+/// process properties until the gate drops: a member started in this process takes them, as a cluster's members share
+/// one `.env` (conf/local-cluster/README.md); each runtime would otherwise generate keys of its own.
+fn share_generated_secrets(runtime: &Path, reset: &mut PropertyReset) {
+    let text = std::fs::read_to_string(runtime.join(".env")).unwrap_or_default();
+    for (name, value) in moqui_lib::env::parse_dotenv(&text) {
+        if moqui_lib::node::path::env_segments(&name).is_some() && moqui_lib::env::get_property(&name).is_none() {
+            moqui_lib::env::set_property(&name, value);
+            reset.add(&name);
+        }
+    }
+}
+
 impl Drop for PropertyReset {
     fn drop(&mut self) {
         for name in &self.0 {
@@ -886,7 +906,7 @@ fn start_seeded_under(
     links: &[(&str, &str)],
 ) -> Gate {
     assert_own_process();
-    let reset = PropertyReset::of(&properties.iter().map(|(name, _)| *name).collect::<Vec<_>>());
+    let mut reset = PropertyReset::of(&properties.iter().map(|(name, _)| *name).collect::<Vec<_>>());
     for (name, value) in properties {
         moqui_lib::env::set_property(name, (*value).to_string());
     }
@@ -939,6 +959,7 @@ fn start_seeded_under(
     }
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
+    share_generated_secrets(&runtime, &mut reset);
     Gate {
         server,
         runtime: runtime.clone(),

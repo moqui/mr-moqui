@@ -194,7 +194,7 @@ The definitions still load, so components, screens and service files are the sam
 - Without `edge`, the `org.moqui.edge.EdgeServices` that need the link (pairing, clients, hosts, ping) fail with
   `edge link not built into this host` (`get#LinkStatus` answers state `notBuilt`), and `ec.service.passAuthority`
   throws `gRPC not built into this host`, so mr-pass takes REST.
-- Without `embedded-postgres`, `entity_ds_db_conf` must name an external `postgres` or `mysql` database, the sim
+- Without `embedded-postgres`, the transactional datasource's `database-conf-name` must name an external `postgres` or `mysql` database, the sim
   overlay is not available, and `save-db`, `load-save`, and `moqui test --db fresh` (which makes scratch embedded
   databases) report that this build has no embedded Postgres. `moqui test --db none` still runs specs that set
   `database: false`.
@@ -556,7 +556,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
                                # the others), linking any component crates in runtime/components/addon; tasks that
                                # run moqui build a missing binary themselves
 ./moq run                      # target/release/moqui with runtime/conf/MoquiDevConf.xml; --lite uses target/lite/moqui
-./moq run -p 8081 -D entity_ds_db_conf=postgres
+./moq run -p 8081 -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 ./moq run lint --screens       # moqui's own commands, with the same conf
 ./moq load                     # all data types; ./moq load seed seed-initial install
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)

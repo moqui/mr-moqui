@@ -1695,7 +1695,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element name="decrypt-alt" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
                     <xs:annotation><xs:documentation>Alternate settings for decryption only; useful for migrating keys, supporting data imported from other systems, etc</xs:documentation></xs:annotation>
-                    <xs:attribute name="crypt-pass" type="xs:string"/>
+                    <xs:attribute name="crypt-pass" type="xs:string"><xs:annotation><xs:documentation>
+                        Left out, the entity-facade's crypt-pass, or with old="true" its crypt-pass-old.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="old" default="false" type="boolean"><xs:annotation><xs:documentation>
+                        With no crypt-pass of its own, take the entity-facade's crypt-pass-old: for values encrypted
+                        under the pass before the current one.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="crypt-salt" type="xs:string"/>
                     <xs:attribute name="crypt-iter" type="xs:string"/>
                     <xs:attribute name="crypt-algo" type="xs:string"/>
@@ -1714,12 +1718,19 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>Topic factory for distributed cache invalidate</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sequenced-id-prefix" type="xs:string"/>
             <xs:attribute name="sql-name-style" type="xs:string">
-                <xs:annotation><xs:documentation>Rust only: java (default), or legacy to retain pre-compatibility quoted Rust table and column names. Supports property expansion.</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>Rust only: java (default), or legacy to retain pre-compatibility quoted Rust table and column names.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="default-group-name" type="name-plain"/>
             <xs:attribute name="database-time-zone" type="xs:string"/>
-            <xs:attribute name="database-locale" type="xs:string"/>
-            <xs:attribute name="crypt-pass" type="xs:string"/>
+            <xs:attribute name="database-locale" type="xs:string"><xs:annotation><xs:documentation>
+                Empty is the instance's default locale.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="crypt-pass" type="xs:string"><xs:annotation><xs:documentation>
+                The key of encrypted fields; empty turns field encryption off. A value ending in CHANGEME is generated at
+                the first start and kept in runtime/.env as moqui_conf__entity_facade__crypt_pass, which must be kept
+                with the database's backups.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="crypt-pass-old" type="xs:string"><xs:annotation><xs:documentation>
+                The pass before crypt-pass, for the decrypt-alt entries marked old: values encrypted under it still
+                read. A secret, never generated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="crypt-salt" type="xs:string"/>
             <xs:attribute name="crypt-iter" type="xs:string"/>
             <xs:attribute name="crypt-algo" type="xs:string"/>
@@ -2193,8 +2204,30 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:sequence>
             <xs:attribute name="group-name" type="name-segmented" use="required"/>
             <xs:attribute name="database-conf-name" type="xs:string">
-                <xs:annotation><xs:documentation>This is only required for JDBC/SQL datasources.</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>The database-list entry of its server: postgres, mysql or mysql8;
+                    embedded, empty or h2 for the embedded Postgres cluster. Only required for JDBC/SQL
+                    datasources.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="host" type="xs:string"><xs:annotation><xs:documentation>The server's host name or
+                address, or a Unix socket directory for Postgres. For a group other than transactional, empty is the
+                transactional datasource's, as are port, user, password, sslmode and sslrootcert. The datasource's own
+                inline-jdbc xa-properties or jdbc-uri (a conf from Java) replace these
+                attributes.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="port" type="xs:string"><xs:annotation><xs:documentation>Empty is the server's
+                default port.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="database" type="xs:string"><xs:annotation><xs:documentation>The database on the
+                server; for a group other than transactional on the embedded cluster, its database
+                there.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="user" type="xs:string"/>
+            <xs:attribute name="password" type="xs:string"><xs:annotation><xs:documentation>A secret: set it in
+                runtime/.env or the environment (moqui_conf__entity_facade__datasource__TRANSACTIONAL__password).
+                </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sslmode" type="xs:string"><xs:annotation><xs:documentation>An external server is
+                reached over TLS: disable connects without it, require encrypts without checking the certificate,
+                verify-ca checks its authority, and empty or verify-full its authority and
+                name.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sslrootcert" type="xs:string"><xs:annotation><xs:documentation>A PEM file of the
+                authorities to trust in place of the public ones.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="schema-name" type="xs:string"/>
             <xs:attribute name="startup-add-missing" default="false" type="boolean-expandable"/>
             <xs:attribute name="runtime-add-missing" default="true" type="boolean-expandable"/>

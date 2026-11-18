@@ -27,7 +27,7 @@
     <default-property name="pass_backend_transport" value=""/>
     <default-property name="pass_backend_grpc_url" value=""/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 
     <!-- The public site: its host and mounts must match the ones bound at the authority
         (mantle.public.SiteServices.create#Site and store#Mounts there). The certificate for the host goes in cert/. -->

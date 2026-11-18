@@ -19,14 +19,8 @@ fn conf(datasource: &str) -> MNode {
         r#"<moqui-conf>
                 <entity-facade>{datasource}</entity-facade>
                 <database-list>
-                    <database name="postgres" default-test-query="SELECT 1">
-                        <inline-jdbc pool-maxsize="90"><xa-properties serverName="db.example" portNumber="6543"
-                            databaseName="moqui" user="moqui" password="pw"/></inline-jdbc>
-                    </database>
-                    <database name="mysql8" default-test-query="SELECT 2">
-                        <inline-jdbc pool-maxsize="140"><xa-properties serverName="my.example" port="3307"
-                            databaseName="moqui" user="u" password="p"/></inline-jdbc>
-                    </database>
+                    <database name="postgres" default-test-query="SELECT 1"><inline-jdbc pool-maxsize="90"/></database>
+                    <database name="mysql8" default-test-query="SELECT 2"><inline-jdbc pool-maxsize="140"/></database>
                     <database name="h2"/>
                     <database name="oracle"/>
                 </database-list>
@@ -71,7 +65,8 @@ fsync=off"/>"#,
     }
     // on a datasource that is not the embedded cluster's they are ignored, a bad value too
     let external = conf(
-        r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="public" work-mem="lots"/>"#,
+        r#"<datasource group-name="transactional" database-conf-name="postgres" host="db.example" schema-name="public"
+            work-mem="lots"/>"#,
     );
     assert!(!datasource_conf(&external, "transactional")
         .unwrap()
@@ -101,9 +96,13 @@ fn h2_and_empty_are_embedded_with_the_postgres_pool() {
     }
 }
 
+/// The server and credentials are the datasource's own attributes (plans/Conf-Paths.md §6.6).
 #[test]
-fn postgres_reads_the_database_xa_properties() {
-    let node = conf(r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="public"/>"#);
+fn postgres_reads_the_datasource_attributes() {
+    let node = conf(
+        r#"<datasource group-name="transactional" database-conf-name="postgres" host="db.example" port="6543"
+            database="moqui" user="moqui" password="pw" schema-name="public"/>"#,
+    );
     let ds = datasource_conf(&node, "transactional").unwrap();
     assert_eq!(ds.kind, DatasourceKind::Postgres);
     assert_eq!(
@@ -129,11 +128,9 @@ fn the_isolation_level_is_the_inline_jdbc_one_else_the_database_default() {
     let level = |database: &str, inline: &str| {
         let text = format!(
             r#"<moqui-conf>
-                <entity-facade><datasource group-name="transactional" database-conf-name="mysql8"/></entity-facade>
+                <entity-facade><datasource group-name="transactional" database-conf-name="mysql8" host="my.example"/></entity-facade>
                 <database-list>
-                    <database name="mysql8" {database}>
-                        <inline-jdbc {inline}><xa-properties serverName="my.example" databaseName="moqui"/></inline-jdbc>
-                    </database>
+                    <database name="mysql8" {database}><inline-jdbc {inline}/></database>
                 </database-list>
             </moqui-conf>"#
         );
@@ -246,7 +243,8 @@ fn jdbc_uri_parameters_with_a_driver_equivalent_are_read() {
 
 #[test]
 fn use_schemas_false_leaves_the_schema_out() {
-    let node = conf(r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="app"/>"#);
+    let node =
+        conf(r#"<datasource group-name="transactional" database-conf-name="postgres" host="h" schema-name="app"/>"#);
     node.first_named("database-list")
         .unwrap()
         .children_named("database")
@@ -259,7 +257,8 @@ fn use_schemas_false_leaves_the_schema_out() {
 
 #[test]
 fn mysql8_uses_port_and_its_own_test_query() {
-    let node = conf(r#"<datasource group-name="transactional" database-conf-name="mysql8"/>"#);
+    let node =
+        conf(r#"<datasource group-name="transactional" database-conf-name="mysql8" host="my.example" port="3307"/>"#);
     let ds = datasource_conf(&node, "transactional").unwrap();
     assert_eq!(ds.kind, DatasourceKind::Mysql);
     assert_eq!(ds.dialect, "mysql8");
@@ -275,4 +274,49 @@ fn a_database_without_a_driver_or_a_group_without_a_datasource_is_an_error() {
     assert!(err.to_string().contains("no driver"), "{err}");
     let err = datasource_conf(&node, "nontransactional").unwrap_err();
     assert!(err.to_string().contains("no datasource"), "{err}");
+}
+
+/// A group other than `transactional` takes the transactional datasource's server and credentials where its own are
+/// empty, but not its database; the datasource's own `xa-properties` (a conf from Java) replace its attributes.
+#[test]
+fn the_content_datasource_takes_the_transactional_server_where_it_has_none() {
+    let node = conf(
+        r#"<datasource group-name="transactional" database-conf-name="postgres" host="db.example" port="6543"
+                database="moqui" user="moqui" password="pw" sslmode="disable"/>
+            <datasource group-name="content" database-conf-name="postgres" host="" database="moqui_content" user="cms"
+                password=""/>"#,
+    );
+    let ds = datasource_conf(&node, "content").unwrap();
+    assert_eq!(
+        (
+            ds.host.as_str(),
+            ds.port,
+            ds.database.as_str(),
+            ds.user.as_str(),
+            ds.password.as_str(),
+            ds.tls
+        ),
+        ("db.example", Some(6543), "moqui_content", "cms", "pw", false)
+    );
+    let java = conf(
+        r#"<datasource group-name="transactional" database-conf-name="postgres" host="ignored" database="moqui">
+                <inline-jdbc><xa-properties serverName="java.example" databaseName="erp" user="j"/></inline-jdbc>
+            </datasource>"#,
+    );
+    let ds = datasource_conf(&java, "transactional").unwrap();
+    assert_eq!(
+        (ds.host.as_str(), ds.database.as_str(), ds.user.as_str()),
+        ("java.example", "erp", "j")
+    );
+    // embedded: a group other than transactional names its database in the cluster
+    let embedded = conf(
+        r#"<datasource group-name="transactional" database-conf-name="embedded" database="moqui"/>
+            <datasource group-name="content" database-conf-name="" database="moqui_content"/>"#,
+    );
+    assert_eq!(datasource_conf(&embedded, "content").unwrap().database, "moqui_content");
+    let transactional = datasource_conf(&embedded, "transactional").unwrap();
+    assert_eq!(
+        (transactional.kind, transactional.database.as_str()),
+        (DatasourceKind::Embedded, "")
+    );
 }

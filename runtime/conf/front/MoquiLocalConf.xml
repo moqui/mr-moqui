@@ -14,10 +14,9 @@
     <!-- The shared database, as in conf/local-cluster: Postgres (or MySQL with the default cluster transport), its
         settings in .env, the same on every member. Back it up with its own tools: the backup job covers an embedded
         database only. -->
-    <default-property name="entity_ds_db_conf" value="postgres"/>
 
     <!-- The same .env on every member: the secrets the first member's first start generates (session_cookie_key,
-        cluster_tls_cert, cluster_tls_key, entity_ds_crypt_pass) and what pairing with the front writes on that member:
+        cluster_tls_cert, cluster_tls_key, moqui_conf__entity_facade__crypt_pass) and what pairing with the front writes on that member:
         front_node_url, front_node_key (the pairing's key), front_node_pin and front_node_id. A front pairing has no
         pairing id: the front knows the cluster by its key and its members' ids, and there is no queue. Copy that whole
         .env to every other member, then add the member's own cluster_base_url, https://(this member's private
@@ -56,5 +55,7 @@
         Edge Node (This node's cluster) or on the front's Edge Clients › Clients; the front sends it no new work and its
         /health answers 503. Draining the only live member takes the pairing's names offline at the front. -->
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true">
+        <datasource group-name="transactional" database-conf-name="postgres"/>
+    </entity-facade>
 </moqui-conf>

@@ -92,7 +92,7 @@
         This sets the paused seed job backup_EmbeddedDatabase_daily running at each boot (docs/Run-Deploy.md, Backups). -->
     <default-property name="embedded_db_backup_scheduled" value="true"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 
     <!-- The queue: what waits for a pairing that is away is kept 14 days, and at most queue-max-megabytes of it for
         each pairing alone, so one pairing's backlog does not crowd out another's; a pairing's own cap

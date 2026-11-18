@@ -710,7 +710,7 @@ pub(super) fn access_token(
 fn undecryptable(server_id: &str) -> TokenError {
     tracing::error!("Email server {server_id}: the stored OAuth refresh token cannot be decrypted");
     TokenError::Unavailable(format!(
-        "The sign-in of email server {server_id} cannot be decrypted (entity_ds_crypt_pass changed?)"
+        "The sign-in of email server {server_id} cannot be decrypted (entity-facade@crypt-pass changed?)"
     ))
 }
 
@@ -1390,10 +1390,10 @@ fn finish_pending(parameters: &BTreeMap<String, Value>, facade: &EntityFacade, p
         };
     }
     if facade.crypt().is_none() {
-        tracing::error!("Email sign-in refused: field encryption (entity_ds_crypt_pass) is not configured");
+        tracing::error!("Email sign-in refused: field encryption (entity-facade@crypt-pass) is not configured");
         return failed(
             "storeFailed",
-            "This server does not encrypt stored secrets (entity_ds_crypt_pass), so the sign-in is not kept.",
+            "This server does not encrypt stored secrets (entity-facade@crypt-pass), so the sign-in is not kept.",
         );
     }
     let stored = if pending.account.is_empty() {

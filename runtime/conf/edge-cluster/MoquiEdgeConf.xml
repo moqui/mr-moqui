@@ -19,14 +19,14 @@
     <default-property name="webapp_web_protection" value="true"/>
 
     <!-- The shared database: Postgres (or MySQL with the default cluster transport), its settings in .env, the same on
-        every member: entity_ds_host, entity_ds_port, entity_ds_database, entity_ds_user, entity_ds_password, and
-        entity_ds_sslmode and entity_ds_sslrootcert for its TLS. It holds the queue of every pairing, the only data here
+        every member: the transactional datasource's host, port,
+        database, user and password, and sslmode and sslrootcert for its TLS
+        (moqui_conf__entity_facade__datasource__TRANSACTIONAL__host and the rest). It holds the queue of every pairing, the only data here
         that matters: back it up with its own tools (the backup job covers an embedded database only, so it is not set
         running here). -->
-    <default-property name="entity_ds_db_conf" value="postgres"/>
 
     <!-- The same .env on every member, made by the first member's first start and copied to each other one before its
-        first start: session_cookie_key, cluster_tls_cert, cluster_tls_key, entity_ds_crypt_pass and the link key,
+        first start: session_cookie_key, cluster_tls_cert, cluster_tls_key, moqui_conf__entity_facade__crypt_pass and the link key,
         edge_link_key, so every member presents the one key a local node pinned at pairing (a member that generated a
         key of its own is refused by every local node); also turn_auth_secret, mail_dkim_key and acme_account_key, and
         the public settings below that name the cluster as a whole.
@@ -98,7 +98,9 @@
         sip_public_address, its own; the same on each: sip_port, sip_tls_port, sip_host and sip_registrar_enabled. SRV
         records for the SIP domain name every member, and the trunk provider's failover number is still worth setting. -->
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true">
+        <datasource group-name="transactional" database-conf-name="postgres"/>
+    </entity-facade>
 
     <!-- How work crosses the links, as on one edge node (conf/edge/MoquiEdgeConf.xml): the queue is one for the cluster,
         claimed by lease, so each item goes once whichever member's link delivers it; the cap holds for each pairing in

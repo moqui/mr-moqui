@@ -12,11 +12,14 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A `<datasource>` of the merged conf, read the way Java's `EntityDatasourceFactoryImpl` and
-//! `TransactionInternalBitronix` read it: the datasource's own `inline-jdbc` wins, else the
-//! `<database>`'s. The host turns the result into a `DbDriver`, and the pool settings into the core
-//! pool. `h2`, the Java default `entity_ds_db_conf`, and an empty name are the embedded Postgres
-//! cluster (`plans/archive/EmbeddedPostgres.md`); H2 has no driver here.
+//! A `<datasource>` of the merged conf. Its server and credentials are its own attributes (`host`, `port`,
+//! `database`, `user`, `password`, `sslmode`, `sslrootcert`; plans/Conf-Paths.md §6.6), and a group other than
+//! `transactional` takes the transactional datasource's where it leaves one empty. A conf from Java gives them in the
+//! datasource's own `inline-jdbc` instead (`xa-properties`, or `jdbc-uri`), which then replaces the attributes, read the
+//! way Java's `EntityDatasourceFactoryImpl` and `TransactionInternalBitronix` read it. The pool settings come from the
+//! datasource's own `inline-jdbc`, else the `<database>`'s. The host turns the result into a
+//! `DbDriver`, and the pool settings into the core pool. `embedded`, an empty name and `h2` (Java's default) are the
+//! embedded Postgres cluster (`plans/archive/EmbeddedPostgres.md`); H2 has no driver here.
 
 use std::time::Duration;
 
@@ -263,7 +266,7 @@ fn size_text(bytes: u64) -> String {
     format!("{bytes}B")
 }
 
-/// One datasource, with `${}` expanded.
+/// One datasource.
 #[derive(Clone)]
 pub struct DatasourceConf {
     pub group: String,
@@ -355,14 +358,12 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         .ok_or_else(|| Error::new(format!("the conf has no datasource for group {group}")))?;
     let conf_name = expanded(&datasource, "database-conf-name");
     let kind = match conf_name.as_str() {
-        "" | "h2" => DatasourceKind::Embedded,
+        "" | "embedded" | "h2" => DatasourceKind::Embedded,
         "postgres" => DatasourceKind::Postgres,
         "mysql" | "mysql8" => DatasourceKind::Mysql,
-        other => {
-            return Err(Error::new(format!(
-                "database {other} for datasource {group} has no driver in this port (postgres, mysql, mysql8, or the embedded default)"
-            )))
-        }
+        other => return Err(Error::new(format!(
+            "database {other} for datasource {group} has no driver in this port (postgres, mysql, mysql8, or embedded)"
+        ))),
     };
     let dialect = if kind == DatasourceKind::Embedded {
         "postgres".to_string()
@@ -432,15 +433,34 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
     conf.preload_pg_stat_statements = conf.pg_stat_statements;
     if kind == DatasourceKind::Embedded {
         // Only the database: a group other than `transactional` has a database of its own in the embedded cluster,
-        // named by the datasource's own `databaseName` (the `database-list` one names the external server's).
-        conf.database = datasource
-            .first_named("inline-jdbc")
-            .and_then(|own| own.first_named("xa-properties"))
-            .map(|xa| expanded(&xa, "databaseName"))
-            .unwrap_or_default();
+        // named by the datasource's `database`, or its own `xa-properties` `databaseName`; the transactional one is the
+        // cluster's own
+        if group != "transactional" {
+            conf.database = Some(expanded(&datasource, "database"))
+                .filter(|database| !database.is_empty())
+                .or_else(|| {
+                    datasource
+                        .first_named("inline-jdbc")
+                        .and_then(|own| own.first_named("xa-properties"))
+                        .map(|xa| expanded(&xa, "databaseName"))
+                })
+                .unwrap_or_default();
+        }
     } else {
-        if let Some(inline) = &inline {
-            connection(&mut conf, inline)?;
+        let transactional = (group != "transactional")
+            .then(|| {
+                entity
+                    .children_named("datasource")
+                    .into_iter()
+                    .find(|node| node.attribute_is("group-name", "transactional"))
+            })
+            .flatten();
+        let own_connection = datasource
+            .first_named("inline-jdbc")
+            .filter(|own| own.first_named("xa-properties").is_some() || !expanded(own, "jdbc-uri").is_empty());
+        match own_connection {
+            Some(own) => connection(&mut conf, &own)?,
+            None => attributes(&mut conf, &datasource, transactional.as_ref())?,
         }
         if conf.host.is_empty() {
             return Err(Error::new(format!(
@@ -540,8 +560,32 @@ fn read_timeout(inline: Option<&MNode>) -> Result<Option<Duration>, Error> {
         })
 }
 
-/// Server, database and credentials from `xa-properties`, else from `jdbc-uri` and the
-/// `jdbc-username`/`jdbc-password` attributes.
+/// Server, database and credentials from the datasource's own attributes; for a group other than `transactional`
+/// each one it leaves empty but `database` is the `transactional` datasource's (`fallback`), so naming only a
+/// `database-conf-name` for the content puts it on the transactional server.
+fn attributes(conf: &mut DatasourceConf, datasource: &MNode, fallback: Option<&MNode>) -> Result<(), Error> {
+    let get = |name: &str| -> String {
+        let own = expanded(datasource, name);
+        if own.is_empty() && name != "database" {
+            fallback.map(|node| expanded(node, name)).unwrap_or_default()
+        } else {
+            own
+        }
+    };
+    conf.host = get("host");
+    conf.port = port(&get("port"))?;
+    conf.database = get("database");
+    conf.user = get("user");
+    conf.password = get("password");
+    let mode = get("sslmode");
+    conf.tls = tls_wanted(&mode);
+    conf.tls_verify = tls_verify(&mode);
+    conf.tls_root_cert = get("sslrootcert");
+    Ok(())
+}
+
+/// Server, database and credentials from a datasource's own `xa-properties`, else from its `jdbc-uri` and the
+/// `jdbc-username`/`jdbc-password` attributes: a conf from Java, in place of the datasource's attributes.
 fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
     if let Some(xa) = inline.first_named("xa-properties") {
         let get = |names: &[&str]| -> String {

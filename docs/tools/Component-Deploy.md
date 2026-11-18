@@ -131,8 +131,7 @@ A `default-property` follows the boot rules:
 - A changed value is set only while the property still has the value the conf set. Otherwise something else set it,
   and that wins.
 - A removed property, and a changed secret, wait for a restart.
-- So does every property the process was set up with: `instance_purpose`, the datasource (`entity_ds_*`,
-  `content_ds_*`), cluster, edge, port, host, bind and key properties, time zones and locale, and the search backend.
+- So does every property the process was set up with: `instance_purpose`, the datasources, cluster, edge, port, host, bind and key properties, time zones and locale, and the search backend.
 - A property that a restart-class setting reads also waits for a restart, so the two never disagree.
 - A setting that reads a property set live is listed with the change, as `property`.
 

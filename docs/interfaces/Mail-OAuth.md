@@ -17,7 +17,7 @@ Each provider needs the deployment's own OAuth client. Nothing is shared: no cli
 | `email_oauth_google_client_id`, `email_oauth_google_client_secret` | The Google client. |
 | `email_oauth_microsoft_client_id`, `email_oauth_microsoft_client_secret` | The Microsoft client. |
 | `email_oauth_microsoft_tenant` | `common` (the default: work, school and personal accounts), `organizations`, `consumers` or a tenant id. |
-| `entity_ds_crypt_pass` | Must be the deployment's own: the refresh tokens (and a client secret kept on the `EmailOAuthProvider` row instead of a property) are encrypted with it. A server with no field encryption refuses to store a sign-in. |
+| `moqui_conf__entity_facade__crypt_pass` | Must be the deployment's own: the refresh tokens (and a client secret kept on the `EmailOAuthProvider` row instead of a property) are encrypted with it. A server with no field encryption refuses to store a sign-in. |
 
 A provider whose client id or secret is missing, or whose row is `disabled`, is not offered: `discover#EmailServer` answers
 `oauthConfigured` false and `start#OAuthSignIn` refuses it. `get#OAuthProviders` lists the providers, whether each is set up,

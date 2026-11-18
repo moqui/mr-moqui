@@ -78,7 +78,7 @@
         once. -->
     <default-property name="embedded_db_backup_scheduled" value="true"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 
     <!-- How work crosses the link (plans/archive/Edge-Node.md §5.2): as on an edge node, the queue's 1 GB cap for each
         paired node. The delegated services, queue kinds and

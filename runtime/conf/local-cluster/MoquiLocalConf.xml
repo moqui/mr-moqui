@@ -11,12 +11,12 @@
     <default-property name="instance_purpose" value="production"/>
 
     <!-- The shared database: Postgres, or MySQL (mysql8) with the default cluster transport. The rest in .env, the same
-        on every member: entity_ds_host, entity_ds_port, entity_ds_database, entity_ds_user, entity_ds_password, and
-        entity_ds_sslmode and entity_ds_sslrootcert for its TLS. The content database shares it unless
-        content_ds_db_conf names another (docs/Run-Deploy.md, Content database). -->
-    <default-property name="entity_ds_db_conf" value="postgres"/>
+        on every member: the transactional datasource's host, port,
+        database, user and password, and sslmode and sslrootcert for its TLS
+        (moqui_conf__entity_facade__datasource__TRANSACTIONAL__host and the rest). The content database shares it unless
+        the content datasource's database-conf-name names another (docs/Run-Deploy.md, Content database). -->
 
-    <!-- The same secrets on every member: session_cookie_key, cluster_tls_cert, cluster_tls_key and entity_ds_crypt_pass,
+    <!-- The same secrets on every member: session_cookie_key, cluster_tls_cert, cluster_tls_key and moqui_conf__entity_facade__crypt_pass,
         and for git hosting ssh_host_key and git_lfs_token_key, as the load balancer sends a client's SSH connections
         and LFS requests to any member (a member with another SSH host key warns at startup).
         The first member's first start generates them into its .env; copy that whole .env to each other member before its
@@ -38,7 +38,9 @@
         (X-Forwarded-For, X-Real-IP, CF-Connecting-IP or CloudFront-Viewer-Address). Leave webapp_https_port empty
         when it serves 443. -->
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true">
+        <datasource group-name="transactional" database-conf-name="postgres"/>
+    </entity-facade>
 
     <!-- A load balancer that does not keep a client on one member: write each session change before the response, so the
         next request on another member sees it. With sticky sessions this can go. -->

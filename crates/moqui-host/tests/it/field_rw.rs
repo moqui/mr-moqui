@@ -37,14 +37,6 @@ impl Drop for DirGuard {
     }
 }
 
-struct CryptPassGuard;
-
-impl Drop for CryptPassGuard {
-    fn drop(&mut self) {
-        moqui_lib::env::clear_property("entity_ds_crypt_pass");
-    }
-}
-
 #[test]
 fn encrypt_audit_and_localized_reads() {
     if !crate::common::own_process() {
@@ -56,8 +48,7 @@ fn encrypt_audit_and_localized_reads() {
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
     let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
-    moqui_lib::env::set_property("entity_ds_crypt_pass", "MoquiDefaultPassword:CHANGEME");
-    let _crypt_pass = CryptPassGuard;
+    // the default conf's crypt-pass, MoquiDefaultPassword:CHANGEME, as written: no boot generates one here
     let facade = open_entity_facade(
         &framework,
         driver,

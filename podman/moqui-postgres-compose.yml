@@ -3,9 +3,9 @@
 #
 #   podman compose -f podman/moqui-postgres-compose.yml up -d
 #
-# Passwords come from podman/.env (see env.example). entity_ds_sslmode=disable because an empty
+# Passwords come from podman/.env (see env.example). moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslmode=disable because an empty
 # sslmode asks for verified TLS, and this Postgres image does not serve TLS. A server that does
-# should set verify-full and entity_ds_sslrootcert instead.
+# should set verify-full and moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslrootcert instead.
 
 name: moqui
 
@@ -22,15 +22,15 @@ services:
       - moqui-data:/var/lib/moqui
     environment:
       instance_purpose: production
-      entity_ds_crypt_pass: ${MOQUI_CRYPT_PASS:-}
-      entity_ds_db_conf: postgres
-      entity_ds_host: postgres
-      entity_ds_port: "5432"
-      entity_ds_database: ${MOQUI_DB_NAME:-moqui}
-      entity_ds_schema: public
-      entity_ds_user: ${MOQUI_DB_USER:-moqui}
-      entity_ds_password: ${MOQUI_DB_PASSWORD:?set MOQUI_DB_PASSWORD in podman/.env}
-      entity_ds_sslmode: disable
+      moqui_conf__entity_facade__crypt_pass: ${MOQUI_CRYPT_PASS:-}
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name: postgres
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__host: postgres
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__port: "5432"
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__database: ${MOQUI_DB_NAME:-moqui}
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__schema_name: public
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__user: ${MOQUI_DB_USER:-moqui}
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__password: ${MOQUI_DB_PASSWORD:?set MOQUI_DB_PASSWORD in podman/.env}
+      moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslmode: disable
       search_backend: postgres
     depends_on:
       postgres:

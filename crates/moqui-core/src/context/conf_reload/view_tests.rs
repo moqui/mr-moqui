@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::*;
-use crate::context::conf::conf_files_of;
+use crate::context::conf::{conf_files_of, merge_files};
 use crate::context::tests::TempRuntime;
 
 const DEFAULT: &str = r#"<?xml version="1.0" encoding="UTF-8" ?>

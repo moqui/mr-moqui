@@ -634,7 +634,7 @@ const SHARED_SECRETS: [&str; 4] = [
     "session_cookie_key",
     "cluster_tls_cert",
     "cluster_tls_key",
-    "entity_ds_crypt_pass",
+    "moqui_conf__entity_facade__crypt_pass",
 ];
 
 /// A second member of a local server's cluster, on its database, in a child process of this test binary: its member

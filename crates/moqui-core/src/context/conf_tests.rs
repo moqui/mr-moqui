@@ -371,20 +371,20 @@ fn the_dev_conf_datasource_overrides_keep_the_default_jdbc_child() {
     };
     let content = datasource("content");
     assert_eq!(content.attribute("pg-stat-statements").as_deref(), Some("true"));
-    assert_eq!(
-        content.attribute("database-conf-name").as_deref(),
-        Some("${content_ds_db_conf}")
-    );
+    assert_eq!(content.attribute("database-conf-name").as_deref(), Some(""));
     let inline = content
         .first_named("inline-jdbc")
         .expect("content keeps its inline-jdbc");
     assert_eq!(inline.attribute("pool-maxsize"), default_content);
-    assert!(inline.first_named("xa-properties").is_some());
+    assert!(
+        inline.first_named("xa-properties").is_none(),
+        "the connection is the datasource's attributes"
+    );
     let transactional = datasource("transactional");
     assert_eq!(transactional.attribute("pg-stat-statements").as_deref(), Some("true"));
     assert_eq!(
         transactional.attribute("database-conf-name").as_deref(),
-        Some("${entity_ds_db_conf}")
+        Some("embedded")
     );
     assert!(transactional.first_named("inline-jdbc").is_none());
     // merged in place, none added

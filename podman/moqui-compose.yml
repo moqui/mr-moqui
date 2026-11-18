@@ -23,7 +23,7 @@ services:
       - moqui-data:/var/lib/moqui
     environment:
       instance_purpose: production
-      entity_ds_crypt_pass: ${MOQUI_CRYPT_PASS:-}
+      moqui_conf__entity_facade__crypt_pass: ${MOQUI_CRYPT_PASS:-}
 
 volumes:
   moqui-data:

@@ -10,13 +10,13 @@
     <default-property name="instance_purpose" value="production"/>
 
     <!-- The shared database, as in MoquiLocalConf.xml: Postgres (or MySQL with the default cluster transport), its
-        settings in .env, the same on every member: entity_ds_host, entity_ds_port, entity_ds_database, entity_ds_user,
-        entity_ds_password, and entity_ds_sslmode and entity_ds_sslrootcert for its TLS. Back it up with its own tools:
+        settings in .env, the same on every member: the transactional datasource's host, port,
+        database, user and password, and sslmode and sslrootcert for its TLS
+        (moqui_conf__entity_facade__datasource__TRANSACTIONAL__host and the rest). Back it up with its own tools:
         the backup job covers an embedded database only. -->
-    <default-property name="entity_ds_db_conf" value="postgres"/>
 
     <!-- The same secrets on every member, as in MoquiLocalConf.xml: session_cookie_key, cluster_tls_cert,
-        cluster_tls_key and entity_ds_crypt_pass, which the first member's first start generates into its .env.
+        cluster_tls_key and moqui_conf__entity_facade__crypt_pass, which the first member's first start generates into its .env.
         The pairing is the cluster's, made once on one member (System › Edge Node, Pair with an edge node), which writes
         edge_node_url, edge_node_key (the pairing's key), edge_node_pin, edge_node_id and edge_node_pairing (the id the
         edge node knows the cluster by, which keys the outbox and its receipts) to that member's .env. Copy that whole
@@ -68,5 +68,7 @@
         starting or stopping, so a rolling upgrade needs nothing more: drain, stop, upgrade, start, resume. Draining the
         only live member takes the pairing's names offline at the edge node until it resumes. -->
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true">
+        <datasource group-name="transactional" database-conf-name="postgres"/>
+    </entity-facade>
 </moqui-conf>

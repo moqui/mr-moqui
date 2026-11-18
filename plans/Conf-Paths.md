@@ -1,7 +1,8 @@
 # Conf Paths: settings by XML path, overridden from the environment
 
 Status 2026-11-18: phases 0 to 2 built (the path module, the conf schema, the overrides with `getConfValue`, `setConf`,
-the conf view's names and `moqui conf env`); 3 to 8 to do ([§7](#7-phases)).
+the conf view's names and `moqui conf env`) and 3a (entity facade, datasources, database list); the rest of 3 to 8 to
+do ([§7](#7-phases)).
 
 The conf was configured through about 330 flat `default-property` entries (279 in `MoquiDefaultConf.xml`, the rest in
 `runtime/conf/**` and component `MoquiConf.xml` files). Attributes referred to them by `${name}` and `${a ?: b}`,
@@ -85,7 +86,9 @@ own, [§6.27](#627-component-elements)) merges as a settings element: its attrib
 
 ## 3. Applying overrides
 
-- `runtime/.env` is read into the dotenv table before the first merge. `MOQUI_CONF` still ignores it.
+- The `.env` names are read from the runtime's own `runtime/.env` at each merge, so what the server wrote there since
+  boot is seen, and a factory never takes another runtime's (factories of tests share one process's tables). The
+  file is also loaded into the dotenv table before the first merge, for the properties. `MOQUI_CONF` still ignores it.
 - `conf_env::apply_overrides` runs at the end of `load_merged_conf`, `merge_component_confs` and `merge_files`, so
   component discovery, the port check, the SSH listen target and `before_init` see the overrides, and so does each
   re-merge of a conf reload. It writes nothing. Its result (selector, env name, source, secret) is kept with the conf

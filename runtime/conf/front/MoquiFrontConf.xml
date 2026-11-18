@@ -72,7 +72,7 @@
         database only: back an external one up with its own tools. -->
     <default-property name="embedded_db_backup_scheduled" value="true"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 
     <!-- Balancing a pairing's pool (plans/Edge-Node2.md §4.4): a terminate host's requests stay on the member their
         session cookie hashes to (sticky-cookie, the session cookie; a host's own on Edge Clients › Domains), a

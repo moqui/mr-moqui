@@ -9,7 +9,7 @@
     <!-- a first start on an empty database loads the demo data too, with the john.doe login -->
     <default-property name="entity_empty_db_load" value="all"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true">
+    <entity-facade query-stats="true">
         <!-- add datasource elements here to configure databases -->
     </entity-facade>
 

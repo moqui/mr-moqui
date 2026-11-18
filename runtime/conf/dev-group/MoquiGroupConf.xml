@@ -31,7 +31,7 @@
         boot (false pauses it; docs/Run-Deploy.md, Backups). It backs up the embedded database only. -->
     <default-property name="embedded_db_backup_scheduled" value="true"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 
     <llm-facade>
         <gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300">

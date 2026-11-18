@@ -93,7 +93,7 @@ pub fn load_merged_conf_with(framework_dir: &Path, runtime_dir: &Path) -> Result
         let over = MNode::parse_file(&runtime_conf)?;
         merge_conf(&base, &over);
     }
-    let overrides = conf_env::apply_overrides(&base);
+    let overrides = conf_env::apply_overrides(&base, Some(&runtime_dir.join(".env")));
     Ok((base, overrides))
 }
 
@@ -130,7 +130,7 @@ pub fn merge_component_confs_with(
     if !files.iter().any(|file| file.role.component().is_some()) {
         return Ok(None);
     }
-    merge_files_with(&files, None).map(Some)
+    merge_files_with(&files, None, Some(&runtime_dir.join(".env"))).map(Some)
 }
 
 /// What a conf file is to the merge.
@@ -215,15 +215,20 @@ pub fn conf_files_of(
 ///
 /// When a file cannot be read or does not parse.
 pub fn merge_files(files: &[ConfFile], replace: Option<(&Path, &str)>) -> Result<MNode, Error> {
-    merge_files_with(files, replace).map(|(conf, _)| conf)
+    merge_files_with(files, replace, None).map(|(conf, _)| conf)
 }
 
-/// [`merge_files`], with what each environment name did ([`conf_env::apply_overrides`]).
+/// [`merge_files`], with the `.env` names read from `env_file` (the runtime's `runtime/.env`; `None` for the loaded
+/// table), and what each environment name did ([`conf_env::apply_overrides`]).
 ///
 /// # Errors
 ///
 /// When a file cannot be read or does not parse.
-pub fn merge_files_with(files: &[ConfFile], replace: Option<(&Path, &str)>) -> Result<(MNode, Vec<Override>), Error> {
+pub fn merge_files_with(
+    files: &[ConfFile],
+    replace: Option<(&Path, &str)>,
+    env_file: Option<&Path>,
+) -> Result<(MNode, Vec<Override>), Error> {
     let parse = |file: &ConfFile| match replace {
         Some((path, text)) if path == file.path => MNode::parse_text(&file.location(), text),
         _ => MNode::parse_file(&file.path),
@@ -238,7 +243,7 @@ pub fn merge_files_with(files: &[ConfFile], replace: Option<(&Path, &str)>) -> R
         }
         merge_conf(&base, &parse(file)?);
     }
-    let overrides = conf_env::apply_overrides(&base);
+    let overrides = conf_env::apply_overrides(&base, env_file);
     Ok((base, overrides))
 }
 

@@ -45,7 +45,7 @@ const SHARED_SECRETS: [&str; 5] = [
     "session_cookie_key",
     "cluster_tls_cert",
     "cluster_tls_key",
-    "entity_ds_crypt_pass",
+    "moqui_conf__entity_facade__crypt_pass",
     "turn_auth_secret",
 ];
 

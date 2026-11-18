@@ -204,7 +204,8 @@ pub fn pending_restart(factory: &ExecutionContextFactory) -> Vec<ConfChange> {
 ///
 /// When a conf file does not parse, or the runtime conf named is missing.
 pub fn merged_from_files(factory: &ExecutionContextFactory, components: &[ComponentInfo]) -> Result<MNode, Error> {
-    conf::merge_files(&conf_files(factory, components)?, None)
+    let env_file = factory.runtime_dir().join(".env");
+    conf::merge_files_with(&conf_files(factory, components)?, None, Some(&env_file)).map(|(conf, _)| conf)
 }
 
 /// The files the conf of `components` is merged from, in merge order, as boot merges them.

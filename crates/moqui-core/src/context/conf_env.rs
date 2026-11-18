@@ -86,9 +86,11 @@ impl Override {
 }
 
 /// The environment names of the conf with their values, highest source first and in name order within a source, each
-/// with a value that is not empty (an empty value is not applied).
+/// with a value that is not empty (an empty value is not applied). The `.env` ones are read from `env_file`, the
+/// runtime's own `runtime/.env`, at each call, so what a server wrote there since it was loaded is seen and another
+/// runtime's (a test's factories in one process share the loaded table) is not; `None` takes the loaded table.
 #[must_use]
-pub fn candidates() -> Vec<(String, String, Source)> {
+pub fn candidates(env_file: Option<&Path>) -> Vec<(String, String, Source)> {
     let ours = |name: &str, value: &str| !value.is_empty() && path::env_segments(name).is_some();
     let mut found = Vec::new();
     let mut properties: Vec<(String, String)> = env::property_entries()
@@ -111,20 +113,23 @@ pub fn candidates() -> Vec<(String, String, Source)> {
             .into_iter()
             .map(|(name, value)| (name, value, Source::Environment)),
     );
-    let mut dotenv: Vec<(String, String)> = env::dotenv_entries()
-        .into_iter()
-        .filter(|(name, value)| ours(name, value))
-        .collect();
+    let entries = match env_file {
+        Some(file) => std::fs::read_to_string(file)
+            .map(|text| env::parse_dotenv(&text))
+            .unwrap_or_default(),
+        None => env::dotenv_entries(),
+    };
+    let mut dotenv: Vec<(String, String)> = entries.into_iter().filter(|(name, value)| ours(name, value)).collect();
     dotenv.sort();
     found.extend(dotenv.into_iter().map(|(name, value)| (name, value, Source::DotEnv)));
     found
 }
 
-/// Apply the environment's names ([`candidates`]) to the merged `conf`. Writes nothing to disk and logs nothing: the
-/// caller logs the result once ([`log_overrides`]).
+/// Apply the environment's names ([`candidates`], with the runtime's `env_file`) to the merged `conf`. Writes nothing
+/// to disk and logs nothing: the caller logs the result once ([`log_overrides`]).
 #[must_use]
-pub fn apply_overrides(conf: &MNode) -> Vec<Override> {
-    apply_from(conf, candidates())
+pub fn apply_overrides(conf: &MNode, env_file: Option<&Path>) -> Vec<Override> {
+    apply_from(conf, candidates(env_file))
 }
 
 /// [`apply_overrides`] with the names given, highest first.

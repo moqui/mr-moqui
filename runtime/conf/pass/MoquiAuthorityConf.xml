@@ -43,5 +43,5 @@
         tools. On a cluster, pass_media_root and pass_import_dir must name storage every member reads. -->
     <default-property name="embedded_db_backup_scheduled" value="true"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 </moqui-conf>

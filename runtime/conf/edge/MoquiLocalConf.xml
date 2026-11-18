@@ -36,5 +36,5 @@
         It backs up the embedded database only: back an external one up with its own tools. -->
     <default-property name="embedded_db_backup_scheduled" value="true"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 </moqui-conf>

@@ -38,7 +38,7 @@
     <!-- Backups: the pairing, host names, the mail port and the certificates are rows (conf/front/MoquiFrontConf.xml). -->
     <default-property name="embedded_db_backup_scheduled" value="true"/>
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 
     <!-- Balancing the edge members: the sites' requests by the session cookie, the mail port and passthrough names by
         the client's address. An edge member set aside after failures gets no new work for a while, and one drained on
