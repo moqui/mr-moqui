@@ -50,9 +50,10 @@ in [Security-Review-Low](Security-Review-Low.md).
    reach (17), PASS (9), and BOSS with the Mantle services behind it (15). One reviewer read each unit and its map
    text, ran nothing, and wrote a report in the form of step 3, with the controls found sound and the map's open
    questions answered from the code. A unit over about 20,000 lines was read from what untrusted input reaches
-   inward, and its report says what was read whole, sampled or not reached. The lead read the cited lines of every
-   High and Medium candidate before it was recorded (its **Re-check** says which lines, and what was not read); a
-   Low or Info one is as its reviewer reported it. One writer for each area then wrote the entries and brought the
+   inward, and its report says what was read whole, sampled or not reached. The lead read the cited lines of the High
+   and most Medium candidates before they were recorded: an entry's **Re-check** says which lines and what was not
+   read, and its status says `(lead)`; a Medium with no Re-check, and every Low or Info one, is as its reviewer
+   reported it. One writer for each area then wrote the entries and brought the
    area's map file up to date from the reports. Nothing was run and nothing found in this round is fixed. An entry's
    lines, names and settings are those of the commit its unit read: mr-moqui `f6a7de2f9` for units A1 to A19 and B1 to
    B11, before the settings became conf attributes (`plans/archive/Conf-Paths.md` §6 maps each old name to its
