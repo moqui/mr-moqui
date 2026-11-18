@@ -33,6 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="ourNumber"/>
             <parameter name="warning"/>
             <parameter name="welcomeSent" type="Boolean"/>
+            <parameter name="welcomeReasonCode"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('addTextMember', context))</script></actions>
@@ -49,6 +50,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="chatRoomBridgeId"/>
             <parameter name="chatActorId"/>
+            <parameter name="chatBridgeId"/>
+            <parameter name="externalRoomId"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsRoom.js').execute('storeTextMember', context))</script></actions>

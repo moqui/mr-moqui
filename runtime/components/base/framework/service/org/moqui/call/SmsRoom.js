@@ -212,9 +212,11 @@ function addTextMember(p) {
   const adder = one(ACCOUNT, { userId: me }) || {}
   const welcome = ec.resource.expand('${adder} added you to ${roomName}. You get its messages here as texts, and your replies go to the group. Reply STOP to leave.',
     '', { adder: adder.userFullName || adder.username || me, roomName: room.roomName || ec.l10n.localize('a group') })
-  const sent = textOne(stored.chatRoomBridgeId, welcome, 'welcome')
+  // the mapping as stored: a row its own transaction committed may not be seen from this one
+  const welcomed = textOne({ chatRoomBridgeId: stored.chatRoomBridgeId, chatRoomId: room.chatRoomId, chatBridgeId: stored.chatBridgeId,
+    externalRoomId: stored.externalRoomId }, welcome, 'welcome')
   return { chatActorId: stored.chatActorId, chatRoomBridgeId: stored.chatRoomBridgeId, ourNumber: pick.phoneNumber,
-    warning: pick.pairRoomActive ? 'pairRoomActive' : null, welcomeSent: sent }
+    warning: pick.pairRoomActive ? 'pairRoomActive' : null, welcomeSent: welcomed.sent, welcomeReasonCode: welcomed.reasonCode }
 }
 
 /** Internal (add#TextMember, in a transaction of its own): the external user and actor, the member, the mapping and the event. */
@@ -268,17 +270,16 @@ function storeTextMember(p) {
   mapping.create()
   ec.service.sync().name('org.moqui.chat.ChatServices.append#Event').parameters({ chatRoomId: room.chatRoomId, eventTypeEnumId: 'CetMembership',
     senderUserId: me, content: { action: 'add', chatActorId: actor.chatActorId, byUserId: me, via: 'text' } }).disableAuthz().call()
-  return { chatRoomBridgeId: mapping.chatRoomBridgeId, chatActorId: actor.chatActorId }
+  return { chatRoomBridgeId: mapping.chatRoomBridgeId, chatActorId: actor.chatActorId, chatBridgeId, externalRoomId: mapping.externalRoomId }
 }
 
 /**
  * One text to a text member's mapping, outside the room's timeline (the welcome, a HELP's reply): check#SmsSend in room mode
  * (reserved, in a transaction of its own), send#BridgeDirect, the count let go when it did not reach the provider. The
- * mapping keeps a welcome's outcome. Out: true when the provider took it.
+ * mapping keeps a welcome's outcome. Out: sent (the provider took it) and reasonCode (why not, or uncertain).
  */
-function textOne(chatRoomBridgeId, text, purpose) {
-  const mapping = one(MAPPING, { chatRoomBridgeId })
-  if (!mapping) return false
+function textOne(mapping, text, purpose) {
+  const chatRoomBridgeId = mapping.chatRoomBridgeId
   const ours = oursOf(mapping)
   const theirs = theirsOf(mapping)
   let reasonCode = null
@@ -318,7 +319,7 @@ function textOne(chatRoomBridgeId, text, purpose) {
   } catch (err) {
     ec.logger.error(`The ${purpose} text's outcome of mapping ${chatRoomBridgeId} was not kept: ${message(err)}`)
   }
-  return sent
+  return { sent, reasonCode }
 }
 
 /** Internal (receive#Sms): a text member's STOP takes them out of the room; HELP is answered once a day. */
@@ -330,7 +331,7 @@ function noteMemberKeyword(p) {
     if (mapping.helpReplyDate && ms(mapping.helpReplyDate) > nowMs() - DAY) return { done: false }
     const room = one(ROOM, { chatRoomId: mapping.chatRoomId }) || {}
     const text = ec.resource.expand('Texts of ${roomName} from MR Moqui. Reply STOP to leave.', '', { roomName: room.roomName || ec.l10n.localize('a group') })
-    return { done: textOne(mapping.chatRoomBridgeId, text, 'help') }
+    return { done: textOne(mapping, text, 'help').sent }
   }
   if (p.keyword !== 'STOP') return { done: false }
   endMapping(mapping)
