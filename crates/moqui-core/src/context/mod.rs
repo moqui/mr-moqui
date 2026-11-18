@@ -22,6 +22,7 @@ mod cache;
 mod component;
 mod conf;
 pub mod conf_reload;
+pub mod conf_schema;
 mod confcache;
 mod factory;
 pub(crate) mod identity;

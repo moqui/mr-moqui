@@ -439,3 +439,46 @@ fn each_component_adds_authz_elements_and_keeps_the_defaults() {
     assert_eq!(authz.attribute("privileged-groups").as_deref(), Some("ADMIN"));
     assert_eq!(names("privileged-group"), ["APP_ADMIN", "OTHER_ADMIN"]);
 }
+
+/// Every keyed merge takes its key attributes from the conf schema (`conf_schema::merge_keys`), which asserts in a
+/// debug build that its path is a keyed unit: merging one of each keyed element runs them all.
+#[test]
+fn every_keyed_merge_has_its_key_in_the_conf_schema() {
+    let text = r#"<moqui-conf>
+        <default-property name="p" value="1"/>
+        <tools><tool-factory class="t"/></tools>
+        <cache-list><cache name="c"/></cache-list>
+        <telemetry><artifact type="AT_SERVICE"/><operations><operation service="s"/></operations></telemetry>
+        <webapp-list><webapp name="webroot">
+            <root-screen host=".*" location="l"/><error-screen error="e"/><token-route name="r"/>
+            <token-path pattern="p"/><public-site host="h"/><listener class="l"/><endpoint path="/x"/>
+            <filter name="f"><init-param name="i" value="v"/></filter>
+            <servlet name="s"><init-param name="i" value="v"/></servlet>
+            <web-protection><rate-limit name="r"/><ban name="b"/><client-rule name="c"/><path-rule name="p"/>
+                <user-agent-rule name="u"/></web-protection>
+        </webapp></webapp-list>
+        <artifact-execution-facade><artifact-execution type="AT_SERVICE"/></artifact-execution-facade>
+        <user-facade><authz><sealed-permission name="s"/><privileged-group name="g"/></authz></user-facade>
+        <resource-facade><resource-reference scheme="s"/><template-renderer extension="e"/><script-runner extension="e"/></resource-facade>
+        <screen-facade><screen-text-output type="t"/><screen-output type="t"/>
+            <screen location="l"><subscreens-item name="i"/></screen></screen-facade>
+        <service-facade><service-location name="l"/><service-type name="t"/><service-file location="f"/>
+            <startup-service name="s"/><thread-pool><run-from-pool name="p"/></thread-pool></service-facade>
+        <llm-facade><endpoint id="e"><header name="h"/></endpoint><model id="m"><reasoning level="low"/></model>
+            <bind feature="f"/><data-entity package="p" entity="e"/><user-facts service="s"/>
+            <constitution-provider service="s"/><ai-task name="t"/></llm-facade>
+        <entity-facade><datasource group-name="g"/></entity-facade>
+        <database-list><dictionary-type type="t"/><database name="d"><database-type type="t"/></database></database-list>
+        <repository-list><repository name="r"><init-param name="i"/></repository></repository-list>
+        <edge><delegate service="s"/><queue-kind name="q"/><replicate set="s"/></edge>
+        <instance-hosting><token-command name="t"/></instance-hosting>
+    </moqui-conf>"#;
+    let base = MNode::parse_text("moqui-conf", text).unwrap();
+    let over = MNode::parse_text("moqui-conf", text).unwrap();
+    super::merge_conf(&base, &over);
+    assert_eq!(
+        base.first_named("webapp-list").unwrap().children_named("webapp").len(),
+        1,
+        "the same key merges into one element"
+    );
+}

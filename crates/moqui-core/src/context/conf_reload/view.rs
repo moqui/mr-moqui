@@ -26,7 +26,7 @@ use moqui_lib::node::{with_merge_sources, MNode, Source};
 use moqui_lib::xml_edit::comments::{element_comments, ElementComments};
 use serde::Serialize;
 
-use super::catalog::{Class, Key, Unit, CATALOG, UNKNOWN};
+use crate::context::conf_schema::{Class, Key, Unit, CATALOG, UNKNOWN};
 use super::diff::{join, keyed};
 use super::{conf_files, preview_conf, restart_reason, ConfChange, ConfReport};
 use crate::context::conf::{merge_files, ConfFile, ConfRole};

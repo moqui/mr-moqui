@@ -330,7 +330,7 @@ pub(crate) async fn listen(
     let reloaded = Arc::downgrade(&guard);
     moqui_core::context::conf_reload::on_apply(
         &factory,
-        moqui_core::context::conf_reload::catalog::Group::WebProtection,
+        moqui_core::context::conf_schema::Group::WebProtection,
         move |factory| {
             if let Some(guard) = reloaded.upgrade() {
                 let node = crate::guard::protection_node(&factory.conf_text());

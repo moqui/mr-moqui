@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use moqui_core::context::conf_reload::catalog::{Class, CATALOG};
+use moqui_core::context::conf_schema::{Class, CATALOG};
 use moqui_core::context::ExecutionContextFactory;
 
 use super::{Allow, GateConf};

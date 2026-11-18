@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use moqui_lib::node::MNode;
 
-use super::catalog::CATALOG;
+use crate::context::conf_schema::CATALOG;
 use super::{apply_conf, pending_restart, preview_conf, ConfReport, Outcome};
 use crate::context::ExecutionContextFactory;
 

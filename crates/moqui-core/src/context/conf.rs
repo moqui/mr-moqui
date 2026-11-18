@@ -19,7 +19,18 @@ use std::path::{Path, PathBuf};
 
 use moqui_lib::node::MNode;
 
+use super::conf_schema::merge_keys as keys;
 use super::Error;
+
+const WEBAPP_LIST: &str = "webapp-list";
+const WEBAPP: &str = "webapp";
+const PROTECTION: &str = "web-protection";
+const RESOURCE: &str = "resource-facade";
+const SCREEN: &str = "screen-facade";
+const SERVICE: &str = "service-facade";
+const LLM: &str = "llm-facade";
+const DATABASES: &str = "database-list";
+const REPOSITORIES: &str = "repository-list";
 
 /// The runtime conf merged over the default, like Java's `moqui.conf`. A process property `MOQUI_CONF` names it,
 /// then the environment variable of the same name. Relative to the runtime directory or absolute, and a named file
@@ -215,10 +226,10 @@ fn merge_config_component_nodes(base: &MNode, over: &MNode) {
 }
 
 fn merge_config_nodes(base: &MNode, over: &MNode) {
-    base.merge_children_by_keys(over, "default-property", &["name"], None);
-    base.merge_child_with_child_key(over, "tools", "tool-factory", &["class"], None);
-    base.merge_child_with_child_key(over, "cache-list", "cache", &["name"], None);
-    base.merge_child_with_child_key(over, "telemetry", "artifact", &["type"], None);
+    base.merge_children_by_keys(over, "default-property", keys(&["default-property"]), None);
+    base.merge_child_with_child_key(over, "tools", "tool-factory", keys(&["tools", "tool-factory"]), None);
+    base.merge_child_with_child_key(over, "cache-list", "cache", keys(&["cache-list", "cache"]), None);
+    base.merge_child_with_child_key(over, "telemetry", "artifact", keys(&["telemetry", "artifact"]), None);
     if let (Some(base_telemetry), Some(over_telemetry)) = (base.first_named("telemetry"), over.first_named("telemetry"))
     {
         base_telemetry.merge_single_child(&over_telemetry, "receiver");
@@ -226,11 +237,23 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         base_telemetry.merge_single_child(&over_telemetry, "regressions");
         base_telemetry.merge_single_child(&over_telemetry, "recovery");
         // A component adds or replaces operation rules by service pattern, keeping the framework's.
-        base_telemetry.merge_child_with_child_key(&over_telemetry, "operations", "operation", &["service"], None);
+        base_telemetry.merge_child_with_child_key(
+            &over_telemetry,
+            "operations",
+            "operation",
+            keys(&["telemetry", "operations", "operation"]),
+            None,
+        );
     }
     merge_server_stats(base, over);
     merge_webapps(base, over);
-    base.merge_child_with_child_key(over, "artifact-execution-facade", "artifact-execution", &["type"], None);
+    base.merge_child_with_child_key(
+        over,
+        "artifact-execution-facade",
+        "artifact-execution",
+        keys(&["artifact-execution-facade", "artifact-execution"]),
+        None,
+    );
     merge_user_facade(base, over);
     merge_transaction_facade(base, over);
     merge_resource_facade(base, over);
@@ -243,7 +266,13 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     merge_repository_list(base, over);
     merge_edge(base, over);
     // the registry token commands of hosted instances, by name (service/registry_token.rs)
-    base.merge_child_with_child_key(over, "instance-hosting", "token-command", &["name"], None);
+    base.merge_child_with_child_key(
+        over,
+        "instance-hosting",
+        "token-command",
+        keys(&["instance-hosting", "token-command"]),
+        None,
+    );
     // elements of settings only: an attribute of the override replaces the base one
     for name in [
         "email-client",
@@ -282,9 +311,9 @@ fn merge_edge(base: &MNode, over: &MNode) {
         return;
     };
     base_edge.copy_attributes_from(&over_edge);
-    base_edge.merge_children_by_keys(&over_edge, "delegate", &["service"], None);
-    base_edge.merge_children_by_keys(&over_edge, "queue-kind", &["name"], None);
-    base_edge.merge_children_by_keys(&over_edge, "replicate", &["set"], None);
+    base_edge.merge_children_by_keys(&over_edge, "delegate", keys(&["edge", "delegate"]), None);
+    base_edge.merge_children_by_keys(&over_edge, "queue-kind", keys(&["edge", "queue-kind"]), None);
+    base_edge.merge_children_by_keys(&over_edge, "replicate", keys(&["edge", "replicate"]), None);
 }
 
 fn merge_server_stats(base: &MNode, over: &MNode) {
@@ -313,17 +342,23 @@ fn merge_webapps(base: &MNode, over: &MNode) {
     let mut merge_webapp = |base_web: &MNode, over_web: &MNode| {
         merge_webapp_children(base_web, over_web);
     };
-    base.merge_child_with_child_key(over, "webapp-list", "webapp", &["name"], Some(&mut merge_webapp));
+    base.merge_child_with_child_key(
+        over,
+        "webapp-list",
+        "webapp",
+        keys(&["webapp-list", "webapp"]),
+        Some(&mut merge_webapp),
+    );
 }
 
 fn merge_webapp_children(base: &MNode, over: &MNode) {
-    base.merge_children_by_keys(over, "root-screen", &["host"], None);
-    base.merge_children_by_keys(over, "error-screen", &["error"], None);
+    base.merge_children_by_keys(over, "root-screen", keys(&[WEBAPP_LIST, WEBAPP, "root-screen"]), None);
+    base.merge_children_by_keys(over, "error-screen", keys(&[WEBAPP_LIST, WEBAPP, "error-screen"]), None);
     // anonymous token routes (screen/token_route.rs): a component's route of the same name replaces the earlier one
-    base.merge_children_by_keys(over, "token-route", &["name"], None);
+    base.merge_children_by_keys(over, "token-route", keys(&[WEBAPP_LIST, WEBAPP, "token-route"]), None);
     // token paths (SEC-PSF-03): a component adds its own; the same pattern twice is one
-    base.merge_children_by_keys(over, "token-path", &["pattern"], None);
-    base.merge_children_by_keys(over, "public-site", &["host"], None);
+    base.merge_children_by_keys(over, "token-path", keys(&[WEBAPP_LIST, WEBAPP, "token-path"]), None);
+    base.merge_children_by_keys(over, "public-site", keys(&[WEBAPP_LIST, WEBAPP, "public-site"]), None);
     for name in [
         "first-hit-in-visit",
         "after-request",
@@ -340,15 +375,25 @@ fn merge_webapp_children(base: &MNode, over: &MNode) {
         append_named(base_child, over_child, "url-pattern");
         append_named(base_child, over_child, "dispatcher");
     };
-    base.merge_children_by_keys(over, "filter", &["name"], Some(&mut merge_filter));
-    base.merge_children_by_keys(over, "listener", &["class"], None);
+    base.merge_children_by_keys(
+        over,
+        "filter",
+        keys(&[WEBAPP_LIST, WEBAPP, "filter"]),
+        Some(&mut merge_filter),
+    );
+    base.merge_children_by_keys(over, "listener", keys(&[WEBAPP_LIST, WEBAPP, "listener"]), None);
     let mut merge_servlet = |base_child: &MNode, over_child: &MNode| {
         merge_init_params(base_child, over_child);
         append_named(base_child, over_child, "url-pattern");
     };
-    base.merge_children_by_keys(over, "servlet", &["name"], Some(&mut merge_servlet));
+    base.merge_children_by_keys(
+        over,
+        "servlet",
+        keys(&[WEBAPP_LIST, WEBAPP, "servlet"]),
+        Some(&mut merge_servlet),
+    );
     base.merge_single_child(over, "session-config");
-    base.merge_children_by_keys(over, "endpoint", &["path"], None);
+    base.merge_children_by_keys(over, "endpoint", keys(&[WEBAPP_LIST, WEBAPP, "endpoint"]), None);
     merge_response_headers(base, over);
     merge_web_protection(base, over);
 }
@@ -368,10 +413,15 @@ fn merge_web_protection(base: &MNode, over: &MNode) {
     for single in ["connections", "requests", "overload"] {
         base_node.merge_single_child(&over_node, single);
     }
-    base_node.merge_children_by_keys(&over_node, "rate-limit", &["name"], None);
-    base_node.merge_children_by_keys(&over_node, "ban", &["name"], None);
+    base_node.merge_children_by_keys(
+        &over_node,
+        "rate-limit",
+        keys(&[WEBAPP_LIST, WEBAPP, PROTECTION, "rate-limit"]),
+        None,
+    );
+    base_node.merge_children_by_keys(&over_node, "ban", keys(&[WEBAPP_LIST, WEBAPP, PROTECTION, "ban"]), None);
     for rule in ["client-rule", "path-rule", "user-agent-rule"] {
-        base_node.merge_children_by_keys(&over_node, rule, &["name"], None);
+        base_node.merge_children_by_keys(&over_node, rule, keys(&[WEBAPP_LIST, WEBAPP, PROTECTION, rule]), None);
         for child in over_node.children_named(rule) {
             if child.attribute("name").is_none_or(|name| name.is_empty()) {
                 base_node.append_node(child.deep_copy());
@@ -381,7 +431,12 @@ fn merge_web_protection(base: &MNode, over: &MNode) {
 }
 
 fn merge_init_params(base: &MNode, over: &MNode) {
-    base.merge_children_by_keys(over, "init-param", &["name"], None);
+    base.merge_children_by_keys(
+        over,
+        "init-param",
+        keys(&[WEBAPP_LIST, WEBAPP, "servlet", "init-param"]),
+        None,
+    );
 }
 
 fn merge_webapp_actions(base: &MNode, over: &MNode, name: &str) {
@@ -444,7 +499,7 @@ fn merge_authz(base: &MNode, over: &MNode) {
     };
     base_authz.copy_attributes_from(&over_authz);
     for child in ["sealed-permission", "privileged-group"] {
-        base_authz.merge_children_by_keys(&over_authz, child, &["name"], None);
+        base_authz.merge_children_by_keys(&over_authz, child, keys(&["user-facade", "authz", child]), None);
     }
 }
 
@@ -463,18 +518,53 @@ fn merge_transaction_facade(base: &MNode, over: &MNode) {
 }
 
 fn merge_resource_facade(base: &MNode, over: &MNode) {
-    base.merge_child_with_child_key(over, "resource-facade", "resource-reference", &["scheme"], None);
-    base.merge_child_with_child_key(over, "resource-facade", "template-renderer", &["extension"], None);
-    base.merge_child_with_child_key(over, "resource-facade", "script-runner", &["extension"], None);
+    base.merge_child_with_child_key(
+        over,
+        RESOURCE,
+        "resource-reference",
+        keys(&[RESOURCE, "resource-reference"]),
+        None,
+    );
+    base.merge_child_with_child_key(
+        over,
+        RESOURCE,
+        "template-renderer",
+        keys(&[RESOURCE, "template-renderer"]),
+        None,
+    );
+    base.merge_child_with_child_key(
+        over,
+        RESOURCE,
+        "script-runner",
+        keys(&[RESOURCE, "script-runner"]),
+        None,
+    );
 }
 
 fn merge_screen_facade(base: &MNode, over: &MNode) {
-    base.merge_child_with_child_key(over, "screen-facade", "screen-text-output", &["type"], None);
-    base.merge_child_with_child_key(over, "screen-facade", "screen-output", &["type"], None);
+    base.merge_child_with_child_key(
+        over,
+        SCREEN,
+        "screen-text-output",
+        keys(&[SCREEN, "screen-text-output"]),
+        None,
+    );
+    base.merge_child_with_child_key(over, SCREEN, "screen-output", keys(&[SCREEN, "screen-output"]), None);
     let mut merge_screen = |base_screen: &MNode, over_screen: &MNode| {
-        base_screen.merge_children_by_keys(over_screen, "subscreens-item", &["name"], None);
+        base_screen.merge_children_by_keys(
+            over_screen,
+            "subscreens-item",
+            keys(&[SCREEN, "screen", "subscreens-item"]),
+            None,
+        );
     };
-    base.merge_child_with_child_key(over, "screen-facade", "screen", &["location"], Some(&mut merge_screen));
+    base.merge_child_with_child_key(
+        over,
+        SCREEN,
+        "screen",
+        keys(&[SCREEN, "screen"]),
+        Some(&mut merge_screen),
+    );
     if let (Some(base_node), Some(over_node)) = (base.first_named("screen-facade"), over.first_named("screen-facade")) {
         base_node.merge_single_child(&over_node, "pdf");
         // a component's providers of the conf-answerable hooks, merged by hook and name
@@ -505,13 +595,23 @@ fn merge_service_facade(base: &MNode, over: &MNode) {
         base.append_node(over_node.deep_copy());
         return;
     };
-    base_node.merge_node_with_child_key(&over_node, "service-location", &["name"], None);
-    base_node.merge_children_by_keys(&over_node, "service-type", &["name"], None);
-    base_node.merge_children_by_keys(&over_node, "service-file", &["location"], None);
-    base_node.merge_children_by_keys(&over_node, "startup-service", &["name"], None);
+    base_node.merge_node_with_child_key(
+        &over_node,
+        "service-location",
+        keys(&[SERVICE, "service-location"]),
+        None,
+    );
+    base_node.merge_children_by_keys(&over_node, "service-type", keys(&[SERVICE, "service-type"]), None);
+    base_node.merge_children_by_keys(&over_node, "service-file", keys(&[SERVICE, "service-file"]), None);
+    base_node.merge_children_by_keys(&over_node, "startup-service", keys(&[SERVICE, "startup-service"]), None);
     if let Some(over_pool) = over_node.first_named("thread-pool") {
         if let Some(base_pool) = base_node.first_named("thread-pool") {
-            base_pool.merge_node_with_child_key(&over_pool, "run-from-pool", &["name"], None);
+            base_pool.merge_node_with_child_key(
+                &over_pool,
+                "run-from-pool",
+                keys(&[SERVICE, "thread-pool", "run-from-pool"]),
+                None,
+            );
         } else {
             base_node.append_node(over_pool.deep_copy());
         }
@@ -548,22 +648,32 @@ fn merge_llm_facade(base: &MNode, over: &MNode) {
     };
     base_node.copy_attributes_from(&over_node);
     let mut merge_endpoint = |base_endpoint: &MNode, over_endpoint: &MNode| {
-        base_endpoint.merge_children_by_keys(over_endpoint, "header", &["name"], None);
+        base_endpoint.merge_children_by_keys(over_endpoint, "header", keys(&[LLM, "endpoint", "header"]), None);
     };
-    base_node.merge_children_by_keys(&over_node, "endpoint", &["id"], Some(&mut merge_endpoint));
+    base_node.merge_children_by_keys(
+        &over_node,
+        "endpoint",
+        keys(&[LLM, "endpoint"]),
+        Some(&mut merge_endpoint),
+    );
     let mut merge_model = |base_model: &MNode, over_model: &MNode| {
-        base_model.merge_children_by_keys(over_model, "reasoning", &["level"], None);
+        base_model.merge_children_by_keys(over_model, "reasoning", keys(&[LLM, "model", "reasoning"]), None);
         if let Some(api) = over_model.first_named("api-config") {
             base_model.remove_where(|child| child.has_name("api-config"));
             base_model.append_node(api.deep_copy());
         }
     };
-    base_node.merge_children_by_keys(&over_node, "model", &["id"], Some(&mut merge_model));
-    base_node.merge_children_by_keys(&over_node, "bind", &["feature"], None);
-    base_node.merge_children_by_keys(&over_node, "data-entity", &["package", "entity"], None);
-    base_node.merge_children_by_keys(&over_node, "user-facts", &["service"], None);
-    base_node.merge_children_by_keys(&over_node, "constitution-provider", &["service"], None);
-    base_node.merge_children_by_keys(&over_node, "ai-task", &["name"], None);
+    base_node.merge_children_by_keys(&over_node, "model", keys(&[LLM, "model"]), Some(&mut merge_model));
+    base_node.merge_children_by_keys(&over_node, "bind", keys(&[LLM, "bind"]), None);
+    base_node.merge_children_by_keys(&over_node, "data-entity", keys(&[LLM, "data-entity"]), None);
+    base_node.merge_children_by_keys(&over_node, "user-facts", keys(&[LLM, "user-facts"]), None);
+    base_node.merge_children_by_keys(
+        &over_node,
+        "constitution-provider",
+        keys(&[LLM, "constitution-provider"]),
+        None,
+    );
+    base_node.merge_children_by_keys(&over_node, "ai-task", keys(&[LLM, "ai-task"]), None);
     for name in ["limits", "content-log", "screen-sessions", "mcp", "gateway"] {
         base_node.merge_single_child(&over_node, name);
     }
@@ -597,29 +707,56 @@ fn merge_entity_facade(base: &MNode, over: &MNode) {
             }
         }
     };
-    base_node.merge_node_with_child_key(&over_node, "datasource", &["group-name"], Some(&mut merge_datasource));
+    base_node.merge_node_with_child_key(
+        &over_node,
+        "datasource",
+        keys(&["entity-facade", "datasource"]),
+        Some(&mut merge_datasource),
+    );
     base_node.merge_single_child(&over_node, "server-jndi");
     append_named(&base_node, &over_node, "load-entity");
     append_named(&base_node, &over_node, "load-data");
 }
 
 fn merge_database_list(base: &MNode, over: &MNode) {
-    base.merge_child_with_child_key(over, "database-list", "dictionary-type", &["type"], None);
+    base.merge_child_with_child_key(
+        over,
+        DATABASES,
+        "dictionary-type",
+        keys(&[DATABASES, "dictionary-type"]),
+        None,
+    );
     let mut merge_database = |base_db: &MNode, over_db: &MNode| {
-        base_db.merge_node_with_child_key(over_db, "database-type", &["type"], None);
+        base_db.merge_node_with_child_key(
+            over_db,
+            "database-type",
+            keys(&[DATABASES, "database", "database-type"]),
+            None,
+        );
     };
-    base.merge_child_with_child_key(over, "database-list", "database", &["name"], Some(&mut merge_database));
+    base.merge_child_with_child_key(
+        over,
+        DATABASES,
+        "database",
+        keys(&[DATABASES, "database"]),
+        Some(&mut merge_database),
+    );
 }
 
 fn merge_repository_list(base: &MNode, over: &MNode) {
     let mut merge_repository = |base_repo: &MNode, over_repo: &MNode| {
-        base_repo.merge_children_by_keys(over_repo, "init-param", &["name"], None);
+        base_repo.merge_children_by_keys(
+            over_repo,
+            "init-param",
+            keys(&[REPOSITORIES, "repository", "init-param"]),
+            None,
+        );
     };
     base.merge_child_with_child_key(
         over,
-        "repository-list",
+        REPOSITORIES,
         "repository",
-        &["name"],
+        keys(&[REPOSITORIES, "repository"]),
         Some(&mut merge_repository),
     );
 }

@@ -18,7 +18,7 @@
 
 use moqui_lib::node::MNode;
 
-use super::catalog::{Class, Key, Unit, CATALOG, UNKNOWN};
+use crate::context::conf_schema::{Class, Key, Unit, CATALOG, UNKNOWN};
 
 /// Longest text of an element kept in a change, for the report.
 const MAX_TEXT: usize = 4000;

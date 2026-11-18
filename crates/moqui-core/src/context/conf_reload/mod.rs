@@ -19,7 +19,6 @@
 //! conf overrides shows no change. The running conf holds only what is in effect: a change that needs a restart stays
 //! out of it, so the next reload reports it again until the restart. Guide: docs/tools/Component-Deploy.md.
 
-pub mod catalog;
 mod diff;
 pub mod view;
 
@@ -32,7 +31,7 @@ use moqui_lib::sync::lock;
 use serde::Serialize;
 
 use super::{conf, ComponentInfo, Error, ExecutionContextFactory};
-use catalog::{Class, Group};
+use super::conf_schema::{self as catalog, Class, Group};
 use diff::{Kind, UnitChange};
 
 /// What became of one change.

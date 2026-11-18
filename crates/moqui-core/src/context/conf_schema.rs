@@ -12,11 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What each part of the merged conf takes to change on a running server (plans/archive/Component-Deploy.md, Phase 1): read
-//! on each use (live), built from the conf by a hook (apply), or read once at boot (restart). The catalog is a tree of
-//! units by element name, each with its key, its class, the attributes whose class differs, and its child units. What
-//! no unit names is part of its parent unit; at the top, an element no unit names needs a restart, so an element added
-//! to the conf without a catalog entry is never reported as live.
+//! The schema of the merged conf (plans/Conf-Paths.md §2): a tree of units by element name, each with how its
+//! elements are told apart (its key), its class, the attributes whose class differs, and its child units. The merge
+//! keys repeated elements by it, an environment name or selector finds an element by it ([`keying`]), and the conf
+//! reload (plans/archive/Component-Deploy.md, Phase 1) reads what each part takes to change on a running server: read
+//! on each use (live), built from the conf by a hook (apply), or read once at boot (restart). What no unit names is
+//! part of its parent unit; at the top, an element no unit names needs a restart, so an element added to the conf
+//! without a catalog entry is never reported as live.
+
+pub use moqui_lib::node::path::Keying as Key;
 
 /// How a change to a unit of the conf takes effect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,17 +74,6 @@ impl Group {
             Self::WebProtection => "web-protection",
         }
     }
-}
-
-/// How the elements of one unit are told apart.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Key {
-    /// The first element of the name is the unit.
-    Single,
-    /// Each element is a unit, by the values of these attributes, as the merge keys them.
-    By(&'static [&'static str]),
-    /// The elements of the name together, in order, are one unit: a list the merge appends to.
-    Sequence,
 }
 
 /// A unit of the conf: an element name, how its elements are told apart, its class, the attributes whose class
@@ -142,6 +135,12 @@ const LISTENER: Class = Class::Restart("a listener, worker pool or background lo
 const NEXT_START: Class = Class::Restart("runs at the next start");
 const SCREENS: Class = Class::Apply(Group::Screens);
 const DERIVED: Class = Class::Apply(Group::Derived);
+const TELEMETRY: Class =
+    Class::Restart("read once at boot; Monitor › Settings changes its levels and rates for a while");
+const WEB_PROTECTION: Class = Class::Apply(Group::WebProtection);
+const LLM: Class = Class::Restart("the agent runtime is built at boot");
+const DATABASES: Class = Class::Restart("the database dialects are read when the entity facade is opened");
+const EDGE: Class = Class::Restart("the edge link starts at boot");
 
 /// The class of an element at the top of the conf that no unit names.
 pub const UNKNOWN: Class = Class::Restart("not known to the conf reload");
@@ -163,9 +162,14 @@ pub static CATALOG: &[Unit] = &[
     single(
         "telemetry",
         Class::Restart("read once at boot; Monitor › Settings changes its levels and rates for a while"),
-    ),
+    )
+    .children(&[
+        keyed("artifact", &["type"], TELEMETRY),
+        keyed("metric", &["name"], TELEMETRY),
+        single("operations", TELEMETRY).children(&[keyed("operation", &["service"], TELEMETRY)]),
+    ]),
     // only read at boot for deprecation warnings
-    single("server-stats", Class::Live),
+    single("server-stats", Class::Live).children(&[keyed("artifact-stats", &["type", "sub-type"], Class::Live)]),
     single("webapp-list", BOOT).children(&[keyed("webapp", &["name"], Class::Live)
         .attrs(&[
             ("http-port", LISTENER),
@@ -179,6 +183,7 @@ pub static CATALOG: &[Unit] = &[
             keyed("root-screen", &["host"], DERIVED),
             keyed("error-screen", &["error"], Class::Live),
             keyed("token-route", &["name"], DERIVED),
+            keyed("token-path", &["pattern"], DERIVED),
             keyed("public-site", &["host"], Class::Live),
             single("first-hit-in-visit", DERIVED),
             single("after-request", DERIVED),
@@ -187,9 +192,16 @@ pub static CATALOG: &[Unit] = &[
             single("before-logout", DERIVED),
             single("after-startup", NEXT_START),
             single("before-shutdown", DERIVED),
-            keyed("filter", &["name"], DERIVED),
+            keyed("filter", &["name"], DERIVED).children(&[
+                keyed("init-param", &["name"], DERIVED),
+                sequence("url-pattern", DERIVED),
+                sequence("dispatcher", DERIVED),
+            ]),
             keyed("listener", &["class"], DERIVED),
-            keyed("servlet", &["name"], DERIVED),
+            keyed("servlet", &["name"], DERIVED).children(&[
+                keyed("init-param", &["name"], DERIVED),
+                sequence("url-pattern", DERIVED),
+            ]),
             single("session-config", Class::Live).attrs(&[("flush", BOOT), ("max", BOOT)]),
             keyed(
                 "endpoint",
@@ -198,11 +210,27 @@ pub static CATALOG: &[Unit] = &[
             ),
             keyed("response-header", &["type", "name"], Class::Live),
             // the listener's limits are read when it starts
-            single("web-protection", Class::Apply(Group::WebProtection))
-                .children(&[single("connections", LISTENER), single("requests", LISTENER)]),
+            single("web-protection", WEB_PROTECTION).children(&[
+                single("connections", LISTENER),
+                single("requests", LISTENER),
+                single("overload", WEB_PROTECTION),
+                keyed("rate-limit", &["name"], WEB_PROTECTION),
+                keyed("ban", &["name"], WEB_PROTECTION),
+                keyed("client-rule", &["name"], WEB_PROTECTION),
+                keyed("path-rule", &["name"], WEB_PROTECTION),
+                keyed("user-agent-rule", &["name"], WEB_PROTECTION),
+            ]),
         ])]),
     single("artifact-execution-facade", Class::Live).children(&[keyed("artifact-execution", &["type"], Class::Live)]),
-    single("user-facade", Class::Live),
+    single("user-facade", Class::Live).children(&[
+        single("password", Class::Live),
+        single("login-key", Class::Live),
+        single("login", Class::Live),
+        single("authz", Class::Live).children(&[
+            keyed("sealed-permission", &["name"], Class::Live),
+            keyed("privileged-group", &["name"], Class::Live),
+        ]),
+    ]),
     single(
         "transaction-facade",
         Class::Restart("the transaction managers are set up at boot"),
@@ -235,14 +263,22 @@ pub static CATALOG: &[Unit] = &[
         ),
         keyed("service-file", &["location"], Class::Live),
         keyed("startup-service", &["name"], NEXT_START),
-        single("thread-pool", BOOT),
+        single("thread-pool", BOOT).children(&[keyed("run-from-pool", &["name"], BOOT)]),
         sequence("jms-service", Class::Live),
     ]),
     single(
         "search-facade",
         Class::Restart("the search backend is attached at boot"),
     ),
-    single("llm-facade", Class::Restart("the agent runtime is built at boot")),
+    single("llm-facade", LLM).children(&[
+        keyed("endpoint", &["id"], LLM).children(&[keyed("header", &["name"], LLM)]),
+        keyed("model", &["id"], LLM).children(&[keyed("reasoning", &["level"], LLM)]),
+        keyed("bind", &["feature"], LLM),
+        keyed("data-entity", &["package", "entity"], LLM),
+        keyed("user-facts", &["service"], LLM),
+        keyed("constitution-provider", &["service"], LLM),
+        keyed("ai-task", &["name"], LLM),
+    ]),
     single("entity-facade", Class::Restart("the entity facade is opened at boot")).children(&[
         keyed(
             "datasource",
@@ -250,6 +286,7 @@ pub static CATALOG: &[Unit] = &[
             Class::Restart("datasources connect at boot"),
         ),
         single("server-jndi", BOOT),
+        sequence("decrypt-alt", Class::Restart("the entity facade is opened at boot")),
         sequence(
             "load-entity",
             Class::Restart("the entity model reads them when it is opened"),
@@ -259,12 +296,24 @@ pub static CATALOG: &[Unit] = &[
     single(
         "database-list",
         Class::Restart("the database dialects are read when the entity facade is opened"),
-    ),
-    single("repository-list", Class::Live),
-    single("edge", Class::Restart("the edge link starts at boot")),
+    )
+    .children(&[
+        keyed("dictionary-type", &["type"], DATABASES),
+        keyed("database", &["name"], DATABASES).children(&[keyed("database-type", &["type"], DATABASES)]),
+    ]),
+    single("repository-list", Class::Live).children(&[keyed("repository", &["name"], Class::Live).children(&[keyed(
+        "init-param",
+        &["name"],
+        Class::Live,
+    )])]),
+    single("edge", EDGE).children(&[
+        keyed("delegate", &["service"], EDGE),
+        keyed("queue-kind", &["name"], EDGE),
+        keyed("replicate", &["set"], EDGE).children(&[keyed("entity", &["name"], EDGE)]),
+    ]),
     single("email-client", Class::Live).attrs(&[("idle-enabled", LISTENER)]),
     single("ssh-server", LISTENER),
-    single("terminal", Class::Live),
+    single("terminal", Class::Live).children(&[keyed("host-profile", &["name"], Class::Live)]),
     single("git-server", Class::Live).attrs(&[("max-concurrent", LISTENER), ("max-queued", LISTENER)]),
     single("git-ci", Class::Live),
     single("dav-server", Class::Live).attrs(&[("sftp-drives", LISTENER)]),
@@ -292,6 +341,39 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("components are found at boot; System › Components loads one on a running server"),
     ),
 ];
+
+/// The unit of the elements at `path`, the element names from below the root (`["webapp-list", "webapp"]`), or `None`
+/// when no unit names them.
+#[must_use]
+pub fn unit(path: &[&str]) -> Option<&'static Unit> {
+    let mut units: &'static [Unit] = CATALOG;
+    let mut found = None;
+    for name in path {
+        let unit = units.iter().find(|unit| unit.name == *name)?;
+        found = Some(unit);
+        units = unit.children;
+    }
+    found
+}
+
+/// How the elements at `path` are told apart: their unit's key, or the first of the name ([`Key::Single`]) for an
+/// element no unit names. What an environment name or a selector walks by (plans/Conf-Paths.md §1).
+#[must_use]
+pub fn keying(path: &[&str]) -> Key {
+    unit(path).map_or(Key::Single, |unit| unit.key)
+}
+
+/// The key attributes the merge matches the elements at `path` by: their unit's, so the merge, the conf reload and an
+/// environment name pick the same element. `path` names a keyed unit; a test merges every one.
+pub(crate) fn merge_keys(path: &[&str]) -> &'static [&'static str] {
+    match keying(path) {
+        Key::By(attrs) => attrs,
+        Key::Single | Key::Sequence => {
+            debug_assert!(false, "{} is not a keyed unit of the conf schema", path.join("/"));
+            &[]
+        }
+    }
+}
 
 /// Properties a conf reload never changes: what the process, its listeners, its databases or its keys were set up
 /// with at boot.
@@ -327,3 +409,7 @@ pub fn fixed_property(name: &str) -> Option<&'static str> {
         || FIXED_PROPERTY_SUFFIXES.iter().any(|suffix| name.ends_with(suffix));
     fixed.then_some("the process, a listener, a database or a key was set up with it at boot")
 }
+
+#[cfg(test)]
+#[path = "conf_schema_tests.rs"]
+mod tests;

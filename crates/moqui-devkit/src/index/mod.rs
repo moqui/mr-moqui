@@ -1053,7 +1053,7 @@ fn listen(factory: &Arc<ExecutionContextFactory>) {
     let weak = Arc::downgrade(factory);
     moqui_core::context::conf_reload::on_apply(
         factory,
-        moqui_core::context::conf_reload::catalog::Group::Screens,
+        moqui_core::context::conf_schema::Group::Screens,
         move |_| {
             let Some(factory) = weak.upgrade() else {
                 return;
