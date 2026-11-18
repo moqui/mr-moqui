@@ -200,6 +200,9 @@ acceptance client spec). Met in phase 8: acceptance `ChatPalette` (the web) and 
 - A member with read receipts off is not listed, and a viewer with receipts off sees no "Read by" (as the reader
   avatars do today, `Chat.qvue:1332`). The line then says receipts are off; it does not say "not read".
 - A read marker is a position, not a per-message record: "Read by" means "has read up to here or later".
+
+Phase 15 adds "Remind me…" to the action list, after Mark unread from here, and "Send later…" to the composer's Send
+(a long press on a phone, an arrow and a right click on a desktop) (§18.3).
 - In a thread, Info shows Sent and Delivered only; threads have no read markers.
 
 **Done when:** on a phone a user can react, remove a reaction, see who reacted, and open Info, all by touch
@@ -553,6 +556,9 @@ too (2026-11-17).
    or the tries run out. A push that ends without being sent is counted and shown (§7.3 Health), and the app shows
    what it missed when it next opens (§7.5). An acknowledgement from the app means the device got the push. It does
    not mean the person read the message.
+9. **Reminders** (phase 15). A reminder the user set pushes to each of their devices at its time, as a `notification`
+   push with its own tag and collapse key. It is not dropped by a read marker or closed by a room's clear, it is held
+   during do not disturb, and rule 5 applies to its text.
 
 ### 7.3 Server work
 
@@ -1004,10 +1010,10 @@ that adds it. "New" means this plan adds it (§17).
 | SMS, MMS, group MMS | SMS and MMS through the provider; group texts | Built; group texts in phase 9 (none on Sinch, §9) |
 | RCS chat | Business RCS; personal RCS by bridge (§13.4) | §16 |
 | Default SMS app | `sim-sms` build | §10 |
-| Scheduled send | Scheduled send: a send time on a message the server holds and sends, as mail's due drafts are (`send#DueDrafts`). A chat event has no send time today, and the only outbox is the client's | New |
+| Scheduled send | Send later on the composer's Send (a long press on a phone, an arrow on a desktop): the server holds the message (`ChatScheduledMessage`) and sends it at its time as the sender, through the normal path, so bridges and their send checks apply then, as mail's due drafts are sent (`send#DueDrafts`). The room lists its scheduled messages: edit, send now, cancel. Not in an encrypted room, which the server cannot encrypt for | Designed: phase 15 (§18.3) |
 | Spam protection, block, report | Block a number: its calls and texts, on the user's Blocked list (a `CallerList`, Settings, Call handling); its texts kept out of sight in "Spam & blocked". Block a person in chat: their messages hidden in shared rooms, their direct rooms and invites refused. Spam filter for outside numbers: local rules (first contact, links, keywords, numbers, reports here), on by default; the provider's number lookup optional and off. Not spam and Report spam | Designed: phase 11 (§18.3); the caller lists are built |
 | One-time codes: copy, delete after 24 h | Detect codes in SMS; Copy button in the notification; optional delete | New |
-| Message reminders | "Remind me" on a message: a notification later | New |
+| Message reminders | "Remind me" on a message (in 20 minutes, in 1 hour, tomorrow, a time picked): a push through the chat push worker and an Activity row then; pending reminders listed at the top of Activity and cancelled there. A reminder keeps the room and the message's number only, never its text | Designed: phase 15 (§18.3) |
 | Smart replies, writing help | Suggested replies from `moqui-llm`, plain rooms only (never encrypted rooms) | New |
 | Photo quality choice | Send original or compressed | New |
 | Messages for web | The web client and the desktop app | Built |
@@ -1019,7 +1025,7 @@ that adds it. "New" means this plan adds it (§17).
 | Blue-bubble chat with iPhone users | BlueBubbles bridge (§13.3), else SMS | New |
 | Tapbacks | Reactions | Built |
 | Edit and unsend within minutes | Edit, redact | Built |
-| Send later | Scheduled send | New |
+| Send later | Scheduled send (§14.2), not in encrypted rooms | Designed: phase 15 (§18.3) |
 | Message effects, stickers, GIFs | Sticker packs; GIF search through a provider the server proxies; effects: no | New (stickers, GIFs) |
 | Share location, live location | A location message with a map, and live location for a set time. The map needs the Maps app, which is a design only ([Maps](Maps.md)) | New, after Maps |
 | Check In (tell a contact you arrived) | Later, on live location | Later |
@@ -1285,7 +1291,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 |---|---|---|
 | 1 | Unified contacts: one person with many networks; pick the network per message | §11 |
 | 2 | Block and report; spam filter for outside numbers | §14.2; designed as phase 11 (§18.3) |
-| 3 | Scheduled send, message reminders | §14.2, §14.3 |
+| 3 | Scheduled send, message reminders | §14.2, §14.3; designed as phase 15 (§18.3) |
 | 4 | Disappearing messages (exact timer) and view-once media | §14.4 |
 | 5 | Invite links and QR, with approval; join requests | §14.4, §14.5 |
 | 6 | SMS members of a room (GroupMe's SMS join) | §14.5 |
@@ -2299,6 +2305,222 @@ backup is not in a spec; `moqui-desktop`'s own tests were not run here (the crat
   rows.
 - **Done when.** The regression specs above pass within budget; on a real phone, the row of §18.4.
 
+#### Phase 15: scheduled send and message reminders
+
+Designed 2026-11-17 (§14.2, §14.3, §17 #3). A chat message gets a send time, and the server holds it and sends it then,
+as mail's due drafts are sent (`EmailClientServices.send#DueDrafts`). "Remind me" on any message brings it back later as
+a notification and an Activity row.
+
+**Encrypted rooms: no scheduled send.** Send later is shown disabled there, with its reason. Why not the ciphertext
+made at schedule time:
+- A Megolm session's key goes to the devices that are in the room when the message is encrypted. A member who leaves
+  before the send time could still read the message, though it is sent after they left. A member or device added
+  meanwhile could not read it.
+- Rotation and leaving rotate the session for later messages. A held ciphertext pins an old session past both, so the
+  room's rule (rotate when a member goes) would be broken for that message.
+- To fix either, the browser would have to encrypt again at the send time. That needs the sender's device open at
+  that moment, which is not a scheduled send held by the server.
+
+The rest of a room's encryption is untouched. Reminders work in encrypted rooms: a reminder keeps only the room and
+the message's number.
+
+**Data model** (new `framework/entity/ChatScheduleEntities.xml`, listed in `MoquiDefaultConf.xml` `load-entity`)
+
+| Entity, field | What |
+|---|---|
+| `moqui.chat.ChatScheduledMessage` (`chatScheduledMessageId` pk, sequenced) | A message the server holds: `chatRoomId`, `senderUserId`, `sendDate`, `statusEnumId`, `body` (the composer's safe HTML, cleaned as `send#Message` cleans it), `bodyText` (for the list), `replyToEventSeq`, `threadRootEventSeq`, `recordsJson` (the record cards looked up at schedule time), `sentEventSeq`, `sentDate`, `attemptCount`, `reasonCode`, `failText`, `createdDate`. Indexes: (`statusEnumId`, `sendDate`), (`senderUserId`, `statusEnumId`) |
+| `ChatScheduledMessageStatus` (Enumeration) | `CsmScheduled`, `CsmSent`, `CsmFailed` (not sent: `reasonCode`, kept for the sender to see), `CsmCancelled` |
+| `ChatAttachment.chatScheduledMessageId` (extend-entity) | A file uploaded for a scheduled message: `clean#PendingAttachments` leaves it while the message waits |
+| `moqui.chat.ChatMessageReminder` (`chatMessageReminderId` pk, sequenced) | A reminder: `userId`, `chatRoomId`, `eventSeq`, `remindDate`, `statusEnumId`, `firedDate`, `reasonCode`, `createdDate`. No text of the message, in any room. Indexes: (`statusEnumId`, `remindDate`), (`userId`, `statusEnumId`), (`userId`, `chatRoomId`, `eventSeq`) |
+| `ChatMessageReminderStatus` (Enumeration) | `CrmPending`, `CrmFired`, `CrmCancelled`, `CrmDropped` (not sent: the message is gone or the room can no longer be read) |
+| `ChatUserActivityKind` `CuaReminder`; `PushOutboxKind` `PokReminder` | A fired reminder in Activity; its push in the outbox (seeded in the new file) |
+| `NotificationTopic` `ChatReminder`, `ChatScheduleFailed` | The in-page alert of a fired reminder (pushed by the chat push worker only: in `PUSHED_TOPICS`); a scheduled message that was not sent (`ChatSetupData.xml`) |
+
+Limits: 100 scheduled messages and 200 pending reminders a user; a time at least one minute ahead and at most a year.
+
+**Services** (new `org.moqui.chat.ChatScheduleServices`, logic in `ChatSchedule.js`). Each checks the caller: a row of
+someone else is "not found".
+
+| Service | What |
+|---|---|
+| `schedule#Message` | `chatRoomId`, `body`, `replyToEventSeq`, `threadRootEventSeq`, `chatAttachmentIdList`, `recordList`, `sendDate`. The rules of `send#Message` now: a member, not archived, a body or files, the files the sender's unsent uploads of the room (each then marked with the message). Refused: an encrypted room (`encryptedRoom`), a time out of range (`badTime`), over the limit (`tooMany`). Out: `chatScheduledMessageId`, `scheduled` (as listed) |
+| `update#ScheduledMessage` | A new `body` or `sendDate`, with the row locked; only while `CsmScheduled` (else `notScheduled`: it was sent or is being sent). The files stay; to change them, cancel and schedule again |
+| `cancel#ScheduledMessage` | `CsmCancelled`; its files removed (`remove#AttachmentFile`), each on its own |
+| `send#ScheduledMessageNow` | The due path for one of the sender's rows (`CsmScheduled` or `CsmFailed`), at once |
+| `get#ChatSchedule` | The caller's `scheduledList` (scheduled and failed, by room, soonest first) and `reminderList` (pending, soonest first): each reminder with the room's name, the sender's name and, in a plain room, the message's current snippet read now. An encrypted room's reminder has no snippet: `encrypted` true and the event's ciphertext (`encryptedContent`) for the browser, as `find#ChatActivity` answers |
+| `set#Reminder` | `chatRoomId`, `eventSeq`, `remindDate`: a message (`CetMessage`, not redacted) of a room the caller can read now (`get#RoomAccess`). It replaces the caller's pending reminder of that message. Refused: `badTime`, `tooMany`, not found |
+| `cancel#Reminder` | `CrmCancelled` |
+| `send#DueMessages` (job) | `send_DueChatMessages_frequent`, every minute (`ChatSetupData.xml`). The `CsmScheduled` rows due, oldest first, at most 200 a run, no send started after 45 s. Each row in a transaction of its own (`deliver#ScheduledMessage`), see below |
+| `send#DueReminders` (job) | `send_DueChatReminders_frequent`, every minute. Each pending reminder due, in its own transaction: the room still readable by its user and the message still there (else `CrmDropped`, with `reasonCode` `noAccess` or `messageGone`); a `CuaReminder` Activity row (`activityDate` now, `actorUserId` the message's sender); its push (`queue#ReminderPush`); the `ChatReminder` notification; `CrmFired` |
+| `queue#ReminderPush` | Rust, in `chat_push.rs`: one `PushOutbox` row of kind `PokReminder` for each device of the user, in the caller's transaction; the worker woken after the commit |
+| `clean#ScheduledMessages` (job) | `clean_ChatSchedule_daily`: sent and cancelled rows and fired, cancelled and dropped reminders after 7 days; failed rows after 30 days, with their files |
+
+**The send at its time** (`deliver#ScheduledMessage`):
+1. Lock the row; go on only if it is still `CsmScheduled` and due (another node or Send now took it otherwise).
+2. Sign in as the sender (`ec.user.internalLoginUser`, as `SmsSpam.js` `asUser` does), so the sender's rights are
+   checked at the send time with authorization on. A disabled account is `accountDisabled`.
+3. Refuse when the sender's place in the room is out of their sight (`filterEnumId` `CmfBlocked`: they blocked its
+   number or its person since): reason `blocked`.
+4. `send#Message` with the row's body, reply, thread, files and records, `roomUrl` from `comms_app_root`, and
+   `clientRef` `sched:<id>`. It checks membership (`notMember`) and the archive (`archived`) itself, and resolves the
+   mentions as they are then.
+5. In the same transaction: `CsmSent`, `sentEventSeq`. The `sched:` clientRef also makes a retry after a crash answer
+   the message it made (`duplicate`): it is sent once.
+
+A refusal (a `reasonCode`, a validation error) rolls the send back. Then, in a transaction of its own, the row is set
+to `CsmFailed` with the reason, the sender gets `ChatScheduleFailed` ("Your scheduled message in Team was not sent: you
+are no longer in the room"), and their lists are told. Any other error leaves the row `CsmScheduled` with
+`attemptCount` + 1, to be tried at the next run, and it fails after 5 tries.
+
+**Bridges.** At its time, a scheduled message is an ordinary message of its sender, through `send#Message` and
+`append#Event`. So SMS, RCS and every other bridge get it through their `ChatBridgeDelivery` and adapter as any message.
+The adapter's checks then apply at that moment: `check#SmsSend` (the destination's class, STOP and the opt-out, the
+day's limits), the bridge's capabilities and its fallback. Nothing is checked only at schedule time.
+
+**Blocks** (D1, phase 11):
+- The sender blocked the room's number or person since scheduling: not sent (`blocked`).
+- The other person blocked the sender: the message is sent as an immediate send would be, hidden from them and
+  notifying nothing. Failing it would tell the sender they are blocked, which a block never does.
+
+**Pushes to the sender's lists.** Every change goes on `chatUser:<userId>` as
+`{kind: schedule, chatRoomId, what: scheduled | reminder}` (`push#Signal`, after the commit). Each open Chat of the
+sender reads `schedule` again. No feed entry: `get#ChatSchedule` is read whole at Chat's opening and on that push.
+
+**The reminder push** (§7.2 rule 9, new). A `PokReminder` row, sent by the same worker, encryption and transport, with
+these differences from a message push:
+- Not dropped by a read marker (rule 3) or by `queue#ReadClear`: the message was usually read already.
+- Its own collapse key and tag (`chat-reminder-<id>`), so a room's clear never closes it and it replaces nothing of the
+  room.
+- Held during do not disturb, as messages are, and sent when it ends. It lives a day.
+
+The payload is the kind every client already shows: `{kind: notification, topic: ChatReminder, title, body, link,
+tag}`.
+- `title`: "Reminder: Ann in Team", or "Reminder: Ann" in a direct room.
+- `body`: the snippet in a plain room when `CHAT_NOTIFY_PREVIEW` is not N; else "A message you asked to be reminded
+  of".
+- `link`: the message (`Chat?chatRoomId=…&eventSeq=…`).
+
+The web's service worker shows title, body and link as they are. The Android app shows the title of a `notification`
+push and opens the app; showing the body and opening the message wait for its next change.
+
+**Transitions** (in a new `basic-comms/template/ChatScheduleTransitions.xml`, each one `transition-include` line in
+`Chat.xml`): `chatSchedule` (get), `scheduleMessage` (looks up the body's record cards as `send#ChatMessage` does,
+`lookup#Records`), `updateScheduled`, `cancelScheduled`, `sendScheduledNow`, `setReminder`, `cancelReminder`. A refusal
+is answered with its `reasonCode` and errors, as `send` is.
+
+**Screens** (`Chat.qvue`; two new sub-components in their own block: `chat-when` and `chat-scheduled`)
+
+| Part | Phone (bubbles) | Desktop |
+|---|---|---|
+| Send later | A long press on Send (450 ms, with a short vibration) opens a sheet: "Send later…" | A narrow arrow beside Send, and a right click on Send, open a menu: "Send later…" |
+| When (`chat-when`) | Full-screen sheet. Send later: In 1 hour, Tomorrow morning (8:00), Tomorrow afternoon (13:00), Monday morning (8:00, from Friday to Sunday), Pick a date and time (`m-date-time`). The choices are in the device's zone, and the next step says the time picked ("Sends tomorrow at 8:00") | A 400 px dialog with the same list |
+| Scheduled bar | A line above the composer: "Scheduled: tomorrow at 8:00", or "3 scheduled messages", and "1 not sent" in red when one failed. A tap opens the list | Same |
+| The list (`chat-scheduled`) | Full screen. Each message: its time, its text (two lines), its files, the message it replies to, "in a thread"; Edit (the text in `m-rich-text` with mentions, and the time), Send now, Cancel (confirmed). A failed one shows its reason, with Send now and Cancel | A 560 px dialog, the same rows |
+| Remind me | "Remind me…" in `messageActions`, after Mark unread from here, for a member and a sent message (not a pending or failed one): In 20 minutes, In 1 hour, Tomorrow (9:00), Pick a date and time. A message with a reminder says "Reminder at 15:40…" there, with Cancel the reminder in the picker; an alarm icon by its time | Same, from the hover toolbar's More and the right-click menu |
+| Reminders | At the top of Activity: the pending reminders, each with its time, room, sender and text (an encrypted room's decrypted here), opening the message, and a × to cancel. A fired reminder is an Activity row (alarm icon, "Reminder: Ann's message") | Same |
+
+- Disabled with a reason, never hidden: Send later in an encrypted room ("Send later is not offered in an end-to-end
+  encrypted room: the server cannot encrypt for you"); while offline ("Send later needs a connection"); while files
+  go up.
+- Send later is not offered for a voice note, a poll, a forward or an edit.
+- The thread composer has Send later too.
+- Every text through `t()`.
+- The helpers are in a block of their own in `WebrootChat.js`:
+  - `moqui.chat.whenChoices(kind, now)`: the choices and their times for `send` and `remind`;
+  - `scheduledLine(list, now)`: the bar's text;
+  - `reminderOf(reminders, chatRoomId, eventSeq)`;
+  - `reduce` answers the `schedule` push as `{kind: schedule}`.
+
+**Terminal.** No change: `ChatTui.xml` neither schedules nor reminds. A scheduled message shows there once it is sent.
+
+**Phone and desktop.** The same bundled Chat in the Android app and the desktop app (`bundled-screens.js`
+regenerated). The desktop app shows a fired reminder by its socket (the `ChatReminder` notification), as it shows
+messages.
+
+**Failure tolerance.**
+- Each due message and reminder is on its own, in its own transaction: one that fails is logged and the rest go on.
+- A run stops starting sends after 45 s, and what is left goes at the next run.
+- A reminder whose push cannot be queued (no device, an error) is logged and still fires: its Activity row and its
+  notification hold it.
+- The failure notice and the list push are logged when they fail, and never fail the send.
+- `get#ChatSchedule` failing at Chat's opening: logged, and Chat works without the bar and the reminders.
+- The file cancel: each file on its own.
+
+**Security and abuse.**
+- Only the sender sees or changes their scheduled messages and reminders. Another member learns of a message only when
+  it is sent.
+- The rights are those at the send time: signed in as the sender, with authorization on. Membership, the archive and
+  the account are checked again; the mentions are resolved then.
+- Nothing encrypted is held: a scheduled send in an encrypted room is refused.
+- A reminder keeps no text of any message. Its push follows rule 5 (no snippet for an encrypted room or with previews
+  off). It is checked against the room's access at its time, so a user taken out of a private room gets nothing of it.
+- Bounded: 100 scheduled messages and 200 reminders a user, at most a year ahead, and 200 sends a run. The send
+  limits of each network are the adapter's, at the send time.
+- The body is cleaned at the schedule (`cleanChatHtml`, our own images only) and again by `send#Message`.
+- A block is never revealed to the person blocked.
+
+**Left out.**
+- Scheduled send in encrypted rooms (above).
+- A recurring message or reminder.
+- Snoozing a fired reminder (set it again from the message).
+- A note on a reminder: it would be text the server keeps.
+- Changing the files of a scheduled message.
+- Scheduling a forward, poll or voice note.
+- The terminal and XMPP clients.
+- Android's reminder body and its link to the message (the next APK change).
+- Showing in the rail which rooms have scheduled messages.
+
+**Hooks in shared files** (small, so the parallel phases merge):
+- `ChatServices.xml`: `clean#PendingAttachments` leaves files with a `chatScheduledMessageId`; `find#ChatActivity`'s
+  kind maps gain `reminder`.
+- `Chat.xml`: the seven `transition-include` lines.
+- `ChatSetupData.xml`: the three jobs and two topics.
+- `MoquiDefaultConf.xml`: the entity file.
+- `chat_push.rs`: `queue_reminder_push`, its registration, the exemption from rule 3, the collapse key, and
+  `PUSHED_TOPICS`.
+- `WebrootChat.js`: the helper block and one `reduce` branch.
+- `Chat.qvue`: the Send menu, the bar, the menu item, the Activity section and the feed's kind.
+
+**Tests (regression).**
+- Server: `framework/test/ChatSchedule.spec.js` (new), on `ec.user.setEffectiveTime` and direct calls of the job
+  services:
+  - `schedule#Message`'s refusals: not a member, archived, encrypted, past, more than a year, empty, over the limit;
+  - not sent before its time, sent at it as the sender (the body, a file, the reply), then never again;
+  - edited (text, time) before; refused after it was sent; cancel removes its files; Send now;
+  - at the send time: left the room (`notMember`), archived (`archived`), the sender blocked the room (`blocked`),
+    each `CsmFailed` with a `ChatScheduleFailed` notification; the other person blocked the sender: sent and hidden
+    from them;
+  - a bridged room (a `ChatRoomBridge` out): its `ChatBridgeDelivery` written at the send time;
+  - `clean#PendingAttachments` leaves a scheduled message's file;
+  - `set#Reminder` refused for a room the user cannot read, a past time and over the limit; it replaces a pending one;
+  - `get#ChatSchedule` with a plain room's snippet and none for an encrypted room's;
+  - `send#DueReminders`: a `CuaReminder` Activity row (`find#ChatActivity` kind `reminder`), a `PokReminder` row for
+    the user's device with no snippet in an encrypted room, nothing on a second run, a redacted message and a room
+    left `CrmDropped`.
+- Rust: `chat_push_tests.rs`:
+  - `queue#ReminderPush` writes one row a device;
+  - it is sent though the user read past the message, and `queue#ReadClear` leaves it;
+  - its collapse key is not the room's;
+  - it is held during do not disturb.
+- Client, offline: `webroot/test/client/WebrootChat` (`whenChoices` in the device's zone: in 20 minutes, tomorrow at
+  9:00, Monday from Friday, nothing in the past; `scheduledLine`; `reminderOf`; the `schedule` push). The webroot
+  client budget is 40.6 of 48 s.
+- basic-comms client (10.9 of 12 s): at most one small `ShellSync` check on the bundled Chat: Send later in Send's menu
+  and disabled in an encrypted room, Remind me in the message menu. It is measured, and dropped if it does not fit.
+- No acceptance spec.
+
+**Docs.**
+- [Comms](../docs/tools/Comms.md): scheduled send and reminders.
+- [Mobile-Client](../docs/ui/Mobile-Client.md): the long press on Send.
+- [Desktop-Client](../docs/ui/Desktop-Client.md): Send's arrow.
+- [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): a scheduled message goes out through the normal path at its
+  time.
+- The BasicComms README.
+- §7.2 rule 9.
+
+**Done when.** The regression specs above pass within their budgets, and on a real phone the row of §18.4: a long press
+on Send, and a reminder's notification on the phone.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -2315,7 +2537,7 @@ Then the other networks and the rest of §17, in this order:
 3. GroupMe adapter (official API, low risk).
 4. Signal adapter.
 5. iMessage adapter (needs a Mac).
-6. Disappearing messages, invite links, scheduled send, SMS members.
+6. Disappearing messages, invite links, SMS members (scheduled send and reminders: phase 15, designed).
 7. RCS: business RCS in the SMS provider modules is phase 10 (Twilio and Sinch first); then C6c and the personal RCS bridge if §13.4 picks B or C.
 8. The rest of §17.
 
@@ -2335,6 +2557,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 7 | A voice note recorded and played |
 | 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (each provider's group receipts are from its documentation), on Telnyx and on Twilio |
 | 12 | First sign-in on a new phone with the Android app: the device made when Chat opens (and how long the module takes to load), Set up this device in an encrypted room, the recovery key typed and pasted, then on another new phone Verify with the desktop by emoji, older messages readable after each; My devices in the app at the phone's width, with the keyboard up and in dark mode; a direct chat started from the phone with a person who has a device is encrypted, and with one who has none is plain |
+| 15 | A long press on Send opens Send later (and its vibration); a message scheduled from the phone arrives at its time with the app closed; a reminder's notification on the phone at its time, with the app closed and during do not disturb (held, then shown) |
 
 ## 19. Decisions and open questions
 
