@@ -65,6 +65,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::chat_push::wake_chat_push",
         "moqui_core::service::chat_schedule::run_as_sender",
         "moqui_core::service::contacts::filter_contact_addresses",
+        "moqui_core::service::contacts::find_contact_people",
         "moqui_core::service::content::gc_content_blobs",
         "moqui_core::service::content::migrate_db_resource_blobs",
         "moqui_core::service::edge::add_edge_host",

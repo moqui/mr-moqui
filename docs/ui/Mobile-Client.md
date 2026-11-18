@@ -327,7 +327,10 @@ and `contact_names`.
   asks, after a dialog that says why; the names never ask (a room list opened is not a use), and the app does not ask
   again by itself: the notification check's Contacts row asks on a tap, or opens the app's settings once Android no
   longer asks. Contacts allowed later (the question, or Android's settings while the app was away) name the rooms again
-  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`).
+  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`). The phone's contacts name a person's rooms
+  only; they group nothing (people across networks, [Comms](../tools/Comms.md#people-across-networks)). In a person's
+  room the composer's network button opens their ways as a sheet from the bottom, and the People tab's card fills the
+  details pane, its Add a full-screen dialog.
 
 ## Chat notifications
 
