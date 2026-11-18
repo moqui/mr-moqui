@@ -342,6 +342,43 @@ impl MobileHost {
         }
     }
 
+    /// A room's invite link from its join page (`org.moqui.mobile:/join`, [`crate::join`]): its page in the shell of an
+    /// account on its host (the current one when it is there), where the person presses Join; with none, the shell says so.
+    pub(crate) fn open_join_link(&self, host: &str, token: &str) {
+        let Ok(state) = moqui_client_tauri::state(&self.app) else {
+            return;
+        };
+        let (accounts, current) = {
+            let accounts = moqui_lib::sync::lock(state.core.accounts());
+            (
+                accounts.list().to_vec(),
+                accounts.current().map(|account| account.id.clone()),
+            )
+        };
+        let Some(account) = crate::join::account_for(&accounts, current.as_deref(), host) else {
+            log::warn!("moqui-mobile: a join link of {host} is not opened: no account on that server here");
+            let text = serde_json::to_string(&format!("This invite is for {host}, and this app has no account there"))
+                .unwrap_or_else(|_| "\"\"".to_string());
+            self.eval(&format!(
+                "window.moqui && moqui.notifyMessages && moqui.notifyMessages([{{type: 'warning', message: \
+                 (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize({text}) : {text})}}])"
+            ));
+            return;
+        };
+        let path = crate::join::join_path(token);
+        if current.as_deref() != Some(account.as_str()) {
+            if let Err(err) = moqui_client_tauri::commands::switch_account(&state, &account) {
+                log::warn!("moqui-mobile: a join link is not opened: {err}");
+                return;
+            }
+            // the shell is loading for the account, and takes it then
+            *moqui_lib::sync::lock(&state.open_pending) = Some(path);
+        } else {
+            self.open_shell_path(&path);
+        }
+        log::info!("moqui-mobile: a room's join page opens in the shell");
+    }
+
     /// A chat notification's tap (a room link this app signed): the room of `account` at the message, in the shell; the
     /// account, which must be one signed in here, becomes the current one first.
     pub(crate) fn open_room(&self, account: &str, room: &str, seq: Option<i64>) {

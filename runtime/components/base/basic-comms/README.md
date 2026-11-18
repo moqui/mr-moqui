@@ -7,7 +7,8 @@ usable with only the framework ([plans/archive/Comms-Framework.md](../../../../p
 | Path | What |
 | --- | --- |
 | `screen/BasicComms.xml`, `screen/BasicComms/` | The app root and its screens (`.qvue` with `.tui.json` twins beside their XML) |
-| `screen/System/` | Admin: Voice (trunks, numbers, caller IDs, fraud limits, emergency setup, desk and soft phones, ring groups, schedules, IVR menus, queues, the spam filter of texts and its rules), Chat Bridges ([docs/interfaces/Chat-Bridges.md](../../../../docs/interfaces/Chat-Bridges.md)) and Push Health (every user's push devices and their counts; [docs/ui/Qvt-Client.md](../../../../docs/ui/Qvt-Client.md#install-and-web-push)), mounted into the tools System app by `MoquiConf.xml` |
+| `screen/ChatJoin.xml`, `ChatJoin.qvue` | A room's invite link page, `/join/<token>` (the token-route `join` of `MoquiConf.xml`): sign in, Join or Ask to join ([Comms](../../../../docs/tools/Comms.md)) |
+| `screen/System/` | Admin: Voice (trunks, numbers and which carry rooms' text members, caller IDs, fraud limits, emergency setup, desk and soft phones, ring groups, schedules, IVR menus, queues, the spam filter of texts and its rules), Chat Bridges ([docs/interfaces/Chat-Bridges.md](../../../../docs/interfaces/Chat-Bridges.md)) and Push Health (every user's push devices and their counts; [docs/ui/Qvt-Client.md](../../../../docs/ui/Qvt-Client.md#install-and-web-push)), mounted into the tools System app by `MoquiConf.xml` |
 | `screen-extend/tools/screen/System/Home.xml` | Voice, Chat Bridges and Push Health in the Integration group of the System home's navigation |
 | `service/org/moqui/comms/` | Screen services (`InboxServices` with `run#Operation`, `ComposeServices`, `CommsHomeServices`, `ChatScreenServices`, `MailSettingsServices`, `CommsServices`, `FilePickerServices` for Attach from Files and Save to Files) and the provider interfaces (`ProviderInterfaces`) |
 | `template/` | Transitions shared by screens (`FilePickerTransitions.xml`: the drive picker; `VoiceTransitions.xml`: the Voice screens' user and target search; `DialerTransitions.xml`: the Dialer's, for Calls/Dialer and the tray's Panel/Dialer; `UploadTransitions.xml`: files sent in chunks, for Compose and Chat; `ChatScheduleTransitions.xml`: Chat's Send later and reminders; `ChatCalTransitions.xml`: Chat's events with RSVP, [Comms](../../../../docs/tools/Comms.md)) |
@@ -28,7 +29,8 @@ connection", the gaps of what is kept) shows only there
 ([docs/ui/Desktop-Client.md](../../../../docs/ui/Desktop-Client.md#bundled-screens-and-app-windows)). A room's details (people, media,
 files, voice notes, links, reactions, pinned) and voice notes: [Comms](../../../../docs/tools/Comms.md#room-details); the palette's Chat rooms, Activity,
 Threads, the rail's groups and the mail line on a person's row: [Comms](../../../../docs/tools/Comms.md#chat-desktop); disappearing messages and
-view-once: [Comms](../../../../docs/tools/Comms.md#disappearing-messages). After a change to one of them:
+view-once: [Comms](../../../../docs/tools/Comms.md#disappearing-messages); a person's rooms across networks, the network button and the person
+card: [Comms](../../../../docs/tools/Comms.md#people-across-networks). After a change to one of them:
 `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
 
 Test ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test basic-comms`,

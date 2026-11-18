@@ -73,6 +73,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="org.moqui.mobile" android:path="/room" />
             </intent-filter>
+            <!-- A chat room's invite link from its join page's "Open in the MR Moqui app" (org.moqui.mobile:/join?host=&token=,
+                src/join.rs): the page in the account on that host (src/lib.rs), where the person presses Join. BROWSABLE: a
+                web page opens it; it only opens a page. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="org.moqui.mobile" android:path="/join" />
+            </intent-filter>
         </activity>
 
         <!-- The ring on the screen, over the lock screen; its own task, so it never shows the app's pages. -->

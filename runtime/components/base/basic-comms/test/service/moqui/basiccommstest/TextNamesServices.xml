@@ -13,4 +13,11 @@
             if (n.startsWith('+1555222')) contactList = [{name: 'Spec contact ' + n.slice(-4), kind: 'person', url: null, detail: 'BasicCommsTexts'}]
         ]]></script></actions>
     </service>
+    <service verb="get" noun="ChatTarget">
+        <description>The ChatJoin spec's chat-target: a user whose id starts with BASIC_COMMS_REFUSED is kept from everyone.</description>
+        <implements service="org.moqui.comms.ProviderInterfaces.chat#Target"/>
+        <actions><script><![CDATA[
+            refusedUserIdList = Array.from(userIdList || []).map((id) => String(id)).filter((id) => id.startsWith('BASIC_COMMS_REFUSED'))
+        ]]></script></actions>
+    </service>
 </services>

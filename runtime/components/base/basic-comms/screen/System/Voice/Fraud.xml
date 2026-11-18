@@ -29,7 +29,8 @@ along with this software (see the LICENSE.md file). If not, see
                 authFailureWindowSeconds:authFailureWindowSeconds, authBlockSeconds:authBlockSeconds, homeCountryCode:homeCountryCode,
                 emergencyNumbers:emergencyNumbers, premiumPrefixes:premiumPrefixes, smsMaxPerDay:smsMaxPerDay,
                 smsMaxPerUserPerDay:smsMaxPerUserPerDay, smsSystemMaxPerDay:smsSystemMaxPerDay, smsSystemNumber:smsSystemNumber,
-                smsMaxPromotionalPerNumber:smsMaxPromotionalPerNumber}"/>
+                smsMaxPromotionalPerNumber:smsMaxPromotionalPerNumber, smsRoomMaxMembers:smsRoomMaxMembers, smsRoomMaxPerDay:smsRoomMaxPerDay,
+                smsRoomAddsPerDay:smsRoomAddsPerDay}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Limits saved</message></if></actions>
         <default-response url="."/>
     </transition>
@@ -90,6 +91,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="smsSystemNumber"><default-field title="System texts from" tooltip="Sign-in codes and other texts of the system go from this number">
                     <drop-down allow-empty="true"><list-options list="textNumberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                 <field name="smsMaxPromotionalPerNumber"><default-field title="Promotional texts in a day per number" tooltip="A campaign's texts from one of our numbers: counted for the number, apart from the system's texts"><text-line size="6"/></default-field></field>
+                <field name="smsRoomMaxMembers"><default-field title="Text members a room" tooltip="Outside numbers in a chat room by text: each message there is a text to each of them"><text-line size="6"/></default-field></field>
+                <field name="smsRoomMaxPerDay"><default-field title="Texts in a day per room" tooltip="A room's texts to its text members, also counted in the texts of everyone"><text-line size="6"/></default-field></field>
+                <field name="smsRoomAddsPerDay"><default-field title="Text members a person adds in a day"><text-line size="6"/></default-field></field>
                 <field name="submitButton"><default-field title="Save limits"><submit/></default-field></field>
                 <field-layout>
                     <field-row><field-ref name="internationalEnabled"/><field-ref name="premiumEnabled"/></field-row>
@@ -101,6 +105,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <field-row><field-ref name="smsMaxPerDay"/><field-ref name="smsMaxPerUserPerDay"/></field-row>
                     <field-row><field-ref name="smsSystemMaxPerDay"/><field-ref name="smsSystemNumber"/></field-row>
                     <field-ref name="smsMaxPromotionalPerNumber"/>
+                    <field-row><field-ref name="smsRoomMaxMembers"/><field-ref name="smsRoomMaxPerDay"/></field-row>
+                    <field-ref name="smsRoomAddsPerDay"/>
                     <field-ref name="submitButton"/>
                 </field-layout>
             </form-single>

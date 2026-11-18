@@ -386,6 +386,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="routeId"/>
             <parameter name="emergencyLocationId"/>
             <parameter name="description"/>
+            <parameter name="roomTextsEnabled"><description>Y: the number may carry rooms' text members (plans/Comms-Messaging.md
+                §18.3 phase 18); left as it is when not given</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="phoneNumber"/>
@@ -516,6 +518,9 @@ along with this software (see the LICENSE.md file). If not, see
                 SMS bridge: one on an RCS bridge is refused, reasonCode systemNumber)</description></parameter>
             <parameter name="smsMaxPromotionalPerNumber"><description>Promotional texts one of our numbers sends a day (a
                 campaign's, apart from the system's own budget)</description></parameter>
+            <parameter name="smsRoomMaxMembers"><description>Text members a room has at most (plans/Comms-Messaging.md §18.3 phase 18)</description></parameter>
+            <parameter name="smsRoomMaxPerDay"><description>Texts a room sends its text members a day</description></parameter>
+            <parameter name="smsRoomAddsPerDay"><description>Text members one user adds a day</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="policy" type="Map"/>

@@ -38,6 +38,7 @@ mod calls;
 mod commands;
 mod dial;
 mod host;
+mod join;
 mod keystore;
 mod native;
 mod push;
@@ -366,6 +367,17 @@ fn on_event(app: &AppHandle, event: RunEvent) {
                             std::thread::spawn(move || host.open_room_link(&url));
                         }
                         None => log::info!("A room link before the app was set up: the shell opens as it is"),
+                    }
+                } else if join::is_join_link(&url) {
+                    // a room's invite link from its join page (plans/Comms-Messaging.md §18.3 phase 17): only a page of a
+                    // server the app has an account on opens, where the person presses Join
+                    match (join::join_link_of(&url), app.try_state::<Arc<MobileHost>>()) {
+                        (Some((host, token)), Some(state)) => {
+                            let state = Arc::clone(&state);
+                            std::thread::spawn(move || state.open_join_link(&host, &token));
+                        }
+                        (None, _) => log::warn!("A join link that is not one is refused"),
+                        (_, None) => log::info!("A join link before the app was set up: the shell opens as it is"),
                     }
                 } else if calls::is_call_link(&url) {
                     // the activity is exported, so any app may send a call link: only one the native code made for
