@@ -83,13 +83,14 @@ fn condition_actions(condition: &str, context: &serde_json::Map<String, Json>) -
 
 /// `eval#Condition`: a rule's condition (an expression, or a condition element) against `against` (a JSON object: the
 /// service's last Try, a record), run in the sim (10's "later": a SECA's condition against its service's last Try, an
-/// EECA's against a record). Answers whether it holds, and its messages and log.
+/// EECA's against a record). Answers whether it holds, and its messages and log. The extend tier, as `try#Snippet`: a
+/// condition is an expression evaluated in the server, which the view tier's browse and read do not include (SEC-DEV-02).
 fn eval_condition(
     ec: &ExecutionContext,
     service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
-    let context = Context::of(ec, Tier::View)?;
+    let context = Context::of(ec, Tier::Extend)?;
     if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "a condition is tried in the sim, which this server has not (it needs embedded Postgres)",

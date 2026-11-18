@@ -186,6 +186,44 @@ const DENIED_ATTRIBUTES: &[&str] = &[
     "is",
 ];
 
+/// `<meta name>` values a theme may use. Others are refused, `referrer` above all: it could loosen the server's
+/// `Referrer-Policy` and send a page address that carries a bearer value to a linked host (SEC-PSS-62).
+const META_NAMES: &[&str] = &[
+    "viewport",
+    "description",
+    "keywords",
+    "author",
+    "robots",
+    "googlebot",
+    "theme-color",
+    "color-scheme",
+    "application-name",
+    "generator",
+    "format-detection",
+];
+
+/// Whether a theme may have this `<meta>`: a `charset`, a listed `name` or a card's `twitter:` one, an Open Graph
+/// `property`, or microdata's `itemprop`. `http-equiv` is a denied attribute wherever it stands.
+fn meta_allowed(tag: &Tag) -> bool {
+    let value = |name: &str| {
+        tag.attrs
+            .iter()
+            .find(|attribute| &*attribute.name.local == name)
+            .map(|attribute| attribute.value.trim().to_ascii_lowercase())
+    };
+    if value("charset").is_some() || value("itemprop").is_some() {
+        return true;
+    }
+    if let Some(name) = value("name") {
+        return META_NAMES.contains(&name.as_str()) || name.starts_with("twitter:");
+    }
+    value("property").is_some_and(|property| {
+        ["og:", "article:", "product:", "profile:", "book:", "music:", "video:"]
+            .iter()
+            .any(|prefix| property.starts_with(prefix))
+    })
+}
+
 /// `<link rel>` values a theme may use: the stylesheet and icon loads, preload, and navigation relations.
 const LINK_RELS: &[&str] = &[
     "stylesheet",
@@ -393,6 +431,16 @@ impl Sink<'_> {
                     ),
                 ));
             }
+        }
+        if name == "meta" && !meta_allowed(tag) {
+            state.problems.push(problem(
+                line,
+                "unsafe-markup",
+                format!(
+                    "a theme's <meta> is a charset, an Open Graph property, itemprop, or a name of {}",
+                    META_NAMES.join(", ")
+                ),
+            ));
         }
         if tag.self_closing {
             return TokenSinkResult::Continue;

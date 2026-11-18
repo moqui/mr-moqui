@@ -3,9 +3,11 @@
  * The service worker of the /qapps PWA (plans/archive/Comms-Framework.md §7.2 P0). Served uncached at the site root
  * (screen/static_files.rs), registered by js/WebrootPush.js.
  *
- * Caching: only versioned shell assets (a `v` parameter, or under /libs/), which never change at a URL. Nothing
- * else: no screen render, transition, /rest, socket or any response that depends on who is signed in, so a shared
- * device keeps no private page and an account switch shows nothing of the last user's.
+ * Caching: only versioned shell assets, which never change at a URL: a file under /libs/, or a static file (by its
+ * extension) with a `v` parameter, sent with no Authorization header and answered whole, same-origin and
+ * `Cache-Control: public` (as the server marks its static files). Nothing else: no screen render, transition, /rest,
+ * web script, download, socket or any response that depends on who is signed in, so a shared device keeps no private
+ * page and an account switch shows nothing of the last user's (SEC-CLI-02).
  *
  * Push: a push shows a notification (a browser may revoke push from a worker that shows none). The payload has the
  * title, link, topic and tag of a notification, never its body. A chat push (kind message) has its room, sender, count
@@ -15,7 +17,8 @@
  * focuses an open window and takes it to the link, or opens one. Push is a hint: the notification list is the
  * server's, and the page reads it again when it comes back.
  */
-const CACHE = "moqui-shell-v1"
+// v2: the narrower rule of SEC-CLI-02; activating it drops what v1 kept
+const CACHE = "moqui-shell-v2"
 
 self.addEventListener("install", () => self.skipWaiting())
 
@@ -28,11 +31,31 @@ self.addEventListener("activate", event => {
     )
 })
 
-function cacheable(request) {
-    if (request.method !== "GET") return false
+// A static file by its name: script, style, source map, font, image or wasm (no data, page or document type).
+const STATIC_FILE = /\.(?:m?js|css|map|woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|ico|wasm)$/i
+// Paths whose answers are a signed-in user's whatever their name.
+const DYNAMIC_PREFIXES = ["/rest/", "/rpc/", "/apps/", "/qapps/", "/dav/", "/git/", "/xmpp-upload/", "/s/", "/u/", "/r/"]
+
+function cacheable(request, origin = self.location.origin) {
+    if (request.method !== "GET" || request.headers.has("Authorization")) return false
     const url = new URL(request.url)
-    if (url.origin !== self.location.origin) return false
-    return url.pathname.startsWith("/libs/") || url.searchParams.has("v")
+    if (url.origin !== origin) return false
+    const path = url.pathname
+    if (path.startsWith("/libs/")) return true
+    if (DYNAMIC_PREFIXES.some(prefix => path.startsWith(prefix))) return false
+    return url.searchParams.has("v") && STATIC_FILE.test(path)
+}
+
+// Only a whole, same-origin answer the server marked public is kept.
+function keepable(response) {
+    const control = response.headers.get("Cache-Control") || ""
+    return (
+        response.ok &&
+        response.status === 200 &&
+        response.type === "basic" &&
+        /\bpublic\b/i.test(control) &&
+        !/private|no-store|no-cache/i.test(control)
+    )
 }
 
 self.addEventListener("fetch", event => {
@@ -44,11 +67,7 @@ self.addEventListener("fetch", event => {
                 found =>
                     found ||
                     fetch(request).then(response => {
-                        // only a whole, public, same-origin answer is kept
-                        const control = response.headers.get("Cache-Control") || ""
-                        if (response.ok && response.type === "basic" && !/private|no-store/i.test(control)) {
-                            cache.put(request, response.clone())
-                        }
+                        if (keepable(response)) cache.put(request, response.clone())
                         return response
                     })
             )

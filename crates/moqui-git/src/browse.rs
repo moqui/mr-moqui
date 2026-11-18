@@ -108,8 +108,9 @@ impl GitProvider {
         let store = repo.store.as_ref();
         let mut refs = Vec::new();
         for (name, target) in store.list_refs(prefix)? {
-            // the heads of merge requests are not branches or tags: get#MergeRequest gives each
-            if name.starts_with(super::reach::MERGE_REQUEST_REFS) {
+            // only branches and tags: the heads of merge requests are get#MergeRequest's, and the other refs of a store
+            // are its own (a mirror's fetch staged under refs/moqui-incoming/ before its gate passes it: SEC-GIT-12)
+            if !(name.starts_with("refs/heads/") || name.starts_with("refs/tags/")) {
                 continue;
             }
             let tag = match store.find(&target)? {
@@ -138,7 +139,9 @@ impl GitProvider {
     /// The commit a revision names (see [`ops::resolve_revision`]), with tags peeled. A revision that is an object
     /// id, or the start of one, names a commit only when a ref the repository's readers read reaches it
     /// ([`super::reach`]): its store may hold the commits of other repositories of its fork network and the heads of
-    /// hidden merge requests. The head ref of a hidden merge request names nothing either.
+    /// hidden merge requests. The head ref of a hidden merge request names nothing either, nor a full ref name outside
+    /// the branches, the tags and the merge request heads: the store's own refs (a mirror's fetch staged under
+    /// `refs/moqui-incoming/` before its gate passes it) are no reader's (SEC-GIT-12).
     pub(crate) fn resolve_commit(&self, repository_id: &str, revision: &str) -> Result<Option<ObjectId>, Error> {
         let repo = self.repo(repository_id)?;
         let store = repo.store.as_ref();
@@ -146,6 +149,12 @@ impl GitProvider {
         let by_name = if revision.is_empty() || revision == "HEAD" {
             store.read_ref(&ops::branch_ref(&repo.definition.branch))?
         } else if revision.starts_with("refs/") {
+            if !(revision.starts_with("refs/heads/")
+                || revision.starts_with("refs/tags/")
+                || revision.starts_with(super::reach::MERGE_REQUEST_REFS))
+            {
+                return Ok(None);
+            }
             match store.read_ref(revision)? {
                 Some(_)
                     if revision.starts_with(super::reach::MERGE_REQUEST_REFS)
