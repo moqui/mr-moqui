@@ -1129,6 +1129,16 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     assert.deepEqual(sentAs("mms"), ["MMS: the phone did not take RCS"]);
     assert.deepEqual(sentAs(null), [], "not known yet, or an SMS bridge's");
     assert.deepEqual(["rcs", "sms", "mms", null].map((path) => chat.pathName({ path })), ["", "SMS", "MMS", ""]);
+    // and what can read it, by the way it went (§16.5), the provider named; read past delivered (§18.3 phase 13)
+    const viaTwilio = (path, receipt) => event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "RCS", state: "accepted", receipt: receipt || "delivered", path, adapterName: "rcs-twilio" }] } });
+    const lineOf = (item, key) => chat.messageInfoLines(chat.messageInfo(item, members, { me: "ann" }), when).filter((line) => line.key === key).map((line) => line.text);
+    assert.deepEqual(lineOf(viaTwilio("rcs"), "encryption"), ["Encrypted in transit only. Twilio, Google, carriers and this server can read it."]);
+    assert.deepEqual(lineOf(viaTwilio(null), "encryption"), ["Encrypted in transit only. Twilio, Google, carriers and this server can read it."], "not known yet: RCS's");
+    assert.deepEqual(lineOf(viaTwilio("sms"), "encryption"), ["The phone did not support RCS. This message went as SMS."]);
+    assert.deepEqual(lineOf(viaTwilio("rcs", "read"), "delivered"), ["Read: the network's receipt says so"]);
+    assert.deepEqual(lineOf(rcs("rcs"), "encryption").length, 1, "an RCS path with no adapter named: the provider");
+    assert.deepEqual(["rcs-twilio", "sms-sinch", "sms", "rcs-telnyx", "xmpp", null].map((name) => chat.providerName(name)), ["Twilio", "Sinch", "Telnyx", "Telnyx", "", ""]);
     // a thread: Sent and Delivered only, it has no read markers
     const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
     const thread = chat.messageInfo(reply, members, { me: "ann" });
@@ -1141,6 +1151,35 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     // a message that came in from a network says where from
     const inbound = chat.messageInfo(event({ eventSeq: 5, senderUserId: null, senderExternal: { network: "sms", networkName: "SMS" } }), members, { me: "ann" });
     assert.equal(chat.messageInfoLines(inbound, when).find((line) => line.key === "from").text, "SMS");
+});
+
+test("an RCS room's label (§16.5): in transit only from the brand's verified agent, its provider named, never a lock, in place of the SMS banner", () => {
+    const rcs = chat.e2eeLabel({ roomTypeEnumId: "CrtExternal", bridges: [{ network: "rcs", networkName: "RCS", adapterName: "rcs-sinch", encryption: "Transport" }] });
+    assert.deepEqual([rcs.state, rcs.lock, rcs.icon, rcs.badge, rcs.hint], ["rcs", false, "sym_o_lock_open", "sym_o_verified", "RCS message"]);
+    assert.equal(rcs.text, "RCS Business - not end-to-end encrypted");
+    assert.equal(rcs.banner, "Encrypted in transit only. Sinch, Google, carriers and this server can read it.");
+    assert.ok(chat.e2eeLabel({ bridgeNetworks: [{ network: "rcs" }] }).banner.startsWith("Encrypted in transit only. The provider,"), "a row with no adapter named");
+    assert.equal(chat.e2eeLabel({ roomTypeEnumId: "CrtExternal" }).state, "sms", "an SMS room keeps its banner");
+    // only an RCS bridge that sends out; another bridge of the room is said too
+    assert.equal(chat.e2eeLabel({ roomTypeEnumId: "CrtExternal", bridges: [{ network: "rcs", outbound: false }] }).state, "sms", "an inbound-only RCS bridge");
+    const both = chat.e2eeLabel({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "rcs", adapterName: "rcs-twilio" }, { network: "matrix", networkName: "Matrix" }] });
+    assert.equal(both.state, "rcs");
+    assert.ok(both.banner.startsWith("Encrypted in transit only. Twilio,") && both.banner.endsWith("The bridge reads messages to pass them on."), both.banner);
+    // a card the provider refused went as its text, and Info says so
+    const refused = chat.messageInfoLines(chat.messageInfo({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "RCS", state: "accepted", receipt: "delivered", path: "rcs", adapterName: "rcs-twilio", note: "richRefused" }] } }, [], { me: "ann" }), String);
+    assert.deepEqual(refused.filter((line) => line.key === "deliveryNote").map((line) => line.text), ["The provider refused the card; its text went instead."]);
+});
+
+test("a rich message's text form (§18.3 phase 13) is the server's (ChatRich.js): words, each card, links and calls, then the replies", () => {
+    assert.equal(chat.richFallback({ kind: "text", text: "Table for two?", suggestions: [{ type: "reply", text: "Yes" }, { type: "reply", text: "No" }] }),
+        "Table for two?\n\nReply: Yes, No");
+    assert.equal(chat.richFallback({ kind: "card", cards: [{ title: "Your order shipped", description: "Arrives Tuesday", suggestions: [
+        { type: "reply", text: "Thanks" }, { type: "url", text: "Track", url: "https://example.test/track/7" }, { type: "dial", text: "Call us", phone: "+15550109999" }] }] }),
+        "Your order shipped\nArrives Tuesday\nTrack: https://example.test/track/7\nCall us: +15550109999\nReply: Thanks");
+    assert.equal(chat.richFallback({ kind: "carousel", cards: [{ title: "Jacket", description: "Light", suggestions: [{ type: "reply", text: "Save" }] },
+        { description: "Roomy", suggestions: [{ type: "reply", text: "Save" }] }] }), "1. Jacket\nLight\nReply: Save\n\n2. Roomy\nReply: Save");
+    assert.equal(chat.richFallback({ kind: "card", cards: [{ description: "Words only", suggestions: [] }] }), "Words only");
 });
 
 test("before a send (§6.1 rule 3): a verified person's device not verified is a problem unless let through for the room by its key; one verified by emoji passes; a changed identity until let through by its master key", async () => {

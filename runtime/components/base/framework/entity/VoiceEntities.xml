@@ -905,7 +905,7 @@ along with this software (see the LICENSE.md file). If not, see
     </extend-entity>
     <extend-entity entity-name="ChatBridgeDelivery" package="moqui.chat">
         <field name="receiptStatus" type="text-short"><description>What the network's delivery receipt last said: sent,
-            delivered, failed or unconfirmed (C4-SMS)</description></field>
+            delivered, read (RCS), failed or unconfirmed (C4-SMS)</description></field>
         <field name="receiptDate" type="date-time"/>
         <field name="recipientReceipts" type="text-medium"><description>A group text's receipts, one a recipient: JSON of
             number to sent, delivered, failed or unconfirmed (plans/Comms-Messaging.md §9); receiptStatus is then theirs
@@ -913,6 +913,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="deliveryPath" type="text-short"><description>An RCS bridge's: the way the message went, rcs, sms or
             mms (the fallback from our number), from the provider's answer or report (ChatBridgeServices.note#DeliveryPath;
             plans/Comms-Messaging.md §16); empty until known, and on an SMS bridge</description></field>
+        <field name="providerContentId" type="text-short"><description>A content the adapter made at its network for this
+            send (an RCS bridge's Twilio Content resource of a rich message, HX...), until it is deleted: by the message's
+            final receipt, else by the daily sweep after 2 days (ChatBridgeServices.note#DeliveryContent,
+            clean#ProviderContent; plans/Comms-Messaging.md §18.3 phase 13)</description></field>
+        <field name="providerContentTries" type="number-integer"><description>The sweeps that could not delete
+            providerContentId; at 5 it is let go</description></field>
+        <field name="deliveryNote" type="text-short"><description>What the adapter changed of the send: richRefused (the
+            provider refused the cards, and their text went)</description></field>
+        <field name="deliveryNoteText" type="text-medium"><description>The provider's words for deliveryNote</description></field>
         <index name="CHAT_DELIVERY_REMOTE"><index-field name="chatBridgeId"/><index-field name="remoteEventId"/></index>
     </extend-entity>
     <!-- ========== end C4-SMS ========== -->

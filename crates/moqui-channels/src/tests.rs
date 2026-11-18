@@ -103,6 +103,7 @@ enum Reply {
 
 #[derive(Clone, Debug)]
 struct Seen {
+    method: String,
     path: String,
     headers: Vec<(String, String)>,
     body: String,
@@ -209,7 +210,8 @@ fn serve(mut stream: TcpStream, state: &Mutex<FakeState>) {
         let _ = stream.write_all(body);
         let _ = stream.flush();
     };
-    if method == "GET" {
+    // a GET is a file the fake holds, but a search of Twilio's Content API (v2) is answered as a send is
+    if method == "GET" && !path.starts_with("/v2/Content") {
         let file = state
             .lock()
             .unwrap()
@@ -225,6 +227,7 @@ fn serve(mut stream: TcpStream, state: &Mutex<FakeState>) {
     let reply = {
         let mut state = state.lock().unwrap();
         state.sends.push(Seen {
+            method: method.clone(),
             path: path.clone(),
             headers: headers.clone(),
             body: body.clone(),
