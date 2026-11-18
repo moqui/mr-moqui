@@ -211,6 +211,50 @@ fn rotate_when_due(server: &str, answer: &serde_json::Value, token: &mut String,
     }
 }
 
+/// Hold the step user for this runner process alone: an exclusive lock on `moqui-ci-step-user-<uid>.lock` in `/run`
+/// (or `/var/run`), root's, kept while the process runs. Before it reads a job's files a runner kills every process of
+/// its step user that started during the job, so a second runner with the same step user would kill the first's
+/// steps: it is refused. The lock file, opened `O_NOFOLLOW`; `None` (with a warning) where there is no such directory
+/// or no lock can be taken.
+#[cfg(unix)]
+fn hold_step_user(user: &runner::StepUser) -> Result<Option<std::fs::File>, Error> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let Some(dir) = ["/run", "/var/run"].into_iter().map(Path::new).find(|dir| dir.is_dir()) else {
+        eprintln!(
+            "moqui ci-run poll: no /run to hold --step-user {} in: give each runner a step user of its own",
+            user.name
+        );
+        return Ok(None);
+    };
+    let path = dir.join(format!("moqui-ci-step-user-{}.lock", user.uid));
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits().cast_signed())
+        .open(&path)
+        .map_err(|err| Error::new(format!("moqui ci-run poll: {}: {err}", path.display())))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Err(Error::new(format!(
+            "moqui ci-run poll: another runner runs its steps as {} (it holds {}): each runner needs a step user of its \
+             own, as it kills that user's processes of a job before it reads the job's files",
+            user.name,
+            path.display()
+        ))),
+        Err(std::fs::TryLockError::Error(err)) => {
+            eprintln!(
+                "moqui ci-run poll: {} was not locked ({err}): give each runner a step user of its own",
+                path.display()
+            );
+            Ok(None)
+        }
+    }
+}
+
 /// The names `--pass-env NAME,...` lets through to a registered runner's steps (repeatable).
 fn pass_env(args: &[String]) -> Vec<String> {
     args.iter()
@@ -275,6 +319,11 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
             // the step user must run this binary, which reads the reports, artifacts and caches as that user: asked
             // once here, so a runner that could not read them takes no job
+            #[cfg(unix)]
+            let _held = match &step_user {
+                Some(user) => hold_step_user(user)?,
+                None => None,
+            };
             #[cfg(unix)]
             if let Some(user) = &step_user {
                 std::fs::create_dir_all(&work)

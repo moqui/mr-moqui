@@ -997,6 +997,7 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
             })?;
             let dirs: Vec<PathBuf> = found.found.into_iter().map(|(path, _)| path).collect();
             if dirs.is_empty() {
+                log.line(None, &format!("Cache {key}: nothing at {path}"))?;
                 continue;
             }
             let scratch = Scratch::new(&options.workspace, "cache-out.tar.gz");
