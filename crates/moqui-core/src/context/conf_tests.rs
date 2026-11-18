@@ -529,3 +529,20 @@ fn an_add_on_element_merges_as_settings_and_the_frameworks_are_known() {
         Some("/c")
     );
 }
+
+/// A `default-property` of a component or runtime conf is kept in the merge, each one whole, so the boot's refusal of
+/// retired properties names it (plans/archive/Conf-Paths.md, phase 7).
+#[test]
+fn a_default_property_in_a_later_conf_reaches_the_refusal() {
+    let base = MNode::parse_text("base", "<moqui-conf><instance purpose=\"dev\"/></moqui-conf>").unwrap();
+    let over = MNode::parse_text(
+        "over",
+        r#"<moqui-conf><default-property name="webapp_http_port" value="9999"/>
+            <default-property name="entity_ds_host" value="db"/></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &over);
+    assert_eq!(base.children_named("default-property").len(), 2);
+    let err = super::super::conf_env::refuse_retired(&base).unwrap_err().to_string();
+    assert!(err.contains("webapp_http_port") && err.contains("entity_ds_host"), "{err}");
+}

@@ -268,8 +268,12 @@ pub fn merge_conf(base: &MNode, over: &MNode) {
 fn merge_component_elements(base: &MNode, over: &MNode) {
     for over_child in over.children() {
         let name = over_child.name().to_string();
-        // a default-property is refused at boot (conf_env::refuse_retired), not merged
-        if name == "component-list" || name == "default-property" || super::conf_schema::is_known_element(&name) {
+        // a default-property is kept whole, each one, so the boot's refusal names it (conf_env::refuse_retired)
+        if name == "default-property" {
+            base.append_node(over_child.deep_copy());
+            continue;
+        }
+        if name == "component-list" || super::conf_schema::is_known_element(&name) {
             continue;
         }
         let Some(base_child) = base.first_named(&name) else {
