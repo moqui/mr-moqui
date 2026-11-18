@@ -21,7 +21,7 @@ use gix::objs::Kind;
 use gix::ObjectId;
 
 use super::diff::{self, FileChange, FileDiff};
-use super::hosting::MAX_COMPARE_FILES;
+use super::hosting::{MAX_COMPARE_COUNTED_FILES, MAX_COMPARE_FILES};
 use super::ops::{self, CommitDetails, TagDetails};
 use super::revwalk::{self, Walk};
 use super::GitProvider;
@@ -295,17 +295,23 @@ impl GitProvider {
             return Ok(None);
         };
         let mut diffs = Vec::new();
-        // as a comparison: the first files are diffed (`git-server` `commit-max-diff-files`, 300), the rest only listed
-        // (as too large to show)
-        let most = Some(crate::number_setting("commit-max-diff-files", MAX_COMPARE_FILES))
-            .filter(|most| *most > 0)
-            .unwrap_or(MAX_COMPARE_FILES);
+        // as a comparison: the first files are diffed (`git-server` `commit-max-diff-files`, 300), the next ones up to
+        // MAX_COMPARE_COUNTED_FILES counted (their hunks without lines), the rest only listed (as too large to show)
+        let most = commit_max_diff_files();
         for change in diff::commit_changes(store, &ops::read_commit(store, &id)?)? {
             if path.is_some_and(|path| path != change.path) {
                 continue;
             }
             let file = if diffs.len() < most {
                 diff::file_diff(store, &change)?
+            } else if diffs.len() < MAX_COMPARE_COUNTED_FILES.max(most) {
+                let mut file = diff::file_diff(store, &change)?;
+                if let Some(text) = &mut file.diff {
+                    for hunk in &mut text.hunks {
+                        hunk.lines.clear();
+                    }
+                }
+                file
             } else {
                 FileDiff {
                     binary: false,
@@ -405,4 +411,11 @@ fn changed_path(store: &dyn super::store::GitStore, commit: &ops::CommitInfo, pa
         None => None,
     };
     Ok(here != before)
+}
+
+/// The most files a commit's diff gives the lines of (`git-server` `commit-max-diff-files`, 300).
+pub(crate) fn commit_max_diff_files() -> usize {
+    Some(crate::number_setting("commit-max-diff-files", MAX_COMPARE_FILES))
+        .filter(|most| *most > 0)
+        .unwrap_or(MAX_COMPARE_FILES)
 }
