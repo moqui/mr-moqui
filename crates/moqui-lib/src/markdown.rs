@@ -20,7 +20,10 @@
 //! rendered; it stays a paragraph.
 //!
 //! A base link URL (Java's `sri.baseLinkUrl`, which the wiki screens set to the wiki space) resolves the relative
-//! link and image destinations of the markdown against it. Links inside raw HTML are left as written.
+//! link and image destinations of the markdown against it. Links inside raw HTML are left as written; a link or image
+//! of the markdown itself to a `javascript:` or `vbscript:` URL (a link's `data:` one too) is written as `#`, which
+//! Java's flexmark kept: no markdown needs one, and a wiki page's raw HTML is cleaned when it is saved
+//! (`safe_html::clean_markdown`).
 
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 
@@ -48,6 +51,11 @@ pub fn to_html_mapped(source: &str, mut map: impl FnMut(&str) -> Option<String>)
             id,
         }) => {
             let dest_url = map(&dest_url).map_or(dest_url, CowStr::from);
+            let dest_url = if script_url(&dest_url, true) {
+                CowStr::from("#")
+            } else {
+                dest_url
+            };
             Event::Start(Tag::Link {
                 link_type,
                 dest_url,
@@ -62,6 +70,11 @@ pub fn to_html_mapped(source: &str, mut map: impl FnMut(&str) -> Option<String>)
             id,
         }) => {
             let dest_url = map(&dest_url).map_or(dest_url, CowStr::from);
+            let dest_url = if script_url(&dest_url, false) {
+                CowStr::from("#")
+            } else {
+                dest_url
+            };
             Event::Start(Tag::Image {
                 link_type,
                 dest_url,
@@ -126,6 +139,22 @@ pub fn resolve_link(base: &str, dest: &str) -> Option<String> {
     Some(out)
 }
 
+/// Whether a link (`link`) or image destination of the markdown would run script or carry a document where it is
+/// followed: a `javascript:` or `vbscript:` URL, and for a link a `data:` one, as a browser reads the scheme (ASCII
+/// whitespace and control characters taken out, any case). The renderer writes `#` in its place, so the HTML markdown
+/// gives has no script in its links (plans/Security-Review.md SEC-SCR-81); raw HTML is the page's own.
+fn script_url(url: &str, link: bool) -> bool {
+    let read: String = url
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace() && !ch.is_ascii_control())
+        .collect();
+    let Some((scheme, _)) = read.split_once(':') else {
+        return false;
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    scheme == "javascript" || scheme == "vbscript" || (link && scheme == "data")
+}
+
 /// Whether `url` starts with a scheme: `[A-Za-z][A-Za-z0-9+.-]*:` before any `/`, `?` or `#`.
 fn has_scheme(url: &str) -> bool {
     let Some((scheme, _)) = url.split_once(':') else {
@@ -182,6 +211,14 @@ mod tests {
         let relative = "[x](Page)\n";
         assert_eq!(to_html_with_base(relative, None), "<p><a href=\"Page\">x</a></p>\n");
         assert_eq!(to_html_with_base(relative, Some("")), to_html(relative));
+    }
+
+    #[test]
+    fn a_script_link_of_the_markdown_is_written_as_a_fragment() {
+        let html = to_html("[a](javascript:alert(1)) [b](<JaVa\tScript:x>) <vbscript:x> [c](data:text/html,x) ![d](data:image/png;base64,AA)\n");
+        assert_eq!(html.matches("href=").count(), 4, "{html}");
+        assert_eq!(html.matches("href=\"#\"").count(), 4, "{html}");
+        assert!(html.contains("src=\"data:image/png;base64,AA\""), "{html}");
     }
 
     #[test]

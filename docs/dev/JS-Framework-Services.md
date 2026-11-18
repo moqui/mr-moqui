@@ -368,7 +368,8 @@ Also members and ownership, favorites, tags, activity, previews, public share li
 |---|---|
 | `get#PublishedWikiPageText` | `wikiSpaceId*`, `pagePath`, `versionName`, `getPageText` → `wikiPageId`, `pageText`, `pageLocation`, `publishedVersionName` |
 | `get#WikiPageInfo` | The parameters of `get#WikiPageReference`, `versionName` → `pageLocation`, `pageName`, `attachmentList`, `breadcrumbMapList`, `currentVersionName` |
-| `update#WikiPage` | `wikiSpaceId*`, `pageName*`, `wikiPageId` or `pagePath`, `parentPath`, `pageText`, `wikiType`, `versionNote` → `wikiPageId`, `pagePath`, `versionName`, `createdRecord`. Creates the page when it is not there |
+| `update#WikiPage` | `wikiSpaceId*`, `pageName*`, `wikiPageId` or `pagePath`, `parentPath`, `pageText`, `wikiType`, `versionNote` → `wikiPageId`, `pagePath`, `versionName`, `createdRecord`. Creates the page when it is not there. Without the space's `allowAnyHtml` an `html` or `txt` page is cleaned and an `md` page's raw HTML |
+| `get#WikiPageTypes` | → `wikiTypeList`, `scriptTypes`: the types a user may give a new page, `md`, `html`, `txt`, and with `DATABASE_ADMIN` the script types `fancy`, `html.fancy`, `md.fancy`, `markdown.fancy`, which run as server script for whoever views the page. `check#WikiPageType` refuses any other, and a script page's file to a user without it (SEC-SCR-81) |
 | `create#WikiSpace` | `wikiSpaceId*`, `rootPageDirectory`, `wikiType`, `repositoryKind`, `memberList` → `wikiSpaceId`, `rootPageLocation` |
 | `move#WikiPage`, `delete#WikiPage` | `wikiPageId`, or `wikiSpaceId` and `pagePath`; `toWikiSpaceId`, `toParentPath`, `toPageName` |
 | `get#WikiSpacePages` | `wikiSpaceId*`, `currentPagePath` → `allChildFileFlatList`, `rootChildResourceList` |

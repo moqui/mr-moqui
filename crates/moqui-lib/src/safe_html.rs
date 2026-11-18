@@ -13,12 +13,112 @@
  */
 
 //! HTML cleaned to the safe set: what an `allow-html="safe"` service parameter takes (`moqui_core::service`), and what
-//! the desktop and mobile client's offline Compose quotes (`moqui_client::offline`), so both clean alike.
+//! the desktop and mobile client's offline Compose quotes (`moqui_client::offline`), so both clean alike. Markdown's raw
+//! HTML cleaned the same way ([`clean_markdown`]), for a wiki page of a space that does not allow any HTML.
+
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 /// `text` cleaned to the safe set: tags and attributes not on the list removed, script and style content gone with
 /// its element, and links without unsafe URLs.
 pub fn clean(text: &str) -> String {
     cleaner().clean(text).to_string()
+}
+
+/// How many times [`clean_markdown`] cleans before it writes the raw HTML left as text: removing a tag joins the text
+/// around it, which may make a new one (`<scr<!-- -->ipt>`), so it cleans again until nothing changes.
+const MARKDOWN_PASSES: usize = 6;
+
+/// Markdown `source` with its raw HTML cleaned to the safe set, as [`clean`] cleans HTML (plans/Security-Review.md
+/// SEC-SCR-81): an HTML block cleaned whole, an inline tag kept when it is on the list (its attributes cleaned), else
+/// taken out. The markdown around it is not changed, so a source with no raw HTML comes back as it was; the links the
+/// markdown itself makes are cleaned by the renderer (`markdown::to_html_mapped`). Raw HTML that cleaning still
+/// changes after a few passes is written as text (`&lt;`).
+pub fn clean_markdown(source: &str) -> String {
+    let mut text = source.to_string();
+    for _ in 0..MARKDOWN_PASSES {
+        match markdown_edits(&text, clean_raw_html) {
+            Some(next) => text = next,
+            None => return text,
+        }
+    }
+    markdown_edits(&text, |raw, _| raw.replace('<', "&lt;")).unwrap_or(text)
+}
+
+/// `source` with each raw HTML range replaced by `edit(raw, inline)`, or None when no replacement changes anything.
+fn markdown_edits(source: &str, edit: impl Fn(&str, bool) -> String) -> Option<String> {
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut block_end = 0;
+    for (event, range) in Parser::new_ext(source, Options::ENABLE_TABLES).into_offset_iter() {
+        if range.start < block_end {
+            continue;
+        }
+        let inline = match event {
+            Event::Start(Tag::HtmlBlock) => false,
+            Event::Html(_) | Event::InlineHtml(_) => true,
+            _ => continue,
+        };
+        let Some(raw) = source.get(range.clone()) else {
+            continue;
+        };
+        let mut cleaned = edit(raw, inline);
+        if !inline {
+            block_end = range.end;
+            // the block keeps its line end, so the markdown after it starts its own line
+            if raw.ends_with('\n') && !cleaned.ends_with('\n') {
+                cleaned.push('\n');
+            }
+        }
+        if cleaned != raw {
+            edits.push((range, cleaned));
+        }
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut at = 0;
+    for (range, cleaned) in edits {
+        out.push_str(source.get(at..range.start)?);
+        out.push_str(&cleaned);
+        at = range.end;
+    }
+    out.push_str(source.get(at..)?);
+    Some(out)
+}
+
+/// One piece of raw HTML cleaned: a block as HTML; an inline comment or declaration taken out, a closing tag kept when
+/// its element is on the list, an opening tag cleaned without the end tag the cleaner adds.
+fn clean_raw_html(raw: &str, inline: bool) -> String {
+    if !inline {
+        return clean(raw);
+    }
+    if raw.starts_with("<!") || raw.starts_with("<?") {
+        return String::new();
+    }
+    let element = |text: &str| -> String {
+        text.chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    let allowed = |name: &str| {
+        let pair = format!("<{name}></{name}>");
+        !name.is_empty() && clean(&pair) == pair
+    };
+    if let Some(rest) = raw.strip_prefix("</") {
+        let name = element(rest);
+        return if allowed(&name) {
+            format!("</{name}>")
+        } else {
+            String::new()
+        };
+    }
+    let name = raw.strip_prefix('<').map(element).unwrap_or_default();
+    let cleaned = clean(raw);
+    match cleaned.strip_suffix(&format!("</{name}>")) {
+        Some(open) if !name.is_empty() => open.to_string(),
+        _ => cleaned,
+    }
 }
 
 /// The cleaner. ammonia's defaults are a maintained, conservative allow-list, so there is no
@@ -92,5 +192,29 @@ mod tests {
         // mentions survive
         let mention = r#"<p><span data-mention-id="john.doe">@John</span></p>"#;
         assert_eq!(clean_chat(mention), mention);
+    }
+
+    /// Markdown's raw HTML is cleaned and the markdown around it kept; one with none comes back as it was.
+    #[test]
+    fn markdown_raw_html_is_cleaned_and_the_markdown_kept() {
+        let plain = "# Title\n\n> a < b && c\n\n```\n<script>kept in code</script>\n```\n\n- `<b>` [x](Page)\n";
+        assert_eq!(clean_markdown(plain), plain);
+        let source = "# Hi\n\n<script>alert(1)</script>\n\ntext <b onclick=\"x()\">bold</b> <img src=\"a.png\" onerror=\"x()\">\n";
+        let cleaned = clean_markdown(source);
+        assert!(cleaned.starts_with("# Hi\n\n"), "{cleaned}");
+        assert!(
+            !cleaned.contains("script") && !cleaned.contains("onclick") && !cleaned.contains("onerror"),
+            "{cleaned}"
+        );
+        assert!(
+            cleaned.contains("<b>bold</b>") && cleaned.contains(r#"<img src="a.png">"#),
+            "{cleaned}"
+        );
+        // a tag made by joining the text around one taken out is cleaned too
+        let joined = clean_markdown("x <scr<!-- -->ipt>alert(1)</script>\n");
+        assert!(!joined.contains("<script"), "{joined}");
+        let block = "<div onmouseover=\"x()\">\n<a href=\"javascript:x()\">a</a>\n</div>\n";
+        let html = crate::markdown::to_html(&clean_markdown(block));
+        assert!(!html.contains("onmouseover") && !html.contains("javascript"), "{html}");
     }
 }

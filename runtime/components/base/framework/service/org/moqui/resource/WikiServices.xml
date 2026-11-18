@@ -144,13 +144,89 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="update#moqui.resource.wiki.WikiPage" in-map="{wikiPageId:wikiPageId, publishedVersionName:(publishedVersionName || null)}"/>
         </actions>
     </service>
+    <service verb="get" noun="WikiPageTypes">
+        <description>The page types (the file extension of a new page) the user may write, for a form's choice: md, html
+            and txt for anyone; fancy, html.fancy, md.fancy and markdown.fancy, whose page runs as script on the server
+            for whoever views it, only for a holder of DATABASE_ADMIN, the permission for script stored in records.
+            Authorization disabled does not stand in for it: a service that writes as the system for its caller
+            (runAsSystem) would write the caller's text as script. check#WikiPageType holds the same rule
+            (plans/Security-Review.md SEC-SCR-81).</description>
+        <out-parameters>
+            <parameter name="wikiTypeList" type="List"><parameter name="wikiType"/></parameter>
+            <parameter name="scriptTypes" type="Boolean"><description>The list has the script types</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            scriptTypes = ec.user.hasPermission('DATABASE_ADMIN')
+            wikiTypeList = ['md', 'html', 'txt'].concat(scriptTypes ? ['fancy', 'html.fancy', 'md.fancy', 'markdown.fancy'] : [])
+        ]]></script></actions>
+    </service>
+    <service verb="check" noun="WikiPageType" allow-remote="false">
+        <description>Refuses, with a message error, a page type or page file the user may not write (SEC-SCR-81). A
+            wikiType is one of md, html and txt, or fancy, html.fancy, md.fancy and markdown.fancy (get#WikiPageTypes): a
+            name the template renderers run as script, so only for a holder of DATABASE_ADMIN (with authorization
+            disabled too); anything else (a path, an extension of no renderer, another renderer's) is refused. A location is a
+            page file to be written: a name ending in .fancy (in any case) is a script page and needs the same, and
+            unless anyType its name must end in .md, .markdown, .html or .txt (a file of another type, whose text a page
+            would show as it is, is not written as a page).</description>
+        <in-parameters>
+            <parameter name="wikiType"/>
+            <parameter name="location"><description>A page file (or an attachment's name, with anyType)</description></parameter>
+            <parameter name="anyType" type="Boolean" default="false"><description>Any type but a script one, as an
+                attachment may be</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="wikiType"><description>The type checked: of the location when one is given, else wikiType</description></parameter>
+            <parameter name="scriptType" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const SCRIPT = ['fancy', 'html.fancy', 'md.fancy', 'markdown.fancy']
+            // markdown is md's other name: an existing page's type, never offered for a new one
+            const PLAIN = ['md', 'markdown', 'html', 'txt']
+            const mayScript = () => ec.user.hasPermission('DATABASE_ADMIN')
+            const refuseScript = (type) => ec.message.addError(ec.resource.expand(ec.l10n.localize(
+                    'A page of type ${type} runs as script on the server for whoever views it: it needs the DATABASE_ADMIN permission'), '', {type}))
+            scriptType = false
+            if (wikiType != null && wikiType !== '') {
+                const type = String(wikiType)
+                if (!PLAIN.includes(type) && !SCRIPT.includes(type)) {
+                    ec.message.addError(ec.l10n.localize('A page type is md, html or txt'))
+                    return
+                }
+                if (SCRIPT.includes(type)) {
+                    scriptType = true
+                    if (!mayScript()) { refuseScript(type); return }
+                }
+                wikiType = type
+            }
+            if (location) {
+                const name = String(location).split('#')[0].replace(/^.*[\/\\]/, '')
+                const ending = (types) => types.filter((type) => name.length > type.length + 1 && name.endsWith('.' + type))
+                        .sort((left, right) => right.length - left.length)[0] || null
+                if (name.toLowerCase().endsWith('.fancy')) {
+                    scriptType = true
+                    wikiType = ending(SCRIPT) || 'fancy'
+                    if (!mayScript()) refuseScript(wikiType)
+                    return
+                }
+                if (anyType) return
+                const type = ending(PLAIN)
+                if (type == null) {
+                    ec.message.addError(ec.resource.expand(ec.l10n.localize(
+                            'The page file ${name} is not of a type pages are written in (md, html or txt)'), '', {name}))
+                    return
+                }
+                wikiType = type
+            }
+        ]]></script></actions>
+    </service>
     <service verb="get" noun="WikiPageFile" allow-remote="false">
         <description>The file of a page at its exact path in its space: in the directory named as the root page without its
             extension, then the directories of the parent path, the file named as the page, with an extension or without
             (move#WikiPage finds it the same way). Never a file of that name elsewhere in the space, as findChildFile's
             search of the directory tree would find: a new top-level page Travel would write over Policies/Travel. When
             no file is there, the location a new page gets (with wikiType as its extension), exists false. A path with a
-            . or .. segment is no page of the space and an error.</description>
+            . or .. segment, or with an _attachments one (a page's attachments are no page: one named .fancy would run as
+            a script page), is no page of the space and an error, and so is a wikiType check#WikiPageType refuses.</description>
         <in-parameters>
             <parameter name="rootPageLocation"><description>The space's root page; or wikiSpaceId</description></parameter>
             <parameter name="wikiSpaceId"/>
@@ -172,6 +248,11 @@ along with this software (see the LICENSE.md file). If not, see
             if (!root) { ec.message.addError(ec.l10n.localize('This space has no place for its pages (no root page location)')); return }
             const parts = String(pagePath || '').split('/').filter((part) => part !== '')
             if (parts.some((part) => part === '.' || part === '..')) { ec.message.addError(ec.l10n.localize('A page path has no . or .. in it')); return }
+            if (parts.includes('_attachments')) { ec.message.addError(ec.l10n.localize("A page's attachments are not a page")); return }
+            if (wikiType) {
+                ec.service.sync().name('org.moqui.resource.WikiServices.check#WikiPageType').parameter('wikiType', wikiType).call()
+                if (ec.message.hasError()) return
+            }
             const rootRef = ec.resource.getLocationReference(String(root))
             if (!parts.length) {
                 pageReference = rootRef
@@ -537,6 +618,10 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="updateAccess" in-map="updateAccessIn"/>
             <if condition="updateAccess.readOnly"><return error="true" message="This space is a read-only mirror: its pages change where it is copied from"/></if>
             <if condition="!updateAccess.canUpdate"><return error="true" message="You may not change the files of this page"/></if>
+            <!-- a .fancy file is a script page wherever it is under the space's root: only a holder of DATABASE_ADMIN adds one
+                (check#WikiPageType, SEC-SCR-81) -->
+            <service-call name="org.moqui.resource.WikiServices.check#WikiPageType" in-map="{location:filename, anyType:true}"/>
+            <if condition="ec.message.hasError()"><return/></if>
             <script><![CDATA[
                 ec.logger.info(`Uploading file ${filename} for page path ${pagePath} in space ${wikiSpaceId}`)
                 attachmentReference.putUpload(attachmentFile)
@@ -589,8 +674,12 @@ along with this software (see the LICENSE.md file). If not, see
                     never . or .., and at most 240 bytes in UTF-8 (a file name on disk is 255 at most, with the extension).
                     Saved in NFC.</description>
             </parameter>
-            <parameter name="wikiType" default-value="md"/>
-            <parameter name="pageText" allow-html="any"><description>If WikiSpace.allowAnyHtml = Y will be stored as-is, otherwise filtered like parameter.allow-html=safe.</description></parameter>
+            <parameter name="wikiType" default-value="md"><description>The type of a new page, its file's extension: md,
+                html or txt, or for a holder of DATABASE_ADMIN a script type (check#WikiPageType); an existing page keeps
+                its file's type</description></parameter>
+            <parameter name="pageText" allow-html="any"><description>If WikiSpace.allowAnyHtml = Y will be stored as-is,
+                otherwise an html or txt page is filtered like parameter.allow-html=safe and an md page's raw HTML the
+                same way (StringUtilities.cleanMarkdown).</description></parameter>
             <parameter name="sequenceNum" type="Integer"/>
             <parameter name="versionNote"><description>The note of the version this save makes (a named version)</description></parameter>
             <parameter name="historyUserId"><description>The user a save made as the system is for (a service that checked
@@ -615,6 +704,11 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="encodeURIComponent(pageName).replace(/%[0-9A-F]{2}/g, '_').length &gt; 240"><return error="true" message="A page name is too long"/></if>
             <if condition="pageName == wikiSpaceId"><set field="pageName" from="null"/></if>
             <if condition="parentPath == wikiSpaceId"><set field="parentPath" from="null"/></if>
+            <!-- the type from the fixed list: a script type (a .fancy page runs as script for every viewer) only for a
+                holder of DATABASE_ADMIN (SEC-SCR-81) -->
+            <if condition="!wikiType"><set field="wikiType" value="md"/></if>
+            <service-call name="org.moqui.resource.WikiServices.check#WikiPageType" in-map="{wikiType:wikiType}"/>
+            <if condition="ec.message.hasError()"><return/></if>
             <set field="versionNote" from="versionNote ? String(versionNote).trim().substring(0, 255) : null"/>
             <!-- who the save is by: the user, or for a save made as the system the user it names (never with a user) -->
             <set field="historyUserId" from="ec.user.userId || (ec.artifactExecution.authzDisabled() ? (historyUserId || null) : null)"/>
@@ -712,13 +806,21 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{rootPageLocation:rootPageLocation, pagePath:pagePath, wikiType:wikiType}"/>
             <if condition="ec.message.hasError()"><return/></if>
             <set field="pageReference" from="fileOut.pageReference"/>
-            <!-- an existing page keeps its type: an .html page is filtered as HTML whatever wikiType says -->
-            <if condition="pageReference.exists &amp;&amp; pageReference.fileName.includes('.')">
-                <set field="wikiType" from="pageReference.fileName.substring(pageReference.fileName.lastIndexOf('.') + 1)"/></if>
+            <!-- the type is the file's, as the renderers read it: an existing page keeps its type (an .html page is
+                filtered as HTML whatever wikiType says), a script page (.fancy) is written only by a holder of
+                DATABASE_ADMIN, and a file of no type pages are written in is not written (SEC-SCR-81) -->
+            <service-call name="org.moqui.resource.WikiServices.check#WikiPageType" out-map="fileType"
+                    in-map="{location:pageReference.location}"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <set field="wikiType" from="fileType.wikiType"/>
 
-            <!-- unless WikiSpace.allowAnyHtml = Y filter the HTML -->
-            <if condition="wikiSpace.allowAnyHtml != 'Y' &amp;&amp; wikiType == 'html'">
+            <!-- unless WikiSpace.allowAnyHtml = Y filter the HTML: an html or txt page's (a page with no renderer shows its
+                text as it is), and the raw HTML of an md page -->
+            <if condition="wikiSpace.allowAnyHtml != 'Y' &amp;&amp; (wikiType == 'html' || wikiType == 'txt')">
                 <script>pageText = StringUtilities.cleanHtml(pageText)</script>
+            </if>
+            <if condition="wikiSpace.allowAnyHtml != 'Y' &amp;&amp; pageText != null &amp;&amp; (wikiType == 'md' || wikiType == 'markdown')">
+                <script>pageText = StringUtilities.cleanMarkdown(pageText)</script>
             </if>
 
             <!-- do the update, then the move if applicable -->
@@ -802,6 +904,11 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="moqui.resource.wiki.WikiSpace" value-field="existingSpace" cache="false"/>
             <if condition="existingSpace != null"><return error="true" message="Wiki Space with ID ${wikiSpaceId} already exists"/></if>
+            <!-- the root page's type from the fixed list, a script type only for a holder of DATABASE_ADMIN, and a root page
+                location given is a page file of such a type (SEC-SCR-81) -->
+            <if condition="!wikiType"><set field="wikiType" value="md"/></if>
+            <service-call name="org.moqui.resource.WikiServices.check#WikiPageType" in-map="{wikiType:wikiType, location:(rootPageLocation || null)}"/>
+            <if condition="ec.message.hasError()"><return/></if>
             <set field="readOnlyStorage" from="false"/>
             <if condition="repositoryKind">
                 <service-call name="org.moqui.resource.WikiServices.make#WikiSpaceStorage" out-map="storageOut"
@@ -1033,6 +1140,10 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="ec.message.hasError()"><return/></if>
             <if condition="!rootPageLocation">
                 <set field="rootPageLocation" from="rootPageDirectory.replace(/\/+$/, '') + '/' + wikiSpaceId + '.' + (baseRootPageInfo.wikiType || 'md')"/></if>
+            <!-- the root page is a page file of a type pages are written in, a script one only for a holder of DATABASE_ADMIN
+                (SEC-SCR-81); the other pages are checked as they are copied -->
+            <service-call name="org.moqui.resource.WikiServices.check#WikiPageType" in-map="{location:rootPageLocation}"/>
+            <if condition="ec.message.hasError()"><return/></if>
             <set field="rootPageReference" from="ec.resource.getLocationReference(rootPageLocation)"/>
             <if condition="copyHistory &amp;&amp; rootPageReference.exists">
                 <return error="true" message="There is a page at ${rootPageLocation} already"/></if>
@@ -1977,6 +2088,9 @@ along with this software (see the LICENSE.md file). If not, see
                 const fromDirRef = ec.resource.getLocationReference(fromDirLoc)
                 const toLoc = `${toRootDir}/${toPath}${ext}`
                 const toDirLoc = `${toRootDir}/${toPath}`
+                // a script page (.fancy) is placed only by a holder of DATABASE_ADMIN (check#WikiPageType, SEC-SCR-81)
+                ec.service.sync().name('org.moqui.resource.WikiServices.check#WikiPageType').parameters({location: toLoc, anyType: true}).call()
+                if (ec.message.hasError()) return
                 if (pageFileOf(toRootDir, toPath) != null || ec.resource.getLocationReference(toLoc).exists ||
                         ec.resource.getLocationReference(toDirLoc).exists) return fail('There is a page named ${name} there already', {name: toPageName})
                 if (toParentPath && pageFileOf(toRootDir, toParentPath) == null) return fail('Parent page not found')
@@ -2129,6 +2243,13 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
             if (dirOf(sourceLocation) !== sourceLocation) walk(dirOf(sourceLocation), dirOf(targetLocation), '', 0)
+            // a script page (.fancy) runs for whoever views it: only a holder of DATABASE_ADMIN writes one, a copy too
+            // (check#WikiPageType, SEC-SCR-81)
+            const script = files.find((file) => /\.fancy$/i.test(file.target))
+            if (script) {
+                ec.service.sync().name('org.moqui.resource.WikiServices.check#WikiPageType').parameters({location: script.target, anyType: true}).call()
+                if (ec.message.hasError()) return
+            }
             fileCount = files.length
 
             // each file's versions, oldest first; a file with none (or no history wanted) once, as it is now

@@ -1782,6 +1782,8 @@ interface MoquiStringUtilities {
     elasticQueryAutoWildcard(query: string, allFieldPrefix?: boolean): string;
     cleanHtml(text: string | null): string;
     cleanChatHtml(text: string | null): string;
+    /** Markdown with its raw HTML cleaned to the safe set and the markdown around it kept. */
+    cleanMarkdown(text: string | null): string;
     urlEncodeIfNeeded(text: string | null): string;
     encodeAsciiFilename(filename: string | null): string;
     /** A formatter of a mask (`#` digit, `U`/`L` letter, `A` letter or digit, `?` letter, `H` hex, `*` any), or null for no mask. */
