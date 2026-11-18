@@ -956,7 +956,8 @@ yet). The sidecar's license applies to the sidecar, not to MR Moqui; a legal che
   event types beyond `line.create` are documented only by the community (phase 14, "Not confirmed").
 
 **Google Messages and RCS** (details in §16)
-- SMS and MMS: through the ported number on the SMS provider. Group texts: §9.
+- SMS and MMS: through the ported number on the SMS provider. Group texts: §9. Text members of a room (GroupMe's SMS
+  join): phase 18.
 - Business RCS (RBM) through the same provider (Twilio and Sinch first): verified brand sender, rich cards, replies in
   the thread. Not person to person.
 - Personal RCS: only a bridge to Google Messages for Web (`mautrix-gmessages` behind C6c). It needs a phone with Google
@@ -1047,7 +1048,7 @@ that adds it. "New" means this plan adds it (§17).
 | Linked devices list | Apps and devices | Built |
 | Registration lock, PIN | Device keys, password, recovery key for key backup | Built |
 | Screen security (no screenshots) | Android `FLAG_SECURE` option, per app or per encrypted room | New |
-| Group links with admin approval | Room invite links and QR codes, with optional approval | New |
+| Group links with admin approval | Room invite links and QR codes (`/join/<token>`) in private and public rooms, made by a room's moderators (any member of a public room), with an expiry, a use limit and optional approval; revoked at once. Join requests in the moderators' queue | Designed: phase 17 (§18.3) |
 | Stories | Later, if wanted | Later |
 | Sealed sender | Not possible: the server sees who sends. The UI says so (§6) | Not planned |
 | Proxy for censored networks | TURN on 443 and the web socket on 443 | Built; live check in §8 |
@@ -1057,15 +1058,15 @@ that adds it. "New" means this plan adds it (§17).
 | Feature | Equivalent | Status |
 |---|---|---|
 | Large groups | Public and private rooms; test with 5,000 members | Built; load test new |
-| Join by SMS without the app | SMS members of a room: a phone number added to a room gets each message as a text with the sender's name, and its replies post to the room | New |
-| Group invite links and QR | Invite links | New |
+| Join by SMS without the app | Text members of a private room: a number a moderator adds (with the person's consent) gets each message as a text, "Ann: …", from one of our numbers marked for room texts, and its replies post to the room as that number. One room per outside number on each of our numbers; STOP leaves. Never in an encrypted room | Designed: phase 18 (§18.3) |
+| Group invite links and QR | Invite links and their QR codes; a deep link into the Android app (`org.moqui.mobile:/join`) | Designed: phase 17 (§18.3) |
 | Likes | Heart reaction; across the GroupMe bridge a like is a heart both ways | Built; the bridge in phase 14 |
 | Topics (subgroups) | Threads, or linked sub-rooms. A bridged Topic is a room of its own, "Group › Topic" | Built (threads); the bridge in phase 14 |
 | Events with RSVP | An event message with Going / Maybe / No, and a calendar entry | New |
 | Polls | Polls | Built |
 | Gallery | Media tab | §5 |
 | Mute, @all | Mute, `@room`; across the GroupMe bridge `@all` and `@room` map both ways | Built; the bridge in phase 14 |
-| Directory and join requests | Browse rooms; join request for private rooms | Browse built; requests new |
+| Directory and join requests | Browse rooms; a private room its owner lists in Browse takes join requests ("Ask to join"), as a link with approval does | Browse built; requests designed: phase 17 (§18.3) |
 
 ### 14.6 Cheogram (XMPP)
 
@@ -1299,8 +1300,8 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 2 | Block and report; spam filter for outside numbers | §14.2; designed as phase 11 (§18.3) |
 | 3 | Scheduled send, message reminders | §14.2, §14.3 |
 | 4 | Disappearing messages (exact timer) and view-once media | §14.4 |
-| 5 | Invite links and QR, with approval; join requests | §14.4, §14.5 |
-| 6 | SMS members of a room (GroupMe's SMS join) | §14.5 |
+| 5 | Invite links and QR, with approval; join requests: designed, phase 17 (§18.3) | §14.4, §14.5 |
+| 6 | SMS members of a room (GroupMe's SMS join): designed, phase 18 (§18.3) | §14.5 |
 | 7 | Stickers, GIF search, location and live location | §14.3 |
 | 8 | Event messages with RSVP | §14.5 |
 | 9 | Screen security option; one-time code helper; send original photo | §14.2, §14.4 |
@@ -2902,6 +2903,433 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   - the live test with GroupMe, and the facts not confirmed (`docs/interfaces/GroupMe.md`, "Not confirmed");
   - what "Left out" names.
 
+#### Phase 17: invite links and QR codes, and join requests (D2c, §14.4, §14.5, §17 #5)
+
+Designed 2026-11-17. A room's moderator makes a link (and its QR code) that lets people with an account into the room,
+straight in or through the moderators' approval. A private room its owner lists in Browse takes join requests too.
+
+**Which rooms take links.**
+
+| Room | Links | Who makes and revokes them | Approval |
+|---|---|---|---|
+| Private (`CrtPrivate`) | Yes | Moderators and owners; the maker revokes their own | Optional, per link |
+| Public (`CrtPublic`) | Yes, as a shortcut: any user may join from Browse already | Any member | Never: the room is open |
+| Direct, record, phone (`CrtExternal`) | No: a direct room's members are fixed, a record room's readers are the record's, a phone room's are its number's users | — | — |
+
+A link works only while:
+- the room is not archived;
+- its maker may still make one (a moderator of the private room, a member of the public room);
+- it is not revoked, not past its expiry and not used up.
+
+**People without an account.** The join page asks them to sign in, and nothing more. There are no chat guests:
+- the call guests (`CallGuest`, `Calls.js guestJoin`) are a credential for one call's signaling for 4 hours;
+- a chat member stays, reads history and writes, which needs an account, its rights and its devices;
+- an encrypted room needs a crypto device;
+- the base framework has no self sign-up.
+
+A person with no account is added by text (phase 18), or an administrator makes an account. The page says: "You need
+an account on this server to join. Ask the person who shared the link."
+
+**Data model** (`ChatEntities.xml`)
+
+| Entity, field | What |
+|---|---|
+| `moqui.chat.ChatInviteLink` (`chatInviteLinkId` pk; `chatRoomId`; `tokenHash`, unique index; `tokenText`, `encrypt="true"`; `label`; `createdByUserId`, `createdDate`; `expiryDate`, empty for never; `maxUses`, empty for no limit; `useCount`; `approvalRequired`; `revokedDate`, `revokedByUserId`; `lastUsedDate`; index `chatRoomId`, `revokedDate`) | A room's link. The token is found by its hash (`ec.user.singleUseCodeHash`, as `CallLink` does). Its text is kept encrypted, so a moderator can copy the link and show its QR again, which the call links cannot (they are one person's, shown once) |
+| `moqui.chat.ChatJoinRequest` (`chatJoinRequestId` pk; `chatRoomId`; `userId`; `chatInviteLinkId`, empty from Browse; `statusEnumId`; `note`, at most 200 characters; `requestedDate`; `decidedDate`, `decidedByUserId`; indexes `chatRoomId`+`statusEnumId`, `userId`+`statusEnumId`) | A person's request to join. `ChatJoinRequestStatus`: `CjrPending`, `CjrApproved`, `CjrDenied`, `CjrCancelled`, `CjrExpired`. A pending request older than 30 days reads as expired, and is written so when next touched (no job) |
+| `ChatRoom.directoryListed` | Y: a private room listed in Browse, by its name, topic and member count, with "Ask to join". Its messages stay its members' |
+| `ChatRoomMember.removedByUserId` | Who took the member out (`remove#Member` by another member). Such a person joins by a link only through a request, whatever the link says |
+| `ChatSetupData.xml` | The notification topics `ChatJoinRequest` (to the moderators) and `ChatJoinDecision` (to the person who asked) |
+
+**Links.** The link is `https://<host>/join/<token>`:
+- `<token>` is `ec.user.randomString(32)`, about 190 bits;
+- the token route `join` of basic-comms (`MoquiConf.xml`, beside `call`) renders the join page in the public shell after
+  `check#InviteToken`;
+- the QR code is that URL, drawn by `ec.resource.barcodeSvg('QR', url)` on the server, so no QR library is added.
+
+The link's choices:
+- expiry: 1 hour, 1 day, 7 days (the default), 30 days, or never;
+- uses: no limit (the default), 1, 5, 10, 25 or 100;
+- approval: on or off, in a private room only;
+- a label, such as "Newsletter".
+
+A use is a join or a request. So a link with approval that allows 10 uses lets at most 10 people into the queue.
+
+**Joining** (`join#ByInvite`, the join page's `join` transition, a POST with the session token):
+1. Signed out: the page shows the room's name and "Sign in to join". Its `signIn` transition keeps `/join/<token>` as
+   the return path in the session (`ec.web.saveScreenLastInfo`, which Login's `returnTo` uses) and goes to `/Login`.
+   The token never goes in a query string.
+2. Already a member: "Open the room".
+3. Otherwise, under the link row's lock (so its last use is taken once), the link is checked, and then:
+   - with approval, or when the person was taken out of the room by another member: a request (`CjrPending`, with
+     their note), counted as a use;
+   - else they join: a member row, as `add#Member` makes one, and the membership event
+     `{action: 'join', userId, via: 'link', chatInviteLinkId}`, shown as "Ann joined by an invite link";
+   - a person who left by themselves comes back as `add#Member` brings them back.
+4. Out: `outcome` (`joined`, `requested` or `member`), `chatRoomId`, `roomUrl` (`${comms_app_root}/Chat?chatRoomId=`).
+   Refused with a `reasonCode`:
+   - `notFound`: a bad, revoked, expired or used-up link; a link whose maker blocked the person (D1: answered as not
+     found, SEC-COM-01); an external user (`EXTERNAL_USER`) and a public room;
+   - `notSignedIn`;
+   - `deniedRecently`: a request to this room denied in the last 7 days;
+   - `tooManyRequests`: 10 pending a person;
+   - `queueFull`: 100 pending a room;
+   - `rateLimited`: 30 joins and requests an hour a person, counted on the distributed cache as `find#PhoneNames` does.
+
+The join itself is in `ChatInvites.js`, not in `add#Member`. `add#Member` lets a member add others, and lets a person
+join only a room they can read. A private room's joiner is neither, and an internal parameter on a remote service would
+be a way round its checks. An approval does go through `add#Member`, called as the approving moderator, with all of its
+checks (`get#RefusedUsers` among them).
+
+**Join requests.**
+- From a link with approval, or from Browse ("Ask to join" on a listed private room, `request#Join`).
+- The moderators and owners hear of a new one by the `ChatJoinRequest` notification (the bell, and the socket). A
+  moderator who blocked the person (D1) gets no notification and does not see the request. The room's moderators get
+  `{kind: 'joinRequests', chatRoomId, pendingCount}` on the room's topic, which moves the room's banner.
+- The queue (`find#JoinRequests`, moderators and owners) shows each request's person, note, time, and the link's label
+  (or "From Browse"), and "Was taken out of this room" when it applies.
+- Approve (`decide#JoinRequest`, one or a list) adds the person through `add#Member` as the moderator. Deny marks the
+  request. Each request in a list is done on its own. The person gets the `ChatJoinDecision` notification, and an approval
+  brings the room into their list as any add does.
+- The person may cancel their own request (`cancel#JoinRequest`). A revoked link's pending requests stay for the
+  moderators to decide, as Signal keeps them when a group's link is reset.
+
+**Services** (`framework/service/org/moqui/chat/ChatInviteServices.xml`, `ChatInvites.js`)
+
+| Service | What |
+|---|---|
+| `create#InviteLink` (`chatRoomId`, `label`, `expiryHours` 1 to 720, 0 for never; `maxUses`; `approvalRequired`) | Out: `chatInviteLinkId`, `token`, `path`. Refused: `notAllowed` (not a moderator of a private room, or not a member of a public room; an external user); `roomType` (direct, record, phone); `archived`; `tooManyLinks` (20 in force a room) |
+| `find#InviteLinks` (`chatRoomId`) | The links in force: a moderator sees all, a member of a public room their own. Each with its path, label, uses, expiry, approval, maker, last use |
+| `get#InviteQr` (`chatInviteLinkId`, `baseUrl`) | The QR code (`qrSvg`) of the link's URL. The transition passes `baseUrl` from the request's own scheme and host |
+| `revoke#InviteLink` (`chatInviteLinkId`) | Its maker, or a moderator or owner of the room. It takes no one from then on |
+| `check#InviteToken` (anonymous; the token route's service) | `valid` and `routeContext`: the room's name, member count, room type, approval, encrypted. With a session user also: `signedIn`, `member`, `pending` (their open request), `makerName`. Nothing is read for a bad token |
+| `join#ByInvite` (`token`, `note`) | Above |
+| `request#Join` (`chatRoomId`, `note`) | A listed private room from Browse; the same refusals as a request by link |
+| `cancel#JoinRequest`, `find#JoinRequests`, `decide#JoinRequest` (`chatJoinRequestId` or `chatJoinRequestIdList`, `decision` approve or deny) | Above |
+| `find#ListedRooms` (`searchText`) | The listed private rooms the user is not in, for Browse (none for an external user), with `pending` |
+| `set#RoomListed` (`chatRoomId`, `listed`) | An owner of a private room |
+
+Hooks in shared files:
+- `ChatServices.remove#Member` sets `removedByUserId` when another member takes someone out (one line).
+- `Chat.qvue` shows the membership line "joined by an invite link".
+
+**Screens**
+
+| Work | Files |
+|---|---|
+| The join page: the room's initial, name and member count; "Sign in to join", "Join", "Ask to join" with a note, or "Open the room"; the encrypted note; "Open in the MR Moqui app" on Android | `basic-comms/screen/ChatJoin.xml`, `ChatJoin.qvue` (new); the token route `join` and the rate limits `/join/*/join` and `/join/*/signIn` (10 a minute) in `basic-comms/MoquiConf.xml` |
+| Invite links dialog (`m-chat-invites`): the links with Copy, QR, Share (`navigator.share` where there is one), Revoke; New link (label, expiry, uses, approval); the owner's "List in Browse" switch in a private room. The QR view: the code at 240 px, the URL, Copy and Download (SVG) | `webroot/screen/webroot/js/WebrootChatInvites.js` (new: `moqui.chat.invites`, `m-chat-invites`, `m-chat-join-requests`), loaded after `WebrootChat.js` in `qapps.xml` and the desktop shell's `index.html` |
+| Join requests (`m-chat-join-requests`): each request with Approve and Deny, and Approve all | The same file |
+| Hooks: the room menu's "Invite links" and "Join requests (n)"; a moderator's banner "2 people ask to join · Review" above the timeline; Browse's second list, "Private rooms you can ask to join", with "Ask to join"; the membership line | `Chat.qvue` |
+| Transitions `inviteLinks`, `createInviteLink`, `revokeInviteLink`, `inviteQr`, `joinRequests`, `decideJoinRequest`, `cancelJoinRequest`, `listedRooms`, `requestJoin`, `setRoomListed` | `basic-comms/template/ChatInviteTransitions.xml` (new), one `transition-include` each in `Chat.xml` |
+| The terminal: the membership line. No links or requests: those are the browser's | `ChatTui.xml` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+**On a phone and on a desktop.**
+- Desktop: the dialog shows the QR code large, for a phone's camera to scan, beside Copy.
+- Phone: the dialog is full screen under 600 px; Share opens the system's share sheet with the link, and the QR code
+  shows for a person standing beside.
+- A link scanned or tapped on a phone opens the join page in the browser. On Android the page offers "Open in the
+  MR Moqui app": `org.moqui.mobile:/join?host=<host>&token=<token>`.
+  - A new `BROWSABLE` intent filter on the path `/join` (`AndroidManifest.xml`) takes it.
+  - The app opens `https://<host>/join/<token>` in its window of the account on that host, where the person presses
+    Join. With several accounts there, the person picks one.
+  - With no account there, it says so and adds none. Nothing the link brings is done by itself (as with the dial link,
+    phase 9).
+  - The link is not signed, unlike the room link, because a web page makes it. It only opens a page of a server the
+    app already has an account on.
+  - Files: `crates/moqui-mobile/src/join.rs` (new: `join_link_of`, `is_join_link`), `src/lib.rs` (the
+    `RunEvent::Opened` branch).
+- Android App Links (an https link opening the app straight away) are left out: each server has its own host, and the
+  app cannot list them all.
+- The desktop app's bundled Chat has the same dialogs; offline they say "needs a connection".
+
+**Bridges and encryption.**
+- A link changes who is a member, so the room's bridges are unchanged. A bridged room's link admits local users only.
+- Encrypted room: a person who joins reads messages sent after they join, on a device set up for encrypted chat. Chat
+  makes the browser's device when it opens (§19.1, 2026-11-17). The join page says both. In a room with verified devices
+  only, their new device gets the room's keys once a member verifies it; the page says that too.
+
+**Failure tolerance.**
+- The moderators' notifications go one at a time; one that fails is logged.
+- An "Approve all" decides each request on its own, and answers the ones that failed.
+- A QR code that cannot be drawn leaves the link as it is, and the dialog shows "No QR code" with the link.
+- Not being able to tell whether a moderator blocked the person (`blockersOf`) shows the request to every moderator,
+  as D1 treats a failed block lookup.
+
+**Security and abuse.**
+- The token: 32 random characters, found by its hash, its text encrypted at rest. A bad token gets the token route's 404
+  page, with nothing read. The server records the path as `/join/:token`.
+- What the page shows: the room's name, member count and kind. A signed-in person also sees the maker's name. No member
+  names, topic or messages.
+- Limits:
+  - 20 links in force a room;
+  - 100 pending requests a room, 10 pending a person;
+  - 30 joins and requests an hour a person;
+  - 10 POSTs a minute on the route (`web-protection`);
+  - 7 days after a deny before the person may ask again;
+  - the use limit, taken under the link row's lock.
+- Blocks (D1):
+  - the maker's block refuses the blocked person, as not found;
+  - a moderator who blocked the person does not see their request, and other moderators do;
+  - the joiner's own blocks work as in any room.
+- A person a member took out of the room comes back only by approval.
+- External users: no links made by them, and no public room by a link. A private room by a link is the same reach as a
+  member adding them.
+- A link stops when its maker is no longer a moderator, so a moderator who was taken out leaves no open door.
+- Every service checks the caller's access in the room (`get#RoomAccess`). Only `check#InviteToken` and
+  `join#ByInvite` take a token instead of a room.
+
+**Left out.**
+- Chat guests without an account, and sign-up from a link.
+- Links in direct, record and phone rooms.
+- An in-app QR scanner: the phone's camera app opens the link.
+- A push to the moderators' phones for a request: the bell and the room's banner only.
+- Bans, and Android App Links.
+- Joining by text from the join page: a stranger typing any number would make the server text it (cost, toll fraud).
+  A moderator adds a number instead (phase 18).
+
+**Tests (regression).**
+- `framework/test/ChatInvites.spec.js` (new):
+  - who makes a link in each room type, and the refusals;
+  - the token check: valid, expired, revoked, used up, maker no longer a moderator, room archived;
+  - a straight join and its event;
+  - approval: a request, then approve (through `add#Member`) and deny, and `deniedRecently`;
+  - a request counts as a use;
+  - a person taken out of the room gets a request;
+  - the maker's block refuses as not found, and a blocking moderator does not see the request;
+  - an external user and a public room;
+  - the per-person and per-room limits;
+  - a listed room in `find#ListedRooms` and its request;
+  - revoke.
+- `basic-comms/test/ChatJoin.spec.js` (new): the route's 404 for a bad token; the join page rendered once (qvt) with its
+  route context; the `join` transition; `signIn`'s return path.
+- `basic-comms/test/BasicCommsTexts.spec.js`: none (phase 18's transitions only).
+- `webroot/test/client/WebrootChat.spec.js` (offline, no server): `moqui.chat.invites` expiry and uses texts, a link's
+  state (expired, used up), the membership line for `via: 'link'`.
+- moqui-mobile `join_tests.rs`: `join_link_of` takes a host and a token, and refuses another path, scheme, a bad host
+  or token.
+- No basic-comms client spec (its budget is near 12 s) and no acceptance spec. The dialogs and the join page in a phone
+  browser are §18.4 checks.
+
+**Docs.**
+- [Comms](../docs/tools/Comms.md): Invite links and QR codes, Join requests, List in Browse.
+- [Mobile-Client](../docs/ui/Mobile-Client.md): the join link.
+- [Desktop-Client](../docs/ui/Desktop-Client.md): the dialogs in the bundled Chat.
+- The BasicComms README: the `/join/<token>` route.
+
+#### Phase 18: text members of a room (D2d, §14.5 "Join by SMS without the app", §17 #6)
+
+Designed 2026-11-17. A moderator adds a phone number to a private room. That number gets each message of the room as a
+text, "Ann: …", from one of our numbers, and its replies post to the room as that number, as GroupMe's SMS members do.
+
+**Routing: one room per outside number on each of our numbers.** A text a person sends to our number carries no room.
+GroupMe gave each group its own reply number. Here:
+- A number of ours carries room texts when an administrator marks it (`PhoneNumber.roomTextsEnabled`, System, Voice,
+  Numbers).
+- An outside number is a text member of at most one room on each such number. While it is one, all of its texts to that
+  number go to that room.
+- With one marked number, a person is in one room by text. With three, three.
+- A fourth room on three numbers is refused: `noFreeNumber`, "This number is already in a room by text on each of your
+  numbers for room texts: take it out of one first".
+
+The other choices were not taken:
+- *The room the person was last texted from*: a reply to an older message goes to the wrong room, and nobody can tell.
+- *A short room code in each reply* ("#2 see you"): people forget it, and a reply without it has no room.
+
+A code could be added later, for a number shared by many rooms, if the user asks for it.
+
+The pair room of that number and ours stays for calls and history. A text sent from it is refused while the number is
+a text member there: `inRoomByText`, "This number is in “Soccer parents” by text: write there, or take them out of it".
+Otherwise its replies would land in the room. The add dialog warns when the pair room had a text in the last 30 days.
+
+**Which rooms.** Private rooms only:
+- Not direct rooms (fixed members), record rooms (the record's readers), phone rooms (their numbers) or public rooms
+  (open to every user, and large: each message would go out to outside phones).
+- Never an encrypted room: a text is plain, and the room's promise would be broken (`encrypted`).
+- Not a room with a disappearing timer (`timerOn`): a text cannot be deleted. The other way round, phase 16's
+  `set#RoomTimer` refuses a room with a mapping in force (`bridged`), and a text member is one.
+
+**Data model**
+
+| Entity, field | What |
+|---|---|
+| `ChatRoomBridge.memberChatActorId` | A text member's mapping: the external actor it is for (`ChatExternalUser` of the number's bridge, `externalUserId` the number). Its `externalRoomId` is `<ours>/<theirs>#<chatRoomId>`, so it is never a pair's `ours/theirs` and two rooms never share one |
+| `ChatRoomBridge.addedByUserId`, `consentDate` | Who added the member, and when they confirmed the person agreed to get the room's texts |
+| `ChatRoomBridge.welcomeDate`, `welcomeReasonCode` | The welcome text sent, or why not |
+| `PhoneNumber.roomTextsEnabled` | Y: the number may carry rooms' text members (`VoiceEntities.xml`; System, Voice, Numbers) |
+| `VoicePolicy`: `smsRoomMaxMembers` (10), `smsRoomMaxPerDay` (500), `smsRoomAddsPerDay` (20) | Text members a room; texts a room sends a day; text members one user adds a day. Counted in `SmsSendCount` as `room:<chatRoomId>` and `roomAdds:<userId>`, and inside `all` (`smsMaxPerDay`) |
+| `ChatExternalUser.displayName` | The member's name, as the adder gives it, when the number's external user has none but its number. A moderator renames it. The number's other rooms show the same name |
+
+**Adding a text member** (`add#TextMember`: `chatRoomId`, `phoneNumber`, `displayName`, `ourNumber` (optional),
+`consent` Y). A moderator or owner of the room who is granted a room-texts number. It:
+1. checks the room (above), the number (E.164; not ours; not emergency; international and premium only where the
+   policy allows; not opted out), the consent, and the limits;
+2. picks our number: `ourNumber`, else the first of the adder's room-texts numbers on which the outside number is free;
+3. makes the external user and actor on that number's bridge, and the member row (no `userId`, role member);
+4. makes the mapping (`CrbBoth`, `memberChatActorId`), and a membership event
+   `{action: 'add', chatActorId, byUserId, via: 'text'}`, shown as "Ann added Bob (+1 555 …) by text";
+5. sends the welcome text, after the commit, through `send#BridgeDirect` with `check#SmsSend` first, as
+   `send#SmsMessage` does: "Ann added you to “Soccer parents”. You get its messages here as texts, and your replies go to
+   the group. Reply STOP to leave."
+
+Out: `chatActorId`, `ourNumber`, `warning` (`pairRoomActive`). The dialog shows the cost before Add: "Each message in
+this room is sent as a text to each text member. With 3 text members, one message is 3 texts, and a long message or a
+photo costs more."
+
+**Out: the room's messages as texts.**
+- `append#Event` gives a text member's mapping a delivery for a message only. Edits, reactions, deletes, polls, pins
+  and calls stay in the room, so one text member does not take edits and reactions from everyone. Their mappings are
+  left out of `get#RoomBridges`' `capabilityMap` and out of `check#BridgeSupport`.
+- A mapping never gets its own member's messages. The bridge echo rule (nothing back to `sourceChatBridgeId`) would
+  keep one text member's reply from the others on the same bridge, so for these mappings it is by actor:
+  `memberChatActorId` is not the sender's.
+- The SMS adapter (`sms.rs`) knows a member mapping by its `#<chatRoomId>`:
+  - It checks the text with `check#SmsSend` in room mode (`chatRoomId`, no `userId`): the number carries room texts;
+    the pair has not opted out; the destination class; the room's and all users' day. The sender need not be granted
+    our number, since the room sends.
+  - It sends `<sender>: <text>`, with the sender's name cut to 30 characters and the text to the bridge's
+    `maxTextLength`, ending "…" when cut.
+  - Photos and videos within the bridge's MMS limits go as MMS, as in a pair room. Another file is a line:
+    "[report.pdf: a file, not sent by text]". There are no links to files, which a text member could not open.
+  - No typing to a text member.
+- A refusal (opted out, a day's limit, room texts off) fails that delivery alone, visible as any failed delivery, with
+  its reason in Info.
+
+**In: a text member's replies** (`receive#Sms`, before the spam filter and `ensure#PairRoom`):
+- A pair text (no other recipients, no provider thread) from a number with an active member mapping on our number goes
+  through `ingest#Event` to that mapping, as the member. It is not judged for spam: a moderator added the number with
+  its consent.
+- STOP (applied first, as now, so the pair is opted out) also takes the member out: the mapping ends, the member row
+  gets `leftDate`, and the event "Bob left by replying STOP" is added. START opts the pair back in and does not add them
+  back.
+- HELP gets one reply a day: "Texts of “Soccer parents” from MR Moqui. Reply STOP to leave."
+- If the room refuses the text, it goes on to the pair room as before, so nothing is lost.
+- A group text from a member number goes to its group room as now.
+
+**Taking a member out.**
+- `remove#Member` with the member's `chatActorId` (a moderator or owner, as for any external actor). A SECA
+  (`SmsRoomServices.xml`, conditioned on `chatActorId`) then ends its mapping, so its texts go back to the pair room.
+- No goodbye text.
+- An archived room's mappings count for nothing: `route#MemberText` and the free-number pick pass over them, so the
+  person's texts go to the pair room and the number is free for another room.
+
+**Services** (`framework/service/org/moqui/call/SmsRoomServices.xml`, `SmsRoom.js`)
+
+| Service | What |
+|---|---|
+| `add#TextMember` | Above. Refused: `notAllowed`, `roomType`, `encrypted`, `timerOn`, `archived`, `badNumber`, `emergency`, `internationalNotEnabled`, `premiumNotEnabled`, `optedOut`, `consentRequired`, `noRoomNumber` (the adder has no room-texts number), `noFreeNumber`, `alreadyMember`, `tooManyMembers`, `dailyLimit` |
+| `find#TextMembers` (`chatRoomId`) | The room's text members for its members: actor, name, number, our number, added by and when, the welcome's state, opted out, the last delivery's failure |
+| `get#TextMemberChoices` (`chatRoomId`, `phoneNumber`) | The adder's room-texts numbers, each free or taken for that number, and whether the pair room was active |
+| `rename#TextMember` (`chatRoomId`, `chatActorId`, `displayName`) | A moderator |
+| `end#TextMember` (internal; the SECA, STOP) | Ends the mapping |
+| `route#MemberText` (internal; `receive#Sms`) | The member mapping of a pair text, or none |
+
+Hooks in shared files:
+- `ChatServices.xml`:
+  - `append#Event`: a member mapping gets messages only, and not its own member's (two conditions in the mappings
+    filter);
+  - `get#RoomBridges`: member mappings left out of `bridgeMap` and `capabilityMap`, and counted in `textMemberMap`;
+  - `check#BridgeSupport`: member mappings not counted.
+- `Sms.js`:
+  - `receive`: the member's route, STOP and HELP;
+  - `checkSend`: room mode, and `inRoomByText` for the pair room;
+  - `inMyPhoneRoom`: the `#` part left out, so text members' names come from the phone book.
+- `crates/moqui-channels/src/sms.rs`: `numbers_of` reads the `#<chatRoomId>` part (`member_of`); `deliver` takes the
+  room mode and the prefix; `typing` skips a member mapping.
+
+**Screens**
+
+| Work | Files |
+|---|---|
+| People: each text member with a phone icon, their name and number, "Text" and its state (welcome not sent, opted out, last text failed); a moderator's Rename and Remove. "Add by phone number" for a moderator, in a private room that is not encrypted (`m-chat-text-member-add`: number, name, our number when several, the consent box, the cost note, the pair room's warning) | `webroot/screen/webroot/js/WebrootChatTexts.js` (new: `moqui.chat.texts`, `m-chat-text-member-add`), loaded with `WebrootChatInvites.js` |
+| Hooks: the People tab's text member rows and Add; the header chip "3 by text", which opens People; the composer's line "Also sent as a text to 3 numbers"; the delete confirm's "Text members already got it as a text"; the membership lines (`via: 'text'`, left by STOP) | `Chat.qvue` |
+| Transitions `textMembers`, `textMemberChoices`, `addTextMember`, `renameTextMember` | `basic-comms/template/ChatTextTransitions.xml` (new), included in `Chat.xml` |
+| Numbers: "Room texts" on each number. Fraud: the three limits beside the SMS limits | `System/Voice/Numbers.xml`, `System/Voice/Fraud.xml` |
+| The terminal: a text member is a member with its name, as any external actor; no Add | — |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+**On a phone and on a desktop.** The same screens. At 390 px:
+- Add by phone number is a full-screen dialog with the number field first (`type="tel"`);
+- the cost note sits above Add;
+- the People rows wrap the number under the name.
+
+On Android, the number field offers the phone's contacts (`moqui.chat.contactOptions`, phase 9), so a person is picked
+rather than typed. The desktop app's bundled Chat is the same; offline, Add says "needs a connection".
+
+**Bridges and encryption.**
+- A text member's messages are plain (SMS, `Encryption::None`). A room with text members is never encrypted (refused
+  above), so its label stays the plain room's.
+- The room's other bridges (GroupMe, XMPP) are unchanged. A bridged person's message goes to the text members as
+  "<their name>: …", and a text member's reply goes to the other bridges as the member.
+- A disappearing timer is refused (above).
+- Scheduled messages (phase 15) go to text members when they are sent.
+- RCS: a number whose bridge is RCS (`CbtRcs`) sends room texts through the same adapter, with the same prefix.
+
+**Failure tolerance.**
+- Each text member is a delivery of its own: one that fails or is refused leaves the others.
+- A welcome text that fails leaves the member added, with the reason on their row.
+- If the member route fails in `receive#Sms`, it is logged and the text goes to the pair room as before.
+- If STOP's removal fails, it is logged; the pair is opted out all the same, so nothing more is sent.
+- A room texts number turned off leaves its mappings, so replies still arrive; sends are refused `roomTextsOff`
+  until it is on again or the member is taken out.
+
+**Security and abuse.**
+- Only a room's moderator or owner adds, with a granted number the administrator marked for room texts, and confirms
+  consent. The welcome text names the room and the adder and says how to leave.
+- STOP is applied as the carrier's rule says, for the pair.
+- Limits: 10 text members a room, 20 adds a user a day, 500 room texts a room a day, inside the deployment's day
+  (`smsMaxPerDay`). A text to each member counts once in each.
+- Cost: the add dialog and the composer's line say what a message costs. The limits are on System, Voice, Fraud.
+- A text member sees only what is sent after they were added. Nothing of the history goes out.
+- Their number shows to the room's members, as an outside number shows to its own room's members (§14.4).
+- D1:
+  - a number on the adder's Blocked list cannot be added by them (`blocked`);
+  - a text member's texts are not judged for spam;
+  - Report spam is a phone room's, not a group room's. A moderator takes the member out instead.
+- Inbound texts and files have the bounds they have in a pair room.
+
+**Left out.**
+- A short room code for one number shared by many rooms.
+- Group MMS to the members, and text members of a public room.
+- Edits, reactions, deletes, polls, rich cards and calls to text members, and links to files.
+- History sent to a new member, and quiet hours.
+- Hiding a blocked number's texts in a group room (as phase 11 left it out of group texts).
+- The SIM's own texts (`sim-sms`) as a room's number.
+- A text member who is also a user here is not told apart.
+
+**Tests (regression).**
+- `framework/test/SmsRoomMembers.spec.js` (new). No provider is reached: deliveries are rows, and `receive#Sms` is
+  called as the webhook would be. It covers:
+  - each refusal of `add#TextMember`;
+  - the free-number pick and `noFreeNumber`;
+  - the welcome checked and counted;
+  - a message makes one delivery a member and none for an edit or a reaction;
+  - a member's reply posts as the member and goes to the other members, not back;
+  - `check#SmsSend` room mode, with its day's limit and room texts off;
+  - `inRoomByText` in the pair room;
+  - STOP takes the member out, and START does not add them back;
+  - HELP once a day;
+  - remove ends the mapping, and the next text goes to the pair room;
+  - an archived room's text goes to the pair room;
+  - `capabilityMap` keeps reactions with a text member.
+- moqui-channels `src/tests.rs` (the SMS adapter's, on Telnyx): on the fake server, a member mapping's send has the prefix and the cut, is checked in
+  room mode, gives its place back when refused, and has no typing.
+- `basic-comms/test/BasicCommsTexts.spec.js`: the transitions `textMembers`, `textMemberChoices`, `addTextMember`.
+- `basic-comms/test/BasicComms.spec.js`: Numbers and Fraud render there already; the new fields are checked on that
+  render.
+- `webroot/test/client/WebrootChat.spec.js` (offline): `moqui.chat.texts` cost line and state texts.
+- No client or acceptance spec. A text member with a real phone is a §18.4 check.
+
+**Docs.**
+- [SMS](../docs/interfaces/SMS.md): Text members of a room (routing, the number's switch, the limits, STOP and HELP,
+  cost).
+- [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): member mappings (`memberChatActorId`, the `#` room id, the echo
+  rule by actor, messages only).
+- [Comms](../docs/tools/Comms.md): Add by phone number.
+- The BasicComms README: Numbers' Room texts.
+- §18.4: after phase 18, a text member on a real phone (welcome, a message both ways, a photo, STOP), on Telnyx and on
+  Twilio.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -2917,7 +3345,8 @@ Then the other networks and the rest of §17, in this order:
 2. Default phone app and the merged call log (the user stops using the Phone app).
 4. Signal adapter.
 5. iMessage adapter (needs a Mac).
-6. Disappearing messages, invite links, scheduled send, SMS members.
+6. Disappearing messages, scheduled send; invite links and join requests (phase 17, designed), SMS members of a room
+   (phase 18, designed).
 7. RCS: business RCS in the SMS provider modules is phase 10 (Twilio and Sinch first), its rich features phase 13;
    then C6c and the personal RCS bridge if §13.4 picks B or C.
 8. The rest of §17.
@@ -2938,6 +3367,8 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 7 | A voice note recorded and played |
 | 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (each provider's group receipts are from its documentation), on Telnyx and on Twilio |
 | 12 | First sign-in on a new phone with the Android app: the device made when Chat opens (and how long the module takes to load), Set up this device in an encrypted room, the recovery key typed and pasted, then on another new phone Verify with the desktop by emoji, older messages readable after each; My devices in the app at the phone's width, with the keyboard up and in dark mode; a direct chat started from the phone with a person who has a device is encrypted, and with one who has none is plain |
+| 17 | The join page in a phone's browser: Sign in and back to the page, Join, Ask to join with a note; Share from the invite dialog; the desktop's QR code scanned by the phone's camera; "Open in the MR Moqui app" opening the page in the app's account, with one account and with two |
+| 18 | A text member on a real phone: the welcome text, a message each way with the sender's name, a photo, the replies of two text members reaching each other, HELP, and STOP; on Telnyx and on Twilio |
 
 ## 19. Decisions and open questions
 
