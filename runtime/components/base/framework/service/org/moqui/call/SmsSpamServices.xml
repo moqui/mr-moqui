@@ -56,20 +56,32 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="mark" noun="NotSpam">
         <description>Not spam, for a current member of phone room chatRoomId: the room comes back for every member it was
-            Spam for, its numbers get the user's not-spam vote (a number with more not-spam votes than spam votes is never
-            judged again) and the rules of its last verdict count it.</description>
+            Spam for and is never judged again (ChatRoomBridge.notSpamDate), its numbers get the user's not-spam vote (trusted
+            for the user's own rooms; for everyone with an admin's vote, or three distinct users') and the rules of its last
+            verdict count it.</description>
         <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
         <out-parameters><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('markNotSpam', context))</script></actions>
     </service>
 
     <service verb="report" noun="Spam">
-        <description>Report spam, for a current member of phone room chatRoomId: a pair room's number goes on the user's
-            Blocked list (its calls refused too), a group text's room is blocked for the user; its numbers get the user's spam
-            vote, the rules of its last verdict count it, and the room goes to Spam for the other members whose filter is on.
+        <description>Report spam, for a current member of phone room chatRoomId (plans/Comms-Messaging.md §18.3 phase 11): a
+            pair room's number goes on the user's Blocked list (its calls refused too) with the user's spam vote; a group
+            text's room is hidden for the user alone, with spam votes only of the numbers of phoneNumberList they picked
+            (none by default). In a pair room nobody here ever replied in, the teammates whose filter is on get it in Spam
+            too, and the reporter's Unblock brings them back (the vote withdrawn). One report is not spam for others by
+            itself: each distinct reporter adds the reported rule's weight (50 of 100), an admin's report reaches it alone.
             No provider's report API is used.</description>
-        <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
-        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="phoneNumberList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="blocked"/>
+            <parameter name="votedNumberList" type="List"/>
+            <parameter name="filteredUserIdList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('reportSpam', context))</script></actions>
     </service>
 
@@ -87,10 +99,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="SpamFilter">
         <description>The spam filter's settings (VoiceAdmin): settings {smsSpamFilter, smsSpamThreshold, smsSpamLookup,
-            smsSpamLookupDays, smsSpamLookupMaxPerDay}, with the defaults, and ruleList (each rule with its counts).</description>
+            smsSpamLookupDays, smsSpamLookupMaxPerDay}, with the defaults, ruleList (each rule with its counts), and voteList
+            (the numbers with votes: spamCount, notSpamCount, spamAdmin, notSpamAdmin, trusted for everyone) with trustVotes,
+            the distinct users whose Not spam trusts a number for everyone.</description>
         <out-parameters>
             <parameter name="settings" type="Map"/>
             <parameter name="ruleList" type="List"/>
+            <parameter name="voteList" type="List"/>
+            <parameter name="trustVotes" type="Integer"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('getFilter', context))</script></actions>
@@ -130,6 +146,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('storeRule', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="SpamVote">
+        <description>An admin's vote of a number (VoiceAdmin): vote notSpam trusts it for everyone, spam reports it for everyone
+            (the threshold reached alone), clear removes every vote of it.</description>
+        <in-parameters>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="vote" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('storeVote', context))</script></actions>
     </service>
 
     <service verb="delete" noun="SmsSpamRule">

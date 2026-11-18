@@ -532,9 +532,24 @@ function planOf(route) {
 }
 
 /** A ring step: the users still free (a group's members are read again), the forwards allowed; null when none rings. */
+/** Of a step's users, those whose Blocked list holds the caller's number (a failure is logged: nobody left out). */
+function blockersOfCaller(route, userIds) {
+  if (!route.fromNumber || !userIds.length) return new Set()
+  try {
+    return new Set(blockedUsers({ phoneNumber: route.fromNumber, userIdList: userIds }).userIdList || [])
+  } catch (err) {
+    ec.logger.warn(`Call ${route.callSessionId}: the Blocked lists were not read, all rung: ${err && err.message ? err.message : err}`)
+    return new Set()
+  }
+}
+
 function runRing(route, step, displayName) {
-  const users = (step.users || []).filter((userId) => step.role === 'ringGroupMember' ? memberFree(userId) : enabledUser(userId))
-  const numbers = (step.numbers || []).filter((n) => (step.role !== 'ringGroupMember' || users.includes(n.userId)) &&
+  // a user who blocked the caller is left out before any leg: no tab, phone or mobile rings, and no missed call; in a
+  // ring group taken in turns, their turn is skipped (the step has nobody, so the plan goes on)
+  const blockers = blockersOfCaller(route, step.users || [])
+  const users = (step.users || []).filter((userId) => !blockers.has(userId))
+    .filter((userId) => step.role === 'ringGroupMember' ? memberFree(userId) : enabledUser(userId))
+  const numbers = (step.numbers || []).filter((n) => !blockers.has(n.userId)).filter((n) => (step.role !== 'ringGroupMember' || users.includes(n.userId)) &&
     voice('forwardCheck', { phoneNumber: n.number, userId: n.userId, byAdmin: !!n.byAdmin }).allowed)
   if (!users.length && !numbers.length) return null
   const rung = calls('ringStep', { callSessionId: route.callSessionId, userIdList: users, numberList: numbers, role: step.role,
@@ -928,7 +943,11 @@ function unblockNumber(p) {
   const entry = one(ENTRY, { callerListId: list.callerListId, phoneNumber: raw }) || (entryNumber(raw).number
     ? one(ENTRY, { callerListId: list.callerListId, phoneNumber: entryNumber(raw).number }) : null)
   ec.message.clearErrors()
-  if (entry) entry.delete()
+  if (entry) {
+    entry.delete()
+    // the user's Report spam of it is withdrawn: their vote, and the teammates' rooms their report put in Spam
+    ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('withdrawReport', { userId: me, phoneNumber: entry.phoneNumber })
+  }
   chatBlocks('refilterPhoneRooms', { userId: me })
   return {}
 }

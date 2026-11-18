@@ -380,7 +380,8 @@ feature("the System Voice screens render in qvt and tui through the System app, 
             Fraud: "198.51.100.7", Emergency: "Render office", Phones: "Render phone", RingGroups: "Render group", Schedules: "Render hours",
             IvrMenus: "Render menu", Queues: "Render queue", Spam: "bit.ly"}
         for (const [path, text] of Object.entries(texts)) {
-            for (const mode of ["qvt", "tui"]) {
+            // Spam has no tui template of its own: rendered once, in qvt
+            for (const mode of path === "Spam" ? ["qvt"] : ["qvt", "tui"]) {
                 const shown = render(systemRoot, "Voice/" + path, mode, {})
                 if (shown.status != 200 || shown.broken || !shown.output.includes(text))
                     problems.push(mode + " " + path + ": " + shown.status + " " + shown.errors + " " + shown.output.slice(0, 200))

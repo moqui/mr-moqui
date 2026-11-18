@@ -183,15 +183,24 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   room opens with a banner in place of the composer: Not spam and Report spam, or Unblock.
   - *A number.* Block in a phone room's menu, or Settings, Call handling, Blocked numbers (a number or a prefix ending
     in `*`): its calls are refused and its texts go to Spam & blocked. In a group text Block blocks that conversation
-    only; one number's block does not hide its texts there. Report spam blocks the number and puts the room in Spam
-    for your teammates on the same number. Filter spam texts (Settings, Call handling) turns the filter off for you
+    only; one number's block does not hide its texts there. Report spam blocks the number for you; your teammates on the
+    same number get the conversation in Spam only if nobody here ever replied in it, and your Unblock takes the report
+    back. In a group text Report spam hides it for you alone and reports only the numbers you pick. One person's report
+    is not spam for others (two people's, or an admin's, is), and your Not spam trusts the number for your own rooms and
+    keeps that conversation out of Spam for good. Filter spam texts (Settings, Call handling) turns the filter off for you
     ([SMS, Blocked numbers and spam](../interfaces/SMS.md#blocked-numbers-and-spam)).
   - *A person.* Block in a direct chat's menu, a member's menu, or Settings, Chat, Blocked people (Unblock there). Their
-    messages are hidden in shared rooms (one quiet line says so) and notify nothing, mention you in nothing and count
-    nothing; their typing does not show and their calls do not ring you; they cannot start a direct chat with you or
-    add you to a room, and are told only that you are not found; your direct chat with them goes to Spam & blocked,
-    where it shows everything. Your XMPP sessions follow it for new messages and history. A chat block is not a mail
-    block (the Inbox's Block), and neither stops the other.
+    messages are hidden in shared rooms (one quiet line says so, and a reply to one shows nothing of it) and notify
+    nothing, mention you in nothing, count nothing and are in none of your threads, Activity or search; their typing
+    does not show and their calls do not ring you (a call to you alone is refused as if you were not there). They cannot
+    start a direct chat with you or add you to a private room, and are told only that you are not found. A block does not
+    keep you out of a room someone else adds you to, and never refuses a public or a record room: it cannot refuse a
+    manager's team rooms. Your direct chat with them goes to Spam & blocked, where it shows everything. Your XMPP
+    sessions follow it for new messages and history. A chat block is not a mail block (the Inbox's Block), and neither
+    stops the other.
+  - *What they still see.* A blocked person still sees you in the rooms you share and can still read your messages
+    there; nothing tells them they are blocked.
+  - *Unblock.* Their messages show again, but the mentions and Activity they made during the block do not come back.
   - *Not covered.* A blocked person's reactions and poll votes still count in the totals; the XMPP blocklist of your
     XMPP app (XEP-0191) is its own.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give

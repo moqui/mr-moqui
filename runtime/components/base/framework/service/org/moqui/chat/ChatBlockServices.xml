@@ -77,6 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="filtered"/>
             <parameter name="blockKind"/>
             <parameter name="phoneNumber"/>
+            <parameter name="phoneNumberList" type="List"><description>A group text's numbers, for Report spam's pick</description></parameter>
             <parameter name="blockedUserId"/>
             <parameter name="blockedName"/>
             <parameter name="personBlocked" type="Boolean"/>

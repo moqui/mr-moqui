@@ -85,14 +85,18 @@ feature("a blocked person cannot start a direct room with me or add me to a room
         const group = as(B, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "B's room", memberUserIdList: [A, C]})
         const own = as(B, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "B alone"})
         const add = as(B, CHAT + "add#Member", {chatRoomId: own.chatRoomId, userIdList: [A]})
+        // a block refuses only a direct room and a private room's invite: a public room takes the blocker
+        const pub = as(B, CHAT + "create#Room", {roomTypeEnumId: "CrtPublic", roomName: "B's public room"})
+        const addPublic = as(B, CHAT + "add#Member", {chatRoomId: pub.chatRoomId, userIdList: [A]})
         // a third person still puts us in one room
         const third = as(C, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Team", memberUserIdList: [A, B]})
         shared.team = third.chatRoomId
         // the one who blocked may still start a direct room: the one with them, in Spam & blocked
         const mine = as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtDirect", memberUserIdList: [B]})
-        return {self, nobody, blocked, direct, group, add, third, mine}
+        return {self, nobody, blocked, direct, group, add, addPublic, third, mine}
     },
-    then({self, nobody, blocked, direct, group, add, third, mine}) {
+    then({self, nobody, blocked, direct, group, add, addPublic, third, mine}) {
+        addPublic.errors == ""
         self.reasonCode == "notFound"
         nobody.reasonCode == "notFound"
         blocked.errors == ""
@@ -115,11 +119,18 @@ feature("their messages in a shared room are hidden from me and count, mention a
         const rooms = as(A, CHAT + "find#Rooms")
         const mentions = sys(() => ec.entity.find("moqui.chat.ChatEventMention").condition({chatRoomId: shared.team, userId: A}).count())
         const activity = sys(() => ec.entity.find("moqui.chat.ChatUserActivity").condition({chatRoomId: shared.team, userId: A}).count())
+        // a reply to their message shows nothing of it; a thread they started is not listed
+        const bSeq = timeline(C, shared.team)[0].eventSeq
+        as(C, CHAT + "send#Message", {chatRoomId: shared.team, body: "<p>answering</p>", replyToEventSeq: bSeq})
+        const reply = timeline(A, shared.team).find((event) => event.replyToEventSeq == bSeq)
         const linksA = Array.from(as(A, CHAT + "find#RoomLinks", {chatRoomId: shared.team}).links || [])
         const linksC = Array.from(as(C, CHAT + "find#RoomLinks", {chatRoomId: shared.team}).links || [])
-        return {mine, theirs, counts, rooms, mentions, activity, linksA, linksC}
+        return {mine, theirs, counts, rooms, mentions, activity, linksA, linksC, reply}
     },
-    then({mine, theirs, counts, rooms, mentions, activity, linksA, linksC}) {
+    then({mine, theirs, counts, rooms, mentions, activity, linksA, linksC, reply}) {
+        reply.replyTo.hidden == "blocked"
+        reply.replyTo.snippet == null
+        mine[0].senderUserId == null
         mine.length == 2
         mine[0].hidden == "blocked"
         mine[0].body == null

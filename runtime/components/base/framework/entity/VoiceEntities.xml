@@ -836,7 +836,7 @@ along with this software (see the LICENSE.md file). If not, see
             (ruleTypeEnumId): SsrFirstContact (the first text of a new conversation from a number nobody here knows),
             SsrLink (any link), SsrLinkHost (a link to the host pattern, exactly or under a leading *.), SsrKeyword (the
             words of pattern, on word boundaries, ignoring case), SsrNumber (the sender is pattern, or starts with it when it
-            ends in *), SsrReported (the number has more spam votes here than not-spam votes, SmsSpamVote), SsrLineType (the
+            ends in *), SsrReported (its weight for each distinct user here who reported the number, less its not-spam votes; an admin report reaches the threshold alone: SmsSpamVote), SsrLineType (the
             provider's lookup says pattern, with VoicePolicy.smsSpamLookup on). Patterns are plain text: no regular
             expressions. hitCount, notSpamCount and spamCount count the texts it matched, and the Not spam and Report spam
             of their rooms, for the admin who sets the weights.</description>
@@ -877,13 +877,19 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lookupBridgeId" type="id"/>
     </entity>
     <entity entity-name="SmsSpamVote" package="moqui.call" use="transactional" cache="never">
-        <description>A user's one vote of an outside number: SsvSpam (Report spam) or SsvNotSpam (Not spam). A number with
-            more spam votes than not-spam votes is reported (the rule SsrReported); one with more not-spam votes is trusted
-            and never judged.</description>
+        <description>A user's one vote of an outside number: SsvSpam (Report spam) or SsvNotSpam (Not spam). Each distinct
+            reporter adds the rule SsrReported's weight (50: two reporters reach the threshold; an admin's report, byAdmin,
+            reaches it alone), less one for each not-spam vote. A not-spam vote trusts the number for its voter's own rooms;
+            for everyone it takes an admin's, or three distinct users' that outnumber the spam votes (TRUST_VOTES, SmsSpam.js).
+            A report keeps the room it came from (chatRoomId) and the teammates' rooms it put in Spam (filteredJson, [{userId,
+            chatRoomId}]), so the reporter's Unblock withdraws it and brings those back.</description>
         <field name="phoneNumber" type="id" is-pk="true"/>
         <field name="userId" type="id" is-pk="true"/>
         <field name="voteEnumId" type="id"/>
         <field name="voteDate" type="date-time"/>
+        <field name="byAdmin" type="text-indicator"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="filteredJson" type="text-medium"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="one" title="SmsSpamVote" related="moqui.basic.Enumeration" short-alias="vote">
             <key-map field-name="voteEnumId"/></relationship>
@@ -893,6 +899,10 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Not spam" enumId="SsvNotSpam" enumCode="notSpam" enumTypeId="SmsSpamVote" sequenceNum="2"/>
         </seed-data>
     </entity>
+    <extend-entity entity-name="ChatRoomBridge" package="moqui.chat">
+        <field name="notSpamDate" type="date-time"><description>A member said Not spam (plans/Comms-Messaging.md §18.3 phase 11):
+            the conversation is never judged spam again (SmsSpamServices judge#SmsText); a block still applies</description></field>
+    </extend-entity>
     <extend-entity entity-name="ChatBridgeDelivery" package="moqui.chat">
         <field name="receiptStatus" type="text-short"><description>What the network's delivery receipt last said: sent,
             delivered, failed or unconfirmed (C4-SMS)</description></field>

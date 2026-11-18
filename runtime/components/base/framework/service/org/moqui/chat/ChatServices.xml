@@ -305,6 +305,9 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="userIdList" type="List"/>
             <parameter name="hook" default-value="chat-target"/>
+            <parameter name="blocks" type="Boolean" default="false"><description>Also refuse the users who blocked the current
+                user (ChatUserBlock, plans/Comms-Messaging.md §18.3 phase 11): for a direct room, or a private room they
+                make or add to; never a public or record room, or the people search</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
         <actions><script><![CDATA[
@@ -317,7 +320,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!asked.length) return
             const refused = new Set()
             // a user who blocked this one (ChatUserBlock, plans/Comms-Messaging.md §18.3 phase 11) is refused them, told nothing
-            for (const id of ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOfMe', {userIdList: asked}).userIdList || []) refused.add(id)
+            if (blocks) for (const id of ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOfMe', {userIdList: asked}).userIdList || []) refused.add(id)
             // an external caller reaches only the people of their own rooms (a direct room's even after leaving it)
             const outside = ec.service.sync().name('org.moqui.chat.ChatServices.get#ExternalUsers').parameter('userIdList', [me])
                     .disableAuthz().call()
@@ -616,8 +619,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.message.hasError()) return
             const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
+            const blockers = new Set(row.senderUserId ? ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: row.senderUserId,
+                    userIdList: Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).selectField('userId').list()).map((member) => member.userId)}).userIdList || [] : [])
             const users = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
-                    .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
+                    .selectField('userId').selectField('leftDate').selectField('filterEnumId').list()).filter((member) => member.userId && (isDirect || !member.leftDate) && !member.filterEnumId && !blockers.has(member.userId))
                     .map((member) => member.userId)
             if (users.length) ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                 userIdList: users, message: {kind: 'update', chatRoomId: chatRoomId, eventSeq: eventSeq, threadRootEventSeq: threadRoot,
@@ -1495,7 +1500,7 @@ along with this software (see the LICENSE.md file). If not, see
                 // a user an app's chat-target provider keeps from this one, or anyone outside an external user's rooms, is
                 // answered as one that does not exist (SEC-COM-01)
                 const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
-                        .parameter('userIdList', others.filter((id) => found.has(id))).call()?.refusedUserIdList || [])
+                        .parameters({userIdList: others.filter((id) => found.has(id)), blocks: type === 'CrtDirect' || type === 'CrtPrivate'}).call()?.refusedUserIdList || [])
                 const missing = others.filter((id) => !found.has(id) || refused.has(id))
                 if (missing.length) { ec.message.addError(`User ${missing.join(', ')} not found`); return }
             }
@@ -1789,7 +1794,7 @@ along with this software (see the LICENSE.md file). If not, see
                 // a user an app's chat-target provider keeps from this one, or anyone outside an external user's rooms, is
                 // answered as one that does not exist (SEC-COM-01)
                 const refused = new Set(ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers')
-                        .parameter('userIdList', targets.filter((id) => found.has(id))).call()?.refusedUserIdList || [])
+                        .parameters({userIdList: targets.filter((id) => found.has(id)), blocks: room.roomTypeEnumId === 'CrtPrivate' || room.roomTypeEnumId === 'CrtDirect'}).call()?.refusedUserIdList || [])
                 const missing = targets.filter((id) => !found.has(id) || refused.has(id))
                 if (missing.length) { ec.message.addError(`User ${missing.join(', ')} not found`); return }
                 // nobody adds an external user (EXTERNAL_USER) to a room bound to a record
@@ -2256,7 +2261,8 @@ along with this software (see the LICENSE.md file). If not, see
                         redacted: !!target.redactedDate} : {eventSeq: item.replyToEventSeq, senderUserId: null, senderName: null, snippet: null, redacted: true}
                 }
                 // a sender the user blocked: hidden, nothing of it given, unless the room is in the user's Spam & blocked (plans/Comms-Messaging.md §18.3 phase 11)
-                eventList.push(hidden.has(item.senderUserId) && row.eventTypeEnumId !== 'CetMembership' ? {chatRoomId: chatRoomId, eventSeq: seq, eventTypeEnumId: row.eventTypeEnumId, type: item.type, senderUserId: item.senderUserId, sentDate: item.sentDate, threadRootEventSeq: item.threadRootEventSeq, hidden: 'blocked', content: {}, mentions: [], attachments: [], records: [], reactions: [], linkPreviews: [], encryptedReactions: []} : item)
+                if (item.replyTo && hidden.has(item.replyTo.senderUserId)) item.replyTo = {eventSeq: item.replyTo.eventSeq, senderUserId: null, senderName: null, snippet: null, encrypted: null, sentDate: null, redacted: false, hidden: 'blocked'}
+                eventList.push(hidden.has(item.senderUserId) && row.eventTypeEnumId !== 'CetMembership' ? {chatRoomId: chatRoomId, eventSeq: seq, eventTypeEnumId: row.eventTypeEnumId, type: item.type, senderUserId: null, sentDate: item.sentDate, threadRootEventSeq: item.threadRootEventSeq, hidden: 'blocked', content: {}, mentions: [], attachments: [], records: [], reactions: [], linkPreviews: [], encryptedReactions: []} : item)
             }
         ]]></script></actions>
     </service>
@@ -2338,7 +2344,7 @@ along with this software (see the LICENSE.md file). If not, see
                     threadLastUserName: row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null,
                     lastSnippet: last && !last.redactedDate ? snippet(last.bodyText) : null})
             }
-            { const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || []); if (hidden.size) threadList = threadList.filter((thread) => !hidden.has(thread.senderUserId)) }
+            { const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || []); if (hidden.size) threadList = threadList.filter((thread) => !hidden.has(thread.senderUserId)).map((thread) => hidden.has(thread.threadLastUserId) ? Object.assign(thread, {threadLastUserId: null, threadLastUserName: null, lastSnippet: null, lastHidden: true}) : thread) }
         ]]></script></actions>
     </service>
 
@@ -4181,6 +4187,7 @@ along with this software (see the LICENSE.md file). If not, see
             // read in batches until the page is full and one more row is seen, or ten batches are read (then the page may be
             // short: rows of rooms no longer readable are left out, and the cursor goes on past them)
             const kept = []
+            const hiddenActors = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || [])
             let last = null
             let more = false
             let round = 0
@@ -4194,7 +4201,7 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const row of batch) {
                     if (kept.length === size) { more = true; break }
                     last = row
-                    if (canRead(row.chatRoomId)) kept.push(row)
+                    if (canRead(row.chatRoomId) && !hiddenActors.has(row.actorUserId)) kept.push(row)
                 }
                 if (more || batch.length < BATCH) break
                 at = decode(encode(last))

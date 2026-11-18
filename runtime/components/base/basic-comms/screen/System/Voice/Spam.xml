@@ -14,9 +14,10 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Voice, Spam (plans/Comms-Messaging.md §18.3 phase 11; docs/interfaces/SMS.md "Blocked numbers and spam"): the spam
     filter of texts from outside numbers: on or off, its threshold, the provider's paid number lookup (off by default) with
-    the days an answer is kept and its limit a day; and its rules, each with its weight, whether it is on, and its counts
-    (the texts it matched, and the Not spam and Report spam of their rooms), to add, change, turn off and remove.
-    org.moqui.call.SmsSpamServices get#, update#SpamFilter, store# and delete#SmsSpamRule (VoiceAdmin). -->
+    the days an answer is kept and its limit a day; its rules, each with its weight, whether it is on, and its counts
+    (the texts it matched, and the Not spam and Report spam of their rooms), to add, change, turn off and remove; and the
+    votes of numbers (Report spam, Not spam), where an admin trusts or reports a number for everyone or clears its votes.
+    org.moqui.call.SmsSpamServices get#, update#SpamFilter, store# and delete#SmsSpamRule, store#SpamVote (VoiceAdmin). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Spam" default-menu-index="12">
 
@@ -39,6 +40,12 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="storeVote">
+        <service-call name="org.moqui.call.SmsSpamServices.store#SpamVote" in-map="{phoneNumber:phoneNumber, vote:vote}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Votes saved</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="deleteRule">
         <service-call name="org.moqui.call.SmsSpamServices.delete#SmsSpamRule" in-map="{smsSpamRuleId:smsSpamRuleId}"/>
         <default-response url="."/>
@@ -57,7 +64,13 @@ along with this software (see the LICENSE.md file). If not, see
         ruleList = Array.from(out.ruleList || []).map((r) => Object.assign({}, r, {typeText: types[r.ruleTypeEnumId] || r.ruleTypeEnumId,
             patternText: r.pattern || '', descriptionText: r.description ? L(r.description) : '', stateText: r.disabled ? L('Off') : L('On'),
             toggleTo: r.disabled ? 'N' : 'Y', toggleText: r.disabled ? L('Turn on') : L('Turn off'),
-            countsText: ec.resource.expand('${hits} texts, ${notSpam} not spam, ${spam} reported', '', {hits: r.hitCount, notSpam: r.notSpamCount, spam: r.spamCount})}))
+            countsText: ec.resource.expand(L('${hits} texts, ${notSpam} not spam, ${spam} reported'), '', {hits: r.hitCount, notSpam: r.notSpamCount, spam: r.spamCount})}))
+        voteList = Array.from(out.voteList || []).map((v) => Object.assign({}, v, {
+            votesText: ec.resource.expand(L('${spam} reported, ${notSpam} not spam'), '', {spam: v.spamCount, notSpam: v.notSpamCount})
+                + (v.spamAdmin ? ' · ' + L('reported by an admin') : '') + (v.notSpamAdmin ? ' · ' + L('trusted by an admin') : ''),
+            trustText: v.trusted ? L('Trusted for everyone') : ''}))
+        trustNote = ec.resource.expand(L('A number is trusted for everyone by an admin, or by ${count} people here who said Not spam (more than reported it); one person\'s Not spam trusts it for their own rooms only. Each person who reports a number adds the reported rule\'s weight; an admin\'s report reaches the threshold alone.'), '', {count: out.trustVotes || 3})
+        newVote = {vote: 'notSpam'}
         newRule = {ruleTypeEnumId: 'SsrKeyword', weight: 40}
     ]]></script></actions>
 
@@ -95,6 +108,25 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="weight"><default-field title="Weight"><text-line size="6"/></default-field></field>
                 <field name="description"><default-field title="Shown as" tooltip="Why a text is spam, in its room's banner"><text-line size="40"/></default-field></field>
                 <field name="submitButton"><default-field title="Add the rule"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Votes"/><box-body>
+            <label type="p" text="${trustNote}" style="text-caption m-muted q-mt-none"/>
+            <section name="NoVotes" condition="!voteList.length"><widgets><label type="p" text="No votes yet."/></widgets></section>
+            <form-list name="Votes" list="voteList" skip-form="true" paginate="false">
+                <field name="phoneNumber"><default-field title="Number"><display/></default-field></field>
+                <field name="votesText"><default-field title="Votes"><display/></default-field></field>
+                <field name="trustText"><default-field title=""><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="storeVote" link-type="hidden-form-link" text="Clear" icon="sym_o_delete" confirmation="Remove every vote of this number?"
+                            parameter-map="{phoneNumber: phoneNumber, vote: 'clear'}"/>
+                </default-field></field>
+            </form-list>
+            <form-single name="NewVote" transition="storeVote" map="newVote">
+                <field name="phoneNumber"><default-field title="Number, with its country code"><text-line size="20"/></default-field></field>
+                <field name="vote"><default-field title="Vote">
+                    <radio><option key="notSpam" text="Trust it for everyone"/><option key="spam" text="Report it for everyone"/></radio></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
             </form-single>
         </box-body></container-box>
     </widgets>

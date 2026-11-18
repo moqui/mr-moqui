@@ -501,7 +501,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.message.hasError()) { ec.web.sendJsonResponse({}); return }
             const spam = out.filtered === 'spam' ? ec.service.sync().name('org.moqui.call.SmsSpamServices.get#SpamInfo').parameter('chatRoomId', chatRoomId).call() || {} : {}
             ec.message.clearErrors()
-            ec.web.sendJsonResponse({filtered: out.filtered || null, blockKind: out.blockKind || null, phoneNumber: out.phoneNumber || null,
+            ec.web.sendJsonResponse({filtered: out.filtered || null, blockKind: out.blockKind || null, phoneNumber: out.phoneNumber || null, phoneNumberList: out.phoneNumberList || [],
                 blockedUserId: out.blockedUserId || null, blockedName: out.blockedName || null, personBlocked: !!out.personBlocked, reasons: spam.reasons || []})
         ]]></script></actions>
         <default-response type="none"/>
@@ -529,7 +529,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="reportSpam">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.call.SmsSpamServices.report#Spam').parameter('chatRoomId', chatRoomId || '').call()
+            const numbers = phoneNumbers ? String(phoneNumbers).split(',').map((number) => number.trim()).filter((number) => number) : []
+            ec.service.sync().name('org.moqui.call.SmsSpamServices.report#Spam').parameters({chatRoomId: chatRoomId || '', phoneNumberList: numbers}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Reported as spam and blocked')}]})
         ]]></script></actions>
         <default-response type="none"/>

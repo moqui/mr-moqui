@@ -70,7 +70,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- The spam filter of texts from outside numbers (SmsSpamServices, plans/Comms-Messaging.md §18.3 phase 11): its rules,
         at the threshold 100 (VoicePolicy.smsSpamThreshold), set in System, Voice, Spam. A first text from an unknown number
-        with a shortened link is spam (110), one with a link alone is not (70); a number reported here is. -->
+        with a shortened link is spam (110), one with a link alone is not (70); a number two people here reported is
+        (50 each), or one an admin reported. -->
     <moqui.call.SmsSpamRule smsSpamRuleId="SSR_FIRST_CONTACT" ruleTypeEnumId="SsrFirstContact" pattern="" weight="40" description="The first text of a new conversation from a number nobody here knows"/>
     <moqui.call.SmsSpamRule smsSpamRuleId="SSR_LINK" ruleTypeEnumId="SsrLink" pattern="" weight="30" description="A link"/>
     <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_BIT_LY" ruleTypeEnumId="SsrLinkHost" pattern="bit.ly" weight="40" description="A shortened link"/>
@@ -95,6 +96,6 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_DELIVERY_ATTEMPT_FAILED" ruleTypeEnumId="SsrKeyword" pattern="delivery attempt failed" weight="40" description="Words spam often has"/>
     <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_PACKAGE_COULD_NOT_BE_DELIVERED" ruleTypeEnumId="SsrKeyword" pattern="package could not be delivered" weight="40" description="Words spam often has"/>
     <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_LOAN_APPROVED" ruleTypeEnumId="SsrKeyword" pattern="loan approved" weight="40" description="Words spam often has"/>
-    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_REPORTED" ruleTypeEnumId="SsrReported" pattern="" weight="100" description="Reported as spam here"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_REPORTED" ruleTypeEnumId="SsrReported" pattern="" weight="50" description="Reported as spam here"/>
     <moqui.call.SmsSpamRule smsSpamRuleId="SSR_LINE_NON_FIXED_VOIP" ruleTypeEnumId="SsrLineType" pattern="nonFixedVoip" weight="40" description="A number with no fixed line (the provider's lookup)"/>
 </entity-facade-xml>

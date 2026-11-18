@@ -233,34 +233,45 @@ applied first, as above, so an opt-out of a spammer still holds.
 
 - **Blocked numbers.** A user's one Blocked list (`CallerList` of type `CltBlocked`, made on the first block; Settings,
   Call handling, or Block in a phone room's menu: `block#PhoneNumber`, `unblock#PhoneNumber`) holds numbers and
-  prefixes (`+1900*`). Their calls are refused before every rule (SIP, Call handling), a ring group's member who blocked
-  the caller is not rung, and the user's pair rooms with them are blocked (`CmfBlocked`). A group text is not filtered
+  prefixes (`+1900*`). A call from one to the user is refused before every rule, 603 Decline with no voicemail (SIP,
+  Call handling). A ring group's member who blocked the caller is left out before any leg is made: none of their tabs,
+  phones or mobile rings and they get no missed call; taken in turns (in order, round robin), their turn is skipped and
+  the next member rings. The user's pair rooms with the number are blocked (`CmfBlocked`). A group text is not filtered
   by one number's block: the room is its other numbers' too, so its texts still show (as on iOS). Block in a group
   text's menu blocks that conversation alone.
 - **The spam filter.** On unless VoicePolicy `smsSpamFilter` is N, and for each user unless they turned off Filter spam
-  texts (`CallHandlingSetting.spamFilter`; off brings their rooms in Spam back). A text is judged only while the room has
-  no message from a local sender, and only from a number that is neither trusted (more Not spam votes here than Report
-  spam votes, `SmsSpamVote`) nor known: on a member's own caller list, a user's mobile number, or named by an app's
-  `call-context` provider for a new conversation (asked as the room's first member; a provider that fails counts as
-  knowing it). Its score is the sum of the weights of the rules it matches (`SmsSpamRule`, System, Voice, Spam), spam at
+  texts (`CallHandlingSetting.spamFilter`; off brings their rooms in Spam back). A text is judged only while the room was
+  never marked Not spam and has no message from a local sender. A number trusted for everyone, or known, is judged by the
+  admin's number rules (`SsrNumber`) alone: trusted is an admin's Not spam, or three distinct users' that outnumber the
+  reports; known is on a member's own caller list that no reject rule uses (a reject list never vouches for a number), a
+  user's mobile number, or named by an app's `call-context` provider for a new conversation (asked as the room's first
+  member; a provider that fails counts as knowing it). A user who said Not spam to a number never gets it in Spam (but
+  for the admin's number rules). Its score is the sum of the weights of the rules it matches (`SmsSpamRule`, System, Voice, Spam), spam at
   `smsSpamThreshold` (100). The seeded rules: the first text of a new conversation 40, any link 30, a shortened link's
-  host (bit.ly, tinyurl.com, ...) 40, words spam often has (gift card, verify your account, unpaid toll, ...) 40, a number
-  reported here 100, the provider's line type `nonFixedVoip` 40. So a first text with a shortened link is spam, one
+  host (bit.ly, tinyurl.com, ...) 40, words spam often has (gift card, verify your account, unpaid toll, ...) 40, each
+  distinct person here who reported the number 50 (less one for each Not spam; an admin's report reaches the threshold
+  alone), the provider's line type `nonFixedVoip` 40. So a first text with a shortened link is spam, one
   with a link alone is not. Patterns are plain text (words on word boundaries, a host or `*.host`, a number or a prefix),
   never regular expressions, and only the first 2,000 characters of a text are read. A spam room's links do not open
   until Not spam, and it is not filed on a record by the apps until then.
-- **Not spam and Report spam** (the room's banner; `mark#NotSpam`, `report#Spam`). Not spam brings the room back for
-  every member it was Spam for, votes the number not spam and counts the rules of its last verdict (`notSpamCount`).
-  Report spam puts a pair room's number on the user's Blocked list (its calls refused too) or blocks a group text's room
-  for the user, votes spam, counts the rules (`spamCount`) and puts the room in Spam for the other members whose filter
-  is on. No provider's report API is used. The counts show the admin which rules misfire; the weights are theirs to set.
+- **Not spam** (the room's banner; `mark#NotSpam`) brings the room back for every member it was Spam for, marks it never
+  to be judged again (`ChatRoomBridge.notSpamDate`; a block still applies), votes the number not spam for the user (their
+  own rooms trust it) and counts the rules of its last verdict (`notSpamCount`).
+- **Report spam** (`report#Spam`) acts on the reporter. In a pair room it puts the number on their Blocked list (its
+  calls refused too) with their spam vote; the teammates whose filter is on get the room in Spam only when nobody here
+  ever replied in it, and the reporter's Unblock withdraws the vote and brings those rooms back. In a group text it hides
+  the room for the reporter alone and votes only against the numbers they pick (none by default). One report is not
+  spam for anyone else: it takes two people's (or an admin's). No provider's report API is used. The rule counts
+  (`spamCount`) and the votes (System, Voice, Spam: an admin trusts, reports or clears a number for everyone there) show
+  what misfires; the weights are the admin's to set.
 - **The provider's number lookup** (optional, off by default: VoicePolicy `smsSpamLookup`). A paid lookup of the line type
   (`ChatBridgeServices.lookup#BridgeNumber`, the adapter's `lookup_number`; Twilio Lookup v2, below), asked only for a
   first text from an unknown number in E.164 whose local score is within the Line type rules' weight of the threshold, so
   the answer can change the verdict. An answer is kept `smsSpamLookupDays` (30) on the number (`SmsSpamNumber`), at most
-  `smsSpamLookupMaxPerDay` (100) are asked a day (`SmsSendCount` `lookup`), and a failure or a timeout (3 s) adds
-  nothing. Telnyx's number lookup is not built.
-- **The purge.** With the property `chat_spam_purge_days` above 0 (0, the default, keeps everything), the daily
+  `smsSpamLookupMaxPerDay` (100) are asked a day (`SmsSendCount` `lookup`, reserved in a transaction of its own so no
+  lock is held through the provider's answer, and given back when the lookup fails), and a failure or a timeout (3 s)
+  adds nothing. Telnyx's number lookup is not built.
+- **The purge.** With the property `chat_spam_purge_days` (MoquiDefaultConf.xml) above 0 (0, the default, keeps everything), the daily
   `clean#ChatRetention` deletes the texts older than that in each phone room that every current member has in Spam
   (`purge#SpamRooms`), each room on its own: one that fails is logged and the rest go on.
 - **Failure tolerance.** A judge that fails is logged and the text goes in unfiltered: an error never hides or loses a

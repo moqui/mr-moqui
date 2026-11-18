@@ -11,17 +11,25 @@
 // number of ours may reach several users, and Not spam brings a text back.
 //
 // The score of a text is the sum of the weights of the SmsSpamRule rows it matches; spam at VoicePolicy.smsSpamThreshold
-// (100). A text is judged only while the filter is on, the room has no message from a local sender (once we replied it is
-// a conversation), and the number is neither trusted (more not-spam votes than spam votes, SmsSpamVote) nor known (on a
-// member's own caller list, a user's mobile, or named by an app's call-context provider: for a new conversation only, as
-// the room's first member). The provider's lookup (lookup#BridgeNumber: the line type) is asked only with
-// VoicePolicy.smsSpamLookup on, for a first contact in E.164, when its answer can change the verdict, with no answer kept
-// younger than smsSpamLookupDays, under smsSpamLookupMaxPerDay.
+// (100). A text is judged only while the filter is on, the room was never marked Not spam (ChatRoomBridge.notSpamDate),
+// the room has no message from a local sender (once we replied it is a conversation), and the number is neither trusted
+// for everyone (an admin's not-spam vote, or TRUST_VOTES distinct users' that outnumber the spam votes) nor known (on a
+// member's own caller list that no reject rule uses, a user's mobile, or named by an app's call-context provider: for a
+// new conversation only, as the room's first member). A trusted or known number is still judged by the admin's number
+// rules (SsrNumber) alone, and a user who voted it not spam never gets it in Spam. Each distinct reporter adds the
+// reported rule's weight (50: two reach the threshold), less one for each not-spam vote; an admin's report reaches the
+// threshold alone. The provider's lookup (lookup#BridgeNumber: the line type) is asked only with VoicePolicy.smsSpamLookup
+// on, for a first contact in E.164, when its answer can change the verdict, with no answer kept younger than
+// smsSpamLookupDays, under smsSpamLookupMaxPerDay (the day's count reserved in a transaction of its own, so no lock is held
+// through the provider's answer, and given back when the lookup fails).
 //
-// Not spam (markNotSpam) clears the room's Spam for every member, votes not-spam and counts the rules; Report spam
-// (reportSpam) blocks the pair room's number for the user (CallHandling.js blockNumber: its calls too) or a group text's
-// room, votes spam, counts the rules and puts the room in Spam for the other members whose filter is on. Failure tolerant:
-// a judge that fails lets the text in unfiltered, a provider or a lookup that fails adds nothing.
+// Not spam (markNotSpam) clears the room's Spam for every member, marks the room never to be judged again and votes not
+// spam (the number trusted for the voter's own rooms). Report spam (reportSpam) acts on the reporter: a pair room's number
+// on their Blocked list (CallHandling.js blockNumber: its calls too), a group text's room blocked for them alone with votes
+// only against the numbers they pick; and it puts the room in Spam for the teammates whose filter is on only when nobody
+// here ever replied in it, keeping those rooms on the vote (filteredJson), so the reporter's Unblock withdraws the vote
+// and brings them back (withdrawReport). Failure tolerant: a judge that fails lets the text in unfiltered, a provider or a
+// lookup that fails adds nothing.
 
 const NUMBER = 'moqui.call.PhoneNumber'
 const POLICY = 'moqui.call.VoicePolicy'
@@ -43,6 +51,10 @@ const TYPES = ['SsrFirstContact', 'SsrLink', 'SsrLinkHost', 'SsrKeyword', 'SsrNu
 /** The most of a text the rules read. */
 const TEXT_READ = 2000
 const DEFAULTS = { smsSpamThreshold: 100, smsSpamLookupDays: 30, smsSpamLookupMaxPerDay: 100 }
+/** The distinct users whose Not spam trusts a number for everyone (an admin's alone does). */
+const TRUST_VOTES = 3
+/** The rule kinds that make a caller list a reject list, never a list of known numbers. */
+const REJECT_KINDS = ['ChrSelectiveReject', 'ChrAnonymousReject']
 
 const ms = (value) => {
   if (value == null || value === '') return null
@@ -104,14 +116,25 @@ function entryHolds(entry, number) {
   return text.endsWith('*') ? number.startsWith(text.slice(0, -1)) : text === number
 }
 
-/** The votes of a number: {spam, notSpam}. */
+/** The votes of a number: {spam, notSpam, spamAdmin, notSpamAdmin, notSpamUsers}. */
 function votesOf(number) {
-  const out = { spam: 0, notSpam: 0 }
+  const out = { spam: 0, notSpam: 0, spamAdmin: false, notSpamAdmin: false, notSpamUsers: new Set() }
   for (const vote of find(VOTE).condition('phoneNumber', number).list()) {
-    if (vote.voteEnumId === 'SsvSpam') out.spam++
-    else if (vote.voteEnumId === 'SsvNotSpam') out.notSpam++
+    if (vote.voteEnumId === 'SsvSpam') {
+      out.spam++
+      if (vote.byAdmin === 'Y') out.spamAdmin = true
+    } else if (vote.voteEnumId === 'SsvNotSpam') {
+      out.notSpam++
+      out.notSpamUsers.add(vote.userId)
+      if (vote.byAdmin === 'Y') out.notSpamAdmin = true
+    }
   }
   return out
+}
+
+/** Whether the votes trust a number for everyone: an admin's Not spam, or TRUST_VOTES users' that outnumber the reports. */
+function trustedForAll(votes) {
+  return votes.notSpamAdmin || (votes.notSpam >= TRUST_VOTES && votes.notSpam > votes.spam)
 }
 
 /** Run fn as the user (username), back to whoever was signed in after. */
@@ -134,7 +157,11 @@ function asUser(username, fn) {
  */
 function known(number, users, askApps) {
   if (!users.length) return false
-  const lists = Array.from(find(LIST).condition('userId', 'in', users).list()).filter((list) => list.listTypeEnumId !== 'CltBlocked')
+  // a list a reject rule uses is a list of callers kept out, never of numbers known
+  const rejecting = new Set(Array.from(find('moqui.call.CallHandlingRule').condition('userId', 'in', users).list())
+    .filter((rule) => REJECT_KINDS.includes(rule.kindEnumId) || rule.targetTypeEnumId === 'ChtReject').map((rule) => rule.callerListId).filter((id) => id))
+  const lists = Array.from(find(LIST).condition('userId', 'in', users).list())
+    .filter((list) => list.listTypeEnumId !== 'CltBlocked' && !rejecting.has(list.callerListId))
   if (lists.length && Array.from(find(ENTRY).condition('callerListId', 'in', lists.map((l) => l.callerListId)).list())
     .some((entry) => entryHolds(entry.phoneNumber, number))) return true
   if (find(SETTING).condition('mobileNumber', number).count() > 0) return true
@@ -164,20 +191,27 @@ function today() {
   return new Date(nowMs()).toISOString().slice(0, 10)
 }
 
-/** The day's lookups, counted (SmsSendCount lookup); false when the day's limit is reached. */
-function countLookup(max) {
-  const day = today()
-  const row = find(COUNT).condition({ counterKey: 'lookup', dayDate: day }).forUpdate(true).one()
-  if (row && Number(row.sentCount || 0) >= max) return false
-  if (row) {
-    row.setFields({ sentCount: Number(row.sentCount || 0) + 1, lastSentDate: ec.user.nowTimestamp }, true, null, null)
-    row.update()
-  } else {
-    const made = ec.entity.makeValue(COUNT)
-    made.setFields({ counterKey: 'lookup', dayDate: day, sentCount: 1, lastSentDate: ec.user.nowTimestamp }, true, null, null)
-    made.create()
-  }
-  return true
+/**
+ * A lookup of the day reserved (SmsSendCount lookup, by delta 1) or given back (delta -1), in a transaction of its own so
+ * its row lock is not held through the provider's answer. A reserve answers false when the day's limit is reached.
+ */
+function countLookup(max, delta) {
+  let reserved = false
+  ec.transaction.runRequireNew(null, 'The day\'s number lookups were not counted', () => {
+    const day = today()
+    const row = find(COUNT).condition({ counterKey: 'lookup', dayDate: day }).forUpdate(true).one()
+    if (delta > 0 && row && Number(row.sentCount || 0) >= max) return
+    if (row) {
+      row.setFields({ sentCount: Math.max(0, Number(row.sentCount || 0) + delta), lastSentDate: ec.user.nowTimestamp }, true, null, null)
+      row.update()
+    } else if (delta > 0) {
+      const made = ec.entity.makeValue(COUNT)
+      made.setFields({ counterKey: 'lookup', dayDate: day, sentCount: 1, lastSentDate: ec.user.nowTimestamp }, true, null, null)
+      made.create()
+    }
+    reserved = true
+  })
+  return reserved
 }
 
 /** The provider's answer for number: kept when younger than the policy's days, else asked (and kept); null for none. */
@@ -186,7 +220,7 @@ function lookupOf(number, chatBridgeId, pol) {
   if (kept && kept.lookupJson && ms(kept.lookupDate) > nowMs() - pol.smsSpamLookupDays * 86400000) {
     try { return JSON.parse(kept.lookupJson) } catch (err) { /* asked again */ }
   }
-  if (!countLookup(pol.smsSpamLookupMaxPerDay)) {
+  if (!countLookup(pol.smsSpamLookupMaxPerDay, 1)) {
     ec.logger.warn(`Spam filter: the day's ${pol.smsSpamLookupMaxPerDay} number lookups are used; ${number} not looked up`)
     return null
   }
@@ -197,13 +231,15 @@ function lookupOf(number, chatBridgeId, pol) {
     if (ec.message.hasError()) throw new Error(ec.message.errorsString)
   } catch (err) {
     ec.logger.warn(`Spam filter: the lookup of ${number} failed: ${message(err)}`)
-    return null
+    out = { reasonCode: 'failed' }
   } finally {
     ec.message.clearErrors()
     ec.message.popErrors()
   }
   if (out.reasonCode) {
-    if (out.reasonCode === 'failed') ec.logger.warn(`Spam filter: the lookup of ${number} failed: ${out.error || ''}`)
+    if (out.reasonCode === 'failed' && out.error) ec.logger.warn(`Spam filter: the lookup of ${number} failed: ${out.error}`)
+    // a lookup that failed is not counted against the day
+    if (out.reasonCode === 'failed') countLookup(pol.smsSpamLookupMaxPerDay, -1)
     return null
   }
   const found = { lineType: out.lineType || null, carrierName: out.carrierName || null, callerName: out.callerName || null }
@@ -229,15 +265,16 @@ function keepNumber(number, fields) {
  * The score of a text from number (the rules it matches): {score, reasons: [smsSpamRuleId]}. firstContact: a new
  * conversation from a number nobody knows; lookup: a function answering the provider's lookup, or null.
  */
-function scoreOf(text, number, firstContact, threshold, lookup) {
+function scoreOf(text, number, firstContact, threshold, lookup, numbersOnly) {
   const read = String(text || '').slice(0, TEXT_READ)
   const words = wordsOf(read)
   const hosts = hostsOf(read)
-  const all = rules()
+  // a trusted or known number: the admin's number rules alone
+  const all = rules().filter((rule) => !numbersOnly || rule.ruleTypeEnumId === 'SsrNumber')
   let votes = null
   let score = 0
   const reasons = []
-  const hit = (rule) => { score += Number(rule.weight || 0); reasons.push(rule.smsSpamRuleId) }
+  const hit = (rule, points) => { score += points != null ? points : Number(rule.weight || 0); reasons.push(rule.smsSpamRuleId) }
   for (const rule of all) {
     const pattern = String(rule.pattern || '').trim()
     switch (rule.ruleTypeEnumId) {
@@ -246,7 +283,15 @@ function scoreOf(text, number, firstContact, threshold, lookup) {
       case 'SsrLinkHost': if (pattern && hosts.some((host) => hostMatches(host, pattern))) hit(rule); break
       case 'SsrKeyword': { const want = wordsOf(pattern); if (want.trim() && words.includes(want)) hit(rule); break }
       case 'SsrNumber': if (pattern && entryHolds(pattern, number)) hit(rule); break
-      case 'SsrReported': votes = votes || votesOf(number); if (votes.spam > votes.notSpam) hit(rule); break
+      case 'SsrReported': {
+        // its weight for each distinct reporter, less the not-spam votes; an admin's report reaches the threshold alone
+        votes = votes || votesOf(number)
+        const reporters = Math.max(0, votes.spam - votes.notSpam)
+        const weight = Number(rule.weight || 0)
+        if (votes.spamAdmin) hit(rule, Math.max(weight * reporters, threshold))
+        else if (reporters > 0) hit(rule, weight * reporters)
+        break
+      }
       default: break
     }
   }
@@ -279,25 +324,28 @@ function judge(p) {
   }
   const pol = policy()
   if (!pol.smsSpamFilter) return out
-  // the room: none yet is a new conversation; one with a message of ours is a conversation, never judged
+  // the room: none yet is a new conversation; one a member marked Not spam, or with a message of ours, is never judged
   const key = ours + '/' + (group ? Array.from(p.groupNumbers).join(',') : p.pairNumber || theirs)
   const mapping = Array.from(find(MAPPING).condition('chatBridgeId', p.chatBridgeId).condition('externalRoomId', key).condition('thruDate', null).list())[0]
+  if (mapping && mapping.notSpamDate) return out
   const room = mapping ? one(ROOM, { chatRoomId: mapping.chatRoomId }) : null
   if (room && find(EVENT).condition('chatRoomId', room.chatRoomId).condition('eventTypeEnumId', 'CetMessage')
     .condition('senderUserId', 'is-not-null', null).count() > 0) return out
   const votes = votesOf(theirs)
-  if (votes.notSpam > votes.spam) return out
   const firstContact = !room
-  if (known(theirs, users, firstContact && isE164(theirs))) return out
-  const lookup = pol.smsSpamLookup && firstContact && isE164(theirs) ? () => lookupOf(theirs, p.chatBridgeId, pol) : null
-  const scored = scoreOf(p.text, theirs, firstContact, pol.smsSpamThreshold, lookup)
+  // trusted for everyone, or known: only the admin's number rules apply
+  const numbersOnly = trustedForAll(votes) || known(theirs, users, firstContact && isE164(theirs))
+  const lookup = !numbersOnly && pol.smsSpamLookup && firstContact && isE164(theirs) ? () => lookupOf(theirs, p.chatBridgeId, pol) : null
+  const scored = scoreOf(p.text, theirs, firstContact && !numbersOnly, pol.smsSpamThreshold, lookup, numbersOnly)
   out.judged = true
   out.score = scored.score
   out.reasons = scored.reasons
   out.spam = scored.score >= pol.smsSpamThreshold
   if (out.spam) {
     const off = new Set(Array.from(find(SETTING).condition('userId', 'in', users).condition('spamFilter', 'N').selectField('userId').list()).map((row) => row.userId))
-    for (const userId of users) if (!out.memberFilterMap[userId] && !off.has(userId)) out.memberFilterMap[userId] = 'CmfSpam'
+    // a user who said Not spam to the number keeps it in their sight (but not against the admin's number rules)
+    const voters = numbersOnly ? new Set() : votes.notSpamUsers
+    for (const userId of users) if (!out.memberFilterMap[userId] && !off.has(userId) && !voters.has(userId)) out.memberFilterMap[userId] = 'CmfSpam'
   }
   return out
 }
@@ -339,18 +387,26 @@ function myPhoneRoom(chatRoomId) {
   return { me, room, numbers, member }
 }
 
-function vote(number, userId, voteEnumId) {
+/** The user's vote of a number (one a user; an admin's is marked), with what a report keeps; true when it changed. */
+function vote(number, userId, voteEnumId, extra) {
+  const fields = Object.assign({ voteEnumId, voteDate: ec.user.nowTimestamp,
+    byAdmin: ec.user.userId === userId && ec.user.hasPermission('VoiceAdmin') ? 'Y' : 'N', chatRoomId: null, filteredJson: null }, extra || {})
   const row = one(VOTE, { phoneNumber: number, userId })
+  const changed = !row || row.voteEnumId !== voteEnumId
   if (row) {
-    if (row.voteEnumId === voteEnumId) return false
-    row.setFields({ voteEnumId, voteDate: ec.user.nowTimestamp }, true, null, null)
+    row.setFields(fields, true, null, null)
     row.update()
   } else {
     const made = ec.entity.makeValue(VOTE)
-    made.setFields({ phoneNumber: number, userId, voteEnumId, voteDate: ec.user.nowTimestamp }, true, null, null)
+    made.setFields(Object.assign({ phoneNumber: number, userId }, fields), true, null, null)
     made.create()
   }
-  return true
+  return changed
+}
+
+/** Whether anyone here ever wrote in the room (a message of a local sender). */
+function repliedIn(chatRoomId) {
+  return find(EVENT).condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetMessage').condition('senderUserId', 'is-not-null', null).count() > 0
 }
 
 function lastReasons(number) {
@@ -363,10 +419,18 @@ function membersOf(chatRoomId) {
   return Array.from(find(MEMBER).condition('chatRoomId', chatRoomId).condition('leftDate', null).condition('userId', 'is-not-null', null).list())
 }
 
-/** Not spam: the room in sight again for every member it was Spam for, the numbers voted not spam, the rules counted. */
+/**
+ * Not spam: the room in sight again for every member it was Spam for and never judged again (its mapping's notSpamDate),
+ * the numbers voted not spam by the user (trusted for the user's own rooms), the rules counted.
+ */
 function markNotSpam(p) {
   const found = myPhoneRoom(p.chatRoomId)
   if (found.refusal) return found.refusal
+  for (const mapping of find(MAPPING).condition('chatRoomId', found.room.chatRoomId).condition('thruDate', null).list()) {
+    if (mapping.notSpamDate) continue
+    mapping.set('notSpamDate', ec.user.nowTimestamp)
+    mapping.update()
+  }
   for (const member of membersOf(found.room.chatRoomId)) {
     if (member.filterEnumId !== 'CmfSpam') continue
     try {
@@ -380,34 +444,69 @@ function markNotSpam(p) {
 }
 
 /**
- * Report spam: a pair room's number on the user's Blocked list (its calls too), a group text's room blocked for the user;
- * the numbers voted spam, the rules counted, and the room in Spam for the other members whose filter is on.
+ * Report spam, for the reporter: a pair room's number on their Blocked list (its calls refused too) and a spam vote of it;
+ * a group text's room blocked for them alone, with spam votes only of the numbers of phoneNumberList they picked (none by
+ * default). In a pair room the teammates whose filter is on get the room in Spam only when nobody here ever replied in it; those rooms
+ * are kept on the vote, so the reporter's Unblock brings them back (withdrawReport). Out: blocked, votedNumberList,
+ * filteredUserIdList.
  */
 function reportSpam(p) {
   const found = myPhoneRoom(p.chatRoomId)
   if (found.refusal) return found.refusal
   const chatRoomId = found.room.chatRoomId
-  if (found.numbers.length === 1) {
+  const pair = found.numbers.length === 1
+  if (pair) {
     const out = script(CALL_HANDLING, 'blockNumber', { phoneNumber: found.numbers[0] })
     if (ec.message.hasError()) return out
   } else {
     script(CHAT_BLOCKS, 'setFilters', { userId: found.me, chatRoomIdList: [chatRoomId], filterEnumId: 'CmfBlocked', replace: true })
   }
-  for (const number of found.numbers) if (vote(number, found.me, 'SsvSpam')) countRules(lastReasons(number), 'spamCount', false)
-  if (policy().smsSpamFilter) {
+  const picked = new Set(Array.from(p.phoneNumberList || []).map(String))
+  const voted = pair ? found.numbers : found.numbers.filter((number) => picked.has(number))
+  // the teammates of a pair room, only when nobody here ever replied in it (a group text is hidden for the reporter alone)
+  const filtered = []
+  if (pair && policy().smsSpamFilter && !repliedIn(chatRoomId)) {
     const others = membersOf(chatRoomId).filter((member) => member.userId !== found.me && !member.filterEnumId)
     const off = new Set(others.length ? Array.from(find(SETTING).condition('userId', 'in', others.map((m) => m.userId)).condition('spamFilter', 'N')
       .selectField('userId').list()).map((row) => row.userId) : [])
     for (const member of others) {
       if (off.has(member.userId)) continue
-      try {
-        script(CHAT_BLOCKS, 'setFilters', { userId: member.userId, chatRoomIdList: [chatRoomId], filterEnumId: 'CmfSpam' })
-      } catch (err) {
-        ec.logger.error(`Chat room ${chatRoomId}: the report did not reach ${member.userId}: ${message(err)}`)
-      }
+      const changed = script(CHAT_BLOCKS, 'setFilters', { userId: member.userId, chatRoomIdList: [chatRoomId], filterEnumId: 'CmfSpam' }).changedRoomIdList || []
+      if (changed.length) filtered.push({ userId: member.userId, chatRoomId })
     }
   }
-  return {}
+  for (const number of voted) {
+    if (vote(number, found.me, 'SsvSpam', { chatRoomId, filteredJson: filtered.length ? JSON.stringify(filtered) : null })) {
+      countRules(lastReasons(number), 'spamCount', false)
+    }
+  }
+  return { blocked: pair ? 'number' : 'room', votedNumberList: voted, filteredUserIdList: filtered.map((item) => item.userId) }
+}
+
+/**
+ * Internal (the reporter's Unblock: CallHandling.js unblockNumber, ChatBlocks.js unblockRoom): the user's spam votes of
+ * phoneNumber, or those made from chatRoomId, are withdrawn, and the teammates' rooms those reports put in Spam come back
+ * (when they are still in Spam). Each on its own: one that fails is logged.
+ */
+function withdrawReport(p) {
+  if (blank(p.userId) || (blank(p.phoneNumber) && blank(p.chatRoomId))) return {}
+  let find0 = find(VOTE).condition('userId', p.userId).condition('voteEnumId', 'SsvSpam')
+  find0 = blank(p.phoneNumber) ? find0.condition('chatRoomId', p.chatRoomId) : find0.condition('phoneNumber', p.phoneNumber)
+  let withdrawn = 0
+  for (const row of Array.from(find0.list())) {
+    try {
+      let filtered = []
+      try { filtered = row.filteredJson ? Array.from(JSON.parse(row.filteredJson)) : [] } catch (err) { filtered = [] }
+      for (const item of filtered) {
+        if (item && item.userId && item.chatRoomId) script(CHAT_BLOCKS, 'setFilters', { userId: item.userId, chatRoomIdList: [item.chatRoomId], onlyFrom: 'CmfSpam' })
+      }
+      row.delete()
+      withdrawn++
+    } catch (err) {
+      ec.logger.error(`The report of ${row.phoneNumber} by ${p.userId} was not withdrawn: ${message(err)}`)
+    }
+  }
+  return { withdrawnCount: withdrawn }
 }
 
 /** The banner of a phone room: filtered (spam, blocked or none) for the current user, and why it is spam (reasons). */
@@ -470,7 +569,36 @@ function getFilter() {
   return { settings: policy(), ruleList: Array.from(find(RULE).orderBy('ruleTypeEnumId').orderBy('pattern').list()).map((rule) => ({
     smsSpamRuleId: rule.smsSpamRuleId, ruleTypeEnumId: rule.ruleTypeEnumId, pattern: rule.pattern || null, weight: Number(rule.weight || 0),
     description: rule.description || null, disabled: rule.disabled === 'Y', hitCount: Number(rule.hitCount || 0),
-    notSpamCount: Number(rule.notSpamCount || 0), spamCount: Number(rule.spamCount || 0), lastHitDate: rule.lastHitDate || null })) }
+    notSpamCount: Number(rule.notSpamCount || 0), spamCount: Number(rule.spamCount || 0), lastHitDate: rule.lastHitDate || null })),
+    voteList: votesList(), trustVotes: TRUST_VOTES }
+}
+
+/** The numbers with votes, the latest first (at most 200): spam and not-spam counts, an admin's, and whether trusted for everyone. */
+function votesList() {
+  const byNumber = new Map()
+  for (const row of find(VOTE).orderBy('-voteDate').limit(1000).list()) {
+    if (!byNumber.has(row.phoneNumber)) byNumber.set(row.phoneNumber, { phoneNumber: row.phoneNumber, lastVoteDate: row.voteDate || null })
+  }
+  return Array.from(byNumber.values()).slice(0, 200).map((item) => {
+    const votes = votesOf(item.phoneNumber)
+    return Object.assign(item, { spamCount: votes.spam, notSpamCount: votes.notSpam, spamAdmin: votes.spamAdmin, notSpamAdmin: votes.notSpamAdmin,
+      trusted: trustedForAll(votes) })
+  })
+}
+
+/** An admin's vote of a number (VoiceAdmin): notSpam trusts it for everyone, spam reports it for everyone, clear removes every vote of it. */
+function storeVote(p) {
+  const refusal = notAdmin()
+  if (refusal) return refusal
+  const number = String(p.phoneNumber || '').trim()
+  if (!isE164(number)) return refuse('badNumber', 'A number with its country code, in E.164')
+  if (p.vote === 'clear') {
+    find(VOTE).condition('phoneNumber', number).deleteAll()
+    return {}
+  }
+  if (p.vote !== 'spam' && p.vote !== 'notSpam') return refuse('badVote', 'Choose spam, not spam or clear')
+  vote(number, ec.user.userId, p.vote === 'spam' ? 'SsvSpam' : 'SsvNotSpam')
+  return {}
 }
 
 function updateFilter(p) {
@@ -529,7 +657,7 @@ function deleteRule(p) {
 }
 
 const operations = {
-  judge, noteJudged, markNotSpam, reportSpam, spamInfo, purgeSpam, getFilter, updateFilter, storeRule, deleteRule,
+  judge, noteJudged, markNotSpam, reportSpam, withdrawReport, spamInfo, purgeSpam, getFilter, updateFilter, storeRule, deleteRule, storeVote,
   score: (p) => scoreOf(p.text, p.theirNumber, yes(p.firstContact), policy().smsSpamThreshold, null),
 }
 

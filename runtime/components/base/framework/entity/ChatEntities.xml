@@ -139,6 +139,7 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="notificationLevelEnumId"/></relationship>
         <index name="CHAT_MEMBER_USER"><index-field name="userId"/><index-field name="leftDate"/></index>
         <index name="CHAT_MEMBER_ROOM_USER" unique="true"><index-field name="chatRoomId"/><index-field name="userId"/></index>
+        <index name="CHAT_MEMBER_FILTER"><index-field name="filterEnumId"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Chat Member Role" enumTypeId="ChatMemberRole"/>
             <moqui.basic.Enumeration description="Owner" enumId="CmrOwner" enumCode="owner" enumTypeId="ChatMemberRole" sequenceNum="1"/>

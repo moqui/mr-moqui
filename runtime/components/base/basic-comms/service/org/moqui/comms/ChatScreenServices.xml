@@ -938,6 +938,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (reply.senderUserId) (repliers[roomId + ' ' + Number(reply.threadRootEventSeq)] = repliers[roomId + ' ' + Number(reply.threadRootEventSeq)] || new Set()).add(reply.senderUserId)
             }
             const userIds = Array.from(new Set(kept.flatMap((row) => [row.senderUserId, row.threadLastUserId]).filter((id) => id)))
+            const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || [])
             const names = {}
             if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
@@ -948,14 +949,17 @@ along with this software (see the LICENSE.md file). If not, see
                 const map = summaries[row.chatRoomId]
                 const root = map[String(Number(row.eventSeq))] || {}
                 const lastReply = row.threadLastEventSeq != null ? map[String(Number(row.threadLastEventSeq))] || {} : {}
+                // a blocked person's root is left out, and a last reply of theirs shows nothing (plans/Comms-Messaging.md §18.3 phase 11)
+                if (hidden.has(row.senderUserId)) continue
+                const lastHidden = hidden.has(row.threadLastUserId)
                 items.push({chatRoomId: row.chatRoomId, roomName: room.roomName ?? null, roomTypeEnumId: room.roomTypeEnumId ?? null,
                     threadRootEventSeq: Number(row.eventSeq), startedByMe: row.senderUserId === me,
                     rootSenderName: row.senderUserId ? names[row.senderUserId] || row.senderUserId : null, rootSnippet: sealed ? null : root.snippet ?? null,
                     replyCount: Number(row.threadReplyCount || 0), lastDate: toMillis(row.threadLastDate),
-                    lastEventSeq: row.threadLastEventSeq != null ? Number(row.threadLastEventSeq) : null, lastUserId: row.threadLastUserId ?? null,
-                    lastUserName: row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null,
-                    lastSnippet: sealed ? null : lastReply.snippet ?? null, replierCount: (repliers[row.chatRoomId + ' ' + Number(row.eventSeq)] || new Set()).size,
-                    encrypted: sealed, encryptedContent: sealed ? lastReply.encrypted ?? null : null,
+                    lastEventSeq: row.threadLastEventSeq != null ? Number(row.threadLastEventSeq) : null, lastUserId: lastHidden ? null : row.threadLastUserId ?? null,
+                    lastUserName: !lastHidden && row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null, lastHidden: lastHidden,
+                    lastSnippet: sealed || lastHidden ? null : lastReply.snippet ?? null, replierCount: (repliers[row.chatRoomId + ' ' + Number(row.eventSeq)] || new Set()).size,
+                    encrypted: sealed, encryptedContent: sealed && !lastHidden ? lastReply.encrypted ?? null : null,
                     encryptedEventSeq: sealed ? lastReply.encryptedEventSeq ?? null : null, encryptedSentDate: sealed ? lastReply.encryptedSentDate ?? null : null})
             }
         ]]></script></actions>

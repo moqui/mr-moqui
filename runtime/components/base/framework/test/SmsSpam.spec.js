@@ -12,7 +12,7 @@ const USERS = [OWNER, MATE]
 const BRIDGE = "SMS_SPAM_BRIDGE"
 const OURS = "+15550007100"
 const N = (n) => "+1555017" + String(1000 + n).slice(1)
-const NUMBERS = Array.from({length: 20}, (_, i) => N(i + 1))
+const NUMBERS = Array.from({length: 30}, (_, i) => N(i + 1))
 const SPAM = "component://framework/service/org/moqui/call/SmsSpam.js"
 
 function sys(run) {
@@ -123,6 +123,7 @@ spec({
     cleanupSpec() {
         clean()
         policy(POLICY_FIELDS)
+        sys(() => ec.entity.find("moqui.call.SmsSpamRule").condition("smsSpamRuleId", "SMS_SPAM_SPEC_NUMBER").deleteAll())
         ec.user.logoutUser()
     }
 })
@@ -209,7 +210,9 @@ feature("a known number, a trusted number and a room we replied in are not judge
     },
     then({known, trusted, replied}) {
         filterOf(known, OWNER) == null
+        // one user's Not spam trusts the number for their own rooms only
         filterOf(trusted, MATE) == null
+        filterOf(trusted, OWNER) == "CmfSpam"
         filterOf(replied, OWNER) == null
         filterOf(replied, MATE) == null
     }
@@ -222,6 +225,7 @@ feature("Not spam brings the room back for everyone and the number is trusted; R
         const notSpam = as(MATE, "org.moqui.call.SmsSpamServices.mark#NotSpam", {chatRoomId: room})
         const after = {owner: filterOf(room, OWNER), mate: filterOf(room, MATE)}
         const misfires = Number(rule("SSR_HOST_BIT_LY").notSpamCount || 0)
+        const marked = sys(() => ec.entity.find("moqui.chat.ChatRoomBridge").condition("chatRoomId", room).condition("thruDate", null).one()).notSpamDate
         text(N(1), "Another https://bit.ly/x")
         const stillIn = filterOf(room, OWNER)
         // a plain first text, then reported by the owner
@@ -233,11 +237,12 @@ feature("Not spam brings the room back for everyone and the number is trusted; R
         const call = as(OWNER, "org.moqui.call.CallHandlingServices.evaluate#CallHandling", {userId: OWNER, fromNumber: N(5)})
         // the teammate turns the filter off: their Spam comes back
         const off = as(MATE, "org.moqui.call.CallHandlingServices.update#CallHandlingSetting", {spamFilter: "false"})
-        return {stranger, notSpam, after, misfires, stillIn, plain, report, reportedRoom, handling, call, off}
+        return {stranger, notSpam, after, misfires, marked, stillIn, plain, report, reportedRoom, handling, call, off}
     },
-    then({stranger, notSpam, after, misfires, stillIn, plain, report, reportedRoom, handling, call, off}) {
+    then({stranger, notSpam, after, misfires, marked, stillIn, plain, report, reportedRoom, handling, call, off}) {
         stranger.reasonCode == "notFound"
         notSpam.errors == ""
+        marked != null
         after.owner == null
         after.mate == null
         misfires >= 1
@@ -359,5 +364,103 @@ feature("the spam purge deletes old texts only in rooms every member has in Spam
         on.roomCount >= 1
         after.spam == 0
         after.mixed == before.mixed
+    }
+})
+
+feature("Report spam acts on the reporter: one report is not spam for others, teammates only where nobody replied, and Unblock takes it back", {
+    when() {
+        as(MATE, "org.moqui.call.CallHandlingServices.update#CallHandlingSetting", {spamFilter: "true"})
+        text(N(14), "hello")
+        const room = roomOf(N(14))
+        const report = as(OWNER, "org.moqui.call.SmsSpamServices.report#Spam", {chatRoomId: room})
+        const after = {owner: filterOf(room, OWNER), mate: filterOf(room, MATE)}
+        const oneReport = score("hello", N(14), false)
+        sys(() => {
+            const vote = ec.entity.makeValue("moqui.call.SmsSpamVote")
+            vote.setFields({phoneNumber: N(14), userId: MATE, voteEnumId: "SsvSpam", voteDate: ec.user.nowTimestamp}, true, null, null)
+            vote.create()
+        })
+        const twoReports = score("hello", N(14), false)
+        sys(() => ec.entity.find("moqui.call.SmsSpamVote").condition({phoneNumber: N(14), userId: MATE}).deleteAll())
+        const unblock = as(OWNER, "org.moqui.call.CallHandlingServices.unblock#PhoneNumber", {phoneNumber: N(14)})
+        const back = {owner: filterOf(room, OWNER), mate: filterOf(room, MATE)}
+        const withdrawn = sys(() => ec.entity.find("moqui.call.SmsSpamVote").condition({phoneNumber: N(14), userId: OWNER}).count())
+        // a room someone here replied in: the report leaves the teammates alone
+        text(N(15), "hi")
+        const replied = roomOf(N(15))
+        as(OWNER, "org.moqui.chat.ChatServices.send#Message", {chatRoomId: replied, body: "<p>Hello</p>"})
+        as(OWNER, "org.moqui.call.SmsSpamServices.report#Spam", {chatRoomId: replied})
+        return {report, after, oneReport, twoReports, unblock, back, withdrawn, repliedMate: filterOf(replied, MATE), repliedOwner: filterOf(replied, OWNER)}
+    },
+    then({report, after, oneReport, twoReports, unblock, back, withdrawn, repliedMate, repliedOwner}) {
+        report.errors == ""
+        report.filteredUserIdList.includes(MATE)
+        after.owner == "CmfBlocked"
+        after.mate == "CmfSpam"
+        oneReport.score == 50
+        twoReports.score == 100
+        unblock.errors == ""
+        back.owner == null
+        back.mate == null
+        withdrawn == 0
+        repliedOwner == "CmfBlocked"
+        repliedMate == null
+    }
+})
+
+feature("a group text's report hides it for the reporter alone and votes only against the numbers picked", {
+    when() {
+        const caps = sys(() => ec.service.sync().name("org.moqui.chat.ChatServices.get#BridgeCapabilities").parameter("chatBridgeIdList", [BRIDGE]).call()) || {}
+        const groupMax = Number(((caps.capabilityMap || {})[BRIDGE] || {}).groupMax || 0)
+        if (!groupMax) return {groupMax}
+        text(N(16), "group hi", {recipientList: [OURS, N(17)]})
+        const room = roomOf([N(16), N(17)].sort().join(","))
+        const report = as(OWNER, "org.moqui.call.SmsSpamServices.report#Spam", {chatRoomId: room, phoneNumberList: [N(17)]})
+        const votes = sys(() => Array.from(ec.entity.find("moqui.call.SmsSpamVote").condition("userId", OWNER).condition("phoneNumber", "in", [N(16), N(17)]).list()).map((v) => v.phoneNumber))
+        const owner = filterOf(room, OWNER)
+        const mate = filterOf(room, MATE)
+        const unblock = as(OWNER, "org.moqui.chat.ChatBlockServices.unblock#Room", {chatRoomId: room})
+        const left = sys(() => ec.entity.find("moqui.call.SmsSpamVote").condition("userId", OWNER).condition("phoneNumber", "in", [N(16), N(17)]).count())
+        return {groupMax, room, report, votes, owner, mate, unblock, left, after: filterOf(room, OWNER)}
+    },
+    then({groupMax, report, votes, owner, mate, unblock, left, after}) {
+        groupMax == 0 || report.blocked == "room"
+        groupMax == 0 || votes.join(",") == N(17)
+        groupMax == 0 || owner == "CmfBlocked"
+        groupMax == 0 || mate == null
+        groupMax == 0 || unblock.errors == ""
+        groupMax == 0 || left == 0
+        groupMax == 0 || after == null
+    }
+})
+
+feature("trust for everyone needs an admin's vote; the admin's number rules apply all the same; a reject list does not make a number known", {
+    when() {
+        const adminVote = (number) => sys(() => {
+            const vote = ec.entity.makeValue("moqui.call.SmsSpamVote")
+            vote.setFields({phoneNumber: number, userId: MATE, voteEnumId: "SsvNotSpam", voteDate: ec.user.nowTimestamp, byAdmin: "Y"}, true, null, null)
+            vote.create()
+        })
+        adminVote(N(18))
+        adminVote(N(19))
+        sys(() => {
+            const rule = ec.entity.makeValue("moqui.call.SmsSpamRule")
+            rule.setFields({smsSpamRuleId: "SMS_SPAM_SPEC_NUMBER", ruleTypeEnumId: "SsrNumber", pattern: N(19), weight: 100, description: "Spec number"}, true, null, null)
+            rule.create()
+        })
+        text(N(18), "Claim it: https://bit.ly/free gift card")
+        text(N(19), "hello")
+        // a list a reject rule uses is no list of friends
+        const rejects = as(OWNER, "org.moqui.call.CallHandlingServices.store#CallerList", {name: "Rejects"})
+        as(OWNER, "org.moqui.call.CallHandlingServices.add#CallerListEntry", {callerListId: rejects.callerListId, phoneNumber: N(20)})
+        as(OWNER, "org.moqui.call.CallHandlingServices.store#CallHandlingRule", {kindEnumId: "ChrSelectiveReject", callerListId: rejects.callerListId})
+        text(N(20), "Look: https://bit.ly/x")
+        sys(() => ec.entity.find("moqui.call.CallHandlingRule").condition("userId", OWNER).deleteAll())
+        return {trusted: roomOf(N(18)), ruled: roomOf(N(19)), rejected: roomOf(N(20))}
+    },
+    then({trusted, ruled, rejected}) {
+        filterOf(trusted, OWNER) == null
+        filterOf(ruled, OWNER) == "CmfSpam"
+        filterOf(rejected, OWNER) == "CmfSpam"
     }
 })

@@ -2129,12 +2129,7 @@ const chatRoom = {
                     prev = null;
                 }
                 // a message of someone the user blocked: one quiet line for a run of them (Comms-Messaging §18.3 phase 11)
-                if (event.hidden) {
-                    const last = out[out.length - 1];
-                    if (!last || last.kind !== 'hidden') out.push({ kind: 'hidden', key: 'h' + event.eventSeq, eventSeq: event.eventSeq });
-                    prev = null;
-                    continue;
-                }
+                if (moqui.chat.hiddenLine(out, event)) { prev = null; continue; }
                 if (event.type !== 'message') {
                     const words = systemText(event, (id) => this.nameOf(id));
                     out.push({ kind: 'system', key: 'e' + event.eventSeq, eventSeq: event.eventSeq, text: words[0], icon: words[1], time: timeText(sent),
@@ -2161,6 +2156,9 @@ const chatRoom = {
         },
         replyOf(event) {
             const loaded = this.events.find((item) => Number(item.eventSeq) === Number(event.replyToEventSeq));
+            // a reply to someone the user blocked shows nothing of the message (Comms-Messaging §18.3 phase 11)
+            if ((loaded && loaded.hidden) || (event.replyTo && event.replyTo.hidden)) return { eventSeq: event.replyToEventSeq, senderName: null, redacted: false,
+                hidden: true, snippet: t('Hidden: a message from someone you blocked') };
             if (loaded) return { eventSeq: loaded.eventSeq, senderName: this.nameOf(loaded.senderUserId, loaded.senderName), redacted: !!loaded.redacted,
                 snippet: this.snippetOf(loaded) };
             if (event.replyTo) return Object.assign({}, event.replyTo, { senderName: this.nameOf(event.replyTo.senderUserId, event.replyTo.senderName) });
@@ -2223,17 +2221,30 @@ const chatRoom = {
         // Block, Unblock, Not spam and Report spam; the room and the rail read again
         blockAction(name) {
             if (needsConnection()) return;
-            const run = () => this.post(name, { chatRoomId: this.roomId }).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {});
-            if (name === 'reportSpam') return this.confirm(t('Report spam?'), this.block && this.block.blockKind === 'number'
-                ? t('The number is blocked for you: its texts go to Spam & blocked and its calls are refused.') : t('The conversation is blocked for you.'), t('Report spam'), true).then(run);
+            const run = (extra) => this.post(name, Object.assign({ chatRoomId: this.roomId }, extra || {})).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {});
+            const kind = this.block && this.block.blockKind;
+            // a group text: hidden for me only, with a vote against each number I pick (none by default)
+            if (name === 'reportSpam' && kind === 'room') {
+                const numbers = (this.block && this.block.phoneNumberList) || [];
+                return this.$q.dialog({ title: t('Report spam?'),
+                    message: t('This group text is hidden for you only; nobody in it is told. Pick the numbers to report as spam, if any: each report counts toward marking a number spam for others here.'),
+                    options: { type: 'checkbox', model: [], items: numbers.map((number) => ({ label: number, value: number })) },
+                    ok: { label: t('Report spam'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                    .onOk((picked) => run({ phoneNumbers: (picked || []).join(',') }));
+            }
+            if (name === 'reportSpam') return this.confirm(t('Report spam?'),
+                t('The number is blocked for you: its calls are refused and its texts stay in Spam & blocked. Your report counts toward marking it spam for others here; your teammates on this number see this conversation in Spam only if nobody here has replied in it. Unblock takes the report back.'),
+                t('Report spam'), true).then(() => run());
             if (name === 'blockRoom') return this.confirm(this.blockLabel + '?', this.block && this.block.blockKind === 'person'
-                ? t('Their messages are hidden from you and do not notify you; they are not told.') : t('Its texts go to Spam & blocked and do not notify you; calls from a number are refused.'),
-                t('Block'), true).then(run);
+                ? t('Their messages are hidden from you and do not notify you; they still see you in shared rooms, and are not told.')
+                : kind === 'number' ? t('Its calls are refused, and its texts go to Spam & blocked without notifying you.')
+                : t('This group text goes to Spam & blocked for you only; its numbers are not blocked.'),
+                t('Block'), true).then(() => run());
             return run();
         },
         blockPerson(person) {
             if (needsConnection()) return;
-            this.confirm(fill(t('Block {name}?'), { name: person.name || person.userId }), t('Their messages are hidden from you and do not notify you; they are not told.'),
+            this.confirm(fill(t('Block {name}?'), { name: person.name || person.userId }), t('Their messages are hidden from you and do not notify you; they still see you in shared rooms, and are not told.'),
                 t('Block'), true).then(() => this.post('blockUser', { userId: person.userId }).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {}));
         },
         reloadMeta() {

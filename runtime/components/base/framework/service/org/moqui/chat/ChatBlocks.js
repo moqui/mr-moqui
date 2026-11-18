@@ -14,8 +14,14 @@
 // - The room menu's Block (blockRoom): a pair room's number goes on the user's Blocked list (CallHandling.js
 //   blockNumber), a one-to-one direct room's person is blocked, a group text's room is blocked for the user alone.
 //
-// The blocked person is told nothing. The blocks are a preference, not a security boundary: a helper that fails is
-// logged by its caller, which then pushes or rings everyone.
+// The blocked person is told nothing; they still see the blocker in shared rooms and can still read the blocker's
+// messages there. A person block refuses only what the blocked person starts: a direct room with the blocker, and adding
+// the blocker to a private room (get#RefusedUsers with blocks). A room's admin who is not blocked still adds the blocker,
+// and record and public rooms are never refused, so a block cannot keep anyone out of a team's rooms. Unblocking brings
+// the hidden messages back, but not the mentions and Activity made during the block.
+//
+// The blocks are a preference, not a security boundary: blockedBy and blockersOf never fail (an error is logged and they
+// answer nobody, so the message is pushed and the call rings everyone), and setFilters changes each room on its own.
 
 const MEMBER = 'moqui.chat.ChatRoomMember'
 const ROOM = 'moqui.chat.ChatRoom'
@@ -44,11 +50,18 @@ function callHandling(op, parameters) {
 
 // ---------- who is blocked ----------
 
-/** The users userId blocked in chat. */
+/** The users userId blocked in chat; none (logged) when they cannot be read. */
 function blockedBy(p) {
   if (blank(p.userId)) return { userIdList: [] }
-  return { userIdList: Array.from(find(BLOCK).condition('userId', p.userId).selectField('blockedUserId').list()).map((row) => row.blockedUserId) }
+  try {
+    return { userIdList: Array.from(find(BLOCK).condition('userId', p.userId).selectField('blockedUserId').list()).map((row) => row.blockedUserId) }
+  } catch (err) {
+    ec.logger.error(`The chat blocks of ${p.userId} were not read, none applied: ${message(err)}`)
+    return { userIdList: [] }
+  }
 }
+
+const message = (err) => (err && err.message ? err.message : String(err))
 
 /**
  * Of userIdList, those who blocked the caller: the local user senderUserId (ChatUserBlock), or the outside number
@@ -57,12 +70,18 @@ function blockedBy(p) {
 function blockersOf(p) {
   const users = ids(p.userIdList)
   if (!users.length) return { userIdList: [] }
-  const out = new Set()
-  if (!blank(p.senderUserId)) {
-    for (const row of find(BLOCK).condition('blockedUserId', p.senderUserId).condition('userId', 'in', users).selectField('userId').list()) out.add(row.userId)
+  try {
+    const out = new Set()
+    if (!blank(p.senderUserId)) {
+      for (const row of find(BLOCK).condition('blockedUserId', p.senderUserId).condition('userId', 'in', users).selectField('userId').list()) out.add(row.userId)
+    }
+    if (!blank(p.fromNumber)) for (const id of callHandling('blockedUsers', { phoneNumber: p.fromNumber, userIdList: users }).userIdList || []) out.add(id)
+    return { userIdList: users.filter((id) => out.has(id)) }
+  } catch (err) {
+    // a preference, not a boundary: everyone gets it
+    ec.logger.error(`Blocks not read for ${p.senderUserId || p.fromNumber}, none applied: ${message(err)}`)
+    return { userIdList: [] }
   }
-  if (!blank(p.fromNumber)) for (const id of callHandling('blockedUsers', { phoneNumber: p.fromNumber, userIdList: users }).userIdList || []) out.add(id)
-  return { userIdList: users.filter((id) => out.has(id)) }
 }
 
 /** Of userIdList, those who blocked the current user (get#RefusedUsers). */
@@ -86,12 +105,19 @@ function setFilters(p) {
   if (filter && !FILTERS.includes(filter)) return refuse('badFilter', 'Not a room filter')
   const changed = []
   const now = ec.user.nowTimestamp
-  for (const member of Array.from(find(MEMBER).condition('userId', userId).condition('chatRoomId', 'in', rooms).list())) {
-    const current = member.filterEnumId || null
-    if (filter ? current === filter || (current && p.replace !== true) : !current || (p.onlyFrom && current !== p.onlyFrom)) continue
-    member.setFields({ filterEnumId: filter, filterDate: filter ? now : null }, true, null, null)
-    member.update()
-    changed.push(member)
+  for (const chatRoomId of rooms) {
+    // each room on its own: one that fails is logged and the rest go on
+    try {
+      const member = one(MEMBER, { chatRoomId, userId })
+      if (!member) continue
+      const current = member.filterEnumId || null
+      if (filter ? current === filter || (current && p.replace !== true) : !current || (p.onlyFrom && current !== p.onlyFrom)) continue
+      member.setFields({ filterEnumId: filter, filterDate: filter ? now : null }, true, null, null)
+      member.update()
+      changed.push(member)
+    } catch (err) {
+      ec.logger.error(`Chat room ${chatRoomId}: its filter for ${userId} was not changed: ${message(err)}`)
+    }
   }
   if (changed.length) {
     const settingsOf = (row) => ({ notificationLevelEnumId: row.notificationLevelEnumId ?? null, isMuted: row.isMuted === 'Y', isPinned: row.isPinned === 'Y',
@@ -146,6 +172,7 @@ function refilterPhoneRooms(p) {
       ec.logger.error(`Chat room ${member.chatRoomId}: its block was not checked for ${userId}: ${err && err.message ? err.message : err}`)
     }
   }
+  // setFilters changes each room on its own
   if (block.length) setFilters({ userId, chatRoomIdList: block, filterEnumId: 'CmfBlocked', replace: true })
   if (clear.length) setFilters({ userId, chatRoomIdList: clear, onlyFrom: 'CmfBlocked' })
   return { blockedCount: block.length, clearedCount: clear.length }
@@ -244,7 +271,11 @@ function unblockRoom(p) {
   const kind = blockKindOf(found.room, found.me)
   if (kind && kind.kind === 'number') callHandling('unblockNumber', { phoneNumber: kind.phoneNumber, exactOnly: false })
   else if (kind && kind.kind === 'person') unblockUser({ blockedUserId: kind.userId })
-  else setFilters({ userId: found.me, chatRoomIdList: [found.room.chatRoomId], onlyFrom: 'CmfBlocked' })
+  else {
+    setFilters({ userId: found.me, chatRoomIdList: [found.room.chatRoomId], onlyFrom: 'CmfBlocked' })
+    // a group text's report is withdrawn with its block (SmsSpam.js)
+    ec.resource.script('component://framework/service/org/moqui/call/SmsSpam.js').execute('withdrawReport', { userId: found.me, chatRoomId: found.room.chatRoomId })
+  }
   // a prefix on the Blocked list may still hold the pair room: it says so
   const after = one(MEMBER, { chatRoomId: found.room.chatRoomId, userId: found.me })
   if (after && after.filterEnumId === 'CmfBlocked') return refuse('stillBlocked', 'A prefix on your Blocked list still blocks this number; remove it in Call handling')
@@ -257,6 +288,7 @@ function roomBlock(p) {
   if (found.refusal) return found.refusal
   const kind = blockKindOf(found.room, found.me)
   return { filtered: CODES[found.member.filterEnumId] || null, blockKind: kind ? kind.kind : null, phoneNumber: kind && kind.phoneNumber || null,
+    phoneNumberList: kind && kind.kind === 'room' ? phoneNumbersOf(found.room.chatRoomId) : [],
     blockedUserId: kind && kind.userId || null, blockedName: kind && kind.userId ? userName(kind.userId) : null,
     personBlocked: !!(kind && kind.userId && one(BLOCK, { userId: found.me, blockedUserId: kind.userId })) }
 }

@@ -1929,8 +1929,8 @@ Report spam from a group room's menu filters that room for the user, until Unblo
 - `SmsProvider::lookup_request(config, settings, number) -> Option<ApiRequest>` and `lookup_of(body) ->
   Option<NumberLookup>` both default to `None`. `SmsAdapter` implements `lookup_number` with them, through its guarded
   client with a 3 s timeout.
-- Twilio is built: Lookup v2, `GET {lookupBaseUrl}/v2/PhoneNumbers/{number}?Fields=line_type_intelligence`, with Basic
-  auth. `lookupBaseUrl` defaults to `https://lookups.twilio.com`. The line type keeps Twilio's names (`mobile`,
+- Twilio is built: Lookup v2, `GET {lookupsBaseUrl}/v2/PhoneNumbers/{number}?Fields=line_type_intelligence`, with Basic
+  auth. `lookupsBaseUrl` defaults to `https://lookups.twilio.com`. The line type keeps Twilio's names (`mobile`,
   `landline`, `fixedVoip`, `nonFixedVoip`, `tollFree`, …). It is in `providers/twilio/lookup.rs`, with one delegating
   method in `twilio.rs`. Not yet tested with the provider.
 - Telnyx is designed and not built: `GET /v2/number_lookup/{number}?type=carrier`, with `carrier.type`.
@@ -2076,7 +2076,42 @@ XMPP app's own blocklist (XEP-0191, `XmppBlockedJid`) stays its own.
 - [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): `lookup_number`.
 - The BasicComms README: System, Voice, Spam.
 
-**Status (2026-11-18): built** as designed, with the purge and the XMPP filter above.
+**Review decisions (2026-11-18).** These replace the text above where they differ.
+1. *Report spam acts on the reporter.* A pair room's number goes on the reporter's Blocked list and their room is out of
+   sight; teammates get it in Spam only in a room nobody here ever replied in. The reported rule weighs 50 for each
+   distinct reporter (less one for each Not spam), so one report is not spam for others; an admin's report, or an admin's
+   number rule, reaches the threshold alone. The reporter's Unblock withdraws the vote and brings back the teammates' rooms
+   the report put in Spam (`SmsSpamVote.filteredJson`, `withdrawReport`). In a group text the room is hidden for the
+   reporter alone, and the report votes only against the numbers they pick (none by default). The confirms say exactly
+   this.
+2. *Ring groups and chat calls.* A user who blocked the caller is left out before any leg: `runRing` dials no mobile and
+   offers no leg and writes no `CallUserLog` for them (no missed call), and in order or round robin their turn is skipped.
+   In `Calls.js` `start`, a room's call leaves a blocker with no leg and no callee log, and a direct call to one is
+   `noCallee`, as to nobody. Spec: `RingGroup`.
+3. *Leaks closed.* `get#Timeline`'s reply previews (`replyTo.hidden`), the hidden stub names nobody;
+   `find#RoomThreads`' last reply (`lastHidden`); `find#ChatThreads` (myThreads: a blocked root left out, its last reply
+   blanked); `find#ChatActivity`; `push#Update` (not to a blocker, nor to a member with the room filtered).
+4. *Not spam sticks.* It marks the room never to be judged again (`ChatRoomBridge.notSpamDate`) and trusts the number for
+   the voter.
+5. *Votes.* One user's Not spam trusts the number for that user's rooms only. For everyone it takes an admin's vote, or
+   `TRUST_VOTES` (3) distinct users' that outnumber the reports; the votes are on System, Voice, Spam (`store#SpamVote`:
+   trust, report or clear). An admin's `SsrNumber` rule applies to a trusted or known number all the same.
+6. *Reject lists.* `known()` leaves out a caller list a reject rule uses.
+7. *Client counts.* `moqui.chat.levelOf` gives `none` for a filtered room (the settings push carries `filtered`), and
+   `applyCounts` sets a room the server's counts no longer name at nothing.
+8. *Privacy.* The Calls picker answers a blocker as `noCallee`. A person block refuses only what the blocked person
+   starts: a direct room, and adding the blocker to a private room (`get#RefusedUsers` with `blocks`); an admin who is
+   not blocked still adds them, and public and record rooms are never refused. The blocked person still sees the
+   blocker in shared rooms and reads their messages there.
+9. *Unblock.* The mentions and Activity made during a block do not come back.
+10. *Failure tolerance.* `blockedBy` and `blockersOf` never fail (logged: no blockers, everyone pushed and rung);
+    `setFilters` and `refilterPhoneRooms` change each room on its own.
+11. *Performance.* The day's lookup count is reserved in a transaction of its own, not held through the provider's
+    answer, and given back when the lookup fails. `ChatRoomMember` has an index on `filterEnumId`.
+12. *Conventions.* `chat_spam_purge_days` is a `default-property` in MoquiDefaultConf.xml; System, Voice, Spam renders in
+    qvt only in `BasicComms.spec.js` (no tui template of its own); its counts are localized.
+
+**Status (2026-11-18): built** as designed, with the purge and the XMPP filter above, and the review decisions.
 - Files: `SmsSpam.js`, `SmsSpamServices.xml`, `ChatBlocks.js`, `ChatBlockServices.xml` (new); `CallHandling.js`,
   `CallHandlingServices.xml`, `Sms.js`, `SmsServices.xml`, `Calls.js` (`ring`), `ChatServices.xml` (one-line filters),
   `ChatBridgeServices.xml`, `XmppServices.xml`, `VoiceEntities.xml`, `ChatEntities.xml`, `VoiceSetupData.xml` (the seeded
@@ -2088,8 +2123,10 @@ XMPP app's own blocklist (XEP-0191, `XmppBlockedJid`) stays its own.
   Blocked list), `basic-comms` `BasicCommsTexts` (the transitions) and `BasicComms` (System, Voice, Spam in qvt and tui
   with the other Voice screens); moqui-core `chat_push` (`a_filtered_room_and_a_blocked_sender_push_nothing`),
   `chat_bridge` (`a_bridge_with_no_number_lookup_answers_not_supported`); moqui-channels `tests/twilio.rs`
-  (`a_twilio_lookup_reads_the_line_type_and_a_failure_is_an_error`). No client spec: the rail's chip, the banner and the
-  menus are not walked in a browser.
+  (`a_twilio_lookup_reads_the_line_type_and_a_failure_is_an_error`); after the review also `RingGroup` (a blocker left out
+  of a ring group and of a chat call), `SmsSpam` (the report, the group report, trust, reject lists), `ChatBlocks` (a
+  public room takes the blocker, the reply preview) and the webroot client's `WebrootChat` (the filtered level, the counts
+  reset, the hidden-line fold). The rail's chip, the banner and the menus are not walked in a browser.
 
 #### Phase 10 and later
 

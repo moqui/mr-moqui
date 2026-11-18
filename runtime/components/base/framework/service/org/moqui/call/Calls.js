@@ -801,6 +801,9 @@ function start(p) {
       .selectField('leftDate').selectField('roleEnumId').list())
       .filter((m) => m.userId && (isDirect || !m.leftDate) && m.userId !== me && m.roleEnumId !== 'CmrAgent').map((m) => m.userId)
     kind = isDirect && invitees.length === 1 ? 'CskDirect' : 'CskGroup'
+    // a member who blocked the caller is not invited: no leg, no ring and no callee log (no missed call); the caller is
+    // told nothing, the call rings on until it ends
+    invitees = withoutBlockers(invitees, me, null)
   } else {
     if (isExternal(me)) return refuse('notAllowed', 'Start a call from a chat room you are in')
     const asked = Array.isArray(p.calleeUserIdList) ? p.calleeUserIdList : String(p.calleeUserIdList || '').split(',')
@@ -811,6 +814,8 @@ function start(p) {
     if (known.length !== invitees.length) return refuse('noCallee', 'Choose someone to call')
     // an app's call-target providers may keep the people called to the user's own (the same answer as for no such user)
     if (refusedTargets(invitees).length) return refuse('noCallee', 'Choose someone to call')
+    // one who blocked the caller (plans/Comms-Messaging.md §18.3 phase 11): the same answer as for no such user
+    if (withoutBlockers(invitees, me, null).length !== invitees.length) return refuse('noCallee', 'Choose someone to call')
     const room = ec.service.sync().name('org.moqui.chat.ChatServices.create#Room')
       .parameters({ roomTypeEnumId: 'CrtDirect', memberUserIdList: invitees }).call()
     if (ec.message.hasError() || !room?.chatRoomId) return { reasonCode: 'failed' }
