@@ -47,7 +47,7 @@
 //!   `rcs:` and `rcsSenderId`, `to` `rcs:` and the person's number, `event` START. Twilio shows it up to 20 seconds or
 //!   until a message arrives. None comes in: Twilio documents no typing of the person.
 
-use moqui_core::service::chat_bridge::{DeliveryOutcome, WebhookResponse};
+use moqui_core::service::chat_bridge::{BridgeInfo, DeliveryOutcome, WebhookResponse};
 use moqui_lib::http::{Method, RestClient};
 use serde_json::{json, Value as Json};
 
@@ -137,15 +137,34 @@ fn message_request(
     }
 }
 
-/// A suggestion as a Content action. `chip` places it in the chip list under the message (a text's), else on the card.
-fn action(suggestion: &Suggestion, chip: bool) -> Json {
+/// The most characters of a carousel's own `body`: RCS drops it and Twilio documents no limit, so a safe one; the
+/// whole fallback goes on the SMS path (`twilio/text`, `twilio/media`).
+pub const CAROUSEL_BODY_MAX: usize = 1024;
+/// The pages of our Contents a sweep or a retry reads at most.
+const LIST_PAGES: usize = 3;
+
+/// A suggestion as a Content action. `chip` places it in the chip list under the message (a text's: `Some(true)`) or
+/// on the card (`Some(false)`); a carousel's cards name none (its page documents no `chip_list`).
+fn action(suggestion: &Suggestion, chip: Option<bool>) -> Json {
     let mut action = match suggestion {
         Suggestion::Reply { text, postback } => json!({"type": "QUICK_REPLY", "title": text, "id": postback}),
         Suggestion::Url { text, url } => json!({"type": "URL", "title": text, "url": url}),
         Suggestion::Dial { text, phone } => json!({"type": "PHONE_NUMBER", "title": text, "phone": phone}),
     };
-    action["chip_list"] = Json::Bool(chip);
+    if let Some(chip) = chip {
+        action["chip_list"] = Json::Bool(chip);
+    }
     action
+}
+
+/// Our name of the Contents of a delivery: `moqui-` and its id (letters, digits, - and _).
+pub fn name_of_delivery(delivery_id: &str) -> String {
+    let delivery: String = delivery_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect();
+    format!("moqui-{delivery}")
 }
 
 /// The Content of `rich` for `out` (its fallback the message's text, and its first image with it as MMS), with the
@@ -155,7 +174,7 @@ pub fn content_body(config: &Config, out: &Outgoing<'_>, rich: &Rich) -> Json {
     let mut types = serde_json::Map::new();
     match rich.kind {
         RichKind::Text => {
-            let actions: Vec<Json> = rich.suggestions.iter().map(|one| action(one, true)).collect();
+            let actions: Vec<Json> = rich.suggestions.iter().map(|one| action(one, Some(true))).collect();
             types.insert(
                 "twilio/card".to_string(),
                 json!({"body": rich.text.clone().unwrap_or_default(), "actions": actions}),
@@ -173,7 +192,7 @@ pub fn content_body(config: &Config, out: &Outgoing<'_>, rich: &Rich) -> Json {
             if let Some(url) = image(card.image) {
                 body.insert("media".to_string(), json!([url]));
             }
-            let actions: Vec<Json> = card.suggestions.iter().map(|one| action(one, false)).collect();
+            let actions: Vec<Json> = card.suggestions.iter().map(|one| action(one, Some(false))).collect();
             if !actions.is_empty() {
                 body.insert("actions".to_string(), Json::Array(actions));
             }
@@ -186,7 +205,7 @@ pub fn content_body(config: &Config, out: &Outgoing<'_>, rich: &Rich) -> Json {
                 .map(|card| {
                     let mut body = json!({
                         "body": card.description.clone().or_else(|| card.title.clone()).unwrap_or_default(),
-                        "actions": card.suggestions.iter().map(|one| action(one, false)).collect::<Vec<_>>(),
+                        "actions": card.suggestions.iter().map(|one| action(one, None)).collect::<Vec<_>>(),
                     });
                     if let Some(title) = card.title.as_ref().filter(|_| card.description.is_some()) {
                         body["title"] = json!(title);
@@ -197,29 +216,26 @@ pub fn content_body(config: &Config, out: &Outgoing<'_>, rich: &Rich) -> Json {
                     body
                 })
                 .collect();
-            types.insert(
-                "twilio/carousel".to_string(),
-                json!({"body": out.text.unwrap_or_default(), "cards": cards}),
-            );
+            let body: String = out.text.unwrap_or_default().chars().take(CAROUSEL_BODY_MAX).collect();
+            types.insert("twilio/carousel".to_string(), json!({"body": body, "cards": cards}));
         }
     }
     if out.fallback {
         if let Some(fallback) = out.text {
-            match image(rich.first_image()) {
+            // the first picture when it is within the MMS limit, else the text alone
+            match image(out.fallback_image) {
                 Some(url) => types.insert("twilio/media".to_string(), json!({"body": fallback, "media": [url]})),
                 None => types.insert("twilio/text".to_string(), json!({"body": fallback})),
             };
         }
     }
-    // a name of ours, from the delivery's id (letters, digits, - and _)
-    let delivery: String = out
-        .request
-        .chat_bridge_delivery_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .take(64)
-        .collect();
-    json!({"friendly_name": format!("moqui-{delivery}"), "language": config.content_language, "types": types})
+    // a name of ours for each attempt, so a Content whose answer was lost is found again ([`send_rich`])
+    let name = format!(
+        "{}-{}",
+        name_of_delivery(&out.request.chat_bridge_delivery_id),
+        out.request.attempt
+    );
+    json!({"friendly_name": name, "language": config.content_language, "types": types})
 }
 
 /// The request that makes the Content of `rich` for `out`.
@@ -232,9 +248,14 @@ pub fn content_request(config: &Config, out: &Outgoing<'_>, rich: &Rich) -> ApiR
     }
 }
 
-/// Send `rich`: its Content made (or an app's own named), then the send with its `ContentSid`. The Content step's
-/// answer: a `sid` goes on; none, a lost answer, 429 and 5xx are tried again (no message went: another Content is
-/// harmless); 401 and 403 too, with the bridge not connected; another 4xx fails the send (`richRefused`).
+/// Send `rich`: its Content (or an app's own named), then the send with its `ContentSid`.
+///
+/// - **A retry.** The Content an earlier attempt kept on the delivery is sent again when it has no picture (its
+///   addresses expire); else it is deleted and a new one made. With none kept, the Contents of the delivery's earlier
+///   attempts (by name: one whose answer was lost) are deleted first.
+/// - **The Content step.** A `sid` goes on, kept on the delivery and its lease renewed for the second step; none, a lost
+///   answer, 429 and 5xx are tried again (no message went); 401 and 403 too, with the bridge not connected; another 4xx
+///   (Twilio refuses the card) sends the fallback text and its picture instead, noted on the delivery (`richRefused`).
 pub fn send_rich(
     twilio: &Twilio,
     client: &RestClient,
@@ -253,31 +274,106 @@ pub fn send_rich(
             }
         }
         None => {
-            let sid = match made_content(twilio, client, config, out, rich) {
-                Ok(sid) => sid,
-                Err(outcome) => return outcome,
+            let bridge = out.bridge;
+            let delivery = &out.request.chat_bridge_delivery_id;
+            let kept = crate::sms::kept_content(delivery);
+            let reuse = kept.clone().filter(|_| out.media_urls.is_empty());
+            let sid = match reuse {
+                Some(sid) => sid,
+                None => {
+                    match &kept {
+                        // its pictures' addresses may have run out: a new one, the old deleted first
+                        Some(old) => drop_kept(twilio, client, config, bridge, delivery, old),
+                        // an earlier attempt's Content whose answer was lost
+                        None if out.request.attempt > 1 && !delivery.is_empty() => {
+                            for old in named_contents(twilio, client, config, &name_of_delivery(delivery)) {
+                                drop_kept(twilio, client, config, bridge, delivery, &old);
+                            }
+                            crate::sms::renew_lease(bridge, delivery);
+                        }
+                        None => {}
+                    }
+                    match made_content(twilio, client, config, out, rich) {
+                        Ok(sid) => {
+                            if let Err(error) = crate::sms::keep_content(bridge, delivery, &sid) {
+                                tracing::warn!(
+                                    "RCS bridge {}: content {sid} was not kept on its delivery; the sweep finds it by \
+                                     name: {error}",
+                                    bridge.chat_bridge_id
+                                );
+                            }
+                            sid
+                        }
+                        Err(Made::Outcome(outcome)) => return outcome,
+                        // Twilio refuses the card: its text (and picture) goes, said on the delivery
+                        Err(Made::Refused(error)) => {
+                            tracing::warn!(
+                                "RCS bridge {}: Twilio refused a card, its text goes instead: {error}",
+                                bridge.chat_bridge_id
+                            );
+                            crate::sms::note_delivery(bridge, delivery, "richRefused", &error);
+                            let urls: Vec<String> = out
+                                .fallback_image
+                                .and_then(|index| out.media_urls.get(index))
+                                .cloned()
+                                .into_iter()
+                                .collect();
+                            let plain = Outgoing {
+                                media_urls: &urls,
+                                rich: None,
+                                fallback_image: None,
+                                ..*out
+                            };
+                            return exchange(twilio, client, &plain, &request(config, settings, &plain));
+                        }
+                    }
+                }
             };
-            if let Err(error) = crate::sms::keep_content(out.bridge, &out.request.chat_bridge_delivery_id, &sid) {
-                tracing::warn!(
-                    "RCS bridge {}: content {sid} was not kept on its delivery, so it is not deleted: {error}",
-                    out.bridge.chat_bridge_id
-                );
-            }
             what.push(("ContentSid".to_string(), sid));
         }
     }
     exchange(twilio, client, out, &message_request(config, settings, out, what))
 }
 
-/// The `sid` of the Content made for `rich`, or the send's outcome when it was not made.
+/// Delete `old`, a Content of the delivery, and let the delivery's field go; one not deleted stays for the sweep.
+fn drop_kept(twilio: &Twilio, client: &RestClient, config: &Config, bridge: &BridgeInfo, delivery: &str, old: &str) {
+    let deleted = match delete_request(config, old) {
+        Some(request) => crate::sms::plain(twilio, client, &request, true),
+        None => Ok(()),
+    };
+    match deleted {
+        Ok(()) => {
+            if let Err(error) = crate::sms::clear_content_of(bridge, delivery, old) {
+                tracing::warn!(
+                    "RCS bridge {}: content {old} stays named: {error}",
+                    bridge.chat_bridge_id
+                );
+            }
+        }
+        Err(error) => tracing::warn!(
+            "RCS bridge {}: an earlier attempt's content {old} was not deleted (the sweep tries again): {error}",
+            bridge.chat_bridge_id
+        ),
+    }
+}
+
+/// Why no Content was made.
+enum Made {
+    /// The send's outcome (tried again, or the bridge not connected).
+    Outcome(DeliveryOutcome),
+    /// Twilio refused the card (a 4xx): its text.
+    Refused(String),
+}
+
+/// The `sid` of the Content made for `rich`, or why none was.
 fn made_content(
     twilio: &Twilio,
     client: &RestClient,
     config: &Config,
     out: &Outgoing<'_>,
     rich: &Rich,
-) -> Result<String, DeliveryOutcome> {
-    let retry = |error: String, not_connected: bool| DeliveryOutcome::Retry { error, not_connected };
+) -> Result<String, Made> {
+    let retry = |error: String, not_connected: bool| Made::Outcome(DeliveryOutcome::Retry { error, not_connected });
     let response = crate::sms::call(client, &content_request(config, out, rich))
         .map_err(|error| retry(format!("Twilio's content step failed: {}", error.message()), false))?;
     let status = response.status();
@@ -288,13 +384,10 @@ fn made_content(
             .filter(|sid| is_sid(sid, "HX"))
             .ok_or_else(|| retry("Twilio made the content and named no id".to_string(), false)),
         401 | 403 => Err(retry(format!("Twilio refused the API key ({status})"), true)),
-        400..=499 if status != 429 => Err(DeliveryOutcome::Failed {
-            reason_code: "richRefused".to_string(),
-            error: format!(
-                "Twilio refused the card ({status}): {}",
-                twilio.error_of(response.body()).text
-            ),
-        }),
+        400..=499 if status != 429 => Err(Made::Refused(format!(
+            "Twilio refused the card ({status}): {}",
+            twilio.error_of(response.body()).text
+        ))),
         _ => Err(retry(
             format!(
                 "Twilio's content step answered {status}: {}",
@@ -303,6 +396,108 @@ fn made_content(
             false,
         )),
     }
+}
+
+/// The search of our Contents named `name` (Content API v2, `ContentName`), created before `before` when given.
+fn search_request(config: &Config, name: &str, before: Option<&str>) -> ApiRequest {
+    let mut pairs = vec![
+        ("PageSize".to_string(), "100".to_string()),
+        ("ContentName".to_string(), name.to_string()),
+    ];
+    if let Some(before) = before {
+        pairs.push(("DateCreatedBefore".to_string(), before.to_string()));
+    }
+    ApiRequest {
+        method: Method::Get,
+        url: format!(
+            "{}/v2/Content?{}",
+            config.content_base_url,
+            crate::sms::form_encode(&pairs)
+        ),
+        headers: auth_headers(config),
+        body: ApiBody::None,
+    }
+}
+
+/// The Contents of `request`'s search whose name starts with `prefix`, at most [`LIST_PAGES`] pages (by its
+/// `meta.next_page_url` on the Content API's own host only). A page that cannot be read ends the search.
+fn listed(
+    twilio: &Twilio,
+    client: &RestClient,
+    config: &Config,
+    request: ApiRequest,
+    prefix: &str,
+) -> Result<Vec<String>, String> {
+    let mut found = Vec::new();
+    let mut next = Some(request);
+    for _ in 0..LIST_PAGES {
+        let Some(request) = next.take() else { break };
+        let response = crate::sms::call(client, &request).map_err(|error| error.message().to_string())?;
+        if !(200..300).contains(&response.status()) {
+            return Err(format!(
+                "Twilio's content search answered {}: {}",
+                response.status(),
+                twilio.error_of(response.body()).text
+            ));
+        }
+        let page: Json = serde_json::from_str(response.body()).unwrap_or(Json::Null);
+        for content in page.get("contents").and_then(Json::as_array).into_iter().flatten() {
+            let name = content.get("friendly_name").and_then(Json::as_str).unwrap_or_default();
+            if let Some(sid) = content
+                .get("sid")
+                .and_then(Json::as_str)
+                .filter(|sid| is_sid(sid, "HX"))
+            {
+                if name.starts_with(prefix) {
+                    found.push(sid.to_string());
+                }
+            }
+        }
+        next = page
+            .pointer("/meta/next_page_url")
+            .and_then(Json::as_str)
+            .filter(|url| url.starts_with(&config.content_base_url))
+            .map(|url| ApiRequest {
+                url: url.to_string(),
+                ..request.clone()
+            });
+    }
+    Ok(found)
+}
+
+/// The Contents of a delivery's earlier attempts (`moqui-{delivery}-`), for a retry; none when they cannot be read.
+fn named_contents(twilio: &Twilio, client: &RestClient, config: &Config, name: &str) -> Vec<String> {
+    let prefix = format!("{name}-");
+    match listed(twilio, client, config, search_request(config, name, None), &prefix) {
+        Ok(found) => found,
+        Err(error) => {
+            tracing::warn!("Twilio's contents of {name} were not read (the sweep finds them later): {error}");
+            Vec::new()
+        }
+    }
+}
+
+/// Our Contents (`moqui-...`) made before `before_millis`, for the sweep of those no delivery keeps.
+///
+/// # Errors
+///
+/// Returns why they could not be read.
+pub fn our_contents(
+    twilio: &Twilio,
+    client: &RestClient,
+    config: &Config,
+    before_millis: i64,
+) -> Result<Vec<String>, String> {
+    let before = jiff::Timestamp::from_millisecond(before_millis)
+        .map(|at| at.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .map_err(|error| error.to_string())?;
+    listed(
+        twilio,
+        client,
+        config,
+        search_request(config, "moqui-", Some(&before)),
+        "moqui-",
+    )
 }
 
 /// The typing indicator to `theirs` from the agent; none without `rcsSenderId`.

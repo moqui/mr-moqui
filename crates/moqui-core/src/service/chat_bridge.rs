@@ -353,6 +353,17 @@ pub trait ChatBridgeAdapter: Send + Sync {
         let _ = (bridge, content_id);
         Ok(())
     }
+    /// The contents the adapter made at its network for sends before `before_millis`, as the network lists them (ours by
+    /// their name), for the daily sweep to delete those no delivery keeps (`clean#ProviderContent`). The default has
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// Returns why they could not be read; the sweep logs it and goes on.
+    fn orphan_contents(&self, bridge: &BridgeInfo, before_millis: i64) -> Result<Vec<String>, String> {
+        let _ = (bridge, before_millis);
+        Ok(Vec::new())
+    }
     /// What the network's provider knows of an outside number (a paid number lookup: its line type, carrier and caller
     /// name), for the spam filter (`ChatBridgeServices.lookup#BridgeNumber`, plans/Comms-Messaging.md §18.3 phase 11).
     /// `Ok(None)` when the adapter has no lookup, the default.

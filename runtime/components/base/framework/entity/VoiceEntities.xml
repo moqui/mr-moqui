@@ -917,6 +917,11 @@ along with this software (see the LICENSE.md file). If not, see
             send (an RCS bridge's Twilio Content resource of a rich message, HX...), until it is deleted: by the message's
             final receipt, else by the daily sweep after 2 days (ChatBridgeServices.note#DeliveryContent,
             clean#ProviderContent; plans/Comms-Messaging.md §18.3 phase 13)</description></field>
+        <field name="providerContentTries" type="number-integer"><description>The sweeps that could not delete
+            providerContentId; at 5 it is let go</description></field>
+        <field name="deliveryNote" type="text-short"><description>What the adapter changed of the send: richRefused (the
+            provider refused the cards, and their text went)</description></field>
+        <field name="deliveryNoteText" type="text-medium"><description>The provider's words for deliveryNote</description></field>
         <index name="CHAT_DELIVERY_REMOTE"><index-field name="chatBridgeId"/><index-field name="remoteEventId"/></index>
     </extend-entity>
     <!-- ========== end C4-SMS ========== -->

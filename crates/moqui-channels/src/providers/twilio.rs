@@ -353,6 +353,19 @@ impl SmsProvider for Twilio {
         }
     }
 
+    fn orphan_contents(
+        &self,
+        client: &RestClient,
+        config: &Config,
+        _settings: &Settings,
+        before_millis: i64,
+    ) -> Result<Vec<String>, String> {
+        if !self.is_rcs() {
+            return Ok(Vec::new());
+        }
+        rcs::our_contents(self, client, config, before_millis)
+    }
+
     fn delete_content(
         &self,
         client: &RestClient,

@@ -15,7 +15,13 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Rich messages (plans/Comms-Messaging.md §18.3 phase 13, §16 RCS phase 2): a text with suggestion chips, a card or a
     carousel of cards, each with its suggestions (a reply, a link, a call), kept as content.rich on a message whose body is
     the fallback every other client and bridge shows and sends. Business RCS sends the cards themselves (crates/moqui-channels).
-    The logic is ChatRich.js beside this file; its notes have the limits. -->
+    The logic is ChatRich.js beside this file; its notes have the limits.
+
+    Postbacks are untrusted input. Only an app's own call (authorization disabled) names a reply's postback; a member's is
+    always "user:" and the button's words, and an app's may not start with "user:". An RCS reply's postback comes from the
+    person's device: it is not signed, and the device may send any text. An app acting on a postback checks the tapped
+    message's author and that it was an app's (note#SuggestionReply's authorUserId and fromApp) before it acts; an RCS
+    reply (outside) names no message, so its postback is only the device's word. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="send" noun="Rich">
@@ -24,7 +30,9 @@ along with this software (see the LICENSE.md file). If not, see
             carousel), text (a text's words), suggestions (a text's chips), cards [{title, description, attachmentSeq (its
             picture: the message's file of that place, 1 to n), suggestions}], providerContent {twilio: {contentSid,
             contentVariables}} (an app's own Twilio template, with authorization disabled only)}; a suggestion is {type:
-            reply, text, postback} or {type: url, text, url} or {type: dial, text, phone}. chatAttachmentIdList: the cards'
+            reply, text, postback} or {type: url, text, url} or {type: dial, text, phone}. A reply's postback is an app's
+            own only with authorization disabled (never starting with "user:"); a member's is "user:" and its words. A card
+            has its title or words and one thing more (the other, a picture or a button). chatAttachmentIdList: the cards'
             pictures, uploaded to the room (upload#Attachment), and no other files. Checked by normalize#Rich; its body is the
             fallback. threadRootEventSeq, clientRef and roomUrl as send#Message. Out: eventSeq, event (with rich), duplicate,
             reasonCode (encryptedRoom, badRich, badSuggestion, badImage, tooLong, notAllowed).</description>
@@ -90,8 +98,11 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: message eventSeq of room chatRoomId answers a suggestion: content.postback {data (postback, cut
             to 1024 characters), toEventSeq (the message whose button it was, when known)}, pushed to the room. From
             reply#Suggestion, and from SmsServices.receive#Sms for an RCS reply (chatBridgeId, no toEventSeq). An app that
-            sent the buttons, with its own context in the postback (order:123:confirm), runs on a SECA of this service.
-            Out: postback.</description>
+            sent the buttons, with its own context in the postback (order:123:confirm), runs on a SECA of this service. The
+            postback is untrusted (see the file's notes): before it acts, an app checks authorUserId (who wrote the tapped
+            message) and fromApp (it was an app's, sent with authorization disabled); outside is an RCS reply, whose
+            postback is the person's device's, unsigned. Out: postback ({data, toEventSeq, authorUserId, fromApp,
+            outside}), authorUserId, fromApp, outside.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
@@ -99,7 +110,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="toEventSeq" type="Integer"/>
             <parameter name="chatBridgeId"/>
         </in-parameters>
-        <out-parameters><parameter name="postback" type="Map"/></out-parameters>
+        <out-parameters>
+            <parameter name="postback" type="Map"/>
+            <parameter name="authorUserId"/>
+            <parameter name="fromApp" type="Boolean"/>
+            <parameter name="outside" type="Boolean"/>
+        </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatRich.js').execute('noteReply', context))</script></actions>
     </service>
 </services>

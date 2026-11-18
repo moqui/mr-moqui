@@ -1506,7 +1506,7 @@
             const delivered = destinations.length ? destinations.map((one) => ({
                 name: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + " · " + one.bridgeName : network(one),
                 state: one.state || "pending", receipt: one.receipt || null, error: one.error || null, path: one.path || null,
-                adapterName: one.adapterName || null,
+                adapterName: one.adapterName || null, note: one.note || null,
                 // a group text's receipts, one a recipient (number to its receipt)
                 recipients: one.recipients && typeof one.recipients === "object" ? one.recipients : null })) : null;
             let readBy = null;
@@ -1594,6 +1594,8 @@
                 lines.push({ key: "delivered", label: one.name || tr("Bridge"), text: text + (one.error && one.state !== "accepted" ? ": " + one.error : ""), state: one.state });
                 // an RCS bridge's: the way it went (Comms-Messaging §16), RCS or the fallback's SMS or MMS
                 if (PATHS[one.path]) lines.push({ key: "path", label: tr("Sent as"), text: PATHS[one.path], path: one.path });
+                // the provider refused the cards and their text went (§18.3 phase 13)
+                if (one.note === "richRefused") lines.push({ key: "deliveryNote", label: tr("Sent as text"), text: tr("The provider refused the card; its text went instead.") });
                 // an RCS bridge's: what can read it, by the way it went (§16.5)
                 if (one.path || /^rcs-/.test(one.adapterName || "")) lines.push({ key: "encryption", label: tr("Encryption"), text: chat.rcsDetail(one.path, one.adapterName) });
                 // a group text: each recipient's own receipt, a failed one said as such even when the others got it
@@ -1652,9 +1654,12 @@
             const namesOf = (list) => Array.from(new Set(list.map((bridge) => bridge.networkName || bridge.name).filter((name) => name))).join(", ");
             const otherNames = namesOf(outbound.filter((bridge) => bridge.network !== "sms")) || (!bridges.length ? (it.bridgeNetworkNames || []).join(", ") : "");
             // business RCS (§16.5): encrypted in transit only, from the brand's verified agent; its texts' fallback is SMS
-            const rcsBridge = bridges.find((bridge) => bridge.network === "rcs");
+            // only an RCS bridge that sends out; another bridge of the room reads its messages too, and is said
+            const rcsBridge = outbound.find((bridge) => bridge.network === "rcs");
             if (rcsBridge) {
-                return label("rcs", false, chat.rcsDetail(null, rcsBridge.adapterName),
+                const elsewhere = bridges.some((bridge) => bridge.network !== "rcs");
+                const detail = chat.rcsDetail(null, rcsBridge.adapterName);
+                return label("rcs", false, elsewhere ? detail + " " + tr("The bridge reads messages to pass them on.") : detail,
                     { text: tr("RCS Business - not end-to-end encrypted"), badge: "sym_o_verified", hint: tr("RCS message") });
             }
             const hints = [];

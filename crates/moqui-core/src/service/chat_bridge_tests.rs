@@ -1233,7 +1233,10 @@ fn a_rich_message_goes_to_the_adapter_with_its_fallback_as_its_text() {
     );
     let given = last.rich.as_ref().expect("the cards go with it");
     assert_eq!(given["kind"], "text");
-    assert_eq!(given["suggestions"][0]["postback"], "table:yes");
+    assert_eq!(
+        given["suggestions"][0]["postback"], "user:On my way",
+        "a member's postback is its words"
+    );
     // an edit or a reaction carries none; a plain message none
     bed.send("<p>plain</p>");
     bed.round(0);

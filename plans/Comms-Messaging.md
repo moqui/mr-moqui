@@ -2538,9 +2538,24 @@ README; the crate's notes (`sms.rs`, `providers/twilio.rs`, `providers/sinch.rs`
     needs its access token), with `sms::plain` for a one-request call; the adapter's are `ChatBridgeAdapter::typing`
     and `delete_content`, in the new `crates/moqui-core/src/service/chat_bridge_provider.rs` with `send#BridgeTyping`
     and `clean#ProviderContent`.
-  - `rcs-sinch` takes up to 10 files (`maxMediaCount`), for a carousel's pictures; a plain text there still carries
-    one.
+  - A rich message's pictures are counted and sized by the core's RCS limits (10 pictures, the provider's per-picture
+    limit, 64 MB together), not the MMS ones; a plain text on `rcs-sinch` still carries one file.
   - A link or call button opens on any message; only a reply is the other side's to tap.
+- Review fixes (2026-11-18):
+  - Sinch's `explicit_channel_omni_message` is the AppMessage's (`message`), not the request's.
+  - Postbacks are untrusted: a member's is `user:` and its words, only an app's own call names one (never `user:`);
+    `note#SuggestionReply` gives `authorUserId`, `fromApp` and `outside`; an RCS reply's is the device's, unsigned.
+  - Twilio: a retry sends the Content it kept (no picture) or deletes it and makes another; a Content is named
+    `moqui-{delivery}-{attempt}`, and a retry with none kept deletes the earlier attempts' found by name; the sweep is
+    keyed on the last attempt, leaves pending and held deliveries, goes oldest first, lets one go after 5 tries
+    (`providerContentTries`), then deletes our Contents no delivery names; the lease is renewed between the steps; a
+    Content Twilio refuses sends the text form instead (`deliveryNote` `richRefused`); carousel cards name no
+    `chip_list` and its `body` is cut to 1024.
+  - A card has its title or words and one thing more; pictures are PNG, JPEG or GIF, sized by the RCS limits, the
+    fallback with the first picture only within the MMS limit; a bridge with no RCS gets the text form and the first
+    picture.
+  - Typing starts only for a room with an RCS bridge and goes only to a person a message of ours reached; a read never
+    changes a failed delivery; the RCS label uses only an outbound RCS bridge and says another bridge reads messages.
 - Left:
   - the live tests with Twilio and Sinch, and the facts listed above;
   - our read receipts out (later, with their own setting);

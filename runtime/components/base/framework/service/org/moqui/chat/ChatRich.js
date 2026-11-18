@@ -10,7 +10,14 @@
 //
 // The limits are the stricter of Twilio's and Sinch's (Twilio twilio/card and twilio/carousel, Sinch RCS message
 // support), so one rich message goes on both: see LIMITS. A card's image is one of the message's files (attachmentSeq,
-// 1 to n); the message has no other files. A message answering a suggestion has content.postback {data, toEventSeq};
+// 1 to n); the message has no other files. A message answering a suggestion has content.postback {data, toEventSeq,
+// authorUserId, fromApp, outside}.
+//
+// Postbacks are untrusted. Only an app (its own call, authorization disabled) names a reply's postback; a member's is
+// always USER_POSTBACK and the button's words, and an app's may not start with it, so an app tells its own buttons from a
+// member's. An RCS reply's postback comes from the person's device, unsigned: any text the device sends. An app acting
+// on one checks the tapped message's author (authorUserId) and that it was an app's (fromApp) first; an RCS reply names
+// no message (outside), so its postback is only the device's word.
 // note#SuggestionReply is the hook an app's SECA runs on.
 //
 // The client's moqui.chat.richFallback (WebrootChat.js) makes the same fallback for the composer's preview; the specs
@@ -21,7 +28,10 @@ const LIMITS = {
   carouselSuggestionsMin: 1, carouselSuggestionsMax: 2, cardsMin: 2, cardsMax: 10, suggestionTextMax: 20,
   postbackMax: 200, urlMax: 2048, fallbackMax: 1600, inboundPostbackMax: 1024,
 }
-const IMAGE_TYPES = /^image\/(png|jpe?g|gif|webp)$/i
+// the image types both providers' RCS takes (Twilio's: JPEG, GIF, PNG)
+const IMAGE_TYPES = /^image\/(png|jpe?g|gif)$/i
+/** A member's reply postback: this and the button's words (an app's never starts with it). */
+const USER_POSTBACK = 'user:'
 const PHONE = /^\+[1-9]\d{3,14}$/
 const URL_FORM = /^https?:\/\/[^\s<>"]+$/i
 const EVENT = 'moqui.chat.ChatEvent'
@@ -39,16 +49,19 @@ function refuse(reasonCode, message) {
   return { reasonCode }
 }
 
-/** A suggestion, checked and cleaned; or {error}. */
-function suggestionOf(value) {
+/** A suggestion, checked and cleaned (a reply's postback an app's own, `app` true, else USER_POSTBACK and its words); or
+ * {error}. */
+function suggestionOf(value, app) {
   const it = value && typeof value === 'object' ? value : {}
   const type = String(it.type || '')
   const text = words(it.text)
   if (!text) return { error: localize('A button needs its words') }
   if (text.length > LIMITS.suggestionTextMax) return { error: ec.resource.expand(localize('A button is up to ${max} characters: ${text}'), '', { max: LIMITS.suggestionTextMax, text }) }
   if (type === 'reply') {
+    if (!app) return { value: { type, text, postback: USER_POSTBACK + text } }
     const postback = it.postback == null || it.postback === '' ? text : String(it.postback).trim()
     if (postback.length > LIMITS.postbackMax || /[\u0000-\u001f\u007f]/.test(postback)) return { error: localize('A reply button\'s postback is up to 200 characters, with no control characters') }
+    if (postback.startsWith(USER_POSTBACK)) return { error: ec.resource.expand(localize('An app\'s postback does not start with ${prefix}: that is a member\'s'), '', { prefix: USER_POSTBACK }) }
     return { value: { type, text, postback: postback || text } }
   }
   if (type === 'url') {
@@ -65,10 +78,10 @@ function suggestionOf(value) {
 }
 
 /** A list of suggestions, checked; or {error}. */
-function suggestionsOf(list) {
+function suggestionsOf(list, app) {
   const out = []
   for (const one of Array.from(list || [])) {
-    const checked = suggestionOf(one)
+    const checked = suggestionOf(one, app)
     if (checked.error) return { error: checked.error }
     out.push(checked.value)
   }
@@ -129,12 +142,15 @@ function normalize(p) {
   if (!given) return refuse('badRich', localize('A rich message needs its cards or buttons'))
   const kind = String(given.kind || '')
   const types = Array.from(p.attachmentTypeList || []).map((type) => String(type || ''))
+  // an app's own call: its postbacks and template are its own, and its message is marked an app's (fromApp)
+  const app = p.allowProviderContent === true
   const rich = { kind }
+  if (app) rich.byApp = true
   if (kind === 'text') {
     const text = paragraph(given.text)
     if (!text) return refuse('badRich', localize('A message with buttons needs its words'))
     if (text.length > LIMITS.textMax) return refuse('tooLong', ec.resource.expand(localize('The words are up to ${max} characters'), '', { max: LIMITS.textMax }))
-    const chips = suggestionsOf(given.suggestions)
+    const chips = suggestionsOf(given.suggestions, app)
     if (chips.error) return refuse('badSuggestion', chips.error)
     if (!chips.value.length || chips.value.length > LIMITS.chipsMax) return refuse('badSuggestion', ec.resource.expand(localize('A message has 1 to ${max} buttons'), '', { max: LIMITS.chipsMax }))
     if (types.length) return refuse('badRich', localize('A message with buttons has no files: make it a card for a picture'))
@@ -155,7 +171,7 @@ function normalize(p) {
       if (title.length > LIMITS.titleMax) return refuse('tooLong', ec.resource.expand(localize('A card\'s title is up to ${max} characters'), '', { max: LIMITS.titleMax }))
       if (description.length > LIMITS.descriptionMax) return refuse('tooLong', ec.resource.expand(localize('A card\'s words are up to ${max} characters'), '', { max: LIMITS.descriptionMax }))
       if (carousel && title.length + description.length > LIMITS.carouselWordsMax) return refuse('tooLong', ec.resource.expand(localize('A carousel card\'s title and words are up to ${max} characters together'), '', { max: LIMITS.carouselWordsMax }))
-      const buttons = suggestionsOf(card.suggestions)
+      const buttons = suggestionsOf(card.suggestions, app)
       if (buttons.error) return refuse('badSuggestion', buttons.error)
       const count = buttons.value.length
       if (!carousel && count > LIMITS.cardSuggestionsMax) return refuse('badSuggestion', ec.resource.expand(localize('A card has up to ${max} buttons'), '', { max: LIMITS.cardSuggestionsMax }))
@@ -169,9 +185,13 @@ function normalize(p) {
       let seq = card.attachmentSeq == null || card.attachmentSeq === '' ? null : Number(card.attachmentSeq)
       if (seq != null) {
         if (!Number.isInteger(seq) || seq < 1 || seq > types.length || used.has(seq)) return refuse('badImage', localize('A card\'s picture is one of the message\'s files, each card its own'))
-        if (!IMAGE_TYPES.test(types[seq - 1])) return refuse('badImage', localize('A card\'s picture is a PNG, JPEG, GIF or WebP image'))
+        if (!IMAGE_TYPES.test(types[seq - 1])) return refuse('badImage', localize('A card\'s picture is a PNG, JPEG or GIF image'))
         used.add(seq)
       } else if (carousel) return refuse('badImage', localize('Every card of a carousel has a picture'))
+      // Twilio's card: a title or words, and at least one thing more (the other, a picture or a button)
+      if (!carousel && [title, description, seq != null, count > 0].filter((one) => !!one).length < 2) {
+        return refuse('badRich', localize('A card needs one thing more than its title or its words: words, a title, a picture or a button'))
+      }
       const clean = { suggestions: buttons.value }
       if (title) clean.title = title
       if (description) clean.description = description
@@ -216,7 +236,7 @@ function send(p) {
     const row = ec.entity.find('moqui.chat.ChatAttachment').condition('chatAttachmentId', id).condition('chatRoomId', p.chatRoomId).disableAuthz().one()
     return row ? String(row.contentType || '') : ''
   })
-  const checked = normalize({ rich: p.rich, attachmentTypeList: types, allowProviderContent: ec.artifactExecution.authzDisabled() })
+  const checked = normalize({ rich: p.rich, attachmentTypeList: types, allowProviderContent: ec.artifactExecution.authzDisabled() === true })
   if (ec.message.hasError()) return Object.assign(out, { reasonCode: checked.reasonCode || 'badRich' })
   const sent = ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters({ chatRoomId: p.chatRoomId, body: checked.body,
     chatAttachmentIdList: ids, threadRootEventSeq: p.threadRootEventSeq ?? null, clientRef: p.clientRef || null, roomUrl: p.roomUrl || null,
@@ -270,20 +290,30 @@ function reply(p) {
 
 /**
  * note#SuggestionReply: message eventSeq answers a suggestion: content.postback {data (cut to 1024), toEventSeq (the
- * suggesting message, when known)} kept and pushed. An app that sent the buttons runs on a SECA of this service.
+ * tapped message, when known), authorUserId (its sender), fromApp (it was an app's: rich.byApp), outside (an RCS reply,
+ * from the person's device)} kept and pushed. An app that sent the buttons runs on a SECA of this service; the postback
+ * is untrusted (see the file's notes).
  */
 function noteReply(p) {
+  const none = { postback: null, authorUserId: null, fromApp: false, outside: false }
   const row = ec.entity.find(EVENT).condition('chatRoomId', p.chatRoomId).condition('eventSeq', p.eventSeq).forUpdate(true).disableAuthz().one()
-  if (!row || row.eventTypeEnumId !== 'CetMessage' || row.redactedDate) return { postback: null }
+  if (!row || row.eventTypeEnumId !== 'CetMessage' || row.redactedDate) return none
   const data = String(p.postback ?? '').trim().slice(0, LIMITS.inboundPostbackMax)
-  if (!data) return { postback: null }
+  if (!data) return none
+  const toSeq = p.toEventSeq != null && p.toEventSeq !== '' ? Number(p.toEventSeq) : null
+  const tapped = toSeq != null ? ec.entity.find(EVENT).condition('chatRoomId', p.chatRoomId).condition('eventSeq', toSeq).disableAuthz().one() : null
+  const rich = tapped ? parse(tapped.contentJson).rich : null
+  // who wrote the tapped message, and whether it was an app's; an RCS reply names none: the outside person's device
+  const authorUserId = tapped ? tapped.senderUserId ?? null : null
+  const fromApp = !!(rich && rich.byApp === true)
+  const outside = toSeq == null
   const content = parse(row.contentJson)
-  content.postback = p.toEventSeq != null && p.toEventSeq !== '' ? { data, toEventSeq: Number(p.toEventSeq) } : { data }
+  content.postback = Object.assign({ data, authorUserId, fromApp, outside }, toSeq != null ? { toEventSeq: toSeq } : {})
   row.set('contentJson', JSON.stringify(content))
   row.update()
   ec.service.sync().name('org.moqui.chat.ChatServices.push#Update').parameters({ chatRoomId: p.chatRoomId, eventSeq: Number(p.eventSeq),
     fields: { postback: content.postback } }).disableAuthz().call()
-  return { postback: content.postback }
+  return { postback: content.postback, authorUserId, fromApp, outside }
 }
 
 const operations = { normalize, send, reply, noteReply }

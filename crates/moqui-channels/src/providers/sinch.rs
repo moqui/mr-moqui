@@ -301,12 +301,17 @@ impl SmsProvider for Sinch {
         ))
     }
 
+    /// Sinch's RCS channel takes files up to 100 MB.
+    fn rcs_media_bytes(&self) -> i64 {
+        100 * 1024 * 1024
+    }
+
     fn defaults(&self) -> Defaults {
         Defaults {
             api_base_url: "https://us.conversation.api.sinch.com",
             max_text_length: 1600,
-            // a text carries one file; an RCS card or carousel one a card, in the rich message itself
-            max_media_count: if self.is_rcs() { 10 } else { 1 },
+            // a text carries one file (a rich message's pictures, one a card, are counted by the core's RCS limits)
+            max_media_count: 1,
             max_media_bytes: 1024 * 1024,
             max_inbound_media_bytes: 5 * 1024 * 1024,
         }
@@ -406,7 +411,8 @@ impl SmsProvider for Sinch {
             body["channel_priority_order"] = order;
             body["channel_properties"] = properties;
             if let Some(fallback) = out.rich.and_then(|rich| rcs::fallback_override(out, rich)) {
-                body["explicit_channel_omni_message"] = fallback;
+                // the AppMessage's own field, beside its kind
+                body["message"]["explicit_channel_omni_message"] = fallback;
             }
         }
         let delivery = &out.request.chat_bridge_delivery_id;
@@ -456,7 +462,11 @@ impl SmsProvider for Sinch {
             );
         }
         // a file's fallback is an MMS, from the MMS channel's sender (RCS alone needs none)
-        if !out.media_urls.is_empty() && out.fallback && config.mms_sender.as_deref() != Some(out.ours) {
+        let mms_fallback = match out.rich {
+            Some(_) => out.fallback_image.is_some(),
+            None => !out.media_urls.is_empty(),
+        };
+        if mms_fallback && out.fallback && config.mms_sender.as_deref() != Some(out.ours) {
             let error = match &config.mms_sender {
                 None => "The Sinch bridge has no mmsSender: its texts carry no files until its MMS channel is set up"
                     .to_string(),

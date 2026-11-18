@@ -32,7 +32,8 @@
 //!   `choice_message`, a card a `card_message`, cards a `carousel_message`; a reply a `text_message` choice with its
 //!   `postback_data`, a link a `url_message`, a call a `call_message`. With the fallback, `explicit_channel_omni_message`
 //!   gives the SMS channel our fallback text, or the MMS channel a card of it with the first image
-//!   ([`fallback_override`]), not Sinch's own rendering of the card. `READ` is the message read on the phone.
+//!   ([`fallback_override`]), not Sinch's own rendering of the card; it goes in the `message` (the AppMessage). Each
+//!   picture is at most 100 MB (Sinch's RCS limit). `READ` is the message read on the phone.
 //! - **Typing.** `events:send` with a `composing_event` to the person's `RCS` identity ([`typing_request`]). None comes
 //!   in: Sinch's RCS channel documents no typing of the person.
 
@@ -61,7 +62,11 @@ pub fn check(config: &Config) -> Result<(), String> {
 /// The recipient, the channel order and the fallback's sender of `out`, for [`super::Sinch::request`]'s body: (the
 /// recipient's identities, `channel_priority_order`, `channel_properties`).
 pub fn route(out: &Outgoing<'_>, theirs: &str) -> (Json, Json, Json) {
-    let file = !out.media_urls.is_empty();
+    // a rich message's fallback is MMS only with its picture (the first, within the MMS limit)
+    let file = match out.rich {
+        Some(_) => out.fallback_image.is_some(),
+        None => !out.media_urls.is_empty(),
+    };
     let (fallback, sender_key) = if file {
         ("MMS", "MMS_SENDER")
     } else {
@@ -149,7 +154,7 @@ pub fn fallback_override(out: &Outgoing<'_>, rich: &Rich) -> Option<Json> {
         return None;
     }
     let text = out.text?;
-    Some(match rich.first_image().and_then(|index| out.media_urls.get(index)) {
+    Some(match out.fallback_image.and_then(|index| out.media_urls.get(index)) {
         Some(url) => {
             let title = rich
                 .cards

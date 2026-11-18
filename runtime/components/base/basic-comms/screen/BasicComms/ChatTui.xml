@@ -157,14 +157,15 @@ along with this software (see the LICENSE.md file). If not, see
                     // trust, which only a browser knows
                     const roomBridges = Array.from(room.bridges || [])
                     // business RCS (§16.5): in transit only, its provider named
-                    const rcsBridge = roomBridges.find((bridge) => bridge.network === 'rcs')
+                    const rcsBridge = roomBridges.find((bridge) => bridge.network === 'rcs' && bridge.outbound !== false)
+                    const elsewhere = roomBridges.some((bridge) => bridge.network !== 'rcs')
                     const sms = room.roomTypeEnumId === 'CrtExternal' || roomBridges.some((bridge) => bridge.network === 'sms')
                     const otherBridge = roomBridges.some((bridge) => bridge.network !== 'sms')
                     // a record's room kept to its members is a plain private room
                     const open = room.roomTypeEnumId === 'CrtPublic' || ['CrvUsers', 'CrvRecord'].includes(room.visibilityEnumId)
                         || (room.roomTypeEnumId === 'CrtRecord' && room.visibilityEnumId !== 'CrvMembers')
                     e2eeText = rcsBridge && !encryptedRoom ? ec.resource.expand(ec.l10n.localize('Encrypted in transit only. ${provider}, Google, carriers and this server can read it.'),
-                        '', {provider: providerOf(rcsBridge.adapterName)})
+                        '', {provider: providerOf(rcsBridge.adapterName)}) + (elsewhere ? ' ' + ec.l10n.localize('The bridge reads messages to pass them on.') : '')
                         : ec.l10n.localize(encryptedRoom ? 'End-to-end encrypted'
                         : sms && otherBridge ? 'Not end-to-end encrypted. Texts go through the phone network and the SMS provider, and the bridge reads messages to pass them on.'
                         : sms ? 'Not end-to-end encrypted. Texts go through the phone network and the SMS provider.'

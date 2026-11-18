@@ -64,6 +64,11 @@ use serde_json::{json, Value as Json};
 
 pub use rich::Rich;
 
+/// The most pictures a rich message (a carousel's cards) carries.
+pub const RCS_MEDIA_COUNT: usize = 10;
+/// The most bytes a rich message's pictures are together (`maxRcsTotalBytes` overrides).
+pub const RCS_TOTAL_BYTES: i64 = 64 * 1024 * 1024;
+
 /// The most a file fetched from a provider may be, whatever a bridge says.
 pub const MEDIA_CAP: u64 = 20 * 1024 * 1024;
 const DEFAULT_TOLERANCE_SECONDS: i64 = 300;
@@ -190,8 +195,11 @@ pub struct Outgoing<'a> {
     /// `smsFallback` (true when not set). Always true for an SMS provider, where it means nothing.
     pub fallback: bool,
     /// An RCS send's cards and suggestions ([`rich`]), its `text` the fallback; none for an SMS provider, which sends
-    /// the fallback and the files.
+    /// the fallback and the first picture.
     pub rich: Option<&'a Rich>,
+    /// A rich send's fallback picture (MMS): the index in [`Self::media_urls`] of its first, when that is within the
+    /// MMS limit (`maxMediaBytes`); none sends the fallback as text alone.
+    pub fallback_image: Option<usize>,
 }
 
 impl Outgoing<'_> {
@@ -444,6 +452,11 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     fn channel(&self) -> Channel {
         Channel::Sms
     }
+    /// The most bytes of one picture of a rich message on its RCS channel (`maxRcsMediaBytes` overrides): Twilio's 16 MB
+    /// by default.
+    fn rcs_media_bytes(&self) -> i64 {
+        16 * 1024 * 1024
+    }
     /// The adapter name a `ChatBridge` selects it by (`adapterName`; Telnyx's is `sms`).
     fn adapter_name(&self) -> &'static str;
     /// An RCS provider's SMS adapter of the same provider (`sms-twilio` for `rcs-twilio`): a reply to a fallback text
@@ -580,6 +593,22 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     ) -> Result<(), String> {
         let _ = (client, config, settings, ours, theirs);
         Ok(())
+    }
+    /// The contents this provider made for sends before `before_millis` (ours by their name: Twilio's `moqui-...`
+    /// Contents), for the sweep of those no delivery keeps. None by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns why they could not be read.
+    fn orphan_contents(
+        &self,
+        client: &RestClient,
+        config: &Self::Config,
+        settings: &Settings,
+        before_millis: i64,
+    ) -> Result<Vec<String>, String> {
+        let _ = (client, config, settings, before_millis);
+        Ok(Vec::new())
     }
     /// Delete a content this provider made for a send (a Twilio Content resource, [`keep_content`]); one it no longer
     /// has is deleted. Nothing by default.
@@ -1055,8 +1084,8 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
         let Some((ours, theirs)) = pair_of(external_room_id) else {
             return Ok(());
         };
-        // a STOP ends every contact, a typing indicator too
-        if opted_out(&ours, &theirs)? {
+        // a STOP ends every contact, a typing indicator too; and none to a person we never sent a message
+        if opted_out(&ours, &theirs)? || !messaged(&bridge.chat_bridge_id, external_room_id)? {
             return Ok(());
         }
         let settings = self.settings(bridge);
@@ -1070,6 +1099,13 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
         let config = self.provider.config(&bridge.config);
         self.provider
             .delete_content(self.client(settings.allow_internal), &config, &settings, content_id)
+    }
+
+    fn orphan_contents(&self, bridge: &BridgeInfo, before_millis: i64) -> Result<Vec<String>, String> {
+        let settings = self.settings(bridge);
+        let config = self.provider.config(&bridge.config);
+        self.provider
+            .orphan_contents(self.client(settings.allow_internal), &config, &settings, before_millis)
     }
 
     fn lookup_number(&self, bridge: &BridgeInfo, number: &str) -> Result<Option<NumberLookup>, String> {
@@ -1118,18 +1154,87 @@ impl<P: SmsProvider> SmsAdapter<P> {
                 format!("A text is at most {} characters", settings.max_text_length),
             );
         }
-        if request.attachments.len() > settings.max_media_count {
-            return failed(
-                "tooManyFiles",
-                format!("A text carries at most {} files", settings.max_media_count),
-            );
-        }
-        let total: i64 = request.attachments.iter().map(|file| file.file_size.unwrap_or(0)).sum();
-        if total > settings.max_media_bytes {
-            return failed(
-                "mediaTooLarge",
-                format!("A text's files are at most {} bytes in all", settings.max_media_bytes),
-            );
+        let rcs = self.provider.channel() == Channel::Rcs;
+        // a rich message (its files are its cards' pictures): the cards go only to an RCS provider; any other sends the
+        // fallback (the text) with only the first picture, so a carousel never fails for its count
+        let rich = request
+            .rich
+            .as_ref()
+            .and_then(|value| Rich::of(value, request.attachments.len()));
+        let trimmed;
+        let request = match &rich {
+            Some(rich) if !rcs => {
+                trimmed = DeliveryRequest {
+                    attachments: rich
+                        .first_image()
+                        .and_then(|index| request.attachments.get(index))
+                        .cloned()
+                        .into_iter()
+                        .collect(),
+                    ..request.clone()
+                };
+                &trimmed
+            }
+            _ => request,
+        };
+        let rich = rich.filter(|_| rcs);
+        // the fallback's picture (MMS): the first, when it is within the MMS limit; else the fallback is text alone
+        let mut fallback_image = None;
+        if let Some(rich) = &rich {
+            // each picture within the provider's RCS limit, all within a sane total; never the MMS total, which only the
+            // fallback's one picture meets
+            let per_file = number_of(&bridge.config, "maxRcsMediaBytes")
+                .filter(|n| *n > 0)
+                .unwrap_or_else(|| self.provider.rcs_media_bytes());
+            let all = number_of(&bridge.config, "maxRcsTotalBytes")
+                .filter(|n| *n > 0)
+                .unwrap_or(RCS_TOTAL_BYTES);
+            if request.attachments.len() > RCS_MEDIA_COUNT {
+                return failed(
+                    "tooManyFiles",
+                    format!("A rich message has at most {RCS_MEDIA_COUNT} pictures"),
+                );
+            }
+            if let Some(file) = request
+                .attachments
+                .iter()
+                .find(|file| file.file_size.unwrap_or(0) > per_file)
+            {
+                return failed(
+                    "mediaTooLarge",
+                    format!(
+                        "A card's picture is at most {per_file} bytes: {}",
+                        file.file_name.as_deref().unwrap_or("a picture")
+                    ),
+                );
+            }
+            let total: i64 = request.attachments.iter().map(|file| file.file_size.unwrap_or(0)).sum();
+            if total > all {
+                return failed(
+                    "mediaTooLarge",
+                    format!("A rich message's pictures are at most {all} bytes in all"),
+                );
+            }
+            fallback_image = rich.first_image().filter(|index| {
+                request
+                    .attachments
+                    .get(*index)
+                    .is_some_and(|file| file.file_size.unwrap_or(0) <= settings.max_media_bytes)
+            });
+        } else {
+            if request.attachments.len() > settings.max_media_count {
+                return failed(
+                    "tooManyFiles",
+                    format!("A text carries at most {} files", settings.max_media_count),
+                );
+            }
+            let total: i64 = request.attachments.iter().map(|file| file.file_size.unwrap_or(0)).sum();
+            if total > settings.max_media_bytes {
+                return failed(
+                    "mediaTooLarge",
+                    format!("A text's files are at most {} bytes in all", settings.max_media_bytes),
+                );
+            }
         }
         let now = jiff::Timestamp::now().as_millisecond();
         // by address, the edge node's on a paired local node: not sent until the files are there
@@ -1148,13 +1253,6 @@ impl<P: SmsProvider> SmsAdapter<P> {
         if words.is_none() && media_urls.is_empty() {
             return failed("empty", "A text has words or a file");
         }
-        let rcs = self.provider.channel() == Channel::Rcs;
-        // the cards and suggestions go only to an RCS provider; any other sends the fallback (the text) and the files
-        let rich = request
-            .rich
-            .as_ref()
-            .filter(|_| rcs)
-            .and_then(|value| Rich::of(value, media_urls.len()));
         let out = Outgoing {
             bridge,
             request,
@@ -1164,6 +1262,7 @@ impl<P: SmsProvider> SmsAdapter<P> {
             media_urls: &media_urls,
             fallback: !rcs || sms_fallback(&bridge.config),
             rich: rich.as_ref(),
+            fallback_image,
         };
         let config = self.provider.config(&bridge.config);
         let outcome = self
@@ -1632,6 +1731,106 @@ pub fn keep_content(bridge: &BridgeInfo, delivery_id: &str, content: &str) -> Re
         ("providerContentId".to_string(), Value::string(content)),
     ]);
     crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters).map(|_| ())
+}
+
+/// The content an earlier attempt kept on delivery `delivery_id` ([`keep_content`]), for a retry to send again or
+/// delete; none when there is none or it cannot be read.
+pub fn kept_content(delivery_id: &str) -> Option<String> {
+    if delivery_id.is_empty() {
+        return None;
+    }
+    let facade = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()?;
+    facade
+        .find("moqui.chat.ChatBridgeDelivery")
+        .and_then(|find| {
+            find.eq("chatBridgeDeliveryId", Value::string(delivery_id))
+                .use_cache(false)
+                .disable_authz()
+                .one()
+        })
+        .ok()
+        .flatten()
+        .and_then(|row| row.get("providerContentId").map(to_plain_string))
+        .filter(|content| !content.is_empty())
+}
+
+/// Clear `content` from delivery `delivery_id` once it is deleted.
+///
+/// # Errors
+///
+/// Returns why it was not cleared.
+pub fn clear_content_of(bridge: &BridgeInfo, delivery_id: &str, content: &str) -> Result<(), String> {
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("deletedContentId".to_string(), Value::string(content)),
+    ]);
+    crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters).map(|_| ())
+}
+
+/// Renew delivery `delivery_id`'s lease between the steps of a send of several calls (a Twilio Content, then the
+/// message), so a slow send is never taken for one cut off; one not renewed is logged.
+pub fn renew_lease(bridge: &BridgeInfo, delivery_id: &str) {
+    if delivery_id.is_empty() {
+        return;
+    }
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("renewLease".to_string(), Value::Bool(true)),
+    ]);
+    if let Err(error) = crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters) {
+        tracing::warn!("delivery {delivery_id}: its lease was not renewed: {error}");
+    }
+}
+
+/// Note on delivery `delivery_id` what the adapter changed of its send (`richRefused`: the provider refused its cards
+/// and their text went), shown in the message's Info; one not kept is logged.
+pub fn note_delivery(bridge: &BridgeInfo, delivery_id: &str, code: &str, text: &str) {
+    if delivery_id.is_empty() {
+        return;
+    }
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("noteCode".to_string(), Value::string(code)),
+        ("noteText".to_string(), Value::string(text)),
+    ]);
+    if let Err(error) = crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters) {
+        tracing::warn!("delivery {delivery_id}: its note {code} was not kept: {error}");
+    }
+}
+
+/// Whether a message of ours ever reached the network for the mapping `external_room_id` of bridge `bridge_id` (an
+/// accepted delivery): a typing indicator goes only to a person we wrote to.
+fn messaged(bridge_id: &str, external_room_id: &str) -> Result<bool, String> {
+    let Some(facade) = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
+        return Err("no entity facade to check the room".to_string());
+    };
+    let read = || -> Result<bool, moqui_lib::error::Error> {
+        let mappings = facade
+            .find("moqui.chat.ChatRoomBridge")?
+            .eq("chatBridgeId", Value::string(bridge_id))
+            .eq("externalRoomId", Value::string(external_room_id))
+            .disable_authz()
+            .list()?;
+        for mapping in mappings.values() {
+            let Some(id) = mapping.get("chatRoomBridgeId").map(to_plain_string) else {
+                continue;
+            };
+            let accepted = facade
+                .find("moqui.chat.ChatBridgeDelivery")?
+                .eq("chatRoomBridgeId", Value::string(&id))
+                .eq("statusEnumId", Value::string("CdsAccepted"))
+                .disable_authz()
+                .count()?;
+            if accepted > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    };
+    read().map_err(|error| format!("the room's messages were not read: {error}"))
 }
 
 /// Clear `content` from the delivery of `remote_event_id` once it is deleted.

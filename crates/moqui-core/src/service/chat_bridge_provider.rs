@@ -19,15 +19,19 @@
 //!   [`TYPING_EVERY_MILLIS`] for a room on this node, checked before anything is read; nothing is kept or retried, and a
 //!   bridge whose indicator fails is logged and the next goes on. `ChatServices.signal#Typing` starts it
 //!   asynchronously, so the user's signal never waits on a network.
-//! - `clean#ProviderContent` and [`sweep_contents`]: the contents an adapter made at its network for a send (a Twilio
-//!   Content resource of a rich message, `ChatBridgeDelivery.providerContentId`) that are still there on a delivery made
-//!   more than [`CONTENT_SWEEP_AGE_MILLIS`] ago (its message's final receipt deletes it; this is for one that never came,
-//!   or a send that never got through). Each is deleted through its adapter
-//!   ([`super::ChatBridgeAdapter::delete_content`]), best effort: one that fails is logged and kept for the next sweep.
-//!   The delivery worker sweeps once a day.
+//! - `clean#ProviderContent` and [`sweep_contents`], once a day from the delivery worker: the contents an adapter made
+//!   at its network for a send (a Twilio Content resource of a rich message, `ChatBridgeDelivery.providerContentId`)
+//!   still named on a delivery whose last attempt was more than [`CONTENT_SWEEP_AGE_MILLIS`] ago (its message's final
+//!   receipt deletes it; this is for one that never came, or a send that never got through). A delivery still pending
+//!   or held by a worker is left. The oldest go first, each through its adapter
+//!   ([`super::ChatBridgeAdapter::delete_content`]); one that fails is logged and counted
+//!   (`providerContentTries`), and after [`CONTENT_TRIES`] it is let go (logged), so one that can never be deleted
+//!   never holds the others up. Then each bridge's own list of ours made before that time
+//!   ([`super::ChatBridgeAdapter::orphan_contents`]: a create whose answer was lost, a content not kept) that no
+//!   delivery names is deleted.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::Condition;
 use moqui_lib::error::Error as LibError;
@@ -35,7 +39,8 @@ use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
 use super::{
-    adapter_of, bridge_info, current_factory, force_new, now_millis, param, stamp, text_of, BRIDGE, DELIVERY, MAPPING,
+    adapter_of, bridge_info, current_factory, force_new, now_millis, param, stamp, text_of, BridgeInfo,
+    ChatBridgeAdapter, BRIDGE, DELIVERY, MAPPING,
 };
 use crate::context::ExecutionContextFactory;
 use crate::entity::EntityFacade;
@@ -46,6 +51,8 @@ pub const TYPING_EVERY_MILLIS: i64 = 15_000;
 pub const CONTENT_SWEEP_AGE_MILLIS: i64 = 2 * 86_400_000;
 /// The deliveries one sweep reads at most; the rest wait for the next.
 const SWEEP_MAX: i64 = 500;
+/// The daily sweeps a content that cannot be deleted is tried in before it is let go.
+pub const CONTENT_TRIES: i64 = 5;
 
 pub(super) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -156,13 +163,24 @@ fn clean_provider_content(
     ]))
 }
 
-/// Delete the provider's contents left on deliveries made before `now` less [`CONTENT_SWEEP_AGE_MILLIS`], each through
-/// its bridge's adapter, and clear the field of each one deleted. Each is on its own: one that fails is logged and kept.
-/// Returns (deleted, kept).
+/// A bridge and the adapter that serves it.
+type Served = (BridgeInfo, Arc<dyn ChatBridgeAdapter>);
+
+/// Delete the provider's contents left on deliveries whose last attempt was before `now` less
+/// [`CONTENT_SWEEP_AGE_MILLIS`], then each bridge's own contents of that age that no delivery names (see the module
+/// notes). Each is on its own: one that fails is logged and kept, or let go after [`CONTENT_TRIES`]. Returns (deleted,
+/// kept).
 pub fn sweep_contents(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64) -> (usize, usize) {
+    let before = now - CONTENT_SWEEP_AGE_MILLIS;
     let rows = facade.find(DELIVERY).and_then(|find| {
         find.condition(Condition::is_not_null("providerContentId"))
-            .condition(Condition::less("createdDate", stamp(now - CONTENT_SWEEP_AGE_MILLIS)))
+            .condition(Condition::not_equals("statusEnumId", Value::string("CdsPending")))
+            .condition(Condition::less("lastAttemptDate", stamp(before)))
+            .condition(Condition::or(vec![
+                Condition::is_null("leaseExpiresDate"),
+                Condition::less("leaseExpiresDate", stamp(now)),
+            ]))
+            .order_by("lastAttemptDate", false)
             .limit(SWEEP_MAX)
             .disable_authz()
             .list()
@@ -174,7 +192,21 @@ pub fn sweep_contents(factory: &ExecutionContextFactory, facade: &EntityFacade, 
             return (0, 0);
         }
     };
-    let mut bridges = HashMap::new();
+    let mut bridges: HashMap<String, Option<Served>> = HashMap::new();
+    let mut of_bridge = |id: &str| -> Option<Served> {
+        bridges
+            .entry(id.to_string())
+            .or_insert_with(|| {
+                facade
+                    .find(BRIDGE)
+                    .and_then(|find| find.eq("chatBridgeId", Value::string(id)).disable_authz().one())
+                    .ok()
+                    .flatten()
+                    .map(|row| bridge_info(&row))
+                    .and_then(|info| adapter_of(factory, facade, &info).map(|adapter| (info, adapter)))
+            })
+            .clone()
+    };
     let (mut deleted, mut kept) = (0, 0);
     for row in rows.values() {
         let (Some(delivery_id), Some(bridge_id), Some(content_id)) = (
@@ -184,45 +216,105 @@ pub fn sweep_contents(factory: &ExecutionContextFactory, facade: &EntityFacade, 
         ) else {
             continue;
         };
-        if !bridges.contains_key(&bridge_id) {
-            let found = facade
-                .find(BRIDGE)
-                .and_then(|find| find.eq("chatBridgeId", Value::string(&bridge_id)).disable_authz().one())
-                .ok()
-                .flatten()
-                .map(|row| bridge_info(&row))
-                .and_then(|info| adapter_of(factory, facade, &info).map(|adapter| (info, adapter)));
-            bridges.insert(bridge_id.clone(), found);
-        }
-        let Some(Some((info, adapter))) = bridges.get(&bridge_id) else {
-            kept += 1;
-            continue;
+        let tries = super::int_of(row, "providerContentTries").unwrap_or(0) + 1;
+        let result = match of_bridge(&bridge_id) {
+            Some((info, adapter)) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                adapter.delete_content(&info, &content_id)
+            }))
+            .unwrap_or_else(|_| Err("the adapter failed".to_string())),
+            None => Err("the bridge or its adapter is gone".to_string()),
         };
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            adapter.delete_content(info, &content_id)
-        }));
-        match result {
-            Ok(Ok(())) => {
-                let cleared = force_new(facade, DELIVERY, || {
-                    facade
-                        .find(DELIVERY)?
-                        .eq("chatBridgeDeliveryId", Value::string(&delivery_id))
-                        .eq("providerContentId", Value::string(&content_id))
-                        .disable_authz()
-                        .update_all([("providerContentId".to_string(), Value::Null)])
-                });
-                if let Err(error) = cleared {
-                    tracing::warn!("delivery {delivery_id}: its deleted content {content_id} stays named: {error}");
-                }
+        let fields = match &result {
+            Ok(()) => {
                 deleted += 1;
+                vec![
+                    ("providerContentId".to_string(), Value::Null),
+                    ("providerContentTries".to_string(), Value::Null),
+                ]
             }
-            Ok(Err(error)) => {
+            Err(error) if tries >= CONTENT_TRIES => {
+                tracing::error!(
+                    "chat bridge {bridge_id}: content {content_id} of delivery {delivery_id} was not deleted in \
+                     {tries} sweeps and is let go: {error}"
+                );
+                kept += 1;
+                vec![
+                    ("providerContentId".to_string(), Value::Null),
+                    ("providerContentTries".to_string(), Value::Null),
+                ]
+            }
+            Err(error) => {
                 tracing::warn!("chat bridge {bridge_id}: content {content_id} was not deleted: {error}");
                 kept += 1;
+                vec![("providerContentTries".to_string(), Value::I64(tries))]
             }
-            Err(_) => {
-                tracing::error!("chat bridge {bridge_id}: the adapter failed deleting content {content_id}");
-                kept += 1;
+        };
+        let kept_row = force_new(facade, DELIVERY, || {
+            facade
+                .find(DELIVERY)?
+                .eq("chatBridgeDeliveryId", Value::string(&delivery_id))
+                .eq("providerContentId", Value::string(&content_id))
+                .disable_authz()
+                .update_all(fields)
+        });
+        if let Err(error) = kept_row {
+            tracing::warn!("delivery {delivery_id}: its content {content_id}'s sweep was not kept: {error}");
+        }
+    }
+    // each bridge's own of that age that no delivery names
+    let all = facade.find(BRIDGE).and_then(|find| {
+        find.condition(Condition::or(vec![
+            Condition::is_null("statusId"),
+            Condition::not_equals("statusId", Value::string("CbsDisabled")),
+        ]))
+        .disable_authz()
+        .list()
+    });
+    let all = match all {
+        Ok(all) => all,
+        Err(error) => {
+            tracing::error!("the chat bridges were not read for their contents: {error}");
+            return (deleted, kept);
+        }
+    };
+    for row in all.values() {
+        let info = bridge_info(row);
+        let Some(adapter) = adapter_of(factory, facade, &info) else {
+            continue;
+        };
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| adapter.orphan_contents(&info, before)))
+            .unwrap_or_else(|_| Err("the adapter failed".to_string()));
+        let found = match found {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(
+                    "chat bridge {}: its contents were not listed: {error}",
+                    info.chat_bridge_id
+                );
+                continue;
+            }
+        };
+        for content_id in found {
+            let named = facade
+                .find(DELIVERY)
+                .and_then(|find| {
+                    find.eq("providerContentId", Value::string(&content_id))
+                        .disable_authz()
+                        .count()
+                })
+                .unwrap_or(1);
+            if named > 0 {
+                continue;
+            }
+            match adapter.delete_content(&info, &content_id) {
+                Ok(()) => deleted += 1,
+                Err(error) => {
+                    kept += 1;
+                    tracing::warn!(
+                        "chat bridge {}: its content {content_id}, kept by no delivery, was not deleted: {error}",
+                        info.chat_bridge_id
+                    );
+                }
             }
         }
     }

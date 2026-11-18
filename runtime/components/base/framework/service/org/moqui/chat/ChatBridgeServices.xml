@@ -716,7 +716,7 @@ along with this software (see the LICENSE.md file). If not, see
                     networkName: types[bridge.typeEnumId]?.description || null, state: state, reasonCode: row.reasonCode ?? null,
                     error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
                     receipt: row.receiptStatus ?? null, recipients: recipientsOf(row), path: row.deliveryPath ?? null,
-                    adapterName: bridge.adapterName ?? null})
+                    adapterName: bridge.adapterName ?? null, note: row.deliveryNote ?? null, noteText: row.deliveryNoteText ?? null})
                 if (RANK[state] > RANK[entry.state]) entry.state = state
                 if (state === 'failed' || state === 'uncertain') entry.retryable = true
             }
@@ -827,6 +827,8 @@ along with this software (see the LICENSE.md file). If not, see
                     return
                 }
             } else if (row.receiptStatus === status || (RANK[row.receiptStatus] || 0) > RANK[status]) return
+            // a failed message stays failed (and retryable as one): a later read changes nothing
+            if (status === 'read' && (row.receiptStatus === 'failed' || row.statusEnumId === 'CdsFailed')) return
             const fields = {receiptStatus: overall, receiptDate: receiptDate || ec.user.nowTimestamp}
             if (recipientsText) fields.recipientReceipts = recipientsText
             if (overall === 'failed' && row.statusEnumId === 'CdsAccepted') Object.assign(fields, {statusEnumId: 'CdsFailed', reasonCode: 'deliveryFailed',
@@ -886,14 +888,20 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (an adapter, plans/Comms-Messaging.md §18.3 phase 13): providerContentId, a content the adapter
             made at its network for the send of delivery chatBridgeDeliveryId (a Twilio Content resource of a rich message),
             kept on the delivery before the send, so its final receipt or the daily sweep (clean#ProviderContent) deletes
-            it; or deletedContentId, cleared from the delivery of remoteEventId (or chatBridgeDeliveryId) once deleted. In a
-            transaction of its own. Out: found.</description>
+            it; or deletedContentId, cleared from the delivery of remoteEventId (or chatBridgeDeliveryId) once deleted.
+            Keeping a content, and renewLease, renew the lease of a delivery a worker holds (one more LEASE_MILLIS, 60 s),
+            so a send of two steps is never taken for one cut off. noteCode and noteText say what the adapter changed of the
+            send (richRefused: the provider refused the cards and their text went), for its Info. In a transaction of its
+            own. Out: found.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="chatBridgeDeliveryId"/>
             <parameter name="remoteEventId"/>
             <parameter name="providerContentId"/>
             <parameter name="deletedContentId"/>
+            <parameter name="renewLease" type="Boolean" default="false"/>
+            <parameter name="noteCode"/>
+            <parameter name="noteText" allow-html="any"/>
         </in-parameters>
         <out-parameters><parameter name="found" type="Boolean"/></out-parameters>
         <actions><script><![CDATA[
@@ -905,13 +913,15 @@ along with this software (see the LICENSE.md file). If not, see
             const row = Array.from(find.list())[0]
             if (!row) return
             found = true
-            if (providerContentId) {
-                row.set('providerContentId', String(providerContentId).slice(0, 60))
-                row.update()
-            } else if (deletedContentId && row.providerContentId === deletedContentId) {
-                row.set('providerContentId', null)
-                row.update()
-            }
+            const fields = {}
+            // a worker holds it: its lease goes on (chat_bridge::LEASE_MILLIS) while the send's steps run
+            if ((providerContentId || renewLease === true) && row.leaseOwner) fields.leaseExpiresDate = new Date(Number(ec.user.nowTimestamp) + 60000)
+            if (providerContentId) Object.assign(fields, {providerContentId: String(providerContentId).slice(0, 60), providerContentTries: null})
+            else if (deletedContentId && row.providerContentId === deletedContentId) Object.assign(fields, {providerContentId: null, providerContentTries: null})
+            if (noteCode) Object.assign(fields, {deliveryNote: String(noteCode).slice(0, 60), deliveryNoteText: noteText ? String(noteText).slice(0, 1000) : null})
+            if (!Object.keys(fields).length) return
+            row.setFields(fields, true, null, null)
+            row.update()
         ]]></script></actions>
     </service>
 

@@ -98,13 +98,13 @@ feature("a card and a text with buttons keep their text form as the message's bo
         cardSeq > 0
         card.out.event.rich.kind == "card"
         eventOf(cardSeq).bodyText == "Your order shipped\nArrives Tuesday\nTrack: https://example.test/track/7\nCall us: +15550109999\nReply: Thanks"
-        // the call's number is kept in its E.164 form, the reply's postback as given
+        // the call's number is kept in its E.164 form; a member's reply postback is "user:" and its words, never its own
         contentOf(cardSeq).rich.cards[0].suggestions[2].phone == "+15550109999"
-        contentOf(cardSeq).rich.cards[0].suggestions[0].postback == "order:7:thanks"
+        contentOf(cardSeq).rich.cards[0].suggestions[0].postback == "user:Thanks"
         text.errors == ""
         eventOf(text.out.eventSeq).bodyText == "Table for two?\n\nReply: Yes, No"
-        // a reply with no postback answers with its words
-        contentOf(text.out.eventSeq).rich.suggestions[0].postback == "Yes"
+        contentOf(text.out.eventSeq).rich.suggestions[1].postback == "user:No"
+        contentOf(cardSeq).rich.byApp == null
         timelineRich.includes('"title":"Your order shipped"')
         edit.errors.includes("A card is not edited")
     }
@@ -128,6 +128,12 @@ feature("the limits refuse a rich message, each by its reason", {
             missingFile: reason({kind: "card", cards: [{title: "T", attachmentSeq: 1}]}),
             tooLong: reason({kind: "card", cards: [{title: "T".repeat(200), description: "d".repeat(1500), suggestions: chips(2)}]}),
             template: reason(Object.assign({}, CARD, {providerContent: {twilio: {contentSid: "HX" + "0".repeat(32)}}})),
+            // Twilio's card: its title or words, and one thing more
+            onlyTitle: reason({kind: "card", cards: [{title: "Just a title"}]}),
+            onlyWords: reason({kind: "card", cards: [{description: "Just words"}]}),
+            // an app's postback may not pass for a member's
+            appUser: sys(() => run(RICH + ".send#Rich", {chatRoomId: roomId, senderUserId: SENDER, rich: {kind: "text", text: "Hi",
+                suggestions: [{type: "reply", text: "Yes", postback: "user:Yes"}]}})).out.reasonCode,
         }
     },
     then(reasons) {
@@ -145,6 +151,9 @@ feature("the limits refuse a rich message, each by its reason", {
         reasons.tooLong == "tooLong"
         // a provider's template is an app's, never a user's
         reasons.template == "notAllowed"
+        reasons.onlyTitle == "badRich"
+        reasons.onlyWords == "badRich"
+        reasons.appUser == "badSuggestion"
     }
 })
 
@@ -169,6 +178,9 @@ feature("a member taps a reply on another's message, not on their own, not a lin
     when() {
         ec.user.internalLoginUser("basic.comms.rich.reader")
         const tapped = reply({eventSeq: cardSeq, index: 0, cardIndex: 0})
+        // an app's card (its own call): its postback is its own, and the answer says the card was an app's
+        const appCard = sys(() => run(RICH + ".send#Rich", {chatRoomId: roomId, senderUserId: SENDER, rich: CARD})).out.eventSeq
+        const appTapped = reply({eventSeq: appCard, index: 0, cardIndex: 0})
         const link = reply({eventSeq: cardSeq, index: 1, cardIndex: 0})
         ec.user.internalLoginUser("basic.comms.rich")
         const own = reply({eventSeq: cardSeq, index: 0, cardIndex: 0})
@@ -196,18 +208,28 @@ feature("a member taps a reply on another's message, not on their own, not a lin
             mapping.set("thruDate", ec.user.nowTimestamp)
             mapping.update()
         })
-        return {tapped, link, own, noted, bridged}
+        return {tapped, appTapped, link, own, noted, bridged}
     },
-    then({tapped, link, own, noted, bridged}) {
+    then({tapped, appTapped, link, own, noted, bridged}) {
         tapped.errors == ""
         eventOf(tapped.out.eventSeq).bodyText == "Thanks"
         eventOf(tapped.out.eventSeq).senderUserId == READER
-        tapped.out.event.postback.data == "order:7:thanks"
+        // a member's card: its postback is "user:", and the answer names its author, not an app
+        tapped.out.event.postback.data == "user:Thanks"
         tapped.out.event.postback.toEventSeq == cardSeq
+        tapped.out.event.postback.authorUserId == SENDER
+        tapped.out.event.postback.fromApp == false
+        tapped.out.event.postback.outside == false
+        appTapped.errors == ""
+        appTapped.out.event.postback.data == "order:7:thanks"
+        appTapped.out.event.postback.fromApp == true
         link.out.reasonCode == "notReply"
         own.out.reasonCode == "ownMessage"
+        // an RCS reply's postback is the person's device's: no message named, outside
         noted.out.postback.data == "order:7:thanks"
         noted.out.postback.toEventSeq == null
+        noted.out.outside == true
+        noted.out.fromApp == false
         bridged.out.reasonCode == "bridgedRoom"
     }
 })
@@ -230,9 +252,18 @@ feature("a read receipt is past delivered, and a final one names the provider's 
         const back = receipt("delivered")
         const cleared = sys(() => run("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", {chatBridgeId: BRIDGE, remoteEventId: "SM-rich-1", deletedContentId: content}))
         const row = sys(() => ec.entity.find("moqui.chat.ChatBridgeDelivery").condition("chatBridgeDeliveryId", "RICH_SPEC_DELIVERY").one())
-        return {content, sent, delivered, read, back, cleared, row}
+        // a failed delivery stays failed: a later read changes nothing
+        sys(() => {
+            const failed = ec.entity.makeValue("moqui.chat.ChatBridgeDelivery")
+            failed.setFields({chatBridgeDeliveryId: "RICH_SPEC_FAILED", chatRoomId: roomId, eventSeq: cardSeq + 1, chatRoomBridgeId: "RICH_SPEC_MAP",
+                chatBridgeId: BRIDGE, statusEnumId: "CdsFailed", remoteEventId: "SM-rich-2", receiptStatus: "failed", createdDate: ec.user.nowTimestamp}, true, null, null)
+            failed.create()
+        })
+        const lateRead = sys(() => run("org.moqui.chat.ChatBridgeServices.note#DeliveryReceipt", {chatBridgeId: BRIDGE, remoteEventId: "SM-rich-2", status: "read"}))
+        const failedRow = sys(() => ec.entity.find("moqui.chat.ChatBridgeDelivery").condition("chatBridgeDeliveryId", "RICH_SPEC_FAILED").one())
+        return {content, sent, delivered, read, back, cleared, row, lateRead, failedRow}
     },
-    then({content, sent, delivered, read, back, cleared, row}) {
+    then({content, sent, delivered, read, back, cleared, row, lateRead, failedRow}) {
         sent.out.providerContentId == null
         delivered.out.providerContentId == content
         read.out.changed == true
@@ -240,5 +271,8 @@ feature("a read receipt is past delivered, and a final one names the provider's 
         cleared.out.found == true
         row.receiptStatus == "read"
         row.providerContentId == null
+        lateRead.out.changed == false
+        failedRow.receiptStatus == "failed"
+        failedRow.statusEnumId == "CdsFailed"
     }
 })

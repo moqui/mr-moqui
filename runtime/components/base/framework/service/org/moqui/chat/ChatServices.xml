@@ -3448,7 +3448,12 @@ along with this software (see the LICENSE.md file). If not, see
                 userIdList: others.filter((id) => !hush.has(id)), message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing,
                     statusText: typing && statusText ? String(statusText).replace(/\s+/g, ' ').trim().slice(0, 80) : null}}).call()
             // a network with a typing indicator (business RCS) shows the other side too, never holding this signal up
-            if (typing && !userId) ec.service.async().name('org.moqui.chat.ChatBridgeServices.send#BridgeTyping').parameter('chatRoomId', chatRoomId).call()
+            if (typing && !userId) {
+                const bridgeIds = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
+                        .selectField('chatBridgeId').disableAuthz().list()).map((row) => row.chatBridgeId)
+                if (bridgeIds.length && ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', 'in', bridgeIds).condition('typeEnumId', 'CbtRcs').disableAuthz().count())
+                    ec.service.async().name('org.moqui.chat.ChatBridgeServices.send#BridgeTyping').parameter('chatRoomId', chatRoomId).call()
+            }
         ]]></script></actions>
     </service>
 

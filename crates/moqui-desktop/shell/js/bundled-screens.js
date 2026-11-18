@@ -3528,7 +3528,7 @@ const cardBoxTemplate = `
         <q-btn flat dense no-caps color="primary" icon="sym_o_image" :label="image ? t('Change the picture') : t('Add a picture')" :loading="image && image.uploading" @click="$refs.picker.click()"></q-btn>
         <span v-if="image" class="text-caption m-muted ellipsis q-ml-sm">{{image.fileName}}</span>
         <q-btn v-if="image" flat round dense size="sm" icon="sym_o_close" :aria-label="t('Remove the picture')" @click="image = null"></q-btn>
-        <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none" @change="pick">
+        <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif" style="display:none" @change="pick">
     </div>
     <div v-for="(button, index) in buttons" :key="index" class="row no-wrap items-center q-mt-xs q-gutter-x-xs m-chat-card-box-button">
         <q-btn-toggle v-model="button.type" dense no-caps unelevated toggle-color="primary" :options="kinds"></q-btn-toggle>
@@ -3559,7 +3559,8 @@ const chatCardBox = {
                 const text = String(button.text).trim();
                 if (button.type === 'url') return { type: 'url', text, url: String(button.value || '').trim() };
                 if (button.type === 'dial') return { type: 'dial', text, phone: String(button.value || '').replace(/[\s().-]/g, '') };
-                return { type: 'reply', text, postback: text };
+                // its postback is the server's: "user:" and its words
+                return { type: 'reply', text };
             });
         },
         // a card with a title or a picture, else a text with buttons
@@ -3578,7 +3579,9 @@ const chatCardBox = {
             if (this.busy || (this.image && (this.image.uploading || !this.image.chatAttachmentId))) return false;
             const rich = this.rich;
             if (rich.kind === 'text') return !!rich.text && rich.suggestions.length > 0;
-            return !!(rich.cards[0].title || rich.cards[0].description);
+            // as the server's: a title or words, and one thing more (the other, a picture or a button)
+            const card = rich.cards[0];
+            return [card.title, card.description, card.attachmentSeq, card.suggestions.length].filter((one) => !!one).length >= 2;
         }
     },
     methods: {
@@ -3587,7 +3590,7 @@ const chatCardBox = {
             const file = event.target.files && event.target.files[0];
             event.target.value = '';
             if (!file) return;
-            if (!isImage(file)) { moqui.notifyMessages([{ type: 'warning', message: t('A card\'s picture is a PNG, JPEG, GIF or WebP image') }]); return; }
+            if (!/^image\/(png|jpe?g|gif)$/i.test(file.type || '')) { moqui.notifyMessages([{ type: 'warning', message: t('A card\'s picture is a PNG, JPEG or GIF image') }]); return; }
             if (needsConnection()) return;
             const entry = { fileName: file.name, contentType: file.type, uploading: true, chatAttachmentId: null };
             this.image = entry;
@@ -12775,7 +12778,7 @@ module.exports = {
                         _createElementVNode("input", {
                           ref: "picker",
                           type: "file",
-                          accept: "image/png,image/jpeg,image/gif,image/webp",
+                          accept: "image/png,image/jpeg,image/gif",
                           style: {"display":"none"},
                           onChange: _ctx.pick
                         }, null, 40, ["onChange"])
