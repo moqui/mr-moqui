@@ -141,13 +141,27 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   not offered. The terminal shows the same, with Send again. Room settings, Bridges lists where the room goes; a bridge
   administrator connects it to another network there (the bridge, the room or conversation there, which way messages
   go), changes or ends it. See [Chat bridges](../interfaces/Chat-Bridges.md).
+- <a id="groupme"></a>**GroupMe** (not yet tested with GroupMe). Settings, Chat, GroupMe connects your own GroupMe
+  account with its access token (from dev.groupme.com): each of your groups, Topics ("Group › Topic") and direct
+  conversations becomes a room you own, under Bridged. A heart is a like there and back, `@room` is `@all`, and pictures
+  go both ways; other files and reactions are not sent. Only your own messages go out, from your account. Disconnect
+  stops the syncing and forgets the token; the rooms keep their history. GroupMe has no end-to-end encryption, and the
+  room says so. See [GroupMe](../interfaces/GroupMe.md).
 - <a id="texts"></a>**Texts** (C4-SMS). A number of ours with messaging has one room for each outside number it texts
   with (the SMS icon, named their number): its texts, pictures, calls and voicemail are there, and everyone our number
   reaches is in it. Calls, Text a number opens it for a number you are granted; a reply goes from that number. A person
   who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
   administrator allows them. See [SMS](../interfaces/SMS.md). A number on an RCS bridge texts as the brand's RCS
   agent, with SMS from the number when the phone has no RCS; each message's caption and Info say when it went as SMS
-  or MMS ([RCS](../interfaces/RCS.md)).
+  or MMS ([RCS](../interfaces/RCS.md)). Its header says "RCS Business - not end-to-end encrypted" and its banner who can
+  read it; a message the phone read says "Read on RCS"; the person sees the agent typing while you type.
+- <a id="cards"></a>**Cards and buttons.** The composer's Card (beside Poll, not in an encrypted room) sends a card: a
+  title, words, a picture and up to 4 buttons, each a reply, a link or a call; with no title and no picture it is a
+  message with buttons under it. The dialog shows the text a phone without RCS gets. Apps send cards and carousels too
+  (`ChatRichServices.send#Rich`). A card goes as RCS cards on an RCS bridge and as that text (and its picture) on SMS
+  and every other bridge. Tap a reply on someone else's card to answer with its words (in a bridged room the buttons
+  are the other person's to tap, on their phone); a link opens, a call dials. On a phone the buttons of a message are
+  one row that scrolls sideways; on a desktop they wrap. A card is not edited.
 - <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
   app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Settings, Chat apps
   shows the address to sign in as (`username@domain`; an email-style username has its `@` written as `\40`), the

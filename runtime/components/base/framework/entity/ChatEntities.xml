@@ -162,7 +162,8 @@ along with this software (see the LICENSE.md file). If not, see
             A message (CetMessage) has its content in contentJson: {body (safe HTML), mentions [userId], attachments
             [{chatAttachmentId, attachmentSeq, fileName, contentType, fileSize}], records [{entity, id}], forwardOf (a
             forwarded message: {senderUserId, senderName, sentDate, body, bodyText}, made by the server), poll ({question}:
-            the poll's rows are ChatPoll)}; replyToEventSeq
+            the poll's rows are ChatPoll), rich (a card, a carousel or a text with suggestion buttons, its body the fallback:
+            ChatRichServices), postback ({data, toEventSeq}: a message answering a suggestion)}; replyToEventSeq
             quotes another, threadRootEventSeq puts it in that message's thread. An edit (CetEdit, editsEventSeq the
             message, contentJson the new body and mentions), a reaction (CetReaction, relatesToEventSeq the message,
             contentJson {key}), a redaction (CetRedaction, relatesToEventSeq the message or reaction it removes), a pin
@@ -508,7 +509,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="ChatBridge" package="moqui.chat" use="transactional" cache="never">
         <description>A connector account or federated network: one row each. typeEnumId is the network; adapterName picks the
             ChatBridgeAdapter registered through moqui_core::extension that serves it (empty: the network's code; an SMS
-            bridge's names its provider's adapter: sms for Telnyx; an RCS bridge, CbtRcs, rcs-twilio or rcs-sinch). configJson
+            bridge's names its provider's adapter: sms for Telnyx; an RCS bridge, CbtRcs, rcs-twilio or rcs-sinch; a GroupMe bridge,
+            CbtGroupMe, groupme: one person's account, its configJson's ownerUserId, org.moqui.chat.GroupMeServices). configJson
             holds the provider account's settings and secrets, encrypted; inboundTokenHash is the SHA-256 (hex) of the token
             an adapter gives ingest#Event. statusId: CbsConnected, CbsNotConnected (its rooms show "not connected" and keep
             their local timeline), CbsDisabled (no deliveries, no input). sendsPerMinute caps the deliveries a node sends to
@@ -530,7 +532,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastErrorText" type="text-long"/>
         <field name="lastErrorDate" type="date-time"/>
         <field name="sendsPerMinute" type="number-integer"/>
+        <field name="ownerUserId" type="id"><description>A bridge that is one person's account (GroupMe): that local user,
+            the same as its configJson's ownerUserId, kept plain so their own bridge is found without reading every
+            bridge's configuration</description></field>
+        <field name="retryDate" type="date-time"><description>An adapter's own connection (GroupMe's push channel) tries
+            again from then: a refused token, or failures in a row. Whichever node holds the connection reads it, so a
+            hand-over keeps the wait</description></field>
         <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one" title="ChatBridgeType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="typeEnumId"/></relationship>
         <relationship type="one" title="ChatBridge" related="moqui.basic.StatusItem" short-alias="status">
@@ -549,6 +559,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Microsoft Teams" enumId="CbtTeams" enumCode="teams" enumTypeId="ChatBridgeType" sequenceNum="10"/>
             <moqui.basic.Enumeration description="Discord" enumId="CbtDiscord" enumCode="discord" enumTypeId="ChatBridgeType" sequenceNum="11"/>
             <moqui.basic.Enumeration description="RCS" enumId="CbtRcs" enumCode="rcs" enumTypeId="ChatBridgeType" sequenceNum="12"/>
+            <moqui.basic.Enumeration description="GroupMe" enumId="CbtGroupMe" enumCode="groupme" enumTypeId="ChatBridgeType" sequenceNum="13"/>
 
             <moqui.basic.StatusType description="Chat Bridge" statusTypeId="ChatBridge"/>
             <moqui.basic.StatusItem statusId="CbsConnected" statusTypeId="ChatBridge" sequenceNum="1" description="Connected"/>
@@ -576,6 +587,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
         <field name="filedDate" type="date-time"/>
+        <field name="syncCursor" type="text-medium"><description>An adapter's catch-up (GroupMe): the network's id of the
+            message up to which every message of the room was taken, advanced only past a page taken whole, so a stopped
+            catch-up resumes there</description></field>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
         <relationship type="one" title="ChatBridgeDirection" related="moqui.basic.Enumeration" short-alias="direction">

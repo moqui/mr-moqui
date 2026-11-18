@@ -949,11 +949,17 @@ yet). The sidecar's license applies to the sidecar, not to MR Moqui; a legal che
   Signal unlinks it. The server stores plaintext.
 - The UI says plainly: "Signal messages are end-to-end encrypted until they reach your server. Your server can read them."
 
-**GroupMe**
+**GroupMe** (designed as phase 14, §18.3)
 - Public API v3 (`api.groupme.com/v3`): groups, direct messages, likes, attachments, members. A user token reads groups,
   members and Topics; the push channel gives new messages.
-- Adapter `groupme.rs`: each group and Topic is a room; likes map to a heart reaction; `@all` maps to `@room`.
-- Risk: low; the API is old but works. GroupMe has no E2EE, so nothing is lost.
+- Adapter `groupme` (`crates/moqui-channels/src/groupme/`), bridge type `CbtGroupMe`, encryption `None`:
+  - each group, each Topic and each direct conversation is a private room of the bridge's owner;
+  - a like is a heart reaction both ways, and `@all` is `@room` both ways;
+  - pictures go out through GroupMe's image service.
+- New messages come through GroupMe's push channel: one outbound HTTPS connection from the core node, so no webhook and
+  no edge node. A catch-up through the messages API after each reconnect is the polling fallback.
+- Risk: low; the API is old but works. GroupMe has no E2EE, so nothing is lost. Direct messages, Topics and the push
+  event types beyond `line.create` are documented only by the community (phase 14, "Not confirmed").
 
 **Google Messages and RCS** (details in §16)
 - SMS and MMS: through the ported number on the SMS provider. Group texts: §9.
@@ -1008,7 +1014,7 @@ that adds it. "New" means this plan adds it (§17).
 | Feature | Equivalent | Status |
 |---|---|---|
 | SMS, MMS, group MMS | SMS and MMS through the provider; group texts | Built; group texts in phase 9 (none on Sinch, §9) |
-| RCS chat | Business RCS; personal RCS by bridge (§13.4) | §16 |
+| RCS chat | Business RCS; personal RCS by bridge (§13.4) | §16; business RCS phase 10, its cards, chips, read and labels phase 13 |
 | Default SMS app | `sim-sms` build | §10 |
 | Scheduled send | Send later on the composer's Send (a long press on a phone, an arrow on a desktop): the server holds the message (`ChatScheduledMessage`) and sends it at its time as the sender, through the normal path, so bridges and their send checks apply then, as mail's due drafts are sent (`send#DueDrafts`). The room lists its scheduled messages: edit, send now, cancel. In an encrypted room, which the server cannot encrypt for, the sender's own device holds it and sends it, the server keeping a placeholder with no text | Designed: phase 15 (§18.3) |
 | Spam protection, block, report | Block a number: its calls and texts, on the user's Blocked list (a `CallerList`, Settings, Call handling); its texts kept out of sight in "Spam & blocked". Block a person in chat: their messages hidden in shared rooms, their direct rooms and invites refused. Spam filter for outside numbers: local rules (first contact, links, keywords, numbers, reports here), on by default; the provider's number lookup optional and off. Not spam and Report spam | Designed: phase 11 (§18.3); the caller lists are built |
@@ -1059,12 +1065,12 @@ that adds it. "New" means this plan adds it (§17).
 | Large groups | Public and private rooms; test with 5,000 members | Built; load test new |
 | Join by SMS without the app | SMS members of a room: a phone number added to a room gets each message as a text with the sender's name, and its replies post to the room | New |
 | Group invite links and QR | Invite links | New |
-| Likes | Heart reaction | Built |
-| Topics (subgroups) | Threads, or linked sub-rooms | Built (threads) |
+| Likes | Heart reaction; across the GroupMe bridge a like is a heart both ways | Built; the bridge in phase 14 |
+| Topics (subgroups) | Threads, or linked sub-rooms. A bridged Topic is a room of its own, "Group › Topic" | Built (threads); the bridge in phase 14 |
 | Events with RSVP | An event message with Going / Maybe / No, and a calendar entry | New |
 | Polls | Polls | Built |
 | Gallery | Media tab | §5 |
-| Mute, @all | Mute, `@room` | Built |
+| Mute, @all | Mute, `@room`; across the GroupMe bridge `@all` and `@room` map both ways | Built; the bridge in phase 14 |
 | Directory and join requests | Browse rooms; join request for private rooms | Browse built; requests new |
 
 ### 14.6 Cheogram (XMPP)
@@ -1131,7 +1137,7 @@ server shows on the phone within a minute; a call and a text from that contact s
 | Phone SMS and MMS | The `sim-sms` build reads the phone's messages once and uploads them to the number's rooms | Needs the default SMS role during import |
 | Signal | `signal-cli` backfill when linking (Signal offers "transfer message history") | Only what Signal transfers |
 | iMessage | BlueBubbles backfill (pages of 1,000) | From the Mac's history |
-| GroupMe | The API's message history per group | Full history |
+| GroupMe | The API's message history per group. Phase 14 catches a room up from its last message only | Full history |
 | Cheogram | The XMPP archive (MAM) of the old account, if its server keeps it; or an export | Best effort |
 | Google Messages | Through the phone's SMS store (`sim-sms` import); RCS history only through the bridge | RCS history mostly lost |
 
@@ -1237,13 +1243,18 @@ provider resells. The facts and their sources are in Appendix A, Finding 2.
 
 #### RCS phase 2: Rich features and labels
 
-1. Add suggested replies and actions to the chat model. Show them as chips in the mobile UI.
-2. Add rich cards and carousels as a message kind, sent in each provider's form (the table above). Render them in the
-   mobile UI.
+Designed 2026-11-17: phase 13 (§18.3) has the data model, the providers' forms and the tests.
+
+1. Add suggested replies and actions to the chat model. Show them as chips in the mobile UI, then desktop and web
+   (`content.rich`, `reply#Suggestion`).
+2. Add rich cards and carousels as a message kind, sent in each provider's form (the table above): Twilio a Content
+   resource made for the send (or an app's own `ContentSid`), Sinch its card, carousel and choice messages. Every other
+   bridge and client gets the fallback text with links. Authors: apps and services (`send#Rich`), and the composer's
+   Card for a card with buttons.
 3. Add typing and read events where the provider passes RBM's `IS_TYPING` and `READ` (Twilio's `read` status and
-   Sinch's `READ` report give read; typing once a provider's docs show it).
-4. Show the RCS labels below in thread headers and message info. The `encryption` capability they come from is built
-   with the other labels (§6.2, §18 phase 3), not here.
+   Sinch's `READ` report give read). Typing goes out only: both providers document the indicator out, neither one in.
+4. Show the RCS labels below in thread headers and message info, in place of the SMS banner. The `encryption`
+   capability they come from is built with the other labels (§6.2, §18 phase 3), not here.
 
 #### RCS phase 3 (optional): Personal RCS bridge, experimental
 
@@ -1266,7 +1277,8 @@ provider resells. The facts and their sources are in Appendix A, Finding 2.
 ### 16.5 UI labels for E2EE status
 
 The labels for MR Moqui chat, SMS and other bridges are in §6.2, the one table for them. These rows add the RCS
-paths, in the same form.
+paths, in the same form. The business rows are phase 13 (§18.3): the `rcs` state of `moqui.chat.e2eeLabel`, its
+banner naming the provider, and Info's "Encryption" line by each message's path.
 
 | Path | Label (thread header) | Detail text (message info) | Icon |
 | --- | --- | --- | --- |
@@ -1298,10 +1310,10 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 7 | Stickers, GIF search, location and live location | §14.3 |
 | 8 | Event messages with RSVP | §14.5 |
 | 9 | Screen security option; one-time code helper; send original photo | §14.2, §14.4 |
-| 10 | GroupMe adapter (`groupme.rs`) | §13.3 |
+| 10 | GroupMe adapter (`groupme`): designed, phase 14 (§18.3) | §13.3 |
 | 11 | Signal adapter on `signal-cli` (`signal.rs`), optional build feature | §13.3 |
 | 12 | iMessage adapter on BlueBubbles (`bluebubbles.rs`), optional build feature | §13.3 |
-| 13 | Business RCS in the SMS provider modules, Twilio and Sinch first: designed, phase 10 (§18.3) | §16 |
+| 13 | Business RCS in the SMS provider modules, Twilio and Sinch first: phase 10; its rich features and labels: designed, phase 13 (§18.3) | §16 |
 | 14 | Matrix appservice API (C6c), then `mautrix-gmessages` for personal RCS | §13.2 |
 | 15 | History imports | §15 |
 | 16 | Default phone app (`sim-dialer`): SIM calls, line choice, one call log, call screening | §14.7 |
@@ -2305,6 +2317,597 @@ backup is not in a spec; `moqui-desktop`'s own tests were not run here (the crat
   rows.
 - **Done when.** The regression specs above pass within budget; on a real phone, the row of §18.4.
 
+#### Phase 13: RCS rich features and labels (R2, §16 RCS phase 2)
+
+Designed 2026-11-17, on phase 10. Built against fake servers only, so **not yet tested with the provider** (Twilio and
+Sinch), as phase 10. Four parts: suggestions as chips, rich cards and carousels as a message kind, the read receipt and
+the typing indicator, and the RCS labels.
+
+**The model.** No new entity and no migration. A rich message is a message (`CetMessage`) with `content.rich`, the
+pattern of `content.poll` and `content.assist`:
+
+```
+rich: {kind: text | card | carousel,
+       text,                                        // kind text: the words the chips go with
+       cards: [{title, description, attachmentSeq,  // the message's image for the card (1..n)
+                suggestions: [...]}],
+       suggestions: [...],                          // kind text: the chips
+       providerContent: {twilio: {contentSid, contentVariables}}}   // optional, apps only
+suggestion: {type: reply, text, postback} | {type: url, text, url} | {type: dial, text, phone}
+```
+
+- Its `body` and `bodyText` are the **fallback**, made by the server from the rich content: the words, then each card's
+  title and description, then each link as "label: URL" and each call as "label: number", and the replies as one line
+  "Reply: Yes, No". Every client and bridge that knows nothing of `rich` shows and sends that: the terminal, search,
+  snippets, notifications, mail digests, XMPP, Matrix, and an SMS room (its images go as MMS, as any file does).
+- Limits, the strictest of the two providers so one rich message goes on both (Twilio's `twilio/card` and
+  `twilio/carousel` pages, Sinch's RCS message support, read 2026-11-17):
+
+  | | Kind `text` | Kind `card` | Kind `carousel` |
+  | --- | --- | --- | --- |
+  | Words | 1 to 1600 characters | title up to 200, description up to 1600, at least one | each card's title and description 160 together |
+  | Image | none | 0 or 1 | one on every card (Twilio needs it) |
+  | Suggestions | 1 to 10 chips | 0 to 4, on the card | 1 or 2 a card, the same types in the same order on every card (Twilio) |
+  | Cards | — | 1 | 2 to 10 |
+
+  A suggestion's text is 1 to 20 characters (Twilio's quick reply; 25 for a link or call there, 20 kept for all); a
+  reply's `postback` up to 200 printable characters, its text when not given; a link `http` or `https`, up to 2048; a
+  call an E.164 number. The message's files are its cards' images (PNG, JPEG, GIF, WebP), each card's own, and no
+  others. The fallback is at most 1600 characters (an SMS bridge's `maxTextLength`), else the rich message is refused.
+- `content.postback {data, toEventSeq}` on a message that answers a suggestion: one a member tapped here
+  (`toEventSeq`, checked), or one that came in from RCS (`Inbound.postback`, `toEventSeq` empty).
+- `DeliveryRequest.rich` (`crates/moqui-core/src/service/chat_bridge.rs`): the event's `content.rich`, as JSON, for an
+  adapter that sends it; the others never read it.
+- `ReceiptStatus::Read`; `note#DeliveryReceipt` ranks `read` above `delivered` (a read is never taken back to
+  delivered or failed).
+- `ChatBridgeDelivery.providerContentId` (`VoiceEntities.xml`, beside `deliveryPath`): the provider's content made
+  for this send (a Twilio `HX…`), until it is deleted.
+
+**Services** (new `framework/service/org/moqui/chat/ChatRichServices.xml`, its logic in `ChatRich.js` beside it, as
+`Sms.js` is; `ChatServices.xml` gets only one-line changes, beside D1's):
+- `send#Rich` (chatRoomId, rich, chatAttachmentIdList, threadRootEventSeq, clientRef): the member's or an app's rich
+  message: `normalize#Rich`, then `send#Message` with the fallback as `body`, then `content.rich` set and pushed
+  (`push#Update`, fields `{rich}`), in one transaction, as `create#Poll` does. Refused in an encrypted room
+  (`encryptedRoom`: the server must read it to make the fallback). `providerContent` only with authorization disabled
+  (an app's own call), as `send#AssistCard`'s rule.
+- `normalize#Rich` (internal): the checks above, each refusal with its message through `t()`; out: the clean `rich`
+  (unknown keys dropped), `body` (safe HTML) and `fallbackText`.
+- `reply#Suggestion` (chatRoomId, eventSeq, index: which suggestion, cardIndex): a member taps a reply chip: a message with
+  the suggestion's text (`send#Message`), then `note#SuggestionReply`. Refused when it is the member's own message, when
+  the room has an outbound bridge (its chips are the other person's, on their phone), or for a suggestion that is not a
+  reply. A link or call chip is not a service: the client opens it.
+- `note#SuggestionReply` (internal; chatRoomId, eventSeq, postback, toEventSeq, chatBridgeId): sets `content.postback`
+  on the answering message and pushes it. It is the hook for apps: an app that sent a card puts its own context in the
+  postback (`order:123:confirm`) and runs on a SECA of this service. `Sms.js` `receive` calls it after `ingest#Event`
+  for an RCS reply with a postback (accepted, not a duplicate).
+- `ChatServices.xml`: `append#Event` and `get#Timeline` give `rich` and `postback` (one line each); `edit#Message`
+  refuses a rich message ("A card is not edited: delete it and send another"), beside the poll's line; `signal#Typing`
+  starts `ChatBridgeServices.send#BridgeTyping` asynchronously when `typing` is true (one line).
+- `ChatBridgeServices.send#BridgeTyping` (new, Rust in `chat_bridge.rs`, internal): see Typing below.
+- `get#RoomBridges` and `get#EventDeliveries` give each bridge's `adapterName`, for the provider's name in the labels.
+- Who authors one: an app or a service (marketing, mr-boss, an agent) through `send#Rich`; and a member through the
+  composer's **Card** (below). A carousel and `providerContent` come from apps only.
+
+**The providers** (`crates/moqui-channels`):
+
+| | `rcs-twilio` (`providers/twilio/rcs.rs`) | `rcs-sinch` (`providers/sinch/rcs.rs`) |
+| --- | --- | --- |
+| Rich send | Two calls: `POST {contentBaseUrl}/v1/Content` (JSON: `friendly_name` `moqui-{chatBridgeDeliveryId}`, `language` the bridge's `contentLanguage`, `en` by default, `types`), then the Messages API with its `ContentSid` instead of `Body` and `MediaUrl`, and `MessagingServiceSid`, `To`, `FallbackFrom`, `StatusCallback` as for a text. A `providerContent.twilio.contentSid` skips the first call (`ContentVariables` with it) | One `messages:send` as for a text, its `message` the rich kind, and `explicit_channel_omni_message` with our fallback for the fallback's channel |
+| Kind `text` | `twilio/card` with `body` and the chips as `actions`, each `chip_list: true` | `choice_message`: `text_message` and `choices` |
+| Kind `card` | `twilio/card`: `title`, `body`, `media` (the image's URL), `actions` | `card_message`: `title`, `description`, `media_message.url`, `choices` |
+| Kind `carousel` | `twilio/carousel`: `body` (the fallback; RCS drops it), `cards` of `title`, `body`, `media`, `actions` | `carousel_message.cards`, each a card as above |
+| A suggestion | reply `QUICK_REPLY` (`title`, `id` the postback); link `URL` (`title`, `url`); call `PHONE_NUMBER` (`title`, `phone`) | reply `text_message` with `postback_data`; link `url_message` (`title`, `url`); call `call_message` (`title`, `phone_number`) |
+| The fallback | The same content's `twilio/text` (`body` the fallback) or, with an image, `twilio/media` (the fallback and the first image) | `{"SMS": {"text_message": …}}`, or with an image `{"MMS": {"card_message": …}}` (MMS takes a card: the title its subject) |
+| No fallback (`smsFallback` false) | No `twilio/text` or `twilio/media` type; `To` `rcs:+1…` | `RCS` alone, no override |
+| Read | Status `read` is `ReceiptStatus::Read` (it was taken as delivered) | `MESSAGE_DELIVERY` `READ` is `Read` |
+| Typing out | `POST {messagingBaseUrl}/v3/Indicators/Typing.json` JSON `{channel: RCS, from: rcs:{rcsSenderId}, to: rcs:+1…, event: START}`; shown up to 20 s or until a message arrives. Needs the new key `rcsSenderId` (the agent's id); none without it | `POST …/events:send` with `event.composing_event` to the `RCS` identity, `channel_priority_order ["RCS"]` |
+| New config | `contentBaseUrl` (`https://content.twilio.com`, a test's fake), `messagingBaseUrl` (`https://messaging.twilio.com`), `contentLanguage`, `rcsSenderId`, `typingIndicators` (true) | `typingIndicators` (true) |
+
+- `sms.rs`: `Outgoing.rich: Option<&Rich>`, the neutral parse of `DeliveryRequest.rich` in a new `sms/rich.rs`
+  (`Rich`, `RichKind`, `Card`, `Suggestion`; a card's image as an index into `Outgoing.media_urls`). The core sends
+  a rich message's images only through the provider's rich form, never as `MediaUrl` beside it. `SmsProvider` gains
+  `typing_request(config, settings, ours, theirs) -> Option<ApiRequest>` (none by default). An SMS provider and
+  `sms-twilio`, `sms-sinch`, `sms` (Telnyx) ignore `rich`: they send the fallback and the images, as now.
+- Twilio's content per message (decided 2026-11-17): one `Content` resource for each rich send (an image's URL is
+  signed and expires, so two sends never make the same content), deleted once its message is done:
+  - its `HX…` id is kept on the delivery (`ChatBridgeDelivery.providerContentId`, by `note#DeliveryContent`, in its own
+    transaction) as soon as Twilio makes it, before the send;
+  - a final receipt (delivered, read, failed or undelivered) deletes it (`DELETE {contentBaseUrl}/v1/Content/{sid}`)
+    and clears the field: `note#DeliveryReceipt` answers the delivery's `providerContentId` with a final status, and the
+    adapter deletes it after the receipt is kept;
+  - a daily sweep (`ChatBridgeServices.clean#ProviderContent`, run by the delivery worker once a day beside its other
+    cleaning) deletes those left on deliveries older than 2 days (a receipt that never came, a crash before the send),
+    through `ChatBridgeAdapter::delete_content`;
+  - best effort: a failed DELETE is logged and the field kept for the sweep; one Twilio no longer has (404) is cleared;
+  - an app's own `providerContent.twilio.contentSid` is never kept there, so never deleted.
+
+  An app that sends one card to many people names a `ContentSid` it made once in Twilio (`providerContent`).
+- Answers of the first call (the content): 2xx with a `sid` goes on to the send; 2xx without one, a lost answer, 429
+  and 5xx `Retry` (no message was sent: a second content is harmless); 401 and 403 `Retry` not connected; another 4xx
+  `Failed` `richRefused` with Twilio's text. The send's answer is read as a text's.
+
+**Typing** (§16.4 step 3). Twilio and Sinch document the typing indicator **out** (ours to the person), and **neither
+documents one in** (the person's `IS_TYPING`): Twilio's status callbacks and inbound webhooks name none, and Sinch's
+RCS page lists only `MESSAGE_INBOUND`, `MESSAGE_DELIVERY`, `OPT_IN` and `OPT_OUT`. So only out is built:
+- `ChatBridgeAdapter::typing(bridge, external_room_id) -> Result<(), String>` (default `Ok`, nothing sent);
+  `SmsAdapter` sends the provider's `typing_request` for a pair room (never a group), when `typingIndicators` is not
+  false, and not to a person who opted out of our number (`SmsOptOut`: a STOP ends every contact).
+- `send#BridgeTyping` (chatRoomId): at most once in 15 s for a room on this node (in memory), before any read; then
+  each active outbound mapping of an enabled bridge, its adapter's `typing`. A failure is logged and the next mapping
+  goes on; nothing is kept or retried. It runs asynchronously, so the user's typing signal never waits on a provider.
+- Read out (our read of their message, Sinch's `read_message_event`) is left out (decided 2026-11-17): it tells the
+  person when a user of ours read their message, later work with its own setting.
+
+**Labels** (§16.5, §6.2). `moqui.chat.e2eeLabel` gets the state `rcs`, before `sms`, for a room with an RCS bridge:
+
+| Where | Text |
+| --- | --- |
+| Header (`text`), with the open lock and a `sym_o_verified` badge (`label.badge`) | "RCS Business - not end-to-end encrypted" |
+| Banner | "Encrypted in transit only. {provider}, Google, carriers and this server can read it." (`moqui.chat.providerName(adapterName)`: Twilio, Sinch, Telnyx; else "The provider") |
+| Composer hint | "RCS message" |
+| Info, a line "Encryption" for an RCS destination, by its path | `rcs`: the banner's text; `sms`: "The phone did not support RCS. This message went as SMS."; `mms`: the same, "as MMS"; no path yet: the banner's text |
+| Terminal (`ChatTui.xml`) | The banner's one line; Info's "Encryption" line |
+
+The SMS banner leaves RCS rooms (phase 10 kept it). Never a closed lock (§16.5 rules). The per-message path stays as
+phase 10 built it ("Delivered to RCS as SMS").
+
+**Read** (§16.4 step 3). The caption of a message whose receipt is `read`: "Read on {network}", the done-all icon in
+the primary colour; Info's line "Read: the network's receipt says so". A local member's read markers are unchanged.
+
+**Screens** (`Chat.qvue`; a self-contained `chatRich` sub-component and the `cardBox` dialog, each its own block, with
+one tag in the message template, one button in the composer and one entry in `components`, so D3's work there merges):
+- **A text with chips:** the words as any message, then the chips: Quasar `q-chip`s, a reply with the reply icon, a
+  link with `sym_o_open_in_new`, a call with `sym_o_call`. On a phone (`room.mobile`) one row that scrolls sideways
+  under the bubble; on a desktop they wrap. A tap: a reply sends its text (`reply#Suggestion`), a link opens in a new
+  tab (`noopener`), a call goes to the app's dialer (`tel:` where there is none). Display only (no tap, the tooltip
+  "For the other person to tap") on my own message and in a room with an outbound bridge.
+- **A card:** a `q-card` (at most 320 px; 85 % of the width on a phone): the image (its attachment, the chat's file
+  URL), the title, the description, the suggestions as flat buttons. Its image is not shown again as a file.
+- **A carousel:** the cards side by side in a row that scrolls with snap (240 px each), on every width.
+- **An answer to a suggestion:** a small "Chose a suggestion" caption with the reply icon under its text.
+- **The composer's Card** (a button beside Poll, plain rooms only, offline disabled): a dialog with Title, Text, an
+  image (pick one file, an image), and up to 4 buttons, each Reply (its words), Link (words and URL) or Call (words and
+  number). With no title and no image it is a text with chips. It shows the fallback ("People without RCS get:") as
+  the user types, from the same rules (`moqui.chat.richFallback`, kept in step with `ChatRich.js` by the specs). Its
+  Post button calls `send#Rich` through the outbox as a poll does.
+- The message menu: no Edit on a rich message (as on a poll); Copy copies the fallback.
+- The terminal shows the fallback (its `body`); chips cannot be tapped there.
+- Phone and desktop differ only in the chip row (scroll or wrap) and the card's width.
+
+**Bridges and encryption.**
+- Every non-RCS bridge sends the fallback and the images, unchanged: the core reads `rich` only in the RCS providers.
+- A rich message is refused in an encrypted room (`send#Rich`, and the Card button is hidden there).
+- RCS is encrypted in transit only; its labels never show a lock.
+
+**Failure tolerance.**
+- A rich send that fails at Twilio's content step is the delivery's failure or retry, as any send; the other bridges of
+  the room go on.
+- A typing indicator that fails is logged and dropped; the next mapping and the next signal go on.
+- `note#SuggestionReply` after an RCS reply runs after the message is kept; its failure is logged (`Sms.js`), and the
+  text stays.
+- A `content.rich` that does not parse is ignored by the client and the adapter: the fallback shows and goes.
+
+**Security and abuse.**
+- Every rich RCS send goes through `check#SmsSend` as a text: the grants, the opt-out, the day's limits.
+- Links in a suggestion are `http` or `https` only, opened with `noopener noreferrer`; a call is a checked E.164
+  number. The card's words are text, never HTML; the fallback HTML is made from escaped text.
+- The images are the message's own uploads, served to the provider by the signed, expiring media URLs.
+- `providerContent` (a Twilio template of the account) only from an app's own call, never from a client.
+- An inbound postback is untrusted text, cut to 1024 (phase 10) and kept only on its message; nothing is run from it
+  but the SECAs an app put on `note#SuggestionReply`. `reply#Suggestion` checks the suggestion is on that message.
+- No typing indicator to a person who opted out; at most one a room each 15 s.
+
+**Left out.**
+- The person's typing in (no provider documents it; §16.4 RCS phase 4 watches for it).
+- Our read receipt out (above).
+- Telnyx RCS rich content (Telnyx RCS is optional and not built).
+- Rich messages in a direct send (`send#BridgeDirect`: a campaign's texts) and from the terminal.
+- A carousel or `providerContent` from the composer.
+- Calendar, location and share-location suggestions (Sinch has them; Twilio's cards do not).
+- Linking an RCS reply to the card it answers (`toEventSeq` of an inbound postback): an app puts its context in the
+  postback.
+
+**Tests** (regression):
+- `crates/moqui-channels/src/tests/rcs.rs`, with the fake Twilio (its Content API, Messages API and Indicators) and the
+  fake Sinch:
+  - Twilio: a card, a text with chips and a carousel: the content's body and the send with its `ContentSid`; the
+    fallback type (`twilio/text`, `twilio/media` with an image) and none without the fallback; a `providerContent`
+    with no content call; the content refused (`richRefused`) and unavailable (`Retry`, no message sent);
+  - Sinch: the `choice_message`, `card_message` and `carousel_message` bodies and the SMS and MMS overrides;
+  - `sms-twilio` with a rich message sends the fallback and the image;
+  - `read` (Twilio) and `READ` (Sinch) to `read`, and never back to delivered;
+  - typing: Twilio's and Sinch's requests; none with `typingIndicators` false, without `rcsSenderId` (Twilio), to a
+    group or to an opted-out pair; once in 15 s.
+- `crates/moqui-core/src/service/chat_bridge_tests.rs`: `DeliveryRequest.rich` from the event; `send#BridgeTyping`'s
+  throttle and its skip of a failing adapter.
+- `runtime/components/base/basic-comms/test/BasicCommsRich.spec.js` (new, server): each limit's refusal; the fallback
+  `body` and `bodyText`; an encrypted room refused; `providerContent` refused from a user; edit refused;
+  `reply#Suggestion` (its message and `content.postback`, refused on my own message, in a bridged room, for a link);
+  `note#SuggestionReply`; `get#Timeline` with `rich`; `note#DeliveryReceipt` with `read`.
+- `runtime/components/base/webroot/test/client/WebrootChat.spec.js`: `e2eeLabel`'s `rcs` state, `providerName`,
+  `richFallback` (the same cases as the server's), Info's "Encryption" and read lines. No new client walk: the
+  basic-comms client budget is at about 10.8 of 12 s.
+
+**Docs:** `docs/interfaces/RCS.md` (rich messages, the read receipt, typing, the labels, and the new "Not confirmed"
+items below); `docs/interfaces/Chat-Bridges.md` (`DeliveryRequest.rich`, `typing`, the `read` receipt);
+`docs/tools/Comms.md` (cards and chips, the Card dialog); `docs/ui/Mobile-Client.md` (the chip row); the BasicComms
+README; the crate's notes (`sms.rs`, `providers/twilio.rs`, `providers/sinch.rs`).
+
+**Not confirmed in the providers' docs** (read 2026-11-17; listed in RCS.md, checked in the live tests):
+- Whether a Twilio content for RCS needs approval before it is sent (its pages name approval for WhatsApp only).
+- That Twilio sends the content's `twilio/text` or `twilio/media` as the SMS or MMS fallback (its page says "most
+  complex type the channel supports"), and that `FallbackFrom` holds with a `ContentSid`.
+- That Twilio returns a quick reply's `id` as `ButtonPayload` on RCS.
+- The shape of Sinch's `explicit_channel_omni_message` value (its reference names a map of channel to content, with no
+  schema), and that MMS shows a `card_message` as described.
+- Whether either provider bills a typing indicator.
+
+**Status (2026-11-17): built**, against fake servers only. Not yet tested with the provider.
+- Built as designed, with these details:
+  - The fallback HTML is one paragraph with a blank line (`<br><br>`) between blocks, so `send#Message`'s `bodyText`
+    (what every bridge sends) is the fallback text.
+  - The trait's provider hooks are `SmsProvider::send_typing` and `delete_content` (each sends its own request: Sinch
+    needs its access token), with `sms::plain` for a one-request call; the adapter's are `ChatBridgeAdapter::typing`
+    and `delete_content`, in the new `crates/moqui-core/src/service/chat_bridge_provider.rs` with `send#BridgeTyping`
+    and `clean#ProviderContent`.
+  - A rich message's pictures are counted and sized by the core's RCS limits (10 pictures, the provider's per-picture
+    limit, 64 MB together), not the MMS ones; a plain text on `rcs-sinch` still carries one file.
+  - A link or call button opens on any message; only a reply is the other side's to tap.
+- Review fixes (2026-11-18):
+  - Sinch's `explicit_channel_omni_message` is the AppMessage's (`message`), not the request's.
+  - Postbacks are untrusted: a member's is `user:` and its words, only an app's own call names one (never `user:`);
+    `note#SuggestionReply` gives `authorUserId`, `fromApp` and `outside`; an RCS reply's is the device's, unsigned.
+  - Twilio: a retry sends the Content it kept (no picture) or deletes it and makes another; a Content is named
+    `moqui-{delivery}-{attempt}`, and a retry with none kept deletes the earlier attempts' found by name; the sweep is
+    keyed on the last attempt, leaves pending and held deliveries, goes oldest first, lets one go after 5 tries
+    (`providerContentTries`), then deletes our Contents no delivery names; the lease is renewed between the steps; a
+    Content Twilio refuses sends the text form instead (`deliveryNote` `richRefused`); carousel cards name no
+    `chip_list` and its `body` is cut to 1024.
+  - A card has its title or words and one thing more; pictures are PNG, JPEG or GIF, sized by the RCS limits, the
+    fallback with the first picture only within the MMS limit; a bridge with no RCS gets the text form and the first
+    picture.
+  - Typing starts only for a room with an RCS bridge and goes only to a person a message of ours reached; a read never
+    changes a failed delivery; the RCS label uses only an outbound RCS bridge and says another bridge reads messages.
+- Left:
+  - the live tests with Twilio and Sinch, and the facts listed above;
+  - our read receipts out (later, with their own setting);
+  - rich messages in direct sends and from the terminal.
+
+#### Phase 14: GroupMe adapter (D5, §13.3, §14.5, §17 #10)
+
+Designed 2026-11-17. Built against a fake GroupMe only, so **not yet tested with GroupMe**. The adapter is
+`crates/moqui-channels/src/groupme/`, on GroupMe's public API v3 with the user's access token. The facts it relies on,
+and those not confirmed, are at the end of this entry.
+
+**New messages: the push channel.** GroupMe offers three ways:
+
+| Way | For | Against |
+| --- | --- | --- |
+| Push: Faye/Bayeux at `push.groupme.com/faye`, long-polling over HTTPS (chosen) | Official (the push tutorial). One outbound connection a bridge, from the core node: no webhook, no edge node, nothing public. The user channel `/user/<id>` carries every group's, Topic's and direct conversation's messages and likes | A thread a bridge holds a long poll open. Its event types beyond `line.create` are documented by the community only |
+| Bot callback URL | Official, a plain POST | A bot in each group, which the group sees; no direct messages; no signature, so anyone with the URL can forge a message; needs a public webhook (the edge node) |
+| Polling | Simple | A request a room an interval; slow; GroupMe's rate limit (420) |
+
+The push channel is chosen. Polling is only its catch-up after a reconnect.
+
+**The connection** (`groupme/push.rs`).
+- `start()` spawns one thread per bridge, `moqui-groupme-<chatBridgeId>`, holding a `Weak` factory. `stop()` sets its
+  stop flag and does not wait for it. Its loop:
+  1. `GET /users/me`: the token's GroupMe user id.
+  2. Handshake (`/meta/handshake`, `long-polling`), then subscribe to `/user/<id>` with `ext: {access_token, timestamp}`.
+  3. Catch up (below).
+  4. `/meta/connect` long polls, each with a read timeout of the server's `advice.timeout` plus 15 s. Each answer's
+     messages are handled in order.
+- Every hour a new handshake and subscription (the tutorial: "Signature must refresh every hour").
+- A failed connect, `advice.reconnect: handshake`, a network error or a 5xx: a new handshake after 2 s, doubling up to
+  5 min.
+- Before each poll the thread reads the bridge row again (status and `configJson`):
+  - disabled or removed: the thread ends;
+  - a changed token or settings: a new handshake at once.
+- The bridge is connected once subscribed. A 401 (from the API or the push server) marks it not connected with "GroupMe
+  refused the access token: get a new one (docs/interfaces/GroupMe.md)". The thread then tries again every 5 minutes,
+  and at once when `store#Bridge` changes the token.
+- New core helpers in `chat_bridge.rs`:
+  - `note_status(facade, bridge_id, connected, error)` wraps `set_status` for an adapter's own thread;
+  - `bridge_row(facade, bridge_id)` returns the `BridgeInfo` and status.
+- **In a cluster** one node holds each bridge's connection (decided 2026-11-17, at the design check). It is the lease
+  the replication sender and the SIP trunks already use: a `moqui.edge.EdgeSenderLock` row `groupme:<chatBridgeId>`,
+  through `moqui_core::edge::replica::sender::claim`.
+  - The lease is 120 s, renewed between steps (each long poll is at most the server's timeout plus 15 s).
+  - Another node asks every 15 s and takes the lease over when it lapses.
+  - A holder whose claims fail stops after two thirds of the lease since its last good claim.
+  - A thread that ends lets the lease go.
+
+  Should two nodes still meet, duplicates stop in `ingest#Event`: one transaction id a GroupMe event
+  (`gm:<message id>`), and `ChatEventExternal` is unique on the event.
+- **Edge nodes:** nothing. The connection goes out from the core node, and files go out as uploads, not addresses.
+
+**Catch-up** (the polling fallback).
+- When it runs:
+  - after each subscription;
+  - every `syncMinutes` (60).
+- Per run:
+  - `GET /groups?omit=memberships&per_page=100` (up to `maxRooms`) and `GET /chats?per_page=100`;
+  - at the start and hourly, `GET /groups/:id/subgroups` for the Topics.
+- What it does:
+  - It makes the rooms of chosen groups, Topics and conversations that have none.
+  - A room whose `last_message_id` is not its newest mapped event fetches `GET /groups/:id/messages?after_id=<newest>&limit=100`
+    (or `GET /direct_messages?other_user_id=…&after_id=…`), at most 5 pages a room.
+  - The newest mapped event is the mapping's latest `ChatEventExternal` that is not a like. No cursor field is needed.
+  - A new room starts at GroupMe's newest message. History is §15's, later.
+
+**Rooms.**
+- `externalRoomId`:
+  - `g:<group id>`: a group;
+  - `g:<topic id>`: a Topic, which posts and reads as a conversation of its own;
+  - `dm:<other user id>`: a direct conversation. Its chat id (`a+b`) is the mapping's `externalThreadId`
+    (`store#MappingThread`), for likes.
+- Each is a `CrtPrivate`, `CrvMembers` room, not encrypted, with a `CrbBoth` mapping. Not `CrtExternal`: that is a phone
+  number's room. So GroupMe rooms list under Bridged.
+- The room's name and topic:
+  - a group: the group's name, topic "GroupMe group";
+  - a Topic: "Group › Topic", topic "GroupMe Topic in {group}";
+  - a conversation: the person's name, topic "GroupMe direct messages".
+- The bridge's owner (`configJson.ownerUserId`) is the room's owner and its one local member when it is made. The owner
+  may add others: they read, and their sends are refused (below).
+- A new name from GroupMe renames the room only while the room still has GroupMe's last name (the mapping's
+  `externalRoomName`): the owner's own name wins.
+- Which rooms (`configJson`):
+  - `groupIds` (empty: every group);
+  - `skipGroupIds`;
+  - `topics` (true);
+  - `directMessages` (true);
+  - `maxRooms` (200, Topics and conversations counted).
+
+  An event of a room left out is dropped, logged at debug.
+- New service file `org.moqui.chat.GroupMeServices` (`GroupMeServices.xml`, `GroupMe.js`), internal (no remote), which
+  the adapter calls with authorization off:
+  - `ensure#Room` {chatBridgeId, externalRoomId, kind (group, topic, direct), name, parentName, conversationId}: under the
+    bridge's row lock, the active mapping or a new room and mapping, as `ensure#PairRoom`. It reads the owner from the
+    bridge's `configJson` itself, so no caller names a user. Out: chatRoomId, chatRoomBridgeId, created.
+  - `receive#Likes` {chatBridgeId, externalRoomId, messageId, likedByList, ownGroupMeId, names}: the likes of one message
+    as a state.
+    - It compares the heart reactions of the room's external actors on that message with `likedByList`.
+    - It sends `ingest#Event`: a reaction for each new like (`like:<message>:<user>:<n>`), and a redaction of the latest
+      like for each one taken back.
+    - The owner's own GroupMe id counts as liked while the owner has a local heart on the message, so the owner's like
+      does not come back as a second heart.
+    - One transaction id per state (`gml:<message>:<hash of the sorted ids>`), so a repeat, or another node's, is a
+      duplicate.
+
+**In** (`groupme/events.rs`). Each push message or caught-up message is one `ingest#Event` batch. The adapter runs it
+under its bridge's transport mark (`sms::with_mark`): its own TLS connection to GroupMe, signed in with the token, is the
+transport check. Nothing comes in on the webhook route: `webhook()` keeps the default 401.
+
+| GroupMe | Becomes |
+| --- | --- |
+| `line.create`, `direct_message.create`, a caught-up message | A message as the GroupMe person (`externalUserId` its `user_id`, its `name`, its `avatar_url` when on `https://i.groupme.com`, `originDate` from `created_at`). Image (`i.groupme.com`) and video (`v.groupme.com`) attachments are `media`, up to 10. A location is a line "Location: {name}" with an OpenStreetMap link built from the coordinates. A file is the line "[A file on GroupMe: open GroupMe to get it]". A `reply` attachment is the reply's target. Its `favorited_by` goes to `receive#Likes` |
+| `@all` or `@everyone` as a word in the text | `item.mentions: ['@room']`. `process#InboundItem` (small change) makes the first such word `<span data-mention-id="@room">`. Any other value in `mentions` is `malformed`. `send#Message`'s @room rule still applies |
+| `favorite` | `receive#Likes` with `subject.line.favorited_by` |
+| `message.update`, `message.deleted` (community-documented) | An edit (`edit:<id>:<updated_at>`) or a delete of the message. `ingest#Event`'s own-sender rule applies |
+| `membership.create` | `ensure#Room` for the group, when chosen |
+| `system: true`, `typing`, `ping`, other types | Dropped |
+| The owner's own message sent from here (its `user_id` the token's, its `source_guid` starting `moqui-chat:`) | Dropped: the echo of a send, even before the send's mapping is written |
+
+- The owner's own messages and likes from the GroupMe app show as the owner's GroupMe person, a member like the others.
+  The bridge layer has no puppet of a local user.
+- `fetch_media` fetches only `https://i.groupme.com/…` and `https://v.groupme.com/…`, through the guarded client (public
+  addresses only, `maxInboundMediaBytes`, at most 20 MiB). `store#BridgeMedia`'s safe types apply.
+
+**Out** (`groupme/mod.rs` `deliver`).
+- **Only the owner speaks for the account.** An event of another local member fails `notBridgeOwner` ("GroupMe messages
+  go from {owner}'s account only").
+- **A message.**
+  - Text: up to 1,000 characters (`textTooLong`).
+  - `POST /groups/:id/messages` `{message: {source_guid, text, attachments}}`, or `POST /direct_messages`
+    `{direct_message: {source_guid, recipient_id, text, attachments}}`.
+  - `source_guid` is the delivery's idempotency key, and `X-Access-Token` the token.
+  - 201: `Accepted` with GroupMe's message id.
+- **@room.** An `@room` mention in the HTML goes as the text `@all`, with a `mentions` attachment of every member but
+  the owner, each at that text. The members come from `GET /groups/:id`, kept 10 minutes. There is none in a direct
+  conversation.
+- **Pictures.** Each image file is read through a new core helper, `chat_bridge::delivery_file(bridge_id,
+  attachment_id)`: `own_media`'s check that the message went to the bridge, without the media token. It is posted to
+  `image.groupme.com/pictures` with its content type and the token, and its `payload.url` becomes an `image`
+  attachment.
+  - A picture over `maxImageBytes` (10 MB) fails `mediaTooLarge`.
+  - Any other file fails `fileNotCarried` ("GroupMe takes only pictures from this server"). GroupMe's video and file
+    services are community-documented only.
+- **A like.** A heart reaction (❤️, ❤, ♥️, ♥) is `POST /messages/<conversation>/<message>/like`; its removal is
+  `…/unlike`. The conversation is the group's or Topic's id, or the mapping's chat id.
+  - Any other reaction fails `reactionNotCarried` ("GroupMe carries only the heart").
+  - An edit or a delete is `bridgeUnsupported`, refused before the change by the capabilities.
+- **GroupMe's answers.**
+  - 200 and 201: accepted.
+  - 400: `Failed` `badRequest`, with GroupMe's `meta.errors`.
+  - 401: `Retry` with the bridge not connected.
+  - 403: `Failed` `refused`, with GroupMe's error (its update limits; not in the group).
+  - 404: `Failed` `notFound`.
+  - 420, 429, 502, 503: `Retry`.
+  - 409 (the same `source_guid` within a minute), a 500, or an answer lost in flight: the room's latest 20 messages are
+    looked up for our `source_guid`. Found, it is `Accepted` with that id; else `Uncertain`.
+- **Capabilities:**
+  - `edit` false, `delete` false, `reaction` true;
+  - `idempotent` false: GroupMe dedupes for a minute only, shorter than the lease;
+  - `sends_per_minute` 20 (`sendsPerMinute`);
+  - `encryption` `None`, `group_max` 0.
+
+**The data model and configuration.**
+- `ChatEntities.xml`: Enumeration `CbtGroupMe` (GroupMe, `enumCode` `groupme`). No new entity or field, and no
+  migration.
+- `configJson`, encrypted as every bridge's:
+  - `accessToken` and `ownerUserId` (both required);
+  - the room choices above, `syncMinutes`, `sendsPerMinute`, `maxImageBytes`, `maxInboundMediaBytes`;
+  - `apiBaseUrl` (`https://api.groupme.com/v3`), `imageBaseUrl` (`https://image.groupme.com`), `pushUrl`
+    (`https://push.groupme.com/faye`), and `allowInternalAddresses` (tests only, never on production).
+- `store#Bridge` for `CbtGroupMe` checks (`GroupMeServices.check#Bridge`):
+  - the adapter is `groupme`;
+  - `accessToken` and `ownerUserId` are there, and the owner is a user;
+  - the owner does not change while the bridge has rooms (`ownerFixed`);
+  - the owner has no other GroupMe bridge (`oneBridge`).
+- `lib.rs`: `pub mod groupme;` and its line in `adapters()`.
+
+**Self-service** (decided 2026-11-17, at the design check: in the first release).
+- Settings, Chat gets a GroupMe section (`Settings/Chat.xml`, which renders in both modes). It shows:
+  - the status (Connected with the room count; Not connected with the reason; Disconnected);
+  - Access token (a password field, write-only) and Connect, or Connect again;
+  - Disconnect.
+- `GroupMeServices`, the current user's own bridge:
+  - `get#MyGroupMe`: the status, never the token.
+  - `connect#MyGroupMe`: makes the user's GroupMe bridge (owner the user, adapter `groupme`), or replaces its token and
+    connects it again. An empty token keeps the one kept. At most one per user (the user's row lock, then a look).
+  - `disconnect#MyGroupMe`: the bridge is disabled, so the worker stops its thread. The token is forgotten. The
+    `lastErrorText` says "Disconnected by its owner: the rooms keep their history and no longer sync with GroupMe".
+    The rooms stay.
+- Only the owner (these services) and a `ChatBridgeAdmin` (System, Chat Bridges, `find#Bridges`, `store#Bridge`) see or
+  change the bridge. The token is kept in the encrypted `configJson`.
+- The property `chat_groupme_self_service` (`true` by default) turns it off. When `false`, Connect is refused
+  (`selfServiceOff`) and the section shows only a bridge the user has, without its token form.
+- The administrator's path stays: System, Chat Bridges takes a GroupMe bridge as any other (the network, the adapter and
+  the JSON configuration), and the guide gives the keys.
+
+**Screens.**
+- Settings, Chat, GroupMe (above). BasicComms.spec's one render of Settings, Chat checks it.
+- GroupMe rooms show in Chat's Bridged section with the GroupMe chip, a failed send's reason, and Send again.
+- The label (§6.2), in `WebrootChat.js` `e2eeLabel` and `ChatTui.xml`: a room whose bridges all have `encryption`
+  `None` and are not SMS says "Not end-to-end encrypted. {network} has no end-to-end encryption, and the bridge reads
+  messages to pass them on." The rule is generic, not GroupMe's alone.
+- The terminal shows the same label line, and nothing new besides.
+- Phone and desktop: the same rooms, label and captions. Nothing depends on the width.
+
+**Failure tolerance.**
+- Each push message, each caught-up message, each room and each like state is worked on its own. One that fails is
+  logged with the bridge and GroupMe's id, and the rest go on. A room not made is tried again at the next sync.
+- A file not fetched is named in its message (`ingest#Event`'s rule).
+- One message's handling runs under `catch_unwind`: a panic is logged and the thread goes on.
+- The thread ends only when its bridge is stopped, disabled or removed. A failure backs off and connects again.
+- A catch-up page that fails is logged, and that room waits for the next run.
+
+**Security and abuse.**
+- The token is only in the encrypted `configJson`. It is never returned (`store#Bridge`), never logged (errors are
+  scrubbed of it), and sent only over https: `start()` refuses an http URL but a test's `allowInternalAddresses`. It
+  goes in the `X-Access-Token` header and in the Faye `ext`, never in a URL.
+- No public endpoint: input comes only over the bridge's own connection, and every `ingest#Event` check applies (no
+  local identity, the batch's bounds, the dedupes). The transport mark is set only around the adapter's own calls.
+- Files are fetched from GroupMe's two media hosts only, through the guarded client. Avatars are kept only from
+  `i.groupme.com`.
+- No local user speaks through another's account: only the owner's events go out.
+- `@room` comes only from the word `@all` or `@everyone`, and `send#Message`'s rule for who may mention the room still
+  applies.
+- Bounds: `maxRooms` (a stranger adding the owner to many groups, or many direct messages, makes at most that many rooms;
+  `directMessages` false stops strangers' rooms); `sendsPerMinute`; 420 and 429 backed off; at most 5 catch-up pages a
+  room.
+
+**Left out.**
+- Edits, deletes and replies going out. GroupMe's edit is a v4 call documented by the community only.
+- Typing, read receipts, polls, events, galleries, emoji PowerUps (they show as their placeholder), reactions other than
+  the heart (GroupMe's newer reactions are community-documented), and sending video and files.
+- History beyond the catch-up (§15), and GroupMe's system messages.
+- A group's whole roster as members: a GroupMe person joins the room when they first post or like.
+- GroupMe's OAuth flow for applications: the user pastes their token.
+- The WebSocket transport: long-polling needs no new crate.
+- Archiving a room when the owner leaves its group. GroupMe's 403 or 404 fails its sends with the reason.
+- Bots.
+
+**Tests** (regression):
+- `crates/moqui-channels/src/groupme/tests.rs`, on a fake GroupMe on loopback (REST, image service and Faye long-poll).
+  The token is built with `format!`. The push session is driven a step at a time (`push::Session::step`), with no
+  timing:
+  - send: a text with the idempotency key as `source_guid` and the token header; `textTooLong`; another member's
+    message refused (`notBridgeOwner`);
+  - receive: the handshake, the subscription with the token in `ext`, and a `line.create` into the group's room as
+    the GroupMe person with name and avatar; the same message on two connects kept once; the owner's echo dropped;
+  - a like both ways: a heart out as `/like` and its removal as `/unlike`; another emoji refused; a `favorite` in as a
+    heart and taken back; the owner's own like not doubled;
+  - `@all`: in as an `@room` mention; `@room` out as `@all` with every member mentioned;
+  - an attachment: a picture out through `/pictures` then as an `image` attachment; a picture in, fetched; a PDF out
+    refused; a file from another host not fetched;
+  - a Topic: a message with a `parent_id` into its own room, "Group › Topic", and a reply sent to the Topic;
+  - a direct message: `direct_message.create` into the conversation's room; the reply through `/direct_messages` with
+    `recipient_id`; a like with the chat id;
+  - an expired token: a 401 on a send is `Retry` with the bridge not connected; a 401 at the subscription marks it not
+    connected with the guide's message; a new token in `configJson` connects again;
+  - rate limits: 420 and 429 on a send are `Retry`; the session backs off on a push 5xx;
+  - catch-up: after a reconnect, the messages after the room's newest fetched with `after_id`;
+  - a lost answer found by its `source_guid`;
+  - `store#Bridge`'s checks; the capabilities (`None`);
+  - self-service: one bridge a user, the token never shown, Connect again with no token, Disconnect, the property off;
+  - the lease: one node holds it, another is refused.
+- `webroot/test/client/WebrootChat.spec.js`: the label of a room whose bridge's network has no E2EE.
+- `basic-comms/test/BasicComms.spec.js`: the GroupMe section on the existing Settings, Chat render.
+
+**Docs:**
+- New: `docs/interfaces/GroupMe.md`, the operator guide, marked **not yet tested with GroupMe**: getting the token
+  (dev.groupme.com, Access Token), the owner, which groups (and the keys), what is carried and what is not, the limits,
+  the facts not confirmed.
+- Changed:
+  - `Chat-Bridges.md`: the adapter, the network that connects out, the label;
+  - `docs/tools/Comms.md`: GroupMe, beside Bridged rooms;
+  - `docs/Run-Deploy.md`: the property `chat_groupme_self_service`;
+  - `Cargo.toml`'s description;
+  - this plan's status.
+
+**The API facts** (dev.groupme.com, read 2026-11-17).
+- Confirmed:
+  - the base URL, the `X-Access-Token` header, the `{response, meta}` envelope and the status codes (420 for the rate
+    limit);
+  - messages index (`after_id`, `limit` up to 100, 304 when none) and create (`source_guid` deduped a minute with 409,
+    text up to 1,000, `image` attachments only from `i.groupme.com`);
+  - the image service (`POST image.groupme.com/pictures`, `payload.url`);
+  - `like` and `unlike` at `/messages/:conversation_id/:message_id/`;
+  - `/chats`, `/users/me`;
+  - the push handshake, the subscription to `/user/<id>` with `ext.access_token` and `timestamp`, long-poll connect,
+    the `line.create` shape and the hourly signature.
+- Not confirmed (from the community's docs, groupme-js.github.io/GroupMeCommunityDocs, or not found):
+  - `GET` and `POST /direct_messages`: the current page lists Direct Messages but shows only Chats;
+  - Topics (`/groups/:id/subgroups`, a Topic's messages under its own id, `parent_id` on `line.create`);
+  - the push types `direct_message.create`, `favorite`, `message.update`, `message.deleted` and `membership.create`;
+  - the `mentions` (`user_ids`, `loci`) and `reply` attachments, and video at `v.groupme.com`;
+  - the order of a chat id (`a+b`);
+  - the rate limit's numbers and the image size limit;
+  - whether GroupMe itself treats `@all` as anything but text.
+
+**Status (2026-11-17): built**, against a fake GroupMe only. Not yet tested with GroupMe.
+- Built as designed, with the design check's two changes (self-service in Settings, Chat, and one node holding each
+  connection by the lease), and these details:
+  - `receive#Likes` runs with no transaction of its own (`transaction="ignore"`), as `receive#Sms` does, so
+    `ingest#Event` stores its batch first.
+  - After a refused token the thread asks for the bridge every 10 s during its wait, so a new token connects within
+    seconds, not at once.
+  - Settings, Chat is an XML screen that renders in both modes, so the terminal has the GroupMe section too.
+- Review fixes (2026-11-17):
+  - **Re-likes.** A likes state's transaction id has the time too, so a like after an unlike after a like applies.
+  - **The catch-up mark.** `ChatRoomBridge.syncCursor` replaces "the room's newest mapped event". It moves past a page
+    taken whole; a failed page or message, or the page cap (`catchUpPageSize`, `catchUpPages`), stops it there, and the
+    next run (within a minute) resumes. A pushed message moves it only in a caught-up room.
+  - **Redirects.** The token's calls follow none; a file follows at most three, each to the file hosts only.
+  - **The label.** `Encryption::NoneByNetwork`, which only the GroupMe adapter says, is what the label names a network
+    by; `None` alone stays the plain bridged label.
+  - **One coordinator a node**, not a thread per bridge on every node.
+    - It lists the GroupMe bridges in one query and claims or renews all their leases in one pass (`claim_all`), up to
+      `chat_groupme_node_max` (50), and runs a session thread only for each bridge it holds.
+    - The leases are renewed apart from the sessions, so no step outlasts them; a long poll is at most 60 + 15 s.
+    - Each coordinator claims under its own token, so an old one never frees a new one's lease.
+    - A bridge's configuration is read again only when its `lastUpdatedStamp` moved.
+    - A long wait is kept as `ChatBridge.retryDate`, so a hand-over waits it out.
+    - A panic in a pass is caught, and the next pass runs; a coordinator that ended starts again at the next `start`.
+  - **The status.** The adapter says `keeps_status`, so the worker's `start` no longer marks it connected; only the
+    holder's session writes it, only when the row says otherwise. The last error is a code and a text (`tokenRefused`,
+    `connectFailed`, `noToken`, `roomLimit`, `disconnected`), which Settings, Chat says in the user's language.
+  - **Outcomes.** A picture's or the account's failure before the post is `Retry`. A 500, 502, 503 or lost answer looks
+    the message up; not found, it is tried again within the first three attempts (GroupMe's minute of dedupe), then
+    uncertain.
+  - **Direct messages.** The answer's `message` (the community's docs), else `direct_message`; its chat id is kept when
+    new.
+  - **`@room` in a Topic** mentions its group's members (the Topic mapping's `externalThreadId` is its group). With the
+    members unread, or more than 100 others, `@all` goes as text alone.
+  - **Room limits.** `maxDirectRooms` (50) inside `maxRooms`, so groups come before strangers' messages; a refusal is
+    kept an hour per conversation; the status says "room limit reached".
+  - **Owner.** `ChatBridge.ownerUserId`, kept plain, finds a user's own bridge without reading every configuration.
+  - `Config`'s `Debug` hides the token; the screen and service texts go through `ec.l10n.localize`.
+- Left:
+  - the live test with GroupMe, and the facts not confirmed (`docs/interfaces/GroupMe.md`, "Not confirmed");
+  - what "Left out" names.
+
 #### Phase 15: scheduled send and message reminders
 
 Designed 2026-11-17 (§14.2, §14.3, §17 #3), with the user's change for encrypted rooms (§19.1); built 2026-11-18 (the
@@ -2589,11 +3192,11 @@ Each of these needs its design first:
 Then the other networks and the rest of §17, in this order:
 1. The number on the SMS and SIP provider, block and spam (phase 11, designed), contacts sync (the user stops using Google Messages and Cheogram).
 2. Default phone app and the merged call log (the user stops using the Phone app).
-3. GroupMe adapter (official API, low risk).
 4. Signal adapter.
 5. iMessage adapter (needs a Mac).
 6. Disappearing messages, invite links, SMS members (scheduled send and reminders: phase 15, designed).
-7. RCS: business RCS in the SMS provider modules is phase 10 (Twilio and Sinch first); then C6c and the personal RCS bridge if §13.4 picks B or C.
+7. RCS: business RCS in the SMS provider modules is phase 10 (Twilio and Sinch first), its rich features phase 13;
+   then C6c and the personal RCS bridge if §13.4 picks B or C.
 8. The rest of §17.
 
 **Done when** for each network: the user sends and gets text, a photo and a reaction with a real person on that network,

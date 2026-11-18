@@ -48,7 +48,8 @@ along with this software (see the LICENSE.md file). If not, see
             itemList: up to 200 items of {itemId (the item's name in the outcomes), type (message, edit, reaction or
             redaction), externalRoomId, externalEventId, externalUserId, displayName, avatarUrl, text (plain), originDate
             (millis), relatesToExternalEventId (an edit's, reaction's or delete's target), key (a reaction), replyToExternalEventId,
-            metadata (a map kept beside the event), media (a message's files, up to 10: [{url, contentType, fileName, size}], each
+            metadata (a map kept beside the event), mentions (['@room'] only: the text's first @all or @everyone mentions
+            the room), media (a message's files, up to 10: [{url, contentType, fileName, size}], each
             fetched by the bridge's adapter when the item is worked, store#BridgeMedia)}. transportVerified: the bridge's adapter
             checked the request's signature itself (its webhook, ChatBridgeAdapter::webhook), so no token is needed; honored
             only inside that bridge's webhook (chat_bridge::webhook marks the context), else badToken. A security failure rejects the whole batch (reasonCode unknownBridge,
@@ -376,6 +377,9 @@ along with this software (see the LICENSE.md file). If not, see
             const externalRoomId = field('externalRoomId'), externalEventId = field('externalEventId'), externalUserId = field('externalUserId')
             const displayName = field('displayName'), avatarUrl = field('avatarUrl', 1024), relatesTo = field('relatesToExternalEventId')
             const text = field('text', 65536), key = field('key', 64), replyTo = field('replyToExternalEventId')
+            // a mention of the whole room from the network (GroupMe's @all): only @room, made of the text's first @all or @everyone
+            const mentions = item.mentions == null ? [] : Array.isArray(item.mentions) || (item.mentions && typeof item.mentions.length === 'number') ? Array.from(item.mentions) : null
+            if (mentions === null || mentions.some((value) => value !== '@room')) { reject('malformed', 'A mention from a bridge is @room only'); return }
             if (!TYPES.includes(type)) { reject('malformed', 'An item is a message, edit, reaction or redaction'); return }
             if (!externalRoomId || !externalEventId || !externalUserId) { reject('malformed', 'An item names its room, its event and its sender'); return }
             if ([displayName, avatarUrl, relatesTo, text, key, replyTo].some((value) => value === undefined)) { reject('malformed', 'A field of the item is too long'); return }
@@ -498,7 +502,9 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 let bodyText = text ? text : ''
                 if (missed.length) bodyText = (bodyText ? bodyText + '\n' : '') + `[${missed.length === 1 ? 'A file' : missed.length + ' files'} not received: ${missed.join(', ')}]`
-                out = ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters(Object.assign({body: bodyText.trim() ? htmlOf(bodyText) : null,
+                let body = bodyText.trim() ? htmlOf(bodyText) : null
+                if (body && mentions.includes('@room')) body = body.replace(/(^|[^\w@])(@(?:all|everyone))(?![\w])/i, '$1<span data-mention-id="@room">$2</span>')
+                out = ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters(Object.assign({body: body,
                     replyToEventSeq: replyToEventSeq, chatAttachmentIdList: attachmentIds}, common)).call()
                 if (ec.message.hasError()) return
                 eventSeq = out.eventSeq
@@ -715,7 +721,8 @@ along with this software (see the LICENSE.md file). If not, see
                 entry.destinations.push({chatBridgeDeliveryId: row.chatBridgeDeliveryId, chatBridgeId: row.chatBridgeId, bridgeName: bridge.name ?? null,
                     networkName: types[bridge.typeEnumId]?.description || null, state: state, reasonCode: row.reasonCode ?? null,
                     error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
-                    receipt: row.receiptStatus ?? null, recipients: recipientsOf(row), path: row.deliveryPath ?? null})
+                    receipt: row.receiptStatus ?? null, recipients: recipientsOf(row), path: row.deliveryPath ?? null,
+                    adapterName: bridge.adapterName ?? null, note: row.deliveryNote ?? null, noteText: row.deliveryNoteText ?? null})
                 if (RANK[state] > RANK[entry.state]) entry.state = state
                 if (state === 'failed' || state === 'uncertain') entry.retryable = true
             }
@@ -771,7 +778,9 @@ along with this software (see the LICENSE.md file). If not, see
             group text has one receipt a recipient (recipientNumber; a network may name the delivery by its group's id or by
             otherRemoteEventId, its own): each recipient's is kept (recipientReceipts), and the delivery's receipt is theirs
             together, the least of those not failed, and failed (the delivery failed) only when every recipient failed. The
-            room hears of a change (push#DeliveryState). Out: found (a delivery of that message), changed.</description>
+            room hears of a change (push#DeliveryState). read (RCS: read on the phone) is past delivered and never taken back. With a final
+            status (delivered, read, failed), providerContentId: the content the adapter made for the send, for it to delete
+            (note#DeliveryContent). Out: found (a delivery of that message), changed, providerContentId.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="remoteEventId" required="true"/>
@@ -784,16 +793,19 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="found" type="Boolean"/>
             <parameter name="changed" type="Boolean"/>
+            <parameter name="providerContentId"/>
         </out-parameters>
         <actions><script><![CDATA[
-            found = false; changed = false
-            const RANK = {sent: 1, unconfirmed: 2, delivered: 3, failed: 3}
+            found = false; changed = false; providerContentId = null
+            const RANK = {sent: 1, unconfirmed: 2, delivered: 3, failed: 3, read: 4}
             if (!RANK[status]) { ec.message.addError(`Unknown receipt status ${status}`); return }
             const byRemote = (id) => id ? Array.from(ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId)
                     .condition('remoteEventId', id).forUpdate(true).disableAuthz().list())[0] : null
             const row = byRemote(remoteEventId) || byRemote(otherRemoteEventId)
             if (!row) return
             found = true
+            // the message is done: the content made for its send may go
+            if (['delivered', 'read', 'failed'].includes(status) && row.providerContentId) providerContentId = row.providerContentId
             let overall = status
             let recipientsText = null
             if (recipientNumber) {
@@ -821,6 +833,8 @@ along with this software (see the LICENSE.md file). If not, see
                     return
                 }
             } else if (row.receiptStatus === status || (RANK[row.receiptStatus] || 0) > RANK[status]) return
+            // a failed message stays failed (and retryable as one): a later read changes nothing
+            if (status === 'read' && (row.receiptStatus === 'failed' || row.statusEnumId === 'CdsFailed')) return
             const fields = {receiptStatus: overall, receiptDate: receiptDate || ec.user.nowTimestamp}
             if (recipientsText) fields.recipientReceipts = recipientsText
             if (overall === 'failed' && row.statusEnumId === 'CdsAccepted') Object.assign(fields, {statusEnumId: 'CdsFailed', reasonCode: 'deliveryFailed',
@@ -874,6 +888,77 @@ along with this software (see the LICENSE.md file). If not, see
             ec.service.sync().name('org.moqui.chat.ChatBridgeServices.push#DeliveryState').parameters({chatRoomId: row.chatRoomId,
                 eventSeq: row.eventSeq}).disableAuthz().call()
         ]]></script></actions>
+    </service>
+
+    <service verb="note" noun="DeliveryContent" allow-remote="false" transaction="force-new">
+        <description>Internal (an adapter, plans/Comms-Messaging.md §18.3 phase 13): providerContentId, a content the adapter
+            made at its network for the send of delivery chatBridgeDeliveryId (a Twilio Content resource of a rich message),
+            kept on the delivery before the send, so its final receipt or the daily sweep (clean#ProviderContent) deletes
+            it; or deletedContentId, cleared from the delivery of remoteEventId (or chatBridgeDeliveryId) once deleted.
+            Keeping a content, and renewLease, renew the lease of a delivery a worker holds (one more LEASE_MILLIS, 60 s),
+            so a send of two steps is never taken for one cut off. noteCode and noteText say what the adapter changed of the
+            send (richRefused: the provider refused the cards and their text went), for its Info. In a transaction of its
+            own. Out: found.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="chatBridgeDeliveryId"/>
+            <parameter name="remoteEventId"/>
+            <parameter name="providerContentId"/>
+            <parameter name="deletedContentId"/>
+            <parameter name="renewLease" type="Boolean" default="false"/>
+            <parameter name="noteCode"/>
+            <parameter name="noteText" allow-html="any"/>
+        </in-parameters>
+        <out-parameters><parameter name="found" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            found = false
+            let find = ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId).forUpdate(true).disableAuthz()
+            if (chatBridgeDeliveryId) find = find.condition('chatBridgeDeliveryId', chatBridgeDeliveryId)
+            else if (remoteEventId) find = find.condition('remoteEventId', remoteEventId)
+            else return
+            const row = Array.from(find.list())[0]
+            if (!row) return
+            found = true
+            const fields = {}
+            // a worker holds it: its lease goes on (chat_bridge::LEASE_MILLIS) while the send's steps run
+            if ((providerContentId || renewLease === true) && row.leaseOwner) fields.leaseExpiresDate = new Date(Number(ec.user.nowTimestamp) + 60000)
+            if (providerContentId) Object.assign(fields, {providerContentId: String(providerContentId).slice(0, 60), providerContentTries: null})
+            else if (deletedContentId && row.providerContentId === deletedContentId) Object.assign(fields, {providerContentId: null, providerContentTries: null})
+            if (noteCode) Object.assign(fields, {deliveryNote: String(noteCode).slice(0, 60), deliveryNoteText: noteText ? String(noteText).slice(0, 1000) : null})
+            if (!Object.keys(fields).length) return
+            row.setFields(fields, true, null, null)
+            row.update()
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="BridgeTyping" type="rust" location="moqui_core::service::chat_bridge::provider::send_bridge_typing"
+            allow-remote="false" transaction="ignore">
+        <description>Internal (ChatServices.signal#Typing, asynchronously; plans/Comms-Messaging.md §18.3 phase 13): show the
+            other side of each outbound bridge of room chatRoomId that a user of ours is typing, where the network has a
+            typing indicator (business RCS: ChatBridgeAdapter::typing). At most once in 15 seconds for a room on this node;
+            nothing is kept or retried, and a bridge whose indicator fails is logged. nowMillis is a test's clock. Out:
+            sent (the bridges asked), throttled.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="nowMillis" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sent" type="Long"/>
+            <parameter name="throttled" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="clean" noun="ProviderContent" type="rust" location="moqui_core::service::chat_bridge::provider::clean_provider_content"
+            allow-remote="false" transaction="ignore">
+        <description>Internal (the delivery worker, once a day): delete the contents adapters made at their networks for sends
+            (ChatBridgeDelivery.providerContentId: a Twilio Content resource) still named on deliveries made more than 2 days
+            before nowMillis (a receipt that never came), each through its adapter; one that fails is logged and kept for
+            the next sweep. Out: deleted, kept.</description>
+        <in-parameters><parameter name="nowMillis" type="Long"/></in-parameters>
+        <out-parameters>
+            <parameter name="deleted" type="Long"/>
+            <parameter name="kept" type="Long"/>
+        </out-parameters>
     </service>
 
     <service verb="send" noun="BridgeDirect" type="rust" location="moqui_core::service::chat_bridge::web::send_bridge_direct"
@@ -1084,6 +1169,14 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError(ec.l10n.localize('An RCS bridge\'s adapter is rcs-twilio or rcs-sinch')); return }
             if (row.typeEnumId === 'CbtSms' && adapter && !/^sms(-|$)/.test(adapter)) {
                 ec.message.addError(ec.l10n.localize('An SMS bridge\'s adapter is sms, sms-twilio or sms-sinch')); return }
+            // a GroupMe bridge (plans/Comms-Messaging.md §18.3 phase 14): one person's account, its token and owner; one a user
+            if (row.typeEnumId === 'CbtGroupMe') {
+                const check = ec.service.sync().name('org.moqui.chat.GroupMeServices.check#Bridge').parameters({chatBridgeId: created ? null : row.chatBridgeId,
+                    adapterName: adapter, configJson: row.configJson}).disableAuthz().call() || {}
+                if (check.reasonCode) { ec.message.addError(check.message || check.reasonCode); return }
+                // the owner kept plain, so their own bridge is found without reading every configuration
+                row.set('ownerUserId', check.ownerUserId)
+            }
             // an RCS bridge (plans/Comms-Messaging.md §16, phase 10): one number, its home number, never the system's
             if (row.typeEnumId === 'CbtRcs' && !created) {
                 const numbers = Array.from(ec.entity.find('moqui.call.PhoneNumber').condition('messagingBridgeId', row.chatBridgeId).disableAuthz().list())

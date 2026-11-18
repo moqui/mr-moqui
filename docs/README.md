@@ -63,6 +63,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Chat-Bridges.md](interfaces/Chat-Bridges.md) | Chat actors and the bridge layer: the adapter contract, input stored before it is acknowledged, durable delivery with leases and idempotency keys, the C1 migration |
 | [SMS.md](interfaces/SMS.md) | SMS and MMS on Telnyx: setup and 10DLC, the number pair's room shared with calls and voicemail, signed webhooks, the checks before a send, opt-out, the system's texts |
 | [RCS.md](interfaces/RCS.md) | Business RCS on Twilio and Sinch (not yet tested with the provider): the brand's agent, the fallback to SMS and MMS, the path of each message, replies to a fallback text, the system's number kept on SMS |
+| [GroupMe.md](interfaces/GroupMe.md) | A person's GroupMe account in Chat (not yet tested with GroupMe): connecting it in Settings or by an administrator, which groups, the push channel and its catch-up, likes, `@all`, pictures, the limits |
 | [XMPP.md](interfaces/XMPP.md) | XMPP apps on Moqui chat: the listeners and WebSocket, sign-in with app passwords (SCRAM-PLUS, SASL2, FAST), rooms as MUC, history, PEP and OMEMO, uploads, what is served |
 
 ## ai: Agents and Models
