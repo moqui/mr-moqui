@@ -5,7 +5,9 @@
 // knows who sent it from which device. What john.doe's page sent to the server never holds the plaintext. Then the other
 // user revokes their device in Settings, My devices (its transition), and a new send from john.doe reaches no device.
 // Before that, two devices of calls.client.b verify each other by emoji: the device that did not start the comparison
-// accepts it, so both show the same seven emoji, and once both confirm each is verified (COM-UI-012).
+// accepts it, so both show the same seven emoji, and once both confirm each is verified (COM-UI-012). The first device has a
+// key backup, so the second needs setting up (Comms-Messaging §6.5); once verified it asks the first for the secrets it lacks
+// and restores the backup with the backup key the first sends it, with no recovery key.
 // Run: ./moq test-client basic-comms --serve --spec CryptoFlow
 const OTHER = "calls.client.b"
 const PASSWORD = "CallsClient1!!"
@@ -24,12 +26,15 @@ spec({
     }
 })
 
-feature("two devices of one user verify each other by emoji: the same seven emoji on both, then both verified", {
+feature("two devices of one user verify each other by emoji: the same seven emoji on both, then both verified; the new one gets the backup key", {
     when() {
         receiver.goto("/qapps/BasicComms/Home")
         second.goto("/qapps/BasicComms/Home")
         const first = receiver.evaluate(() => window.moqui.crypto.ensureDevice())
         const other = second.evaluate(() => window.moqui.crypto.ensureDevice())
+        // the first device's key backup (its recovery key is not used below): the second has something to be set up from
+        const backup = receiver.evaluate(() => window.moqui.crypto.enableBackup().then((out) => out.version))
+        const setupBefore = second.evaluate(() => window.moqui.crypto.setupStatus().then((status) => JSON.parse(JSON.stringify(status))))
         // the first device asks once it knows the second (its own user's device list, by a sync)
         const flowId = receiver.waitFor(async (d) => {
             await window.moqui.crypto.sync()
@@ -55,18 +60,36 @@ feature("two devices of one user verify each other by emoji: the same seven emoj
             const list = await window.moqui.crypto.devicesOf(d.userId)
             return (list.find((device) => device.deviceId === d.deviceId) || {}).verified === true
         }, {arg: other, timeout: 15})
+        // the second device asked the first for its secrets once verified: the backup key comes, opens the current backup, and
+        // the second holds it (each page syncs in turn: a push lost between them does not stall this)
+        let setupAfter = null
+        for (let round = 0; round < 6 && !setupAfter; round++) {
+            receiver.evaluate(() => window.moqui.crypto.sync().then(() => true))
+            try {
+                setupAfter = second.waitFor(async () => {
+                    await window.moqui.crypto.sync()
+                    const status = await window.moqui.crypto.setupStatus()
+                    return status.restored ? JSON.parse(JSON.stringify(status)) : null
+                }, {timeout: 3})
+            } catch (err) { setupAfter = null }
+        }
         // the second device goes, so the exchange below sends to one device of this user
         const revoked = second.evaluate((deviceId) => window.moqui.request("/apps/BasicComms/Settings/Devices/revoke",
             {method: "POST", params: {deviceId}}).then((result) => result.json || {}), other.deviceId)
-        return {first, other, flowId, askerEmoji, askedEmoji, askerDone, askedDone, trusted, revoked}
+        return {first, other, backup, setupBefore, setupAfter, flowId, askerEmoji, askedEmoji, askerDone, askedDone, trusted, revoked}
     },
-    then({first, other, flowId, askerEmoji, askedEmoji, askerDone, askedDone, trusted, revoked}) {
+    then({first, other, backup, setupBefore, setupAfter, flowId, askerEmoji, askedEmoji, askerDone, askedDone, trusted, revoked}) {
         first.deviceId != other.deviceId
         flowId.length > 0
         askerEmoji.length == 7
         askerEmoji.join(" ") == askedEmoji.join(" ")
         askerDone.done == true && askedDone.done == true
         trusted == true
+        backup.length > 0
+        setupBefore.backup == backup && setupBefore.restored == false && setupBefore.verified == false
+        setupBefore.otherDevices.some((device) => device.deviceId == first.deviceId)
+        setupAfter != null
+        setupAfter.restored == true && setupAfter.verified == true && setupAfter.backup == backup
         !revoked.errors
     }
 })

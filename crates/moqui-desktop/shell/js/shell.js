@@ -27,7 +27,7 @@
     // view; Chat; the Inbox (Mail), whose compose docks load Compose; Compose; a call's screen (Calls/Call, m-call), which
     // the page's call store (moqui.call) opens; and the Dialer.
     const commsApp = (config) => String((config.calls && config.calls.appRoot) || "/qapps/BasicComms").replace(/^\/qapps/, "/apps");
-    const BUNDLED_COMMS = ["Panel/Chat", "Chat", "Inbox/Mail", "Inbox/Compose", "Calls/Call", "Calls/Dialer"];
+    const BUNDLED_COMMS = ["Panel/Chat", "Chat", "Inbox/Mail", "Inbox/Compose", "Calls/Call", "Calls/Dialer", "Settings/Devices"];
     const nameBundled = (config) => {
         BUNDLED_COMMS.forEach((name) => {
             const screen = moqui.qvtBundled["BasicComms/" + name];

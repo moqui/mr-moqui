@@ -91,6 +91,10 @@ moqui.request = (url, options) => {
     return Promise.resolve({ ok: true, status: 200, headers, json, text: "" });
 };
 
+// Chat makes this browser's crypto device when it opens (Comms-Messaging §6.5): stood in for, so no module loads here
+const madeDevices = [];
+moqui.crypto.ensureDevice = () => { madeDevices.push(Date.now()); return Promise.reject({ reasonCode: "standIn", errors: "No crypto device in this test" }); };
+
 // ---- the host: its outbox (the test moves an operation through its states, as the flusher does), drafts and /notws ----
 const MD4_KINDS = ["chat-send", "chat-read", "mail-send", "mail-state"];
 const MD5_KINDS = MD4_KINDS.concat(["chat-edit", "chat-redact", "chat-react", "poll-vote", "internal-send"]);
@@ -1486,6 +1490,102 @@ test("a number the phone's dialer handed the app is filled in, never placed by i
         delete desktop.dialChoice;
         delete desktop.dialFrom;
         root.goHome();
+    }
+});
+
+test("E2EE by default (Comms-Messaging §6.5): Chat makes the device; a dm link's unsaved chat shows the label it will have; a plain direct chat offers Start an encrypted chat, which links back; Set up this device; My devices in the shell", async () => {
+    const crypto = moqui.crypto;
+    const keptCrypto = { setupStatus: crypto.setupStatus, roomTrust: crypto.roomTrust, restoreBackup: crypto.restoreBackup, verifyDevice: crypto.verifyDevice, status: crypto.state.status };
+    const keptChat = { openEvents: moqui.chat.openEvents, openEvent: moqui.chat.openEvent };
+    const keptAnswers = Object.assign({}, answers);
+    const direct = { chatRoomId: "R6", roomTypeEnumId: "CrtDirect", roomName: null, displayName: "Bob", otherUserId: "bob", otherUserIdList: ["bob"],
+        lastEventSeq: 0, isMember: true, unreadCount: 0 };
+    const sealedDirect = Object.assign({}, direct, { chatRoomId: "R7", encrypted: true });
+    const roomList = [room, sealedRoom, direct];
+    const created = [];
+    answers["/apps/BasicComms/Chat/chatData"] = () => ({ me: { userId: "ann" }, prefs: {}, roomList: clone(roomList) });
+    answers["/apps/BasicComms/Chat/roomView"] = (params) => {
+        const shown = { R6: direct, R7: sealedDirect }[params.chatRoomId] || roomOf(params);
+        return { room: clone(shown), member: { lastReadEventSeq: 6 }, access: { isMember: true, canPost: true },
+            memberList: [{ userId: "ann", name: "Ann" }, { userId: "bob", name: "Bob" }], timeline: shown.chatRoomId === "R6" || shown.chatRoomId === "R7"
+                ? { eventList: [], hasMoreBefore: false, hasMoreAfter: false } : timelineOf({ chatRoomId: params.chatRoomId }) };
+    };
+    answers["/apps/BasicComms/Chat/encryptionDefault"] = () => ({ encrypted: true });
+    answers["/apps/BasicComms/Chat/createDirect"] = (params) => {
+        created.push(clone(params));
+        if (params.encrypted === "true") { roomList.push(sealedDirect); return { chatRoomId: "R7", created: true, encrypted: true }; }
+        return { chatRoomId: "R1", created: false, encrypted: false };
+    };
+    answers["/apps/BasicComms/Settings/Devices/devices"] = () => ({ deviceList: [] });
+    answers["/apps/BasicComms/Settings/Devices/keySettings"] = () => ({ verifiedDevicesOnly: false });
+    moqui.chat.openEvents = (roomId, list) => Promise.resolve(list);
+    moqui.chat.openEvent = () => Promise.resolve();
+    try {
+        // the device was asked for once Chat's rooms showed (in idle time), in the tests before this one
+        await until(() => madeDevices.length > 0, "the device asked for");
+        // a dm link to someone with no direct chat: the unsaved chat says it will be encrypted; its first message is sent by the room
+        const chat = await open("/qapps/BasicComms/Chat?dm=cy", "chat");
+        await until(() => chat.pendingDirect && chat.pendingDirect.encrypted === true, "the default asked");
+        const pendingLabel = await until(() => document.querySelector(".m-chat-pending-e2ee"), "the unsaved chat's label");
+        assert.ok(pendingLabel.textContent.includes("end-to-end encrypted"), pendingLabel.textContent);
+        assert.ok(chat.pendingLabel.lock, "the lock");
+        chat.pendingDirect.text = "hello cy";
+        chat.sendPendingDirect();
+        await until(() => host.added.find((op) => op.kind === "chat-send" && op.payload.chatRoomId === "R1" && JSON.stringify(op.payload).includes("hello cy")),
+            "the first message sent by the room that was made");
+        assert.deepEqual(created[0], { userIds: "cy" });
+        // a plain direct chat whose person has a device too: Start an encrypted chat, then the encrypted one links back to it
+        const plain = await open("/qapps/BasicComms/Chat?chatRoomId=R6", "chat");
+        const vm = await until(() => plain.$refs.room && plain.$refs.room.roomId === "R6" && plain.$refs.room.state === "ready" && plain.$refs.room, "the plain direct room");
+        const start = await until(() => vm.$el.querySelector(".m-chat-start-encrypted"), "Start an encrypted chat");
+        assert.ok(start.textContent.includes("Start an encrypted chat"), start.textContent);
+        start.click();
+        const sealed = await until(() => plain.$refs.room && plain.$refs.room.roomId === "R7" && plain.$refs.room.state === "ready" && plain.$refs.room, "the encrypted direct room");
+        assert.deepEqual(created[1], { userIds: "bob", encrypted: "true" });
+        const earlier = await until(() => sealed.$el.querySelector(".m-chat-earlier-plain"), "the link to the earlier chat");
+        assert.ok(earlier.textContent.includes("Earlier messages with Bob are in a chat that is not end-to-end encrypted"), earlier.textContent);
+        assert.equal(sealed.plainSibling, "R6");
+        // the picker opens the encrypted one now that there are both
+        await until(() => moqui.chat.directRoomFor(plain.rooms, ["bob"], "ann") === "R7", "the encrypted one picked once the rooms are read again");
+        // a new device: Set up this device in the banner's place, the message it cannot read, and the card's two ways
+        let status = { deviceId: "N1", backup: "3", restored: false, verified: false, otherDevices: [{ deviceId: "O1", displayName: "Desktop", lastSeenDate: Date.now() }] };
+        const restored = [];
+        const verified = [];
+        crypto.state.status = "ready";
+        crypto.roomTrust = () => Promise.resolve({ verifiedOnly: false, users: [] });
+        crypto.setupStatus = () => Promise.resolve(clone(status));
+        crypto.restoreBackup = (key) => { restored.push(key); status = Object.assign({}, status, { restored: true }); return Promise.resolve({ imported: 4 }); };
+        crypto.verifyDevice = (userId, deviceId) => { verified.push(userId + "/" + deviceId); return Promise.resolve("F1"); };
+        sealed.loadSetup();
+        const bar = await until(() => sealed.$el.querySelector(".m-chat-setup-bar"), "the set-up bar");
+        assert.equal(sealed.$el.querySelector(".m-chat-e2ee-banner"), null, "in the banner's place");
+        assert.equal(moqui.chat.undecryptableText(null, "Bob", sealed.setupNeeded), "Sent before this device was set up. Set up this device to read it.");
+        bar.querySelector(".m-chat-setup").click();
+        const card = await until(() => document.querySelector(".m-chat-device-setup"), "the card");
+        card.querySelector(".m-chat-device-setup-verify").click();
+        await until(() => verified.length, "Verify asked");
+        assert.deepEqual(verified, ["ann/O1"]);
+        const input = card.querySelector("input[name='setupRecoveryKey']");
+        input.value = "EsTj 3yST y93F";
+        input.dispatchEvent(new Event("input"));
+        await Vue.nextTick();
+        card.querySelector(".m-chat-device-setup-restore").click();
+        await until(() => restored.length, "Restore asked");
+        assert.deepEqual(restored, ["EsTj 3yST y93F"]);
+        await until(() => document.querySelector(".m-chat-device-setup-done"), "the card says it is set up");
+        await until(() => !sealed.$el.querySelector(".m-chat-setup-bar"), "the bar gone");
+        sealed.setupOpen = false;
+        // My devices is the shell's own screen now
+        const devices = await open("/qapps/BasicComms/Settings/Devices", "devices");
+        await until(() => devices.$el && devices.$el.querySelector && devices.$el.querySelector(".m-chat-devices") || document.querySelector(".m-chat-devices"), "My devices in the shell");
+        await until(() => asked("/apps/BasicComms/Settings/Devices/devices").length, "its devices asked of the server");
+    } finally {
+        Object.assign(crypto, { setupStatus: keptCrypto.setupStatus, roomTrust: keptCrypto.roomTrust, restoreBackup: keptCrypto.restoreBackup, verifyDevice: keptCrypto.verifyDevice });
+        crypto.state.status = keptCrypto.status;
+        Object.assign(moqui.chat, keptChat);
+        Object.keys(answers).forEach((key) => { if (!(key in keptAnswers)) delete answers[key]; });
+        Object.assign(answers, keptAnswers);
+        await open("/qapps/BasicComms/Chat?chatRoomId=R1", "chat");
     }
 });
 

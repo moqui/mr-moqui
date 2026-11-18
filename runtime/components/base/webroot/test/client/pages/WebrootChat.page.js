@@ -785,7 +785,8 @@ test("the new-chat pickers: one person is a direct chat, several a group (with a
     assert.deepEqual(posts, [
         { name: "createDirect", params: { userIds: "bob" } },
         { name: "createDirect", params: { userIds: "bob,cy" } },
-        { name: "createRoom", params: { roomTypeEnumId: "private", roomName: "Ops", memberUserIds: "bob,cy", encrypted: "false" } },
+        // no encrypted: the server decides, encrypted when everyone in it has a crypto device (Comms-Messaging §6.5)
+        { name: "createRoom", params: { roomTypeEnumId: "private", roomName: "Ops", memberUserIds: "bob,cy" } },
         { name: "textRoom", params: { textTo: "(555) 222-4000", textFrom: "+15550004000" } },
         { name: "textRoom", params: { textTo: "5552224000", textFrom: "" } }]);
     // a number with someone else, or nothing picked, posts nothing
@@ -981,6 +982,9 @@ test("an encrypted room's trust: every other member's devices verified, else Ver
     assert.equal(chat.leftOutText([], "ann"), "");
     assert.ok(chat.undecryptableText("m.unverified", "Bob").startsWith("Bob has not verified this device"), "the sender withheld it from this device");
     assert.ok(chat.undecryptableText(null, "Bob").includes("Restore your key backup"), "else the key backup");
+    // a new device not set up yet (Comms-Messaging §6.5): sent before it, Set up; the withheld text stays
+    assert.equal(chat.undecryptableText(null, "Bob", true), "Sent before this device was set up. Set up this device to read it.");
+    assert.ok(chat.undecryptableText("m.unverified", "Bob", true).startsWith("Bob has not verified this device"));
     // a withheld key's reason reaches the message
     const item = {};
     chat.applyOpened(item, { error: "unreadable", withheld: "m.unverified" });
@@ -1132,7 +1136,7 @@ test("before a send (§6.1 rule 3): a verified person's device not verified is a
     assert.equal(problemsOf([eve], [{ userId: "eve", masterKey: "mk-1" }]).length, 1, "an identity let through before is not this one");
 });
 
-test("a dm link opens the plain direct room of exactly those people, else none (an unsaved message: no room until the first send)", () => {
+test("a dm link opens the direct room of exactly those people, the encrypted one first, else none (an unsaved message: no room until the first send)", () => {
     const rooms = [{ chatRoomId: "D1", roomTypeEnumId: "CrtDirect", isMember: true, otherUserIdList: ["bob"] },
         { chatRoomId: "D2", roomTypeEnumId: "CrtDirect", isMember: true, otherUserIdList: ["cy", "bob"] },
         { chatRoomId: "E1", roomTypeEnumId: "CrtDirect", isMember: true, encrypted: true, otherUserIdList: ["dee"] },
@@ -1140,11 +1144,38 @@ test("a dm link opens the plain direct room of exactly those people, else none (
         { chatRoomId: "L1", roomTypeEnumId: "CrtDirect", isMember: false, otherUserIdList: ["fay"] }];
     assert.equal(chat.directRoomFor(rooms, ["bob"], "ann"), "D1");
     assert.equal(chat.directRoomFor(rooms, ["bob", "cy", "ann"], "ann"), "D2", "a group's, in any order, me left out");
-    assert.equal(chat.directRoomFor(rooms, ["dee"], "ann"), null, "an encrypted room is its own");
+    assert.equal(chat.directRoomFor(rooms, ["dee"], "ann"), "E1", "an encrypted direct room with no plain one");
+    // both: the encrypted one first (Comms-Messaging §6.5), the plain one when asked for it (the link back to the earlier chat)
+    const both = rooms.concat([{ chatRoomId: "E2", roomTypeEnumId: "CrtDirect", isMember: true, encrypted: true, otherUserIdList: ["bob"] }]);
+    assert.equal(chat.directRoomFor(both, ["bob"], "ann"), "E2");
+    assert.equal(chat.directRoomFor(both, ["bob"], "ann", true), "D1");
+    assert.equal(chat.directRoomFor(rooms, ["dee"], "ann", true), null, "no plain one");
     assert.equal(chat.directRoomFor(rooms, ["eve"], "ann"), null, "a private room is no direct chat");
     assert.equal(chat.directRoomFor(rooms, ["fay"], "ann"), null, "one I am not in");
     assert.equal(chat.directRoomFor(rooms, ["gus"], "ann"), null);
     assert.equal(chat.directRoomFor(rooms, ["ann"], "ann"), null, "myself alone is nobody");
+});
+
+test("a new device needs setting up only while it holds neither the backup's key nor a verification, and has a backup or another device to set it up from", () => {
+    const status = (fields) => Object.assign({ deviceId: "N1", backup: null, restored: false, verified: false, otherDevices: [] }, fields);
+    assert.equal(chat.setupNeeded(null), false);
+    assert.equal(chat.setupNeeded(status({})), false, "a first device: nothing to set it up from");
+    assert.equal(chat.setupNeeded(status({ backup: "2" })), true, "a key backup to restore");
+    assert.equal(chat.setupNeeded(status({ otherDevices: [{ deviceId: "O1" }] })), true, "another device to verify with");
+    assert.equal(chat.setupNeeded(status({ backup: "2", restored: true })), false, "restored");
+    assert.equal(chat.setupNeeded(status({ otherDevices: [{ deviceId: "O1" }], verified: true })), false, "verified");
+    // the key backup hint of a first device: once, closed per account
+    chat.me = "ann";
+    try { localStorage.removeItem(chat.setupHintKey()); } catch (err) { /* none */ }
+    assert.equal(chat.backupHinted(status({})), true);
+    chat.closeSetupHint();
+    assert.equal(chat.backupHinted(status({})), false);
+    assert.equal(chat.backupHinted(status({ backup: "1" })), false);
+    // Not now, per account and device
+    assert.equal(chat.setupLater("N9"), false);
+    chat.putSetupLater("N9");
+    assert.equal(chat.setupLater("N9"), true);
+    assert.equal(chat.setupLater("N8"), false);
 });
 
 test("the mail lines are asked once for the page within five minutes, by room; a failure keeps nothing", async () => {

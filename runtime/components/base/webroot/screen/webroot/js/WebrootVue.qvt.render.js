@@ -3202,6 +3202,228 @@
               ], 4))
             }
         } },
+        "m-chat-device-setup": { hash: "c119d19d", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, withCtx: _withCtx, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, withModifiers: _withModifiers, withKeys: _withKeys, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, createBlock: _createBlock, normalizeStyle: _normalizeStyle } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_m_chat_verification = _resolveComponent("m-chat-verification")
+              const _component_q_card_actions = _resolveComponent("q-card-actions")
+              const _component_q_card = _resolveComponent("q-card")
+              const _component_q_dialog = _resolveComponent("q-dialog")
+
+              return (_openBlock(), _createBlock(_component_q_dialog, {
+                "model-value": _ctx.modelValue,
+                maximized: _ctx.phone,
+                "onUpdate:modelValue": _ctx.setOpen
+              }, {
+                default: _withCtx(() => [
+                  _createVNode(_component_q_card, {
+                    class: "m-chat-device-setup column no-wrap",
+                    style: _normalizeStyle(_ctx.phone ? '' : 'width:480px;max-width:95vw')
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_card_section, { class: "row items-center no-wrap q-pb-none" }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_icon, {
+                            name: "sym_o_phonelink_lock",
+                            size: "24px",
+                            class: "text-primary q-mr-sm"
+                          }),
+                          _createElementVNode("div", { class: "text-h6 col" }, _toDisplayString(_ctx.t('Set up this device')), 1),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            round: "",
+                            dense: "",
+                            icon: "sym_o_close",
+                            "aria-label": _ctx.t('Close'),
+                            onClick: _ctx.close
+                          }, null, 8, ["aria-label", "onClick"])
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_card_section, {
+                        class: "col scroll",
+                        style: {"min-height":"0"}
+                      }, {
+                        default: _withCtx(() => [
+                          (_ctx.done)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "text-positive m-chat-device-setup-done",
+                                role: "status"
+                              }, _toDisplayString(_ctx.t('This device is set up: it reads your encrypted messages.')), 1))
+                            : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                _createElementVNode("div", { class: "text-body2 q-mb-md" }, _toDisplayString(_ctx.t('Messages sent before this device was added were encrypted for your other devices. To read them here, use one of these.')), 1),
+                                (_ctx.hasBackup)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 0,
+                                      class: "q-mb-md m-chat-device-setup-key"
+                                    }, [
+                                      _createElementVNode("div", { class: "text-subtitle2" }, _toDisplayString(_ctx.t('Your recovery key')), 1),
+                                      _createElementVNode("div", { class: "text-caption m-muted q-mb-xs" }, _toDisplayString(_ctx.t('The key you kept when you set up key backup.')), 1),
+                                      _createElementVNode("div", { class: "row no-wrap items-center q-gutter-sm" }, [
+                                        _createElementVNode("div", {
+                                          class: "col",
+                                          style: {"min-width":"0"}
+                                        }, [
+                                          _createVNode(_component_q_input, {
+                                            modelValue: _ctx.recoveryKey,
+                                            "onUpdate:modelValue": $event => ((_ctx.recoveryKey) = $event),
+                                            dense: "",
+                                            outlined: "",
+                                            autocomplete: "off",
+                                            spellcheck: "false",
+                                            name: "setupRecoveryKey",
+                                            label: _ctx.t('Recovery key'),
+                                            onKeydown: _withKeys(_withModifiers(_ctx.restore, ["prevent"]), ["enter"])
+                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "onKeydown"])
+                                        ]),
+                                        _createVNode(_component_q_btn, {
+                                          unelevated: "",
+                                          "no-caps": "",
+                                          color: "primary",
+                                          label: _ctx.t('Restore'),
+                                          loading: _ctx.busy,
+                                          disable: !_ctx.recoveryKey.trim(),
+                                          class: "m-chat-device-setup-restore",
+                                          onClick: _ctx.restore
+                                        }, null, 8, ["label", "loading", "disable", "onClick"])
+                                      ])
+                                    ]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.devices.length)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 1,
+                                      class: "m-chat-device-setup-devices"
+                                    }, [
+                                      _createElementVNode("div", { class: "text-subtitle2" }, _toDisplayString(_ctx.t('Another of your devices')), 1),
+                                      _createElementVNode("div", { class: "text-caption m-muted q-mb-xs" }, _toDisplayString(_ctx.t('Verify this device from one you use, with Chat or My devices open there: you compare emoji on both.')), 1),
+                                      _createVNode(_component_q_list, {
+                                        dense: "",
+                                        separator: "",
+                                        bordered: "",
+                                        class: "rounded-borders"
+                                      }, {
+                                        default: _withCtx(() => [
+                                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.devices, (d) => {
+                                            return (_openBlock(), _createBlock(_component_q_item, {
+                                              key: d.deviceId,
+                                              class: "m-chat-device-setup-device",
+                                              "data-device": d.deviceId
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { style: {"min-width":"0"} }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_item_label, { class: "ellipsis" }, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(_ctx.nameOf(d)), 1)
+                                                      ]),
+                                                      _: 2
+                                                    }, 1024),
+                                                    (d.lastSeenDate)
+                                                      ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                          key: 0,
+                                                          caption: ""
+                                                        }, {
+                                                          default: _withCtx(() => [
+                                                            _createTextVNode(_toDisplayString(_ctx.t('last seen')) + " " + _toDisplayString(_ctx.whenText(d.lastSeenDate)), 1)
+                                                          ]),
+                                                          _: 2
+                                                        }, 1024))
+                                                      : _createCommentVNode("", true)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024),
+                                                _createVNode(_component_q_item_section, { side: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_btn, {
+                                                      flat: "",
+                                                      dense: "",
+                                                      "no-caps": "",
+                                                      color: "primary",
+                                                      icon: "sym_o_verified_user",
+                                                      label: _ctx.t('Verify'),
+                                                      class: "m-chat-device-setup-verify",
+                                                      onClick: $event => (_ctx.verify(d))
+                                                    }, null, 8, ["label", "onClick"])
+                                                  ]),
+                                                  _: 2
+                                                }, 1024)
+                                              ]),
+                                              _: 2
+                                            }, 1032, ["data-device"]))
+                                          }), 128))
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]))
+                                  : _createCommentVNode("", true),
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.flows, (v) => {
+                                  return (_openBlock(), _createBlock(_component_m_chat_verification, {
+                                    key: v.flowId,
+                                    flow: v,
+                                    who: _ctx.whoOf(v),
+                                    "can-retry": _ctx.canRetry(v),
+                                    class: "q-mt-md",
+                                    onRetry: $event => (_ctx.retry(v))
+                                  }, null, 8, ["flow", "who", "can-retry", "onRetry"]))
+                                }), 128)),
+                                (_ctx.waiting && !_ctx.waitedLong)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 2,
+                                      class: "m-muted q-mt-sm m-chat-device-setup-waiting",
+                                      role: "status"
+                                    }, _toDisplayString(_ctx.t('Verified. Getting your keys from the other device…')), 1))
+                                  : _createCommentVNode("", true),
+                                (_ctx.waitedLong)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 3,
+                                      class: "text-negative q-mt-sm m-chat-device-setup-slow",
+                                      role: "status"
+                                    }, _toDisplayString(_ctx.t('Your other device did not send the keys. Open Chat there and keep it open, or use your recovery key.')), 1))
+                                  : _createCommentVNode("", true)
+                              ], 64))
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_card_actions, { align: "right" }, {
+                        default: _withCtx(() => [
+                          (!_ctx.done)
+                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 0,
+                                flat: "",
+                                "no-caps": "",
+                                label: _ctx.t('Not now'),
+                                class: "m-chat-device-setup-later",
+                                onClick: _ctx.later
+                              }, null, 8, ["label", "onClick"]))
+                            : (_openBlock(), _createBlock(_component_q_btn, {
+                                key: 1,
+                                unelevated: "",
+                                "no-caps": "",
+                                color: "primary",
+                                label: _ctx.t('Done'),
+                                onClick: _ctx.close
+                              }, null, 8, ["label", "onClick"]))
+                        ]),
+                        _: 1
+                      })
+                    ]),
+                    _: 1
+                  }, 8, ["style"])
+                ]),
+                _: 1
+              }, 8, ["model-value", "maximized", "onUpdate:modelValue"]))
+            }
+        } },
         "m-chat-verification": { hash: "2f682fbe", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, createVNode: _createVNode, Fragment: _Fragment, renderList: _renderList, withCtx: _withCtx } = Vue
 
