@@ -30,7 +30,14 @@ pub struct Decoded {
 #[derive(Default)]
 pub struct Decoder {
     cumulative: Mutex<CumulativeCache>,
+    /// This server's own `service.name`, for a receiver's decoder: a received record that claims it is another
+    /// service's ([`RECEIVED_SUFFIX`]), so a sender cannot move the local service's regressions, releases or
+    /// verification (SEC-TLS-14).
+    local_service: Option<String>,
 }
+
+/// Added to the `service.name` of a received record that claims this server's own name.
+pub const RECEIVED_SUFFIX: &str = " (received)";
 
 struct CumulativeCache {
     points: HashMap<String, Previous>,
@@ -57,6 +64,14 @@ struct Previous {
 }
 
 impl Decoder {
+    /// A receiver's decoder: records from a sender that name `local_service` are kept as another service's.
+    pub fn receiving(local_service: impl Into<String>) -> Self {
+        Self {
+            local_service: Some(local_service.into()).filter(|name: &String| !name.is_empty()),
+            ..Self::default()
+        }
+    }
+
     pub fn decode(&self, signal: Signal, content_type: &str, body: &[u8], source: &str) -> Result<Decoded, Error> {
         self.decode_scoped(signal, content_type, body, source, source)
     }
@@ -106,7 +121,7 @@ impl Decoder {
                     match signal {
                         Signal::Traces => match span_document(entry) {
                             Some(mut document) => {
-                                enrich(&mut document, &resource_attrs, source_id, "otel_spans");
+                                enrich(&mut document, &resource_attrs, source_id, "otel_spans", self.local());
                                 decoded.documents.push(document);
                             }
                             None => decoded.rejected += 1,
@@ -120,7 +135,7 @@ impl Decoder {
                                 "scope_name".into(),
                                 Value::String(string(field(field(scope, "scope"), "name"))),
                             );
-                            enrich(&mut document, &resource_attrs, source_id, "otel_logs");
+                            enrich(&mut document, &resource_attrs, source_id, "otel_logs", self.local());
                             decoded.documents.push(document);
                         }
                         Signal::Metrics => self.metric_documents(entry, &resource_attrs, source_id, &mut decoded),
@@ -140,6 +155,10 @@ impl Decoder {
             };
         }
         decoded
+    }
+
+    fn local(&self) -> Option<&str> {
+        self.local_service.as_deref()
     }
 
     fn metric_documents(&self, metric: &Json, resource: &Document, source: &str, decoded: &mut Decoded) {
@@ -271,7 +290,7 @@ impl Decoder {
                 document.insert("aggregation".into(), Value::string("exponential_histogram"));
                 histogram.store(&mut document);
                 flatten_attributes(&mut document, attrs, "otel_metrics");
-                enrich(&mut document, resource, source, "otel_metrics");
+                enrich(&mut document, resource, source, "otel_metrics", self.local());
                 decoded.documents.push(document);
             }
             return;
@@ -547,7 +566,7 @@ impl Decoder {
                 Value::List(buckets.into_iter().map(|value| Value::I64(value as i64)).collect()),
             );
             flatten_attributes(&mut document, attrs, "otel_metrics");
-            enrich(&mut document, resource, source, "otel_metrics");
+            enrich(&mut document, resource, source, "otel_metrics", self.local());
             decoded.documents.push(document);
         }
     }
@@ -877,11 +896,20 @@ pub(super) fn flatten_attributes(document: &mut Document, attrs: Document, index
     }
     document.insert("attributes".into(), Value::Map(attrs));
 }
-fn enrich(document: &mut Document, resource: &Document, source: &str, index: &str) {
+fn enrich(document: &mut Document, resource: &Document, source: &str, index: &str, local_service: Option<&str>) {
     let fields = root_fields(index);
     for (key, value) in resource {
         if fields.is_some_and(|fields| fields.contains(key)) && !document.contains_key(key) {
             document.insert(key.clone(), value.clone());
+        }
+    }
+    // A record attribute or the resource may name this server's own service; either way it is a sender's record.
+    if let Some(local) = local_service {
+        if document.get("service.name").and_then(Value::as_str) == Some(local) {
+            document.insert(
+                "service.name".into(),
+                Value::String(format!("{local}{RECEIVED_SUFFIX}")),
+            );
         }
     }
     document.insert("resource".into(), Value::Map(resource.clone()));
@@ -907,6 +935,54 @@ fn series_fingerprint(name: &str, resource: &Document, attributes: &Document, so
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_received_record_that_names_this_servers_own_service_is_kept_as_another_service() {
+        let decoder = Decoder::receiving("moqui");
+        let spans = json!({"resourceSpans":[{"resource":{"attributes":[
+                {"key":"service.name","value":{"stringValue":"moqui"}}]},
+            "scopeSpans":[{"spans":[{"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331",
+                "name":"GET /","startTimeUnixNano":"1000000000","endTimeUnixNano":"2000000000"}]}]}]});
+        let decoded = decoder.decode_value(Signal::Traces, &spans, "key-hash", "ci");
+        assert_eq!(decoded.documents.len(), 1);
+        assert_eq!(
+            super::super::text(&decoded.documents[0], "service.name"),
+            "moqui (received)"
+        );
+        // a data point's own attribute names it too
+        let metrics = json!({"resourceMetrics":[{"resource":{"attributes":[
+                {"key":"service.name","value":{"stringValue":"billing"}}]},
+            "scopeMetrics":[{"metrics":[{"name":"http.server.request.duration","gauge":{"dataPoints":[
+                {"timeUnixNano":"1000000000","asDouble":1.0,
+                 "attributes":[{"key":"service.name","value":{"stringValue":"moqui"}}]}]}}]}]}]});
+        let decoded = decoder.decode_value(Signal::Metrics, &metrics, "key-hash", "ci");
+        assert_eq!(decoded.documents.len(), 1);
+        assert_eq!(
+            super::super::text(&decoded.documents[0], "service.name"),
+            "moqui (received)"
+        );
+        // another service's name is the sender's; a decoder that is not a receiver's renames nothing
+        let other = json!({"resourceSpans":[{"resource":{"attributes":[
+                {"key":"service.name","value":{"stringValue":"billing"}}]},
+            "scopeSpans":[{"spans":[{"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331",
+                "name":"GET /","startTimeUnixNano":"1000000000","endTimeUnixNano":"2000000000"}]}]}]});
+        assert_eq!(
+            super::super::text(
+                &decoder.decode_value(Signal::Traces, &other, "k", "ci").documents[0],
+                "service.name"
+            ),
+            "billing"
+        );
+        assert_eq!(
+            super::super::text(
+                &Decoder::default()
+                    .decode_value(Signal::Traces, &spans, "k", "ci")
+                    .documents[0],
+                "service.name"
+            ),
+            "moqui"
+        );
+    }
 
     fn cumulative_sum(decoder: &Decoder, time: i64, integer: Option<i64>, double: Option<f64>) -> Decoded {
         let mut point = json!({"startTimeUnixNano":"1000000000","timeUnixNano":time.to_string()});

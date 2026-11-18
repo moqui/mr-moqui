@@ -175,6 +175,10 @@ external mappings (`ChatEventExternal`) dedupe its events after that.
   event goes to every bridge): with echo suppression by the external
   mapping, a relay between two networks does not loop. An edit, reaction or delete goes only where its target went or
   came from; its row depends on the target's delivery (`dependsOnDeliveryId`) for the network's id.
+- **A scheduled message** (plans/Comms-Messaging.md phase 15) is an ordinary message of its sender at its time:
+  `ChatScheduleServices.send#DueMessages` sends it through `send#Message` as the sender, so its delivery rows are written
+  then, and the adapter's checks (`check#SmsSend`: the destination, the opt-out, the day's limits; its capabilities and
+  fallback) are those of that moment. Nothing about a bridge is decided when it is scheduled.
 - **Woken after the commit.** `wake#BridgeDelivery` wakes this node's worker once the transaction commits. The commit hook
   is in memory and a crash loses it, so the worker (a thread per node, started by the host after the cluster) also runs a
   round at start, and once a minute while any bridge exists.

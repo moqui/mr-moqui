@@ -404,6 +404,19 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a file sent in chunks, for upload with its uploadId -->
     <transition-include name="uploadChunk" location="component://basic-comms/template/UploadTransitions.xml"/>
     <transition-include name="uploadStatus" location="component://basic-comms/template/UploadTransitions.xml"/>
+    <!-- scheduled sends and reminders (plans/Comms-Messaging.md phase 15) -->
+    <transition-include name="chatSchedule" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="scheduleMessage" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="updateScheduled" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="cancelScheduled" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="dismissScheduled" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="sendScheduledNow" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="claimHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="completeHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="sendHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="reportHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="setReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <transition-include name="cancelReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <!-- files for the next message: each stored on its own, or one sent in chunks (uploadId) -->
     <transition name="upload">
         <actions><script><![CDATA[

@@ -22,6 +22,13 @@ pub fn create_annotation(
     // with authorization off after its commit. MONITOR_INGEST and the telemetry dataset's grant are the technical sources'
     // and write no business event.
     let business = source == BUSINESS;
+    // Through the OTLP receiver (an ingest key's owner, which may be an administrator): a technical source.
+    if let Some(Value::String(_)) = ec.shared_map().get("monitor.ingest.source") {
+        let local = moqui_core::telemetry::for_factory(ec.factory()).resource().service_name;
+        if let Some(refusal) = ingest_refusal(source, options["serviceName"].as_str(), &local) {
+            return Err(fail(refusal));
+        }
+    }
     if business {
         moqui_core::user::authorize_own("AT_SERVICE", BUSINESS_ARTIFACT, "create").map_err(fail)?;
     } else if !moqui_core::user::has_permission("MONITOR_INGEST").map_err(fail)? {
@@ -88,6 +95,20 @@ pub fn create_annotation(
     }
     tracing::info!(annotation=%id,source,actor=?moqui_core::user::current_user_id().map_err(fail)?,"monitor annotation created");
     Ok(output(json!({"annotationId":id,"annotation":annotation})))
+}
+
+/// Why an annotation posted with an ingest key is refused, if it is. A business event is its owner's domain service's to
+/// write, never a telemetry credential's, whoever owns the key (SEC-TLS-15). This server's own releases are the ones it
+/// records at start ([`record_release`]); a sender's release for its name would move the regression baselines and the
+/// release list (SEC-TLS-14). Another marker for the local service (a deploy, a config change) is a sender's to draw.
+fn ingest_refusal(source: &str, service: Option<&str>, local_service: &str) -> Option<&'static str> {
+    if source == BUSINESS {
+        return Some("an ingest key does not write a business event");
+    }
+    if source == "release" && service.is_some_and(|service| service.trim() == local_service) {
+        return Some("an ingest key does not write a release of this server's own service");
+    }
+    None
 }
 
 /// The datasets registered as sources of business events (each enumCode of a `ReportAnnotationSource` enumeration). A
@@ -253,3 +274,7 @@ pub fn schema_hash(entity: &moqui_core::entity::EntityFacade) -> String {
     hash.truncate(32);
     hash
 }
+
+#[cfg(test)]
+#[path = "annotations_tests.rs"]
+mod tests;
