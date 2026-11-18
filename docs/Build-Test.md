@@ -551,7 +551,9 @@ The `./moq` script runs the built binaries in place and replaces the Java Moqui 
 of the database, clean, OpenSearch, Chromium for PDF, git across all repositories, and component get, create and zip.
 It needs only bash (3.2 or newer), so it works on a fresh checkout on Linux, macOS, or Windows (Git Bash; `moq.cmd` from PowerShell or cmd). `./moq` with no arguments lists
 the tasks, and `./moq help <task>` describes one. Task names match by partial parts, ignoring case, so `./moq r-p` and
-`./moq runProduction` both mean `run-production`.
+`./moq runProduction` both mean `run-production`. The `moq` file holds the task table and finds the repository; the
+tasks are in `scripts/moq/`, one file an area (`build.sh`, `test.sh`, `components.sh`, ...), each with its tasks, their
+help and their helpers, and `scripts/moq-test.sh` tests them all.
 
 ```sh
 ./moq build                    # Maximal with the dev tools, target/release/moqui (--lite, --debug, --enterprise for

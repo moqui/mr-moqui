@@ -90,6 +90,8 @@ mkdir -p "$R/target/release" "$R/runtime/components/base/framework/data" "$R/run
     "$R/runtime/install/postgres/18.6.0" "$R/runtime/db/install/18.6.0" "$R/runtime/log" "$R/runtime/tmp" "$R/runtime/opensearch/data/nodes" "$R/runtime/opensearch/logs"
 cp "$SRC/moq" "$R/moq"
 chmod +x "$R/moq"
+mkdir -p "$R/scripts/moq"
+cp "$SRC"/scripts/moq/*.sh "$R/scripts/moq/"
 mkdir -p "$R/crates/moqui-embedded" "$R/.cargo"
 cp "$SRC/crates/moqui-embedded/archive-excludes.txt" "$R/crates/moqui-embedded/"
 cp "$SRC/.cargo/config.toml" "$R/.cargo/"
