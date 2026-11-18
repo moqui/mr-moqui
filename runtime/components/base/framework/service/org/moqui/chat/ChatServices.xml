@@ -127,6 +127,12 @@ along with this software (see the LICENSE.md file). If not, see
     with its mentions, files, poll, link previews, links and search document (clear#MessageContent, which redact#Message uses
     too), and the edits, reactions and redactions of what goes go with it.
 
+    Disappearing messages and view-once media (plans/Comms-Messaging.md §18.3 phase 16; ChatExpiryServices, ChatExpiry.js): a
+    room's messageTimerSeconds gives each new message an expireDate (append#Event), which the expiry worker deletes at its
+    time; a view-once message (send#Message viewOnce) opens once for each recipient (open#ViewOnce). An expiring message is
+    not indexed for search, handed to an agent, forwarded or given a notification summary; get#Timeline gives each event's
+    expireDate, a view-once message's state and no files, and serverNow.
+
     A record room's mentions: a mentioned user who is not a member of a record room (CrvRecord) counts when they may see
     the record, which check#RecordVisible asks as that user (its userId, internal work only: the hook of their theme runs
     as them, with authorization on). They get the ChatMention notification, and no room count, as they are not a member.
@@ -245,6 +251,7 @@ along with this software (see the LICENSE.md file). If not, see
                 roomName: row.roomName ?? null, topic: row.topic ?? null, avatarLocation: row.avatarLocation ?? null,
                 visibilityEnumId: row.visibilityEnumId || DEFAULT_VISIBILITY[row.roomTypeEnumId] || 'CrvMembers',
                 recordEntityName: row.recordEntityName ?? null, recordId: row.recordId ?? null, retentionDays: row.retentionDays ?? null,
+                messageTimerSeconds: row.messageTimerSeconds != null ? Number(row.messageTimerSeconds) : null,
                 createdByUserId: row.createdByUserId ?? null, createdDate: toMillis(row.createdDate), archivedDate: toMillis(row.archivedDate),
                 lastEventSeq: Number(row.lastEventSeq || 0), lastEventDate: toMillis(row.lastEventDate), lastChangeSeq: Number(row.lastChangeSeq || 0),
                 lastMessageSeq: row.lastMessageSeq != null ? Number(row.lastMessageSeq) : null, lastMessageUserId: row.lastMessageUserId ?? null,
@@ -409,6 +416,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="encrypted" type="Boolean" default="false"/>
             <parameter name="noUserChanges" type="Boolean" default="false"><description>A membership event whose caller
                 records the users' changes itself (add#Member, one call for all it adds)</description></parameter>
+            <parameter name="viewOnce" type="Boolean" default="false"><description>A view-once message (phase 16)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -432,14 +440,20 @@ along with this software (see the LICENSE.md file). If not, see
             if (!room) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const now = ec.user.nowTimestamp
             eventSeq = Number(room.lastEventSeq || 0) + 1
+            // disappearing messages and view-once (phase 16): its time, from the room's timer or the message's
+            const expiry = ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('expiryOf', {chatRoomId: chatRoomId, eventTypeEnumId: eventTypeEnumId,
+                messageTimerSeconds: room.messageTimerSeconds, viewOnce: viewOnce, editsEventSeq: editsEventSeq, relatesToEventSeq: relatesToEventSeq,
+                content: content, encrypted: encrypted, nowMillis: Number(now)})
+            if (expiry.viewOnce && expiry.content) content = expiry.content
             const row = ec.entity.makeValue('moqui.chat.ChatEvent')
             row.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, eventTypeEnumId: eventTypeEnumId, senderUserId: senderUserId || null,
                 senderActorId: senderActorId || null,
                 contentJson: content ? JSON.stringify(content) : null, bodyText: encrypted ? null : bodyText || null, encrypted: encrypted ? 'Y' : null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
-                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null, sentDate: now},
-                true, null, null)
+                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null, sentDate: now,
+                expireDate: expiry.expireDate ?? null, viewOnce: expiry.viewOnce ?? null, megolmSessionId: expiry.megolmSessionId ?? null}, true, null, null)
             row.create()
+            if (expiry.expireDate != null) ec.service.sync().name('org.moqui.chat.ChatExpiryServices.wake#ChatExpiry').parameter('dueMillis', String(expiry.expireDate)).disableAuthz().call()
             room.set('lastEventSeq', eventSeq)
             room.set('lastEventDate', now)
             if (eventTypeEnumId === 'CetMessage' && threadRootEventSeq == null) {
@@ -471,7 +485,11 @@ along with this software (see the LICENSE.md file). If not, see
                 forwardOf: (content && content.forwardOf) || null, poll: null, assist: (content && content.assist) || null, linkPreviews: [],
                 rich: (content && content.rich) || null, postback: (content && content.postback) || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
-                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null}
+                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null,
+                expireDate: expiry.expireDate ?? null, viewOnce: null}
+            // a view-once message's file is had only through open#ViewOnce
+            if (expiry.viewOnce) { const type = String(((event.attachments || [])[0] || {}).contentType || ''); event.attachments = []
+                event.viewOnce = {kind: /^video\//i.test(type) ? 'video' : /^image\//i.test(type) ? 'photo' : null, openedByMe: false, gone: false} }
 
             // a message changed after it was sent is the room's change (record#RoomChange): one row, however many members
             const about = content || {}
@@ -642,7 +660,8 @@ along with this software (see the LICENSE.md file). If not, see
             causeEventSeq, redacted, threadRootEventSeq}. Out: roomChangeSeq, which the room's push carries.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
-            <parameter name="eventSeq" type="Long" required="true"/>
+            <parameter name="eventSeq" type="Long"><description>Empty for a change of the room's messages as a whole: the
+                disappearing messages' marker {cause: expired, before} (ChatExpiry.js), one a room</description></parameter>
             <parameter name="change" type="Map"/>
         </in-parameters>
         <out-parameters><parameter name="roomChangeSeq" type="Long"/></out-parameters>
@@ -652,9 +671,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!room) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const now = ec.user.nowTimestamp
             const seq = Number(room.lastChangeSeq || 0) + 1
-            ec.entity.find('moqui.chat.ChatRoomChange').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).disableAuthz().deleteAll()
+            ec.entity.find('moqui.chat.ChatRoomChange').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq ?? null).disableAuthz().deleteAll()
             const row = ec.entity.makeValue('moqui.chat.ChatRoomChange')
-            row.setFields({chatRoomId: chatRoomId, changeSeq: seq, eventSeq: eventSeq, changeJson: change ? JSON.stringify(change) : null,
+            row.setFields({chatRoomId: chatRoomId, changeSeq: seq, eventSeq: eventSeq ?? null, changeJson: change ? JSON.stringify(change) : null,
                 changeDate: now}, true, null, null)
             row.create()
             room.set('lastChangeSeq', seq)
@@ -857,6 +876,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reset" type="Boolean"/>
             <parameter name="headList" type="List"><parameter name="head" type="Map"/></parameter>
             <parameter name="headsSince" type="Long"/>
+            <parameter name="serverNow" type="Long"><description>The server's clock, which a client's disappearing messages go by</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
             const toMillis = (value) => {
@@ -866,6 +886,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
             const CODES = {CucMembership: 'membership', CucRoom: 'room', CucSettings: 'settings', CucRead: 'read', CucRetention: 'retention'}
+            serverNow = Number(ec.user.nowTimestamp)
             const since = headsSince != null ? Number(headsSince) : null
             changeList = []; lastSeq = 0; more = false; reset = false; headList = null; headsSince = null
             const me = ec.user.userId
@@ -1221,6 +1242,9 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!ec.search.isAvailable()) return
                 if (!remove && ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
                         .condition('encrypted', 'Y').disableAuthz().count()) return
+                // a disappearing message is never in the index (phase 16)
+                if (!remove && ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
+                        .condition('expireDate', 'not-equals', null).disableAuthz().count()) return
                 if (remove) ec.search.deleteDocument('MoquiChatEvent', `${chatRoomId}::${eventSeq}`)
                 else ec.search.indexDocuments(ec.entity.getDataDocuments('MoquiChatEvent', {chatRoomId: chatRoomId, eventSeq: eventSeq}))
             } catch (err) {
@@ -1298,6 +1322,11 @@ along with this software (see the LICENSE.md file). If not, see
                 if (recordId) find = find.condition('recordId', recordId)
                 for (const row of find.orderBy('-lastEventDate').limit(200).list()) rooms.push(row)
             }
+            // a last message past its time, not yet deleted (phase 16): nothing of it shows (one query on the expireDate index)
+            const pastDue = new Set()
+            if (rooms.length) for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', 'in', rooms.map((row) => row.chatRoomId))
+                    .condition('expireDate', 'less-equals', new Date(Number(ec.user.nowTimestamp))).selectField('chatRoomId').selectField('eventSeq').disableAuthz().list())
+                pastDue.add(row.chatRoomId + ':' + Number(row.eventSeq))
             // the members of the direct rooms, for their names
             const directIds = rooms.filter((row) => row.roomTypeEnumId === 'CrtDirect').map((row) => row.chatRoomId)
             const directMembers = {}
@@ -1355,11 +1384,12 @@ along with this software (see the LICENSE.md file). If not, see
                     archivedEventSeq: member && member.archivedEventSeq != null ? Number(member.archivedEventSeq) : null,
                     archivedByMe: !!member && member.archivedEventSeq != null && Number(row.lastMessageSeq || 0) <= Number(member.archivedEventSeq),
                     lastReadEventSeq: lastRead, unreadCount: unreadCount, mentionCount: mentionCount,
-                    lastMessage: row.lastMessageSeq != null ? {eventSeq: Number(row.lastMessageSeq), senderUserId: row.lastMessageUserId ?? null,
+                    lastMessage: row.lastMessageSeq != null && !pastDue.has(row.chatRoomId + ':' + Number(row.lastMessageSeq)) ? {eventSeq: Number(row.lastMessageSeq), senderUserId: row.lastMessageUserId ?? null,
                         senderName: row.lastMessageUserId ? names[row.lastMessageUserId] || row.lastMessageUserId
                             : (actorNames[row.lastMessageActorId]?.name ?? null),
                         sentDate: toMillis(row.lastMessageDate), snippet: hidden.has(row.lastMessageUserId) ? null : row.lastMessageSnippet ?? null, redacted: row.encrypted !== 'Y' && row.lastMessageSnippet == null, encrypted: row.encrypted === 'Y', hidden: hidden.has(row.lastMessageUserId) || null} : null,
                     encrypted: row.encrypted === 'Y', filtered: filtered,
+                    messageTimerSeconds: row.messageTimerSeconds != null ? Number(row.messageTimerSeconds) : null,
                     otherUserIdList: others, otherUserId: others.length === 1 ? others[0] : null, presence: null,
                     bridged: !!bridgeMap[row.chatRoomId], notConnected: (bridgeMap[row.chatRoomId] || []).some((bridge) => !bridge.connected),
                     bridgeNetworkNames: Array.from(new Set((bridgeMap[row.chatRoomId] || []).map((bridge) => bridge.networkName).filter((name) => name))),
@@ -2109,8 +2139,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="hasMoreAfter" type="Boolean"/>
             <parameter name="lastReadEventSeq" type="Integer"/>
             <parameter name="memberList" type="List"><parameter name="member" type="Map"/></parameter>
+            <parameter name="serverNow" type="Long"><description>The server's clock, for a client's disappearing messages</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
+            serverNow = Number(ec.user.nowTimestamp)
             const toMillis = (value) => {
                 if (value == null || value === '') return null
                 const number = Number(value)
@@ -2131,8 +2163,10 @@ along with this software (see the LICENSE.md file). If not, see
             const hidden = roomOut.member && roomOut.member.filterEnumId === 'CmfBlocked' ? new Set() : new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || [])
             const size = Math.max(1, Math.min(200, Number(limit) || 50))
             const cf = ec.entity.conditionFactory
+            // an event past its time and not yet deleted (phase 16) is not answered
+            const standing = cf.makeCondition([cf.makeCondition('expireDate', 'equals', null), cf.makeCondition('expireDate', 'greater', new Date(serverNow))], 'or')
             const base = () => {
-                let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition(standing)
                 if (eventSeq != null) return find.condition('eventSeq', eventSeq).condition('eventTypeEnumId', 'in', SHOWN)
                 if (pinnedOnly) return find.condition('eventTypeEnumId', 'CetMessage').condition('pinnedDate', 'not-equals', null).condition('redactedDate', null)
                 if (threadRootEventSeq != null) return find.condition('eventTypeEnumId', 'CetMessage').condition(cf.makeCondition([
@@ -2206,7 +2240,7 @@ along with this software (see the LICENSE.md file). If not, see
             const replySeqs = Array.from(new Set(rows.filter((row) => row.replyToEventSeq != null).map((row) => Number(row.replyToEventSeq)).filter((seq) => !onPage[seq])))
             const replied = Object.assign({}, onPage)
             if (replySeqs.length) for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
-                    .condition('eventSeq', 'in', replySeqs).list()) replied[Number(row.eventSeq)] = row
+                    .condition('eventSeq', 'in', replySeqs).condition(standing).list()) replied[Number(row.eventSeq)] = row
             const userIds = new Set()
             Object.values(replied).forEach((row) => { if (row.senderUserId) userIds.add(row.senderUserId) })
             rows.forEach((row) => { if (row.threadLastUserId) userIds.add(row.threadLastUserId) })
@@ -2271,7 +2305,8 @@ along with this software (see the LICENSE.md file). If not, see
                     redacted: redacted, redactedDate: toMillis(row.redactedDate), removedLabel: redacted ? removedLabel : null,
                     pinned: !!row.pinnedDate && !redacted, pinnedByUserId: row.pinnedDate ? row.pinnedByUserId ?? null : null,
                     reactions: redacted ? [] : Object.values(reactions[seq] || {}),
-                    encrypted: null, encryptedEventSeq: null, encryptedSentDate: null, encryptedReactions: []}
+                    encrypted: null, encryptedEventSeq: null, encryptedSentDate: null, encryptedReactions: [],
+                    expireDate: toMillis(row.expireDate), viewOnce: row.viewOnce === 'Y' && isMessage ? {} : null}
                 // an encrypted message (C7): its current ciphertext, and the event it came in
                 if (isMessage && !redacted && (content.encrypted || (edit && edit.encrypted))) {
                     const sealed = edit && edit.encrypted ? edit : null
@@ -2285,12 +2320,14 @@ along with this software (see the LICENSE.md file). If not, see
                     const targetSealed = target && !target.redactedDate && target.encrypted === 'Y' ? parse(target.contentJson).encrypted || null : null
                     item.replyTo = target ? {eventSeq: item.replyToEventSeq, senderUserId: target.senderUserId ?? null,
                         senderName: nameOf(target), snippet: snippet(target), encrypted: targetSealed, sentDate: toMillis(target.sentDate),
-                        redacted: !!target.redactedDate} : {eventSeq: item.replyToEventSeq, senderUserId: null, senderName: null, snippet: null, redacted: true}
+                        redacted: !!target.redactedDate} : {eventSeq: item.replyToEventSeq, senderUserId: null, senderName: null, snippet: null, redacted: true, gone: true}
                 }
                 // a sender the user blocked: hidden, nothing of it given, unless the room is in the user's Spam & blocked (plans/Comms-Messaging.md §18.3 phase 11)
                 if (item.replyTo && hidden.has(item.replyTo.senderUserId)) item.replyTo = {eventSeq: item.replyTo.eventSeq, senderUserId: null, senderName: null, snippet: null, encrypted: null, sentDate: null, redacted: false, hidden: 'blocked'}
                 eventList.push(hidden.has(item.senderUserId) && row.eventTypeEnumId !== 'CetMembership' ? {chatRoomId: chatRoomId, eventSeq: seq, eventTypeEnumId: row.eventTypeEnumId, type: item.type, senderUserId: null, sentDate: item.sentDate, threadRootEventSeq: item.threadRootEventSeq, hidden: 'blocked', content: {}, mentions: [], attachments: [], records: [], reactions: [], linkPreviews: [], encryptedReactions: []} : item)
             }
+            // view-once messages (phase 16): no files, and their state
+            if (eventList.some((item) => item.viewOnce)) ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('timelineView', {chatRoomId: chatRoomId, eventList: eventList})
         ]]></script></actions>
     </service>
 
@@ -2354,8 +2391,8 @@ along with this software (see the LICENSE.md file). If not, see
             const lastSeqs = rows.map((row) => row.threadLastEventSeq).filter((seq) => seq != null).map(Number)
             const lasts = {}
             if (lastSeqs.length) for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
-                    .condition('eventSeq', 'in', lastSeqs).selectField('eventSeq').selectField('bodyText').selectField('redactedDate').list())
-                lasts[Number(row.eventSeq)] = row
+                    .condition('eventSeq', 'in', lastSeqs).selectField('eventSeq').selectField('bodyText').selectField('redactedDate').selectField('expireDate').list())
+                if (!(row.expireDate != null && Number(row.expireDate) <= Number(ec.user.nowTimestamp))) lasts[Number(row.eventSeq)] = row
             const userIds = Array.from(new Set(rows.flatMap((row) => [row.senderUserId, row.threadLastUserId]).filter((id) => id)))
             const names = {}
             if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
@@ -2365,7 +2402,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const last = row.threadLastEventSeq != null ? lasts[Number(row.threadLastEventSeq)] : null
                 threadList.push({eventSeq: Number(row.eventSeq), senderUserId: row.senderUserId ?? null,
                     senderName: row.senderUserId ? names[row.senderUserId] || row.senderUserId : null, sentDate: toMillis(row.sentDate),
-                    redacted: !!row.redactedDate, snippet: row.redactedDate ? null : snippet(row.bodyText),
+                    redacted: !!row.redactedDate, snippet: row.redactedDate || (row.expireDate != null && Number(row.expireDate) <= Number(ec.user.nowTimestamp)) ? null : snippet(row.bodyText),
                     threadReplyCount: Number(row.threadReplyCount || 0), threadLastDate: toMillis(row.threadLastDate),
                     threadLastEventSeq: row.threadLastEventSeq != null ? Number(row.threadLastEventSeq) : null, threadLastUserId: row.threadLastUserId ?? null,
                     threadLastUserName: row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null,
@@ -2431,6 +2468,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sourceChatBridgeId"/>
             <parameter name="encrypted" type="Map"/>
             <parameter name="mentionUserIdList" type="List"/>
+            <parameter name="viewOnce" type="Boolean" default="false"><description>A view-once photo or video (phase 16): one
+                file, no text, not in a bridged room (reasonCode viewOnceFiles, bridged)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -2546,6 +2585,7 @@ along with this software (see the LICENSE.md file). If not, see
                         .condition('eventSeq', forwardOfEventSeq).one() : null
                 if (!source || source.eventTypeEnumId !== 'CetMessage' || source.redactedDate) { ec.message.addError(`Message ${forwardOfEventSeq} not found`); return }
                 if (sourceAccess.room && sourceAccess.room.encrypted || source.encrypted === 'Y') { refuse('encryptedRoom', 'Messages are not forwarded into or out of an encrypted room'); return }
+                if (ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('checkForward', {source: source}).reasonCode) { reasonCode = 'expiring'; return }
                 const sourceContent = parse(source.contentJson)
                 let sourceBody = sourceContent.body ?? null
                 if (source.lastEditEventSeq != null) {
@@ -2660,6 +2700,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const external = new Set(outside ? outside.externalUserIdList || [] : mentionIds)
                 mentionIds = mentionIds.filter((id) => !external.has(id) || (!recordBound && memberOf[id] && (!memberOf[id].leftDate || isDirect)))
             }
+            if (viewOnce && (reasonCode = ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('checkViewOnce', {chatRoomId: chatRoomId, viewOnce: viewOnce,
+                    emptyBody: emptyBody, attachmentRows: attachmentRows, recordCount: (recordList || []).length, forward: !!forwardOf, encrypted: !!ciphertext}).reasonCode || null)) return
             if (mentionIds.length && sender) { const blockers = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: sender, userIdList: mentionIds}).userIdList || []); mentionIds = mentionIds.filter((id) => !blockers.has(id)) }
 
             // an encrypted room's files are opaque: their names and types are in the ciphertext
@@ -2674,10 +2716,12 @@ along with this software (see the LICENSE.md file). If not, see
             const appended = ec.service.sync().name('org.moqui.chat.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
                 eventTypeEnumId: 'CetMessage', senderUserId: sender, senderActorId: senderActor, content: content, bodyText: ciphertext ? null : storedText,
                 replyToEventSeq: replyTo, threadRootEventSeq: threadRoot, clientRef: clientRef, sourceChatBridgeId: sourceChatBridgeId || null,
-                encrypted: !!ciphertext}).call()
+                encrypted: !!ciphertext, viewOnce: !!viewOnce}).call()
             if (ec.message.hasError()) return
             eventSeq = appended.eventSeq
             event = appended.event
+            // a disappearing message (phase 16): no search document, notification summary or agent
+            const expiring = event.expireDate != null
             const now = ec.user.nowTimestamp
             attachmentRows.forEach((row, index) => { row.set('eventSeq', eventSeq); row.set('attachmentSeq', index + 1); row.update() })
             if (rootRow) {
@@ -2712,7 +2756,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const notify = mentionIds.filter((id) => !memberOf[id] || (memberOf[id].notificationLevelEnumId || 'CnlAll') !== 'CnlNone')
                 if (notify.length) ec.service.sync().name('org.moqui.chat.ChatServices.notify#Mention').parameters({userIdList: notify,
                     chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: sender,
-                    authorName: event.senderName || sender, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
+                    authorName: event.senderName || sender, bodyText: ciphertext || expiring ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
             }
             // what the members hear about (ChatUserActivity, plans/Comms-Messaging.md §5.2): its mentions, a reply to their
             // message, a reply in a thread they started or wrote in; current members only for the replies
@@ -2728,7 +2772,7 @@ along with this software (see the LICENSE.md file). If not, see
                 eventSeq: eventSeq, actorUserId: sender, chatActorId: senderActor || null, activityList: activity}).call()
             // indexed once the transaction commits: the document is read through a view of rows this one may hold to
             // its commit (plans/archive/TX-Cache.md D5), and a message that rolls back is not indexed
-            if (!ciphertext) ec.service.special().name('org.moqui.chat.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
+            if (!ciphertext && !expiring) ec.service.special().name('org.moqui.chat.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
             if (html && !externalActor && !ciphertext) ec.service.sync().name('org.moqui.chat.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId,
                 eventSeq: eventSeq, senderUserId: sender, body: html}).call()
             // its links, and a forward's, for the room's Links list (ChatEventLink); none in an encrypted room
@@ -2743,7 +2787,7 @@ along with this software (see the LICENSE.md file). If not, see
             for (const row of memberRows) {
                 if (row.roleEnumId !== 'CmrAgent' || !row.agentRef || row.leftDate || !row.userId || row.userId === sender) continue
                 if (externalActor && room.agentsReadExternal !== 'Y') continue
-                if (ciphertext) continue
+                if (ciphertext || expiring) continue
                 try {
                     ec.message.pushErrors()
                     ec.service.async().name('org.moqui.chat.ChatServices.deliver#AgentMessage').parameters({chatRoomId: chatRoomId,
@@ -2833,6 +2877,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (externalActor ? original.senderActorId !== externalActor.chatActorId : original.senderUserId !== me) {
                 ec.message.addError(ec.l10n.localize('You may edit only your own messages')); return }
             if (parse(original.contentJson).poll) { ec.message.addError(ec.l10n.localize('A poll is not edited: close it, or delete it and make another')); return }
+            if (original.viewOnce === 'Y') { ec.message.addError(ec.l10n.localize('A view-once photo is not edited')); return }
             if (parse(original.contentJson).rich) { ec.message.addError(ec.l10n.localize('A card is not edited: delete it and send another')); return }
             const windowMinutes = Number(System.getProperty('chat_edit_window_minutes') || 1440)
             if (!externalActor && windowMinutes > 0 && Number(ec.user.nowTimestamp) - Number(original.sentDate) > windowMinutes * 60000) {
@@ -3086,6 +3131,7 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId).condition(field, eventSeq).deleteAll()
             // its links (the room's Links list)
             ec.entity.find('moqui.chat.ChatEventLink').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
+            ec.entity.find('moqui.chat.ChatViewOnceOpen').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).disableAuthz().deleteAll()
             // the files: each one on its own; a file that cannot be removed is logged. A file put over XMPP (attach#Upload) is
             // under the upload root, and goes with the last chat file on it, with the uploads that serve it (SEC-COM-14).
             for (const file of ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list()) {
@@ -3558,6 +3604,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fileSize" type="Long"/>
             <parameter name="chatRoomId"/>
             <parameter name="eventSeq" type="Integer"/>
+            <parameter name="expiring" type="Boolean"><description>Its message disappears: the download is not to be cached</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
             const row = ec.entity.find('moqui.chat.ChatAttachment').condition('chatAttachmentId', chatAttachmentId).one()
@@ -3567,6 +3614,10 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', row.chatRoomId).call()
             if (ec.message.hasError()) return
             if (!access.canRead) { missing(); return }
+            // a view-once message's file only through open#ViewOnce and get#ViewOnceFile (phase 16)
+            const kind = row.eventSeq != null ? ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('fileKind', {chatRoomId: row.chatRoomId, eventSeq: row.eventSeq}) : {}
+            if (kind.viewOnce || kind.due) { missing(); return }
+            expiring = !!kind.expiring
             location = row.location; fileName = row.fileName; contentType = row.contentType
             fileSize = row.fileSize != null ? Number(row.fileSize) : null
             chatRoomId = row.chatRoomId
@@ -3656,6 +3707,8 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
             if (deletedCount || failedCount) ec.logger.info(`Chat retention: ${deletedCount} events deleted in ${roomCount} rooms, ${failedCount} rooms failed`)
+            // the disappearing messages a worker did not take (a process with none): ChatExpiryServices, each room on its own
+            const expired = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.expire#DueMessages').disableAuthz().call() || {}; roomCount += Number(expired.roomCount || 0); deletedCount += Number(expired.deletedCount || 0); failedCount += Number(expired.failedCount || 0)
             // the spam purge (chat_spam_purge_days; SmsSpamServices purge#SpamRooms), each room on its own
             const purged = ec.service.sync().name('org.moqui.call.SmsSpamServices.purge#SpamRooms').disableAuthz().call() || {}; roomCount += Number(purged.roomCount || 0); deletedCount += Number(purged.deletedCount || 0); failedCount += Number(purged.failedCount || 0)
         ]]></script></actions>
@@ -3831,6 +3884,8 @@ along with this software (see the LICENSE.md file). If not, see
             for (const row of rows) {
                 const event = events[Number(row.eventSeq)]
                 if (!event || event.redactedDate) continue
+                // a view-once file is in no list, and an expiring message's not after its time (phase 16)
+                if (event.viewOnce === 'Y' || (event.expireDate != null && Number(event.expireDate) <= Number(ec.user.nowTimestamp))) continue
                 const file = {chatAttachmentId: row.chatAttachmentId, eventSeq: Number(row.eventSeq), attachmentSeq: Number(row.attachmentSeq || 0),
                     fileName: sealed ? null : row.fileName ?? null, contentType: sealed ? null : row.contentType ?? null, encrypted: sealed, fileSize: row.fileSize != null ? Number(row.fileSize) : null,
                     senderUserId: event.senderUserId ?? null, senderName: event.senderUserId ? names[event.senderUserId] || event.senderUserId : null,
@@ -3882,12 +3937,17 @@ along with this software (see the LICENSE.md file). If not, see
             const actorIds = Array.from(new Set(rows.filter((row) => !row.senderUserId && row.senderActorId).map((row) => row.senderActorId)))
             const actors = actorIds.length ? ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames')
                     .parameter('chatActorIdList', actorIds).parameter('chatRoomId', chatRoomId).call()?.actorMap || {} : {}
+            const nowMillis = Number(ec.user.nowTimestamp)
             for (const row of rows) {
+                // past its time (phase 16): nothing of it is summed up
+                if (row.expireDate != null && Number(row.expireDate) <= nowMillis) continue
                 const seq = Number(row.eventSeq)
                 const content = parse(row.contentJson)
                 const redacted = !!row.redactedDate
-                const isSealed = row.encrypted === 'Y' && !redacted
-                const files = redacted ? [] : Array.from(content.attachments || []).map((file) => ({chatAttachmentId: file.chatAttachmentId,
+                // a view-once message: no files and no ciphertext (its file's key) in any list
+                const viewOnce = row.viewOnce === 'Y'
+                const isSealed = row.encrypted === 'Y' && !redacted && !viewOnce
+                const files = redacted || viewOnce ? [] : Array.from(content.attachments || []).map((file) => ({chatAttachmentId: file.chatAttachmentId,
                     fileName: isSealed ? null : file.fileName ?? null, contentType: isSealed ? null : file.contentType ?? null}))
                 const text = String(row.bodyText || '').replace(/\s+/g, ' ').trim()
                 const fileNames = files.map((file) => file.fileName).filter((name) => name)
@@ -4851,8 +4911,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (!roomIds.length) return
             const words = text.split(/\s+/).filter((word) => word)
             const find = () => {
+                // an expiring message is found while it stands, never after its time (phase 16)
                 let found = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', 'in', roomIds).condition('eventTypeEnumId', 'CetMessage')
-                        .condition('redactedDate', null)
+                        .condition('redactedDate', null).condition(cf.makeCondition([cf.makeCondition('expireDate', 'equals', null),
+                            cf.makeCondition('expireDate', 'greater', new Date(Number(ec.user.nowTimestamp)))], 'or'))
                 for (const word of words) found = found.condition(cf.makeCondition('bodyText', 'like', `%${word}%`, false, true))
                 return found
             }

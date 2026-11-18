@@ -579,6 +579,8 @@ struct Content {
     call: Option<&'static str>,
     /// From an outside actor of a bridge (a text from an outside number): the app's Texts channel.
     external: bool,
+    /// A disappearing message's time (`expireDate`, phase 16): no snippet, and no push after it.
+    expires: Option<i64>,
 }
 
 /// What a call's event (CetCall) pushes as (§7.2 rule 6): a missed call to the users it names, a voicemail to the
@@ -629,7 +631,8 @@ impl Content {
         let encrypted =
             text_of(room, "encrypted").as_deref() == Some("Y") || text_of(event, "encrypted").as_deref() == Some("Y");
         let call = call_kind(event);
-        let snippet = if encrypted || call.is_some() {
+        let expires = millis_of(event, "expireDate");
+        let snippet = if encrypted || call.is_some() || expires.is_some() {
             None
         } else {
             let text = text_of(event, "bodyText").unwrap_or_default();
@@ -685,6 +688,7 @@ impl Content {
             edit: text_of(event, "eventTypeEnumId").as_deref() == Some("CetEdit"),
             call,
             external: text_of(event, "senderUserId").is_none() && text_of(event, "senderActorId").is_some(),
+            expires,
             room_id,
         })
     }
@@ -985,8 +989,13 @@ fn queue_message(
         .iter()
         .find(|row| !leased(row, now))
         .cloned();
-    let expire = stamp(now + MESSAGE_TTL_SECONDS * 1000);
+    // a disappearing message's push is not sent past the message's own time (phase 16)
+    let ttl_end = now + MESSAGE_TTL_SECONDS * 1000;
+    let ends = content.expires.map_or(ttl_end, |end| end.min(ttl_end));
+    let expire = stamp(ends);
     if let Some(mut row) = open {
+        // merged, the push stands for the earlier messages too: it lasts as long as the longest of them
+        let expire = stamp(millis_of(&row, "expireDate").map_or(ends, |kept| kept.max(ends)));
         let before = count_of(&row, "messageCount").max(1);
         let count = if content.edit { before } else { before + 1 };
         let mention = push.mention || text_of(&row, "mention").as_deref() == Some("Y");

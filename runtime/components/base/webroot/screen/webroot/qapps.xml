@@ -199,6 +199,8 @@ along with this software (see the LICENSE.md file). If not, see
         footer_scripts.add('/js/MoquiL10n.js')
         // the chat store and the account menu's status (moqui.chat), before the client, which registers its components
         footer_scripts.add('/js/WebrootChat.js')
+        // disappearing messages and view-once in the page (moqui.chat.expiry), beside the chat store
+        footer_scripts.add('/js/WebrootChatExpiry.js')
         // joining a room: invite links, join requests, text members (moqui.chat.invites, moqui.chat.texts, their components)
         footer_scripts.add('/js/WebrootChatJoin.js')
         // floats: the windows over the shell that Assist, the tray's tabs and the terminal undock into (moqui.floats,

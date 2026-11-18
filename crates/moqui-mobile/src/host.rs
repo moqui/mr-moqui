@@ -49,6 +49,10 @@ pub(crate) struct PageState {
 struct Shown {
     /// The origin of the page whose load began last, none while a navigation is under way.
     origin: Option<String>,
+    /// The origin a navigation under way goes to, until its load begins. The WebView asks the scheme for the new
+    /// document before the load begins (`onPageStarted` comes once the document commits), so that request has only
+    /// this to tell whose it is.
+    to: Option<String>,
     /// The account the server pages were opened for (`open_remote`), until the account changes.
     app_account: Option<String>,
     /// The nonce of the shell's current load, handed to its document once it loaded; none while it loads, after a
@@ -60,11 +64,13 @@ struct Shown {
 }
 
 impl PageState {
-    /// A navigation starts (the host's, or a page's link): the page that was there may still run, so no page is the
-    /// shell or has an account until the next load begins.
-    pub(crate) fn navigating(&self) {
+    /// A navigation to `to` starts (the host's, or a page's link): the page that was there may still run, so no page is
+    /// the shell until the next load begins; only a navigation to the server's pages has their account meanwhile, for
+    /// the request of its document.
+    pub(crate) fn navigating(&self, to: Option<&Url>) {
         let mut shown = moqui_lib::sync::lock(&self.shown);
         shown.origin = None;
+        shown.to = to.map(|url| url.origin().ascii_serialization());
         shown.nonce = None;
     }
 
@@ -74,6 +80,7 @@ impl PageState {
         // any load began: the host's own showing of the shell, if it was one, is over
         shown.host_shell = false;
         shown.origin = Some(url.origin().ascii_serialization());
+        shown.to = None;
         shown.nonce = None;
     }
 
@@ -137,11 +144,16 @@ impl PageState {
     }
 
     /// The account of the page shown, with `current` the current account: the shell's is the current one; a server
-    /// page's the one it was opened for, while that is the current one; none while a navigation is under way.
+    /// page's the one it was opened for, while that is the current one, from the navigation to it on (its document is
+    /// asked for before its load begins); none while a navigation to anywhere else is under way.
     pub(crate) fn account(&self, current: Option<&str>) -> Option<String> {
         let shown = moqui_lib::sync::lock(&self.shown);
         let current = current?;
-        match shown.origin.as_deref() {
+        let page = match shown.origin.as_deref() {
+            Some(origin) => Some(origin),
+            None => shown.to.as_deref().filter(|to| *to == APP_ORIGIN),
+        };
+        match page {
             Some(SHELL_ORIGIN) => Some(current.to_string()),
             Some(APP_ORIGIN) => shown
                 .app_account
@@ -571,7 +583,7 @@ impl MobileHost {
 
     /// Show `url` in the one webview; its sockets go with the page that leaves.
     pub(crate) fn navigate(&self, url: &Url) {
-        self.page_gone(true);
+        self.page_gone(Some(url));
         if url.origin().ascii_serialization() == SHELL_ORIGIN {
             self.page.host_shows_shell();
         }
@@ -588,14 +600,14 @@ impl MobileHost {
         }
     }
 
-    /// The page goes (a navigation of the host's, or any new document: `PageLoadEvent::Started`, a reload, the webview's
-    /// own history, a renderer gone and loaded again): with `navigating`, the page state too. The page leaves with its
-    /// calls' media, so the native calls it joined end with it; a ring, or a call answered on the phone and not joined
-    /// yet, stays. Under [`Self::calls`], so a `joined` on its way is told first.
-    pub(crate) fn page_gone(&self, navigating: bool) {
+    /// The page goes (a navigation of the host's to `navigating`, or any new document: `PageLoadEvent::Started`, a
+    /// reload, the webview's own history, a renderer gone and loaded again): with `navigating`, the page state too.
+    /// The page leaves with its calls' media, so the native calls it joined end with it; a ring, or a call answered on
+    /// the phone and not joined yet, stays. Under [`Self::calls`], so a `joined` on its way is told first.
+    pub(crate) fn page_gone(&self, navigating: Option<&Url>) {
         let _calls = moqui_lib::sync::lock(&self.calls);
-        if navigating {
-            self.page.navigating();
+        if let Some(to) = navigating {
+            self.page.navigating(Some(to));
         }
         #[cfg(target_os = "android")]
         if let Err(err) = crate::android::calls_page_gone() {

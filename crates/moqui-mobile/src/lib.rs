@@ -134,6 +134,7 @@ pub fn run() {
             commands::call_take_answer,
             commands::call_audio,
             commands::call_audio_route,
+            commands::secure_screen,
             commands::call_dial_account,
             commands::call_dial_choice,
             commands::call_dial_from,
@@ -268,7 +269,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
         PageLoadEvent::Started => {
             // any new document (a reload, the webview's own Back, a renderer gone and loaded again, not a pushState or
             // a hash): the calls the page joined end with it
-            load_host.page_gone(false);
+            load_host.page_gone(None);
             load_host.page.started(payload.url());
             if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
                 core.sockets().close_for(MAIN);
@@ -290,7 +291,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
 fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
     match goes(url, host.page.from().as_deref(), host.signed_in().is_some()) {
         Goes::Here => {
-            host.page.navigating();
+            host.page.navigating(Some(url));
             true
         }
         Goes::AppPage => {

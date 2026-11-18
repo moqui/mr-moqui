@@ -28,7 +28,8 @@ sends and message changes, conflicts and the copy of a draft changed elsewhere, 
 connection", the gaps of what is kept) shows only there
 ([docs/ui/Desktop-Client.md](../../../../docs/ui/Desktop-Client.md#bundled-screens-and-app-windows)). A room's details (people, media,
 files, voice notes, links, reactions, pinned) and voice notes: [Comms](../../../../docs/tools/Comms.md#room-details); the palette's Chat rooms, Activity,
-Threads, the rail's groups and the mail line on a person's row: [Comms](../../../../docs/tools/Comms.md#chat-desktop). After a change to one of them:
+Threads, the rail's groups and the mail line on a person's row: [Comms](../../../../docs/tools/Comms.md#chat-desktop); disappearing messages and
+view-once: [Comms](../../../../docs/tools/Comms.md#disappearing-messages). After a change to one of them:
 `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
 
 Test ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test basic-comms`,

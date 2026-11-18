@@ -356,6 +356,36 @@ fn refusals_have_a_file_and_line() {
 }
 
 #[test]
+fn a_theme_meta_is_a_charset_a_listed_name_or_a_card_property() {
+    let file = "sections/hero.html.fancy-locked";
+    let message = refused(
+        &[(file, Some("<p>x</p>\n<meta name=\"referrer\" content=\"unsafe-url\">"))],
+        "unsafe-markup",
+        file,
+        2,
+    );
+    assert!(message.contains("<meta>"), "{message}");
+    refused(&[(file, Some("<meta content=\"x\">"))], "unsafe-markup", file, 1);
+    refused(
+        &[(file, Some("<meta property=\"referrer\" content=\"x\">"))],
+        "unsafe-markup",
+        file,
+        1,
+    );
+    for meta in [
+        "<meta charset=\"utf-8\">",
+        "<meta name=\"Viewport\" content=\"width=device-width\">",
+        "<meta name=\"description\" content=\"Stones\">",
+        "<meta name=\"twitter:card\" content=\"summary\">",
+        "<meta property=\"og:title\" content=\"Stones\">",
+        "<meta itemprop=\"price\" content=\"1.00\">",
+    ] {
+        let validation = validate_stone(&[(file, Some(meta))]);
+        assert!(validation.ok(), "{meta}: {:?}", errors(&validation));
+    }
+}
+
+#[test]
 fn an_optional_section_failure_is_isolated_and_a_required_one_is_not() {
     // The story section throws at render; the rest of the page renders.
     let package = stone_with(&[(

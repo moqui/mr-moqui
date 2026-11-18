@@ -104,6 +104,8 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     CallManager.know(this)
     CallManager.appScreenShown(this)
+    // screenshots blocked while a reason holds it (a view-once photo open): kept over a new activity
+    ScreenSecurity.attach(this)
     networkWatch.register(applicationContext)
     // the native code's library and context, then push (FCM, when the build has Firebase)
     Native.work {

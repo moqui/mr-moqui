@@ -143,7 +143,7 @@ the user services call.
 | `setEffectiveTime(time)` | `nowTimestamp`, date filters with no date, and the entity-auto `fromDate` and audit stamps use `time` (epoch millis, a `Date` or timestamp text) in this execution context; null goes back to the clock |
 | `timestampMillis(value)` | Epoch milliseconds of a timestamp, null when the value is not one |
 | `getPreference(key)` | The user's preference: a property, the user's `UserPreference`, a group's, or null |
-| `getPreferences(keyRegexp)` | The preferences as a map; with a pattern, those whose whole key matches it |
+| `getPreferences(keyRegexp)` | The preferences as a map; with a pattern, those whose whole key matches it. The pattern is matched in linear time (the Rust `regex` syntax: no back-references or look-around) and has at most 256 characters |
 | `setPreference(key, value)` | Saves the user's preference |
 | `context` | A map for the user of this execution context, read by the entity filters. `get`, `put`, `putAll`, `remove`, `containsKey`, and names as properties. A list read from it is a copy |
 | `hasPermission(permissionId)` | Whether the user has the permission |

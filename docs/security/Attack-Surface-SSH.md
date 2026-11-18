@@ -58,7 +58,7 @@ A host session's profile is found by name among the conf's profiles and the user
 
 The TUI (`crates/moqui-tui`) drops, from every string and key of a screen model as it is parsed, the C0 controls other than tab and newline, DEL, the C1 controls and the bidirectional overrides and isolates (`clean_value` in `src/model.rs`). The markdown reader does the same for a link's text and URL. The painter skips a zero-width character, and the encoder writes a space for a control character in a cell (`src/ui/encode.rs`). The encoder writes an OSC 8 hyperlink with its URL as given; `safe_link` admits a URL that starts with `http://`, `https://` or `mailto:`, and the one caller (`src/ui/draw.rs`) takes the URL from the cleaned model. OSC 52 (clipboard) carries Base64 of the copied text. The TUI source writes no title sequence (OSC 0 or 2).
 
-The admin shell and a host session are not drawn by the TUI. A host session's program output goes to the terminal as it is, and so does the admin shell's error text (see [The admin shell](#the-admin-shell)).
+The admin shell and a host session are not drawn by the TUI. A host session's program output goes to the terminal as it is. The admin shell's output and error text (each outcome, the SSH exec answer and the `error:` line) pass through `with_newlines` (`crates/moqui-host/src/command/mod.rs`), which drops the same controls as the TUI: C0 other than tab and newline, DEL, C1 and the bidirectional overrides and isolates (SEC-FIL-63; see [The admin shell](#the-admin-shell)).
 
 ## Open questions
 
