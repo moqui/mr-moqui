@@ -1472,7 +1472,7 @@
         // members: the room's memberList, whose lastReadEventSeq is a position ("has read up to here or later") and is blank
         // for another member with read receipts off (one who joined after the message, joinedDate, is not a reader of it); opts: {me, receipts (false: the viewer's read receipts are off), inThread,
         // limit (the names shown, 8)}. Answers {sent (millis), from (the network a bridged message came from), delivered (per
-        // network, only for a message that went out on a bridge: [{name, state, receipt, error}]), readBy (null in a thread,
+        // network, only for a message that went out on a bridge: [{name, state, receipt, error, path}]), readBy (null in a thread,
         // which has no read markers; {off: true} when the viewer's receipts are off; else {people, more, count}), thread}.
         // Delivery to a member's device is never in it: the server does not know it, and a push acknowledgement is not it.
         messageInfo(event, members, opts) {
@@ -1486,7 +1486,7 @@
             const repeats = (name) => destinations.filter((one) => network(one) === name).length > 1;
             const delivered = destinations.length ? destinations.map((one) => ({
                 name: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + " · " + one.bridgeName : network(one),
-                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null,
+                state: one.state || "pending", receipt: one.receipt || null, error: one.error || null, path: one.path || null,
                 // a group text's receipts, one a recipient (number to its receipt)
                 recipients: one.recipients && typeof one.recipients === "object" ? one.recipients : null })) : null;
             let readBy = null;
@@ -1505,6 +1505,13 @@
             return { sent: it.sentDate != null && it.sentDate !== "" ? Number(it.sentDate) : null,
                 from: it.senderExternal ? (it.senderExternal.networkName || it.senderExternal.network || tr("another network")) : null, delivered, readBy, thread };
         },
+        // A destination's fallback, for the bubble's caption ("Delivered to {network} as {path}", Comms-Messaging §16): SMS or
+        // MMS when an RCS bridge's message went as the fallback; '' for RCS, an unknown way, or any other bridge (which
+        // records none).
+        pathName(destination) {
+            const path = destination && destination.path;
+            return path === "sms" ? tr("SMS") : path === "mms" ? tr("MMS") : "";
+        },
         // Info as lines [{key, label, text}] (the dialog's, and what a test reads): when is fullTime(millis). A read receipt is
         // never said to be missing: an empty Read by says who is not listed, and receipts off say so.
         messageInfoLines(info, when) {
@@ -1514,9 +1521,12 @@
             const STATES = { pending: tr("Sending"), failed: tr("Not delivered"), uncertain: tr("May not have arrived") };
             const RECEIPTS = { delivered: tr("Delivered: the network's receipt says so"), sent: tr("Sent on by the network"),
                 unconfirmed: tr("Taken by the network; it has not confirmed delivery") };
+            const PATHS = { rcs: tr("RCS"), sms: tr("SMS: the phone did not take RCS"), mms: tr("MMS: the phone did not take RCS") };
             for (const one of info.delivered || []) {
                 const text = one.state === "accepted" ? (RECEIPTS[one.receipt] || tr("Taken by the network")) : (STATES[one.state] || one.state);
                 lines.push({ key: "delivered", label: one.name || tr("Bridge"), text: text + (one.error && one.state !== "accepted" ? ": " + one.error : ""), state: one.state });
+                // an RCS bridge's: the way it went (Comms-Messaging §16), RCS or the fallback's SMS or MMS
+                if (PATHS[one.path]) lines.push({ key: "path", label: tr("Sent as"), text: PATHS[one.path], path: one.path });
                 // a group text: each recipient's own receipt, a failed one said as such even when the others got it
                 for (const number of Object.keys(one.recipients || {}).sort()) {
                     const receipt = one.recipients[number];
