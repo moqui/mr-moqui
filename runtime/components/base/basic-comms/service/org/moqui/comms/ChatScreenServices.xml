@@ -342,6 +342,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="roomList" type="List"/>
             <parameter name="unreadTotal" type="Integer"/>
             <parameter name="mentionTotal" type="Integer"/>
+            <parameter name="filteredCount" type="Integer"><description>The rooms in Spam &amp; blocked, left out of roomList</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
             const account = ec.user.userAccount || {}
@@ -356,6 +357,7 @@ along with this software (see the LICENSE.md file). If not, see
             roomList = ec.service.sync().name('org.moqui.comms.ChatScreenServices.decorate#Rooms').parameter('roomList', out.roomList).call().roomList
             unreadTotal = out.unreadTotal
             mentionTotal = out.mentionTotal
+            filteredCount = out.filteredCount || 0
         ]]></script></actions>
     </service>
 

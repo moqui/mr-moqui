@@ -76,6 +76,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="ourNumber" required="true"/>
             <parameter name="theirNumber"/>
             <parameter name="theirNumberList" type="List"/>
+            <parameter name="memberFilterMap" type="Map"><description>userId to CmfBlocked or CmfSpam (receive#Sms, from
+                SmsSpamServices judge#SmsText): a new member is out of sight from the start with no joined push, a current
+                member with no filter goes out of sight now; a filter is never taken off here</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="chatRoomId"/>

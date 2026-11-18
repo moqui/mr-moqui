@@ -255,7 +255,7 @@ along with this software (see the LICENSE.md file). If not, see
                 agentRef: memberRow.agentRef ?? null, joinedDate: toMillis(memberRow.joinedDate), leftDate: toMillis(memberRow.leftDate),
                 lastReadEventSeq: Number(memberRow.lastReadEventSeq || 0), notificationLevelEnumId: memberRow.notificationLevelEnumId ?? null,
                 isPinned: memberRow.isPinned === 'Y', isMuted: memberRow.isMuted === 'Y',
-                archivedEventSeq: memberRow.archivedEventSeq != null ? Number(memberRow.archivedEventSeq) : null}
+                archivedEventSeq: memberRow.archivedEventSeq != null ? Number(memberRow.archivedEventSeq) : null, filterEnumId: memberRow.filterEnumId ?? null}
         ]]></script></actions>
     </service>
 
@@ -316,6 +316,8 @@ along with this software (see the LICENSE.md file). If not, see
             const asked = ids.filter((id) => id !== me)
             if (!asked.length) return
             const refused = new Set()
+            // a user who blocked this one (ChatUserBlock, plans/Comms-Messaging.md §18.3 phase 11) is refused them, told nothing
+            for (const id of ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOfMe', {userIdList: asked}).userIdList || []) refused.add(id)
             // an external caller reaches only the people of their own rooms (a direct room's even after leaving it)
             const outside = ec.service.sync().name('org.moqui.chat.ChatServices.get#ExternalUsers').parameter('userIdList', [me])
                     .disableAuthz().call()
@@ -487,14 +489,17 @@ along with this software (see the LICENSE.md file). If not, see
             }
 
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
-            memberUserIdList = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
-                    .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
-                    .map((member) => member.userId)
-            if (!noPush && memberUserIdList.length) {
+            const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
+                    .selectField('userId').selectField('leftDate').selectField('filterEnumId').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
+            memberUserIdList = memberRows.map((member) => member.userId)
+            // not to a member with the room out of sight (Spam & blocked), nor one who blocked its sender, but their own membership
+            const unseen = eventTypeEnumId === 'CetMembership' ? new Set() : new Set(memberRows.filter((member) => member.filterEnumId).map((member) => member.userId)
+                    .concat(senderUserId ? ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: senderUserId, userIdList: memberUserIdList}).userIdList || [] : []))
+            if (!noPush && memberUserIdList.some((id) => !unseen.has(id))) {
                 const pushed = {kind: 'event', chatRoomId: chatRoomId, eventSeq: eventSeq, event: event}
                 if (roomChangeSeq != null) pushed.roomChangeSeq = roomChangeSeq
                 ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
-                    userIdList: memberUserIdList, message: pushed}).call()
+                    userIdList: memberUserIdList.filter((id) => !unseen.has(id)), message: pushed}).call()
             }
 
             // a membership event: a room change in the members' feeds and the membership of the user it is about, as it
@@ -574,10 +579,12 @@ along with this software (see the LICENSE.md file). If not, see
             const KINDS = {mention: 'CuaMention', reply: 'CuaReply', threadReply: 'CuaThreadReply', reaction: 'CuaReaction'}
             const seen = new Set()
             const now = ec.user.nowTimestamp
+            const blockers = new Set(actorUserId ? ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: actorUserId,
+                    userIdList: Array.from(activityList || []).map((item) => item && item.userId)}).userIdList || [] : [])
             for (const item of Array.from(activityList || [])) {
                 const userId = item && item.userId ? String(item.userId) : null
                 const kind = item ? KINDS[item.kind] : null
-                if (!userId || !kind || userId === actorUserId || seen.has(userId + ' ' + kind)) continue
+                if (!userId || !kind || userId === actorUserId || seen.has(userId + ' ' + kind) || blockers.has(userId)) continue
                 seen.add(userId + ' ' + kind)
                 const row = ec.entity.makeValue('moqui.chat.ChatUserActivity')
                 row.setSequencedIdPrimary()
@@ -1222,6 +1229,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="roomList" type="List"><parameter name="room" type="Map"/></parameter>
             <parameter name="unreadTotal" type="Integer"/>
             <parameter name="mentionTotal" type="Integer"/>
+            <parameter name="filteredCount" type="Integer"><description>The rooms left out as out of the user's sight (Spam &amp;
+                blocked: filter spam lists them)</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
             const toMillis = (value) => {
@@ -1229,6 +1238,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const number = Number(value)
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
+            filteredCount = 0
             const CODES = {CrtDirect: 'direct', CrtPrivate: 'private', CrtPublic: 'public', CrtRecord: 'record'}
             const DEFAULT_VISIBILITY = {CrtDirect: 'CrvMembers', CrtPrivate: 'CrvMembers', CrtPublic: 'CrvUsers', CrtRecord: 'CrvRecord'}
             roomList = []; unreadTotal = 0; mentionTotal = 0
@@ -1290,10 +1300,16 @@ along with this software (see the LICENSE.md file). If not, see
                         .selectField('chatRoomId').selectField('mentionCount').list())
                     mentionsOf[count.chatRoomId] = Number(count.mentionCount || 0)
             }
+            // a sender the user blocked counts nothing, and their last message shows no text (ChatBlocks.js)
+            const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: userId}).userIdList || [])
+            if (hidden.size && roomIds.length) for (const count of ec.entity.find('moqui.chat.ChatMemberUnread').condition('userId', userId).condition('leftDate', null).condition('redactedDate', null).condition('senderUserId', 'in', Array.from(hidden)).selectField('chatRoomId').selectField('unreadCount').list()) unreadOf[count.chatRoomId] = Math.max(0, (unreadOf[count.chatRoomId] || 0) - Number(count.unreadCount || 0))
             const presenceUsers = new Set()
             const text = searchText ? String(searchText).toLowerCase().trim() : ''
             for (const row of rooms) {
                 const member = memberOf[row.chatRoomId] || null
+                // a room out of the user's sight (Spam & blocked) only under the filter spam
+                const filtered = member && member.filterEnumId ? {CmfSpam: 'spam', CmfBlocked: 'blocked'}[member.filterEnumId] || 'spam' : null
+                if (filter === 'spam' ? !filtered : filtered) { if (filtered) filteredCount++; continue }
                 const isDirect = row.roomTypeEnumId === 'CrtDirect'
                 const lastRead = member ? Number(member.lastReadEventSeq || 0) : 0
                 const unreadCount = member ? unreadOf[row.chatRoomId] || 0 : 0
@@ -1314,8 +1330,8 @@ along with this software (see the LICENSE.md file). If not, see
                     lastMessage: row.lastMessageSeq != null ? {eventSeq: Number(row.lastMessageSeq), senderUserId: row.lastMessageUserId ?? null,
                         senderName: row.lastMessageUserId ? names[row.lastMessageUserId] || row.lastMessageUserId
                             : (actorNames[row.lastMessageActorId]?.name ?? null),
-                        sentDate: toMillis(row.lastMessageDate), snippet: row.lastMessageSnippet ?? null, redacted: row.encrypted !== 'Y' && row.lastMessageSnippet == null, encrypted: row.encrypted === 'Y'} : null,
-                    encrypted: row.encrypted === 'Y',
+                        sentDate: toMillis(row.lastMessageDate), snippet: hidden.has(row.lastMessageUserId) ? null : row.lastMessageSnippet ?? null, redacted: row.encrypted !== 'Y' && row.lastMessageSnippet == null, encrypted: row.encrypted === 'Y', hidden: hidden.has(row.lastMessageUserId) || null} : null,
+                    encrypted: row.encrypted === 'Y', filtered: filtered,
                     otherUserIdList: others, otherUserId: others.length === 1 ? others[0] : null, presence: null,
                     bridged: !!bridgeMap[row.chatRoomId], notConnected: (bridgeMap[row.chatRoomId] || []).some((bridge) => !bridge.connected),
                     bridgeNetworkNames: Array.from(new Set((bridgeMap[row.chatRoomId] || []).map((bridge) => bridge.networkName).filter((name) => name))),
@@ -2003,7 +2019,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             row.update()
             const settings = {notificationLevelEnumId: row.notificationLevelEnumId ?? null, isMuted: row.isMuted === 'Y', isPinned: row.isPinned === 'Y',
-                archivedEventSeq: row.archivedEventSeq != null ? Number(row.archivedEventSeq) : null}
+                archivedEventSeq: row.archivedEventSeq != null ? Number(row.archivedEventSeq) : null, filtered: {CmfSpam: 'spam', CmfBlocked: 'blocked'}[row.filterEnumId] || null}
             notificationLevelEnumId = settings.notificationLevelEnumId; isMuted = settings.isMuted; isPinned = settings.isPinned
             archivedEventSeq = settings.archivedEventSeq
             ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameters({userIdList: [me], changeKind: 'settings',
@@ -2081,6 +2097,7 @@ along with this software (see the LICENSE.md file). If not, see
             chatRoomId = room.chatRoomId
             lastReadEventSeq = roomOut.member ? roomOut.member.lastReadEventSeq : null
             const me = ec.user.userId
+            const hidden = roomOut.member && roomOut.member.filterEnumId === 'CmfBlocked' ? new Set() : new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || [])
             const size = Math.max(1, Math.min(200, Number(limit) || 50))
             const cf = ec.entity.conditionFactory
             const base = () => {
@@ -2238,7 +2255,8 @@ along with this software (see the LICENSE.md file). If not, see
                         senderName: nameOf(target), snippet: snippet(target), encrypted: targetSealed, sentDate: toMillis(target.sentDate),
                         redacted: !!target.redactedDate} : {eventSeq: item.replyToEventSeq, senderUserId: null, senderName: null, snippet: null, redacted: true}
                 }
-                eventList.push(item)
+                // a sender the user blocked: hidden, nothing of it given, unless the room is in the user's Spam & blocked (plans/Comms-Messaging.md §18.3 phase 11)
+                eventList.push(hidden.has(item.senderUserId) && row.eventTypeEnumId !== 'CetMembership' ? {chatRoomId: chatRoomId, eventSeq: seq, eventTypeEnumId: row.eventTypeEnumId, type: item.type, senderUserId: item.senderUserId, sentDate: item.sentDate, threadRootEventSeq: item.threadRootEventSeq, hidden: 'blocked', content: {}, mentions: [], attachments: [], records: [], reactions: [], linkPreviews: [], encryptedReactions: []} : item)
             }
         ]]></script></actions>
     </service>
@@ -2320,6 +2338,7 @@ along with this software (see the LICENSE.md file). If not, see
                     threadLastUserName: row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null,
                     lastSnippet: last && !last.redactedDate ? snippet(last.bodyText) : null})
             }
+            { const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || []); if (hidden.size) threadList = threadList.filter((thread) => !hidden.has(thread.senderUserId)) }
         ]]></script></actions>
     </service>
 
@@ -2608,6 +2627,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const external = new Set(outside ? outside.externalUserIdList || [] : mentionIds)
                 mentionIds = mentionIds.filter((id) => !external.has(id) || (!recordBound && memberOf[id] && (!memberOf[id].leftDate || isDirect)))
             }
+            if (mentionIds.length && sender) { const blockers = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: sender, userIdList: mentionIds}).userIdList || []); mentionIds = mentionIds.filter((id) => !blockers.has(id)) }
 
             // an encrypted room's files are opaque: their names and types are in the ciphertext
             const attachments = attachmentRows.map((row, index) => ({chatAttachmentId: row.chatAttachmentId, attachmentSeq: index + 1,
@@ -2837,6 +2857,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const external = new Set(outside ? outside.externalUserIdList || [] : mentionIds)
                 mentionIds = mentionIds.filter((id) => !external.has(id) || (!recordBound && memberOf[id] && (!memberOf[id].leftDate || isDirect)))
             }
+            if (mentionIds.length && me) { const blockers = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: me, userIdList: mentionIds}).userIdList || []); mentionIds = mentionIds.filter((id) => !blockers.has(id)) }
             const before = new Set(Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId))
             const appended = ec.service.sync().name('org.moqui.chat.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
@@ -3366,15 +3387,18 @@ along with this software (see the LICENSE.md file). If not, see
             for (const count of ec.entity.find('moqui.chat.ChatMemberMentions').condition('userId', userId).condition('leftDate', null)
                     .selectField('chatRoomId').selectField('mentionCount').list())
                 mentionsOf[count.chatRoomId] = Number(count.mentionCount || 0)
+            // a sender the user blocked counts nothing (ChatBlocks.js)
+            { const hidden = Array.from(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: userId}).userIdList || []); if (hidden.length) for (const count of ec.entity.find('moqui.chat.ChatMemberUnread').condition('userId', userId).condition('leftDate', null).condition('redactedDate', null).condition('senderUserId', 'in', hidden).selectField('chatRoomId').selectField('unreadCount').list()) unreadOf[count.chatRoomId] = Math.max(0, (unreadOf[count.chatRoomId] || 0) - Number(count.unreadCount || 0)) }
             const LEVELS = {CnlAll: 'all', CnlMentions: 'mentions', CnlNone: 'none'}
             for (const row of rows) {
                 if (!rooms.has(row.chatRoomId)) continue
                 const level = row.notificationLevelEnumId || 'CnlAll'
-                const effective = level === 'CnlNone' ? 'CnlNone' : (row.isMuted === 'Y' ? 'CnlMentions' : level)
+                // a room out of sight (Spam & blocked) counts and notifies nothing
+                const effective = level === 'CnlNone' || row.filterEnumId ? 'CnlNone' : (row.isMuted === 'Y' ? 'CnlMentions' : level)
                 levelMap[row.chatRoomId] = LEVELS[effective] || 'all'
                 const roomUnread = unreadOf[row.chatRoomId] || 0
                 const roomMentions = mentionsOf[row.chatRoomId] || 0
-                if (!roomUnread && !roomMentions) continue
+                if (row.filterEnumId || (!roomUnread && !roomMentions)) continue
                 const counted = effective === 'CnlAll' ? roomUnread : (effective === 'CnlMentions' ? roomMentions : 0)
                 roomCounts[row.chatRoomId] = {unread: roomUnread, mentions: roomMentions, counted: counted}
                 if (effective === 'CnlAll') unread += roomUnread
@@ -3410,8 +3434,9 @@ along with this software (see the LICENSE.md file). If not, see
             const others = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', 'not-equals', me)
                     .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
                     .map((member) => member.userId)
-            if (others.length) ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
-                userIdList: others, message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing,
+            const hush = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: me, userIdList: others}).userIdList || [])
+            if (others.some((id) => !hush.has(id))) ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
+                userIdList: others.filter((id) => !hush.has(id)), message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing,
                     statusText: typing && statusText ? String(statusText).replace(/\s+/g, ' ').trim().slice(0, 80) : null}}).call()
         ]]></script></actions>
     </service>
@@ -3589,6 +3614,8 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
             if (deletedCount || failedCount) ec.logger.info(`Chat retention: ${deletedCount} events deleted in ${roomCount} rooms, ${failedCount} rooms failed`)
+            // the spam purge (chat_spam_purge_days; SmsSpamServices purge#SpamRooms), each room on its own
+            const purged = ec.service.sync().name('org.moqui.call.SmsSpamServices.purge#SpamRooms').disableAuthz().call() || {}; roomCount += Number(purged.roomCount || 0); deletedCount += Number(purged.deletedCount || 0); failedCount += Number(purged.failedCount || 0)
         ]]></script></actions>
     </service>
 
@@ -3603,6 +3630,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="limit" type="Integer" default="5000"/>
+            <parameter name="retentionDays" type="Integer"><description>In place of the room's (the spam purge's, SmsSpamServices purge#SpamRooms)</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
@@ -3615,8 +3643,9 @@ along with this software (see the LICENSE.md file). If not, see
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
             deletedCount = 0
             const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).forUpdate(true).one()
-            if (!room || !(Number(room.retentionDays) > 0)) return
-            const before = Number(ec.user.nowTimestamp) - Number(room.retentionDays) * 86400000
+            const days = Number(retentionDays) > 0 ? Number(retentionDays) : Number(room ? room.retentionDays : 0)
+            if (!room || !(days > 0)) return
+            const before = Number(ec.user.nowTimestamp) - days * 86400000
             const old = Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('sentDate', 'less', String(before))
                     .selectField('eventSeq').selectField('eventTypeEnumId').orderBy('eventSeq').limit(Math.max(1, limit)).list())
             if (!old.length) return
@@ -3771,6 +3800,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 fileList.push(file)
             }
+            { const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || []); if (hidden.size) fileList = fileList.filter((file) => !hidden.has(file.senderUserId)) }
         ]]></script></actions>
     </service>
 
@@ -3939,6 +3969,7 @@ along with this software (see the LICENSE.md file). If not, see
                     senderName: event.senderUserId ? names[event.senderUserId] || event.senderUserId : (actors[event.senderActorId]?.name ?? null),
                     sentDate: toMillis(event.sentDate), threadRootEventSeq: event.threadRootEventSeq != null ? Number(event.threadRootEventSeq) : null})
             }
+            { const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || []); if (hidden.size) links = links.filter((link) => !hidden.has(link.senderUserId)) }
         ]]></script></actions>
     </service>
 
@@ -4731,6 +4762,7 @@ along with this software (see the LICENSE.md file). If not, see
             const names = {}
             const roomNames = {}
             const finish = () => {
+                { const hidden = new Set(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || []); if (hidden.size) eventList = eventList.filter((item) => !hidden.has(item.senderUserId)) }
                 const userIds = Array.from(new Set(eventList.map((item) => item.senderUserId).filter((id) => id)))
                 if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
                         .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())

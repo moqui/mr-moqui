@@ -66,6 +66,7 @@ pub(in crate::service) fn register(
     rust_service!(map, wake_bridge_delivery)?;
     rust_service!(map, run_bridge_deliveries)?;
     rust_service!(map, get_bridge_capabilities)?;
+    rust_service!(map, lookup_bridge_number)?;
     rust_service!(map, check_bridge_token)?;
     web::register(map)?;
     edge::register(map)?;
@@ -327,6 +328,26 @@ pub trait ChatBridgeAdapter: Send + Sync {
         let _ = (bridge, url, max_bytes);
         Err("this network's files are not fetched".to_string())
     }
+    /// What the network's provider knows of an outside number (a paid number lookup: its line type, carrier and caller
+    /// name), for the spam filter (`ChatBridgeServices.lookup#BridgeNumber`, plans/Comms-Messaging.md §18.3 phase 11).
+    /// `Ok(None)` when the adapter has no lookup, the default.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the lookup failed.
+    fn lookup_number(&self, bridge: &BridgeInfo, number: &str) -> Result<Option<NumberLookup>, String> {
+        let _ = (bridge, number);
+        Ok(None)
+    }
+}
+
+/// What a provider's number lookup answered ([`ChatBridgeAdapter::lookup_number`]); each part as the provider names it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NumberLookup {
+    /// The kind of line: `mobile`, `landline`, `nonFixedVoip`, ...
+    pub line_type: Option<String>,
+    pub carrier_name: Option<String>,
+    pub caller_name: Option<String>,
 }
 
 /// The adapters of a factory: the linked crates' ([`crate::extension::Extension::chat_bridge_adapters`]) and those
@@ -610,6 +631,59 @@ fn get_bridge_capabilities(
         map.insert(id, Value::Map(entry));
     }
     Ok(BTreeMap::from([("capabilityMap".to_string(), Value::Map(map))]))
+}
+
+/// `lookup#BridgeNumber`: what the provider of bridge `chatBridgeId` knows of `phoneNumber` (its adapter's
+/// [`ChatBridgeAdapter::lookup_number`]): `lineType`, `carrierName`, `callerName`; or `reasonCode` `notSupported` (no
+/// adapter, or one with no lookup) or `failed` (with `error`). Never an error of its own, so the spam filter goes on
+/// without an answer.
+fn lookup_bridge_number(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let factory = current_factory().ok_or_else(|| LibError::new("no execution context"))?;
+    let bridge_id = param(parameters, "chatBridgeId").unwrap_or_default();
+    let number = param(parameters, "phoneNumber").unwrap_or_default();
+    let reason = |code: &str, error: Option<String>| {
+        let mut out = BTreeMap::from([("reasonCode".to_string(), Value::string(code))]);
+        if let Some(error) = error {
+            out.insert("error".to_string(), Value::string(error));
+        }
+        Ok(out)
+    };
+    if bridge_id.is_empty() || number.is_empty() {
+        return reason("notSupported", None);
+    }
+    let Some(row) = facade
+        .find(BRIDGE)?
+        .eq("chatBridgeId", Value::string(&bridge_id))
+        .disable_authz()
+        .one()?
+    else {
+        return reason("notSupported", None);
+    };
+    let info = bridge_info(&row);
+    let Some(adapter) = adapter_of(&factory, facade, &info) else {
+        return reason("notSupported", None);
+    };
+    match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.lookup_number(&info, &number))) {
+        Ok(Ok(Some(found))) => {
+            let mut out = BTreeMap::new();
+            for (key, value) in [
+                ("lineType", found.line_type),
+                ("carrierName", found.carrier_name),
+                ("callerName", found.caller_name),
+            ] {
+                if let Some(value) = value {
+                    out.insert(key.to_string(), Value::string(value));
+                }
+            }
+            Ok(out)
+        }
+        Ok(Ok(None)) => reason("notSupported", None),
+        Ok(Err(error)) => reason("failed", Some(error)),
+        Err(_) => reason("failed", Some("the adapter failed".to_string())),
+    }
 }
 
 // ---- the worker ----

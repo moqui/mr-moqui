@@ -29,6 +29,24 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="blockNumber">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.call.CallHandlingServices.block#PhoneNumber').parameter('phoneNumber', phoneNumber || '').requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Blocked'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="unblockNumber">
+        <actions><script>ec.service.sync().name('org.moqui.call.CallHandlingServices.unblock#PhoneNumber').parameter('phoneNumber', phoneNumber || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="saveSpamFilter">
+        <actions><script>ec.service.sync().name('org.moqui.call.CallHandlingServices.update#CallHandlingSetting').parameter('spamFilter', spamFilter === 'Y').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="storeRule">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.call.CallHandlingServices.store#CallHandlingRule').parameters({kindEnumId: kindEnumId || '',
@@ -101,6 +119,8 @@ along with this software (see the LICENSE.md file). If not, see
         for (const l of Array.from(out.callerListList || [])) for (const e of Array.from(l.entryList || []))
             entryList.push({callerListId: l.callerListId, listName: l.name, phoneNumber: e.phoneNumber})
         newRule = {kindEnumId: 'ChrNoAnswer', targetTypeEnumId: 'ChtVoicemail', scheduleWhen: 'open'}
+        blockedList = Array.from(out.blockedList || []).map((e) => ({phoneNumber: e.phoneNumber}))
+        spamSettings = {spamFilter: yn(s.spamFilter !== false)}
     ]]></script></actions>
 
     <widgets>
@@ -116,6 +136,24 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
             </form-single>
             <label type="p" text="${forwardNote}" condition="forwardNote" style="m-muted"/>
+        </box-body></container-box>
+        <container-box><box-header title="Blocked numbers"/><box-body>
+            <label type="p" text="Their calls are refused, and their texts go to Spam &amp; blocked in Chat without notifying you." style="m-muted"/>
+            <section name="NoBlocked" condition="!blockedList.length"><widgets><label type="p" text="No numbers blocked."/></widgets></section>
+            <form-list name="Blocked" list="blockedList" skip-form="true" paginate="false">
+                <field name="phoneNumber"><default-field title="Number"><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="unblockNumber" text="Unblock" icon="sym_o_close"><parameter name="phoneNumber"/></link>
+                </default-field></field>
+            </form-list>
+            <form-single name="BlockNumber" transition="blockNumber">
+                <field name="phoneNumber"><default-field title="Number, or a prefix ending in *"><text-line size="20"/></default-field></field>
+                <field name="submitButton"><default-field title="Block"><submit/></default-field></field>
+            </form-single>
+            <form-single name="SpamFilter" transition="saveSpamFilter" map="spamSettings">
+                <field name="spamFilter"><default-field title="Filter spam texts"><radio><option key="Y" text="Yes"/><option key="N" text="No"/></radio></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
         </box-body></container-box>
         <container-box><box-header title="Rules"/><box-body>
             <label type="p" text="Read in this order for each call; the first that applies decides. Without one, calls ring you, then go to voicemail." style="m-muted"/>

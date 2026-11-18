@@ -857,7 +857,25 @@ function start(p) {
 }
 
 /** Rings the invitees' tabs, and their devices by Web Push (expiring with the ring). */
+/**
+ * userIds less those who blocked the caller: the user fromUserId in chat, or the outside number fromNumber on their
+ * Blocked list (plans/Comms-Messaging.md §18.3 phase 11). A failure is logged and everyone rings.
+ */
+function withoutBlockers(userIds, fromUserId, fromNumber) {
+  if (!userIds.length || (!fromUserId && !fromNumber)) return userIds
+  try {
+    const out = ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf',
+      { senderUserId: fromUserId || null, fromNumber: fromNumber || null, userIdList: userIds }) || {}
+    const blockers = new Set(Array.from(out.userIdList || []))
+    return blockers.size ? userIds.filter((userId) => !blockers.has(userId)) : userIds
+  } catch (err) {
+    ec.logger.warn(`Blocks not checked for a call, all rung: ${err && err.message ? err.message : err}`)
+    return userIds
+  }
+}
+
 function ring(session, userIds, fromUserId, fromName, fromNumber) {
+  userIds = withoutBlockers(userIds, fromUserId, fromNumber)
   if (!userIds.length) return
   const from = { userId: fromUserId || null, name: fromName || userNames([fromUserId])[fromUserId] || fromUserId }
   for (const userId of userIds) {

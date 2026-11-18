@@ -49,6 +49,7 @@
 //! the phone network read every text.
 
 pub mod group;
+pub mod lookup;
 
 use aws_lc_rs::hmac;
 use base64::Engine;
@@ -84,6 +85,8 @@ pub struct Config {
     pub conversations_base_url: String,
     /// No trailing `/`.
     pub media_content_base_url: String,
+    /// Lookup's (the spam filter's line type, [`lookup`]). No trailing `/`.
+    pub lookups_base_url: String,
     /// `allowInternalAddresses` off production: the Conversations and media addresses may be http (a test's fake).
     pub allow_internal: bool,
 }
@@ -152,6 +155,7 @@ impl SmsProvider for Twilio {
             conversation_service_sid: text_of(config, "conversationServiceSid"),
             conversations_base_url: base("conversationsBaseUrl", "https://conversations.twilio.com"),
             media_content_base_url: base("mediaContentBaseUrl", "https://mcs.us1.twilio.com"),
+            lookups_base_url: base("lookupsBaseUrl", "https://lookups.twilio.com"),
             allow_internal: Settings::of(config, &self.defaults()).allow_internal,
         }
     }
@@ -181,6 +185,7 @@ impl SmsProvider for Twilio {
         for (key, url) in [
             ("conversationsBaseUrl", &config.conversations_base_url),
             ("mediaContentBaseUrl", &config.media_content_base_url),
+            ("lookupsBaseUrl", &config.lookups_base_url),
         ] {
             if !(url.starts_with("https://") || (config.allow_internal && url.starts_with("http://"))) {
                 return Err(format!("The Twilio bridge's {key} is not an https address"));
@@ -370,6 +375,14 @@ impl SmsProvider for Twilio {
 
     fn media_auth(&self, config: &Config) -> Option<(String, String)> {
         config.authorization().map(|value| ("authorization".to_string(), value))
+    }
+
+    fn lookup_request(&self, config: &Config, settings: &Settings, number: &str) -> Option<ApiRequest> {
+        lookup::request(config, settings, number)
+    }
+
+    fn lookup_of(&self, body: &str) -> Option<moqui_core::service::chat_bridge::NumberLookup> {
+        lookup::answer(body)
     }
 }
 

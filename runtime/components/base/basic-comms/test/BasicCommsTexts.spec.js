@@ -215,3 +215,41 @@ feature("A phone room's numbers are named by the apps' call-context, as the user
         Object.keys(stranger.nameMap || {}).length == 0
     }
 })
+
+// plans/Comms-Messaging.md §18.3 phase 11: Chat's Block, Unblock, Report spam and Spam & blocked through the transitions; the rules are
+// framework/test/SmsSpam.spec.js's and ChatBlocks.spec.js's
+feature("Chat blocks a phone room's number from its menu, lists it under Spam & blocked, and unblocks it; a stranger reaches none of it", {
+    when() {
+        const room = mappings(THEIRS)[0].chatRoomId
+        ec.user.internalLoginUser("basic.comms.text.stranger")
+        const strangerBlock = JSON.parse(render("Chat/blockRoom", {chatRoomId: room}, "post").output || "{}")
+        ec.user.internalLoginUser("basic.comms.texter")
+        const before = JSON.parse(render("Chat/roomBlock", {chatRoomId: room}).output || "{}")
+        const blocked = JSON.parse(render("Chat/blockRoom", {chatRoomId: room}, "post").output || "{}")
+        const data = JSON.parse(render("Chat/chatData", {}).output || "{}")
+        const spam = JSON.parse(render("Chat/rooms", {filter: "spam"}).output || "{}")
+        const handling = JSON.parse(render("Settings/CallHandling/handling", {}).output || "{}")
+        const unblocked = JSON.parse(render("Chat/unblockRoom", {chatRoomId: room}, "post").output || "{}")
+        const after = JSON.parse(render("Chat/roomBlock", {chatRoomId: room}).output || "{}")
+        // Report spam blocks it too; Unblock again for the features after
+        const reported = JSON.parse(render("Chat/reportSpam", {chatRoomId: room}, "post").output || "{}")
+        const afterReport = JSON.parse(render("Chat/roomBlock", {chatRoomId: room}).output || "{}")
+        render("Chat/unblockRoom", {chatRoomId: room}, "post")
+        return {room, strangerBlock, before, blocked, data, spam, handling, unblocked, after, reported, afterReport}
+    },
+    then({room, strangerBlock, before, blocked, data, spam, handling, unblocked, after, reported, afterReport}) {
+        strangerBlock.blocked == null
+        before.blockKind == "number"
+        before.phoneNumber == THEIRS
+        before.filtered == null
+        blocked.blocked == "number"
+        data.filteredCount >= 1
+        !data.roomList.some((item) => item.chatRoomId == room)
+        spam.roomList.some((item) => item.chatRoomId == room && item.filtered == "blocked")
+        handling.blockedList.some((entry) => entry.phoneNumber == THEIRS)
+        unblocked.messageInfos.length == 1
+        after.filtered == null
+        reported.messageInfos.length == 1
+        afterReport.filtered == "blocked"
+    }
+})

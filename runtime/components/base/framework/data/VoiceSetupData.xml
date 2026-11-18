@@ -67,4 +67,34 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="expire_SipRegistrations" description="Remove expired phone registrations"
             serviceName="org.moqui.call.SipDeviceServices.expire#SipRegistrations" cronExpression="0 0/5 * * * ?" paused="N"
             errorHistoryOnly="Y"/>
+
+    <!-- The spam filter of texts from outside numbers (SmsSpamServices, plans/Comms-Messaging.md §18.3 phase 11): its rules,
+        at the threshold 100 (VoicePolicy.smsSpamThreshold), set in System, Voice, Spam. A first text from an unknown number
+        with a shortened link is spam (110), one with a link alone is not (70); a number reported here is. -->
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_FIRST_CONTACT" ruleTypeEnumId="SsrFirstContact" pattern="" weight="40" description="The first text of a new conversation from a number nobody here knows"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_LINK" ruleTypeEnumId="SsrLink" pattern="" weight="30" description="A link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_BIT_LY" ruleTypeEnumId="SsrLinkHost" pattern="bit.ly" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_TINYURL_COM" ruleTypeEnumId="SsrLinkHost" pattern="tinyurl.com" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_T_CO" ruleTypeEnumId="SsrLinkHost" pattern="t.co" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_GOO_GL" ruleTypeEnumId="SsrLinkHost" pattern="goo.gl" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_IS_GD" ruleTypeEnumId="SsrLinkHost" pattern="is.gd" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_OW_LY" ruleTypeEnumId="SsrLinkHost" pattern="ow.ly" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_CUTT_LY" ruleTypeEnumId="SsrLinkHost" pattern="cutt.ly" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_RB_GY" ruleTypeEnumId="SsrLinkHost" pattern="rb.gy" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_TINY_CC" ruleTypeEnumId="SsrLinkHost" pattern="tiny.cc" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_HOST_SHORTURL_AT" ruleTypeEnumId="SsrLinkHost" pattern="shorturl.at" weight="40" description="A shortened link"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_GIFT_CARD" ruleTypeEnumId="SsrKeyword" pattern="gift card" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_YOU_HAVE_WON" ruleTypeEnumId="SsrKeyword" pattern="you have won" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_CLAIM_YOUR_PRIZE" ruleTypeEnumId="SsrKeyword" pattern="claim your prize" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_VERIFY_YOUR_ACCOUNT" ruleTypeEnumId="SsrKeyword" pattern="verify your account" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_ACCOUNT_SUSPENDED" ruleTypeEnumId="SsrKeyword" pattern="account suspended" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_UNUSUAL_ACTIVITY" ruleTypeEnumId="SsrKeyword" pattern="unusual activity" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_CONFIRM_YOUR_IDENTITY" ruleTypeEnumId="SsrKeyword" pattern="confirm your identity" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_FINAL_NOTICE" ruleTypeEnumId="SsrKeyword" pattern="final notice" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_UNPAID_TOLL" ruleTypeEnumId="SsrKeyword" pattern="unpaid toll" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_DELIVERY_ATTEMPT_FAILED" ruleTypeEnumId="SsrKeyword" pattern="delivery attempt failed" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_PACKAGE_COULD_NOT_BE_DELIVERED" ruleTypeEnumId="SsrKeyword" pattern="package could not be delivered" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_WORDS_LOAN_APPROVED" ruleTypeEnumId="SsrKeyword" pattern="loan approved" weight="40" description="Words spam often has"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_REPORTED" ruleTypeEnumId="SsrReported" pattern="" weight="100" description="Reported as spam here"/>
+    <moqui.call.SmsSpamRule smsSpamRuleId="SSR_LINE_NON_FIXED_VOIP" ruleTypeEnumId="SsrLineType" pattern="nonFixedVoip" weight="40" description="A number with no fixed line (the provider's lookup)"/>
 </entity-facade-xml>

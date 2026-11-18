@@ -125,6 +125,11 @@ along with this software (see the LICENSE.md file). If not, see
             member's main list while its last message is at or before this event; a newer message brings it back. Empty when
             not archived. (The room's own archive, for all members, is ChatRoom.archivedDate.)</description></field>
         <field name="addedByUserId" type="id"/>
+        <field name="filterEnumId" type="id"><description>The room is out of the member's sight (plans/Comms-Messaging.md
+            §18.3 phase 11): CmfSpam (the spam filter took a phone room), CmfBlocked (the member blocked its number or its
+            person, or the room). find#Rooms lists it only under its filter spam, it counts and notifies nothing, and no
+            event of it is pushed to the member. Empty: in sight.</description></field>
+        <field name="filterDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one" related="moqui.chat.ChatActor" short-alias="actor"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
@@ -140,6 +145,9 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Moderator" enumId="CmrModerator" enumCode="moderator" enumTypeId="ChatMemberRole" sequenceNum="2"/>
             <moqui.basic.Enumeration description="Member" enumId="CmrMember" enumCode="member" enumTypeId="ChatMemberRole" sequenceNum="3"/>
             <moqui.basic.Enumeration description="Agent" enumId="CmrAgent" enumCode="agent" enumTypeId="ChatMemberRole" sequenceNum="4"/>
+            <moqui.basic.EnumerationType description="Chat Member Filter" enumTypeId="ChatMemberFilter"/>
+            <moqui.basic.Enumeration description="Spam" enumId="CmfSpam" enumCode="spam" enumTypeId="ChatMemberFilter" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Blocked" enumId="CmfBlocked" enumCode="blocked" enumTypeId="ChatMemberFilter" sequenceNum="2"/>
 
             <moqui.basic.EnumerationType description="Chat Notification Level" enumTypeId="ChatNotificationLevel"/>
             <moqui.basic.Enumeration description="All messages" enumId="CnlAll" enumCode="all" enumTypeId="ChatNotificationLevel" sequenceNum="1"/>
@@ -240,6 +248,7 @@ along with this software (see the LICENSE.md file). If not, see
         <alias entity-alias="CRM" name="userId"/>
         <alias entity-alias="CRM" name="leftDate"/><!-- filter only -->
         <alias entity-alias="CE" name="redactedDate"/><!-- filter only -->
+        <alias entity-alias="CE" name="senderUserId"/><!-- filter only: a blocked sender's messages, taken off the count -->
         <alias entity-alias="CE" name="unreadCount" field="eventSeq" function="count"/>
         <entity-condition>
             <econdition entity-alias="CE" field-name="eventTypeEnumId" value="CetMessage"/>
@@ -355,6 +364,20 @@ along with this software (see the LICENSE.md file). If not, see
         <alias entity-alias="CLP" name="title"/>
         <alias entity-alias="CLP" name="previewFailed" field="failed"/>
     </view-entity>
+
+    <entity entity-name="ChatUserBlock" package="moqui.chat" use="transactional" cache="never">
+        <description>A person a user blocked in chat (plans/Comms-Messaging.md §18.3 phase 11; ChatBlockServices): their
+            messages are hidden from the user in shared rooms and notify nothing, their calls do not ring the user, and they
+            are refused (as users that do not exist, get#RefusedUsers) a direct room with the user and adding the user to a
+            room. At most 500 a user.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="blockedUserId" type="id" is-pk="true"/>
+        <field name="blockedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one-nofk" title="Blocked" related="moqui.security.UserAccount" short-alias="blockedUser">
+            <key-map field-name="blockedUserId" related="userId"/></relationship>
+        <index name="CHAT_USER_BLOCKED"><index-field name="blockedUserId"/></index>
+    </entity>
 
     <entity entity-name="ChatRoomChange" package="moqui.chat" use="transactional" cache="never">
         <description>A message of a room changed after it was sent: an edit, a reaction or its removal, a redaction, a pin,

@@ -378,7 +378,7 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         ec.message.clearErrors()
         const texts = {Status: "SIP servers", Trunks: "Render trunk", Numbers: "+15550109999", CallerIds: "Let someone call from a number",
             Fraud: "198.51.100.7", Emergency: "Render office", Phones: "Render phone", RingGroups: "Render group", Schedules: "Render hours",
-            IvrMenus: "Render menu", Queues: "Render queue"}
+            IvrMenus: "Render menu", Queues: "Render queue", Spam: "bit.ly"}
         for (const [path, text] of Object.entries(texts)) {
             for (const mode of ["qvt", "tui"]) {
                 const shown = render(systemRoot, "Voice/" + path, mode, {})

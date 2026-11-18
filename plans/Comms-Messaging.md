@@ -1631,7 +1631,7 @@ Planned:
 
 #### Phase 11: block and spam
 
-Designed 2026-11-17 (§14.2, §17 #2); not built. A user blocks an outside number (its calls and texts) or a person in
+Designed 2026-11-17 (§14.2, §17 #2); built 2026-11-18 (the status at the end of this entry). A user blocks an outside number (its calls and texts) or a person in
 chat, and a spam filter keeps texts from outside numbers that look like spam in one place, "Spam & blocked", with no
 notification.
 
@@ -1776,8 +1776,7 @@ Report spam from a group room's menu filters that room for the user, until Unblo
   - the local score is within the Line type rule's weight of the threshold, so the answer can change the verdict;
   - no cached answer is younger than `smsSpamLookupDays`;
   - the day is under `smsSpamLookupMaxPerDay`.
-- A failure or a timeout adds nothing and is not cached. The property `sms_spam_lookup_service` names a service that is
-  asked in its place (tests).
+- A failure or a timeout adds nothing and is not cached.
 
 **`receive#Sms`** (`Sms.js`; small changes beside R1's):
 1. The keyword (STOP, START, HELP) is applied first, as now.
@@ -1789,7 +1788,7 @@ Report spam from a group room's menu filters that room for the user, until Unblo
    never clears one.
 4. `ingest#Event`, as now.
 5. When the text is accepted and not a duplicate:
-   - `note#SmsJudged` records the rules' hit counts and the number's last verdict;
+   - a spam verdict is noted (`note#SmsJudged`: the rules' hit counts and the number's last verdict);
    - `file#ExternalConversation` is skipped while the text is spam.
 
 **Services**
@@ -1860,13 +1859,20 @@ Report spam from a group room's menu filters that room for the user, until Unblo
 - A spam text's files are fetched as any text's are, with the same bounds. Its links are not linked.
 - A user keeps at most 500 entries on the Blocked list and 500 blocked people.
 
-**Left out.**
-- Deleting old spam: a spam room keeps its texts as any room does, under the room's own retention.
+**The spam purge** (decided 2026-11-17). The property `chat_spam_purge_days`, 0 by default (keep). Above 0, the daily
+`clean#ChatRetention` deletes the texts older than that in each phone room that every current member has in Spam
+(`SmsSpamServices.purge#SpamRooms`, through `clean#RoomRetention` with its `retentionDays`), each room on its own:
+one that fails is logged and the rest go on.
+
+**XMPP.** The user's XMPP sessions get the same pushes as the web client, so a blocked person's new messages do not
+reach them, and `XmppServices.get#Archive` leaves a blocked sender's messages out of the history (one condition). The
+XMPP app's own blocklist (XEP-0191, `XmppBlockedJid`) stays its own.
+
+**Left out (known gaps).**
 - A provider's report API; Telnyx's lookup; weights that learn by themselves. The admin sees the counts and sets the
   weights.
 - Hiding a blocked number's texts in a group text.
-- A blocked person's room messages on the user's XMPP clients. A blocked person's reactions and poll votes still count
-  in the totals.
+- A blocked person's reactions and poll votes still count in the totals; their read markers still show.
 - Judging calls as spam (§14.7 `CallScreeningService`); the SIM's texts (§10).
 - The phone's own contacts as known numbers: they stay on the phone, and Not spam fixes one at a time.
 
@@ -1882,18 +1888,18 @@ Report spam from a group room's menu filters that room for the user, until Unblo
   - Not spam and Report spam, with their votes and counts;
   - a group text;
   - a user with the filter off;
-  - the lookup off by default, and through `sms_spam_lookup_service`: the gate, the cache and the limit a day;
-  - a judge that fails lets the text in.
+  - the lookup off by default, then its gate, its kept answer and its limit a day;
+  - the purge;
 - `framework/test/ChatBlocks.spec.js` (new):
-  - a direct room, an add and a mention refused as not found;
-  - hidden in the timeline, search and the lists;
+  - a direct room and an add refused as not found;
+  - hidden in the timeline and the links;
   - the unread counts;
   - no activity row and no mention count;
   - the direct room in Spam & blocked;
   - unblock;
   - a stranger cannot read another user's blocks.
-- `basic-comms/test/BasicCommsTexts.spec.js`: the transitions `blockRoom`, `notSpam`, `reportSpam` and `unblockRoom`;
-  `rooms?filter=spam` and `filteredCount`; System, Voice, Spam rendered once (qvt).
+- `basic-comms/test/BasicCommsTexts.spec.js`: the transitions `roomBlock`, `blockRoom`, `reportSpam` and `unblockRoom`;
+  `rooms?filter=spam` and `filteredCount`; `BasicComms`: System, Voice, Spam rendered with the other Voice screens (qvt and tui).
 - moqui-core: `chat_push` (a filtered member and a member who blocked the sender get no push); `chat_bridge`
   (`lookup#BridgeNumber` for an adapter with no lookup answers `notSupported`).
 - moqui-channels `tests/twilio.rs`: the lookup's request and its answer on the fake server, and a failure.
@@ -1905,6 +1911,21 @@ Report spam from a group room's menu filters that room for the user, until Unblo
 - [Comms](../docs/tools/Comms.md): Block a person; Spam & blocked.
 - [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): `lookup_number`.
 - The BasicComms README: System, Voice, Spam.
+
+**Status (2026-11-18): built** as designed, with the purge and the XMPP filter above.
+- Files: `SmsSpam.js`, `SmsSpamServices.xml`, `ChatBlocks.js`, `ChatBlockServices.xml` (new); `CallHandling.js`,
+  `CallHandlingServices.xml`, `Sms.js`, `SmsServices.xml`, `Calls.js` (`ring`), `ChatServices.xml` (one-line filters),
+  `ChatBridgeServices.xml`, `XmppServices.xml`, `VoiceEntities.xml`, `ChatEntities.xml`, `VoiceSetupData.xml` (the seeded
+  rules); `chat_bridge.rs` (`lookup_number`, `lookup#BridgeNumber`), `chat_push.rs`, moqui-channels `sms.rs` and
+  `providers/twilio/lookup.rs` (Twilio Lookup v2, not yet tested with Twilio); `Chat.qvue`, `Chat.xml`, `ChatTui.xml`,
+  `ChatScreenServices.xml` (`filteredCount`), `Settings/CallHandling.qvue`, `CallHandling.xml`, `CallHandlingTui.xml`,
+  `Settings/Chat.xml`, `System/Voice/Spam.xml`; `bundled-screens.js`.
+- Tests. Regression: `framework/test/SmsSpam.spec.js` and `ChatBlocks.spec.js` (new), `CallHandling.spec.js` (the
+  Blocked list), `basic-comms` `BasicCommsTexts` (the transitions) and `BasicComms` (System, Voice, Spam in qvt and tui
+  with the other Voice screens); moqui-core `chat_push` (`a_filtered_room_and_a_blocked_sender_push_nothing`),
+  `chat_bridge` (`a_bridge_with_no_number_lookup_answers_not_supported`); moqui-channels `tests/twilio.rs`
+  (`a_twilio_lookup_reads_the_line_type_and_a_failure_is_an_error`). No client spec: the rail's chip, the banner and the
+  menus are not walked in a browser.
 
 #### Phase 10 and later
 

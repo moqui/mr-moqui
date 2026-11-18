@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Blocks in chat (plans/Comms-Messaging.md §18.3 phase 11; docs/tools/Comms.md "Block and spam"): a person blocked in
+    chat (ChatUserBlock), the rooms out of a member's sight (ChatRoomMember.filterEnumId, Spam & blocked), and the room
+    menu's Block. The logic is ChatBlocks.js beside this file. Each service acts on the signed-in user's own blocks and
+    rooms; a room they are not in is "not found". set#MemberFilters is internal. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="block" noun="ChatUser">
+        <description>Block blockedUserId for the signed-in user: their messages are hidden from the user in shared rooms
+            and notify nothing, their calls do not ring the user, they cannot start a direct room with the user or add the
+            user to a room, and the user's one-to-one direct rooms with them go to Spam &amp; blocked. They are told nothing.
+            At most 500.</description>
+        <in-parameters><parameter name="blockedUserId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="blockedUserId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockUser', context))</script></actions>
+    </service>
+
+    <service verb="unblock" noun="ChatUser">
+        <description>Unblock blockedUserId for the signed-in user: their messages show again, and the direct rooms with them
+            come back.</description>
+        <in-parameters><parameter name="blockedUserId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('unblockUser', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="BlockedUsers">
+        <description>The people the signed-in user blocked: blockedList [{userId, name, blockedDate}], by name.</description>
+        <out-parameters><parameter name="blockedList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('findBlocked', context))</script></actions>
+    </service>
+
+    <service verb="block" noun="Room">
+        <description>A room menu's Block, by the room's kind: a pair room's number goes on the user's Blocked list (its
+            calls refused, its texts out of sight), a one-to-one direct room's person is blocked (block#ChatUser), a group
+            text's room is blocked for the user alone. Out: blocked (number, person or room), phoneNumber, blockedUserId;
+            reasonCode notBlockable for another room.</description>
+        <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="blocked"/>
+            <parameter name="phoneNumber"/>
+            <parameter name="blockedUserId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockRoom', context))</script></actions>
+    </service>
+
+    <service verb="unblock" noun="Room">
+        <description>A blocked room's Unblock, as block#Room made it. reasonCode stillBlocked when a prefix on the user's
+            Blocked list still holds the pair room's number.</description>
+        <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('unblockRoom', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="RoomBlock">
+        <description>What a room's banner and menu say for the signed-in user: filtered (spam, blocked or none), blockKind
+            (number, person, room, or none for a room Block does not apply to), its phoneNumber or blockedUserId and
+            blockedName, and personBlocked.</description>
+        <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="filtered"/>
+            <parameter name="blockKind"/>
+            <parameter name="phoneNumber"/>
+            <parameter name="blockedUserId"/>
+            <parameter name="blockedName"/>
+            <parameter name="personBlocked" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('roomBlock', context))</script></actions>
+    </service>
+
+    <service verb="set" noun="MemberFilters" allow-remote="false">
+        <description>Internal: put userId's rooms of chatRoomIdList out of their sight (filterEnumId CmfSpam or CmfBlocked;
+            replace changes another filter too) or back in it (no filterEnumId; onlyFrom takes off only that filter), with one
+            feed change a room (settings, filtered) and the user's counts published. Out: changedRoomIdList.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="chatRoomIdList" type="List" required="true"/>
+            <parameter name="filterEnumId"/>
+            <parameter name="onlyFrom"/>
+            <parameter name="replace" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="changedRoomIdList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('setFilters', context))</script></actions>
+    </service>
+</services>

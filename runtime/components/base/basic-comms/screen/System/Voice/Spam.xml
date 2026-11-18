@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Spam (plans/Comms-Messaging.md §18.3 phase 11; docs/interfaces/SMS.md "Blocked numbers and spam"): the spam
+    filter of texts from outside numbers: on or off, its threshold, the provider's paid number lookup (off by default) with
+    the days an answer is kept and its limit a day; and its rules, each with its weight, whether it is on, and its counts
+    (the texts it matched, and the Not spam and Report spam of their rooms), to add, change, turn off and remove.
+    org.moqui.call.SmsSpamServices get#, update#SpamFilter, store# and delete#SmsSpamRule (VoiceAdmin). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Spam" default-menu-index="12">
+
+    <transition name="updateFilter">
+        <service-call name="org.moqui.call.SmsSpamServices.update#SpamFilter" in-map="{smsSpamFilter:smsSpamFilter || 'N', smsSpamLookup:smsSpamLookup || 'N',
+                smsSpamThreshold:smsSpamThreshold ?? '', smsSpamLookupDays:smsSpamLookupDays ?? '', smsSpamLookupMaxPerDay:smsSpamLookupMaxPerDay ?? ''}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Spam filter saved</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="storeRule">
+        <service-call name="org.moqui.call.SmsSpamServices.store#SmsSpamRule" in-map="{smsSpamRuleId:smsSpamRuleId || '', ruleTypeEnumId:ruleTypeEnumId,
+                pattern:pattern ?? '', weight:weight, description:description ?? ''}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Rule saved</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="toggleRule">
+        <service-call name="org.moqui.call.SmsSpamServices.store#SmsSpamRule" in-map="{smsSpamRuleId:smsSpamRuleId, disabled:disabled}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteRule">
+        <service-call name="org.moqui.call.SmsSpamServices.delete#SmsSpamRule" in-map="{smsSpamRuleId:smsSpamRuleId}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const out = ec.service.sync().name('org.moqui.call.SmsSpamServices.get#SpamFilter').call() || {}
+        const s = out.settings || {}
+        filter = {smsSpamFilter: s.smsSpamFilter === false ? 'N' : 'Y', smsSpamLookup: s.smsSpamLookup ? 'Y' : 'N', smsSpamThreshold: s.smsSpamThreshold,
+            smsSpamLookupDays: s.smsSpamLookupDays, smsSpamLookupMaxPerDay: s.smsSpamLookupMaxPerDay}
+        const types = {}
+        typeOptions = Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'SmsSpamRuleType').orderBy('sequenceNum').disableAuthz().list())
+            .map((e) => { types[e.enumId] = L(e.description); return {key: e.enumId, text: L(e.description)} })
+        ruleList = Array.from(out.ruleList || []).map((r) => Object.assign({}, r, {typeText: types[r.ruleTypeEnumId] || r.ruleTypeEnumId,
+            patternText: r.pattern || '', descriptionText: r.description ? L(r.description) : '', stateText: r.disabled ? L('Off') : L('On'),
+            toggleTo: r.disabled ? 'N' : 'Y', toggleText: r.disabled ? L('Turn on') : L('Turn off'),
+            countsText: ec.resource.expand('${hits} texts, ${notSpam} not spam, ${spam} reported', '', {hits: r.hitCount, notSpam: r.notSpamCount, spam: r.spamCount})}))
+        newRule = {ruleTypeEnumId: 'SsrKeyword', weight: 40}
+    ]]></script></actions>
+
+    <widgets>
+        <container-box><box-header title="Spam filter"/><box-body>
+            <label type="p" text="Texts from outside numbers that score at the threshold go to Spam &amp; blocked in each user's Chat, without notifying them; nothing is dropped. A number someone here knows, trusts or texted with is not judged."
+                    style="text-caption m-muted q-mt-none"/>
+            <form-single name="SpamFilter" transition="updateFilter" map="filter">
+                <field name="smsSpamFilter"><default-field title="Filter"><radio><option key="Y" text="On"/><option key="N" text="Off"/></radio></default-field></field>
+                <field name="smsSpamThreshold"><default-field title="Spam at a score of" tooltip="The sum of the weights of the rules a text matches"><text-line size="6"/></default-field></field>
+                <field name="smsSpamLookup"><default-field title="The provider's number lookup"
+                        tooltip="Paid per number: asked only for a first text from an unknown number when its line type can change the verdict (Twilio Lookup; not yet tested with the provider)">
+                    <radio><option key="N" text="Off"/><option key="Y" text="On"/></radio></default-field></field>
+                <field name="smsSpamLookupDays"><default-field title="Keep a lookup's answer, days"><text-line size="6"/></default-field></field>
+                <field name="smsSpamLookupMaxPerDay"><default-field title="Lookups in a day at most"><text-line size="6"/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Rules"/><box-body>
+            <form-list name="Rules" list="ruleList" skip-form="true" paginate="false">
+                <field name="typeText"><default-field title="Looks for"><display/></default-field></field>
+                <field name="patternText"><default-field title="Pattern"><display/></default-field></field>
+                <field name="weight"><default-field title="Weight"><display/></default-field></field>
+                <field name="descriptionText"><default-field title="Shown as"><display/></default-field></field>
+                <field name="countsText"><default-field title="Counts"><display/></default-field></field>
+                <field name="stateText"><default-field title=""><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="toggleRule" link-type="hidden-form-link" text="${toggleText}" parameter-map="{smsSpamRuleId: smsSpamRuleId, disabled: toggleTo}"/>
+                    <link url="deleteRule" link-type="hidden-form-link" text="Remove" icon="sym_o_delete" confirmation="Remove this rule?"><parameter name="smsSpamRuleId"/></link>
+                </default-field></field>
+            </form-list>
+            <form-single name="NewRule" transition="storeRule" map="newRule">
+                <field name="ruleTypeEnumId"><default-field title="Looks for"><drop-down><list-options list="typeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="pattern"><default-field title="Pattern" tooltip="Words, a host (bit.ly, *.example), a number or a prefix ending in *, a line type (nonFixedVoip)"><text-line size="30"/></default-field></field>
+                <field name="weight"><default-field title="Weight"><text-line size="6"/></default-field></field>
+                <field name="description"><default-field title="Shown as" tooltip="Why a text is spam, in its room's banner"><text-line size="40"/></default-field></field>
+                <field name="submitButton"><default-field title="Add the rule"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

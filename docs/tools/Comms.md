@@ -176,6 +176,22 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   encrypted call is called back encrypted); Home counts the missed calls until the Missed tab is opened, and so does the
   header's Missed calls badge (the theme's `STRT_CALLS_SCREEN`, Calls, Missed, and the shell counts' `calls`: basic-comms
   seeds both, with the tray's Chat and Dialer tabs and the Mail button, and IronStone's theme rows replace them).
+- **Block and spam** (plans/Comms-Messaging.md §18.3 phase 11). The rail's **Spam & blocked** chip lists the rooms out
+  of your sight: a phone room the spam filter took, and a room you blocked. They notify nothing and count nothing; the
+  room opens with a banner in place of the composer: Not spam and Report spam, or Unblock.
+  - *A number.* Block in a phone room's menu, or Settings, Call handling, Blocked numbers (a number or a prefix ending
+    in `*`): its calls are refused and its texts go to Spam & blocked. In a group text Block blocks that conversation
+    only; one number's block does not hide its texts there. Report spam blocks the number and puts the room in Spam
+    for your teammates on the same number. Filter spam texts (Settings, Call handling) turns the filter off for you
+    ([SMS, Blocked numbers and spam](../interfaces/SMS.md#blocked-numbers-and-spam)).
+  - *A person.* Block in a direct chat's menu, a member's menu, or Settings, Chat, Blocked people (Unblock there). Their
+    messages are hidden in shared rooms (one quiet line says so) and notify nothing, mention you in nothing and count
+    nothing; their typing does not show and their calls do not ring you; they cannot start a direct chat with you or
+    add you to a room, and are told only that you are not found; your direct chat with them goes to Spam & blocked,
+    where it shows everything. Your XMPP sessions follow it for new messages and history. A chat block is not a mail
+    block (the Inbox's Block), and neither stops the other.
+  - *Not covered.* A blocked person's reactions and poll votes still count in the totals; the XMPP blocklist of your
+    XMPP app (XEP-0191) is its own.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its

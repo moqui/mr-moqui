@@ -3905,6 +3905,13 @@ const roomTemplate = `
                             <q-item-section>{{archivedByMe ? t('Unarchive') : t('Archive')}}</q-item-section></q-item>
                         <q-item clickable v-close-popup @click="markRead(true)">
                             <q-item-section avatar><q-icon name="sym_o_done_all"></q-icon></q-item-section><q-item-section>{{t('Mark as read')}}</q-item-section></q-item>
+                        <template v-if="block && block.blockKind">
+                            <q-item clickable v-close-popup class="m-chat-block-item" @click="blockAction(filtered === 'blocked' ? 'unblockRoom' : 'blockRoom')">
+                                <q-item-section avatar><q-icon name="sym_o_block"></q-icon></q-item-section>
+                                <q-item-section>{{filtered === 'blocked' ? t('Unblock') : blockLabel}}</q-item-section></q-item>
+                            <q-item v-if="block.blockKind !== 'person' && filtered !== 'blocked'" clickable v-close-popup class="m-chat-report-item" @click="blockAction('reportSpam')">
+                                <q-item-section avatar><q-icon name="sym_o_report"></q-icon></q-item-section><q-item-section>{{t('Report spam')}}</q-item-section></q-item>
+                        </template>
                         <q-separator></q-separator>
                     </template>
                     <template v-if="canCall && compact">
@@ -3994,6 +4001,8 @@ const roomTemplate = `
                             <div v-else-if="item.kind === 'system'" class="text-center text-caption m-muted q-py-xs q-px-md" :class="item.target ? 'cursor-pointer' : ''"
                                     :id="domId(item.eventSeq, false)" @click="item.target ? jumpTo(item.target) : null">
                                 <q-icon :name="item.icon" size="14px" class="q-mr-xs"></q-icon>{{item.text}} · {{item.time}}</div>
+                            <div v-else-if="item.kind === 'hidden'" class="text-center text-caption m-muted q-py-xs q-px-md m-chat-hidden">
+                                <q-icon name="sym_o_block" size="14px" class="q-mr-xs"></q-icon>{{t('Hidden: a message from someone you blocked')}}</div>
                             <chat-message v-else :item="item" :room="self"></chat-message>
                         </template>
                         <div v-if="gapAfter && !hasMoreAfter" class="text-center text-caption m-muted q-py-sm m-chat-gap" data-gap="after">
@@ -4016,6 +4025,18 @@ const roomTemplate = `
                     <q-banner v-else-if="access.canJoin" dense rounded class="text-caption"><template v-slot:avatar><q-icon name="sym_o_visibility" color="info"></q-icon></template>
                         {{t('You are reading this room. Join it to post and to hear of its messages.')}}
                         <template v-slot:action><q-btn dense unelevated no-caps color="primary" :label="t('Join')" @click="join"></q-btn></template></q-banner>
+                    <!-- a room in Spam & blocked: why, and Not spam, Report spam or Unblock in place of the composer -->
+                    <q-banner v-else-if="filtered" dense rounded class="text-caption m-tonal m-chat-filtered" :data-filtered="filtered">
+                        <template v-slot:avatar><q-icon :name="filtered === 'spam' ? 'sym_o_report' : 'sym_o_block'" color="warning"></q-icon></template>
+                        <div>{{filteredText}}</div>
+                        <div v-if="filtered === 'spam' && block && block.reasons && block.reasons.length" class="m-muted">{{t('Why')}}: {{block.reasons.join(', ')}}</div>
+                        <template v-slot:action>
+                            <template v-if="filtered === 'spam'">
+                                <q-btn dense flat no-caps color="primary" class="m-chat-not-spam" :label="t('Not spam')" @click="blockAction('notSpam')"></q-btn>
+                                <q-btn dense flat no-caps color="negative" class="m-chat-report-spam" :label="t('Report spam')" @click="blockAction('reportSpam')"></q-btn>
+                            </template>
+                            <q-btn v-else dense flat no-caps color="primary" class="m-chat-unblock" :label="t('Unblock')" @click="blockAction('unblockRoom')"></q-btn>
+                        </template></q-banner>
                     <chat-composer v-else-if="access.canPost" :room="self" :placeholder="composerPlaceholder"></chat-composer>
                 </div>
             </template>
@@ -4192,15 +4213,20 @@ const roomTemplate = `
                             <q-chip v-if="person.external" dense square icon="sym_o_hub" class="m-tonal text-info m-chat-external">{{person.networkName || t('Outside')}}</q-chip>
                             <q-chip v-if="person.roleEnumId === 'CmrOwner' && !isDirect" dense square class="m-tonal">{{t('Owner')}}</q-chip>
                             <q-chip v-else-if="person.roleEnumId === 'CmrModerator'" dense square class="m-tonal text-info">{{t('Moderator')}}</q-chip>
-                            <q-btn v-if="canModerate && person.userId !== me.userId && (isOwner || person.roleEnumId !== 'CmrOwner')" flat round dense size="sm" icon="sym_o_more_vert" :aria-label="t('Member')">
+                            <q-btn v-if="person.userId !== me.userId && (canModerate && (isOwner || person.roleEnumId !== 'CmrOwner') || (person.userId && !person.isAgent))" flat round dense size="sm" icon="sym_o_more_vert" :aria-label="t('Member')">
                                 <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:200px">
-                                    <template v-if="!person.external">
-                                        <q-item v-if="person.roleEnumId !== 'CmrModerator'" clickable v-close-popup @click="setRole(person, 'CmrModerator')"><q-item-section>{{t('Make a moderator')}}</q-item-section></q-item>
-                                        <q-item v-if="person.roleEnumId !== 'CmrMember'" clickable v-close-popup @click="setRole(person, 'CmrMember')"><q-item-section>{{t('Make a member')}}</q-item-section></q-item>
-                                        <q-item v-if="isOwner && person.roleEnumId !== 'CmrOwner'" clickable v-close-popup @click="setRole(person, 'CmrOwner')"><q-item-section>{{t('Make an owner')}}</q-item-section></q-item>
-                                        <q-separator></q-separator>
+                                    <template v-if="canModerate && (isOwner || person.roleEnumId !== 'CmrOwner')">
+                                        <template v-if="!person.external">
+                                            <q-item v-if="person.roleEnumId !== 'CmrModerator'" clickable v-close-popup @click="setRole(person, 'CmrModerator')"><q-item-section>{{t('Make a moderator')}}</q-item-section></q-item>
+                                            <q-item v-if="person.roleEnumId !== 'CmrMember'" clickable v-close-popup @click="setRole(person, 'CmrMember')"><q-item-section>{{t('Make a member')}}</q-item-section></q-item>
+                                            <q-item v-if="isOwner && person.roleEnumId !== 'CmrOwner'" clickable v-close-popup @click="setRole(person, 'CmrOwner')"><q-item-section>{{t('Make an owner')}}</q-item-section></q-item>
+                                            <q-separator></q-separator>
+                                        </template>
+                                        <q-item clickable v-close-popup @click="removeMember(person)"><q-item-section class="text-negative">{{t('Take out of the room')}}</q-item-section></q-item>
                                     </template>
-                                    <q-item clickable v-close-popup @click="removeMember(person)"><q-item-section class="text-negative">{{t('Take out of the room')}}</q-item-section></q-item>
+                                    <!-- block a person in chat (Comms-Messaging §18.3 phase 11; unblock in Settings, Chat) -->
+                                    <q-item v-if="person.userId && !person.isAgent" clickable v-close-popup class="m-chat-block-person" @click="blockPerson(person)">
+                                        <q-item-section>{{fill(t('Block {name}'), { name: person.name || person.userId })}}</q-item-section></q-item>
                                 </q-list></q-menu>
                             </q-btn>
                         </q-item-section>
@@ -4477,7 +4503,7 @@ const chatRoom = {
     data() {
         roomCount += 1;
         return {
-            uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {},
+            uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {}, block: null,
             events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false }, editing: null, replyTo: null, side: null,
@@ -4518,6 +4544,20 @@ const chatRoom = {
         callees() { return this.members.filter((person) => person.userId && !person.isAgent && person.userId !== (this.me && this.me.userId)); },
         isMember() { return !!this.access.isMember; },
         canPost() { return !!this.access.canPost; },
+        // Spam & blocked (Comms-Messaging §18.3 phase 11): my room's filter (spam, blocked), what the banner says, the menu's Block
+        filtered() { return this.member && this.member.filterEnumId ? ({ CmfSpam: 'spam', CmfBlocked: 'blocked' })[this.member.filterEnumId] || null : null; },
+        filteredText() {
+            if (this.filtered === 'spam') return t('This conversation looks like spam. It does not notify you, and its links do not open.');
+            const kind = this.block && this.block.blockKind;
+            if (kind === 'person') return fill(t('You blocked {name}. Their messages do not notify you; unblock them to write here.'), { name: this.block.blockedName || '' });
+            if (kind === 'number') return t('You blocked this number: its texts do not notify you and its calls are refused.');
+            return t('You blocked this conversation: it does not notify you.');
+        },
+        blockLabel() {
+            const kind = this.block && this.block.blockKind;
+            if (kind === 'person') return fill(t('Block {name}'), { name: this.block.blockedName || '' });
+            return kind === 'number' ? t('Block this number') : t('Block this conversation');
+        },
         canModerate() { return !!this.access.canModerate; },
         isOwner() { return !!this.access.isOwner; },
         roomBridges() { return (this.room && this.room.bridges) || []; },
@@ -4670,6 +4710,7 @@ const chatRoom = {
     },
     methods: {
         t,
+        fill,
         shortWhen,
         sizeText,
         isImage,
@@ -4869,6 +4910,13 @@ const chatRoom = {
                     dividerPlaced = true;
                     prev = null;
                 }
+                // a message of someone the user blocked: one quiet line for a run of them (Comms-Messaging §18.3 phase 11)
+                if (event.hidden) {
+                    const last = out[out.length - 1];
+                    if (!last || last.kind !== 'hidden') out.push({ kind: 'hidden', key: 'h' + event.eventSeq, eventSeq: event.eventSeq });
+                    prev = null;
+                    continue;
+                }
                 if (event.type !== 'message') {
                     const words = systemText(event, (id) => this.nameOf(id));
                     out.push({ kind: 'system', key: 'e' + event.eventSeq, eventSeq: event.eventSeq, text: words[0], icon: words[1], time: timeText(sent),
@@ -4944,6 +4992,31 @@ const chatRoom = {
             this.members.forEach((person) => { if (person.name) this.names[person.userId] = person.name; });
             if (moqui.chat) moqui.chat.watchUsers(this.members.map((person) => person.userId));
             this.loadTrust();
+            this.loadBlock();
+        },
+        // what Block blocks and why a room is in Spam (roomBlock): for a phone room or a direct chat
+        loadBlock() {
+            const type = this.room && this.room.roomTypeEnumId;
+            if (!(type === 'CrtExternal' || type === 'CrtDirect') || noConnection()) { this.block = null; return; }
+            const roomId = this.roomId;
+            this.get('roomBlock', { chatRoomId: roomId }).then((json) => { if (roomId === this.roomId) this.block = json && json.blockKind !== undefined ? json : null; },
+                () => { this.block = null; });
+        },
+        // Block, Unblock, Not spam and Report spam; the room and the rail read again
+        blockAction(name) {
+            if (needsConnection()) return;
+            const run = () => this.post(name, { chatRoomId: this.roomId }).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {});
+            if (name === 'reportSpam') return this.confirm(t('Report spam?'), this.block && this.block.blockKind === 'number'
+                ? t('The number is blocked for you: its texts go to Spam & blocked and its calls are refused.') : t('The conversation is blocked for you.'), t('Report spam'), true).then(run);
+            if (name === 'blockRoom') return this.confirm(this.blockLabel + '?', this.block && this.block.blockKind === 'person'
+                ? t('Their messages are hidden from you and do not notify you; they are not told.') : t('Its texts go to Spam & blocked and do not notify you; calls from a number are refused.'),
+                t('Block'), true).then(run);
+            return run();
+        },
+        blockPerson(person) {
+            if (needsConnection()) return;
+            this.confirm(fill(t('Block {name}?'), { name: person.name || person.userId }), t('Their messages are hidden from you and do not notify you; they are not told.'),
+                t('Block'), true).then(() => this.post('blockUser', { userId: person.userId }).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {}));
         },
         reloadMeta() {
             return this.get('room', { chatRoomId: this.roomId }).then((json) => { if (json.room) this.applyMeta(json); }, () => {});
@@ -5794,6 +5867,8 @@ const chatRoom = {
             if (!link) return;
             const href = link.getAttribute('href') || '';
             event.preventDefault();
+            // a room in Spam: its links do not open (Not spam first)
+            if (this.filtered === 'spam') return;
             const origin = window.location.origin;
             const local = href.indexOf(origin + '/qapps') === 0 ? href.slice(origin.length) : href;
             if (local.indexOf('/qapps') === 0) this.$root.setUrl(local);
@@ -6407,7 +6482,7 @@ module.exports = {
     components: { 'chat-room': chatRoom },
     data() {
         return {
-            loaded: false, height: 600, me: {}, prefs: {}, rooms: [], filter: 'all', search: '', drafts: {}, roomId: null, seq: null, thread: null,
+            loaded: false, height: 600, me: {}, prefs: {}, rooms: [], spamRooms: [], filteredCount: 0, filter: 'all', search: '', drafts: {}, roomId: null, seq: null, thread: null,
             newDirect: { open: false, userIds: [], busy: false, name: '', fromNumber: '', numbers: [] }, newRoom: { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false },
             browse: { open: false, search: '', list: [], loading: false },
             // the folded groups of the rail, by key (kept per user: foldKey), the Activity or Threads feed and each direct
@@ -6456,6 +6531,7 @@ module.exports = {
                 { value: 'activity', label: t('Activity') }, { value: 'threads', label: t('Threads') },
                 { value: 'direct', label: t('Direct') }, { value: 'rooms', label: t('Rooms') }, { value: 'records', label: t('Records') }]
                 .concat(phone || this.filter === 'phone' ? [{ value: 'phone', label: t('Phone') }] : [])
+                .concat(this.filteredCount || this.filter === 'spam' ? [{ value: 'spam', label: t('Spam & blocked'), count: this.filteredCount }] : [])
                 .concat(archived || this.filter === 'archived' ? [{ value: 'archived', label: t('Archived'), count: archived }] : []);
         },
         // Activity and Threads replace the rooms in the rail, until a search there finds rooms
@@ -6465,10 +6541,11 @@ module.exports = {
         mailLabel() { return moqui.chat.e2eeLabel({ mail: true }); },
         shownRooms() {
             const text = String(this.search || '').trim().toLowerCase();
-            return this.rooms.filter((room) => {
+            // Spam & blocked: the rooms out of sight, read when the chip is chosen (rooms?filter=spam)
+            return (this.filter === 'spam' ? this.spamRooms : this.rooms).filter((room) => {
                 const counts = this.countsOf(room);
                 // my own archive (ChatRoomMember.archivedEventSeq): only under Archived, or found by a search
-                if (this.filter === 'archived' ? !this.archivedByMe(room) : (!text && this.archivedByMe(room))) return false;
+                if (this.filter !== 'spam' && (this.filter === 'archived' ? !this.archivedByMe(room) : (!text && this.archivedByMe(room)))) return false;
                 if (this.filter === 'unread' && !(counts.unread || counts.mentions)) return false;
                 if (this.filter === 'mentions' && !counts.mentions) return false;
                 if (this.filter === 'direct' && room.roomTypeEnumId !== 'CrtDirect') return false;
@@ -6508,7 +6585,7 @@ module.exports = {
     },
     watch: {
         // Activity and Threads read their feed when shown
-        filter(value) { if (value === 'activity' || value === 'threads') this.loadFeed(false); },
+        filter(value) { if (value === 'activity' || value === 'threads') this.loadFeed(false); if (value === 'spam') this.loadSpam(); },
         // a room change opens that room; the screen is not remounted for it
         '$root.currentParameters': { handler() { if (this.isCurrent()) this.applyParams(); }, deep: true }
     },
@@ -6726,6 +6803,8 @@ module.exports = {
                 this.me = json.me || {};
                 this.prefs = json.prefs || {};
                 this.rooms = json.roomList || [];
+                this.filteredCount = Number(json.filteredCount || 0);
+                if (this.filter === 'spam') this.loadSpam();
                 // a phone room's numbers by their names: the phone's contacts, the apps' call-context (plans/Comms-Messaging.md §9)
                 if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 if (moqui.chat) this.rooms.forEach((room) => {
@@ -6772,6 +6851,13 @@ module.exports = {
             }, () => { pending.busy = false; });
         },
         scheduleRooms() { clearTimeout(this.roomsTimer); this.roomsTimer = setTimeout(() => this.loadRooms(), 400); },
+        // the rooms in Spam & blocked (find#Rooms filter spam), named as the rail's are
+        loadSpam() {
+            return this.get('rooms', { filter: 'spam' }).then((json) => {
+                this.spamRooms = json.roomList || [];
+                if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.spamRooms);
+            }, () => {});
+        },
         sortRooms() {
             this.rooms.sort((left, right) => {
                 if (left.isMember !== right.isMember) return left.isMember ? -1 : 1;
@@ -7608,9 +7694,24 @@ module.exports = {
                                                               class: "m-muted q-ml-xs"
                                                             }))
                                                           : _createCommentVNode("", true),
+                                                        (room.filtered)
+                                                          ? (_openBlock(), _createBlock(_component_q_chip, {
+                                                              key: 1,
+                                                              dense: "",
+                                                              square: "",
+                                                              size: "sm",
+                                                              class: "m-tonal text-warning q-my-none q-ml-xs m-chat-filtered-chip",
+                                                              "data-filtered": room.filtered
+                                                            }, {
+                                                              default: _withCtx(() => [
+                                                                _createTextVNode(_toDisplayString(room.filtered === 'blocked' ? _ctx.t('Blocked') : _ctx.t('Spam')), 1)
+                                                              ]),
+                                                              _: 2
+                                                            }, 1032, ["data-filtered"]))
+                                                          : _createCommentVNode("", true),
                                                         (_ctx.labelOf(room).lock)
                                                           ? (_openBlock(), _createBlock(_component_q_icon, {
-                                                              key: 1,
+                                                              key: 2,
                                                               name: "sym_o_lock",
                                                               size: "12px",
                                                               class: "q-ml-xs text-positive m-chat-e2ee-lock",
@@ -7630,7 +7731,7 @@ module.exports = {
                                                           : _createCommentVNode("", true),
                                                         (room.bridged)
                                                           ? (_openBlock(), _createBlock(_component_q_icon, {
-                                                              key: 2,
+                                                              key: 3,
                                                               name: room.notConnected ? 'sym_o_link_off' : 'sym_o_hub',
                                                               size: "12px",
                                                               class: _normalizeClass(["q-ml-xs", room.notConnected ? 'text-warning' : 'm-muted']),
@@ -8802,6 +8903,59 @@ module.exports = {
                                               }, 8, ["onClick"])), [
                                                 [_directive_close_popup]
                                               ]),
+                                              (_ctx.block && _ctx.block.blockKind)
+                                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                    _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                      clickable: "",
+                                                      class: "m-chat-block-item",
+                                                      onClick: $event => (_ctx.blockAction(_ctx.filtered === 'blocked' ? 'unblockRoom' : 'blockRoom'))
+                                                    }, {
+                                                      default: _withCtx(() => [
+                                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                          default: _withCtx(() => [
+                                                            _createVNode(_component_q_icon, { name: "sym_o_block" })
+                                                          ]),
+                                                          _: 1
+                                                        }),
+                                                        _createVNode(_component_q_item_section, null, {
+                                                          default: _withCtx(() => [
+                                                            _createTextVNode(_toDisplayString(_ctx.filtered === 'blocked' ? _ctx.t('Unblock') : _ctx.blockLabel), 1)
+                                                          ]),
+                                                          _: 1
+                                                        })
+                                                      ]),
+                                                      _: 1
+                                                    }, 8, ["onClick"])), [
+                                                      [_directive_close_popup]
+                                                    ]),
+                                                    (_ctx.block.blockKind !== 'person' && _ctx.filtered !== 'blocked')
+                                                      ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                          key: 0,
+                                                          clickable: "",
+                                                          class: "m-chat-report-item",
+                                                          onClick: $event => (_ctx.blockAction('reportSpam'))
+                                                        }, {
+                                                          default: _withCtx(() => [
+                                                            _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                              default: _withCtx(() => [
+                                                                _createVNode(_component_q_icon, { name: "sym_o_report" })
+                                                              ]),
+                                                              _: 1
+                                                            }),
+                                                            _createVNode(_component_q_item_section, null, {
+                                                              default: _withCtx(() => [
+                                                                _createTextVNode(_toDisplayString(_ctx.t('Report spam')), 1)
+                                                              ]),
+                                                              _: 1
+                                                            })
+                                                          ]),
+                                                          _: 1
+                                                        }, 8, ["onClick"])), [
+                                                          [_directive_close_popup]
+                                                        ])
+                                                      : _createCommentVNode("", true)
+                                                  ], 64))
+                                                : _createCommentVNode("", true),
                                               _createVNode(_component_q_separator)
                                             ], 64))
                                           : _createCommentVNode("", true),
@@ -9310,11 +9464,23 @@ module.exports = {
                                                       }, null, 8, ["name"]),
                                                       _createTextVNode(_toDisplayString(item.text) + " · " + _toDisplayString(item.time), 1)
                                                     ], 10, ["id", "onClick"]))
-                                                  : (_openBlock(), _createBlock(_component_chat_message, {
-                                                      key: 3,
-                                                      item: item,
-                                                      room: _ctx.self
-                                                    }, null, 8, ["item", "room"]))
+                                                  : (item.kind === 'hidden')
+                                                    ? (_openBlock(), _createElementBlock("div", {
+                                                        key: 3,
+                                                        class: "text-center text-caption m-muted q-py-xs q-px-md m-chat-hidden"
+                                                      }, [
+                                                        _createVNode(_component_q_icon, {
+                                                          name: "sym_o_block",
+                                                          size: "14px",
+                                                          class: "q-mr-xs"
+                                                        }),
+                                                        _createTextVNode(_toDisplayString(_ctx.t('Hidden: a message from someone you blocked')), 1)
+                                                      ]))
+                                                    : (_openBlock(), _createBlock(_component_chat_message, {
+                                                        key: 4,
+                                                        item: item,
+                                                        room: _ctx.self
+                                                      }, null, 8, ["item", "room"]))
                                           ], 64))
                                         }), 128)),
                                         (_ctx.gapAfter && !_ctx.hasMoreAfter)
@@ -9467,13 +9633,71 @@ module.exports = {
                                               ]),
                                               _: 1
                                             }))
-                                          : (_ctx.access.canPost)
-                                            ? (_openBlock(), _createBlock(_component_chat_composer, {
+                                          : (_ctx.filtered)
+                                            ? (_openBlock(), _createBlock(_component_q_banner, {
                                                 key: 3,
-                                                room: _ctx.self,
-                                                placeholder: _ctx.composerPlaceholder
-                                              }, null, 8, ["room", "placeholder"]))
-                                            : _createCommentVNode("", true)
+                                                dense: "",
+                                                rounded: "",
+                                                class: "text-caption m-tonal m-chat-filtered",
+                                                "data-filtered": _ctx.filtered
+                                              }, {
+                                                avatar: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: _ctx.filtered === 'spam' ? 'sym_o_report' : 'sym_o_block',
+                                                    color: "warning"
+                                                  }, null, 8, ["name"])
+                                                ]),
+                                                action: _withCtx(() => [
+                                                  (_ctx.filtered === 'spam')
+                                                    ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                        _createVNode(_component_q_btn, {
+                                                          dense: "",
+                                                          flat: "",
+                                                          "no-caps": "",
+                                                          color: "primary",
+                                                          class: "m-chat-not-spam",
+                                                          label: _ctx.t('Not spam'),
+                                                          onClick: $event => (_ctx.blockAction('notSpam'))
+                                                        }, null, 8, ["label", "onClick"]),
+                                                        _createVNode(_component_q_btn, {
+                                                          dense: "",
+                                                          flat: "",
+                                                          "no-caps": "",
+                                                          color: "negative",
+                                                          class: "m-chat-report-spam",
+                                                          label: _ctx.t('Report spam'),
+                                                          onClick: $event => (_ctx.blockAction('reportSpam'))
+                                                        }, null, 8, ["label", "onClick"])
+                                                      ], 64))
+                                                    : (_openBlock(), _createBlock(_component_q_btn, {
+                                                        key: 1,
+                                                        dense: "",
+                                                        flat: "",
+                                                        "no-caps": "",
+                                                        color: "primary",
+                                                        class: "m-chat-unblock",
+                                                        label: _ctx.t('Unblock'),
+                                                        onClick: $event => (_ctx.blockAction('unblockRoom'))
+                                                      }, null, 8, ["label", "onClick"]))
+                                                ]),
+                                                default: _withCtx(() => [
+                                                  _createElementVNode("div", null, _toDisplayString(_ctx.filteredText), 1),
+                                                  (_ctx.filtered === 'spam' && _ctx.block && _ctx.block.reasons && _ctx.block.reasons.length)
+                                                    ? (_openBlock(), _createElementBlock("div", {
+                                                        key: 0,
+                                                        class: "m-muted"
+                                                      }, _toDisplayString(_ctx.t('Why')) + ": " + _toDisplayString(_ctx.block.reasons.join(', ')), 1))
+                                                    : _createCommentVNode("", true)
+                                                ]),
+                                                _: 1
+                                              }, 8, ["data-filtered"]))
+                                            : (_ctx.access.canPost)
+                                              ? (_openBlock(), _createBlock(_component_chat_composer, {
+                                                  key: 4,
+                                                  room: _ctx.self,
+                                                  placeholder: _ctx.composerPlaceholder
+                                                }, null, 8, ["room", "placeholder"]))
+                                              : _createCommentVNode("", true)
                                     ])
                                   ], 64))
                       ], 512), [
@@ -10465,7 +10689,7 @@ module.exports = {
                                                                     _: 1
                                                                   }))
                                                                 : _createCommentVNode("", true),
-                                                            (_ctx.canModerate && person.userId !== _ctx.me.userId && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner'))
+                                                            (person.userId !== _ctx.me.userId && (_ctx.canModerate && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner') || (person.userId && !person.isAgent)))
                                                               ? (_openBlock(), _createBlock(_component_q_btn, {
                                                                   key: 4,
                                                                   flat: "",
@@ -10486,84 +10710,108 @@ module.exports = {
                                                                           style: {"min-width":"200px"}
                                                                         }, {
                                                                           default: _withCtx(() => [
-                                                                            (!person.external)
+                                                                            (_ctx.canModerate && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner'))
                                                                               ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                                                                                  (person.roleEnumId !== 'CmrModerator')
-                                                                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                        key: 0,
-                                                                                        clickable: "",
-                                                                                        onClick: $event => (_ctx.setRole(person, 'CmrModerator'))
-                                                                                      }, {
+                                                                                  (!person.external)
+                                                                                    ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                                                        (person.roleEnumId !== 'CmrModerator')
+                                                                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                              key: 0,
+                                                                                              clickable: "",
+                                                                                              onClick: $event => (_ctx.setRole(person, 'CmrModerator'))
+                                                                                            }, {
+                                                                                              default: _withCtx(() => [
+                                                                                                _createVNode(_component_q_item_section, null, {
+                                                                                                  default: _withCtx(() => [
+                                                                                                    _createTextVNode(_toDisplayString(_ctx.t('Make a moderator')), 1)
+                                                                                                  ]),
+                                                                                                  _: 1
+                                                                                                })
+                                                                                              ]),
+                                                                                              _: 1
+                                                                                            }, 8, ["onClick"])), [
+                                                                                              [_directive_close_popup]
+                                                                                            ])
+                                                                                          : _createCommentVNode("", true),
+                                                                                        (person.roleEnumId !== 'CmrMember')
+                                                                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                              key: 1,
+                                                                                              clickable: "",
+                                                                                              onClick: $event => (_ctx.setRole(person, 'CmrMember'))
+                                                                                            }, {
+                                                                                              default: _withCtx(() => [
+                                                                                                _createVNode(_component_q_item_section, null, {
+                                                                                                  default: _withCtx(() => [
+                                                                                                    _createTextVNode(_toDisplayString(_ctx.t('Make a member')), 1)
+                                                                                                  ]),
+                                                                                                  _: 1
+                                                                                                })
+                                                                                              ]),
+                                                                                              _: 1
+                                                                                            }, 8, ["onClick"])), [
+                                                                                              [_directive_close_popup]
+                                                                                            ])
+                                                                                          : _createCommentVNode("", true),
+                                                                                        (_ctx.isOwner && person.roleEnumId !== 'CmrOwner')
+                                                                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                              key: 2,
+                                                                                              clickable: "",
+                                                                                              onClick: $event => (_ctx.setRole(person, 'CmrOwner'))
+                                                                                            }, {
+                                                                                              default: _withCtx(() => [
+                                                                                                _createVNode(_component_q_item_section, null, {
+                                                                                                  default: _withCtx(() => [
+                                                                                                    _createTextVNode(_toDisplayString(_ctx.t('Make an owner')), 1)
+                                                                                                  ]),
+                                                                                                  _: 1
+                                                                                                })
+                                                                                              ]),
+                                                                                              _: 1
+                                                                                            }, 8, ["onClick"])), [
+                                                                                              [_directive_close_popup]
+                                                                                            ])
+                                                                                          : _createCommentVNode("", true),
+                                                                                        _createVNode(_component_q_separator)
+                                                                                      ], 64))
+                                                                                    : _createCommentVNode("", true),
+                                                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                    clickable: "",
+                                                                                    onClick: $event => (_ctx.removeMember(person))
+                                                                                  }, {
+                                                                                    default: _withCtx(() => [
+                                                                                      _createVNode(_component_q_item_section, { class: "text-negative" }, {
                                                                                         default: _withCtx(() => [
-                                                                                          _createVNode(_component_q_item_section, null, {
-                                                                                            default: _withCtx(() => [
-                                                                                              _createTextVNode(_toDisplayString(_ctx.t('Make a moderator')), 1)
-                                                                                            ]),
-                                                                                            _: 1
-                                                                                          })
+                                                                                          _createTextVNode(_toDisplayString(_ctx.t('Take out of the room')), 1)
                                                                                         ]),
                                                                                         _: 1
-                                                                                      }, 8, ["onClick"])), [
-                                                                                        [_directive_close_popup]
-                                                                                      ])
-                                                                                    : _createCommentVNode("", true),
-                                                                                  (person.roleEnumId !== 'CmrMember')
-                                                                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                        key: 1,
-                                                                                        clickable: "",
-                                                                                        onClick: $event => (_ctx.setRole(person, 'CmrMember'))
-                                                                                      }, {
-                                                                                        default: _withCtx(() => [
-                                                                                          _createVNode(_component_q_item_section, null, {
-                                                                                            default: _withCtx(() => [
-                                                                                              _createTextVNode(_toDisplayString(_ctx.t('Make a member')), 1)
-                                                                                            ]),
-                                                                                            _: 1
-                                                                                          })
-                                                                                        ]),
-                                                                                        _: 1
-                                                                                      }, 8, ["onClick"])), [
-                                                                                        [_directive_close_popup]
-                                                                                      ])
-                                                                                    : _createCommentVNode("", true),
-                                                                                  (_ctx.isOwner && person.roleEnumId !== 'CmrOwner')
-                                                                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                        key: 2,
-                                                                                        clickable: "",
-                                                                                        onClick: $event => (_ctx.setRole(person, 'CmrOwner'))
-                                                                                      }, {
-                                                                                        default: _withCtx(() => [
-                                                                                          _createVNode(_component_q_item_section, null, {
-                                                                                            default: _withCtx(() => [
-                                                                                              _createTextVNode(_toDisplayString(_ctx.t('Make an owner')), 1)
-                                                                                            ]),
-                                                                                            _: 1
-                                                                                          })
-                                                                                        ]),
-                                                                                        _: 1
-                                                                                      }, 8, ["onClick"])), [
-                                                                                        [_directive_close_popup]
-                                                                                      ])
-                                                                                    : _createCommentVNode("", true),
-                                                                                  _createVNode(_component_q_separator)
+                                                                                      })
+                                                                                    ]),
+                                                                                    _: 1
+                                                                                  }, 8, ["onClick"])), [
+                                                                                    [_directive_close_popup]
+                                                                                  ])
                                                                                 ], 64))
                                                                               : _createCommentVNode("", true),
-                                                                            _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                              clickable: "",
-                                                                              onClick: $event => (_ctx.removeMember(person))
-                                                                            }, {
-                                                                              default: _withCtx(() => [
-                                                                                _createVNode(_component_q_item_section, { class: "text-negative" }, {
+                                                                            (person.userId && !person.isAgent)
+                                                                              ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                  key: 1,
+                                                                                  clickable: "",
+                                                                                  class: "m-chat-block-person",
+                                                                                  onClick: $event => (_ctx.blockPerson(person))
+                                                                                }, {
                                                                                   default: _withCtx(() => [
-                                                                                    _createTextVNode(_toDisplayString(_ctx.t('Take out of the room')), 1)
+                                                                                    _createVNode(_component_q_item_section, null, {
+                                                                                      default: _withCtx(() => [
+                                                                                        _createTextVNode(_toDisplayString(_ctx.fill(_ctx.t('Block {name}'), { name: person.name || person.userId })), 1)
+                                                                                      ]),
+                                                                                      _: 2
+                                                                                    }, 1024)
                                                                                   ]),
-                                                                                  _: 1
-                                                                                })
-                                                                              ]),
-                                                                              _: 1
-                                                                            }, 8, ["onClick"])), [
-                                                                              [_directive_close_popup]
-                                                                            ])
+                                                                                  _: 2
+                                                                                }, 1032, ["onClick"])), [
+                                                                                  [_directive_close_popup]
+                                                                                ])
+                                                                              : _createCommentVNode("", true)
                                                                           ]),
                                                                           _: 2
                                                                         }, 1024)
