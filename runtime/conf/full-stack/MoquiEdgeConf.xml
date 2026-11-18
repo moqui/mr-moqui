@@ -90,9 +90,9 @@
     <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS: a network's webhook URL is a name through the front, as /channels/{chatBridgeId}/webhook on
-        the member's chat address (channels_public_url on the local node), which the member gives the front as a
+        the member's chat address (channels@public-url on the local node), which the member gives the front as a
         terminate host; any member takes it and queues it once. -->
-    <default-property name="channels_webhooks_enabled" value="true"/>
+    <channels webhooks-enabled="true"/>
 
     <!-- Calls and SIP, as in conf/edge-cluster, never through the front: rtc_public_address, turn_public_host and
         sip_public_address per member in .env, each at the member's own public address (turn_public_host a name with its

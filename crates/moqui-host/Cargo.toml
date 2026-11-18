@@ -99,7 +99,7 @@ speech-local = []
 sip = ["rtc", "dep:moqui-sip"]
 # Business messaging channels (crates/moqui-channels, plans/archive/Comms-Framework.md §4.3, docs/interfaces/SMS.md): the SMS chat
 # bridge adapters, one for each provider (Telnyx's is sms). The /channels/ routes (src/channels.rs) are in every build with axum and answer only when
-# channels_webhooks_enabled is true; without this feature no adapter answers them. In Maximal and Enterprise; not Lite.
+# channels@webhooks-enabled is true; without this feature no adapter answers them. In Maximal and Enterprise; not Lite.
 channels = ["dep:moqui-channels"]
 # XMPP for local users (crates/moqui-xmpp, plans/archive/Comms-Framework.md §4.3 C3a, docs/interfaces/XMPP.md): the listeners
 # (src/xmpp/), /xmpp-websocket and /xmpp-upload/ on the HTTP listener. It starts only when xmpp_domain is set. In Maximal,

@@ -69,8 +69,8 @@
     <!-- Chat bridges and SMS (docs/interfaces/SMS.md): a network's webhook URL is this node's,
         /channels/{chatBridgeId}/webhook. The signature is checked with the local node's replicated bridge and the
         request queued for it; the files of the texts the local node sends (MMS) are served here at
-        /channels/{id}/media/. On the local node, channels_public_url is this node's address (the wizard sets it). -->
-    <default-property name="channels_webhooks_enabled" value="true"/>
+        /channels/{id}/media/. On the local node, channels@public-url is this node's address (the wizard sets it). -->
+    <channels webhooks-enabled="true"/>
 
     <!-- Calls (docs/interfaces/WebRTC.md, The edge node as media node; TURN.md, On an edge node): this node is the media
         node of its local node's calls, and their TURN. Set rtc_public_address in .env to this node's public address: the

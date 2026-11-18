@@ -61,6 +61,23 @@
             agent-entry-services="org.moqui.agent.AgentServices.handle#ChatMessage" held-overdue-days="7"
             schedule-user-per-run="20" groupme-node-max="50" groupme-self-service="true"/>
 
+    <!-- Texts (C4-SMS; plans/archive/Comms-Framework.md §5.6, docs/interfaces/SMS.md): a number's SMS and MMS go through its
+        messaging bridge, a ChatBridge of type SMS (System, Chat Bridges; its provider settings in its configuration), with or
+        without the SIP engine. webhooks-enabled turns on the routes a provider calls: POST /channels/{chatBridgeId}/webhook
+        (its signature checked over the raw body, at most webhook-max-bytes) and GET /channels/{chatBridgeId}/media/{token}
+        (a picture of an MMS that goes out, which the provider fetches). public-url is the https base the provider reaches
+        this server at, for those files; without it an MMS goes out refused (mediaUnreachable). media-key signs the files'
+        addresses (generated into runtime/.env, moqui_conf__channels__media_key), each good for media-minutes. On an edge
+        node (edge-limits), for a bridge whose provider signs with a secret only the local node holds (it cannot check
+        them; the local node does): webhooks-per-minute and webhooks-per-client-minute cap the webhooks a minute it queues
+        for the bridge and from one client address, unverified-max-bytes their body, and unverified-waiting how many of
+        the bridge's wait in its queue; media-max-bytes is the largest file it keeps for an MMS, and media-node-megabytes
+        the files of one local node it keeps at most. -->
+    <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60">
+        <edge-limits webhooks-per-minute="600" webhooks-per-client-minute="120" unverified-max-bytes="32768"
+                unverified-waiting="500" media-max-bytes="5242880" media-node-megabytes="256"/>
+    </channels>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
     <!--
@@ -167,26 +184,6 @@
     <default-property name="sip_max_transactions" value="2000"/>
     <default-property name="sip_max_connections" value="500"/>
     <default-property name="sip_max_connections_per_source" value="100"/>
-    <!-- Texts (C4-SMS; plans/archive/Comms-Framework.md §5.6, docs/interfaces/SMS.md): a number's SMS and MMS go through its messaging
-        bridge, a ChatBridge of type SMS (System, Chat Bridges; its provider settings in its configuration), with or without the
-        SIP engine. channels_webhooks_enabled turns on the routes a provider calls: POST /channels/{chatBridgeId}/webhook (its
-        signature checked over the raw body, at most channels_webhook_max_bytes) and GET /channels/{chatBridgeId}/media/{token}
-        (a picture of an MMS that goes out, which the provider fetches). channels_public_url is the https base the provider
-        reaches this server at, for those files; without it an MMS goes out refused (mediaUnreachable). channels_media_key signs
-        the files' addresses (generated when unset), each good for channels_media_minutes. On an edge node, for a bridge whose
-        provider signs with a secret only the local node holds (it cannot check them; the local node does):
-        channels_edge_webhooks_per_minute and channels_edge_webhooks_per_client_minute cap the webhooks a minute it queues
-        for the bridge and from one client address, channels_edge_unverified_max_bytes their body, and
-        channels_edge_unverified_waiting how many of the bridge's wait in its queue. -->
-    <default-property name="channels_webhooks_enabled" value="false"/>
-    <default-property name="channels_webhook_max_bytes" value="262144"/>
-    <default-property name="channels_public_url" value=""/>
-    <default-property name="channels_media_key" value="CHANGEME" is-secret="true"/>
-    <default-property name="channels_media_minutes" value="60"/>
-    <default-property name="channels_edge_webhooks_per_minute" value="600"/>
-    <default-property name="channels_edge_webhooks_per_client_minute" value="120"/>
-    <default-property name="channels_edge_unverified_max_bytes" value="32768"/>
-    <default-property name="channels_edge_unverified_waiting" value="500"/>
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
         true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
         to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's

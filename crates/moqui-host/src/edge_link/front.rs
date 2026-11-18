@@ -49,7 +49,7 @@ pub(crate) fn names_for_front(factory: &ExecutionContextFactory, role: NodeRole)
             "webapp-list/webapp[webroot]@http-host",
         ));
     }
-    let chat = moqui_lib::env::get_prop_or_env(moqui_core::edge::setup::CHAT_PUBLIC_URL);
+    let chat = moqui_core::context::conf_env::setting(moqui_core::edge::setup::CHAT_PUBLIC_URL);
     own.extend(moqui_core::edge::claims::url_host(&chat));
     let mut forwarded = Vec::new();
     if role.has_front() {

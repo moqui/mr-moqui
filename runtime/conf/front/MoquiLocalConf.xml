@@ -43,7 +43,7 @@
             smtp-server@hostname; docs/interfaces/Mail-Inbound.md) with port 25 on the front as an EdgePort row of kind smtp
             for this pairing, which passes each connection to a live member with a PROXY header naming the client (the
             code takes it as for an edge cluster's members, but this path to a local cluster has no test yet);
-        chat bridges and SMS: channels_webhooks_enabled=true and channels_public_url, one of the cluster's host names
+        chat bridges and SMS: moqui_conf__channels__webhooks_enabled=true and channels@public-url, one of the cluster's host names
             through the front (a terminate name);
         calls: the members' own media nodes and TURN, at addresses of their own, never through the front
             (docs/interfaces/WebRTC.md, Cluster);

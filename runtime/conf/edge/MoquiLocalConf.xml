@@ -17,7 +17,7 @@
     <!-- What the wizard's Apply writes on this node, each an area of the edge node's offer:
         mail: an EmailServer EDGE with smtpHost edge:, SYSTEM's smtpHost set to edge: when chosen, and the chosen
             accounts sending through it (their host or server before is kept, and unpairing puts it back);
-        chat and SMS: channels_public_url, the edge node's address, so MMS files are served there;
+        chat and SMS: channels@public-url, the edge node's address, so MMS files are served there;
         PASS: pass_edge_client (edge), pass_client_edge_sites and pass_client_edge_callback, the edge node as a PASS
             client with no secret;
         calls: edge_calls_enabled (false keeps new calls on this node's own media nodes);

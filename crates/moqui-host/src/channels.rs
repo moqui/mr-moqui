@@ -13,10 +13,10 @@
  */
 
 //! The chat bridges' web routes (plans/archive/Comms-Framework.md §4.3 "Webhooks", C4-SMS; docs/interfaces/SMS.md), off unless
-//! `channels_webhooks_enabled` is true:
+//! `channels@webhooks-enabled` is true:
 //!
 //! - `POST /channels/{chatBridgeId}/webhook`: a network's webhook. The raw body is read first, within
-//!   `channels_webhook_max_bytes` (a larger declared or sent body is 413 before anything else), then handed with the
+//!   `channels@webhook-max-bytes` (a larger declared or sent body is 413 before anything else), then handed with the
 //!   headers to the bridge's adapter on a request worker in a fresh context
 //!   ([`moqui_core::service::chat_bridge::webhook`]), which checks the network's signature over those bytes and a replay
 //!   window before it parses them. A refused signature counts for web protection as a refused login does. A bridge id
@@ -40,16 +40,16 @@ use crate::guard::Event;
 use crate::http::{plain, read_body, ClientAddr, HttpState};
 
 /// The switch of both routes.
-const ENABLED_PROPERTY: &str = "channels_webhooks_enabled";
+const ENABLED_PROPERTY: &str = "channels@webhooks-enabled";
 /// The largest webhook body read.
-const MAX_BYTES_PROPERTY: &str = "channels_webhook_max_bytes";
+const MAX_BYTES_PROPERTY: &str = "channels@webhook-max-bytes";
 const DEFAULT_MAX_BYTES: usize = 256 * 1024;
 
 fn enabled() -> bool {
-    moqui_lib::env::get_prop_or_env(ENABLED_PROPERTY).trim() == "true"
+    moqui_core::context::conf_env::setting(ENABLED_PROPERTY) == "true"
 }
 
-/// Add the routes when `channels_webhooks_enabled` is true.
+/// Add the routes when `channels@webhooks-enabled` is true.
 pub(crate) fn routes(
     app: Router<Arc<HttpState>>,
     factory: &moqui_core::context::ExecutionContextFactory,

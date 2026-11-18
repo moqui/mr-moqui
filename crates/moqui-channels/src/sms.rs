@@ -166,7 +166,7 @@ pub fn flag_of(config: &Json, key: &str) -> bool {
 }
 
 /// The URL the provider posts the bridge's webhooks to, for a send that names its status callback (Twilio's
-/// `StatusCallback`, Sinch's `callback_url`): the bridge's `webhookUrl`, else `channels_public_url` and
+/// `StatusCallback`, Sinch's `callback_url`): the bridge's `webhookUrl`, else `channels@public-url` and
 /// `/channels/{chatBridgeId}/webhook`. None when neither is set.
 pub fn callback_url(bridge: &BridgeInfo) -> Option<String> {
     let request = WebhookRequest {
@@ -525,7 +525,7 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     }
     /// The event a webhook carries, for an edge node's queue: its id (a repeat has the same) and their number. None when
     /// the body cannot be read. For a provider that verifies on the local node it reads a body nobody verified yet (at
-    /// most `channels_edge_unverified_max_bytes`): read only the key.
+    /// most `channels/edge-limits@unverified-max-bytes`): read only the key.
     fn event_key(&self, request: &WebhookRequest) -> Option<WebhookEventKey>;
     /// The event a verified webhook carries; or the answer, when it is malformed (400).
     ///

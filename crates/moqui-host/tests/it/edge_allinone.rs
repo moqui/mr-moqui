@@ -1086,8 +1086,8 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
         "aio-own-server",
         CONF,
         &[
-            ("channels_webhooks_enabled", "true"),
-            ("channels_media_key", "an-all-in-one-test-key"),
+            ("moqui_conf__channels__webhooks_enabled", "true"),
+            ("moqui_conf__channels__media_key", "an-all-in-one-test-key"),
             ("moqui_conf__smtp_server__hostname", "mx.server.example"),
             ("edge_mail_bounce_domain", "bounce.server.example"),
             ("xmpp_domain", XMPP_DOMAIN),
@@ -1101,7 +1101,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
         "aio-own-local",
         None,
         CONF,
-        &[("channels_webhooks_enabled", "true")],
+        &[("moqui_conf__channels__webhooks_enabled", "true")],
         &[],
     );
     let server = starting.ready();

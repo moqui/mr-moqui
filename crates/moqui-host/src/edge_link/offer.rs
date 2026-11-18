@@ -82,7 +82,7 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
         name if !name.is_empty() => name,
         _ => config.public_names.first().cloned().unwrap_or_default(),
     };
-    let webhooks = cfg!(feature = "channels") && on("channels_webhooks_enabled");
+    let webhooks = cfg!(feature = "channels") && on("channels@webhooks-enabled");
     let public_url = match property(setup::CHAT_PUBLIC_URL) {
         url if !url.is_empty() => url.trim_end_matches('/').to_string(),
         _ => config

@@ -329,6 +329,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         keys(&["email-client", "oauth-provider"]),
         None,
     );
+    // texts and chat bridges, with the edge node's limits merged as one element
+    base.merge_child_with_child_key(over, "channels", "edge-limits", &[], None);
     // mail delivery, with its one dkim element merged the same way (an attribute of the override replaces the base one)
     base.merge_child_with_child_key(over, "mail-delivery", "dkim", &[], None);
     // elements of settings only: an attribute of the override replaces the base one

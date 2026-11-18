@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Pair step 4, apply (plans/archive/Edge-Node.md §5.7): the choices Discover kept in the session, and Apply
     (org.moqui.edge.EdgeServices.apply#EdgeSetup): it writes this node's rows and settings (the EDGE mail server with
-    smtpHost edge:, the system's and the chosen accounts' mail through it; channels_public_url; the PASS client
+    smtpHost edge:, the system's and the chosen accounts' mail through it; channels@public-url; the PASS client
     properties), sends the edge node its part (the link's Configure: the host names, refused for a name another node
     holds) and sends every replicated set whole again. Each step is a line, kept in the session for this step. The DNS
     records to set are checked live on each render (check#EdgeDns, with the edge node's MX host, addresses and DKIM key

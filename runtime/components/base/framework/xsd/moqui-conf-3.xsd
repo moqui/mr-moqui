@@ -23,6 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="acme"/>
                 <xs:element minOccurs="0" ref="client-sync"/>
                 <xs:element minOccurs="0" ref="chat"/>
+                <xs:element minOccurs="0" ref="channels"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2098,6 +2099,24 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="schedule-user-per-run" type="non-neg-int-expandable" default="20"/>
             <xs:attribute name="groupme-node-max" type="non-neg-int-expandable" default="50"/>
             <xs:attribute name="groupme-self-service" type="boolean-expandable" default="true"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="channels">
+        <xs:annotation><xs:documentation>Texts and chat bridges' webhooks and files (docs/interfaces/SMS.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" name="edge-limits"><xs:complexType>
+                <xs:attribute name="webhooks-per-minute" type="non-neg-int-expandable" default="600"/>
+                <xs:attribute name="webhooks-per-client-minute" type="non-neg-int-expandable" default="120"/>
+                <xs:attribute name="unverified-max-bytes" type="non-neg-int-expandable" default="32768"/>
+                <xs:attribute name="unverified-waiting" type="non-neg-int-expandable" default="500"/>
+                <xs:attribute name="media-max-bytes" type="non-neg-int-expandable" default="5242880"/>
+                <xs:attribute name="media-node-megabytes" type="non-neg-int-expandable" default="256"/>
+            </xs:complexType></xs:element></xs:sequence>
+            <xs:attribute name="webhooks-enabled" type="boolean-expandable" default="false"/>
+            <xs:attribute name="webhook-max-bytes" type="non-neg-int-expandable" default="262144"/>
+            <xs:attribute name="public-url" type="xs:string"/>
+            <xs:attribute name="media-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="media-minutes" type="non-neg-int-expandable" default="60"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

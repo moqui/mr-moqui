@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     oldest), and each replicated set's epoch, last batch acknowledged and changes waiting; Pause (pause#QueueDelivery)
     holds queue delivery both ways until Resume, and Resync (resync#Replication) sends every set whole again. Setup (§5.7,
     E10): what this node uses the edge node for: its host names there (get#EdgeOffer nodeHosts, while the link is up),
-    the system's and the accounts' mail through the EDGE mail server, the chat address (channels_public_url), the
+    the system's and the accounts' mail through the EDGE mail server, the chat address (channels@public-url), the
     PASS client's sites, XMPP (xmpp_domain through the edge node's tunnel ports, while the link is up) and calls (new
     calls on the edge node's media node while its link-kept row is live, or off by edge_calls_enabled) and phones
     (the trunks and phones through the edge node's SIP engine while its link-kept SipNode row is live, with its
@@ -255,7 +255,7 @@ along with this software (see the LICENSE.md file). If not, see
             const system = ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', 'SYSTEM').disableAuthz().one()
             const accounts = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailServerId', 'EDGE').disableAuthz().count()
             const systemEdge = system?.smtpHost === 'edge:'
-            const chatUrl = String(System.getProperty('channels_public_url') || '')
+            const chatUrl = String(ec.factory.getConfValue('channels@public-url') || '')
             const client = String(System.getProperty('pass_edge_client') || '') || 'edge'
             const sites = String(System.getProperty('pass_client_' + client + '_sites') || '')
             setup = {hostsText,

@@ -475,7 +475,7 @@ pub struct MailOffer {
 /// Chat bridges and SMS (E6).
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ChatOffer {
-    /// channels_webhooks_enabled is on: the edge node takes the bridges' webhooks.
+    /// channels@webhooks-enabled is on: the edge node takes the bridges' webhooks.
     #[prost(bool, tag = "1")]
     pub webhooks: bool,
     /// The address the providers call (/channels/{chatBridgeId}/webhook under it) and the files of MMS come from.

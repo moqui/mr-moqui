@@ -319,8 +319,8 @@ fn bed_with(conf_text: &str) -> Bed {
 
 /// [`bed`] for `provider`'s adapter and fake, on the conf `conf_text`.
 fn bed_for(provider: Provider, conf_text: &str) -> Bed {
-    moqui_lib::env::set_property("channels_public_url", "https://moqui.example.test");
-    moqui_lib::env::set_property("channels_media_key", "a-test-media-key");
+    moqui_lib::env::set_property("moqui_conf__channels__public_url", "https://moqui.example.test");
+    moqui_lib::env::set_property("moqui_conf__channels__media_key", "a-test-media-key");
     let ctx = ExecutionContextFactory::test_context_in(
         conf_text,
         moqui_core::service::ServicePools::inline(),
@@ -2141,11 +2141,11 @@ fn a_group_room_on_a_bridge_without_group_texts_refuses_to_send() {
 }
 
 /// The URL a send names for its receipts (a provider's status callback): the bridge's `webhookUrl` as it is, else
-/// `channels_public_url` and the bridge's webhook route.
+/// `channels@public-url` and the bridge's webhook route.
 #[test]
 fn a_send_names_the_bridges_webhook_url_for_its_receipts() {
     // the value every bed sets
-    moqui_lib::env::set_property("channels_public_url", "https://moqui.example.test");
+    moqui_lib::env::set_property("moqui_conf__channels__public_url", "https://moqui.example.test");
     let bridge = |config: Json| moqui_core::service::chat_bridge::BridgeInfo {
         chat_bridge_id: BRIDGE.to_string(),
         type_enum_id: "CbtSms".to_string(),

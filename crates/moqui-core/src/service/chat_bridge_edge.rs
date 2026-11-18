@@ -33,10 +33,10 @@
 //!   transport-verified mark set.
 //! - **Verified on the local node only.** A network that signs with a secret (Twilio's auth token, Sinch's webhook
 //!   secret) cannot be checked on the edge node, which never holds one ([`WebhookVerification::Core`]). For its adapter
-//!   the edge node checks only the method, the size (`channels_edge_unverified_max_bytes`, 32 KiB), that the signature
-//!   header is there, a rate a client address (`channels_edge_webhooks_per_client_minute`, 120) and a bridge
-//!   (`channels_edge_webhooks_per_minute`, 600; token buckets on each edge node), and how many of the bridge's items
-//!   wait (`channels_edge_unverified_waiting`, 500, so at most 16 MiB), then reads the event key from the unverified
+//!   the edge node checks only the method, the size (`channels/edge-limits@unverified-max-bytes`, 32 KiB), that the signature
+//!   header is there, a rate a client address (`channels/edge-limits@webhooks-per-client-minute`, 120) and a bridge
+//!   (`channels/edge-limits@webhooks-per-minute`, 600; token buckets on each edge node), and how many of the bridge's items
+//!   wait (`channels/edge-limits@unverified-waiting`, 500, so at most 16 MiB), then reads the event key from the unverified
 //!   body and queues the request, its idempotency key including a hash of the signature so a forged item cannot take a
 //!   real event's key ([`UnverifiedLimits`]). On the local node a request this node cannot check (no secret) waits
 //!   (`retryLater`); one whose signature is not the network's is refused and kept for 30 days in
@@ -44,13 +44,13 @@
 //!   and logged once per bridge every ten minutes, the item answered as done so it holds nothing behind it.
 //! - **Files** (kind [`KIND_MEDIA`], local node to edge node). A paired local node whose conf lists `chatMedia` sends
 //!   every file of a message that goes by address (an MMS picture) through its edge node ([`media_urls`]): it queues
-//!   the file as the item's content, with a token it makes (an HMAC under `channels_media_key`, so a later attempt of
+//!   the file as the item's content, with a token it makes (an HMAC under `channels@media-key`, so a later attempt of
 //!   the same send names the same file), and does not send until the item is delivered, so the network never fetches
 //!   an address the edge node does not have yet: while the link is up it waits up to [`MEDIA_WAIT`], else the send
 //!   waits [`MEDIA_RETRY_MILLIS`] and is tried again, its attempt not counted (`DeliveryOutcome::Wait`). The address is
-//!   under `channels_public_url`, which on a paired node names the edge node. The edge node's `store#EdgeMedia` keeps
-//!   the file as a `moqui.edge.EdgeMedia` row by the token's hash, within its own limits (`channels_media_minutes`,
-//!   `channels_edge_media_max_bytes`, `channels_edge_media_node_megabytes`), and [`media`] serves it until it runs
+//!   under `channels@public-url`, which on a paired node names the edge node. The edge node's `store#EdgeMedia` keeps
+//!   the file as a `moqui.edge.EdgeMedia` row by the token's hash, within its own limits (`channels@media-minutes`,
+//!   `channels/edge-limits@media-max-bytes`, `channels/edge-limits@media-node-megabytes`), and [`media`] serves it until it runs
 //!   out; [`sweep_edge_media`] (the link's retention pass, and each store) removes the files that ran out.
 //! - **Keys of older bridges.** [`fill_webhook_keys`], at the delivery worker's start, copies a bridge's `configJson`
 //!   `publicKey` and `webhookToleranceSeconds` to the replicated fields of a bridge saved before E6.
@@ -101,29 +101,29 @@ const EDGE_MEDIA: &str = "moqui.edge.EdgeMedia";
 const MEDIA_WAIT: Duration = Duration::from_secs(2);
 /// How long a send whose files are not on the edge node yet waits before it is tried again (not counted).
 pub const MEDIA_RETRY_MILLIS: i64 = 5_000;
-/// The largest file the edge node keeps: `channels_edge_media_max_bytes`, 5 MiB by default (a provider's MMS limit is
+/// The largest file the edge node keeps: `channels/edge-limits@media-max-bytes`, 5 MiB by default (a provider's MMS limit is
 /// about 1 MiB in all).
-const MEDIA_MAX_BYTES: &str = "channels_edge_media_max_bytes";
+const MEDIA_MAX_BYTES: &str = "channels/edge-limits@media-max-bytes";
 const DEFAULT_MEDIA_MAX_BYTES: i64 = 5 * 1024 * 1024;
-/// The files of one local node the edge node keeps at most: `channels_edge_media_node_megabytes`, 256 by default.
-const MEDIA_NODE_MEGABYTES: &str = "channels_edge_media_node_megabytes";
+/// The files of one local node the edge node keeps at most: `channels/edge-limits@media-node-megabytes`, 256 by default.
+const MEDIA_NODE_MEGABYTES: &str = "channels/edge-limits@media-node-megabytes";
 const DEFAULT_MEDIA_NODE_MEGABYTES: i64 = 256;
 /// The expired files one sweep removes at most.
 const EXPIRED_PAGE: i64 = 500;
 /// Headers of a webhook request that are not kept with the queued request.
 const DROPPED_HEADERS: &[&str] = &["cookie", "authorization", "proxy-authorization"];
 /// The host's bound of a webhook body (`crates/moqui-host/src/channels.rs`), checked again before a request is queued.
-const WEBHOOK_MAX_BYTES: &str = "channels_webhook_max_bytes";
+const WEBHOOK_MAX_BYTES: &str = "channels@webhook-max-bytes";
 const DEFAULT_WEBHOOK_MAX_BYTES: usize = 256 * 1024;
 /// The requests a minute an edge node queues for one bridge whose webhooks it cannot verify, in all and from one client
 /// address; the largest such body; and the most of the bridge's items that wait unverified ([`UnverifiedLimits`]).
-const WEBHOOKS_PER_MINUTE: &str = "channels_edge_webhooks_per_minute";
+const WEBHOOKS_PER_MINUTE: &str = "channels/edge-limits@webhooks-per-minute";
 const DEFAULT_WEBHOOKS_PER_MINUTE: u32 = 600;
-const WEBHOOKS_PER_CLIENT_MINUTE: &str = "channels_edge_webhooks_per_client_minute";
+const WEBHOOKS_PER_CLIENT_MINUTE: &str = "channels/edge-limits@webhooks-per-client-minute";
 const DEFAULT_WEBHOOKS_PER_CLIENT_MINUTE: u32 = 120;
-const UNVERIFIED_MAX_BYTES: &str = "channels_edge_unverified_max_bytes";
+const UNVERIFIED_MAX_BYTES: &str = "channels/edge-limits@unverified-max-bytes";
 const DEFAULT_UNVERIFIED_MAX_BYTES: usize = 32 * 1024;
-const UNVERIFIED_WAITING: &str = "channels_edge_unverified_waiting";
+const UNVERIFIED_WAITING: &str = "channels/edge-limits@unverified-waiting";
 const DEFAULT_UNVERIFIED_WAITING: i64 = 500;
 
 fn sha256_hex(text: &str) -> String {
@@ -391,7 +391,7 @@ pub(super) fn paired_webhook_within(
                 Ok(waiting) if waiting >= limits.waiting => {
                     tracing::warn!(
                         "chat bridge {bridge_id} of local node {node}: {waiting} unverified webhooks wait for it, the \
-                         most it holds (channels_edge_unverified_waiting); more are refused (429) until they go"
+                         most it holds (channels/edge-limits@unverified-waiting); more are refused (429) until they go"
                     );
                     return shaped(
                         adapter.as_ref(),
@@ -453,7 +453,7 @@ fn shaped(adapter: &dyn super::ChatBridgeAdapter, info: &BridgeInfo, response: W
 
 /// A positive number from a property, else `default`.
 fn positive_property<T: std::str::FromStr + PartialOrd + Default>(name: &str, default: T) -> T {
-    moqui_lib::env::get_prop_or_env(name)
+    crate::context::conf_env::setting_or_property(name)
         .trim()
         .parse::<T>()
         .ok()
@@ -464,13 +464,13 @@ fn positive_property<T: std::str::FromStr + PartialOrd + Default>(name: &str, de
 /// What an edge node lets through, for a bridge whose webhooks it cannot verify ([`WebhookVerification::Core`]).
 #[derive(Clone, Debug)]
 pub(super) struct UnverifiedLimits {
-    /// The largest body: `channels_edge_unverified_max_bytes` (32 KiB), at most `channels_webhook_max_bytes`.
+    /// The largest body: `channels/edge-limits@unverified-max-bytes` (32 KiB), at most `channels@webhook-max-bytes`.
     pub max_bytes: usize,
-    /// Requests a minute for the bridge: `channels_edge_webhooks_per_minute` (600).
+    /// Requests a minute for the bridge: `channels/edge-limits@webhooks-per-minute` (600).
     pub per_minute: u32,
-    /// Requests a minute for the bridge from one client address: `channels_edge_webhooks_per_client_minute` (120).
+    /// Requests a minute for the bridge from one client address: `channels/edge-limits@webhooks-per-client-minute` (120).
     pub per_client_minute: u32,
-    /// Its items waiting in the queue, unverified: `channels_edge_unverified_waiting` (500). The bytes waiting are at
+    /// Its items waiting in the queue, unverified: `channels/edge-limits@unverified-waiting` (500). The bytes waiting are at
     /// most this many times `max_bytes` (16 MiB by default).
     pub waiting: i64,
 }
@@ -1071,7 +1071,7 @@ pub fn media_urls(bridge_id: &str, request: &DeliveryRequest, now: i64) -> Media
             Some(url) => urls.push(url),
             None => {
                 return MediaUrls::Unreachable(
-                    "Files go by address: set channels_public_url (and channels_media_key)".to_string(),
+                    "Files go by address: set channels@public-url (and channels@media-key)".to_string(),
                 )
             }
         }
@@ -1079,7 +1079,7 @@ pub fn media_urls(bridge_id: &str, request: &DeliveryRequest, now: i64) -> Media
     MediaUrls::Ready(urls)
 }
 
-/// The token of a file put on the edge node for the item keyed `key`: an HMAC under `channels_media_key`, so it is the
+/// The token of a file put on the edge node for the item keyed `key`: an HMAC under `channels@media-key`, so it is the
 /// same for each attempt of one send and nobody without the key can make one.
 fn media_token(media_key: &str, key: &str) -> Option<String> {
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(media_key.as_bytes()).ok()?;
@@ -1096,8 +1096,8 @@ fn edge_media_urls(
 ) -> MediaUrls {
     let (Some(base), Some(media_key)) = (public_base(), media_key()) else {
         return MediaUrls::Unreachable(
-            "Files go by address through the edge node: set channels_public_url to the edge node's address (and \
-             channels_media_key)"
+            "Files go by address through the edge node: set channels@public-url to the edge node's address (and \
+             channels@media-key)"
                 .to_string(),
         );
     };
@@ -1125,7 +1125,7 @@ fn edge_media_urls(
         };
         let key = format!("chatMedia:{bridge_id}:{}:{id}:{window}", request.idempotency_key);
         let Some(token) = media_token(&media_key, &key) else {
-            return MediaUrls::Unreachable("channels_media_key is not a key".to_string());
+            return MediaUrls::Unreachable("channels@media-key is not a key".to_string());
         };
         let payload = serde_json::json!({
             "chatBridgeId": bridge_id,
@@ -1227,7 +1227,7 @@ fn media_location(node: &str, token_hash: &str) -> Option<String> {
 
 /// A positive number from a property, else `default`.
 fn limit_property(name: &str, default: i64) -> i64 {
-    moqui_lib::env::get_prop_or_env(name)
+    crate::context::conf_env::setting_or_property(name)
         .trim()
         .parse::<i64>()
         .ok()
@@ -1271,8 +1271,8 @@ fn node_media_bytes(facade: &EntityFacade, node: &str, except: &str, now: i64) -
 }
 
 /// `store#EdgeMedia`, on the edge node: a file its local node sends by address, kept by the token's hash for
-/// `minutes` (the local node's `channels_media_minutes`, at most this node's). A file over
-/// `channels_edge_media_max_bytes`, or past `channels_edge_media_node_megabytes` of the node's files, is refused, counted.
+/// `minutes` (the local node's `channels@media-minutes`, at most this node's). A file over
+/// `channels/edge-limits@media-max-bytes`, or past `channels/edge-limits@media-node-megabytes` of the node's files, is refused, counted.
 fn store_edge_media(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,

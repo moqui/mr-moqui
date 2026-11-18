@@ -73,7 +73,7 @@
 
     <!-- Chat bridges and SMS: a network's webhook URL is the cluster's name, /channels/{chatBridgeId}/webhook; any member
         takes it and queues it once by its idempotency key. MMS files are rows, served by any member. -->
-    <default-property name="channels_webhooks_enabled" value="true"/>
+    <channels webhooks-enabled="true"/>
 
     <!-- Calls (docs/interfaces/WebRTC.md, TURN.md, An edge cluster): each member is a media node with its own public
         address and TURN; a local node keeps a CallMediaNode row for each member it links to, and a call's legs are all

@@ -42,7 +42,7 @@ pub const SYSTEM_SERVER_ID: &str = "SYSTEM";
 /// The `smtpHost` of a server whose mail the local node queues for its edge node (plans/archive/Edge-Node.md §5.4, E5a).
 pub const EDGE_SMTP_HOST: &str = "edge:";
 /// The local node's address for chat providers and MMS files, which on a paired node is the edge node's (E6).
-pub const CHAT_PUBLIC_URL: &str = "channels_public_url";
+pub const CHAT_PUBLIC_URL: &str = "channels@public-url";
 /// The most names of each kind a Configure carries.
 pub const MAX_NAMES: usize = 64;
 /// The areas an edge node does not offer yet: none since phones have their area ([`SipOffer`]), as XMPP and calls
@@ -457,7 +457,7 @@ pub fn apply_local(
             lines.push(SetupLine::new(
                 "chat",
                 false,
-                "The edge node names no web address for webhooks, so channels_public_url is left",
+                "The edge node names no web address for webhooks, so channels@public-url is left",
             ));
         }
     }
@@ -528,20 +528,38 @@ fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) 
     )
 }
 
-/// Write `set` to the dotenv file; the line says so, or why not. A process property of the same name wins over the
-/// file, so a value that does not read back is named.
+/// Write `set` to the dotenv file; the line says so, or why not. A name of a conf attribute (a selector, with an `@`)
+/// is set by the running factory ([`ExecutionContextFactory::set_conf_value`], written to its `runtime/.env` under its
+/// environment name and seen at once); a property is written by its name. A process property of the same name wins
+/// over the file, so a value that does not read back is named.
+///
+/// [`ExecutionContextFactory::set_conf_value`]: crate::context::ExecutionContextFactory::set_conf_value
 pub(crate) fn set_env(area: &str, env_file: &std::path::Path, set: &[(&str, &str)], done: &str) -> SetupLine {
-    let pairs: Vec<(String, String)> = set
-        .iter()
-        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-        .collect();
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (name, value) in set {
+        if !name.contains('@') {
+            pairs.push(((*name).to_string(), (*value).to_string()));
+            continue;
+        }
+        let kept = crate::context::ExecutionContext::with_current(|ec| {
+            ec.factory().set_conf_value(name, Some(value), true).map(|_| ())
+        });
+        match kept {
+            Some(Ok(())) => {}
+            Some(Err(err)) => {
+                tracing::error!("Edge setup: {area} settings were not written: {err}");
+                return SetupLine::new(area, false, format!("The settings were not written: {err}"));
+            }
+            None => pairs.push((crate::context::conf_env::env_name_of(name), (*value).to_string())),
+        }
+    }
     if let Err(err) = moqui_lib::env::update_dotenv_file(env_file, &pairs, &[]) {
         tracing::error!("Edge setup: {area} settings were not written: {err}");
         return SetupLine::new(area, false, format!("The settings were not written: {err}"));
     }
     let overridden: Vec<&str> = set
         .iter()
-        .filter(|(name, value)| moqui_lib::env::get_prop_or_env(name).trim() != value.trim())
+        .filter(|(name, value)| crate::context::conf_env::setting_or_property(name).trim() != value.trim())
         .map(|(name, _)| *name)
         .collect();
     if overridden.is_empty() {
@@ -1007,7 +1025,7 @@ fn mta_ready() -> (bool, String) {
 
 fn property_on(name: &str) -> bool {
     matches!(
-        moqui_lib::env::get_prop_or_env(name)
+        crate::context::conf_env::setting_or_property(name)
             .trim()
             .to_ascii_lowercase()
             .as_str(),
@@ -1059,10 +1077,10 @@ fn edge_check(facade: &EntityFacade, node: &str, check: &EchoCheck) -> Result<Ec
             answer(ok, message)
         }
         "webhook" => {
-            if !property_on("channels_webhooks_enabled") {
+            if !property_on("channels@webhooks-enabled") {
                 return answer(
                     false,
-                    "The edge node takes no webhooks: set channels_webhooks_enabled there".to_string(),
+                    "The edge node takes no webhooks: set channels@webhooks-enabled there".to_string(),
                 );
             }
             let copies = super::replica::list_values(facade, Some(node), "chatBridges", None, 10_000)?;

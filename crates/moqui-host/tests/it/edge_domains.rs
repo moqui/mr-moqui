@@ -369,7 +369,7 @@ impl Domains {
         let files_a: Vec<(&str, &str)> = files_a.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
         let pass_properties = [
             ("pass_authority_service", "edgetest.DomainServices.handle#Call"),
-            ("channels_webhooks_enabled", "true"),
+            ("moqui_conf__channels__webhooks_enabled", "true"),
         ];
         let local_a =
             crate::common::start_with_conf_files(&format!("{label}-a"), None, CONF, &pass_properties, &files_a);

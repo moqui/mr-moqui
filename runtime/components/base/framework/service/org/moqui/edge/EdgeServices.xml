@@ -699,7 +699,7 @@ along with this software (see the LICENSE.md file). If not, see
             EmailServer EDGE with smtpHost edge:, SYSTEM's smtpHost edge: when systemMail, and each of emailAccountIds
             (hosted or shared, with no incoming server of another provider) sending through the edge node; the host or
             server each replaced is kept (edgePriorSmtpHost, edgePriorServerId) and put back when the node unpairs. Chat:
-            channels_public_url in runtime/.env, the edge node's address. PASS: pass_edge_client and
+            channels@public-url in runtime/.env, the edge node's address. PASS: pass_edge_client and
             pass_client_(id)_sites and _callback in runtime/.env. Web: hostList (hostName, modeEnumId) is this node's
             whole list of names on the edge node; a name another node holds is refused there. XMPP (xmppOn): this node's
             xmpp_domain goes to the edge node (kept in its setupJson), and with web access on it is added to hostList as

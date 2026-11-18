@@ -256,8 +256,8 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
     let signer = Ed25519KeyPair::from_seed_unchecked(&[7u8; 32]).unwrap();
     let public = base64::engine::general_purpose::STANDARD.encode(signer.public_key().as_ref());
     let properties = [
-        ("channels_webhooks_enabled", "true"),
-        ("channels_media_key", "an-edge-chat-test-key"),
+        ("moqui_conf__channels__webhooks_enabled", "true"),
+        ("moqui_conf__channels__media_key", "an-edge-chat-test-key"),
         // the fake Telnyx is on loopback over http, which allowInternalAddresses permits only off production
         ("moqui_conf__instance__purpose", "test"),
     ];
@@ -320,7 +320,7 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("channels_webhooks_enabled", "true"),
+            ("moqui_conf__channels__webhooks_enabled", "true"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -433,7 +433,7 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
     assert_eq!((status, body.contains("queued")), (200, true), "{body}");
 
     // out: an MMS's file goes to the edge node before the send, and the edge node serves it until it runs out
-    moqui_lib::env::set_property("channels_public_url", url.clone());
+    moqui_lib::env::set_property("moqui_conf__channels__public_url", url.clone());
     moqui_lib::env::set_property(moqui_core::edge::NODE_URL, url.clone());
     let picture: Vec<u8> = (0..1500u32).map(|n| (n % 251) as u8).collect();
     for id in ["A1", "A2", "A3"] {
@@ -476,7 +476,7 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
     assert!(rows(&edge, "moqui.edge.EdgeMedia", &[]).is_empty(), "and removed");
 
     // a file over the edge node's limit is refused there, and the send waits, not failed
-    moqui_lib::env::set_property("channels_edge_media_max_bytes", "1000");
+    moqui_lib::env::set_property("moqui_conf__channels__edge_limits__media_max_bytes", "1000");
     let outcome = mms("edge-mms-2", "A2");
     assert!(matches!(outcome, DeliveryOutcome::Wait { .. }), "{outcome:?}");
     wait_until(Duration::from_secs(10), "the file refused by the edge node", || {
@@ -487,10 +487,10 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
         )
         .first()
         .and_then(|row| row.get("lastErrorText").cloned())
-        .is_some_and(|error| error.contains("channels_edge_media_max_bytes"))
+        .is_some_and(|error| error.contains("channels/edge-limits@media-max-bytes"))
     });
     assert!(rows(&edge, "moqui.edge.EdgeMedia", &[]).is_empty());
-    moqui_lib::env::set_property("channels_edge_media_max_bytes", "5242880");
+    moqui_lib::env::set_property("moqui_conf__channels__edge_limits__media_max_bytes", "5242880");
 
     // in: the link down, a signed text is taken by the edge node and queued, once; an MMS waits for the link
     dialer.stop();

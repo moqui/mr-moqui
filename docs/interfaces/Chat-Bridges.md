@@ -62,7 +62,7 @@ and a disabled one to anyone but its network answer as an unsigned request does,
 disabled one answers its network, by its signature, 503), `replay_take` and `replay_finish` (the webhooks' replay cache:
 the distributed `moqui.security.hmac.replay` the system-message HMAC check uses, so a copy that reaches another node is
 caught there once that cache is shared; until a distributed cache is configured it is the node's own), `media_url` and `media` (a file of a message that goes out by address, signed under
-`channels_media_key` for one bridge and an expiry, served only for a message delivered to that bridge),
+`channels@media-key` for one bridge and an expiry, served only for a message delivered to that bridge),
 `store#BridgeMedia` and `send#BridgeDirect` (one message straight to an adapter outside any room, no delivery row: the
 system's sign-in codes by SMS).
 
@@ -82,7 +82,7 @@ files' fetch auth. Each provider is one adapter, chosen by `ChatBridge.adapterNa
 `sms-twilio` Twilio's, `sms-sinch` Sinch's Conversation API: [SMS](SMS.md#providers); `rcs-twilio` and `rcs-sinch` the
 same providers' business RCS: [RCS](RCS.md)), so an edge node,
 which sees no `configJson`, picks it too. A provider that signs the URL it posted to checks it against
-`chat_bridge::webhook_public_url`: the bridge's `webhookUrl`, else `channels_public_url` and the request's path and query
+`chat_bridge::webhook_public_url`: the bridge's `webhookUrl`, else `channels@public-url` and the request's path and query
 as received (`WebhookRequest.url`).
 
 What the SMS core does for every provider, so a provider module does not: a refusal the provider reads as `optedOut`
@@ -217,15 +217,15 @@ each mapping with its name there and its direction; it does not change them.
 adapter, status and webhook key, never `configJson`) and queues it, and the local node applies it through the adapter's
 `apply_webhook` with the same input checks and dedupe. A network that signs with a secret (`webhook_verification`
 `Core`) is checked on the local node instead: the edge node checks only the method, the size, that the signature header
-is there, a rate per client address and per bridge (`channels_edge_webhooks_per_client_minute`, 120, and
-`channels_edge_webhooks_per_minute`, 600), a smaller body (`channels_edge_unverified_max_bytes`, 32 KiB) and how many of
-the bridge's items wait (`channels_edge_unverified_waiting`, 500), reads the event key from the unverified body and
+is there, a rate per client address and per bridge (`channels/edge-limits@webhooks-per-client-minute`, 120, and
+`channels/edge-limits@webhooks-per-minute`, 600), a smaller body (`channels/edge-limits@unverified-max-bytes`, 32 KiB) and how many of
+the bridge's items wait (`channels/edge-limits@unverified-waiting`, 500), reads the event key from the unverified body and
 queues the request with its path and query, keyed by its signature too. The local node's `apply#EdgeWebhook` checks
 every queued request's signature again, whichever way it was queued: one that is not the network's is refused, kept as
 a `ChatBridgeWebhookRefused` for 30 days (`replay#RefusedWebhooks`, System › Chat Bridges' Replay refused, after the
 secret or `webhookUrl` is fixed), counted there ("N webhooks refused since ...") and logged once per bridge every ten
 minutes; one it cannot check (no secret) waits. Files a message sends by address (MMS) are put on the edge node
-and served there at `/channels/{chatBridgeId}/media/{token}`. The local node's `channels_public_url` names the edge
+and served there at `/channels/{chatBridgeId}/media/{token}`. The local node's `channels@public-url` names the edge
 node; the Edge Node wizard sets it and lists each bridge's webhook URL ([SMS](SMS.md) has the steps). Networks that
 only connect out (GroupMe's push channel; Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway) need no edge node. On an
 all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the webhook and media routes look for the server's
@@ -235,7 +235,7 @@ With several local nodes on one edge node ([Run-Deploy](../Run-Deploy.md#several
 ids come from separate databases and may be the same, so a webhook goes by its host name first: at a local node's
 terminate host name only that node's bridges answer (the edge node queues them while it is away), and at the edge
 node's own names the one local node with the id, where an id two have gets 401, logged. A local node whose ids may
-collide sets `channels_public_url` to one of its terminate host names, so its networks' webhooks and its MMS files
+collide sets `channels@public-url` to one of its terminate host names, so its networks' webhooks and its MMS files
 name it.
 
 ## Tests
@@ -253,7 +253,7 @@ name it.
   (`Provider`: adapter, settings, the fake's answer, the signer).
 - `crates/moqui-core/src/service/chat_bridge_edge_tests.rs`: a queued webhook carrying its path and query; an edge
   node's checks of a webhook it cannot verify (size, signature header, the rate cap); a queued webhook verified on the
-  local node over its public URL (`webhookUrl`, else `channels_public_url`), applied when good, refused, kept and counted
+  local node over its public URL (`webhookUrl`, else `channels@public-url`), applied when good, refused, kept and counted
   when not, and applied by the replay once the secret is fixed; one with no secret waiting; a bridge whose adapter
   verifies on the edge node checked again; the edge node's whole path for one it cannot verify (no check, keyed by its
   signature, the network's answer shape, the cap on what waits); the rate per client address and per bridge; a

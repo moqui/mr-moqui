@@ -385,7 +385,7 @@ pub(crate) async fn listen(
         .route("/.well-known/carddav", axum::routing::any(crate::dav_http::handle));
     #[cfg(feature = "telemetry")]
     let app = crate::monitor::routes(app);
-    // the chat bridges' webhooks and the files of their messages (src/channels.rs), when channels_webhooks_enabled
+    // the chat bridges' webhooks and the files of their messages (src/channels.rs), when channels@webhooks-enabled
     let app = crate::channels::routes(app, &factory);
     // XMPP over WebSocket and its file uploads, while the XMPP server runs (xmpp_domain)
     #[cfg(feature = "xmpp")]

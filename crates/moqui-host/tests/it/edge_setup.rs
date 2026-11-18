@@ -1061,7 +1061,7 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("moqui_conf__smtp_server__hostname", "edge.example.net"),
             ("moqui_conf__mail_delivery__mta", "moqui"),
             ("edge_mail_bounce_domain", "bounce.example.net"),
-            ("channels_webhooks_enabled", "true"),
+            ("moqui_conf__channels__webhooks_enabled", "true"),
             ("edge_public_addresses", "203.0.113.5, not-an-address"),
             ("edge_xmpp_port", &xmpp_port.to_string()),
             ("edge_xmpp_tls_port", &xmpp_tls_port.to_string()),
@@ -1350,7 +1350,10 @@ fn a_local_node_is_attached_from_the_wizard() {
         "EDGE"
     );
     let env = std::fs::read_to_string(&env_file).unwrap();
-    assert!(env.contains(&format!("channels_public_url={url}")), "{env}");
+    assert!(
+        env.contains(&format!("moqui_conf__channels__public_url={url}")),
+        "{env}"
+    );
     assert!(env.contains("pass_edge_client=edge"), "{env}");
     assert!(env.contains("pass_client_edge_sites=SITE1"), "{env}");
     assert!(

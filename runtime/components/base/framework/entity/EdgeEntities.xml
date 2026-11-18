@@ -338,7 +338,7 @@ along with this software (see the LICENSE.md file). If not, see
             with the send (the queue kind chatMedia), so the network fetches it from the edge node at
             /channels/{chatBridgeId}/media/{token} (plans/archive/Edge-Node.md §5.4, E6). edgeMediaId is the SHA-256 (hex) of
             the token, which the local node makes and only it and the network know; location is the file, under
-            dbresource://moqui/edge/media/. Served until expireDate (channels_media_minutes after it came), then
+            dbresource://moqui/edge/media/. Served until expireDate (channels@media-minutes after it came), then
             removed with its file.</description>
         <field name="edgeMediaId" type="id-long" is-pk="true"/>
         <field name="pairedNodeId" type="id"/>

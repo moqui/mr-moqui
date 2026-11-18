@@ -21,8 +21,8 @@
         mail: its domains' addresses, which reach it by its replicated accounts (a domain two nodes share is split by
         address, and an address both have is held back until one lets it go), and smtp-server@authserv-id, the edge node's
         authserv-id (conf/edge/MoquiLocalConf.xml, Mail in).
-        Chat and SMS: the wizard sets channels_public_url to the edge node's address. Bridge ids from two databases can
-        be the same; when they may, set channels_public_url to one of this node's terminate host names, so its
+        Chat and SMS: the wizard sets channels@public-url to the edge node's address. Bridge ids from two databases can
+        be the same; when they may, set channels@public-url to one of this node's terminate host names, so its
         networks' webhooks name this node. -->
 
     <!-- Backups: this node holds the business data. This sets the paused seed job backup_EmbeddedDatabase_daily

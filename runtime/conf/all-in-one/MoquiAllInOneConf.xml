@@ -44,8 +44,8 @@
     <!-- Chat bridges and SMS (plans/archive/Edge-Node.md §5.4, §10): a network's webhook URL is this node's,
         /channels/{chatBridgeId}/webhook, for the server's own bridges and the paired node's alike. The server's own
         ChatBridge is looked for first, then the paired node's replicated copy, whose requests are queued for it; an id
-        both sides have is refused. On the local node, set channels_public_url to this node's address. -->
-    <default-property name="channels_webhooks_enabled" value="true"/>
+        both sides have is refused. On the local node, set channels@public-url to this node's address. -->
+    <channels webhooks-enabled="true"/>
 
     <!-- Calls (plans/archive/Edge-Node.md §5.4, §10): this node registers its own CallMediaNode, as a normal node does, and is
         also the media node of the paired node's calls; rooms are keyed by node and call, so a call of each side never

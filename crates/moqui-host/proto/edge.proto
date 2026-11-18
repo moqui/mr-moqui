@@ -351,7 +351,7 @@ message MailOffer {
 
 // Chat bridges and SMS (E6).
 message ChatOffer {
-  // channels_webhooks_enabled is on: the edge node takes the bridges' webhooks.
+  // channels@webhooks-enabled is on: the edge node takes the bridges' webhooks.
   bool webhooks = 1;
   // The address the providers call (/channels/{chatBridgeId}/webhook under it) and the files of MMS come from.
   string public_url = 2;

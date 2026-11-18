@@ -475,13 +475,13 @@ fn an_edge_node_queues_an_unverified_webhook_without_checking_it() {
 }
 
 /// The local node checks every queued request's signature with the bridge's whole configuration, over the URL the
-/// network posted to (`webhookUrl`, else `channels_public_url` and the path and query), whichever node checked it
+/// network posted to (`webhookUrl`, else `channels@public-url` and the path and query), whichever node checked it
 /// before: a good one is applied; a bad one is refused, counted and kept (the item done, so it holds nothing up), and
 /// applied by replay#RefusedWebhooks once the configuration is fixed; one it cannot check (no secret) waits. A bridge
 /// whose adapter now verifies on the edge node is checked here too.
 #[test]
 fn a_queued_webhook_is_checked_on_the_local_node_and_a_bad_one_refused_and_kept() {
-    moqui_lib::env::set_property("channels_public_url", PUBLIC_BASE);
+    moqui_lib::env::set_property("moqui_conf__channels__public_url", PUBLIC_BASE);
     let ctx = ExecutionContextFactory::test_context();
     let facade = crate::testing::open();
     ctx.factory().set_entity(facade.clone());
@@ -542,7 +542,7 @@ fn a_queued_webhook_is_checked_on_the_local_node_and_a_bad_one_refused_and_kept(
     };
     let received = now_millis() - 3_600_000;
     let signed = |signature: &str, body: &str| deferred_request(Some(signature), body, received);
-    // over channels_public_url and the path and query as received
+    // over channels@public-url and the path and query as received
     let good = signed("s3cret https://example.test/channels/TW1/webhook?kind=status", "good");
     assert!(apply("TW1", "item-1", &good).is_empty(), "applied");
     // a bridge's webhookUrl, as configured, wins

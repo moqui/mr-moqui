@@ -407,7 +407,7 @@ impl SmsProvider for Twilio {
         };
         let Some(url) = webhook_public_url(bridge, request) else {
             tracing::error!(
-                "SMS bridge {}: a Twilio webhook cannot be checked: set channels_public_url or the bridge's webhookUrl \
+                "SMS bridge {}: a Twilio webhook cannot be checked: set channels@public-url or the bridge's webhookUrl \
                  to the URL Twilio posts to",
                 bridge.chat_bridge_id
             );

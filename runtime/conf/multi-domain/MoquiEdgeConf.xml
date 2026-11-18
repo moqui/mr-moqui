@@ -63,9 +63,9 @@
     <!-- Chat bridges and SMS (docs/interfaces/Chat-Bridges.md): ids come from separate databases and two pairings may
         have the same one, so a webhook goes by the request's host name first. At a pairing's terminate host name only
         its bridges answer, queued while it is away; at this node's own names the one pairing with the id answers, and
-        an id two pairings have gets 401. A local node whose ids may collide sets channels_public_url to one of its
+        an id two pairings have gets 401. A local node whose ids may collide sets channels@public-url to one of its
         terminate hosts, so its networks call that name. -->
-    <default-property name="channels_webhooks_enabled" value="true"/>
+    <channels webhooks-enabled="true"/>
 
     <!-- Calls (docs/interfaces/WebRTC.md, TURN.md): this node is the media node and TURN of every pairing's calls. Each
         pairing gets a TURN secret of its own, made from turn_auth_secret and its id and handed over the link, so a
