@@ -589,27 +589,6 @@ function receive(p) {
     const row = one(NUMBER, { phoneNumber: threadNumbers[0] })
     if (row && row.messagingBridgeId === p.chatBridgeId) { ours = threadNumbers[0]; number = row }
   }
-  // an RCS bridge's text to a number of ours on another bridge (a reply to a fallback text from a number shared with an
-  // SMS bridge, plans/Comms-Messaging.md §16 step 11): that number's own room, only through an SMS bridge of the same
-  // provider (rcs-twilio and sms-twilio)
-  if (number && number.messagingBridgeId && number.messagingBridgeId !== p.chatBridgeId && !p.rerouted) {
-    const via = one(BRIDGE, { chatBridgeId: p.chatBridgeId })
-    const own = one(BRIDGE, { chatBridgeId: number.messagingBridgeId })
-    if (via && own && via.typeEnumId === 'CbtRcs' && own.typeEnumId === 'CbtSms') {
-      const provider = (bridge) => String(bridge.adapterName || '').replace(/^(rcs|sms)-/, '')
-      // only inside the RCS bridge's verified webhook (its mark), which then speaks for the number's bridge
-      const shared = ec.context.sharedMap
-      if (/^rcs-/.test(String(via.adapterName || '')) && provider(via) === provider(own) && shared._chatBridgeWebhook === p.chatBridgeId) {
-        shared._chatBridgeWebhook = own.chatBridgeId
-        try {
-          return receive(Object.assign({}, p, { chatBridgeId: own.chatBridgeId, rerouted: true }))
-        } finally {
-          shared._chatBridgeWebhook = p.chatBridgeId
-        }
-      }
-      ec.logger.warn(`RCS bridge ${p.chatBridgeId}: a text to ${ours} was left: its number's bridge ${own.chatBridgeId} is another provider's`)
-    }
-  }
   if (!number || number.messagingBridgeId !== p.chatBridgeId) return { outcome: 'ignored', reasonCode: 'unknownNumber' }
   if (!theirs) return { outcome: 'ignored', reasonCode: 'badNumber' }
   const threadList = threadNumbers && threadNumbers.length === 2 && threadNumbers[0] === ours ? threadNumbers[1].split(',').filter((n) => n) : null

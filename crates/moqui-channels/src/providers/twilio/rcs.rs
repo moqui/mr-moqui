@@ -115,21 +115,10 @@ pub fn bare(address: &str) -> &str {
     address.strip_prefix(PREFIX).unwrap_or(address)
 }
 
-/// The person's number of an RCS address or a number (`rcs:+15557778888`, `+15557778888`).
-///
-/// # Errors
-///
-/// Returns the answer to an address that is not a number (an agent's id where the person's number should be).
-pub fn their_number(address: &str) -> Result<String, WebhookResponse> {
-    let number = bare(address);
-    if e164(number) {
-        Ok(number.to_string())
-    } else {
-        Err(WebhookResponse::text(
-            400,
-            "an RCS message's sender is not a phone number",
-        ))
-    }
+/// The person's number of an RCS address or a number (`rcs:+15557778888`, `+15557778888`), the prefix taken off. A
+/// sender that is not in E.164 (a short code) is taken as `sms-twilio` takes it: `receive#Sms` gives it a room of its own.
+pub fn their_number(address: &str) -> String {
+    bare(address).to_string()
 }
 
 /// Our number of a message to `to`: the number itself, or for the agent (`rcs:` and the sender's id) the bridge's

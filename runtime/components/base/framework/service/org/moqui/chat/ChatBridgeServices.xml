@@ -1007,6 +1007,8 @@ along with this software (see the LICENSE.md file). If not, see
             configJson (JSON; its secrets are kept encrypted; empty keeps the old; its publicKey is also kept as
             webhookPublicKey, its webhookToleranceSeconds as webhookToleranceSeconds), inboundToken (its hash is kept; empty keeps the
             old), sendsPerMinute, disabled (Y stops its deliveries and input; N lets the worker start it). The worker is woken.
+            The network and the adapter agree (CbtRcs: rcs-...; CbtSms: sms or sms-...), and an RCS bridge has one number,
+            its home number (fallbackFrom or smsSender), never the system's (plans/Comms-Messaging.md §16).
             On an all-in-one node a new bridge's id skips the ids its paired node's bridges have, and a bridge a paired node
             holds is refused (EdgeClaims.secas.xml, plans/archive/Edge-Node.md §10).</description>
         <in-parameters>
@@ -1056,6 +1058,26 @@ along with this software (see the LICENSE.md file). If not, see
                     .parameters({token: inboundToken, hashOnly: true}).call().tokenHash)
             if (disabled === 'Y') row.set('statusId', 'CbsDisabled')
             else if (disabled === 'N' && row.statusId === 'CbsDisabled') row.set('statusId', 'CbsNotConnected')
+            // a network and its adapter agree: an RCS bridge's adapter is rcs-..., an SMS bridge's sms or sms-...
+            const adapter = String(row.adapterName || '')
+            if (row.typeEnumId === 'CbtRcs' && !/^rcs-/.test(adapter)) {
+                ec.message.addError(ec.l10n.localize('An RCS bridge\'s adapter is rcs-twilio or rcs-sinch')); return }
+            if (row.typeEnumId === 'CbtSms' && adapter && !/^sms(-|$)/.test(adapter)) {
+                ec.message.addError(ec.l10n.localize('An SMS bridge\'s adapter is sms, sms-twilio or sms-sinch')); return }
+            // an RCS bridge (plans/Comms-Messaging.md §16, phase 10): one number, its home number, never the system's
+            if (row.typeEnumId === 'CbtRcs' && !created) {
+                const numbers = Array.from(ec.entity.find('moqui.call.PhoneNumber').condition('messagingBridgeId', row.chatBridgeId).disableAuthz().list())
+                        .map((number) => number.phoneNumber)
+                const system = (ec.entity.find('moqui.call.VoicePolicy').condition('voicePolicyId', 'DEFAULT').disableAuthz().one() || {}).smsSystemNumber
+                if (numbers.length > 1) { ec.message.addError(ec.l10n.localize('An RCS bridge has one number, its home number: move the others to an SMS bridge first')); return }
+                if (system && numbers.includes(system)) {
+                    ec.message.addError(ec.l10n.localize('The system\'s number is on this bridge, and the system texts stay on an SMS bridge: choose another system number first')); return }
+                let config = {}
+                try { config = JSON.parse(String(row.configJson || '{}')) || {} } catch (err) { config = {} }
+                const home = String(config.fallbackFrom || config.smsSender || '').trim()
+                if (numbers.length === 1 && home !== numbers[0]) {
+                    ec.message.addError(ec.l10n.localize('An RCS bridge\'s home number (fallbackFrom on Twilio, smsSender on Sinch) is its number') + ': ' + numbers[0]); return }
+            }
             if (created) row.create(); else row.update()
             chatBridgeId = row.chatBridgeId
             ec.service.sync().name('org.moqui.chat.ChatServices.wake#BridgeDelivery').disableAuthz().call()

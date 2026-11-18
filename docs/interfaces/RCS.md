@@ -28,8 +28,11 @@ cards, suggestion chips, read receipts, typing and the RCS labels in the thread 
 
 ## How it works
 
-- **The bridge and its numbers.** An RCS bridge is a chat bridge of network RCS whose adapter is `rcs-twilio` or
-  `rcs-sinch`. A number gets an RCS bridge in System, Voice, Numbers (Texts through), as it would get an SMS bridge.
+- **The bridge and its number.** An RCS bridge is a chat bridge of network RCS whose adapter is `rcs-twilio` or
+  `rcs-sinch`. It has exactly one number, its home number (below), given it in System, Voice, Numbers (Texts through)
+  as an SMS bridge is. A second number is refused (`rcsOneNumber`), and so is a number that is not the bridge's home
+  number (`notHomeNumber`). Several numbers on one RCS bridge are later work: they need each person's replies and
+  opt-out followed across the bridge's numbers, since the agent's thread is one for all of them.
 - **The room.** One room for each outside number, `ours/theirs`, as for SMS. It is named after their number, and its
   topic says "RCS and texts".
   - The person's RCS replies come into it.
@@ -52,22 +55,27 @@ cards, suggestion chips, read receipts, typing and the RCS labels in the thread 
   - Twilio's `fallbackFrom`;
   - Sinch's `smsSender`.
 
-  Give that number the RCS bridge too, or its RCS messages are left (`unknownNumber`).
+  Set it in the bridge's configuration first, then give that number the bridge in Numbers. Until the number has the
+  bridge, the RCS messages are left (`unknownNumber`). Chat Bridges refuses a home number that is not the bridge's
+  number, and refuses to make a bridge RCS while it has several numbers or the system's.
 - **The fallback.** `smsFallback` is true by default: a phone with no RCS gets the message as SMS, or as MMS for a
   file, from the room's number. Set it false to send RCS only; a phone with no RCS then gets nothing, and the
   delivery fails. RCS-only is a setting of the whole bridge. A switch for one room or one message is later work
   (§16 RCS phase 1 step 5).
 - **A reply to a fallback text** comes to the number the fallback went from:
   - When that number's bridge is this RCS bridge, the reply goes to its RCS room.
-  - When the number's bridge is an SMS bridge of the same provider (`sms-twilio` for `rcs-twilio`, `sms-sinch` for
-    `rcs-sinch`), it goes to that number's SMS room, kept as that bridge's. This applies only within the RCS bridge's
-    verified webhook.
-  - When the number's bridge is another provider's, the reply is left and logged.
+  - When the number's bridge is an enabled SMS bridge of the same provider (`sms-twilio` for `rcs-twilio`,
+    `sms-sinch` for `rcs-sinch`) and the same provider account (Twilio: the webhook's `AccountSid` is both bridges'
+    `accountSid`; Sinch: its `project_id` and `app_id` are both bridges'), it goes to that number's SMS room, kept as
+    that bridge's. This applies only within the RCS bridge's verified webhook.
+  - Otherwise (another provider's bridge, another account, a disabled bridge) the reply is left before anything is
+    kept, and logged: `otherProvider`, `otherAccount`, `bridgeDisabled`.
 - **The path.** Each sent message records the way it went: RCS, SMS or MMS.
   - A send that cannot fall back is RCS as soon as the provider takes it.
   - Any other send gets its path from the provider's reports.
   - Once a message went as SMS or MMS, it never shows RCS again.
-  - The message's caption says so ("Delivered to RCS as SMS"), and its Info has a "Sent as" line. The terminal's Info
+  - The message's caption says so ("Delivered to RCS as SMS", one translatable string), and its Info has a "Sent as"
+    line. The terminal's Info
     has the same line.
   - The thread header keeps the SMS banner until phase 2's RCS labels.
 - **What comes in.**
@@ -113,8 +121,9 @@ Twilio's RCS is generally available since 2025-08-26 ([send RCS](https://www.twi
    - the RCS sender's Configuration tab: its "Webhook URL for incoming messages" (POST) and its fallback URL;
    - the home number's incoming webhook, so SMS replies to the fallback come to the same bridge.
 
-   A number shared with an `sms-twilio` bridge keeps that bridge's webhook. Twilio signs each request with the Auth
-   Token, and the signature is checked on the server that holds it.
+   A number of an `sms-twilio` bridge that is also in the service's pool keeps its own webhook, to its own bridge; a
+   reply to it that comes to the RCS bridge anyway is handed to its bridge when the account is the same (above).
+   Twilio signs each request with the Auth Token, and the signature is checked on the server that holds it.
 4. **The bridge.** System, Chat Bridges, network RCS, adapter `rcs-twilio`. Its configuration (kept encrypted) has the
    `sms-twilio` keys ([SMS, Twilio](SMS.md#twilio)) and these:
 
@@ -132,8 +141,9 @@ Twilio's RCS is generally available since 2025-08-26 ([send RCS](https://www.twi
 - Its error codes are read as for SMS.
 
 **In.**
-- An RCS message's `From` is `rcs:+1…` and its `To` is the agent's `rcs:` address. The prefix is taken off, the
-  number must be in E.164, and our number is `fallbackFrom`.
+- An RCS message's `From` is `rcs:+1…` and its `To` is the agent's `rcs:` address. The prefix is taken off, and our
+  number is `fallbackFrom`. A sender that is not in E.164 (a short code) is taken as `sms-twilio` takes it: a room of
+  its own.
 - An SMS reply to a number is read as for `sms-twilio`.
 - A place: `Latitude`, `Longitude`, `Label`, `Address`.
 - A tapped suggestion: `Body`, the button's words, and `ButtonPayload`.
@@ -221,8 +231,10 @@ second:
 - RCS, places and tapped suggestions in, to the home number's room;
 - each send's fields with and without the fallback, and with a file;
 - the path from the send and from the reports, never back from the fallback;
-- a reply to a fallback text, to the RCS room, to a same-provider SMS bridge's room, and left for another
-  provider's;
+- a reply to a fallback text, to the RCS room and to a same-provider, same-account SMS bridge's room (Twilio and
+  Sinch); left for another provider's, another account's and a disabled bridge's, and outside the bridge's webhook;
+  the webhook mark put back after an error;
+- one number per RCS bridge, its home number; the network and adapter agreeing in Chat Bridges; a short-code sender;
 - the RCS opt-out;
 - the system's number kept on SMS.
 

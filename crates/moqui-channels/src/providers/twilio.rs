@@ -156,6 +156,15 @@ impl SmsProvider for Twilio {
         }
     }
 
+    fn sms_adapter_name(&self) -> Option<&'static str> {
+        self.is_rcs().then_some("sms-twilio")
+    }
+
+    /// The account (`AC...`): a webhook's `AccountSid`.
+    fn account_of(&self, config: &Json) -> Option<String> {
+        text_of(config, "accountSid")
+    }
+
     fn defaults(&self) -> Defaults {
         Defaults {
             api_base_url: "https://api.twilio.com",
@@ -653,7 +662,7 @@ fn received(form: &Form, rcs: Option<&Config>) -> Result<SmsEvent, WebhookRespon
         return Err(WebhookResponse::text(400, "a text names its message and both numbers"));
     };
     let (theirs, ours) = match rcs {
-        Some(config) => (rcs::their_number(theirs)?, rcs::our_number(config, ours)?),
+        Some(config) => (rcs::their_number(theirs), rcs::our_number(config, ours)?),
         None => (theirs.to_string(), ours.to_string()),
     };
     let count = form
@@ -682,6 +691,7 @@ fn received(form: &Form, rcs: Option<&Config>) -> Result<SmsEvent, WebhookRespon
         media,
         location: rcs.and_then(|_| rcs::location_of(form)),
         postback: rcs.and_then(|_| postback_of(form.get("ButtonPayload"))),
+        account: form.get("AccountSid").map(str::to_string),
         ..Inbound::default()
     }))
 }

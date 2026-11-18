@@ -1641,8 +1641,13 @@ phase 2).
 
 **The model.** An RCS bridge is a chat bridge of the new type `CbtRcs` (`enumCode` `rcs`), adapter `rcs-twilio` or
 `rcs-sinch`. Its sender is the brand's agent, and its rooms are keyed by a number of ours, as an SMS bridge's are:
-- **Its numbers.** A number's `messagingBridgeId` may name an RCS bridge (`Voice.js` takes `CbtRcs` as well as
-  `CbtSms`; System, Voice, Numbers lists both). That number is:
+- **Its number.** A number's `messagingBridgeId` may name an RCS bridge (`Voice.js` takes `CbtRcs` as well as
+  `CbtSms`; System, Voice, Numbers lists both). In phase 10 an RCS bridge has exactly one number, its home number:
+  `store#PhoneNumber` refuses a second (`rcsOneNumber`) and one that is not the home number (`notHomeNumber`), and
+  `store#Bridge` refuses to make a bridge RCS with several numbers, the system's, or a home number not its number
+  (review 2026-11-17: with several, the agent's one thread would send the replies and a STOP to the home number's
+  pair, and another pair would stay sendable). Several numbers per RCS bridge are later work: per-person routing of
+  the agent's thread and the opt-out across the bridge's numbers. That number is:
   - the room's `ours`;
   - the fallback sender of its texts;
   - the pair of its opt-out;
@@ -1660,9 +1665,13 @@ phase 2).
   home number: Twilio's `fallbackFrom` and Sinch's `smsSender`, a number whose `messagingBridgeId` is that bridge.
 - **The reply to a fallback text (§19.1).** A text the RCS bridge takes for one of our numbers:
   - when the number's bridge is this RCS bridge: its room here;
-  - when the number's bridge is an SMS bridge of the same provider (`rcs-twilio` with `sms-twilio`, `rcs-sinch` with
-    `sms-sinch`): that number's SMS room, through its own bridge (`receive#Sms` with that bridge's id);
-  - when the number's bridge is another provider's: left (`unknownNumber`, logged).
+  - when the number's bridge is an enabled SMS bridge of the same provider (`rcs-twilio` with `sms-twilio`,
+    `rcs-sinch` with `sms-sinch`) and the same account (the payload's `AccountSid`, or `project_id/app_id`, is both
+    bridges'): that number's SMS room, through its own bridge (`receive#Sms` with that bridge's id). The adapter
+    decides this in Rust (`SmsAdapter::handover`, `SmsProvider::account_of`), where the bridges' configurations are
+    readable, and only inside the RCS bridge's verified webhook;
+  - otherwise (another provider's, another account's, a disabled bridge, outside the webhook): left before anything
+    is kept, logged (`otherProvider`, `otherAccount`, `bridgeDisabled`, `notInWebhook`).
 
 **The data model.**
 - `ChatEntities.xml`: Enumeration `CbtRcs` (RCS, `rcs`).
@@ -1711,13 +1720,14 @@ R2 adds `ReceiptStatus::Read` and a typing event.
   - `receive` takes `metadata` (the postback and the location) into the item;
   - a location with no words becomes the text "Location: {label}" with an OpenStreetMap link built from the coordinates
     (§19.1, Location);
-  - the reroute of the reply to a fallback text, above;
   - the RCS room's topic in `ensurePairRoom`.
-- `Voice.js` (store number), `Numbers.xml` (Texts through: SMS and RCS bridges).
-- `WebrootChat.js` `moqui.chat.pathText(destination)`: "as SMS" and "as MMS" when the path is not the network's own.
-  It is used by:
+- The hand-over of a reply to a fallback text is the adapter's (`sms.rs`), not `Sms.js`'s.
+- `Voice.js` (store number: the system's number and one number, the home number), `Numbers.xml` (Texts through: SMS
+  and RCS bridges), `store#Bridge` (the network and the adapter agree; an RCS bridge's one number).
+- `WebrootChat.js`:
   - `messageInfo` and `messageInfoLines`: a line "Sent as" (RCS; SMS, the phone took no RCS; MMS);
-  - `Chat.qvue` `deliveryNames`: the bubble's caption reads "Delivered to RCS as SMS".
+  - `moqui.chat.pathName(destination)`, SMS or MMS when the message went as the fallback, for `Chat.qvue`
+    `deliveryText`'s one string "Delivered to {network} as {path}".
 - `ChatTui.xml`: Info's "Sent as" line.
 - The thread header keeps the SMS banner in an RCS room until R2's RCS labels (decided 2026-11-17).
 - Phone and desktop: the same caption and Info line. Nothing depends on the width.
@@ -1751,12 +1761,16 @@ R2 adds `ReceiptStatus::Read` and a typing event.
   - each send's fields, with and without fallback, and a file;
   - the path from the answer and from the reports: RCS, the fallback's SMS and MMS, never back;
   - RCS, location and suggestion replies in, into the home number's room;
-  - a fallback reply to the RCS room and to a same-provider SMS bridge's room, and left for another provider's;
+  - a fallback reply to the RCS room and to a same-provider, same-account SMS bridge's room (Twilio and Sinch); left
+    for another provider's, another account's (the payload's or the bridge's), a disabled bridge's (no opt-out kept)
+    and outside the webhook; the webhook mark put back after a failure;
+  - one number per RCS bridge, its home number, never the system's; `store#Bridge`'s network and adapter agreeing;
+    a short-code sender;
   - the RCS opt-out;
   - the capabilities and a group room refused;
   - the config checks;
   - `sms-sinch` still leaving RCS.
-- `WebrootChat.spec.js`: `pathText` and Info's "Sent as" line.
+- `WebrootChat.spec.js`: `pathName` and Info's "Sent as" line.
 
 **Docs:**
 - New: `docs/interfaces/RCS.md`, the operator guide, per provider:
@@ -1767,15 +1781,16 @@ R2 adds `ReceiptStatus::Read` and a typing event.
 
 **Status (2026-11-17): built**, against fake servers only. Not yet tested with the provider.
 - Built as designed, with three details:
-  - The reroute of a fallback reply runs only inside the RCS bridge's verified webhook. `receive#Sms` hands its
-    webhook mark to the SMS bridge for that one text, because `ingest#Event` takes a transport-verified item only for
-    the bridge whose webhook runs.
+  - The hand-over of a fallback reply runs only inside the RCS bridge's verified webhook. The adapter hands its
+    webhook mark to the SMS bridge for that one text (`sms::with_mark`, put back after, also on an error), because
+    `ingest#Event` takes a transport-verified item only for the bridge whose webhook runs.
   - A place's coordinates reach `Sms.js` as text: a JSON number is a decimal in the service scripts.
   - The system number stays on an SMS bridge, refused in `Voice.js` `storeNumber` and `updatePolicy` (reason
     `systemNumber`).
 - Left:
   - the live tests with Twilio and Sinch, and the facts not confirmed (`docs/interfaces/RCS.md`, "Not confirmed");
   - RCS only per room and per message;
+  - several numbers per RCS bridge (per-person routing and opt-out across them);
   - R2.
 
 #### Phase 10 and later

@@ -1103,7 +1103,7 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     assert.deepEqual(sentAs("sms"), ["SMS: the phone did not take RCS"]);
     assert.deepEqual(sentAs("mms"), ["MMS: the phone did not take RCS"]);
     assert.deepEqual(sentAs(null), [], "not known yet, or an SMS bridge's");
-    assert.deepEqual(["rcs", "sms", "mms", null].map((path) => chat.pathText({ path })), ["", " as SMS", " as MMS", ""]);
+    assert.deepEqual(["rcs", "sms", "mms", null].map((path) => chat.pathName({ path })), ["", "SMS", "MMS", ""]);
     // a thread: Sent and Delivered only, it has no read markers
     const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
     const thread = chat.messageInfo(reply, members, { me: "ann" });

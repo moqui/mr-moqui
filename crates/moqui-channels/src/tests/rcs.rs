@@ -30,9 +30,12 @@ use moqui_core::service::chat_bridge::{ChatBridgeAdapter as _, Encryption};
 const SERVICE: &str = concat!("MG", "0123456789abcdef", "0123456789abcdef");
 /// The RCS sender's id, as Twilio names it in an address (`rcs:brand_..._agent`).
 const AGENT: &str = "rcs:brand_spec_agent";
-/// A number of ours on an SMS bridge of the same provider (`SMS2`), and one on another provider's (`SMS3`).
+/// Numbers of ours on other bridges ([`rcs_bed`]): an SMS bridge of the same provider and account (`SMS2`), another
+/// provider's (`SMS3`), one of the same provider and another account (`SMS4`), and a disabled one (`SMS5`).
 const OTHER: &str = "+15550002000";
 const THIRD: &str = "+15550003000";
+const FOURTH: &str = "+15550004000";
+const FIFTH: &str = "+15550005000";
 
 const TWILIO_RCS: Provider = Provider {
     adapter_name: "rcs-twilio",
@@ -79,9 +82,11 @@ const SINCH_RCS: Provider = Provider {
     sign: |_keys, body, at_seconds, _url| sinch_headers(SECRET, body, at_seconds, "HmacSHA256"),
 };
 
-/// The bed for `provider` with its bridge an RCS one (`CbtRcs`), and two SMS bridges beside it: `SMS2` on the same
-/// provider with [`OTHER`], `SMS3` on Telnyx with [`THIRD`], both routed to alice.
-fn rcs_bed(provider: Provider, same_provider_sms: &str) -> Bed {
+/// The bed for `provider` with its bridge an RCS one (`CbtRcs`, its one number the home number [`OURS`]), and SMS
+/// bridges beside it, each with a number routed to alice: `SMS2` of `same_provider_sms` on the RCS bridge's account
+/// (`account`) with [`OTHER`], `SMS3` on Telnyx with [`THIRD`], `SMS4` of `same_provider_sms` on another account
+/// (`other_account`) with [`FOURTH`], and `SMS5` like `SMS2` but disabled, with [`FIFTH`].
+fn rcs_bed(provider: Provider, same_provider_sms: &str, account: &Json, other_account: &Json) -> Bed {
     let bed = bed_for(provider, "");
     {
         let _entered = bed.ctx.enter();
@@ -96,7 +101,13 @@ fn rcs_bed(provider: Provider, same_provider_sms: &str) -> Bed {
             .unwrap();
         bridge.set("typeEnumId", text("CbtRcs"));
         bridge.update(&bed.facade).unwrap();
-        for (id, adapter, number) in [("SMS2", same_provider_sms, OTHER), ("SMS3", "sms", THIRD)] {
+        let none = json!({});
+        for (id, adapter, number, config, status) in [
+            ("SMS2", same_provider_sms, OTHER, account, "CbsNotConnected"),
+            ("SMS3", "sms", THIRD, &none, "CbsNotConnected"),
+            ("SMS4", same_provider_sms, FOURTH, other_account, "CbsNotConnected"),
+            ("SMS5", same_provider_sms, FIFTH, account, "CbsDisabled"),
+        ] {
             row(
                 &bed.facade,
                 "moqui.chat.ChatBridge",
@@ -105,7 +116,8 @@ fn rcs_bed(provider: Provider, same_provider_sms: &str) -> Bed {
                     ("typeEnumId", text("CbtSms")),
                     ("adapterName", text(adapter)),
                     ("name", text(id)),
-                    ("statusId", text("CbsNotConnected")),
+                    ("statusId", text(status)),
+                    ("configJson", text(&config.to_string())),
                 ],
             );
             row(
@@ -121,6 +133,57 @@ fn rcs_bed(provider: Provider, same_provider_sms: &str) -> Bed {
         }
     }
     bed
+}
+
+fn twilio_bed() -> Bed {
+    let other = concat!("AC", "fedcba9876543210", "fedcba9876543210");
+    rcs_bed(
+        TWILIO_RCS,
+        "sms-twilio",
+        &json!({"accountSid": ACCOUNT}),
+        &json!({"accountSid": other}),
+    )
+}
+
+fn sinch_bed() -> Bed {
+    rcs_bed(
+        SINCH_RCS,
+        "sms-sinch",
+        &json!({"projectId": "proj-1", "appId": "app-1"}),
+        &json!({"projectId": "proj-1", "appId": "app-2"}),
+    )
+}
+
+/// Sign in a user with `permission` (VoiceAdmin, ChatBridgeAdmin).
+fn admin(bed: &Bed, permission: &str) {
+    let user = format!("admin-{permission}");
+    let group = format!("G-{permission}");
+    for (entity, fields) in [
+        (
+            "moqui.security.UserAccount",
+            vec![("userId", text(&user)), ("username", text(&user))],
+        ),
+        ("moqui.security.UserGroup", vec![("userGroupId", text(&group))]),
+        (
+            "moqui.security.UserGroupMember",
+            vec![
+                ("userGroupId", text(&group)),
+                ("userId", text(&user)),
+                ("fromDate", Value::I64(0)),
+            ],
+        ),
+        (
+            "moqui.security.UserGroupPermission",
+            vec![
+                ("userGroupId", text(&group)),
+                ("userPermissionId", text(permission)),
+                ("fromDate", Value::I64(0)),
+            ],
+        ),
+    ] {
+        row(&bed.facade, entity, &fields);
+    }
+    login(&user);
 }
 
 fn rcs_bridge(adapter: &str, config: Json) -> moqui_core::service::chat_bridge::BridgeInfo {
@@ -166,17 +229,42 @@ impl Bed {
 
     /// A Twilio message in (`from`, `to`, its other parameters), signed now.
     fn rcs_in(&self, from: &str, to: &str, extra: &[(&str, &str)]) -> WebhookResponse {
+        self.hook(&self.rcs_request(ACCOUNT, from, to, extra))
+    }
+
+    /// The request of a Twilio message in, of `account`, signed now.
+    fn rcs_request(&self, account: &str, from: &str, to: &str, extra: &[(&str, &str)]) -> WebhookRequest {
         let message = sid("SM", 5000 + self.next());
         let mut pairs = vec![
             ("MessageSid", message.as_str()),
-            ("AccountSid", ACCOUNT),
+            ("AccountSid", account),
             ("MessagingServiceSid", SERVICE),
             ("From", from),
             ("To", to),
             ("NumMedia", "0"),
         ];
         pairs.extend_from_slice(extra);
-        self.hook(&self.signed_bytes(form(&pairs), now() / 1000))
+        self.signed_bytes(form(&pairs), now() / 1000)
+    }
+
+    /// The mappings of `bridge` whose external room id has `number`.
+    fn rooms_with(&self, bridge: &str, number: &str) -> usize {
+        let _authz = self.ctx.disable_authz();
+        self.facade
+            .find("moqui.chat.ChatRoomBridge")
+            .unwrap()
+            .eq("chatBridgeId", text(bridge))
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .filter(|row| {
+                row.get("externalRoomId")
+                    .map(to_plain_string)
+                    .unwrap_or_default()
+                    .contains(number)
+            })
+            .count()
     }
 
     /// A Twilio status callback of `message` from `from` (the agent's address, or the fallback's number).
@@ -280,7 +368,7 @@ fn an_rcs_bridge_is_encrypted_in_transit_has_no_groups_and_needs_its_sender_and_
 
 #[test]
 fn twilio_rcs_comes_in_to_the_home_numbers_room_and_goes_out_with_its_fallback_and_path() {
-    let bed = rcs_bed(TWILIO_RCS, "sms-twilio");
+    let bed = twilio_bed();
     let _entered = bed.ctx.enter();
     // an RCS message names the agent: its room is the home number's (fallbackFrom), keyed by their number
     let response = bed.rcs_in(&format!("rcs:{THEIRS}"), AGENT, &[("Body", "Hi from RCS")]);
@@ -383,7 +471,7 @@ fn twilio_rcs_comes_in_to_the_home_numbers_room_and_goes_out_with_its_fallback_a
 
 #[test]
 fn without_its_fallback_a_twilio_rcs_send_goes_rcs_only_and_its_path_is_known_at_once() {
-    let bed = rcs_bed(TWILIO_RCS, "sms-twilio");
+    let bed = twilio_bed();
     let _entered = bed.ctx.enter();
     bed.set_config(|config| config["smsFallback"] = json!(false));
     bed.rcs_in(&format!("rcs:{THEIRS}"), AGENT, &[("Body", "Hi")]);
@@ -398,24 +486,48 @@ fn without_its_fallback_a_twilio_rcs_send_goes_rcs_only_and_its_path_is_known_at
 }
 
 #[test]
-fn a_reply_to_a_fallback_text_goes_to_the_rcs_room_or_to_its_numbers_own_sms_room() {
-    let bed = rcs_bed(TWILIO_RCS, "sms-twilio");
+fn a_reply_to_a_fallback_text_goes_to_the_rcs_room_or_to_a_same_account_sms_bridges_room() {
+    let bed = twilio_bed();
     let _entered = bed.ctx.enter();
     bed.rcs_in(&format!("rcs:{THEIRS}"), AGENT, &[("Body", "Hi")]);
     let room = bed.room(THEIRS).unwrap();
     // an SMS to the RCS bridge's own number: its RCS room
     assert_eq!(status(&bed.rcs_in(THEIRS, OURS, &[("Body", "By SMS")])), 200);
     assert_eq!(bed.messages(&room).last().unwrap().1, "By SMS");
-    // to a number of an SMS bridge of the same provider: that number's own room, on its bridge
+    // to a number of an SMS bridge of the same provider and account: that number's own room, on its bridge
     let response = bed.rcs_in(THEIRS, OTHER, &[("Body", "To the other number")]);
     assert_eq!(status(&response), 200);
     let other = bed.room_on("SMS2", OTHER, THEIRS).expect("the SMS bridge's pair room");
     assert_ne!(other, room);
     assert_eq!(bed.messages(&other).last().unwrap().1, "To the other number");
-    // to a number of another provider's bridge: left
+    // a payload of another account to that number: left
+    let stranger = concat!("AC", "1111111111111111", "1111111111111111");
+    assert_eq!(
+        status(&bed.hook(&bed.rcs_request(stranger, THEIRS, OTHER, &[("Body", "Not ours")]))),
+        200
+    );
+    assert_eq!(bed.messages(&other).last().unwrap().1, "To the other number");
+    // to a number of a same-provider bridge of another account, of another provider's bridge: left
+    bed.rcs_in(THEIRS, FOURTH, &[("Body", "Another account")]);
+    assert_eq!(bed.rooms_with("SMS4", FOURTH), 0);
     bed.rcs_in(THEIRS, THIRD, &[("Body", "Elsewhere")]);
-    assert!(bed.room_on("SMS3", THIRD, THEIRS).is_none());
-    assert!(bed.room_on(BRIDGE, THIRD, THEIRS).is_none());
+    assert_eq!(bed.rooms_with("SMS3", THIRD) + bed.rooms_with(BRIDGE, THIRD), 0);
+    // to a disabled bridge's number: left before anything is kept, a STOP's opt-out too
+    bed.rcs_in(THEIRS, FIFTH, &[("Body", "STOP")]);
+    assert_eq!(bed.rooms_with("SMS5", FIFTH), 0);
+    assert_eq!(bed.count("moqui.call.SmsOptOut", &[("phoneNumber", text(FIFTH))]), 0);
+    // outside the RCS bridge's own webhook (no mark): left
+    let newcomer = "+15557770001";
+    let info = moqui_core::service::chat_bridge::BridgeInfo {
+        type_enum_id: "CbtRcs".to_string(),
+        ..bridge_info(&bed)
+    };
+    let request = bed.rcs_request(ACCOUNT, newcomer, OTHER, &[("Body", "No mark")]);
+    crate::sms::SmsAdapter::new(Twilio::rcs()).apply_webhook(&info, &request);
+    assert!(bed.room_on("SMS2", OTHER, newcomer).is_none());
+    // a sender that is not in E.164 (a short code): taken as sms-twilio takes it, in a room of its own
+    assert_eq!(status(&bed.rcs_in("rcs:22395", AGENT, &[("Body", "Your code")])), 200);
+    assert_eq!(bed.rooms_with(BRIDGE, "22395"), 1);
     // an SMS bridge takes no RCS message
     let sms = Twilio::default();
     let request = bed.signed_bytes(
@@ -431,50 +543,47 @@ fn a_reply_to_a_fallback_text_goes_to_the_rcs_room_or_to_its_numbers_own_sms_roo
 }
 
 #[test]
-fn the_systems_number_stays_on_an_sms_bridge() {
-    let bed = rcs_bed(TWILIO_RCS, "sms-twilio");
+fn the_webhook_mark_is_put_back_after_a_hand_over_also_when_it_fails() {
+    use moqui_core::service::chat_bridge::WEBHOOK_MARK;
+    let bed = twilio_bed();
     let _entered = bed.ctx.enter();
-    for (entity, fields) in [
-        (
-            "moqui.security.UserAccount",
-            vec![("userId", text("voiceadmin")), ("username", text("voiceadmin"))],
-        ),
-        ("moqui.security.UserGroup", vec![("userGroupId", text("VADMIN"))]),
-        (
-            "moqui.security.UserGroupMember",
-            vec![
-                ("userGroupId", text("VADMIN")),
-                ("userId", text("voiceadmin")),
-                ("fromDate", Value::I64(0)),
-            ],
-        ),
-        (
-            "moqui.security.UserGroupPermission",
-            vec![
-                ("userGroupId", text("VADMIN")),
-                ("userPermissionId", text("VoiceAdmin")),
-                ("fromDate", Value::I64(0)),
-            ],
-        ),
-    ] {
-        row(&bed.facade, entity, &fields);
-    }
-    login("voiceadmin");
+    let mark = || ExecutionContext::with_current(|ec| ec.shared_map().get(WEBHOOK_MARK).map(to_plain_string)).flatten();
+    assert_eq!(crate::sms::with_mark("SMS2", mark).as_deref(), Some("SMS2"));
+    assert_eq!(mark(), None, "no mark before, none after");
+    ExecutionContext::with_current(|ec| {
+        ec.shared_map().insert(WEBHOOK_MARK.to_string(), text(BRIDGE));
+    });
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::sms::with_mark("SMS2", || -> () { panic!("the SMS room failed") })
+    }));
+    assert!(failed.is_err());
+    assert_eq!(mark().as_deref(), Some(BRIDGE), "the RCS bridge's mark is back");
+}
+
+#[test]
+fn an_rcs_bridge_has_one_number_its_home_number_never_the_systems() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    admin(&bed, "VoiceAdmin");
+    let store = |number: &str, bridge: &str| {
+        let out = call(
+            "org.moqui.call.VoiceServices.store#PhoneNumber",
+            &[("phoneNumber", text(number)), ("messagingBridgeId", text(bridge))],
+        );
+        (out_text(&out, "reasonCode"), errors())
+    };
     // the bed's system number is OURS: its texts cannot go through the RCS bridge
-    let out = call(
-        "org.moqui.call.VoiceServices.store#PhoneNumber",
-        &[("phoneNumber", text(OURS)), ("messagingBridgeId", text(BRIDGE))],
-    );
-    assert_eq!(out_text(&out, "reasonCode"), "systemNumber");
-    assert!(errors().contains("sign-in codes"));
-    // another number may, and then cannot become the system's number
-    ok(
-        "org.moqui.call.VoiceServices.store#PhoneNumber",
-        &[("phoneNumber", text(OTHER)), ("messagingBridgeId", text(BRIDGE))],
-    );
+    let (reason, error) = store(OURS, BRIDGE);
+    assert_eq!(reason, "systemNumber");
+    assert!(error.contains("sign-in codes"), "{error}");
+    // a second number on the RCS bridge: refused, its replies and STOPs would come to the home number's pair
+    let (reason, error) = store(OTHER, BRIDGE);
+    assert_eq!(reason, "rcsOneNumber");
+    assert!(error.contains("one number"), "{error}");
+    // a number of an RCS bridge never becomes the system's
     let out = call(
         "org.moqui.call.VoiceServices.update#VoicePolicy",
-        &[("smsSystemNumber", text(OTHER))],
+        &[("smsSystemNumber", text(OURS))],
     );
     assert_eq!(out_text(&out, "reasonCode"), "systemNumber");
     assert!(!errors().is_empty());
@@ -482,13 +591,109 @@ fn the_systems_number_stays_on_an_sms_bridge() {
         "org.moqui.call.VoiceServices.update#VoicePolicy",
         &[("smsSystemNumber", text(THIRD))],
     );
+    // a new RCS bridge takes only its home number
+    let home = "+15550006000";
+    row(
+        &bed.facade,
+        "moqui.chat.ChatBridge",
+        &[
+            ("chatBridgeId", text("RCS2")),
+            ("typeEnumId", text("CbtRcs")),
+            ("adapterName", text("rcs-twilio")),
+            ("name", text("RCS2")),
+            ("statusId", text("CbsDisabled")),
+            ("configJson", text(&json!({"fallbackFrom": home}).to_string())),
+        ],
+    );
+    let (reason, error) = store("+15550007000", "RCS2");
+    assert_eq!(reason, "notHomeNumber");
+    assert!(error.contains("fallbackFrom"), "{error}");
+    let (reason, error) = store(home, "RCS2");
+    assert!(reason.is_empty() && error.is_empty(), "{reason} {error}");
+}
+
+#[test]
+fn a_bridges_network_and_adapter_agree_and_an_rcs_bridge_keeps_one_number() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    admin(&bed, "ChatBridgeAdmin");
+    // the networks, as ChatEntities.xml's seed data has them
+    for (id, code) in [("CbtRcs", "rcs"), ("CbtSms", "sms")] {
+        row(
+            &bed.facade,
+            "moqui.basic.Enumeration",
+            &[
+                ("enumId", text(id)),
+                ("enumCode", text(code)),
+                ("enumTypeId", text("ChatBridgeType")),
+            ],
+        );
+    }
+    let store = |fields: &[(&str, Value)]| {
+        call("org.moqui.chat.ChatBridgeServices.store#Bridge", fields);
+        errors()
+    };
+    let error = store(&[
+        ("name", text("Wrong")),
+        ("typeEnumId", text("CbtRcs")),
+        ("adapterName", text("sms-twilio")),
+    ]);
+    assert!(error.contains("rcs-twilio or rcs-sinch"), "{error}");
+    let error = store(&[
+        ("name", text("Wrong")),
+        ("typeEnumId", text("CbtSms")),
+        ("adapterName", text("rcs-twilio")),
+    ]);
+    assert!(error.contains("sms, sms-twilio or sms-sinch"), "{error}");
+    // SMS4 with the system's number: not made an RCS bridge
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut policy = bed
+            .facade
+            .find("moqui.call.VoicePolicy")
+            .unwrap()
+            .eq("voicePolicyId", text("DEFAULT"))
+            .one()
+            .unwrap()
+            .unwrap();
+        policy.set("smsSystemNumber", text(FOURTH));
+        policy.update(&bed.facade).unwrap();
+    }
+    let to_rcs = |bridge: &str, home: &str| {
+        store(&[
+            ("chatBridgeId", text(bridge)),
+            ("typeEnumId", text("CbtRcs")),
+            ("adapterName", text("rcs-twilio")),
+            ("configJson", text(&json!({"fallbackFrom": home}).to_string())),
+        ])
+    };
+    assert!(to_rcs("SMS4", FOURTH).contains("system"));
+    // SMS3 with two numbers: not made an RCS bridge
+    row(
+        &bed.facade,
+        "moqui.call.PhoneNumber",
+        &[
+            ("phoneNumber", text("+15550008000")),
+            ("messagingBridgeId", text("SMS3")),
+            ("routeTypeEnumId", text("PnrUser")),
+            ("routeId", text("alice")),
+        ],
+    );
+    assert!(to_rcs("SMS3", THIRD).contains("one number"));
+    // SMS2 with its one number: only with it as the home number
+    assert!(to_rcs("SMS2", "+15550009000").contains(OTHER));
+    assert_eq!(to_rcs("SMS2", OTHER), "");
+    assert_eq!(
+        bed.one("moqui.chat.ChatBridge", &[("chatBridgeId", text("SMS2"))])["typeEnumId"],
+        "CbtRcs"
+    );
 }
 
 // ---- Sinch ----
 
 #[test]
 fn sinch_rcs_goes_out_rcs_first_with_its_fallback_and_comes_in_on_the_rcs_channel() {
-    let bed = rcs_bed(SINCH_RCS, "sms-sinch");
+    let bed = sinch_bed();
     let _entered = bed.ctx.enter();
     // an RCS text (its sender_id the agent's): the home number's room
     let response = bed.sinch_event(&sinch_rcs_in("01RCS1", json!({"text_message": {"text": "Hi"}})));
@@ -572,4 +777,33 @@ fn sinch_rcs_goes_out_rcs_first_with_its_fallback_and_comes_in_on_the_rcs_channe
         &[("phoneNumber", text(OURS)), ("otherNumber", text(THEIRS))],
     );
     assert_eq!(opt["optedOut"], "Y");
+}
+
+#[test]
+fn a_sinch_reply_to_a_fallback_text_goes_to_a_same_account_sms_bridges_room() {
+    let bed = sinch_bed();
+    let _entered = bed.ctx.enter();
+    // an SMS on the RCS app to a number of ours (its sender_id), of the app's project and app id
+    let sms_in = |id: &str, to: &str, body: &str| {
+        json!({"app_id": "app-1", "project_id": "proj-1", "accepted_time": "2026-11-01T12:00:00Z",
+            "message": {"id": id, "direction": "TO_APP", "contact_message": {"text_message": {"text": body}},
+                "channel_identity": {"channel": "SMS", "identity": digits(THEIRS), "app_id": "app-1"},
+                "sender_id": digits(to), "accept_time": "2026-11-01T12:00:00Z"}})
+    };
+    assert_eq!(
+        status(&bed.sinch_event(&sms_in("01S1", OURS, "To the home number"))),
+        200
+    );
+    let room = bed.room(THEIRS).expect("the RCS room");
+    assert_eq!(bed.messages(&room).last().unwrap().1, "To the home number");
+    // SMS2 is of the same project and app: its room
+    assert_eq!(
+        status(&bed.sinch_event(&sms_in("01S2", OTHER, "To the other number"))),
+        200
+    );
+    let other = bed.room_on("SMS2", OTHER, THEIRS).expect("the SMS bridge's pair room");
+    assert_eq!(bed.messages(&other).last().unwrap().1, "To the other number");
+    // SMS4 is another app's: left
+    bed.sinch_event(&sms_in("01S3", FOURTH, "Another app"));
+    assert_eq!(bed.rooms_with("SMS4", FOURTH), 0);
 }

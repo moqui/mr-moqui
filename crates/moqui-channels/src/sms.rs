@@ -54,7 +54,7 @@ use std::time::Duration;
 use moqui_core::service::chat_bridge::{
     media_urls, replay_finish, replay_take, webhook_public_url, BridgeInfo, Capabilities, ChatBridgeAdapter,
     DeliveryKind, DeliveryOutcome, DeliveryRequest, Encryption, FetchedMedia, MediaUrls, Replay, WebhookEventKey,
-    WebhookRequest, WebhookResponse, WebhookVerification, MEDIA_RETRY_MILLIS,
+    WebhookRequest, WebhookResponse, WebhookVerification, MEDIA_RETRY_MILLIS, WEBHOOK_MARK,
 };
 use moqui_lib::http::{Method, RestClient, RestResponse};
 use moqui_lib::object::{to_plain_string, Value};
@@ -329,6 +329,9 @@ pub struct Inbound {
     pub location: Option<Location>,
     /// The payload of a suggestion the person tapped (RCS; R2's chips answer to it).
     pub postback: Option<String>,
+    /// The provider account the payload names (Twilio's `AccountSid`, Sinch's `project_id/app_id`): an RCS bridge hands
+    /// a text to a number of an SMS bridge only of this same account ([`SmsProvider::account_of`]).
+    pub account: Option<String>,
 }
 
 /// A file a text that came in names, for the core to fetch ([`SmsProvider::media_auth`]).
@@ -433,6 +436,17 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     }
     /// The adapter name a `ChatBridge` selects it by (`adapterName`; Telnyx's is `sms`).
     fn adapter_name(&self) -> &'static str;
+    /// An RCS provider's SMS adapter of the same provider (`sms-twilio` for `rcs-twilio`): a reply to a fallback text
+    /// that comes to a number of a bridge of it goes to that number's room ([`SmsAdapter`]'s hand-over). None by default.
+    fn sms_adapter_name(&self) -> Option<&'static str> {
+        None
+    }
+    /// The provider account a bridge's `configJson` names, in the form of [`Inbound::account`] (Twilio's `accountSid`,
+    /// Sinch's `projectId/appId`). None by default: no text is handed over.
+    fn account_of(&self, config: &Json) -> Option<String> {
+        let _ = config;
+        None
+    }
     /// Its defaults for the neutral [`Settings`].
     fn defaults(&self) -> Defaults;
     fn config(&self, config: &Json) -> Self::Config;
@@ -1068,7 +1082,17 @@ impl<P: SmsProvider> SmsAdapter<P> {
 
     fn work(&self, bridge: &BridgeInfo, event: SmsEvent) -> WebhookResponse {
         match event {
-            SmsEvent::Inbound(text) => received(bridge, &self.settings(bridge), &text),
+            SmsEvent::Inbound(text) => match self.handover(bridge, &text) {
+                Handover::Here => received(bridge, &self.settings(bridge), &text),
+                // the RCS bridge's verified webhook speaks for the number's own bridge, for this one text
+                Handover::To(target) => with_mark(&target.chat_bridge_id, || {
+                    received(&target, &self.settings(bridge), &text)
+                }),
+                Handover::Left(reason) => {
+                    WebhookResponse::json(200, &json!({"outcome": "ignored", "reasonCode": reason, "message": ""}))
+                }
+                Handover::Unreadable => WebhookResponse::text(503, "the text was not taken; try again later"),
+            },
             SmsEvent::Receipt(receipt) => noted(bridge, &receipt),
             SmsEvent::OptSignal(signal) => opted(bridge, &signal),
             SmsEvent::Path { remote_event_id, path } => {
@@ -1077,6 +1101,96 @@ impl<P: SmsProvider> SmsAdapter<P> {
             }
             SmsEvent::Ignored(what) => WebhookResponse::json(200, &json!({"ignored": what})),
         }
+    }
+
+    /// Where a text an RCS bridge took goes (plans/Comms-Messaging.md §16 step 11): here, unless its number of ours is
+    /// on another bridge. Then to that bridge only when it is an enabled SMS bridge of the same provider and account
+    /// (the payload's, the RCS bridge's and the SMS bridge's account the same), and only inside this bridge's verified
+    /// webhook (its mark); else it is left, before anything is kept, and logged.
+    fn handover(&self, bridge: &BridgeInfo, text: &Inbound) -> Handover {
+        if self.provider.channel() != Channel::Rcs {
+            return Handover::Here;
+        }
+        let read = || -> Result<Option<(BridgeInfo, bool)>, moqui_lib::error::Error> {
+            let Some(facade) =
+                moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()
+            else {
+                return Ok(None);
+            };
+            let number = facade
+                .find("moqui.call.PhoneNumber")?
+                .eq("phoneNumber", Value::string(&text.our_number))
+                .disable_authz()
+                .one()?;
+            let Some(target) = number
+                .and_then(|row| row.get("messagingBridgeId").map(to_plain_string))
+                .filter(|id| !id.is_empty() && *id != bridge.chat_bridge_id)
+            else {
+                return Ok(None);
+            };
+            let Some(row) = facade
+                .find("moqui.chat.ChatBridge")?
+                .eq("chatBridgeId", Value::string(&target))
+                .disable_authz()
+                .one()?
+            else {
+                return Ok(None);
+            };
+            let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+            let disabled = field("statusId") == "CbsDisabled";
+            Ok(Some((
+                BridgeInfo {
+                    chat_bridge_id: target,
+                    type_enum_id: field("typeEnumId"),
+                    adapter_name: field("adapterName"),
+                    name: field("name"),
+                    config: serde_json::from_str(&field("configJson")).unwrap_or(Json::Null),
+                },
+                disabled,
+            )))
+        };
+        let (target, disabled) = match read() {
+            Ok(Some(found)) => found,
+            Ok(None) => return Handover::Here,
+            Err(error) => {
+                tracing::error!(
+                    "RCS bridge {}: the bridge of {} could not be read: {error}",
+                    bridge.chat_bridge_id,
+                    text.our_number
+                );
+                return Handover::Unreadable;
+            }
+        };
+        let leave = |reason: &'static str, why: &str| {
+            tracing::warn!(
+                "RCS bridge {}: a text to {} was left ({reason}): its number is on bridge {}, {why}",
+                bridge.chat_bridge_id,
+                text.our_number,
+                target.chat_bridge_id
+            );
+            Handover::Left(reason)
+        };
+        if disabled {
+            return leave("bridgeDisabled", "which is disabled");
+        }
+        if target.type_enum_id != "CbtSms" || Some(target.adapter_name.as_str()) != self.provider.sms_adapter_name() {
+            return leave("otherProvider", "not an SMS bridge of this provider");
+        }
+        let account = text.account.as_deref().filter(|account| !account.is_empty());
+        let same = account.is_some()
+            && self.provider.account_of(&bridge.config).as_deref() == account
+            && self.provider.account_of(&target.config).as_deref() == account;
+        if !same {
+            return leave("otherAccount", "of another provider account");
+        }
+        let marked = moqui_core::context::ExecutionContext::with_current(|ec| {
+            ec.shared_map().get(WEBHOOK_MARK).map(to_plain_string)
+        })
+        .flatten();
+        if marked.as_deref() != Some(bridge.chat_bridge_id.as_str()) {
+            return leave("notInWebhook", "and this is not the RCS bridge's own webhook");
+        }
+        Handover::To(target)
     }
 
     fn fetch(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
@@ -1117,6 +1231,44 @@ impl<P: SmsProvider> SmsAdapter<P> {
 }
 
 // ---- the events ----
+
+/// Where a text an RCS bridge took goes ([`SmsAdapter::handover`]).
+#[derive(Debug)]
+enum Handover {
+    Here,
+    /// To the room of its number on this bridge, an SMS bridge of the same provider and account.
+    To(BridgeInfo),
+    /// Left, with the reason code.
+    Left(&'static str),
+    /// The number's bridge could not be read now: tried again.
+    Unreadable,
+}
+
+/// Run `work` with the context's webhook mark (`chat_bridge::WEBHOOK_MARK`, what `ingest#Event` takes a
+/// transport-verified item by) set to `bridge_id`, and put back as it was after, also when `work` fails or panics.
+pub(crate) fn with_mark<T>(bridge_id: &str, work: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Value>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            let _ = moqui_core::context::ExecutionContext::with_current(|ec| match previous {
+                Some(value) => {
+                    ec.shared_map().insert(WEBHOOK_MARK.to_string(), value);
+                }
+                None => {
+                    ec.shared_map().shift_remove(WEBHOOK_MARK);
+                }
+            });
+        }
+    }
+    let previous = moqui_core::context::ExecutionContext::with_current(|ec| {
+        ec.shared_map()
+            .insert(WEBHOOK_MARK.to_string(), Value::string(bridge_id))
+    })
+    .flatten();
+    let _restore = Restore(previous);
+    work()
+}
 
 /// The reason codes of `ingest#Event` that refuse a text for what it is; any other failure is the server's own.
 pub const REFUSALS: &[&str] = &[

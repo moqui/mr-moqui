@@ -1498,11 +1498,12 @@
             return { sent: it.sentDate != null && it.sentDate !== "" ? Number(it.sentDate) : null,
                 from: it.senderExternal ? (it.senderExternal.networkName || it.senderExternal.network || tr("another network")) : null, delivered, readBy, thread };
         },
-        // A destination's way, for the bubble's caption (Comms-Messaging §16): " as SMS" or " as MMS" when an RCS bridge's
-        // message went as the fallback; '' for RCS, an unknown way, or any other bridge (which records none).
-        pathText(destination) {
+        // A destination's fallback, for the bubble's caption ("Delivered to {network} as {path}", Comms-Messaging §16): SMS or
+        // MMS when an RCS bridge's message went as the fallback; '' for RCS, an unknown way, or any other bridge (which
+        // records none).
+        pathName(destination) {
             const path = destination && destination.path;
-            return path === "sms" ? " " + tr("as SMS") : path === "mms" ? " " + tr("as MMS") : "";
+            return path === "sms" ? tr("SMS") : path === "mms" ? tr("MMS") : "";
         },
         // Info as lines [{key, label, text}] (the dialog's, and what a test reads): when is fullTime(millis). A read receipt is
         // never said to be missing: an empty Read by says who is not listed, and receipts off say so.

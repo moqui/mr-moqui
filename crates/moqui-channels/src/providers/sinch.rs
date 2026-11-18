@@ -288,6 +288,19 @@ impl SmsProvider for Sinch {
         }
     }
 
+    fn sms_adapter_name(&self) -> Option<&'static str> {
+        self.is_rcs().then_some("sms-sinch")
+    }
+
+    /// The project and its app (`projectId/appId`): a webhook's `project_id/app_id`.
+    fn account_of(&self, config: &Json) -> Option<String> {
+        Some(format!(
+            "{}/{}",
+            text_of(config, "projectId")?,
+            text_of(config, "appId")?
+        ))
+    }
+
     fn defaults(&self) -> Defaults {
         Defaults {
             api_base_url: "https://us.conversation.api.sinch.com",
@@ -734,6 +747,9 @@ fn received(event: &Json, message: &Json, ours: Option<&str>, rcs: bool) -> Resu
         origin_millis: millis_of(str_at(message, "/accept_time").or_else(|| str_at(event, "/accepted_time"))),
         location,
         postback,
+        account: str_at(event, "/project_id")
+            .zip(str_at(event, "/app_id"))
+            .map(|(project, app)| format!("{project}/{app}")),
         ..Inbound::default()
     }))
 }

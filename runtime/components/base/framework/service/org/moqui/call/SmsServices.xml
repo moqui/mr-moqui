@@ -183,8 +183,7 @@ along with this software (see the LICENSE.md file). If not, see
             group's, of the sender and the others. externalThreadId, the provider's conversation the text came in (a Twilio
             Conversation): the room of the bridge's mapping that keeps it (store#MappingThread), whoever writes. metadata, an
             RCS message's place (location: latitude, longitude, label, address) and tapped suggestion (postback), kept on the
-            message; a place with no words is said as its text with a map link. On an RCS bridge, a text to a number of ours
-            on an SMS bridge of the same provider goes to that number's room (plans/Comms-Messaging.md §16 step 11).</description>
+            message; a place with no words is said as its text with a map link (an RCS bridge's: plans/Comms-Messaging.md §16).</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="eventId" required="true"/>
