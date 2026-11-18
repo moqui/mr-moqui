@@ -100,8 +100,11 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   "Email is not end-to-end encrypted" and opens the thread in the Inbox (a link: Tab and Enter reach it). Mail stays in the Inbox: there are no mail-only rows, and an outside person waits for
   unified contacts (`find#DirectChatMail` of `org.moqui.comms.ChatScreenServices`, the `mailLines` transition, one query
   for the list).
-- <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct
-  room beside the plain one). Its messages, reactions and files are encrypted in your browser and read only on the
+- <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). A new direct chat or private room is encrypted when everyone in it
+  has a crypto device (Chat makes your browser's when it opens); otherwise it is plain, with the plain note. A direct chat
+  you already have keeps opening; when it is plain and the other person has a device, its menu and its start offer Start
+  an encrypted chat, which opens a new encrypted chat that links back to the plain one, and from then on the encrypted
+  one opens. New room's Encrypted follows the same rule until you set it. Its messages, reactions and files are encrypted in your browser and read only on the
   devices of its members; the room shows a lock, and the room list says "Encrypted message". It cannot be turned off,
   and it gives up what needs the server to read it: search, link previews, agents, polls, bridges, forwards, filing on
   records and Create from; the terminal lists it but cannot read or write it. Set up the key backup in Settings, My
@@ -142,7 +145,9 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   with (the SMS icon, named their number): its texts, pictures, calls and voicemail are there, and everyone our number
   reaches is in it. Calls, Text a number opens it for a number you are granted; a reply goes from that number. A person
   who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
-  administrator allows them. See [SMS](../interfaces/SMS.md).
+  administrator allows them. See [SMS](../interfaces/SMS.md). A number on an RCS bridge texts as the brand's RCS
+  agent, with SMS from the number when the phone has no RCS; each message's caption and Info say when it went as SMS
+  or MMS ([RCS](../interfaces/RCS.md)).
 - <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
   app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Settings, Chat apps
   shows the address to sign in as (`username@domain`; an email-style username has its `@` written as `\40`), the

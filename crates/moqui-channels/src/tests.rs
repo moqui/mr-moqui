@@ -2194,5 +2194,6 @@ fn a_text_in_a_providers_conversation_comes_to_its_room() {
     assert!(bed.room(OTHER).is_none(), "not the sender's pair room");
 }
 
+mod rcs;
 mod sinch;
 mod twilio;

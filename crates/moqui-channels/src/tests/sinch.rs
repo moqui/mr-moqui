@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
 use crate::providers::sinch::Sinch;
 
-const SECRET: &str = "sinch-webhook-secret";
+pub(super) const SECRET: &str = "sinch-webhook-secret";
 const TOKEN_PATH: &str = "/oauth2/token";
 const SEND_PATH: &str = "/v1/projects/proj-1/messages:send";
 
@@ -32,7 +32,7 @@ const SEND_PATH: &str = "/v1/projects/proj-1/messages:send";
 static NONCE: AtomicU64 = AtomicU64::new(0);
 
 /// The headers Sinch signs `body` with at `at_seconds`, under `secret`, by `algorithm`.
-fn sinch_headers(secret: &str, body: &[u8], at_seconds: i64, algorithm: &str) -> Vec<(String, String)> {
+pub(super) fn sinch_headers(secret: &str, body: &[u8], at_seconds: i64, algorithm: &str) -> Vec<(String, String)> {
     let nonce = format!("01NONCE{}", NONCE.fetch_add(1, Ordering::Relaxed));
     let stamp = at_seconds.to_string();
     let mut message = body.to_vec();
@@ -73,7 +73,7 @@ const SINCH: Provider = Provider {
 };
 
 /// Our number and theirs as Sinch gives them: digits, no `+`.
-fn digits(number: &str) -> &str {
+pub(super) fn digits(number: &str) -> &str {
     number.trim_start_matches('+')
 }
 

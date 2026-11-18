@@ -54,7 +54,7 @@ use std::time::Duration;
 use moqui_core::service::chat_bridge::{
     media_urls, replay_finish, replay_take, webhook_public_url, BridgeInfo, Capabilities, ChatBridgeAdapter,
     DeliveryKind, DeliveryOutcome, DeliveryRequest, Encryption, FetchedMedia, MediaUrls, Replay, WebhookEventKey,
-    WebhookRequest, WebhookResponse, WebhookVerification, MEDIA_RETRY_MILLIS,
+    WebhookRequest, WebhookResponse, WebhookVerification, MEDIA_RETRY_MILLIS, WEBHOOK_MARK,
 };
 use moqui_lib::http::{Method, RestClient, RestResponse};
 use moqui_lib::object::{to_plain_string, Value};
@@ -182,6 +182,9 @@ pub struct Outgoing<'a> {
     pub text: Option<&'a str>,
     /// The files' addresses, one per attachment in order, for the provider to fetch.
     pub media_urls: &'a [String],
+    /// An RCS send ([`Channel::Rcs`]) may go as SMS or MMS from our number when the phone takes no RCS: the bridge's
+    /// `smsFallback` (true when not set). Always true for an SMS provider, where it means nothing.
+    pub fallback: bool,
 }
 
 impl Outgoing<'_> {
@@ -227,8 +230,86 @@ pub enum Refusal {
     Retry,
 }
 
+/// The network a provider's adapter speaks (plans/Comms-Messaging.md §16): SMS and MMS, or business RCS (the brand's
+/// agent, with SMS and MMS from our number as its fallback).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Channel {
+    #[default]
+    Sms,
+    Rcs,
+}
+
+/// The way an RCS bridge's message went, as the provider's answer or report tells it (`ChatBridgeDelivery.deliveryPath`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Path {
+    Rcs,
+    Sms,
+    Mms,
+    /// SMS or MMS, the report does not say which: `note#DeliveryPath` decides by the message's files.
+    Fallback,
+}
+
+impl Path {
+    /// Its name in `note#DeliveryPath`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Path::Rcs => "rcs",
+            Path::Sms => "sms",
+            Path::Mms => "mms",
+            Path::Fallback => "fallback",
+        }
+    }
+}
+
+/// A place a person shared (an RCS location message): checked numbers, the words cut to [`LOCATION_TEXT_MAX`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Location {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub label: Option<String>,
+    pub address: Option<String>,
+}
+
+/// The most characters of a location's label or address kept.
+pub const LOCATION_TEXT_MAX: usize = 200;
+/// The most characters of a tapped suggestion's payload kept.
+pub const POSTBACK_MAX: usize = 1024;
+
+impl Location {
+    /// A location from a provider's latitude, longitude and words; none when either number is missing or out of range.
+    pub fn of(
+        latitude: Option<f64>,
+        longitude: Option<f64>,
+        label: Option<&str>,
+        address: Option<&str>,
+    ) -> Option<Self> {
+        let (latitude, longitude) = (latitude?, longitude?);
+        if !(latitude.is_finite() && longitude.is_finite() && latitude.abs() <= 90.0 && longitude.abs() <= 180.0) {
+            return None;
+        }
+        let words = |text: Option<&str>| {
+            text.map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(|text| text.chars().take(LOCATION_TEXT_MAX).collect::<String>())
+        };
+        Some(Self {
+            latitude,
+            longitude,
+            label: words(label),
+            address: words(address),
+        })
+    }
+}
+
+/// A tapped suggestion's payload, cut to [`POSTBACK_MAX`]; none when empty.
+pub fn postback_of(text: Option<&str>) -> Option<String> {
+    text.map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| text.chars().take(POSTBACK_MAX).collect())
+}
+
 /// A text a person sent us.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Inbound {
     /// The webhook event's id: the ingest transaction, so a repeated webhook does nothing again.
     pub event_id: String,
@@ -244,6 +325,13 @@ pub struct Inbound {
     /// The provider's conversation it came in (a Twilio Conversation of a group text): the room of the mapping that keeps
     /// it (`ChatRoomBridge.externalThreadId`, [`store_thread`]), whoever writes.
     pub thread_id: Option<String>,
+    /// A place the person shared (RCS).
+    pub location: Option<Location>,
+    /// The payload of a suggestion the person tapped (RCS; R2's chips answer to it).
+    pub postback: Option<String>,
+    /// The provider account the payload names (Twilio's `AccountSid`, Sinch's `project_id/app_id`): an RCS bridge hands
+    /// a text to a number of an SMS bridge only of this same account ([`SmsProvider::account_of`]).
+    pub account: Option<String>,
 }
 
 /// A file a text that came in names, for the core to fetch ([`SmsProvider::media_auth`]).
@@ -289,6 +377,8 @@ pub struct Receipt {
     /// An opt-out the receipt tells of (Twilio's failed status with 21610: the person sent STOP), applied after it,
     /// once by its event id.
     pub opt_signal: Option<OptSignal>,
+    /// The way the message went, when the report tells it (an RCS bridge's: RCS, or the fallback's SMS or MMS).
+    pub path: Option<Path>,
 }
 
 /// A keyword a provider tells of apart from a text (an opt-out it took itself).
@@ -310,11 +400,16 @@ pub struct OptSignal {
 }
 
 /// What a verified webhook carries, in neutral terms.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SmsEvent {
     Inbound(Inbound),
     Receipt(Receipt),
     OptSignal(OptSignal),
+    /// A report that tells only the way a message went (Sinch's `SWITCHING_CHANNEL`: on to the fallback).
+    Path {
+        remote_event_id: String,
+        path: Path,
+    },
     /// Nothing to do: answered 200 `{"ignored": ...}` so the provider stops.
     Ignored(String),
 }
@@ -334,8 +429,24 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
 
     /// Its name in messages (`Telnyx`).
     fn name(&self) -> &'static str;
+    /// The network its adapter speaks: [`Channel::Sms`] by default. An RCS adapter's messages are encrypted in transit
+    /// only (`Encryption::Transport`), and each sent message's path is recorded (`note#DeliveryPath`).
+    fn channel(&self) -> Channel {
+        Channel::Sms
+    }
     /// The adapter name a `ChatBridge` selects it by (`adapterName`; Telnyx's is `sms`).
     fn adapter_name(&self) -> &'static str;
+    /// An RCS provider's SMS adapter of the same provider (`sms-twilio` for `rcs-twilio`): a reply to a fallback text
+    /// that comes to a number of a bridge of it goes to that number's room ([`SmsAdapter`]'s hand-over). None by default.
+    fn sms_adapter_name(&self) -> Option<&'static str> {
+        None
+    }
+    /// The provider account a bridge's `configJson` names, in the form of [`Inbound::account`] (Twilio's `accountSid`,
+    /// Sinch's `projectId/appId`). None by default: no text is handed over.
+    fn account_of(&self, config: &Json) -> Option<String> {
+        let _ = config;
+        None
+    }
     /// Its defaults for the neutral [`Settings`].
     fn defaults(&self) -> Defaults;
     fn config(&self, config: &Json) -> Self::Config;
@@ -532,6 +643,13 @@ fn failed(reason: &str, error: impl Into<String>) -> DeliveryOutcome {
     }
 }
 
+/// An RCS bridge's `smsFallback`: true unless it is false (or the text `false`).
+pub fn sms_fallback(config: &Json) -> bool {
+    !config
+        .get("smsFallback")
+        .is_some_and(|value| value.as_bool() == Some(false) || value.as_str() == Some("false"))
+}
+
 /// Whether an HTTP error is one the provider never got: the connection could not be made.
 pub fn never_sent(error: &moqui_lib::error::Error) -> bool {
     let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(error);
@@ -706,9 +824,12 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
             reaction: false,
             idempotent: false,
             sends_per_minute: self.settings(bridge).sends_per_minute,
-            // not even Transport: a text crosses the phone network in the clear, whatever TLS reaches the provider
-            // (plans/Comms-Messaging.md §6.3)
-            encryption: Encryption::None,
+            // SMS: not even Transport, a text crosses the phone network in the clear, whatever TLS reaches the provider
+            // (plans/Comms-Messaging.md §6.3); business RCS is encrypted in transit only, never end to end (§16.1)
+            encryption: match self.provider.channel() {
+                Channel::Sms => Encryption::None,
+                Channel::Rcs => Encryption::Transport,
+            },
             group_max: u32::try_from(self.provider.group_max()).unwrap_or(u32::MAX),
         }
     }
@@ -887,6 +1008,7 @@ impl<P: SmsProvider> SmsAdapter<P> {
         if words.is_none() && media_urls.is_empty() {
             return failed("empty", "A text has words or a file");
         }
+        let rcs = self.provider.channel() == Channel::Rcs;
         let out = Outgoing {
             bridge,
             request,
@@ -894,10 +1016,21 @@ impl<P: SmsProvider> SmsAdapter<P> {
             theirs,
             text: words,
             media_urls: &media_urls,
+            fallback: !rcs || sms_fallback(&bridge.config),
         };
         let config = self.provider.config(&bridge.config);
-        self.provider
-            .send(self.client(settings.allow_internal), &config, &settings, &out)
+        let outcome = self
+            .provider
+            .send(self.client(settings.allow_internal), &config, &settings, &out);
+        // an RCS send that cannot fall back went as RCS: its path is known now (one that can is told by its reports)
+        if rcs && !out.fallback && matches!(outcome, DeliveryOutcome::Accepted { .. }) {
+            note_path(
+                bridge,
+                &[("chatBridgeDeliveryId", &request.chat_bridge_delivery_id)],
+                Path::Rcs,
+            );
+        }
+        outcome
     }
 
     /// Work a webhook request of an SMS bridge: the POST, the signature, the replay cache, then [`Self::apply`].
@@ -949,11 +1082,115 @@ impl<P: SmsProvider> SmsAdapter<P> {
 
     fn work(&self, bridge: &BridgeInfo, event: SmsEvent) -> WebhookResponse {
         match event {
-            SmsEvent::Inbound(text) => received(bridge, &self.settings(bridge), &text),
+            SmsEvent::Inbound(text) => match self.handover(bridge, &text) {
+                Handover::Here => received(bridge, &self.settings(bridge), &text),
+                // the RCS bridge's verified webhook speaks for the number's own bridge, for this one text
+                Handover::To(target) => with_mark(&target.chat_bridge_id, || {
+                    received(&target, &self.settings(bridge), &text)
+                }),
+                Handover::Left(reason) => {
+                    WebhookResponse::json(200, &json!({"outcome": "ignored", "reasonCode": reason, "message": ""}))
+                }
+                Handover::Unreadable => WebhookResponse::text(503, "the text was not taken; try again later"),
+            },
             SmsEvent::Receipt(receipt) => noted(bridge, &receipt),
             SmsEvent::OptSignal(signal) => opted(bridge, &signal),
+            SmsEvent::Path { remote_event_id, path } => {
+                let found = note_path(bridge, &[("remoteEventId", &remote_event_id)], path);
+                WebhookResponse::json(200, &json!({"found": found, "path": path.as_str()}))
+            }
             SmsEvent::Ignored(what) => WebhookResponse::json(200, &json!({"ignored": what})),
         }
+    }
+
+    /// Where a text an RCS bridge took goes (plans/Comms-Messaging.md §16 step 11): here, unless its number of ours is
+    /// on another bridge. Then to that bridge only when it is an enabled SMS bridge of the same provider and account
+    /// (the payload's, the RCS bridge's and the SMS bridge's account the same), and only inside this bridge's verified
+    /// webhook (its mark); else it is left, before anything is kept, and logged.
+    fn handover(&self, bridge: &BridgeInfo, text: &Inbound) -> Handover {
+        if self.provider.channel() != Channel::Rcs {
+            return Handover::Here;
+        }
+        let read = || -> Result<Option<(BridgeInfo, bool)>, moqui_lib::error::Error> {
+            let Some(facade) =
+                moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()
+            else {
+                return Ok(None);
+            };
+            let number = facade
+                .find("moqui.call.PhoneNumber")?
+                .eq("phoneNumber", Value::string(&text.our_number))
+                .disable_authz()
+                .one()?;
+            let Some(target) = number
+                .and_then(|row| row.get("messagingBridgeId").map(to_plain_string))
+                .filter(|id| !id.is_empty() && *id != bridge.chat_bridge_id)
+            else {
+                return Ok(None);
+            };
+            let Some(row) = facade
+                .find("moqui.chat.ChatBridge")?
+                .eq("chatBridgeId", Value::string(&target))
+                .disable_authz()
+                .one()?
+            else {
+                return Ok(None);
+            };
+            let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+            let disabled = field("statusId") == "CbsDisabled";
+            Ok(Some((
+                BridgeInfo {
+                    chat_bridge_id: target,
+                    type_enum_id: field("typeEnumId"),
+                    adapter_name: field("adapterName"),
+                    name: field("name"),
+                    config: serde_json::from_str(&field("configJson")).unwrap_or(Json::Null),
+                },
+                disabled,
+            )))
+        };
+        let (target, disabled) = match read() {
+            Ok(Some(found)) => found,
+            Ok(None) => return Handover::Here,
+            Err(error) => {
+                tracing::error!(
+                    "RCS bridge {}: the bridge of {} could not be read: {error}",
+                    bridge.chat_bridge_id,
+                    text.our_number
+                );
+                return Handover::Unreadable;
+            }
+        };
+        let leave = |reason: &'static str, why: &str| {
+            tracing::warn!(
+                "RCS bridge {}: a text to {} was left ({reason}): its number is on bridge {}, {why}",
+                bridge.chat_bridge_id,
+                text.our_number,
+                target.chat_bridge_id
+            );
+            Handover::Left(reason)
+        };
+        if disabled {
+            return leave("bridgeDisabled", "which is disabled");
+        }
+        if target.type_enum_id != "CbtSms" || Some(target.adapter_name.as_str()) != self.provider.sms_adapter_name() {
+            return leave("otherProvider", "not an SMS bridge of this provider");
+        }
+        let account = text.account.as_deref().filter(|account| !account.is_empty());
+        let same = account.is_some()
+            && self.provider.account_of(&bridge.config).as_deref() == account
+            && self.provider.account_of(&target.config).as_deref() == account;
+        if !same {
+            return leave("otherAccount", "of another provider account");
+        }
+        let marked = moqui_core::context::ExecutionContext::with_current(|ec| {
+            ec.shared_map().get(WEBHOOK_MARK).map(to_plain_string)
+        })
+        .flatten();
+        if marked.as_deref() != Some(bridge.chat_bridge_id.as_str()) {
+            return leave("notInWebhook", "and this is not the RCS bridge's own webhook");
+        }
+        Handover::To(target)
     }
 
     fn fetch(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
@@ -994,6 +1231,44 @@ impl<P: SmsProvider> SmsAdapter<P> {
 }
 
 // ---- the events ----
+
+/// Where a text an RCS bridge took goes ([`SmsAdapter::handover`]).
+#[derive(Debug)]
+enum Handover {
+    Here,
+    /// To the room of its number on this bridge, an SMS bridge of the same provider and account.
+    To(BridgeInfo),
+    /// Left, with the reason code.
+    Left(&'static str),
+    /// The number's bridge could not be read now: tried again.
+    Unreadable,
+}
+
+/// Run `work` with the context's webhook mark (`chat_bridge::WEBHOOK_MARK`, what `ingest#Event` takes a
+/// transport-verified item by) set to `bridge_id`, and put back as it was after, also when `work` fails or panics.
+pub(crate) fn with_mark<T>(bridge_id: &str, work: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Value>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            let _ = moqui_core::context::ExecutionContext::with_current(|ec| match previous {
+                Some(value) => {
+                    ec.shared_map().insert(WEBHOOK_MARK.to_string(), value);
+                }
+                None => {
+                    ec.shared_map().shift_remove(WEBHOOK_MARK);
+                }
+            });
+        }
+    }
+    let previous = moqui_core::context::ExecutionContext::with_current(|ec| {
+        ec.shared_map()
+            .insert(WEBHOOK_MARK.to_string(), Value::string(bridge_id))
+    })
+    .flatten();
+    let _restore = Restore(previous);
+    work()
+}
 
 /// The reason codes of `ingest#Event` that refuse a text for what it is; any other failure is the server's own.
 pub const REFUSALS: &[&str] = &[
@@ -1042,6 +1317,25 @@ fn received(bridge: &BridgeInfo, settings: &Settings, text: &Inbound) -> Webhook
     }
     if let Some(at) = text.origin_millis {
         parameters.insert("originMillis".to_string(), Value::I64(at));
+    }
+    // RCS: a place and a tapped suggestion, kept on the message (Sms.js makes a place with no words its text)
+    let mut metadata = serde_json::Map::new();
+    if let Some(place) = &text.location {
+        metadata.insert(
+            "location".to_string(),
+            // the coordinates as text: a JSON number is a decimal in the service scripts
+            json!({"latitude": place.latitude.to_string(), "longitude": place.longitude.to_string(), "label": place.label,
+                "address": place.address}),
+        );
+    }
+    if let Some(postback) = &text.postback {
+        metadata.insert("postback".to_string(), Json::String(postback.clone()));
+    }
+    if !metadata.is_empty() {
+        parameters.insert(
+            "metadata".to_string(),
+            moqui_lib::json::from_json(&Json::Object(metadata)),
+        );
     }
     match crate::call("org.moqui.call.SmsServices.receive#Sms", parameters) {
         Ok(out) => {
@@ -1109,6 +1403,9 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
     }
     match crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryReceipt", parameters) {
         Ok(out) => {
+            if let Some(path) = receipt.path {
+                note_path(bridge, &[("remoteEventId", &receipt.remote_event_id)], path);
+            }
             if let Some(signal) = &receipt.opt_signal {
                 let answer = opted(bridge, signal);
                 if !(200..300).contains(&answer.status) {
@@ -1127,6 +1424,33 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
                 receipt.remote_event_id
             );
             WebhookResponse::text(503, "the receipt was not kept; try again later")
+        }
+    }
+}
+
+/// The way a sent message went, to `ChatBridgeServices.note#DeliveryPath` by `key` (its delivery's id, or its remote
+/// id): whether a delivery was found. One not kept is logged and changes nothing else: the path is what the room shows,
+/// never what the send or its receipt depends on.
+fn note_path(bridge: &BridgeInfo, key: &[(&str, &str)], path: Path) -> bool {
+    if key.is_empty() || key.iter().any(|(_, value)| value.is_empty()) {
+        return false;
+    }
+    let mut parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("path".to_string(), Value::string(path.as_str())),
+    ]);
+    for (name, value) in key {
+        parameters.insert((*name).to_string(), Value::string(*value));
+    }
+    match crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryPath", parameters) {
+        Ok(out) => out.get("found") == Some(&Value::Bool(true)),
+        Err(error) => {
+            tracing::warn!(
+                "RCS bridge {}: the path {} of a message was not kept: {error}",
+                bridge.chat_bridge_id,
+                path.as_str()
+            );
+            false
         }
     }
 }

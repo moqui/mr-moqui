@@ -54,7 +54,7 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         })
         ec.user.internalLoginUser("john.doe")
         // a bridge with no adapter in this build, a room mapped to it, and a person on its network
-        const bridge = call(BRIDGES + ".store#Bridge", {name: "Spec SMS line", typeEnumId: "CbtSms", adapterName: "spec-missing",
+        const bridge = call(BRIDGES + ".store#Bridge", {name: "Spec SMS line", typeEnumId: "CbtSms", adapterName: "sms-spec-missing",
             inboundToken: "spec-token"}).chatBridgeId
         const room = call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "private", roomName: "Spec bridged room",
             memberUserIdList: [USER]}).chatRoomId
@@ -133,7 +133,7 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         adminQvt.status == 200
         !adminQvt.broken
         adminQvt.output.includes("Spec SMS line")
-        adminQvt.output.includes("No chat bridge adapter spec-missing")
+        adminQvt.output.includes("No chat bridge adapter sms-spec-missing")
         adminQvt.output.includes("Spec refusal")
         !adminTui.broken
         adminTui.output.includes("Spec SMS line")
@@ -161,7 +161,7 @@ feature("a bridge administrator maps a room to a bridge in its settings, changes
             }
         })
         ec.user.internalLoginUser("john.doe")
-        const bridge = call(BRIDGES + ".store#Bridge", {name: "Spec settings line", typeEnumId: "CbtSms", adapterName: "spec-missing",
+        const bridge = call(BRIDGES + ".store#Bridge", {name: "Spec settings line", typeEnumId: "CbtSms", adapterName: "sms-spec-missing",
             inboundToken: "spec-settings-token"}).chatBridgeId
         const room = call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "private", roomName: "Spec settings room",
             memberUserIdList: [USER]}).chatRoomId

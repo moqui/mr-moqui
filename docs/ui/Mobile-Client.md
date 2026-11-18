@@ -23,8 +23,10 @@ own `/qapps`), never both:
   while a navigation is under way. A switch, sign-in or sign-out closes the server's pages before the current account
   changes. A socket whose account was read before the page's sockets were closed (a load, a switch) is refused as it
   starts, so none outlives its page.
-- **The bundled comms screens** (Chat, Mail, Compose, Calls) are the shell's, as on the desktop; an encrypted room in a
-  server page offers Open in Chat, which shows it in the shell (`open_in_shell`).
+- **The bundled comms screens** (Chat, Mail, Compose, Calls, My devices) are the shell's, as on the desktop; an encrypted
+  room in a server page offers Open in Chat, which shows it in the shell (`open_in_shell`). The app's crypto device is
+  made when Chat opens; on a new phone an encrypted room says Set up this device until the key backup is restored with
+  the recovery key or the phone is verified from another device ([Chat keys](../interfaces/Chat-Keys.md#a-new-device)).
 - **The boundary is the command set.** Tauri counts both schemes' pages as local, so the one capability
   (`capabilities/main.json`) grants the app's commands to both and never to the web. The shell's commands (accounts,
   sign-in, SSO, sign-out, opening a page) check the page themselves (`ShellHost::is_shell_page`): the webview's URL on
