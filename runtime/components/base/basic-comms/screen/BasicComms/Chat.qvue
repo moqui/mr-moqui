@@ -2773,7 +2773,9 @@ const chatRoom = {
         // ---- a message's delivery to the room's bridges ----
         deliveryNames(item, state) {
             const list = ((item.event.delivery && item.event.delivery.destinations) || []).filter((destination) => !state || destination.state === state);
-            return Array.from(new Set(list.map((destination) => destination.networkName || destination.bridgeName).filter((name) => name))).join(', ');
+            // an RCS bridge's message that went as the fallback says so: "RCS as SMS" (Comms-Messaging §16)
+            return Array.from(new Set(list.map((destination) => (destination.networkName || destination.bridgeName || '')
+                + (destination.networkName || destination.bridgeName ? moqui.chat.pathText(destination) : '')).filter((name) => name))).join(', ');
         },
         deliveryText(item) {
             const delivery = item.event.delivery;

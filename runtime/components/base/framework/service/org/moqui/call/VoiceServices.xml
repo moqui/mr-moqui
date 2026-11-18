@@ -375,7 +375,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="store" noun="PhoneNumber">
         <description>Add or change a number (E.164 from what is given): its trunk, the user it rings, its emergency location,
-            and its messaging bridge (C4-SMS: an SMS ChatBridge its texts go through; empty for none). The VoiceAdmin permission.</description>
+            and its messaging bridge (C4-SMS: an SMS ChatBridge its texts go through, or an RCS one, whose texts go RCS first;
+            empty for none; the system number, VoicePolicy.smsSystemNumber, never an RCS one: reasonCode systemNumber). The
+            VoiceAdmin permission.</description>
         <in-parameters>
             <parameter name="phoneNumber" required="true"/>
             <parameter name="voiceTrunkId"/>
@@ -510,7 +512,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="smsMaxPerUserPerDay"><description>C4-SMS: texts a user may send a day</description></parameter>
             <parameter name="smsMaxPerDay"><description>C4-SMS: texts the users send a day, in all</description></parameter>
             <parameter name="smsSystemMaxPerDay"><description>The system's own texts (sign-in codes) a day, a budget users' texts do not use</description></parameter>
-            <parameter name="smsSystemNumber"><description>C4-SMS: the number the system's own texts go from (one with messaging)</description></parameter>
+            <parameter name="smsSystemNumber"><description>C4-SMS: the number the system's own texts go from (one with messaging, on an
+                SMS bridge: one on an RCS bridge is refused, reasonCode systemNumber)</description></parameter>
             <parameter name="smsMaxPromotionalPerNumber"><description>Promotional texts one of our numbers sends a day (a
                 campaign's, apart from the system's own budget)</description></parameter>
         </in-parameters>

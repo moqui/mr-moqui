@@ -4,7 +4,7 @@ A chat room can reach outside Moqui: a connector maps it to a room or conversati
 Telegram, Slack and others), and a native endpoint (XMPP, Matrix) serves Moqui rooms to their clients. This is the layer
 under both: chat actors, the input from a network, and the durable delivery of what goes out. The design is
 [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §4.1, §4.3 and §4.4, milestone C1. C1 has no network adapter
-of its own: C4-SMS adds the SMS adapters, one for each provider (`sms` on Telnyx, `sms-twilio` on Twilio, not yet tested with Twilio; [SMS](SMS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
+of its own: C4-SMS adds the SMS adapters, one for each provider (`sms` on Telnyx, `sms-twilio` on Twilio, not yet tested with Twilio; [SMS](SMS.md)), and business RCS on the same core (`rcs-twilio`, `rcs-sinch`, bridges of network RCS, not yet tested with the provider; [RCS](RCS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
 
 - **Entities:** the C1 block at the end of `framework/entity/ChatEntities.xml` (`ChatActor`, `ChatExternalUser`,
   `ChatBridge`, `ChatRoomBridge`, `ChatEventExternal`, `ChatBridgeInbound`, `ChatBridgeDelivery`), with
@@ -75,7 +75,8 @@ whose answer was lost is uncertain, never sent again), and the webhook's POST, r
 `SmsProvider`: its settings, its send request (endpoint, auth, a JSON or form body) and how it reads the answer, its
 group maximum, its webhook signature (and whether an edge node can check it), its event key and its events, and its
 files' fetch auth. Each provider is one adapter, chosen by `ChatBridge.adapterName` (`sms` is Telnyx's,
-`sms-twilio` Twilio's, `sms-sinch` Sinch's Conversation API: [SMS](SMS.md#providers)), so an edge node,
+`sms-twilio` Twilio's, `sms-sinch` Sinch's Conversation API: [SMS](SMS.md#providers); `rcs-twilio` and `rcs-sinch` the
+same providers' business RCS: [RCS](RCS.md)), so an edge node,
 which sees no `configJson`, picks it too. A provider that signs the URL it posted to checks it against
 `chat_bridge::webhook_public_url`: the bridge's `webhookUrl`, else `channels_public_url` and the request's path and query
 as received (`WebhookRequest.url`).

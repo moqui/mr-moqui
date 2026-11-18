@@ -48,9 +48,10 @@ along with this software (see the LICENSE.md file). If not, see
             .map((m) => ({key: m.ivrMenuId, text: m.name}))
         queueOptions = Array.from((ec.service.sync().name('org.moqui.call.CallQueueServices.find#CallQueues').requireNewTransaction(true).disableAuthz().call() || {}).queueList || [])
             .map((q) => ({key: q.callQueueId, text: q.name}))
-        // C4-SMS: the SMS bridges a number's texts can go through
+        // C4-SMS: the SMS and RCS bridges a number's texts can go through (an RCS one's go RCS first, from the brand's agent)
         const bridges = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.find#Bridges').requireNewTransaction(true).disableAuthz().call() || {}
-        messagingOptions = Array.from(bridges.bridgeList || []).filter((b) => b.typeEnumId === 'CbtSms').map((b) => ({key: b.chatBridgeId, text: b.name || b.chatBridgeId}))
+        messagingOptions = Array.from(bridges.bridgeList || []).filter((b) => b.typeEnumId === 'CbtSms' || b.typeEnumId === 'CbtRcs')
+            .map((b) => ({key: b.chatBridgeId, text: (b.name || b.chatBridgeId) + (b.typeEnumId === 'CbtRcs' ? ' · ' + ec.l10n.localize('RCS') : '')}))
         routeOptions = [{key: 'PnrUser', text: ec.l10n.localize('A user')}, {key: 'PnrRingGroup', text: ec.l10n.localize('A ring group')},
             {key: 'PnrIvr', text: ec.l10n.localize('An IVR menu')}, {key: 'PnrQueue', text: ec.l10n.localize('A queue')},
             {key: 'PnrVoicemail', text: ec.l10n.localize('Voicemail access')}]
@@ -74,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="ivrMenuId"><default-field title="IVR menu"><drop-down allow-empty="true"><list-options list="menuOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="callQueueId"><default-field title="Queue"><drop-down allow-empty="true"><list-options list="queueOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
-                    <field name="messagingBridgeId"><default-field title="Texts through" tooltip="The SMS bridge its texts go through (System, Chat Bridges); empty for none">
+                    <field name="messagingBridgeId"><default-field title="Texts through" tooltip="The SMS or RCS bridge its texts go through (System, Chat Bridges); empty for none. An RCS bridge sends RCS first, from the brand's agent; the system's number stays on SMS">
                         <drop-down allow-empty="true"><list-options list="messagingOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                     <field name="submitButton"><default-field title="Save"><submit/></default-field></field>

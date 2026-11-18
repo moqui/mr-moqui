@@ -1121,7 +1121,8 @@ provider resells. The facts and their sources are in Appendix A, Finding 2.
    on any channel but SMS and MMS. An RCS identity is a phone number, so the RCS bridge keys a room by the other
    person's number, as the SMS bridge does.
 5. Send through the table above: the provider's fallback by default; no fallback where the room or the message asks for
-   RCS only. A file goes as the provider's media (Twilio `MediaUrl`, Sinch `media_message`, Telnyx `file_url`).
+   RCS only. Phase 10 builds the bridge-wide switch (`smsFallback`); RCS only per room and per message is later
+   work: a stored room field and a composer option. A file goes as the provider's media (Twilio `MediaUrl`, Sinch `media_message`, Telnyx `file_url`).
 6. Map inbound text, files, location and suggestion replies to `ChatBridgeServices.ingest#Event`.
 7. Map each provider's reports to delivery and read status. A report never moves a delivery backwards (Twilio's come in
    any order).
@@ -1648,7 +1649,10 @@ phase 2).
   - what its grants, limits and members come from.
 
   So `check#SmsSend`, `ensure#PairRoom`, `receive#Sms`, the members and the calls all work unchanged. A user texts
-  "through RCS" by being granted that number.
+  "through RCS" by being granted that number. Its room's texts go RCS first, from the brand agent's name (§19.4 Q1).
+- **The system's number stays on SMS** (decided 2026-11-17). The system's own texts (sign-in codes) go from
+  `VoicePolicy.smsSystemNumber`: `Voice.js` refuses to give that number to an RCS bridge (`store#PhoneNumber`, reason
+  `systemNumber`) and to make a number of an RCS bridge the system's (`update#VoicePolicy`).
 - **The room.** `ours/theirs` on the RCS bridge, `CrtExternal`, with the topic "RCS and texts with … on …". The other
   person's RCS replies and their SMS replies to the fallback number come into this one room. On their phone these are
   two threads: the agent's and the number's.
@@ -1715,7 +1719,7 @@ R2 adds `ReceiptStatus::Read` and a typing event.
   - `messageInfo` and `messageInfoLines`: a line "Sent as" (RCS; SMS, the phone took no RCS; MMS);
   - `Chat.qvue` `deliveryNames`: the bubble's caption reads "Delivered to RCS as SMS".
 - `ChatTui.xml`: Info's "Sent as" line.
-- The thread header keeps the SMS banner until R2's RCS labels.
+- The thread header keeps the SMS banner in an RCS room until R2's RCS labels (decided 2026-11-17).
 - Phone and desktop: the same caption and Info line. Nothing depends on the width.
 
 **Failure tolerance.**
@@ -1736,7 +1740,8 @@ R2 adds `ReceiptStatus::Read` and a typing event.
 **Left out.**
 - Telnyx RCS.
 - The capability lookup (step 10: only Telnyx has one).
-- RCS-only per room or per message: R1 has it only bridge-wide, as `smsFallback` false.
+- RCS-only per room or per message (decided 2026-11-17: later work, a stored room field and a composer option). R1
+  has it only bridge-wide, as `smsFallback` false.
 - Rich content, suggestion chips, read and typing (R2).
 - The RCS header labels (R2, §16.5).
 - A `rcsSenderId` check on inbound (the signature covers it).
@@ -1759,6 +1764,19 @@ R2 adds `ReceiptStatus::Read` and a typing event.
   - marked **not yet tested with the provider**, with the facts not confirmed in the providers' docs listed.
 - Changed: `SMS.md` and `Chat-Bridges.md` (the adapters), `docs/tools/Comms.md` (Texts), the crate's notes and
   `providers/mod.rs`.
+
+**Status (2026-11-17): built**, against fake servers only. Not yet tested with the provider.
+- Built as designed, with three details:
+  - The reroute of a fallback reply runs only inside the RCS bridge's verified webhook. `receive#Sms` hands its
+    webhook mark to the SMS bridge for that one text, because `ingest#Event` takes a transport-verified item only for
+    the bridge whose webhook runs.
+  - A place's coordinates reach `Sms.js` as text: a JSON number is a decimal in the service scripts.
+  - The system number stays on an SMS bridge, refused in `Voice.js` `storeNumber` and `updatePolicy` (reason
+    `systemNumber`).
+- Left:
+  - the live tests with Twilio and Sinch, and the facts not confirmed (`docs/interfaces/RCS.md`, "Not confirmed");
+  - RCS only per room and per message;
+  - R2.
 
 #### Phase 10 and later
 

@@ -719,6 +719,7 @@ pub fn event(
             other_remote_event_id: form.get("ChannelMessageSid").map(str::to_string),
             receipt_millis: None,
             opt_signal: None,
+            path: None,
         }));
     }
     let roster = roster_of(provider, client, config, &bridge.chat_bridge_id, conversation).map_err(unread)?;
@@ -766,6 +767,7 @@ pub fn event(
             .get("DateCreated")
             .and_then(|date| date.parse::<jiff::Timestamp>().ok())
             .map(|stamp| stamp.as_millisecond()),
+        ..Inbound::default()
     }))
 }
 

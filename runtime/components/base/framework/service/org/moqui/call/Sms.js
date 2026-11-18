@@ -181,8 +181,10 @@ function ensurePairRoom(p) {
   if (!room) {
     room = ec.entity.makeValue(ROOM)
     room.setSequencedIdPrimary()
+    const rcs = one(BRIDGE, { chatBridgeId }).typeEnumId === 'CbtRcs'
     const topic = isGroup ? ec.resource.expand('Group texts with ${theirs} on ${ours}', '', { theirs, ours })
-      : ec.resource.expand('Texts and calls with ${theirs} on ${ours}', '', { theirs, ours })
+      : rcs ? ec.resource.expand('RCS and texts with ${theirs} on ${ours}', '', { theirs, ours })
+        : ec.resource.expand('Texts and calls with ${theirs} on ${ours}', '', { theirs, ours })
     room.setFields({ roomTypeEnumId: 'CrtExternal', roomName: theirs, topic, visibilityEnumId: 'CrvMembers', createdDate: now, lastEventSeq: 0,
       lastEventDate: now }, true, null, null)
     room.create()
@@ -550,6 +552,16 @@ function noteOptSignal(p) {
   return { outcome: 'noted' }
 }
 
+/** A shared place as words: its label or address, and a map link built from its coordinates (never a link it came with). */
+function placeText(place) {
+  const lat = Number(place.latitude)
+  const lon = Number(place.longitude)
+  const name = [place.label, place.address].filter((word) => !blank(word)).map((word) => String(word).slice(0, 200)).join(', ')
+  const link = Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+    ? `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}` : ''
+  return [ec.resource.expand('Location: ${name}', '', { name: name || ec.l10n.localize('a place') }), link].filter((line) => line).join('\n')
+}
+
 /**
  * Internal (the adapter's webhook, after it checked the provider's signature): a text from theirNumber to ourNumber.
  * ourNumber must have messaging through chatBridgeId (else outcome ignored, reasonCode unknownNumber). A STOP, START or HELP
@@ -576,6 +588,27 @@ function receive(p) {
   if (threadNumbers && threadNumbers.length === 2) {
     const row = one(NUMBER, { phoneNumber: threadNumbers[0] })
     if (row && row.messagingBridgeId === p.chatBridgeId) { ours = threadNumbers[0]; number = row }
+  }
+  // an RCS bridge's text to a number of ours on another bridge (a reply to a fallback text from a number shared with an
+  // SMS bridge, plans/Comms-Messaging.md §16 step 11): that number's own room, only through an SMS bridge of the same
+  // provider (rcs-twilio and sms-twilio)
+  if (number && number.messagingBridgeId && number.messagingBridgeId !== p.chatBridgeId && !p.rerouted) {
+    const via = one(BRIDGE, { chatBridgeId: p.chatBridgeId })
+    const own = one(BRIDGE, { chatBridgeId: number.messagingBridgeId })
+    if (via && own && via.typeEnumId === 'CbtRcs' && own.typeEnumId === 'CbtSms') {
+      const provider = (bridge) => String(bridge.adapterName || '').replace(/^(rcs|sms)-/, '')
+      // only inside the RCS bridge's verified webhook (its mark), which then speaks for the number's bridge
+      const shared = ec.context.sharedMap
+      if (/^rcs-/.test(String(via.adapterName || '')) && provider(via) === provider(own) && shared._chatBridgeWebhook === p.chatBridgeId) {
+        shared._chatBridgeWebhook = own.chatBridgeId
+        try {
+          return receive(Object.assign({}, p, { chatBridgeId: own.chatBridgeId, rerouted: true }))
+        } finally {
+          shared._chatBridgeWebhook = p.chatBridgeId
+        }
+      }
+      ec.logger.warn(`RCS bridge ${p.chatBridgeId}: a text to ${ours} was left: its number's bridge ${own.chatBridgeId} is another provider's`)
+    }
   }
   if (!number || number.messagingBridgeId !== p.chatBridgeId) return { outcome: 'ignored', reasonCode: 'unknownNumber' }
   if (!theirs) return { outcome: 'ignored', reasonCode: 'badNumber' }
@@ -629,7 +662,10 @@ function receive(p) {
     externalUserId: theirs, displayName: theirs, text: note ? note + (p.text ? '\n' + p.text : '') : p.text || null, originDate: p.originMillis != null ? Number(p.originMillis) : null,
     media: Array.from(p.mediaList || []).map((file) => ({ url: file.url, contentType: file.contentType || null, fileName: file.fileName || null,
       maxBytes: file.maxBytes != null ? Number(file.maxBytes) : null })) }
-  if (keyword) item.metadata = { keyword }
+  // RCS (the adapter's metadata): a place and a tapped suggestion kept on the message; a place with no words says where
+  const extra = p.metadata && typeof p.metadata === 'object' ? p.metadata : null
+  if (extra || keyword) item.metadata = Object.assign({}, extra, keyword ? { keyword } : {})
+  if (extra && extra.location && !item.text) item.text = placeText(extra.location)
   const out = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.ingest#Event').parameters({ chatBridgeId: p.chatBridgeId,
     transactionId: String(p.eventId), transportVerified: true, itemList: [item] }).disableAuthz().call() || {}
   if (ec.message.hasError()) return { outcome: 'failed', reasonCode: out.reasonCode || 'failed' }

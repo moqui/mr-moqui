@@ -352,6 +352,7 @@ fn received(event: &Json, payload: &Json) -> Result<SmsEvent, WebhookResponse> {
         origin_millis: millis_of(str_at(payload, "/received_at").or_else(|| str_at(event, "/data/occurred_at"))),
         // a group MMS is its numbers, not a conversation of Telnyx's
         thread_id: None,
+        ..Inbound::default()
     }))
 }
 
@@ -380,5 +381,6 @@ fn receipt(event: &Json, payload: &Json) -> Result<SmsEvent, WebhookResponse> {
         other_remote_event_id: group_id.map(|_| own_id.to_string()),
         receipt_millis: millis_of(str_at(event, "/data/occurred_at")),
         opt_signal: None,
+        path: None,
     }))
 }
