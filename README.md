@@ -97,7 +97,9 @@ Reference guides for built features are in [`docs/`](docs/), by tier and area wi
 ## Build, Test, and Run
 
 Building from source, the build packages and their features, the `./moq` tasks, and the Rust tests and component specs
-are in [`docs/Build-Test.md`](docs/Build-Test.md). Running and deploying (the runtime directory and conf lookup, HTTPS
+are in [`docs/Build-Test.md`](docs/Build-Test.md), with the checks to run before a commit (for Rust: `cargo lint`,
+`cargo lint-min` and `./moq test-framework`, as CI does on every push) and before a release in its
+[Validation](docs/Build-Test.md#validation) section. Running and deploying (the runtime directory and conf lookup, HTTPS
 certificates and ports, production archives, clusters, and PASS and team topologies) are in
 [`docs/Run-Deploy.md`](docs/Run-Deploy.md); Podman and systemd are in [`podman/README.md`](podman/README.md).
 

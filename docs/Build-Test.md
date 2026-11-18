@@ -12,6 +12,8 @@ JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of
   [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
   [desktop app](#desktop-app), the [Android app](#android-app)
 - [The moq script](#the-moq-script)
+- [Validation](#validation): [before a commit](#before-a-commit), [reading the results](#reading-the-results),
+  [before a release](#before-a-release)
 - [Rust tests and lints](#rust-tests-and-lints)
 - [Component specs](#component-specs): [running](#running), [files and order](#files-and-order),
   [a spec file](#a-spec-file) (the API is in [JS-Testkit](dev/JS-Testkit.md)), [agent evaluation](#agent-evaluation)
@@ -576,6 +578,78 @@ sudo scripts/call-network.sh   # calls on shaped networks (tc netem in namespace
 
 The everyday tasks with their Gradle counterparts, and the runtime, conf and deployment detail, are in
 [Run-Deploy](Run-Deploy.md#everyday-commands).
+
+## Validation
+
+What to run depends on what changed. The checks of a commit are the regression suite's and the lints, the same as CI's
+`check` pipeline (`ci.xml`: `cargo lint`, `cargo lint-min`, `scripts/check-packages.sh` and `./moq test-framework` on
+every push and merge request), so a commit that passes them here passes there. Acceptance and load tests are not part of
+a commit; they are a release's ([The two suites](#the-two-suites)).
+
+### Before a commit
+
+Look at what changed in every repository the work touched (mr-moqui and each component repository under
+`runtime/components/<set>/`: `./moq git-status`), and run each row that applies. A change of several kinds runs each of
+its rows; a check named twice runs once.
+
+| What changed | Run |
+|---|---|
+| Rust in a workspace crate (`crates/*`, a component's `src/`) | `cargo lint` (clippy on the workspace, warnings denied); `cargo lint-min` (the host and every crate it links built with no default features, so feature-gated code and its off stubs are checked); `cargo test -p <crate>` for each crate touched while working; then `./moq test-framework` |
+| Feature-gated code (`#[cfg(feature = ...)]`), a crate's `[features]` or dependencies, `Cargo.toml` or `Cargo.lock` | also `scripts/check-packages.sh` (clippy on each package's feature set) |
+| A crate outside the workspace (`moqui-desktop`, `moqui-mobile`, `moqui-client-tauri`) or the Android targets | the tests in its README (the desktop's need `target/moqui-app`, which `./moq build` writes); `scripts/check-android.sh` for the Android targets |
+| Something a golden or generated file holds: a host member (`moqui-host.d.ts`), a proto, the bundled screens, a typegen fixture | the file rewritten by its variable and its diff read: `UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`, `MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib the_checked_in_code_is_what_the_proto_generates`, `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled` |
+| The framework's components (`runtime/components/base`, `runtime/components/dev`), the conf (`MoquiDefaultConf.xml`, the XSDs, `runtime/conf/**`), `moq` or `scripts/` | `./moq test-framework` (its cargo run holds the conf tests: every runtime conf parsed, merged and checked against the XSD) |
+| An application (`runtime/components/addon/*`, `runtime/components/test`) | `./moq test-apps`; for a changed screen `moqui lint --screens` with a report file (`./moq run lint --screens <file>`), its idiom count not grown |
+| An acceptance test you added or changed | that test (`./moq accept <component> --spec Name`), then its component's acceptance suite |
+| Docs only (`docs/`, `plans/`, READMEs) | no build or test; the relative links still resolve |
+
+While working, run less: the specs of what you touch (`./moq test <component> --spec ...`) and `cargo test -p <crate>`
+for the crate you are in. The rows above are for the commit. Not part of a commit, unless the user asks: `./moq
+test-all` (a release's, or CI's on main), `./moq accept-all`, `cargo test-slow`, an acceptance suite you did not
+change, and load tests.
+
+Format only the files you changed (`rustfmt --edition 2021 --config-path rustfmt.toml <file>`; JavaScript and XML with
+the repository's Prettier config), then read `git diff -U0` for hunks that are not yours. Never `cargo fmt` a whole
+crate: the tree is not rustfmt-clean, and the change gets lost among unrelated rewraps.
+
+### Reading the results
+
+- **A failing test binary stops `cargo test`,** and the `cargo test --workspace` step of `./moq test-framework` with it,
+  so the crates after it did not run. `cargo test --workspace --no-fail-fast` runs them all and lists every failure.
+- **Tests that fail only under load.** The edge, XMPP and call tests bind ports and wait on timers; in a full parallel
+  run one can time out or meet a port another took. Run it alone (`cargo test -p moqui-host --test it -- <module>::<name>`),
+  twice. One that passes alone is flaky under load: say so in the report and go on. One that fails alone is a
+  regression.
+- **A spec that fails only in a full `moqui test` run,** never alone: the components' specs share one database, and an
+  earlier spec left rows behind. Take the order from the full run's log, check that the whole prefix fails
+  (`./moq test --nobuild --db snapshot --spec "<prefix>,<Target>"`), then bisect it. Fix it in the spec that left the
+  rows (its `cleanupSpec`), or narrow the failing spec's checks to its own data.
+- **`--nobuild` runs the binary already built.** After a Rust change a spec run with `--nobuild` tests the old code:
+  a new Rust service shows as `no service named ...`. Build first (`./moq build`, or leave out `--nobuild`).
+- **A component repository behind mr-moqui** fails many tests at once with a missing service or screen after a
+  framework rename. Pull the component repositories with mr-moqui (`./moq git pull`, or `git pull --ff-only` in each
+  under `runtime/components/<set>/`).
+
+### Before a release
+
+On a clean tree, every repository at the release's commits (`./moq git-status`; `./moq component-get` for the
+components `addons.xml` names), in this order:
+
+1. The lints of the whole tree: `cargo lint`, `cargo lint-min`, `scripts/check-packages.sh`.
+2. The whole regression suite: `./moq test-all` (`./moq test-framework`, then `./moq test-apps`).
+3. Every acceptance test: `./moq accept-all --junit <dir>`, the component suites and the Rust ignored and opt-in tests
+   (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`, `cargo test-slow`'s modules). A test that fails on two runs
+   in a row is fixed or deleted before the release.
+4. The client apps that ship with it: the desktop and mobile tests and `scripts/check-android.sh` (their READMEs), and
+   the soak tests their plans name for a release.
+5. Optionally, load: the load scripts of the components that have them (`./moq test-load <component> --script <Name>`)
+   against a release build with production-like data ([Load-Runner](tools/Load-Runner.md)), compared with the last
+   release's results.
+6. The release build and archive, as CI's `release` pipeline makes them: `./moq build --release`, `./moq archive`, and
+   `moqui embedded checksum` for the parts built in ([Run-Deploy](Run-Deploy.md)).
+7. For an upgrade, the target runtime's conf: boot it once (a conf with a retired `default-property` or a `${}` in an
+   attribute refuses to start, naming each), and check its names with `moqui conf env`
+   ([Run-Deploy, Settings and the environment](Run-Deploy.md#settings-and-the-environment)).
 
 ## Rust tests and lints
 

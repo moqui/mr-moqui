@@ -521,7 +521,9 @@ There are two suites ([The two suites](../Build-Test.md#the-two-suites), the
 [testing skill](../../.agents/skills/testing/SKILL.md)): the **regression suite** (`test/`), small rule tests run while
 working and before every commit, and the **acceptance suite** (`test/acceptance/`), complete scenarios run on a schedule,
 before a release or when asked. Say which suite a new test goes in, and why. Regression tests check rules, not pages:
-write one for a business rule you add or change (its result and its refusals) and for a bug you fix.
+write one for a business rule you add or change (its result and its refusals) and for a bug you fix. What to run before
+a commit, by what changed, is the [pre-commit skill](../../.agents/skills/pre-commit/SKILL.md): `./moq test-apps` for
+application work, and the Rust checks as well when the change reaches a crate.
 
 ### Server specs (`test/*.spec.js`)
 

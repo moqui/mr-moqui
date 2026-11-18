@@ -241,8 +241,12 @@ tauri-runtime-cef starts it with `--no-sandbox` ([Build-Test](../../docs/Build-T
 ## Test
 
 ```sh
+./moq build                                                       # writes target/moqui-app, which this crate links
 cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test
 ```
+
+This crate is a workspace of its own, so the root's `cargo lint` and `cargo test` do not reach it: run these for any
+change here.
 
 The host side of the stdin-close stop, the Postgres takeover, the node in process (`in_process`) and the shared PDF
 page sequence (`pdf`) are tested in their crates: `cargo test -p moqui-host -p moqui-drivers`; the client's proxy,

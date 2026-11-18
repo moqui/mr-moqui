@@ -25,7 +25,11 @@ git log --follow --format='%h %an <%ae> %ad %s' --date=short -S'<login>' -- AUTH
 ## Signed
 
 Review and test it as the [Issue and Pull Request Guide](https://moqui.org/m/docs/moqui/Issue+and+Pull+Request+Guide)
-says. Merge so that a signature commit keeps its author: a merge commit or a rebase, not squashed into another
+says, and run the checks of a commit on its branch merged with the target branch
+([Build-Test, Before a commit](../Build-Test.md#before-a-commit)): for Rust, `cargo lint` and `cargo lint-min` as well as
+the tests, since CI's `check` pipeline runs them on every push and a merged change that fails one fails it for
+everyone. A pull request that fails a check is fixed, by its author or in a commit after the merge, before it counts as
+done. Merge so that a signature commit keeps its author: a merge commit or a rebase, not squashed into another
 person's work.
 
 ## Unsigned
