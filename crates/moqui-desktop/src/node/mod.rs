@@ -130,6 +130,13 @@ pub(crate) fn purpose_properties(dev: bool) -> Vec<(&'static str, String)> {
     }
 }
 
+/// The node's properties on every start: `initial_admin_enabled=true`, so the first run's /Login offers the first
+/// administrator (the default conf has it off, for a server set up from its `.env`). The node is this user's own, and
+/// the form goes once any account exists.
+pub(crate) fn setup_properties() -> Vec<(&'static str, String)> {
+    vec![("initial_admin_enabled", "true".to_string())]
+}
+
 impl Mode {
     /// `sidecar`, `in-process` or `client`, as in `MOQUI_DESKTOP_NODE` and the mode file.
     pub(crate) fn parse(text: &str) -> Option<Self> {

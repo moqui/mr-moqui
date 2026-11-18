@@ -373,6 +373,7 @@ fn the_setup_dialog_is_drawn_with_its_fields_and_rules() {
     assert!(text.contains("Welcome to your new system"), "{text}");
     assert!(text.contains("at least 12 characters, 1 digit, 1 other"), "{text}");
     assert!(text.contains("Ada Admin") && !text.contains("Secret-pass-1"), "{text}");
+    assert!(text.contains("Also join ADMIN_ADV") && text.contains(": [ ]"), "{text}");
     golden("login-setup-100x40", &text);
 }
 

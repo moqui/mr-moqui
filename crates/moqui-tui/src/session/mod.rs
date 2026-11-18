@@ -99,7 +99,7 @@ pub struct Login {
     pub password: String,
     pub code: String,
     /// The field: 0 username, 1 password, 2 code; in setup 0 username, 1 password, 2 password again, 3 full name,
-    /// 4 email, and 5 the setup secret when the setup asks for it.
+    /// 4 email, 5 the setup secret when the setup asks for it, and last the ADMIN_ADV toggle.
     pub at: usize,
     pub error: String,
     /// The password was right and a code is wanted: the password is kept for the next try, and these factors take a
@@ -113,12 +113,31 @@ pub struct Login {
     pub full_name: String,
     pub email: String,
     pub setup_secret: String,
+    /// The setup's toggle: the first administrator joins ADMIN_ADV too (`joinAdvanced`), off unless chosen.
+    pub join_advanced: bool,
 }
 
+/// The label of the setup's last field, the ADMIN_ADV toggle.
+pub const JOIN_ADVANCED: &str = "Also join ADMIN_ADV";
 /// The setup's field labels, by field.
-pub const SETUP_FIELDS: [&str; 5] = ["Username", "Password", "Password again", "Full name", "Email"];
+pub const SETUP_FIELDS: [&str; 6] = [
+    "Username",
+    "Password",
+    "Password again",
+    "Full name",
+    "Email",
+    JOIN_ADVANCED,
+];
 /// The setup's field labels when it takes the setup secret of the server's startup log (from another machine).
-pub const SETUP_SECRET_FIELDS: [&str; 6] = ["Username", "Password", "Password again", "Full name", "Email", "Setup secret"];
+pub const SETUP_SECRET_FIELDS: [&str; 7] = [
+    "Username",
+    "Password",
+    "Password again",
+    "Full name",
+    "Email",
+    "Setup secret",
+    JOIN_ADVANCED,
+];
 /// The login's field labels, by field.
 pub const LOGIN_FIELDS: [&str; 3] = ["Username", "Password", "Code"];
 
@@ -134,11 +153,19 @@ impl Login {
 
     /// Whether field `at` is masked.
     pub fn masked(&self, at: usize) -> bool {
-        at == 1 || (self.setup.is_some() && (at == 2 || at == 5))
+        at == 1 || (self.setup.is_some() && !self.is_toggle(at) && (at == 2 || at == 5))
     }
 
-    /// The text of field `at` (the last field past the end).
+    /// Whether field `at` is the setup's ADMIN_ADV toggle, its last field.
+    pub fn is_toggle(&self, at: usize) -> bool {
+        self.setup.is_some() && at + 1 == self.labels().len()
+    }
+
+    /// The text of field `at` (the last field past the end); the toggle's is `yes` or `no`.
     pub fn field(&self, at: usize) -> &str {
+        if self.is_toggle(at) {
+            return if self.join_advanced { "yes" } else { "no" };
+        }
         match (self.setup.is_some(), at) {
             (_, 0) => &self.username,
             (_, 1) => &self.password,
@@ -815,7 +842,14 @@ impl Session {
             return false;
         };
         let at = at.min(login.labels().len() - 1);
-        *login.field_mut(at) = value.to_string();
+        if login.is_toggle(at) {
+            login.join_advanced = matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "yes" | "y" | "true" | "on" | "x" | "1"
+            );
+        } else {
+            *login.field_mut(at) = value.to_string();
+        }
         login.at = at;
         true
     }

@@ -38,14 +38,18 @@ the dialog creates the first administrator, as the browser's `/Login` page does.
 the answer comes. On a system with no accounts the dialog becomes "Welcome to your new system: create the first
 administrator", with Username, Password, Password again, Full name and Email, and the password rules ("at least 12
 characters, 1 digit, 1 other"). From another machine than the server it has a Setup secret field too, with where the
-secret is (the server's startup log). Tab, Down, Up and Shift+Tab move between the fields; Enter goes to the next field and
-sends from the last, and Ctrl+S or Alt+Enter sends from any. The client checks that every field is filled and the two
-passwords match before it sends. The account is made by `create#InitialAdminAccount`, in the `ADMIN` group, and the
+secret is (the server's startup log). The last field, Also join ADMIN_ADV, is a check, off unless chosen: Space flips
+it, `y` and `n` set it, and a note under the rules says what the group holds. Tab, Down, Up and Shift+Tab move between
+the fields; Enter goes to the next field and sends from the last, and Ctrl+S or Alt+Enter sends from any. The client checks that every field is filled and the two
+passwords match before it sends. The account is made by `create#InitialAdminAccount`, in the `ADMIN` group (and
+`ADMIN_ADV` with the check), and the
 dialog then logs in with it, as a login does (with `--server` the login key is kept). A refusal (the password rules,
 an email that is not one) shows in the dialog and clears both passwords. If an account exists by then, someone else
 made the first one: the dialog is the login again, with the username kept. Over SSH a refused creation counts as a
 refused login, and the session still closes without a login within 2 minutes ("Over SSH"). In `--agent` the overlay is
-`initial admin`, its fields are the elements (`set Full name Ada Admin`), and `do Create and log in` sends it.
+`initial admin`, its fields are the elements (`set Full name Ada Admin`; `do login.joinAdvanced` sets the check), and
+`do Create and log in` sends it. While `initial_admin_enabled` is off (the default conf), the server answers that no setup
+is needed, so the dialog stays the login.
 `GET /Login?renderMode=tui` (and `--snapshot /Login`) shows the same form while no account exists.
 
 ## A running server (`--server`)
