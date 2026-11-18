@@ -9,7 +9,7 @@ This file covers the code that runs inside the server as script: the JavaScript 
 - Server scripts run on quickjs-oxide, pinned by git revision in the workspace `Cargo.toml` with `default-features = false`. The binding is `crates/moqui-core/src/script/` (`oxide/` for the engine, `host/` for the functions a script calls).
 - Each thread that runs scripts has one runtime. Its heap cap is 64 MiB (`HEAP_CAP` in `crates/moqui-core/src/script/oxide/engine.rs`).
 - Script runs nested on one thread are counted. The limit is 64 (`MAX_SCRIPT_DEPTH` in `crates/moqui-core/src/script/run.rs`).
-- A script ends when the thread's deadline passes or the thread's interrupt flag is set (`thread_interrupted` in `run.rs`). The limit is computed by `script_limit_for` from the `resource-facade` `script-timeout` setting, whether the thread is a request worker, and the webapp `request-timeout` (`webapp_request_timeout`). The default request timeout constant is 300 seconds.
+- A script ends when the thread's deadline passes or the thread's interrupt flag is set (`thread_interrupted` in `run.rs`). The limit is computed by `script_limit_for` from the `resource-facade` `script-timeout` setting, whether the thread is a request worker, and the webapp `request-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@request-timeout`). The default request timeout constant is 300 seconds.
 - A thread can be restricted to a list of host functions (`restrict_host_calls` in `crates/moqui-core/src/script/runtime.rs`). The engine binder checks it on each host call (`host_call_allowed` in `oxide/bind.rs`). The one caller is the load runner's user threads (`crates/moqui-host/src/test_client/mod.rs`). No other script class uses it.
 
 ### Classes of script

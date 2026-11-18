@@ -28,11 +28,10 @@
     <default-property name="pass_authority_grpc_enabled" value="true"/>
 
     <!-- Web protection on: the PASS servers are exempt, or all their visitors would count as one client. Put the PASS
-        servers' addresses in the cidr. Behind a proxy set webapp_trusted_proxies and webapp_client_ip_header (.env). -->
-    <default-property name="webapp_web_protection" value="true"/>
+        servers' addresses in the cidr. Behind a proxy set webapp-list/webapp[webroot]@trusted-proxies and webapp-list/webapp[webroot]@client-ip-header (.env). -->
     <webapp-list>
         <webapp name="webroot">
-            <web-protection>
+            <web-protection enabled="true">
                 <client-rule name="pass-servers" action="exempt" cidr="10.0.2.0/24"/>
             </web-protection>
         </webapp>

@@ -95,8 +95,8 @@ first branch pushed) its default branch.
 
 - **HTTPS**: HTTP Basic with the username and the password, or an **access token** or an **app password** (docs/interfaces/Sync.md)
   as the password, which accounts with a second factor need (the password alone cannot complete a login there). `Authorization: Bearer <token>` and
-  an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp_https_listen_port` listener, or
-  `X-Forwarded-Proto: https` behind the proxy that `webapp_client_ip_header` names), from a client on this machine
+  an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp-list/webapp[webroot]@https-listen-port` listener, or
+  `X-Forwarded-Proto: https` behind the proxy that `webapp-list/webapp[webroot]@client-ip-header` names), from a client on this machine
   (behind that proxy, the client it names, never the proxy's own loopback address), or with `git-server`
   `allow-http="true"`. A request with no credentials is served what anyone may view ([Access](#access)) and gets 401 for
   everything else, so git asks for them; over a transport that takes no credentials it gets 403 "use HTTPS" instead,
@@ -250,7 +250,7 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
   `objects/pack`, a `db` one writes each object as a row). Each ref is then moved by compare-and-set: a ref another
   push moved first is refused with `stale info`.
 - Clones and pushes run on a pool of their own (`git-server` `max-concurrent`, 4, and `git-server` `max-queued` waiting), not on the
-  request workers of the screens, and are exempt from `webapp_request_timeout`; `git-server` `idle-timeout` (120 seconds) of
+  request workers of the screens, and are exempt from `webapp-list/webapp[webroot]/web-protection/requests@request-timeout`; `git-server` `idle-timeout` (120 seconds) of
   silence in a request body ends it. Limits: `git-server` `max-request` (64 MB) for a fetch request, `git-server` `max-push-size` (2 GB),
   each counted as sent and, for a `Content-Encoding: gzip` body, as inflated, and over SSH for a push's whole input and for
   each round of a fetch (the want phase and each flush of haves in v0, each command in v2), as each HTTP request is
@@ -1329,7 +1329,7 @@ as the client takes it, on a thread of its own (at most `webapp` `transfer-worke
 a slow download holds no request worker. One `Range` is answered from the bytes it names, with `ETag` (a git file's
 blob id, a content blob's SHA-256) and `If-Range`. Only text types are compressed. An upload is read as it arrives: a
 file part over 256 KiB goes to a file in `runtime/tmp/upload`, and from there to its storage (a content blob, a git
-object) as it is read; `webapp_max_upload` (2 GiB) bounds it and `webapp_upload_idle_timeout` (60 seconds) of silence
+object) as it is read; `webapp-list/webapp[webroot]/web-protection/requests@max-upload` (2 GiB) bounds it and `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout` (60 seconds) of silence
 ends it.
 
 ## Large files (Git LFS)

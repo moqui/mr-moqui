@@ -616,8 +616,8 @@ fn server_grant_key(purpose: &str) -> Result<String, Error> {
 
 /// `ec.user.serverGrant(purpose, subject, ttlSeconds)`: a token that [`check_server_grant`] accepts for the same purpose
 /// and subject until `ttlSeconds` (3600; 1 second to 7 days) have passed, `<expiry millis>.<HMAC-SHA256 hex>`, keyed by
-/// the server's own secret (`session_cookie_key`, through a key derived for the purpose), so a script can sign a value
-/// it hands a client (a page's nonce) with no key of its own. An error with no purpose or no `session_cookie_key`.
+/// the server's own secret (`webapp-list/webapp[webroot]/session-config@cookie-key`, through a key derived for the purpose), so a script can sign a value
+/// it hands a client (a page's nonce) with no key of its own. An error with no purpose or no `webapp-list/webapp[webroot]/session-config@cookie-key`.
 fn server_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let key = server_grant_key(&call.text_or_empty(0)).map_err(|err| user_error(&err))?;
     let ttl_seconds = call.number(2).filter(|seconds| seconds.is_finite()).unwrap_or(3600.0);

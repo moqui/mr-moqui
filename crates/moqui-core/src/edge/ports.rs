@@ -59,12 +59,13 @@ const FRONT_NEVER: [&str; 10] = [
     "rtc_media_tcp_port",
 ];
 
-/// The properties of this node's own listeners, whose ports no row may take, each with its port when the property is
-/// unset (0 for none): a row never takes a service's usual port, set or not.
+/// The settings of this node's own listeners (a conf selector, or a property not yet moved to the conf), whose ports
+/// no row may take, each with its port when it is unset (0 for none): a row never takes a service's usual port, set or
+/// not.
 const OWN_PORTS: [(&str, u16); 18] = [
-    ("webapp_http_port", 80),
-    ("webapp_https_port", 443),
-    ("webapp_https_listen_port", 443),
+    ("webapp-list/webapp[webroot]@http-port", 80),
+    ("webapp-list/webapp[webroot]@https-port", 443),
+    ("webapp-list/webapp[webroot]@https-listen-port", 443),
     ("cluster_https_port", 0),
     ("smtp_listen_port", 25),
     ("edge_mail_relay_port", 10025),
@@ -171,7 +172,7 @@ pub fn list(facade: &EntityFacade, paired_node_id: Option<&str>) -> Result<Vec<E
 /// its default), a mail or XMPP port, or a range of its own sockets. On a front node (`front`) the edge set's
 /// listeners and ranges are none of its own ([`FRONT_NEVER`]).
 pub fn reserved(port: u16, front: bool) -> Option<String> {
-    reserved_in(port, front, moqui_lib::env::get_prop_or_env)
+    reserved_in(port, front, crate::context::conf_env::setting_or_property)
 }
 
 /// [`reserved`] with the properties `property` gives.

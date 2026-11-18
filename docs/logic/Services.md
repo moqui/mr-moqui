@@ -92,11 +92,11 @@ the `COMMIT` sent behind them, one wait for it all (an update that must change a
 fails the transaction rather than holding the `COMMIT` back).
 While it holds them its finds see them, and a row it has read or written is not read from the database again. The
 design and the numbers are in [plans/archive/TX-Cache.md](../../plans/archive/TX-Cache.md); the code is `moqui-entity`
-`entity/cache/tx.rs`, `hold.rs` and `batch.rs`. The `entity_tx_cache` property (default true; `-Dentity_tx_cache=false`) turns it
+`entity/cache/tx.rs`, `hold.rs` and `batch.rs`. The `transaction-facade@use-transaction-cache` property (default true; `-Dmoqui_conf__transaction_facade__use_transaction_cache=false`) turns it
 off everywhere, each `cache` service then running as `use` does.
 
 **Which service to mark.** A screen transition's transaction (and a screen's with `begin-transaction`) holds already:
-it begins as `cache` does, unless the `screen_tx_cache` property is `false`. Otherwise the service an operation starts
+it begins as `cache` does, unless the `screen-facade@tx-cache` property is `false`. Otherwise the service an operation starts
 with (a REST call's, a job's), not an inner service many callers share: a `cache` call that joins its caller's transaction turns holding on for the rest of
 that transaction, as Java's `initTransactionCache` does, so a shared inner service would change its callers. A
 `transaction` attribute on a `service-call` decides the cache for that call, as in Java: `force-new` (or `use`) there

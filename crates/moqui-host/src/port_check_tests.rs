@@ -27,14 +27,11 @@ fn a_held_required_port_is_named_and_a_free_one_passes() {
     let held_port = held.local_addr().unwrap().port();
     let free_port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let targets = [
-        required("HTTP", "webapp_http_port", held_port),
+        required("HTTP", "http-port", held_port),
         required("SSH", "ssh_port", free_port),
     ];
     let err = check(&targets).unwrap_err().to_string();
-    assert!(
-        err.contains(&format!("{held_port} (webapp_http_port) on 127.0.0.1")),
-        "{err}"
-    );
+    assert!(err.contains(&format!("{held_port} (http-port) on 127.0.0.1")), "{err}");
     assert!(!err.contains("ssh_port"), "{err}");
     #[cfg(target_os = "linux")]
     assert!(err.contains(&format!("held by pid {}", std::process::id())), "{err}");

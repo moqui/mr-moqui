@@ -13,7 +13,7 @@ Each provider needs the deployment's own OAuth client. Nothing is shared: no cli
 
 | Property (or environment variable) | |
 | --- | --- |
-| `email_oauth_redirect_uri` | The callback registered at both providers, exactly. Empty: the `webroot` webapp's URL from the conf (`webapp_http_host`, `webapp_https_enabled`, the ports) and `/emailOAuth/callback`, such as `https://erp.example.com/emailOAuth/callback`. It is never taken from a request. |
+| `email_oauth_redirect_uri` | The callback registered at both providers, exactly. Empty: the `webroot` webapp's URL from the conf (`webapp-list/webapp[webroot]@http-host`, `webapp-list/webapp[webroot]@https-enabled`, the ports) and `/emailOAuth/callback`, such as `https://erp.example.com/emailOAuth/callback`. It is never taken from a request. |
 | `email_oauth_google_client_id`, `email_oauth_google_client_secret` | The Google client. |
 | `email_oauth_microsoft_client_id`, `email_oauth_microsoft_client_secret` | The Microsoft client. |
 | `email_oauth_microsoft_tenant` | `common` (the default: work, school and personal accounts), `organizations`, `consumers` or a tenant id. |

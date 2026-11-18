@@ -64,7 +64,7 @@ Then the owner is told, each part on its own:
 - a `chatUser` push (`{kind: 'voicemail', action: 'new', voicemailId, from, unheardCount}`) and Web Push "New voicemail
   from …", linking to the message (`comms_app_root` `/Calls/Voicemail?voicemailId=`);
 - an email to the box's `notifyEmail`, when there is one, through the framework's mail (the `SYSTEM` email server):
-  who, when, how long and the link (absolute when `webapp_http_host` is set). The audio is attached only with
+  who, when, how long and the link (absolute when `webapp-list/webapp[webroot]@http-host` is set). The audio is attached only with
   `attachAudio`, and the transcript is in it only with `attachTranscript`. Both are off by default, are only allowed
   with an address, and turning one on answers a warning: mail cannot be recalled. With the transcript in it, the email
   waits for the transcription. It is sent once.

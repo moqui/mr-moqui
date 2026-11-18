@@ -10,11 +10,11 @@
         session cookie: localhost and 127.0.0.1 on any port and either scheme, and no other site (SEC-WEB-10). Name
         another origin here when a dev server runs elsewhere; `*` would let any site read the responses, and never
         comes with credentials. -->
-    <default-property name="webapp_allow_origins" value="localhost,127.0.0.1"/>
-    <default-property name="entity_empty_db_load" value="all"/>
+    <webapp-list><webapp name="webroot" allow-origins="localhost,127.0.0.1"/></webapp-list>
+    <tools empty-db-load="all"/>
     <!-- the first administrator's form on an empty database (off by default, MoquiDefaultConf.xml) -->
     <default-property name="initial_admin_enabled" value="true"/>
-    <default-property name="entity_lock_track" value="true"/>
+    <transaction-facade use-lock-track="true"/>
     <!-- The built-in SSH server on localhost (ssh_host defaults to 127.0.0.1): the apps in the terminal over SSH for
         every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/ui/TUI.md "Over SSH" -->
     <default-property name="ssh_port" value="2222"/>
@@ -73,7 +73,7 @@
     </cache-list>
 
     <!-- For development, record more: screen content as spans, and entity frame times as metrics. Screens, transitions
-        and services have both by default. Set telemetry_sample_ratio=1 to keep every span, not only those of error and
+        and services have both by default. Set moqui_conf__telemetry__sample_ratio=1 to keep every span, not only those of error and
         slow traces. -->
     <telemetry>
         <artifact type="AT_XML_SCREEN_CONTENT" spans="true" metrics="true"/>

@@ -485,7 +485,10 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
         "",
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
         ],
         &files(&big, &[("cert/default.crt", &cert), ("cert/default.key", &key)]),
     );

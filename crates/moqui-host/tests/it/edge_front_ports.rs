@@ -68,7 +68,7 @@ fn start_front(label: &str, port: u16, cert: &(String, String)) -> Gate {
         None,
         &[
             ("node_role", "front"),
-            ("webapp_https_listen_port", &port),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
             ("edge_link_key", &key),
         ],
         &[("cert/default.crt", &cert.0), ("cert/default.key", &cert.1)],
@@ -157,7 +157,10 @@ fn a_front_passes_smtp_to_an_edge_member_with_the_clients_address() {
         EDGE_CONF,
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port,
+            ),
             ("edge_link_key", &new_key().unwrap()),
             ("smtp_listen_port", "0"),
             ("smtp_allowed_addresses", "127.0.0.2"),
@@ -323,7 +326,10 @@ fn an_edge_members_link_name_passes_through_the_front_to_it_alone() {
         EDGE_CONF,
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &first_port),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &first_port,
+            ),
             ("cluster_https_port", &cluster_port),
             ("edge_link_key", &link_key),
             ("edge_link_url", &link_urls[0]),
@@ -336,7 +342,10 @@ fn an_edge_members_link_name_passes_through_the_front_to_it_alone() {
         &first.cluster_dir,
         EDGE_CONF,
         &[
-            ("webapp_https_listen_port", &second_port),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &second_port,
+            ),
             ("edge_link_url", &link_urls[1]),
         ],
         &files(&[("cert/default.crt", &certs[1].0), ("cert/default.key", &certs[1].1)]),
@@ -457,7 +466,10 @@ fn a_front_keeps_its_own_link_name_and_takes_links_at_other_passthrough_hosts() 
         None,
         &[
             ("node_role", "front"),
-            ("webapp_https_listen_port", &front_port.to_string()),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &front_port.to_string(),
+            ),
             ("edge_link_key", &key),
             ("edge_link_url", &format!("https://link.front.test:{front_port}")),
         ],
@@ -633,7 +645,7 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         &[
             ("node_role", ""),
             ("cluster_https_port", &edge_cluster_port),
-            ("webapp_https_listen_port", "off"),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "off"),
         ],
         &files(&[]),
     );
@@ -648,7 +660,10 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         EDGE_CONF,
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_ports[0].to_string()),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_ports[0].to_string(),
+            ),
             ("edge_link_key", &link_key),
             ("edge_link_url", &edge_urls[0]),
         ],
@@ -666,7 +681,10 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         &edge_db.cluster_dir,
         EDGE_CONF,
         &[
-            ("webapp_https_listen_port", &edge_ports[1].to_string()),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_ports[1].to_string(),
+            ),
             ("edge_link_url", &edge_urls[1]),
         ],
         &edge_files,
@@ -695,7 +713,10 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         "",
         &[
             ("node_role", "front"),
-            ("webapp_https_listen_port", &front_port.to_string()),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &front_port.to_string(),
+            ),
             ("edge_link_key", &new_key().unwrap()),
         ],
         &[("cert/default.crt", &front_cert.0), ("cert/default.key", &front_cert.1)],

@@ -865,7 +865,12 @@ fn ensure_instance_id(factory: &ExecutionContextFactory) -> Result<String, Error
 }
 
 fn configured_fingerprints() -> Result<Fingerprints, Error> {
-    let session_key = require_configured("session_cookie_key")?;
+    let session_key = crate::context::conf_env::setting(crate::user::session::COOKIE_KEY);
+    if session_key.is_empty() || session_key.ends_with("CHANGEME") {
+        return Err(Error::new(
+            "the session cookie key (session-config cookie-key) is not configured",
+        ));
+    }
     let cert_b64 = require_configured("cluster_tls_cert")?;
     let _key = require_configured("cluster_tls_key")?;
     let der = decode_der("cluster_tls_cert", &cert_b64)?;
@@ -955,7 +960,9 @@ fn reject_peer_mismatch(
             continue;
         }
         if member.session_fp != fingerprints.session {
-            return Err(Error::new("session_cookie_key does not match a live cluster member"));
+            return Err(Error::new(
+                "the session cookie key (session-config cookie-key) does not match a live cluster member",
+            ));
         }
         if member.cert_fp != fingerprints.cert {
             return Err(Error::new("cluster_tls_cert does not match a live cluster member"));

@@ -238,7 +238,7 @@ pub struct ServiceDef {
     pub validate_input: bool,
     pub transaction: TransactionAttribute,
     /// Whether the definition has a `transaction` attribute: one with none begins its transaction with the cache when
-    /// `service_tx_cache` is on (plans/Profiling3.md S1, D3).
+    /// `service-facade@tx-cache` is on (plans/Profiling3.md S1, D3).
     pub transaction_declared: bool,
     /// `no-tx-cache`: flush and stop the transaction cache in place before the service runs.
     pub no_tx_cache: bool,

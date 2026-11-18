@@ -57,7 +57,7 @@ fn opensearch_backend_proxies_and_exports_telemetry() {
     );
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("cluster_name"), "{body}");
-    // kibana_host defaults to this host; with no Dashboards there the proxy answers 502.
+    // the DashboardProxy's proxyTo defaults to this host; with no Dashboards there the proxy answers 502.
     let (status, _, _) = exchange(address, &http_request("GET", "/dashboard/", &[], ""));
     assert_eq!(status, 401, "the Dashboards proxy needs a login too");
 

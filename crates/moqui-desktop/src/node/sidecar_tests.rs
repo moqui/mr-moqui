@@ -72,8 +72,8 @@ fn the_binary_is_the_variable_then_the_builds_or_beside_the_app() {
 fn the_node_gets_the_listen_properties_and_stops_on_stdin_close() {
     let args = args(51234, &[]);
     assert!(args.chunks(2).all(|pair| pair[0] == "-D"));
-    assert!(args.contains(&"webapp_http_port=51234".to_string()));
-    assert!(args.contains(&"webapp_http_bind=127.0.0.1".to_string()));
+    assert!(args.contains(&"moqui_conf__webapp_list__webapp__WEBROOT__http_port=51234".to_string()));
+    assert!(args.contains(&"moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1".to_string()));
     assert!(args.contains(&"moqui_stop_on_stdin_close=true".to_string()));
 }
 

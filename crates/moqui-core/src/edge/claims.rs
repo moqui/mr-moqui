@@ -330,7 +330,7 @@ pub fn url_host(url: &str) -> Option<String> {
 }
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    crate::context::conf_env::setting_or_property(name).trim().to_string()
 }
 
 /// A domain property in its normal form: lower case, no trailing dot; empty when unset.
@@ -344,10 +344,14 @@ fn domain_property(name: &str) -> String {
 /// a paired node cannot take a mail domain's apex or its `mta-sts.` and `autoconfig.` hosts. The edge link adds the
 /// names its Hello gives. A mail domain split by address stays allowed in a setup's `mailDomains`.
 pub fn own_host_names(factory: &ExecutionContextFactory) -> Vec<String> {
-    let mut names: Vec<String> = ["webapp_http_host", "smtp_hostname", "edge_mail_bounce_domain"]
-        .iter()
-        .map(|name| property(name))
-        .collect();
+    let mut names: Vec<String> = [
+        "webapp-list/webapp[webroot]@http-host",
+        "smtp_hostname",
+        "edge_mail_bounce_domain",
+    ]
+    .iter()
+    .map(|name| property(name))
+    .collect();
     names.extend(url_host(&property(super::setup::CHAT_PUBLIC_URL)));
     names.extend(crate::screen::public_site_hosts(factory));
     if super::settings(factory).all_in_one() {

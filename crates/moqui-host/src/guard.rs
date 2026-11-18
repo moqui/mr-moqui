@@ -388,23 +388,19 @@ pub(crate) struct GuardConf {
     agent_rules: Vec<AgentRule>,
 }
 
-/// An attribute of `node`'s child `child` (of `node` itself when `child` is empty), `${}` expanded and trimmed, or
-/// the property `property` when it is left out or expands to nothing, as `moqui_core::web::protection_setting`.
-pub(crate) fn setting(node: Option<&MNode>, child: &str, name: &str, property: &str) -> String {
+/// An attribute of `node`'s child `child` (of `node` itself when `child` is empty), `${}` expanded and trimmed; empty
+/// when it is left out, as `moqui_core::web::protection_setting`.
+pub(crate) fn setting(node: Option<&MNode>, child: &str, name: &str) -> String {
     let element = match node {
         Some(node) if child.is_empty() => Some(node.clone()),
         Some(node) => node.first_named(child),
         None => None,
     };
-    let configured = element
+    element
         .and_then(|element| element.attribute(name))
         .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
         .map(|value| value.trim().to_string())
-        .unwrap_or_default();
-    if !configured.is_empty() || property.is_empty() {
-        return configured;
-    }
-    moqui_lib::env::get_prop_or_env(property).trim().to_string()
+        .unwrap_or_default()
 }
 
 /// A positive number from `text`, else `default`; a value that is there and not a number is logged with `what`.
@@ -439,7 +435,7 @@ impl GuardConf {
     /// From a `web-protection` element; with none, the properties and defaults (the per-client parts off unless
     /// `addressing` has trusted proxies).
     pub(crate) fn from_node(node: Option<&MNode>, addressing: Arc<ClientAddressing>) -> Self {
-        let enabled = match setting(node, "", "enabled", "webapp_web_protection").as_str() {
+        let enabled = match setting(node, "", "enabled").as_str() {
             "true" => true,
             "false" => false,
             "" => addressing.has_trusted(),
@@ -448,21 +444,21 @@ impl GuardConf {
                 addressing.has_trusted()
             }
         };
-        let ipv6_prefix = number(&setting(node, "", "client-ipv6-prefix", ""), 64u8, "client-ipv6-prefix").min(128);
+        let ipv6_prefix = number(&setting(node, "", "client-ipv6-prefix"), 64u8, "client-ipv6-prefix").min(128);
         let max_tracked = number(
-            &setting(node, "", "max-tracked-clients", ""),
+            &setting(node, "", "max-tracked-clients"),
             DEFAULT_MAX_TRACKED,
             "max-tracked-clients",
         );
         let max_per_client = number(
-            &setting(node, "connections", "max-per-client", ""),
+            &setting(node, "connections", "max-per-client"),
             DEFAULT_MAX_PER_CLIENT,
             "connections max-per-client",
         );
-        let methods = list(&setting(node, "requests", "methods", ""))
+        let methods = list(&setting(node, "requests", "methods"))
             .map(str::to_ascii_uppercase)
             .collect();
-        let queue_timeout = match setting(node, "overload", "queue-timeout", "").as_str() {
+        let queue_timeout = match setting(node, "overload", "queue-timeout").as_str() {
             "0" => None,
             text => Some(Duration::from_secs(number(
                 text,
@@ -471,7 +467,7 @@ impl GuardConf {
             ))),
         };
         let retry_after = number(
-            &setting(node, "overload", "retry-after", ""),
+            &setting(node, "overload", "retry-after"),
             DEFAULT_RETRY_AFTER,
             "overload retry-after",
         );
@@ -1396,7 +1392,7 @@ impl Guard {
         let addressing = &self.conf().addressing;
         if !addressing.header().is_empty() && !addressing.has_trusted() {
             tracing::warn!(
-                "client-ip-header {} is believed from any peer: set trusted-proxies (webapp_trusted_proxies) to the \
+                "client-ip-header {} is believed from any peer: set the webroot webapp's trusted-proxies to the \
                  proxies in front so a client cannot name its own address",
                 addressing.header()
             );

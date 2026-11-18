@@ -229,7 +229,7 @@ A component deployed from git has two more actions:
 Deploying runs the component's code and loads its data, which may include security data. So it needs:
 
 - the sealed `COMPONENT_DEPLOY` permission, seeded on `ADMIN_ADV`, which only a holder can grant;
-- on a production instance, also `component_deploy_enabled=true`. Without it, deploy is refused with no detail.
+- on a production instance, also `moqui_conf__component_deploy__enabled=true`. Without it, deploy is refused with no detail.
 
 The URL must be `https://` or `ssh://` (or `user@host:path`). A local path and `file://` are refused. On a production
 instance, a host at a loopback, private or link-local address is refused too. Sim mode and the remote call fence stop
@@ -248,14 +248,14 @@ A server can be kept to commits that passed a pipeline on the server that hosts 
 deployment, [Pipelines](../interfaces/Pipelines.md#deployments)). In its conf:
 
 ```xml
-<component-deploy require-passed-run="true" attestation-secret="${component_deploy_attestation_key}"
+<component-deploy require-passed-run="true" attestation-secret="${component-deploy@attestation-secret}"
         max-age-seconds="300" public-urls="https://demo.example.com">
     <allow component="site" repository-url="https://git.example.com/git/site.git" branch="main"/>
 </component-deploy>
 ```
 
 and in `runtime/.env` a secret of at least 32 characters (`openssl rand -hex 32`):
-`component_deploy_attestation_key=...`. Give the same secret to the source server as its environment's token
+`moqui_conf__component_deploy__attestation_secret=...`. Give the same secret to the source server as its environment's token
 (`store#CiEnvironment` `token`), with this server's base URL (one of `public-urls`) as the environment's `targetUrl`.
 
 - **Read once at start.** The whole element, its secret and its `allow` entries are read when the server starts; a
@@ -268,7 +268,7 @@ and in `runtime/.env` a secret of at least 32 characters (`openssl rand -hex 32`
   URL and branch too.
 - **`public-urls`**: this server's public base URLs, separated by spaces or commas. An attestation names the URL the
   source posted to (`audience`), which must be one of them, so an attestation for one target is not taken by another
-  that shares the secret. Empty: the webroot webapp's URL when `webapp_http_host` is set; with neither, every
+  that shares the secret. Empty: the webroot webapp's URL when `webapp-list/webapp[webroot]@http-host` is set; with neither, every
   attestation is refused.
 - **Attested deploys.** `deploy#AttestedComponent` (REST `POST /rest/s1/moqui/components/deploy`, no session) takes
   `attestation`, a JSON text that names the target it is for, a repository URL, a branch, a commit, a component, the
@@ -288,7 +288,7 @@ and in `runtime/.env` a secret of at least 32 characters (`openssl rand -hex 32`
   attestation's (the environment's `dataTypes`, signed; empty for the defaults Deploy and Update use); no request
   parameter widens them. The attestation is the authority: no user signs in, the attestation stands for
   `COMPONENT_DEPLOY` for that component at that commit only, and on a production instance
-  `component_deploy_enabled=true` is still needed. Each is audited (`moqui.monitor.audit`, with the source's
+  `moqui_conf__component_deploy__enabled=true` is still needed. Each is audited (`moqui.monitor.audit`, with the source's
   deployment, environment, pipeline and run) and kept in `DeployedComponentHistory`; the record names the commit put
   in place (`deployedCommitId`).
 - **`require-passed-run="true"`.** `deploy#Component` and `update#Component` refuse to put a commit in place unless the

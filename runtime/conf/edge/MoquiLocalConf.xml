@@ -9,7 +9,7 @@
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="instance_purpose" value="production"/>
 
-    <!-- Web access (.env): webapp_http_host, this node's public name, which the wizard offers as its first host name
+    <!-- Web access (.env): webapp-list/webapp[webroot]@http-host, this node's public name, which the wizard offers as its first host name
         (unless it is localhost or has one label). A passthrough name ends its TLS here, so this node needs its HTTPS
         listener and a certificate for each such name in runtime/cert (DNS-01 with an outside tool, or a copied one);
         a terminate name needs none here. In the office's DNS the same names can point at this node. -->

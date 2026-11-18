@@ -27,7 +27,7 @@ Everything is off until `xmpp_domain` is set; each listener is off until its por
 | `xmpp_port`, `xmpp_host` | empty, `0.0.0.0` | STARTTLS (5222 by convention) |
 | `xmpp_tls_port`, `xmpp_tls_host` | empty, `xmpp_host` | Direct TLS with ALPN `xmpp-client` (5223, XEP-0368) |
 | `xmpp_websocket_enabled` | `false` | `/xmpp-websocket` (RFC 7395) on the HTTP listener |
-| `xmpp_upload_url` | `https://<domain>` (and `webapp_https_port`) | The base of upload URLs |
+| `xmpp_upload_url` | `https://<domain>` (and `webapp-list/webapp[webroot]@https-port`) | The base of upload URLs |
 | `xmpp_upload_max_bytes` | 20971520 | The largest upload |
 | `xmpp_upload_secret` | generated | Derives the URLs of chat files sent to XMPP clients |
 | `xmpp_resume_seconds` | 300 | How long a dropped session waits for resumption |

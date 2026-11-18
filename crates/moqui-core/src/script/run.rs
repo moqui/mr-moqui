@@ -224,7 +224,7 @@ pub(crate) fn script_time_remaining() -> Option<Duration> {
         .map(|deadline| deadline.saturating_duration_since(Instant::now()))
 }
 
-/// The default of `webapp_request_timeout`, the host's limit on a whole request, read here by the same name.
+/// The default of `webapp-list/webapp[webroot]/web-protection/requests@request-timeout`, the host's limit on a whole request, read here by the same name.
 const DEFAULT_REQUEST_TIMEOUT: u64 = 300;
 
 /// Mark this thread a request worker: a script on it that runs outside a transaction is limited to the request
@@ -236,7 +236,7 @@ pub(crate) fn mark_request_thread() {
 
 /// The seconds a script may run when no transaction limits it, read once per thread. The conf's `resource-facade`
 /// `script-timeout` when set, for every thread; else the webapp's `requests` `request-timeout`
-/// (`webapp_request_timeout`) on a request worker, and no limit on a service, job, or scheduler thread, which run batch
+/// (`webapp-list/webapp[webroot]/web-protection/requests@request-timeout`) on a request worker, and no limit on a service, job, or scheduler thread, which run batch
 /// work outside a transaction as Java does. 0 is no limit.
 pub(crate) fn default_script_limit() -> Option<Duration> {
     if let Some(limit) = SCRIPT_LIMIT.with(Cell::get) {
@@ -246,12 +246,7 @@ pub(crate) fn default_script_limit() -> Option<Duration> {
     let limit = script_limit_for(
         &crate::resource::setting("script-timeout"),
         REQUEST_THREAD.with(Cell::get),
-        &crate::web::protection_setting(
-            factory.as_deref(),
-            "requests",
-            "request-timeout",
-            "webapp_request_timeout",
-        ),
+        &crate::web::protection_setting(factory.as_deref(), "requests", "request-timeout"),
     );
     SCRIPT_LIMIT.with(|cell| cell.set(Some(limit)));
     limit

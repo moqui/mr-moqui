@@ -86,14 +86,14 @@ fn a_port_row_goes_to_one_active_pairing_and_the_link_is_told() {
 fn a_port_of_this_nodes_own_listeners_is_no_rows() {
     let properties = |name: &str| match name {
         "edge_ssh_tunnel_port" => "2222".to_string(),
-        "webapp_https_listen_port" => " 443 ".to_string(),
+        "webapp-list/webapp[webroot]@https-listen-port" => " 443 ".to_string(),
         _ => String::new(),
     };
     let reserved = |port: u16| reserved_in(port, false, properties);
     assert_eq!(reserved(2222).as_deref(), Some("edge_ssh_tunnel_port"));
     assert_eq!(
         reserved(443).as_deref(),
-        Some("webapp_https_port"),
+        Some("webapp-list/webapp[webroot]@https-port"),
         "set or not, the usual port"
     );
     // the usual ports of services whose properties are unset, and the mail relay beside an edge node
@@ -118,7 +118,10 @@ fn a_front_node_takes_smtp_rows_and_its_edge_set_ports_are_free() {
     for port in [25, 5060, 5222, 3478, 10025, 20500, 50000] {
         assert_eq!(reserved_in(port, true, properties), None, "{port}");
     }
-    assert_eq!(reserved_in(443, true, properties).as_deref(), Some("webapp_https_port"));
+    assert_eq!(
+        reserved_in(443, true, properties).as_deref(),
+        Some("webapp-list/webapp[webroot]@https-port")
+    );
     assert_eq!(reserved_in(587, true, properties).as_deref(), Some("mail submission"));
     assert_eq!(reserved_in(25, false, properties).as_deref(), Some("smtp_listen_port"));
 

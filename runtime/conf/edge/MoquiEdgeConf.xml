@@ -16,13 +16,13 @@
         makes pairing codes, lists the paired nodes, pings and revokes them -->
     <default-property name="node_role" value="front_edge"/>
     <!-- rate limits, connection limits and bans by client address, run before anything goes down a link. With a proxy
-        in front, name it in webapp_trusted_proxies (.env): a client-ip-header with no trusted proxies is ignored -->
-    <default-property name="webapp_web_protection" value="true"/>
+        in front, name it in webapp-list/webapp[webroot]@trusted-proxies (.env): a client-ip-header with no trusted proxies is ignored -->
+    <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
-    <!-- The link and web access (.env): webapp_http_host, this node's public name. The HTTPS listener needs a WebPKI
+    <!-- The link and web access (.env): webapp-list/webapp[webroot]@http-host, this node's public name. The HTTPS listener needs a WebPKI
         certificate in runtime/cert, which local nodes check when they pair; no TLS-terminating proxy in front, since the
         link needs ALPN and client certificates end to end. A local node dials 443 unless its edge node address has a
-        port, and the listener binds webapp_https_listen_port (8443 by default): bind 443 (docs/Run-Deploy.md, Listen
+        port, and the listener binds webapp-list/webapp[webroot]@https-listen-port (8443 by default): bind 443 (docs/Run-Deploy.md, Listen
         ports and URL ports) or give the port in the address. The links use this node's own key, edge_link_key,
         generated into .env at the first start: a renewed web certificate does not touch them, a changed key means every
         local node must pair again. edge_public_addresses: this node's public IPv4 and IPv6 addresses, comma-separated,

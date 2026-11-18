@@ -757,7 +757,7 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
 /// with the current user's username, as the SSH server logs in Moqui users, and `repositoryPath`. The SSH host and
 /// port are `public-host` and `public-port` when either is set; else, on a node paired with an edge node whose offer
 /// names an SSH tunnel to it, that tunnel's host and port (`moqui_core::edge::setup::ssh_address`); else
-/// `webapp_http_host` and the server's own port.
+/// `webapp-list/webapp[webroot]@http-host` and the server's own port.
 fn get_clone_urls(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -811,7 +811,7 @@ pub(crate) fn ssh_host_port() -> Option<(String, String)> {
         public_host,
         public_port,
         edge,
-        http_host: property("webapp_http_host"),
+        http_host: property("webapp-list/webapp[webroot]@http-host"),
         host: ssh_setting("host", "ssh_host"),
         port: ssh_setting("port", "ssh_port"),
     }

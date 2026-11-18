@@ -1,8 +1,10 @@
 # Conf Paths: settings by XML path, overridden from the environment
 
 Status 2026-11-18: phases 0 to 2 built (the path module, the conf schema, the overrides with `getConfValue`, `setConf`,
-the conf view's names and `moqui conf env`) and 3a (entity facade, datasources, database list); the rest of 3 to 8 to
-do ([§7](#7-phases)).
+the conf view's names and `moqui conf env`), 3a (entity facade, datasources, database list) and 3b (web, logging,
+caches, telemetry, reports, PDF, component deploy); the rest of 3 to 8 to do ([§7](#7-phases)). Until phase 7 a name
+table may hold both kinds of name: `conf_env::setting_or_property` reads a selector (it has an `@`) from the conf and
+anything else as a property.
 
 The conf was configured through about 330 flat `default-property` entries (279 in `MoquiDefaultConf.xml`, the rest in
 `runtime/conf/**` and component `MoquiConf.xml` files). Attributes referred to them by `${name}` and `${a ?: b}`,

@@ -27,8 +27,8 @@
 //! `SPEED_PG_HOST` runs it on a new database of an external Postgres instead of the embedded one (`speed::SpeedDb`).
 //!
 //! Authorization is disabled, as `ec.artifactExecution.disableAuthz()`. Artifact telemetry is recorded as configured:
-//! the duration metric for every call, spans as `telemetry_sample_ratio` keeps them (0 by default, so none below a
-//! root), and nothing with `telemetry_enabled=false`. Two modes:
+//! the duration metric for every call, spans as `telemetry@sample-ratio` keeps them (0 by default, so none below a
+//! root), and nothing with `moqui_conf__telemetry__enabled=false`. Two modes:
 //!
 //! - **one transaction** matches `Tools/Database/SpeedTest.xml` (`begin-transaction="true"`): every call joins the
 //!   batch's transaction, which commits once after the timed rows.

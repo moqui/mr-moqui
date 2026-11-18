@@ -10791,7 +10791,7 @@
     };
     // A component of a script that loads after this one (a client part loaded on first use, such as the Assist canvas): its
     // precompiled render function is applied as applyRenders does (moqui.qvtRenders, while the hash matches), so a page of the
-    // build without the compiler (webapp_qvt_static_only) runs it too, and it is registered on the running application, or kept
+    // build without the compiler (webapp-list/webapp[webroot]@qvt-static-only) runs it too, and it is registered on the running application, or kept
     // for start when the application is not running yet. Returns the definition.
     qvt.registerLate = (name, def) => {
         component(name, def);
@@ -10812,7 +10812,7 @@
         const config = given || JSON.parse(doc.getElementById("moqui-config").textContent);
         qvt.config = config;
         moqui.config = config;
-        // The dev/test instance marker (the webapp_dev_marker_color conf property): a small square in the corner of the window
+        // The dev/test instance marker (the webapp-list/webapp[webroot]@dev-marker-color conf property): a small square in the corner of the window
         // (the style sheet draws it for a dev or test body class); an empty or invalid color turns it off. It never overrides
         // the theme's colors.
         if (config.devMarker && moqui.isCssColor(config.devMarker)) doc.body.style.setProperty("--m-dev-marker", config.devMarker.trim());

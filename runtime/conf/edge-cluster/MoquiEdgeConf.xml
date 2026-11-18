@@ -16,7 +16,7 @@
     <default-property name="node_role" value="front_edge"/>
     <!-- rate limits, connection limits and bans by client address, counted on each member; a ban one member starts is
         shared with the others on the cluster topic web-ban (System › Security › Web Protection) -->
-    <default-property name="webapp_web_protection" value="true"/>
+    <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
     <!-- The shared database: Postgres (or MySQL with the default cluster transport), its settings in .env, the same on
         every member: the transactional datasource's host, port,
@@ -26,7 +26,7 @@
         running here). -->
 
     <!-- The same .env on every member, made by the first member's first start and copied to each other one before its
-        first start: session_cookie_key, cluster_tls_cert, cluster_tls_key, moqui_conf__entity_facade__crypt_pass and the link key,
+        first start: webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert, cluster_tls_key, moqui_conf__entity_facade__crypt_pass and the link key,
         edge_link_key, so every member presents the one key a local node pinned at pairing (a member that generated a
         key of its own is refused by every local node); also turn_auth_secret, mail_dkim_key and acme_account_key, and
         the public settings below that name the cluster as a whole.
@@ -38,7 +38,7 @@
     <default-property name="cluster_transport" value=""/>
     <default-property name="cluster_protocol" value=""/>
 
-    <!-- The link and web access (.env), as on one edge node, with names for the cluster: webapp_http_host, the cluster's
+    <!-- The link and web access (.env), as on one edge node, with names for the cluster: webapp-list/webapp[webroot]@http-host, the cluster's
         public name, with an address record for each member (behind a front node, conf/full-stack); edge_public_addresses, every
         member's public IPv4 and IPv6 addresses, comma-separated, which the wizard checks a local node's host names
         against. Each member needs a WebPKI certificate in runtime/cert for that name, which local nodes check when they

@@ -27,9 +27,9 @@
         refuses that client for the pairing's names. A ban is not told on: one a local node starts reaches its own edge
         members (and the front only by its own front pairing, with edge members), not the front through them. Every local node behind front_edge members is part of the edge
         cluster's one pairing here, so a ban, a rule and a limit per pairing holds for the edge cluster as a whole. -->
-    <default-property name="webapp_web_protection" value="true"/>
+    <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
-    <!-- .env: webapp_http_host, the front's own name (where the edge members pair, and its System app), with a WebPKI
+    <!-- .env: webapp-list/webapp[webroot]@http-host, the front's own name (where the edge members pair, and its System app), with a WebPKI
         certificate in runtime/cert; edge_public_addresses, its public addresses; edge_link_key and the other secrets
         made at the first start. The sites' certificates are here, as terminate hosts: in runtime/cert, or System ›
         Certificates with ACME. A passthrough name's certificate and each link name's are on the node that ends its

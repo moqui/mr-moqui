@@ -86,7 +86,7 @@ A user who adds a mail account names its incoming host and port (`storeHost`, `s
 
 ## Tracking pixel
 
-`GET /email/{key}` has no authentication ([Routes](Attack-Surface-Routes.md)). The key is the message's view key, `{emailMessageId}.{tag}`, the tag 128 bits of an HMAC-SHA256 of the id under a key derived from `session_cookie_key` (`web::email_view_key`); the mail render puts it in a template's context as `emailViewKey` (mr-marble's `EmailLayout.html.fancy` is the one template with the image). A bare id or a wrong tag changes nothing. Only a message in `ES_SENT` is updated to `ES_VIEWED`, with `receivedDate` set to the time of the request and authorization disabled; queued (`ES_READY`) and received mail is left alone (plans/Security-Review.md SEC-RTE-01, fixed).
+`GET /email/{key}` has no authentication ([Routes](Attack-Surface-Routes.md)). The key is the message's view key, `{emailMessageId}.{tag}`, the tag 128 bits of an HMAC-SHA256 of the id under a key derived from `webapp-list/webapp[webroot]/session-config@cookie-key` (`web::email_view_key`); the mail render puts it in a template's context as `emailViewKey` (mr-marble's `EmailLayout.html.fancy` is the one template with the image). A bare id or a wrong tag changes nothing. Only a message in `ES_SENT` is updated to `ES_VIEWED`, with `receivedDate` set to the time of the request and authorization disabled; queued (`ES_READY`) and received mail is left alone (plans/Security-Review.md SEC-RTE-01, fixed).
 
 ## MX delivery on an edge node
 

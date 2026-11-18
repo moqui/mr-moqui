@@ -57,7 +57,7 @@ fn the_gate_conf_names_its_public_urls_and_allow_entries() {
         .is_none());
     assert!(!format!("{gate:?}").contains(SECRET));
 
-    // no public URL named and no webapp_http_host: the server cannot tell its own URL, so it takes none
+    // no public URL named and no webapp-list/webapp[webroot]@http-host: the server cannot tell its own URL, so it takes none
     let context = ExecutionContextFactory::test_context_with_conf("<moqui-conf><component-deploy/></moqui-conf>");
     let gate = GateConf::read(context.factory());
     assert!(gate.public_urls.is_empty() && gate.allows.is_empty() && !gate.require_passed_run);

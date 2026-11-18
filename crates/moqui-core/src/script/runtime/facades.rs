@@ -21,10 +21,11 @@ use std::time::{Duration, Instant};
 use super::*;
 use moqui_lib::sync::lock;
 
-/// Whether module values are kept for the run: the `script_module_cache` property, true unless `false` (read once).
+/// Whether module values are kept for the run: the `resource-facade` `script-module-cache`, true unless `false` (read
+/// once).
 pub(crate) fn module_cache_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| moqui_lib::env::get_prop_or_env("script_module_cache") != "false")
+    *ON.get_or_init(|| crate::context::conf_env::setting("resource-facade@script-module-cache") != "false")
 }
 
 /// A script file's text by location, as the function [`crate::script::parse::file_function`] makes of it, with the

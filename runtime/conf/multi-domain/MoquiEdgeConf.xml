@@ -20,10 +20,10 @@
         of its own, so every item has an owner among the pairings -->
     <default-property name="node_role" value="front_edge"/>
     <!-- rate limits, connection limits and bans by client address, for every pairing's names together. With a proxy in
-        front, name it in webapp_trusted_proxies (.env) -->
-    <default-property name="webapp_web_protection" value="true"/>
+        front, name it in webapp-list/webapp[webroot]@trusted-proxies (.env) -->
+    <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
-    <!-- The link and web access (.env): webapp_http_host, this node's own public name, and edge_public_addresses, its
+    <!-- The link and web access (.env): webapp-list/webapp[webroot]@http-host, this node's own public name, and edge_public_addresses, its
         public IPv4 and IPv6 addresses, which each local node's wizard checks its A and AAAA records against. A WebPKI
         certificate for this node's own name in runtime/cert, and for each terminate host name of any pairing. Each
         pairing's host names go to it alone: its wizard asks for them, or the operator adds them on Edge Clients ›

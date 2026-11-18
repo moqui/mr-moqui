@@ -401,7 +401,7 @@ fn a_staged_git_deploy_moves_into_place_and_loads() {
         Some(
             r#"<entity-facade-xml type="seed"><moqui.security.UserAccount userId="DEPLOY_NOBODY" username="deploy.nobody" disabled="N"/></entity-facade-xml>"#,
         ),
-        &[("component_deploy_enabled", "true")],
+        &[("moqui_conf__component_deploy__enabled", "true")],
     );
     let factory = Arc::clone(gate.server.factory());
     let deployed = gate.runtime.join("components/addon");

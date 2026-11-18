@@ -586,7 +586,7 @@ cargo lint-min                         # clippy on the host with no features
 scripts/check-packages.sh              # clippy on each package's feature set
 
 # The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
-# moqui_chromium_path, or an installed Chromium or Chrome): acceptance tests of the framework, run by ./moq accept-all
+# screen-facade/pdf@chromium-path, or an installed Chromium or Chrome): acceptance tests of the framework, run by ./moq accept-all
 cargo test -p moqui-host --test gate3
 ```
 

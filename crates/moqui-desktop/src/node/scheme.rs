@@ -211,8 +211,8 @@ fn answer(app: &AppHandle, request: tauri::http::Request<Vec<u8>>) -> Response<V
 /// The answer's headers the page gets (no cookies, lengths or encodings), with a redirect to the node's own loopback
 /// address pointed at the scheme's origin: a page or link the node writes with its configured host and port.
 pub(crate) fn page_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
-    let port = moqui_lib::env::get_prop_or_env("webapp_http_port");
-    let port = port.trim();
+    let port = moqui_core::context::conf_env::webroot_setting("http-port");
+    let port = port.as_str();
     let shown = response_headers(headers, &format!("http://127.0.0.1:{port}"), NODE_ORIGIN);
     response_headers(&shown, &format!("http://localhost:{port}"), NODE_ORIGIN)
 }

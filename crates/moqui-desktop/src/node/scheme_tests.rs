@@ -45,7 +45,7 @@ fn only_what_the_host_may_say_is_kept_from_a_page_s_headers() {
 
 #[test]
 fn a_page_gets_no_cookie_and_a_redirect_to_the_node_s_address_stays_on_the_scheme() {
-    moqui_lib::env::set_property("webapp_http_port", "18432");
+    moqui_lib::env::set_property("moqui_conf__webapp_list__webapp__WEBROOT__http_port", "18432");
     let headers: Vec<(String, String)> = [
         ("Set-Cookie", "s=1; HttpOnly"),
         ("Content-Encoding", "gzip"),

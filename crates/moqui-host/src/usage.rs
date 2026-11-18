@@ -24,7 +24,7 @@ Usage: moqui [command] [args...]      moqui help [command]      moqui <command> 
 With no command, start the HTTP server.
 
 Server
-  (no command)     [options]                                Start the HTTP server (HTTP webapp_http_port, default 8080; HTTPS webapp_https_listen_port, default 8443)
+  (no command)     [options]                                Start the HTTP server (HTTP port default 8080, HTTPS 8443: moqui help serve)
   serve            [options]                                Start the HTTP server in the background, with no console log
   tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
 
@@ -55,15 +55,15 @@ Help
   version                                                   The version, package and features of this binary
 
 Server options
-  -p, --port N       HTTP port (webapp_http_port, default 8080). Also: port=N, -port=N, --port=N.
-  --https-port N     HTTPS port to listen on (webapp_https_listen_port, default 8443), or 'off'. Certificates
+  -p, --port N       HTTP port (the webroot webapp's http-port, default 8080). Also: port=N, -port=N, --port=N.
+  --https-port N     HTTPS port to listen on (the webroot webapp's https-listen-port, default 8443), or 'off'. Certificates
                      are looked up by domain in runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
                      Also: conf=FILE, -conf=FILE, --conf=FILE. Same as MOQUI_CONF for this run.
   --no-run-es        Do not start OpenSearch (opensearch_run=false). Also: no-run-es, -no-run-es.
   -D name=value      Set a conf property for this run, or a conf attribute by its environment name
                      (moqui_conf__ssh_server__port; moqui help conf). Repeatable. Use underscore names
-                     (webapp_http_port), not dotted ones.
+                     (moqui_conf__ssh_server__port), not dotted ones.
 
   moqui --port 8081 --conf conf/MoquiProductionConf.xml
   moqui -p 8081 -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
@@ -83,8 +83,9 @@ Environment
                      <dir>/chromium (default: install in the runtime directory)
   MOQUI_EMBEDDED_SHA256_RUNTIME, _POSTGRES, _OPENSEARCH, _CHROMIUM
                      The checksum each part built in must have, checked at startup (moqui help embedded)
-  webapp_http_port   HTTP port (default 8080). webapp_https_listen_port defaults to 8443 and cluster_https_port
-                     to 8444. webapp_https_port is the HTTPS port in generated URLs (empty is 443).
+  moqui_conf__webapp_list__webapp__WEBROOT__http_port
+                     HTTP port (default 8080); __https_listen_port the HTTPS one (8443), cluster_https_port
+                     the cluster's (8444); __https_port is the HTTPS port in generated URLs (empty is 443).
   moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name
                      postgres, mysql, or mysql8 for an external server; otherwise embedded (moqui help conf)
 
@@ -510,7 +511,7 @@ Options:
   --wait seconds                  Poll until the server answers, for a server started in the background.
   --timeout seconds               What waitUntil, a WebSocket receive and a browser action wait by
                                   default (10).
-  --chromium path                 The browser, else moqui_chromium_path, else runtime/chromium (./moq
+  --chromium path                 The browser, else screen-facade/pdf@chromium-path, else runtime/chromium (./moq
                                   chromium-download), else an installed Chromium, then Google Chrome
                                   or Microsoft Edge.
   --headed                        A visible browser, for debugging.
@@ -867,6 +868,11 @@ impl ServerOptions {
     }
 }
 
+/// The webroot webapp's `http-port` by its environment name, which `-p` sets (plans/Conf-Paths.md §1).
+pub const HTTP_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_port";
+/// The webroot webapp's `https-listen-port` by its environment name, which `--https-port` sets.
+pub const HTTPS_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port";
+
 /// Parse server options. This does not start the server or set properties.
 ///
 /// # Errors
@@ -880,16 +886,16 @@ pub fn parse_server_args(args: &[impl AsRef<str>]) -> Result<ServerOptions, Erro
     while index < args.len() {
         let arg = args[index];
         if let Some(value) = equals_value(arg, "port") {
-            opts.push("webapp_http_port", parse_port(value)?.to_string());
+            opts.push(HTTP_PORT, parse_port(value)?.to_string());
         } else if arg == "-p" || arg == "--port" {
             let value = next_value(&args, index, arg, "a port number")?;
-            opts.push("webapp_http_port", parse_port(value)?.to_string());
+            opts.push(HTTP_PORT, parse_port(value)?.to_string());
             index += 1;
         } else if let Some(value) = equals_value(arg, "https-port") {
-            opts.push("webapp_https_listen_port", parse_https_port(value)?);
+            opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
         } else if arg == "--https-port" {
             let value = next_value(&args, index, arg, "a port number or off")?;
-            opts.push("webapp_https_listen_port", parse_https_port(value)?);
+            opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
             index += 1;
         } else if let Some(value) = equals_value(arg, "conf") {
             require_conf(value)?;
@@ -945,14 +951,14 @@ fn require_conf(value: &str) -> Result<(), Error> {
     }
 }
 
-/// An explicit empty or non-numeric port is an error. An unset `webapp_http_port` still means 8080.
+/// An explicit empty or non-numeric port is an error. An unset `http-port` still means 8080.
 fn parse_port(raw: &str) -> Result<u16, Error> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err(Error::new("webapp_http_port is not a port"));
+        return Err(Error::new("http-port is not a port"));
     }
     raw.parse::<u16>()
-        .map_err(|_| Error::new(format!("webapp_http_port {raw} is not a port")))
+        .map_err(|_| Error::new(format!("http-port {raw} is not a port")))
 }
 
 /// A port, or `off` to turn the HTTPS listener off.
@@ -963,7 +969,7 @@ fn parse_https_port(raw: &str) -> Result<String, Error> {
     }
     raw.parse::<u16>()
         .map(|port| port.to_string())
-        .map_err(|_| Error::new(format!("webapp_https_listen_port {raw} is not a port or off")))
+        .map_err(|_| Error::new(format!("https-listen-port {raw} is not a port or off")))
 }
 
 fn split_property(token: &str) -> Result<(&str, &str), Error> {

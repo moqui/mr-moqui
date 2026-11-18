@@ -116,7 +116,10 @@ fn server_process() {
     let conf = setup["conf"].as_str().unwrap_or_default().to_string();
     let mut properties: Vec<(String, String)> = vec![
         ("node_role".to_string(), "all-in-one".to_string()),
-        ("webapp_https_listen_port".to_string(), port),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port".to_string(),
+            port,
+        ),
     ];
     if let Some(map) = setup["properties"].as_object() {
         properties.extend(

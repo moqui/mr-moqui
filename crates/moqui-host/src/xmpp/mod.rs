@@ -147,7 +147,9 @@ impl Drop for XmppNode {
 }
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    moqui_core::context::conf_env::setting_or_property(name)
+        .trim()
+        .to_string()
 }
 
 fn number<T: std::str::FromStr>(name: &str, default: T) -> T {
@@ -178,7 +180,7 @@ pub(crate) fn config() -> Option<Config> {
     }
     let base = property("xmpp_upload_url");
     config.upload_base_url = if base.is_empty() {
-        match property("webapp_https_port").as_str() {
+        match property("webapp-list/webapp[webroot]@https-port").as_str() {
             "" | "443" => format!("https://{}", config.domain),
             port => format!("https://{}:{port}", config.domain),
         }

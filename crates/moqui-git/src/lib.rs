@@ -604,7 +604,7 @@ impl GitProvider {
         let forgets = moqui_lib::sync::lock(&self.inner.changing).forgets;
         let repo = Arc::new(self.open(self.definition(repository_id)?)?);
         // a transaction cache frame answers a find by key with the row it read before (most service transactions are
-        // one, `service_tx_cache`), which another thread can have changed and committed since: that row is this
+        // one, `service-facade@tx-cache`), which another thread can have changed and committed since: that row is this
         // transaction's alone
         let own_row = self.entity()?.transactions_for(GIT_REPOSITORY)?.cache_frame().is_some();
         // kept only when no row changed since the row was read and none is changing now; the changing lock is held

@@ -239,7 +239,9 @@ impl std::fmt::Debug for Internet {
 }
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    moqui_core::context::conf_env::setting_or_property(name)
+        .trim()
+        .to_string()
 }
 
 /// The startup report's name for the listener.
@@ -325,7 +327,7 @@ impl SmtpConfig {
         }
         let hostname = match setting_or_property("hostname", "smtp_hostname") {
             name if !name.is_empty() => name,
-            _ => match property("webapp_http_host") {
+            _ => match property("webapp-list/webapp[webroot]@http-host") {
                 name if !name.is_empty() => name,
                 _ => "localhost".to_string(),
             },

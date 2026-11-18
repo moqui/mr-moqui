@@ -117,7 +117,10 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
         None,
         "",
         &[
-            ("webapp_https_listen_port", &local_port),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &local_port,
+            ),
             ("xmpp_domain", "moqui.local"),
             ("xmpp_tls_port", "0"),
             ("xmpp_tls_host", "127.0.0.1"),
@@ -134,7 +137,10 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
         "",
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port.to_string()),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port.to_string(),
+            ),
             ("edge_xmpp_port", &tunnel_port.to_string()),
             ("edge_xmpp_tls_port", &tunnel_tls_port.to_string()),
             ("edge_xmpp_host", "127.0.0.1"),
@@ -307,7 +313,10 @@ fn two_local_nodes_comms_stay_apart() {
         None,
         "",
         &[
-            ("webapp_https_listen_port", &local_port),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &local_port,
+            ),
             ("xmpp_domain", "moqui.local"),
             ("xmpp_tls_port", "0"),
             ("xmpp_tls_host", "127.0.0.1"),
@@ -326,7 +335,10 @@ fn two_local_nodes_comms_stay_apart() {
         "",
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port.to_string()),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port.to_string(),
+            ),
             ("edge_xmpp_port", &tunnel_port.to_string()),
             ("edge_xmpp_tls_port", &tunnel_tls_port.to_string()),
             ("edge_xmpp_host", "127.0.0.1"),

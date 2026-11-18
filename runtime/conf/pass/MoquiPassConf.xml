@@ -10,10 +10,9 @@
     imports and the transports in detail: mr-pass's docs/Deployment.md. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="instance_purpose" value="production"/>
-    <!-- rate limits, connection limits and bans by client address. Behind a proxy set webapp_trusted_proxies and
-        webapp_client_ip_header (.env) as well: each call to the authority carries the visitor's address, which its
+    <!-- rate limits, connection limits and bans by client address. Behind a proxy set webapp-list/webapp[webroot]@trusted-proxies and
+        webapp-list/webapp[webroot]@client-ip-header (.env) as well: each call to the authority carries the visitor's address, which its
         sign-in limits count by -->
-    <default-property name="webapp_web_protection" value="true"/>
 
     <!-- The authority: its final https origin, so that no call depends on a redirect. Unset is local mode, with Mantle in
         this runtime. The deployment's client id is the one registered on the authority (pass_client_<id>_*); put its
@@ -33,6 +32,7 @@
         (mantle.public.SiteServices.create#Site and store#Mounts there). The certificate for the host goes in cert/. -->
     <webapp-list>
         <webapp name="webroot">
+            <web-protection enabled="true"/>
             <public-site host="forum.example.com" site-id="FORUM_SITE" screen-location="component://mr-pass/screen/Pass.xml"
                     resolver-service="pass.RouteServices.resolve#Route">
                 <mount path="/forum" screen="Forum"/>

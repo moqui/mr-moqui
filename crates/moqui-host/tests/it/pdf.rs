@@ -13,7 +13,7 @@
  */
 
 //! The Chromium PDF engine on its own: no database and no server. The browser is the one PDF finds
-//! (`moqui_chromium_path`, else `runtime/chromium`, else an installed Chromium, Google Chrome or Microsoft Edge); with
+//! (`screen-facade/pdf@chromium-path`, else `runtime/chromium`, else an installed Chromium, Google Chrome or Microsoft Edge); with
 //! none the test logs that and passes.
 #![cfg(feature = "pdf")]
 

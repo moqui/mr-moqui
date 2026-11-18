@@ -22,10 +22,9 @@
     <default-property name="node_role" value="front_edge"/>
     <!-- each member's own web protection counts by the client the front names on its link; the front's protection comes
         first, and a ban started here is shared with the other members and told up to the front -->
-    <default-property name="webapp_web_protection" value="true"/>
 
     <!-- The shared database and the shared .env, as in conf/edge-cluster: the transactional datasource's settings the same on every member, and the
-        secrets the first member's first start makes (session_cookie_key, cluster_tls_cert, cluster_tls_key,
+        secrets the first member's first start makes (webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert, cluster_tls_key,
         moqui_conf__entity_facade__crypt_pass, edge_link_key, turn_auth_secret, mail_dkim_key, acme_account_key), with the front
         pairing's lines once it is made. Back the database up with its own tools. -->
     <default-property name="cluster_transport" value=""/>
@@ -36,7 +35,7 @@
         in the Hello of its front link, and the front passes that name's connections through to it alone, so a local
         node dials it there, by the front, and the member needs no inbound port for links: it dials out to the front.
         Its first certificate cannot come through the front: a member with no certificate starts no link server, and an
-        ACME standby listener takes no links. Give webapp_http_host (below) a certificate first, by System ›
+        ACME standby listener takes no links. Give webapp-list/webapp[webroot]@http-host (below) a certificate first, by System ›
         Certificates with ACME at a member (its own 443, the name at the members' addresses) or a copied one in
         runtime/cert; the AcmeCertificate rows are shared, so every member writes it. After that a link name can be set
         up with ACME too (the challenge then passes through the front); it needs one only if a local node pairs at it.
@@ -45,7 +44,7 @@
         the links up without the front. cluster_base_url, https://(its private address):8444,
         open between the members only. Never copy runtime/db: each member keeps its own instance id, member key, and
         the front's member list there.
-        The shared names (.env): webapp_http_host, the cluster's own name for its System app and for pairing, with an
+        The shared names (.env): webapp-list/webapp[webroot]@http-host, the cluster's own name for its System app and for pairing, with an
         address record at each member's own address (not the front's); edge_public_addresses, the
         front's public addresses, which the wizard checks a local node's host names against, since the names point at
         the front. -->
@@ -60,6 +59,7 @@
     <default-property name="pass_backend_url" value="edge:"/>
     <webapp-list>
         <webapp name="webroot">
+            <web-protection enabled="true"/>
             <root-screen host="forum\.example\.org" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
             <root-screen host="shop\.example\.com" location="component://mr-pass/screen/Pass.xml" framework-routes="refuse"/>
             <public-site host="forum.example.org" site-id="FORUM_SITE" screen-location="component://mr-pass/screen/Pass.xml"

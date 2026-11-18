@@ -221,7 +221,7 @@ pub static CATALOG: &[Unit] = &[
                 sequence("url-pattern", DERIVED),
             ]),
             single("session-config", Class::Live)
-                .attrs(&[("flush", BOOT), ("max", BOOT)])
+                .attrs(&[("flush", BOOT), ("max", BOOT), ("cookie-key", BOOT)])
                 .secrets(&[("cookie-key", Secret::Generated)]),
             keyed(
                 "endpoint",
@@ -465,8 +465,6 @@ const FIXED_PROPERTIES: &[&str] = &[
     "database_time_zone",
     "default_locale",
     "search_backend",
-    "webapp_trusted_proxies",
-    "session_cookie_key",
 ];
 
 /// Why the property `name` is not changed by a conf reload, or `None` when it may be.

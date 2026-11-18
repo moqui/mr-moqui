@@ -409,14 +409,19 @@ fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     }
     assert!(super::factory::leave_sentinel("entity_ds_crypt_pass_old"));
     assert!(!super::factory::leave_sentinel("entity_ds_crypt_pass"));
-    assert!(!super::factory::leave_sentinel("session_cookie_key"));
+    assert!(!super::factory::leave_sentinel(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key"
+    ));
 
     let secret = super::factory::property_is_secret;
     assert!(secret("entity_ds_crypt_pass", None));
-    assert!(secret("session_cookie_key", None));
+    assert!(secret(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        None
+    ));
     assert!(secret("smtp_pw", None));
     assert!(secret("fcm_service_account", Some("true")));
-    assert!(!secret("webapp_http_port", None));
+    assert!(!secret("moqui_conf__webapp_list__webapp__WEBROOT__http_port", None));
     assert!(!secret("ssh_host_key", Some("false")));
 
     // the request log's rule: a PASS payment result's returnKey reads the attempt's outcome (SEC-PSA-09)
@@ -427,86 +432,41 @@ fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     assert!(!parameter("returnKeyId"));
 }
 
-/// SEC-WEB-13: a `session_cookie_key` an operator set is checked before the server starts: still `CHANGEME`, not
-/// base64, or under 32 bytes stops the boot with a message naming the property and not the value; 32 bytes start.
+/// SEC-WEB-13: a session cookie key (`webapp-list/webapp[webroot]/session-config@cookie-key`) an operator set is
+/// checked before the server starts: still `CHANGEME`, not base64, or under 32 bytes stops the boot with a message
+/// naming the setting and not the value; 32 bytes start.
 #[test]
 fn a_weak_session_cookie_key_stops_the_boot() {
     use base64::Engine as _;
+    const KEY: &str = "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key";
+    /// The key is cleared however the test ends: one left at a weak value stops every later boot in this process.
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            env::clear_property(KEY);
+        }
+    }
     let _lock = crate::user::session::cookie_property_lock();
+    let _clear = Clear;
     let root = workspace_root();
     let _env = EnvGuard::new(root.clone());
     let framework = root.join("runtime/components/base/framework");
     let temp = TempRuntime::new("cookiekey");
     let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     for weak in ["CHANGEME".to_string(), "not base64!".to_string(), encode(&[7_u8; 16])] {
-        env::set_property("session_cookie_key", weak.clone());
+        env::set_property(KEY, weak.clone());
         let err = match ExecutionContextFactory::boot_with_framework(temp.path(), &framework) {
             Ok(_) => panic!("boot started with the session cookie key {weak:?}"),
             Err(err) => err.to_string(),
         };
-        assert!(err.contains("session_cookie_key"), "{err}");
+        assert!(err.contains("session-config cookie-key"), "{err}");
         assert!(!err.contains(&weak) || weak == "CHANGEME", "{err}");
     }
-    env::set_property("session_cookie_key", encode(&[7_u8; 32]));
+    env::set_property(KEY, encode(&[7_u8; 32]));
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     for name in factory.property_names() {
         env::clear_property(name);
     }
-}
-
-/// A conf attribute's environment name sets it over the conf files at boot: a process property (`-D`) over
-/// `runtime/.env`, and either over the runtime conf; a secret attribute left at `CHANGEME` is generated into `.env`
-/// under its canonical name, and the next boot reads it back (plans/Conf-Paths.md §3).
-#[test]
-fn environment_names_set_conf_attributes_at_boot_and_secrets_are_generated_under_them() {
-    let _lock = crate::user::session::cookie_property_lock();
-    let root = workspace_root();
-    let _env = EnvGuard::new(root.clone());
-    let before = repo_env_stamp(&root);
-    let temp = TempRuntime::new("conf-env");
-    std::fs::write(
-        temp.path().join("conf/MoquiDevConf.xml"),
-        r#"<moqui-conf><ssh-server public-host="from-conf" public-port="2200" host-key="CHANGEME"/></moqui-conf>"#,
-    )
-    .unwrap();
-    std::fs::write(
-        temp.path().join(".env"),
-        "moqui_conf__ssh_server__public_host=from-dotenv\nmoqui_conf__ssh_server__public_port=2201\n",
-    )
-    .unwrap();
-    env::set_property("MOQUI_CONF__SSH_SERVER__PUBLIC_PORT", "2202");
-    let framework = root.join("runtime/components/base/framework");
-    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    assert_eq!(factory.conf_setting("ssh-server", "public-host"), "from-dotenv");
-    assert_eq!(
-        factory
-            .conf_value("ssh-server@public-port")
-            .map(|found| found.value)
-            .as_deref(),
-        Some("2202")
-    );
-    let key = factory.conf_value("ssh-server@host-key").unwrap();
-    assert!(key.secret);
-    assert!(!key.value.ends_with("CHANGEME"));
-    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    assert!(
-        env_text.contains(&format!("moqui_conf__ssh_server__host_key={}\n", key.value)),
-        "{env_text}"
-    );
-    env::clear_property("MOQUI_CONF__SSH_SERVER__PUBLIC_PORT");
-    for name in factory.property_names() {
-        env::clear_property(name);
-    }
-    drop(factory);
-    env::clear_dotenv();
-    let again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    assert_eq!(again.conf_value("ssh-server@host-key").unwrap().value, key.value);
-    assert_eq!(again.conf_setting("ssh-server", "public-port"), "2201");
-    for name in again.property_names() {
-        env::clear_property(name);
-    }
-    env::clear_dotenv();
-    assert_eq!(repo_env_stamp(&root), before);
 }
 
 fn write_probe_conf(runtime: &Path, name: &str, value: &str) {

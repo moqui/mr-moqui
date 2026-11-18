@@ -436,10 +436,10 @@ pub(crate) type LocalLinkClient = proto::local_link_client::LocalLinkClient<H2Ch
 pub struct EdgeConfig {
     /// This node's instance id, in its Hello.
     pub instance_id: String,
-    /// The name local nodes show for this edge node: `webapp_http_host`, else the instance id.
+    /// The name local nodes show for this edge node: `webapp-list/webapp[webroot]@http-host`, else the instance id.
     pub name: String,
     pub capabilities: Vec<String>,
-    /// The public host names this edge node answers for: `webapp_http_host` for now; E2 and later set more.
+    /// The public host names this edge node answers for: `webapp-list/webapp[webroot]@http-host` for now; E2 and later set more.
     pub public_names: Vec<String>,
     /// HTTP/2 PING interval, and how long an unanswered one waits.
     pub keepalive: Duration,
@@ -488,7 +488,9 @@ pub struct EdgeConfig {
 
 impl EdgeConfig {
     pub(crate) fn from_properties(instance_id: &str) -> Self {
-        let host = moqui_lib::env::get_prop_or_env("webapp_http_host").trim().to_string();
+        let host = moqui_core::context::conf_env::setting("webapp-list/webapp[webroot]@http-host")
+            .trim()
+            .to_string();
         Self {
             instance_id: instance_id.to_string(),
             name: if host.is_empty() {
@@ -668,7 +670,11 @@ impl LocalConfig {
 
     /// From the properties, or `None` when `edge_node_url` is not set (this node is not paired).
     pub(crate) fn from_properties(instance_id: &str) -> Option<Self> {
-        let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+        let get = |name: &str| {
+            moqui_core::context::conf_env::setting_or_property(name)
+                .trim()
+                .to_string()
+        };
         let url = get(moqui_core::edge::NODE_URL);
         if url.is_empty() {
             return None;
@@ -680,7 +686,7 @@ impl LocalConfig {
             instance_id,
         );
         config.edge_id = get(moqui_core::edge::NODE_ID);
-        let host = get("webapp_http_host");
+        let host = get("webapp-list/webapp[webroot]@http-host");
         if !host.is_empty() {
             config.node_name = host;
         }
@@ -690,7 +696,11 @@ impl LocalConfig {
     /// The front pairing's from the properties (`front_node_url`, `front_node_key`, `front_node_pin`,
     /// `front_node_id`; plans/Edge-Node2.md §4.7), or `None` when `front_node_url` is not set.
     pub(crate) fn front_from_properties(instance_id: &str) -> Option<Self> {
-        let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+        let get = |name: &str| {
+            moqui_core::context::conf_env::setting_or_property(name)
+                .trim()
+                .to_string()
+        };
         let url = get(moqui_core::edge::FRONT_URL);
         if url.is_empty() {
             return None;
@@ -704,7 +714,7 @@ impl LocalConfig {
         config.edge_id = get(moqui_core::edge::FRONT_ID);
         config.front = true;
         config.link_url = get(moqui_core::cluster::EDGE_LINK_URL_PROPERTY);
-        let host = get("webapp_http_host");
+        let host = get("webapp-list/webapp[webroot]@http-host");
         if !host.is_empty() {
             config.node_name = host;
         }

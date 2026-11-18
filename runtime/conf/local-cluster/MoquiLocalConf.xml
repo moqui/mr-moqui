@@ -16,7 +16,7 @@
         (moqui_conf__entity_facade__datasource__TRANSACTIONAL__host and the rest). The content database shares it unless
         the content datasource's database-conf-name names another (docs/Run-Deploy.md, Content database). -->
 
-    <!-- The same secrets on every member: session_cookie_key, cluster_tls_cert, cluster_tls_key and moqui_conf__entity_facade__crypt_pass,
+    <!-- The same secrets on every member: webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert, cluster_tls_key and moqui_conf__entity_facade__crypt_pass,
         and for git hosting ssh_host_key and git_lfs_token_key, as the load balancer sends a client's SSH connections
         and LFS requests to any member (a member with another SSH host key warns at startup).
         The first member's first start generates them into its .env; copy that whole .env to each other member before its
@@ -33,9 +33,9 @@
     <default-property name="cluster_transport" value=""/>
     <default-property name="cluster_protocol" value=""/>
 
-    <!-- The load balancer (.env): webapp_trusted_proxies, its address ranges, which also turns on web protection by
-        client address (each member counts its own limits); webapp_client_ip_header, the header it sets
-        (X-Forwarded-For, X-Real-IP, CF-Connecting-IP or CloudFront-Viewer-Address). Leave webapp_https_port empty
+    <!-- The load balancer (.env): webapp-list/webapp[webroot]@trusted-proxies, its address ranges, which also turns on web protection by
+        client address (each member counts its own limits); webapp-list/webapp[webroot]@client-ip-header, the header it sets
+        (X-Forwarded-For, X-Real-IP, CF-Connecting-IP or CloudFront-Viewer-Address). Leave webapp-list/webapp[webroot]@https-port empty
         when it serves 443. -->
 
     <entity-facade query-stats="true">

@@ -32,7 +32,7 @@ use crate::user::{now_millis, now_value, stamp_value};
 
 const PROPS: &[&str] = &[
     "instance_id",
-    "session_cookie_key",
+    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
     "cluster_tls_cert",
     "cluster_tls_key",
     "cluster_https_port",
@@ -255,7 +255,10 @@ impl Sender for Scripted {
 fn preset(instance_id: &str) {
     let (cert, key) = super::generate_cert_pair().expect("cert pair");
     env::set_property("instance_id", instance_id);
-    env::set_property("session_cookie_key", "session-key-for-tests");
+    env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        "session-key-for-tests",
+    );
     env::set_property("cluster_tls_cert", cert);
     env::set_property("cluster_tls_key", key);
     env::set_property("cluster_https_port", "");
@@ -528,7 +531,7 @@ fn a_live_peer_with_a_different_fingerprint_fails_start() {
     );
     let err = super::start(ctx.factory()).unwrap_err();
     let shown = format!("{err}");
-    assert!(shown.contains("session_cookie_key"));
+    assert!(shown.contains("session-config cookie-key"));
     assert!(!shown.contains("session-key-for-tests"));
     assert!(!shown.contains(&cert));
 

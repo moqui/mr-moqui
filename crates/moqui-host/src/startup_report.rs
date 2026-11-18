@@ -181,7 +181,7 @@ fn record_integrations(factory: &ExecutionContextFactory) {
         if !cfg!(feature = "telemetry") {
             State::NotBuilt
         } else if factory.conf_setting("telemetry", "enabled") == "false" {
-            State::off("telemetry_enabled is false")
+            State::off("telemetry enabled is false")
         } else {
             match factory.conf_setting("telemetry", "otlp-endpoint") {
                 endpoint if endpoint.is_empty() => State::on("kept in the search store"),

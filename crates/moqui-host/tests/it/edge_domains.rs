@@ -410,7 +410,10 @@ impl Domains {
             EDGE_CONF,
             &[
                 ("node_role", "front_edge"),
-                ("webapp_https_listen_port", &edge_port_text),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    &edge_port_text,
+                ),
                 ("smtp_listen_port", "0"),
                 ("smtp_allowed_addresses", "127.0.0.1"),
                 ("smtp_hostname", "edge.example.com"),

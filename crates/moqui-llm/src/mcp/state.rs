@@ -16,7 +16,7 @@
 //! 2026-07-28 "Multi Round-Trip Requests"). The client echoes it on the retry of the call and must not read it, and
 //! the server treats it as attacker-controlled: it is `base64url(json{v, aid, sub, cid, tool, dig, exp, n})` and
 //! `.` and `base64url(HMAC-SHA256)` of the first part, under the `mcp request-state-key` (base64), else a key derived
-//! from `session_cookie_key`, else a random key of the process (a single node's states then last until it
+//! from `webapp-list/webapp[webroot]/session-config@cookie-key`, else a random key of the process (a single node's states then last until it
 //! restarts). On a retry the MAC is checked first (in constant time), then the version, the expiry, the principal
 //! (`sub`, the user's id) and the request (`tool` and `dig`, the digest of the call's name and arguments); any
 //! failure refuses the state and nothing runs. The state names an approval (`aid`) and its run
@@ -37,7 +37,7 @@ type StateMac = Hmac<Sha256>;
 /// The version of the payload.
 pub const VERSION: u8 = 1;
 
-/// The label the key derived from `session_cookie_key` is made with, so a state's MAC is never a session cookie's.
+/// The label the key derived from `webapp-list/webapp[webroot]/session-config@cookie-key` is made with, so a state's MAC is never a session cookie's.
 const DERIVED_LABEL: &str = "moqui mcp requestState v1";
 
 /// The largest state taken, before it is decoded.
@@ -117,7 +117,7 @@ pub fn nonce() -> Result<String, moqui_lib::error::Error> {
 }
 
 /// The key states are made with: the conf's `request-state-key` (standard base64, at least 32 bytes), else one
-/// derived from `session_cookie_key`, else a random key of this process.
+/// derived from `webapp-list/webapp[webroot]/session-config@cookie-key`, else a random key of this process.
 ///
 /// # Errors
 ///
@@ -143,7 +143,7 @@ pub fn key(factory: &ExecutionContextFactory) -> Result<Vec<u8>, moqui_lib::erro
 }
 
 /// A random key of this process, when neither key is configured: a single node's states then last until it restarts
-/// (a cluster has `session_cookie_key`, so its nodes share the derived key).
+/// (a cluster has `webapp-list/webapp[webroot]/session-config@cookie-key`, so its nodes share the derived key).
 fn process_key() -> Result<Vec<u8>, moqui_lib::error::Error> {
     static KEY: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
     KEY.get_or_init(|| {
@@ -152,7 +152,7 @@ fn process_key() -> Result<Vec<u8>, moqui_lib::error::Error> {
             Ok(()) => {
                 tracing::warn!(
                     "the MCP requestState is signed with a key of this process (no mcp request-state-key or \
-                     session_cookie_key), so a write waiting for its approval must be retried before a restart"
+                     the session cookie key), so a write waiting for its approval must be retried before a restart"
                 );
                 Some(bytes)
             }

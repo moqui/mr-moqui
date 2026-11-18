@@ -425,7 +425,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="send" noun="VoicemailNotice" authenticate="false" allow-remote="false">
         <description>Internal: the email notice of a new voicemail to its box's notifyEmail (the SYSTEM email server): who,
-            when, how long and a link (comms_app_root, with the webapp host when webapp_http_host is set); the audio attached
+            when, how long and a link (comms_app_root, with the webapp host when webapp-list/webapp[webroot]@http-host is set); the audio attached
             only with attachAudio, the transcript only with attachTranscript. Once per voicemail.</description>
         <in-parameters><parameter name="voicemailId" required="true"/></in-parameters>
         <out-parameters>

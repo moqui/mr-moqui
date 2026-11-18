@@ -15,7 +15,7 @@
 //! `PdfRenderer`'s engine: one long-lived headless Chromium, driven over the DevTools Protocol
 //! (`plans/archive/Architecture-Proposal.md`, Tool components and print).
 //!
-//! The binary is the conf's `screen-facade` `pdf` `chromium-path` (`moqui_chromium_path`), else the one `./moq
+//! The binary is the conf's `screen-facade` `pdf` `chromium-path` (`screen-facade/pdf@chromium-path`), else the one `./moq
 //! chromium-download` put in `runtime/chromium`, else an installed Chromium, Google Chrome or Microsoft Edge (on the
 //! `PATH` or where this OS installs it); early in startup [`find_chromium`] (in [`crate::chromium`], which the browser
 //! tests share) logs every one it finds and the one it uses. It is not vendored. When none is found the server still starts and PDF reports that it is not available. The browser starts on the first render and is kept; when it exits, the next

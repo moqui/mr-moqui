@@ -194,7 +194,7 @@ pub(crate) fn start(
         (true, None) => {
             tracing::error!(
                 "node_role is {}, but the HTTPS listener is off (no certificate in runtime/cert, or \
-                 webapp_https_listen_port=off): this node takes no links",
+                 https-listen-port off): this node takes no links",
                 role.as_str()
             );
             None
@@ -805,7 +805,7 @@ impl EdgeLink for Hook {
         config.connect_timeout = CALL_TIMEOUT;
         // a node with a role of its own pairs with a front node only (plans/Edge-Node2.md §4.7)
         config.only_front = self.role.takes_links();
-        let host = moqui_lib::env::get_prop_or_env("webapp_http_host");
+        let host = moqui_core::context::conf_env::setting("webapp-list/webapp[webroot]@http-host");
         if !host.trim().is_empty() {
             config.node_name = host.trim().to_string();
         }

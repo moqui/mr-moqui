@@ -2064,10 +2064,10 @@ fn mirror_fetches_and_opted_in_writes_raise_events() {
 fn the_public_base_url_follows_the_listener_and_the_request() {
     let _lock = moqui_core::user::session::cookie_property_lock();
     let names = [
-        "webapp_http_port",
-        "webapp_http_host",
-        "webapp_https_enabled",
-        "webapp_https_port",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_port",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_host",
+        "moqui_conf__webapp_list__webapp__WEBROOT__https_enabled",
+        "moqui_conf__webapp_list__webapp__WEBROOT__https_port",
         "git_public_url",
     ];
     struct Restore(Vec<(&'static str, String)>);
@@ -2088,17 +2088,17 @@ fn the_public_base_url_follows_the_listener_and_the_request() {
         moqui_lib::env::set_property(name, "");
     }
     let context = ExecutionContextFactory::test_context_with_conf(
-        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="${webapp_http_host}" http-port="${webapp_http_port}"
-            https-enabled="${webapp_https_enabled}" https-port="${webapp_https_port}"/></webapp-list></moqui-conf>"#,
+        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="" http-port=""
+            https-enabled="false" https-port=""/></webapp-list></moqui-conf>"#,
     );
     let _entered = context.enter();
     assert_eq!(super::public_base_url(), "http://localhost:8080");
     for (configured, expected) in [("9090", "http://localhost:9090"), ("80", "http://localhost")] {
-        moqui_lib::env::set_property("webapp_http_port", configured);
+        moqui_lib::env::set_property("moqui_conf__webapp_list__webapp__WEBROOT__http_port", configured);
         assert_eq!(super::public_base_url(), expected);
     }
-    moqui_lib::env::set_property("webapp_https_enabled", "true");
-    moqui_lib::env::set_property("webapp_https_port", "9443");
+    moqui_lib::env::set_property("moqui_conf__webapp_list__webapp__WEBROOT__https_enabled", "true");
+    moqui_lib::env::set_property("moqui_conf__webapp_list__webapp__WEBROOT__https_port", "9443");
     assert_eq!(super::public_base_url(), "https://localhost:9443");
     let _web = moqui_core::web::install(std::collections::BTreeMap::new());
     let mut request = moqui_core::web::WebRequest::new("GET", "/apps/git");

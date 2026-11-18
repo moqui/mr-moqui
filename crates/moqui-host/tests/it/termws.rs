@@ -836,7 +836,13 @@ fn a_device_key_opens_a_remote_command_line_with_a_ticket() {
         "termws-key",
         None,
         r#"<terminal remote="true"/>"#,
-        &[("instance_purpose", "dev"), ("webapp_client_ip_header", "X-Real-IP")],
+        &[
+            ("instance_purpose", "dev"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__client_ip_header",
+                "X-Real-IP",
+            ),
+        ],
     );
     let address = gate.server.address();
     let key = {

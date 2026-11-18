@@ -182,7 +182,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserPermission userPermissionId="SQL_RUNNER_WEB" description="Tools: SQL Runner"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="SQL_RUNNER_WEB" fromDate="0"/>
     <!-- Deploying a component from a git URL runs its code and loads its data (System > Components,
-        docs/tools/Component-Deploy.md); sealed, and in production also needs component_deploy_enabled=true. -->
+        docs/tools/Component-Deploy.md); sealed, and in production also needs moqui_conf__component_deploy__enabled=true. -->
     <moqui.security.UserPermission userPermissionId="COMPONENT_DEPLOY" description="System: deploy a component from git"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="COMPONENT_DEPLOY" fromDate="0"/>
     <!-- Reading and saving the conf files on System > Conf > Edit; a save reloads the conf (docs/tools/Component-Deploy.md).

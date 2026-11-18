@@ -23,19 +23,19 @@ is a few properties.
 
 ## `.env`
 
-- **Group server**: `webapp_http_host` and HTTPS as for one production server; the model endpoints' keys (such as
+- **Group server**: `webapp-list/webapp[webroot]@http-host` and HTTPS as for one production server; the model endpoints' keys (such as
   `llm_openai_api_key`); `ssh_public_port` when clients reach SSH on another port.
 - **Dev instance**:
 
   ```sh
-  webapp_http_bind=127.0.0.1                     # Dev AIDE gives its users code execution
+  moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1                     # Dev AIDE gives its users code execution
   llm_openai_url=https://team.example.com/llm    # no /v1: the endpoint adds /v1/chat/completions
   llm_openai_api_key=<access token>              # from the group server's Projects › Code › Git access
   llm_openai_model=<alias>
   ```
 
-- **Shared dev-aide server**: `dev_aide_shared=true`, and `webapp_allow_origins` set to its own origin, such as
-  `https://dev.example.com`, in place of the dev conf's `*`; a certificate in `cert/`, `webapp_http_bind` empty.
+- **Shared dev-aide server**: `dev_aide_shared=true`, and `webapp-list/webapp[webroot]@allow-origins` set to its own origin, such as
+  `https://dev.example.com`, in place of the dev conf's `*`; a certificate in `cert/`, `webapp-list/webapp[webroot]@http-bind` empty.
 
 ## Commands
 

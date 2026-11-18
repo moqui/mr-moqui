@@ -39,7 +39,7 @@ The server is off by default; while it is off `/mcp` and its documents answer 40
   admin renames a tool for local terms there; each edit moves `lockVersion` on, which `tools/list` gives as
   `_meta["org.moqui/lockVersion"]`.
 - `request-state-key` (standard base64, 32 bytes or more) signs the `requestState` of a write waiting for its approval;
-  without it a key derived from `session_cookie_key` (which a cluster has, so every node checks every state), and on a
+  without it a key derived from `webapp-list/webapp[webroot]/session-config@cookie-key` (which a cluster has, so every node checks every state), and on a
   single node without either a random key of the process (a waiting write must then be retried before a restart).
 - `public-url` is the base URL of the approval links and the documents; without it the request's scheme and `Host`, and
   a believed proxy's forwarded headers only with `trust-forwarded-headers="true"`, as A2A takes them.

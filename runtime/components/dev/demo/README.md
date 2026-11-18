@@ -18,7 +18,7 @@ This is not production policy. A production server loads no demo users and does 
   ./moq run-production -c conf/MoquiDemoConf.xml
   ```
 
-  A first start on an empty database loads all data too (`entity_empty_db_load=all` in that conf).
+  A first start on an empty database loads all data too (`moqui_conf__tools__empty_db_load=all` in that conf).
 - **A dev instance**: `./moq run -D demo_disabled=false`, to try it. Never run a public demo as a dev instance: the Dev
   AIDE loads there, and `moqui tui --user` logs in with no password.
 

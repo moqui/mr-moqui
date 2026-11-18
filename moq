@@ -603,10 +603,11 @@ RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP
 $EMBED_OPTIONS_HELP"'
   -c, --conf FILE      Runtime conf merged over MoquiDefaultConf.xml (sets MOQUI_CONF); relative to
                        the runtime directory, like conf/MoquiProductionConf.xml, or a path
-  -p, --port N         HTTP port (webapp_http_port)
-      --https-port N   HTTPS port to listen on (webapp_https_listen_port), or off
-  -D name=value        Set any conf property, as an environment variable; repeatable. Use the
-                       underscore name (entity_ds_db_conf), not a dotted one
+  -p, --port N         HTTP port (the http-port of the webroot webapp)
+      --https-port N   HTTPS port to listen on (its https-listen-port), or off
+  -D name=value        Set a conf attribute by its environment name (moqui_conf__ssh_server__port;
+                       moqui conf env lists them) or a conf property, as an environment variable;
+                       repeatable. Use the underscore name, not a dotted one
       --nobuild        Skip the build (./moq build) that runs first. A binary that is not there is still built
       --               End of moq options'
 
@@ -664,7 +665,7 @@ moqui arguments it starts the HTTP server. The first argument that is not a moq 
 everything after it, goes to the binary, so moqui's own commands run with the same conf:
   ./moq run                         serve with runtime/conf/MoquiDevConf.xml
   ./moq run serve                   that server in the background; logs stay in the files and the search indexes
-  ./moq run -p 8081 -D entity_ds_db_conf=postgres
+  ./moq run -p 8081 -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
   ./moq run --release               the Maximal binary, still the dev conf
   ./moq run lint --screens          moqui lint --screens
   ./moq run types --out /tmp/types
@@ -679,7 +680,7 @@ help_run_production() {
 Like run, but with conf/MoquiProductionConf.xml unless --conf says otherwise. For a distribution,
 build the binary as README.md describes (scripts/pg-payload.sh strip, then ./moq build).
   ./moq run-production
-  ./moq run-production --enterprise -D entity_ds_db_conf=postgres
+  ./moq run-production --enterprise -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 
 Options:
 $RUN_OPTIONS_HELP
@@ -921,7 +922,7 @@ help_save_db() {
 Saves the embedded database (pg_dump through moqui save-db) to runtime/save/<name>/moqui.dump,
 and runtime/opensearch/data to runtime/save/<name>/opensearch-data.tar.gz. An OpenSearch daemon
 with a pid file is stopped for the copy and started again. The name defaults to "default".
-This saves only the embedded database, not an external one set by entity_ds_db_conf.
+This saves only the embedded database, not an external one a datasource's database-conf-name names.
   ./moq save-db
   ./moq save-db before-upgrade
 
@@ -1396,7 +1397,7 @@ parse_run_opts() {
                     port=${arg#--port=}
                 fi
                 case $port in '' | *[!0-9]*) die "port '$port' is not a number" ;; esac
-                OPT_PROPS+=("webapp_http_port=$port")
+                OPT_PROPS+=("moqui_conf__webapp_list__webapp__WEBROOT__http_port=$port")
                 ;;
             --https-port | --https-port=*)
                 local https_port
@@ -1408,7 +1409,7 @@ parse_run_opts() {
                     https_port=${arg#--https-port=}
                 fi
                 case $https_port in off) ;; '' | *[!0-9]*) die "https port '$https_port' is not a number or off" ;; esac
-                OPT_PROPS+=("webapp_https_listen_port=$https_port")
+                OPT_PROPS+=("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port=$https_port")
                 ;;
             -D)
                 [ $# -ge 2 ] || die "-D needs name=value"
@@ -2456,7 +2457,7 @@ task_test_client() {
     server=()
     for prop in "${OPT_PROPS[@]}"; do
         case $prop in
-            webapp_http_port=*) server=(--server "http://localhost:${prop#webapp_http_port=}") ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "http://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
         esac
     done
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
@@ -2471,7 +2472,7 @@ task_test_load() {
     server=()
     for prop in "${OPT_PROPS[@]}"; do
         case $prop in
-            webapp_http_port=*) server=(--server "http://localhost:${prop#webapp_http_port=}") ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "http://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
         esac
     done
     # moq runs from the repo root: --out, the --compare files and a path target are the caller's, made absolute

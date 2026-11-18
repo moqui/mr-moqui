@@ -340,7 +340,10 @@ fn work_crosses_the_link_once_and_in_order_and_survives_a_cut() {
         EDGE_CONF,
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
         ],
         &component_files(&[("cert/default.crt", &cert), ("cert/default.key", &key)]),
     );

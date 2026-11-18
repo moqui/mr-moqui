@@ -35,7 +35,7 @@
         (mantle.public.SiteServices.create#Site, store#Mounts), the same hosts as the edge members' public-site
         bindings. The authority needs no public address, open port or client secret. -->
 
-    <!-- Web access: the client's address comes over the link, as with one edge node, so no webapp_trusted_proxies. The
+    <!-- Web access: the client's address comes over the link, as with one edge node, so no webapp-list/webapp[webroot]@trusted-proxies. The
         apps' own names (erp.example.com) are given by the wizard: terminate on the front (its certificate there, sticky
         by the session cookie), or passthrough (the certificate in runtime/cert on each member, the same files). -->
 

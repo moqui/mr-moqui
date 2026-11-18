@@ -59,8 +59,9 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const yes = (value) => value === true || value === 'Y' || value === 'true'
 const blank = (value) => value == null || String(value).trim() === ''
+// a conf attribute by its selector (it has an @, plans/Conf-Paths.md §1), else a property not yet moved to the conf
 const property = (name, fallback) => {
-  const value = System.getProperty(name)
+  const value = String(name).includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)
   return value == null || String(value).trim() === '' ? fallback : String(value).trim()
 }
 const clamp = (value, low, high) => Math.min(Math.max(value, low), high)
@@ -92,13 +93,13 @@ function appRoot() {
   return property('comms_app_root', '/qapps/BasicComms').replace(/\/+$/, '')
 }
 
-/** The site's own address for a link in an email, from the webapp properties; empty gives a path alone. */
+/** The site's own address for a link in an email, from the webroot webapp's conf; empty gives a path alone. */
 function siteUrl() {
-  const host = property('webapp_http_host', '')
+  const host = property('webapp-list/webapp[webroot]@http-host', '')
   if (!host) return ''
-  const https = property('webapp_https_port', '')
+  const https = property('webapp-list/webapp[webroot]@https-port', '')
   if (https) return 'https://' + host + (https === '443' ? '' : ':' + https)
-  const http = property('webapp_http_port', '')
+  const http = property('webapp-list/webapp[webroot]@http-port', '')
   return 'http://' + host + (!http || http === '80' ? '' : ':' + http)
 }
 

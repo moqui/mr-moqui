@@ -21,7 +21,7 @@
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="instance_purpose" value="production"/>
     <default-property name="node_role" value="all-in-one"/>
-    <default-property name="webapp_web_protection" value="true"/>
+    <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
     <!-- XMPP (plans/archive/Edge-Node.md §5.4, §10; plans/Edge-Node2.md §4.1): the server's own XMPP server runs here, for
         its xmpp_domain, on xmpp_port and xmpp_tls_port as on a normal node, and the same ports take the paired nodes'

@@ -71,7 +71,7 @@ fn page(address: SocketAddr, auth: &str, path: &str) -> String {
     text
 }
 
-/// A browser for the PDF check: the one PDF finds (`moqui_chromium_path`, else `runtime/chromium`, else an installed
+/// A browser for the PDF check: the one PDF finds (`screen-facade/pdf@chromium-path`, else `runtime/chromium`, else an installed
 /// Chromium, Google Chrome or Microsoft Edge). With none the screen document reports that PDF is not available, which
 /// also passes gate 4.
 fn browser() -> Option<String> {
@@ -88,7 +88,7 @@ fn tools_services_run_on_postgres() {
     let browser = browser();
     let chromium: Vec<(&str, &str)> = browser
         .iter()
-        .map(|binary| ("moqui_chromium_path", binary.as_str()))
+        .map(|binary| ("moqui_conf__screen_facade__pdf__chromium_path", binary.as_str()))
         .collect();
     let gate = crate::common::start_with_properties("tools-services", Some(DATA), &chromium);
     let address = gate.server.address();

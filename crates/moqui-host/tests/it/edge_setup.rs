@@ -357,8 +357,11 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
         let page = screens.test_render(path, parameters, Some("post"));
         page.error_messages.join(" | ")
     };
-    // the default form: no localhost (the default webapp_http_host), and the system's own server kept unless chosen
-    moqui_lib::env::set_property("webapp_http_host", "localhost".to_string());
+    // the default form: no localhost (the default webapp-list/webapp[webroot]@http-host), and the system's own server kept unless chosen
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_host",
+        "localhost".to_string(),
+    );
     let page = screens.test_render("EdgeNode/Pair/Discover", BTreeMap::new(), None);
     assert!(
         page.error_messages.is_empty(),
@@ -367,7 +370,7 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
         page.status()
     );
     let discover = page.text();
-    moqui_lib::env::clear_property("webapp_http_host");
+    moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__http_host");
     assert!(!discover.contains("value=\"localhost\""), "{discover}");
     assert!(
         discover.contains("erp.example.com"),
@@ -1050,7 +1053,10 @@ fn a_local_node_is_attached_from_the_wizard() {
         EDGE_CONF,
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
             ("smtp_listen_port", "0"),
             ("smtp_hostname", "edge.example.net"),
             ("edge_mail_mta", "moqui"),

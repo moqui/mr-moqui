@@ -47,13 +47,13 @@ inline script and no inline event handler, and the settings are a data block:
 | `locale`, `timeZone`, `quasarLang` | `en-US` style tag, zone name, and the key of the language pack in `Quasar.Lang` (`enUS`, `ptBR`, `zhCN`, `de`, ...) |
 | `darkMode`, `leftOpen`, `leftMini` | the preferences `QUASAR_DARK` (`true`, `false` or `"auto"`, which follows the system), `QUASAR_LEFT_OPEN` and `QUASAR_LEFT_MINI` (the drawer as a rail of app icons) |
 | `appearance` | what `org.moqui.ui.ShellServices.get#Appearance` builds (see Appearance): the theme's color schemes (`{id, description, light, dark, custom, version, fonts}`), the fonts (`{id, description, kind, family, stylesheet}`), the themes the user may choose (`themes`, `{id, description}`; see Themes), `screenThemeId` (the theme shown), `defaultSchemeId`, `schemeId` (the scheme shown), `policy`, the user's `THEME_*` values the policy allows, `keys`, `tokens` and the style sheets the page links (`links`) |
-| `devMarker` | the `webapp_dev_marker_color` conf property: the color of the small square a dev or test instance shows in the corner of the window; empty for none |
+| `devMarker` | the `webapp-list/webapp[webroot]@dev-marker-color` conf property: the color of the small square a dev or test instance shows in the corner of the window; empty for none |
 | `density`, `startApp` | `SHELL_DENSITY` (`comfortable` or `compact`) and `SHELL_START_APP`, the app the user may open that `/qapps` with no path opens (empty for the app list) |
 | `notificationEndpoint` | the path of the notification WebSocket, from `webapp_notification_endpoint`. Empty means no socket is opened. |
 | `navPlugins`, `accountPlugins` | theme values `STRT_HEADER_NAVBAR_COMP` and `STRT_HEADER_ACCOUNT_COMP`: URLs of components for the header |
 | `qz` | `{enabled}`: print through QZ Tray |
 | `assist` | whether Assist is on for the user (the `llm` feature built and enabled, and `AgentUse`); without it the drawer makes no request |
-| `qvt` | `{build, handles}`: the Vue build this page loaded (`compiler`, or `runtime` with `webapp_qvt_static_only=true`) and the `X-Moqui-Qvt` responses it handles (`merged-fragment`, `static-template`, and `bundled-qvue`: a `.qvue` loaded compiled, below) |
+| `qvt` | `{build, handles}`: the Vue build this page loaded (`compiler`, or `runtime` with `moqui_conf__webapp_list__webapp__WEBROOT__qvt_static_only=true`) and the `X-Moqui-Qvt` responses it handles (`merged-fragment`, `static-template`, and `bundled-qvue`: a `.qvue` loaded compiled, below) |
 | `userAccount`, `preferences` | the snapshot of the user for the `ec` of a server-static screen: `{partyId, emailAddress, userFullName}` (no password column) and the user's preferences by key |
 | `labels` | text the shell needs localized |
 | `quasar`, `currencies` | optional: Quasar configuration (brand, notify, loading bar), and `{USD: {symbol, fractionDigits}}` for `formatCurrency` |

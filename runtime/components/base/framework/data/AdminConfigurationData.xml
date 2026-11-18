@@ -71,20 +71,20 @@ along with this software (see the LICENSE.md file). If not, see
             operatorNote="Set before the first start; changing it later changes the meaning of stored times"/>
     <moqui.server.InstanceSetting settingKey="conf.publicHost" title="Public host name" settingGroup="Deployment"
             description="The host name links in mail and redirects are made with" valueTypeEnumId="IsvText"
-            propertyName="webapp_http_host" restartRequired="Y" sequenceNum="1050"
-            operatorNote="Set webapp_http_host in the environment or the runtime conf and restart"/>
+            propertyName="webapp-list/webapp[webroot]@http-host" restartRequired="Y" sequenceNum="1050"
+            operatorNote="Set moqui_conf__webapp_list__webapp__WEBROOT__http_host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="conf.httpsEnabled" title="HTTPS links" settingGroup="Deployment"
-            description="Whether links are made with https" valueTypeEnumId="IsvText" propertyName="webapp_https_enabled"
+            description="Whether links are made with https" valueTypeEnumId="IsvText" propertyName="webapp-list/webapp[webroot]@https-enabled"
             restartRequired="Y" sequenceNum="1060"
-            operatorNote="Set webapp_https_enabled in the environment or the runtime conf and restart"/>
+            operatorNote="Set moqui_conf__webapp_list__webapp__WEBROOT__https_enabled in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="conf.maxUpload" title="Largest upload (bytes)" settingGroup="Deployment"
             description="The largest request body the web server accepts" valueTypeEnumId="IsvText"
-            propertyName="webapp_max_upload" restartRequired="Y" sequenceNum="1070"
-            operatorNote="Set webapp_max_upload in the environment or the runtime conf and restart"/>
+            propertyName="webapp-list/webapp[webroot]/web-protection/requests@max-upload" restartRequired="Y" sequenceNum="1070"
+            operatorNote="Set moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_upload in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="conf.telemetryEnabled" title="Telemetry" settingGroup="Deployment"
             description="Whether traces, metrics and logs are kept for Monitor" valueTypeEnumId="IsvText"
-            propertyName="telemetry_enabled" restartRequired="Y" sequenceNum="1080"
-            operatorNote="Set telemetry_enabled in the environment or the runtime conf and restart"/>
+            propertyName="telemetry@enabled" restartRequired="Y" sequenceNum="1080"
+            operatorNote="Set moqui_conf__telemetry__enabled in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
 
     <!-- The registered label targets of delegated translation (ConfigurationServices.store#LocalizedEntityField): the
         framework's vocabularies. A component adds its own configuration labels. -->

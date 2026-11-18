@@ -162,7 +162,7 @@ check "help partial" 0 './moq component-create' -- "$M" help c-cr
 
 # ========== run and load ==========
 
-check "run options" 0 'export webapp_http_port=8081' -- dry "$M" run -p 8081 -D entity_ds_db_conf=postgres lint --screens
+check "run options" 0 'export moqui_conf__webapp_list__webapp__WEBROOT__http_port=8081' -- dry "$M" run -p 8081 -D entity_ds_db_conf=postgres lint --screens
 check "run -D" 0 'export entity_ds_db_conf=postgres' -- dry "$M" run -D entity_ds_db_conf=postgres
 check "run -Dname=value" 0 'export a_b=c' -- dry "$M" run -Da_b=c
 check "run passthrough" 0 'moqui lint --screens$' -- dry "$M" run -p 8081 lint --screens

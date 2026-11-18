@@ -18,7 +18,7 @@ Java's Spock suite (`Security*.groovy`) was not ported. A row below that names o
 
 `--serve` starts `moqui test framework --spec ClientFixtures --db snapshot --serve` on a scratch database, under `conf/MoquiLoadTestConf.xml` (`test/client/suite.js`, and `test/acceptance/client/suite.js` for the acceptance specs). That file is the production conf with the screen, transition, and service tarpits off, so `LoadBasic` (an acceptance test) is not answered 429. `SecurityTarpit`, an acceptance test too (`./moq accept framework`), skips on that conf. A skip there is the expected result of `--serve`.
 
-`SecurityCors` fails its spec when the server allows every origin (the dev conf, `webapp_allow_origins=*`). The foreign-origin `/notws` proof skips on that conf. The other specs run on any conf.
+`SecurityCors` fails its spec when the server allows every origin (the dev conf, `moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=*`). The foreign-origin `/notws` proof skips on that conf. The other specs run on any conf.
 
 Fixture users come from `runtime/components/base/framework/test/ClientFixtures.spec.js`. They are not demo seed. `sec.ip.v4`, `sec.ip.loop`, and `sec.mfa.totp` are rows only. Against a server `--serve` did not start:
 
@@ -140,7 +140,7 @@ Crate tests for [Threat model: stored secrets](Attack-Surface-Data.md#threat-mod
 | Gap: DES ciphertext still decrypts | `known_gap_des_ciphertext_still_decrypts_through_the_alternates` (`crypto_tests.rs`) |
 | Gap: a value sealed under the public default pass is read as valid | `known_gap_a_value_sealed_under_the_public_default_pass_is_read_as_valid` (`crypto_tests.rs`) |
 | Gap: an empty `crypt-pass` turns field encryption off | `known_gap_an_empty_crypt_pass_turns_field_encryption_off` (`crates/moqui-entity/src/entity/tests.rs`) |
-| Gap: a new `session_cookie_key` ends every session; there is no old key | `known_gap_a_new_session_cookie_key_ends_every_session_cookie` (`session_tests.rs`) |
+| Gap: a new `webapp-list/webapp[webroot]/session-config@cookie-key` ends every session; there is no old key | `known_gap_a_new_session_cookie_key_ends_every_session_cookie` (`session_tests.rs`) |
 
 ### Not applicable
 
@@ -173,7 +173,7 @@ Kept on purpose, and asserted by the specs. The parity notes are [Parity-Diffs](
 - A missing or wrong session token is 401 `Session token is missing or is not valid`.
 - An anonymous `/notws` upgrade is 401. The foreign-origin proof uses a logged-in session.
 - CORS and `/notws` compare scheme, host, and port. The same host on another port or scheme is refused.
-- An IP-refused REST login is 401 and not logged in. The body names the user and the client address (`check_ip_allowed`). The spec does not require Java's shared invalid-login sentence. `X-Forwarded-For` does not supply the allow-list address while `webapp_client_ip_header` is empty.
+- An IP-refused REST login is 401 and not logged in. The body names the user and the client address (`check_ip_allowed`). The spec does not require Java's shared invalid-login sentence. `X-Forwarded-For` does not supply the allow-list address while `webapp-list/webapp[webroot]@client-ip-header` is empty.
 
 `WebUtilities.isSameOriginRedirect` with no host argument uses the webapp `http-host`, which is empty in the default conf, so an absolute `returnTo` is refused. The login screen calls that one-argument form. The request `Host` header is not a configured host. `SecurityHeaders` is the proof.
 
@@ -182,7 +182,7 @@ Three `SecurityScreens` assertions are tighter than the Python ones they port. A
 ## Proof strength
 
 - `--serve` does not prove the tarpit. `SecurityTarpit` skips while the status is not 429, which is correct for the load-test conf and is a failed proof on the production conf.
-- `/status` is requested from loopback. The three features prove the public JSON shape and that forwarded headers do not hide it. They do not prove that a TCP source outside `webapp_status_ips` is rejected.
+- `/status` is requested from loopback. The three features prove the public JSON shape and that forwarded headers do not hide it. They do not prove that a TCP source outside `webapp-list/webapp[webroot]@status-ips` is rejected.
 - The HMAC replay cache is local unless a distributed cache is configured. A second server does not see the first server's replay.
 - With `search_backend` at its default `postgres`, `/search` and `/dashboard` are 404 after authentication. The `SearchRemote` feature asserts the response is neither 401 nor 403.
 - The `/resources` feature posts `cmd=put` at the volume root `v0_cm9vdA` and expects JSON containing `write not allowed` or `error`, and not `changed`. That is the root-refusal on every conf. It does not prove a production-only block of writes under `component://`.

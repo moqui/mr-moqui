@@ -83,7 +83,10 @@ pub(crate) fn start_edge(label: &str, certs: &Certs, port: u16) -> Gate {
     crate::common::start_with_files(
         label,
         None,
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port)],
+        &[
+            ("node_role", "front_edge"),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
+        ],
         &[
             ("cert/default.crt", &certs.cert_pem),
             ("cert/default.key", &certs.key_pem),

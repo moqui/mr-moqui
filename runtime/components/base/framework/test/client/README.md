@@ -19,7 +19,7 @@ moqui test-client framework --spec SecurityAuthn,SecurityCors --server https://t
 that `LoadBasic` is not answered 429. Against another server:
 
 - **The conf.** `SecurityCors` needs a server that allows no foreign origin: the production or load test conf. On the dev conf
-  (`webapp_allow_origins=*`) its `setupSpec` fails with "this server allows every origin (the dev conf)", as the Python
+  (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=*`) its `setupSpec` fails with "this server allows every origin (the dev conf)", as the Python
   suite's `require_production_conf` fails it, and the foreign-origin proof of `SecurityWebSocket` skips. The other
   specs pass on any conf.
 - **The fixture users.** `../ClientFixtures.spec.js` makes the `sec.*` accounts the proofs log in as, with

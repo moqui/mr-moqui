@@ -383,7 +383,7 @@ impl Server {
         }
     }
 
-    /// The public HTTPS listener, when one is running (`webapp_https_listen_port`, certificates in `runtime/cert`).
+    /// The public HTTPS listener, when one is running (`webapp-list/webapp[webroot]@https-listen-port`, certificates in `runtime/cert`).
     #[must_use]
     pub fn https_address(&self) -> Option<std::net::SocketAddr> {
         self.https_address
@@ -477,7 +477,7 @@ pub fn start_server(
 }
 
 /// Start the server in the calling program on the runtime at `runtime_dir`, as `moqui` run does: the listeners from
-/// the properties (`webapp_http_port`, `webapp_http_bind`, `cluster_https_port` and the rest, which the caller sets
+/// the properties (`webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind`, `cluster_https_port` and the rest, which the caller sets
 /// with [`moqui_lib::env::set_property`] first), the embedded cluster in `db/embedded`, and the framework from
 /// `MOQUI_FRAMEWORK` or beside the runtime. For a program that hosts the node itself, such as the desktop app
 /// (plans/Mobile-Desktop.md, configuration 2). Drop the returned server to stop it and the postmaster.
@@ -973,7 +973,7 @@ fn dispatch_load(flags: &LoadFlags) -> Result<LoadReport, moqui_lib::error::Erro
     load_data(&runtime, &framework, &cluster, flags)
 }
 
-/// Open the log files in `moqui_log_dir` and say where they are.
+/// Open the log files in `logging@dir` and say where they are.
 fn log_files_attached(factory: &moqui_core::context::ExecutionContextFactory) {
     match logging::attach_files(factory.runtime_dir(), Some(factory)) {
         Some(dir) => tracing::info!("Writing log files moqui.log and moqui-error.log in {}", dir.display()),
@@ -1478,7 +1478,7 @@ fn serve_thread(
             return Err(err);
         }
     };
-    let address = match listen_address(&bind) {
+    let address = match listen_address(&bind, &moqui_core::context::conf_env::webroot_setting) {
         Ok(address) => address,
         Err(err) => {
             ready.fail(&err);
@@ -1532,7 +1532,7 @@ fn serve_thread(
         } else {
             tracing::warn!(
                 "Dev AIDE is loaded and the HTTP listener on {} is not bound to the loopback address: anyone who \
-                 can sign in with a Dev AIDE permission can run code as this server's user. Set webapp_http_bind=127.0.0.1, \
+                 can sign in with a Dev AIDE permission can run code as this server's user. Set the webroot webapp's http-bind to 127.0.0.1, \
                  or dev-aide shared=\"true\" for a team dev server",
                 address.unwrap_or(unbound)
             );
@@ -1553,8 +1553,15 @@ fn serve_thread(
         .as_ref()
         .ok_or_else(|| moqui_lib::error::Error::new("http server has no runtime"))?;
     // After the boot, as for the HTTP port: conf defaults and runtime/.env are read there.
-    let https = match address.map(|address| tls::plan(&runtime_dir, address.ip(), matches!(bind, ListenBind::Property)))
-    {
+    let listen_port = moqui_core::context::conf_env::webroot_setting("https-listen-port");
+    let https = match address.map(|address| {
+        tls::plan(
+            &runtime_dir,
+            address.ip(),
+            matches!(bind, ListenBind::Property),
+            &listen_port,
+        )
+    }) {
         None => None,
         Some(Ok(https)) => https,
         Some(Err(err)) => {
@@ -1597,22 +1604,27 @@ fn serve_thread(
 }
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-fn listen_address(bind: &ListenBind) -> Result<Option<std::net::SocketAddr>, moqui_lib::error::Error> {
+/// The HTTP listener's address: the webroot webapp's `http-port` and `http-bind`, read by `webroot` (an attribute name to
+/// its value) from the running conf, or from the merged conf before the factory is built (the port check).
+fn listen_address(
+    bind: &ListenBind,
+    webroot: &dyn Fn(&str) -> String,
+) -> Result<Option<std::net::SocketAddr>, moqui_lib::error::Error> {
     match bind {
         ListenBind::None => Ok(None),
         ListenBind::Address(address) => Ok(Some(*address)),
         ListenBind::Property => {
-            let port = http::http_port(&moqui_lib::env::get_prop_or_env("webapp_http_port"))?;
-            // webapp_http_bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
-            // webapp_http_host stays the host name of the URLs the server writes
-            let host = moqui_lib::env::get_prop_or_env("webapp_http_bind");
+            let port = http::http_port(&webroot("http-port"))?;
+            // http-bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
+            // http-host stays the host name of the URLs the server writes
+            let host = webroot("http-bind");
             let ip = if host.trim().is_empty() {
                 std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
             } else if host.trim() == "localhost" {
                 std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
             } else {
                 host.trim().parse().map_err(|_| {
-                    moqui_lib::error::Error::new(format!("webapp_http_bind {host} is not an IP address"))
+                    moqui_lib::error::Error::new(format!("the webroot webapp's http-bind {host} is not an IP address"))
                 })?
             };
             Ok(Some(std::net::SocketAddr::new(ip, port)))

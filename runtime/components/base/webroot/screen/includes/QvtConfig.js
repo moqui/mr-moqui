@@ -88,8 +88,8 @@ function build(ec, sri, options) {
         assist: !!(ec.user.userId && ec.llm && ec.llm.isEnabled() && ec.user.hasPermission('AgentUse')),
         userAccount: { partyId: account.partyId || '', emailAddress: account.emailAddress || '', userFullName: account.userFullName || '' },
         appearance: appearance,
-        // the dev/test instance marker (the webapp_dev_marker_color conf property): the shell draws a small square in the corner
-        devMarker: System.getProperty('webapp_dev_marker_color') || '',
+        // the dev/test instance marker (the webroot webapp's dev-marker-color): the shell draws a small square in the corner
+        devMarker: ec.factory.getConfValue('webapp-list/webapp[webroot]@dev-marker-color') || '',
         preferences: preferences, moquiVersion: ec.factory.moquiVersion, quasar: quasarConfig,
         avatarUrl: avatarList.length ? String(avatarList[0]) : '',
         qvt: { build: staticOnly ? 'runtime' : 'compiler', handles: staticOnly ? ['static-template'] : ['merged-fragment', 'static-template'] },

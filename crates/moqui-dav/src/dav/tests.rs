@@ -513,10 +513,10 @@ fn a_lock_holds_another_users_client_on_the_same_file_and_not_the_file_beside_it
 fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins() {
     let _lock = moqui_core::user::session::cookie_property_lock();
     let names = [
-        "webapp_http_port",
-        "webapp_http_host",
-        "webapp_https_enabled",
-        "webapp_https_port",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_port",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_host",
+        "moqui_conf__webapp_list__webapp__WEBROOT__https_enabled",
+        "moqui_conf__webapp_list__webapp__WEBROOT__https_port",
         "dav_public_url",
     ];
     struct Restore(Vec<(&'static str, String)>);
@@ -537,8 +537,8 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
         moqui_lib::env::set_property(name, "");
     }
     let context = moqui_core::context::ExecutionContextFactory::test_context_with_conf(
-        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="${webapp_http_host}" http-port="${webapp_http_port}"
-            https-enabled="${webapp_https_enabled}" https-port="${webapp_https_port}"/></webapp-list></moqui-conf>"#,
+        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="" http-port=""
+            https-enabled="false" https-port=""/></webapp-list></moqui-conf>"#,
     );
     let _entered = context.enter();
     let factory = context.factory();
@@ -547,13 +547,20 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     };
     assert_eq!(factory.webapp_root_url("webroot"), "http://localhost:8080");
     check("http://localhost:8080");
+    // as an environment name would set them over the conf: the running conf, and the property the readers with no
+    // factory at hand take
+    let set = |name: &str, value: &str| {
+        factory
+            .set_conf_value(&format!("webapp-list/webapp[webroot]@{name}"), Some(value), false)
+            .unwrap();
+    };
     for (configured, expected) in [("9090", "http://localhost:9090"), ("80", "http://localhost")] {
-        moqui_lib::env::set_property("webapp_http_port", configured);
+        set("http-port", configured);
         assert_eq!(factory.webapp_root_url("webroot"), expected);
         check(expected);
     }
-    moqui_lib::env::set_property("webapp_https_enabled", "true");
-    moqui_lib::env::set_property("webapp_https_port", "9443");
+    set("https-enabled", "true");
+    set("https-port", "9443");
     check("https://localhost:9443");
     let _web = moqui_core::web::install(std::collections::BTreeMap::new());
     let mut request = moqui_core::web::WebRequest::new("GET", "/apps/git");

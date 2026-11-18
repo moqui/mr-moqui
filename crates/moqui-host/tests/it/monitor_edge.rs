@@ -451,7 +451,7 @@ fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
     capture.clear();
     let location = gate.runtime.join("scheduled-fixture.csv");
     // the fixture saves under the test's runtime (report save-roots, SEC-TLS-06)
-    moqui_lib::env::set_property("report_save_roots", "/");
+    factory.set_conf_value("report@save-roots", Some("/"), false).unwrap();
     let schedule = invoke(
         "org.moqui.report.ReportServices.create#Schedule",
         json!({"definitionId":"scheduled-dashboard","cronExpression":"0 * * * * ?","saveToLocation":location.to_string_lossy(),"renderMode":"csv","userId":"OTHER_RECIPIENT","emailTemplateId":if chart_renderer {Some("DASHBOARD_REPORT")} else {None}}),

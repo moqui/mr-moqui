@@ -64,7 +64,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--out dir` | Where saved bodies, screenshots, PDFs, failure files, load results and `--serve` logs go. The default is `runtime/tmp/test-client/<yyyyMMdd-HHmmss>-<pid>`, or `test-client-out/<run>` in the working directory without a runtime. The run prints it at the end when anything was written |
 | `--wait seconds` | Poll until the server answers |
 | `--timeout seconds` | What `waitUntil`, a raw request, a WebSocket connect and receive, and a browser action wait by default. 10 |
-| `--chromium path` | The browser, else `moqui_chromium_path`, else `runtime/chromium` (`./moq chromium-download`), else an installed Chromium, then Google Chrome or Microsoft Edge (on the PATH or where the OS installs them) |
+| `--chromium path` | The browser, else `screen-facade/pdf@chromium-path`, else `runtime/chromium` (`./moq chromium-download`), else an installed Chromium, then Google Chrome or Microsoft Edge (on the PATH or where the OS installs them) |
 | `--headed` | A visible browser, for debugging |
 | `--video` | Record each spec's pages into `<out>/video/<Spec>.webm`, with `<Spec>.timeline.json` ([Video](#video)). Needs `ffmpeg` |
 | `--insecure` | Accept an invalid server certificate (a WARN says so); Chromium gets `--ignore-certificate-errors` too, and `ssh` takes any host key |
@@ -95,7 +95,7 @@ Against `./moq run` (the dev conf) the specs that pass on any conf pass, and two
   `moqui test framework --spec ClientFixtures --db existing`. Without the fixtures the features that need them skip,
   naming the command.
 - **Conf.** A spec that needs a conf says so. `SecurityCors` needs a server that allows no foreign origin, and fails on
-  the dev conf, which allows localhost on any port (`webapp_allow_origins=localhost,127.0.0.1`). A real load run needs the tarpits off
+  the dev conf, which allows localhost on any port (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=localhost,127.0.0.1`). A real load run needs the tarpits off
   (`conf/MoquiLoadTestConf.xml`; see Load). Start such a server with `./moq run -c conf/MoquiLoadTestConf.xml` or
   `MOQUI_CONF`.
 
@@ -129,7 +129,7 @@ run against it; then the pipe closes, and the child stops and removes its scratc
 the client dies without cleaning up, since its standard input closes. A component with no declaration, or a child that
 exits or does not start within 30 minutes, fails that group's specs with the last lines of its log; the other groups
 still run. With `--acceptance` the child gets `--acceptance` too, so its `specs` may name a regression fixture or an
-acceptance one. When `--chromium` names the browser and `moqui_chromium_path` is not set, the child renders PDF with that
+acceptance one. When `--chromium` names the browser and `screen-facade/pdf@chromium-path` is not set, the child renders PDF with that
 browser too.
 
 The child is an ordinary `moqui test` run, so it writes what one writes: a scratch runtime, and the saved load under

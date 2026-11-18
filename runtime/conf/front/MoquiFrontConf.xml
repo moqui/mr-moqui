@@ -23,13 +23,13 @@
     <!-- rate limits, connection limits and bans by client address, run before anything goes down a link: the nodes
         behind it see the client's address, and a ban they start (failed sign-ins) is told up the link, so this node
         refuses that client for the pairing's own names (System › Security › Web Protection). With a proxy before this
-        node, name it in webapp_trusted_proxies (.env): a client-ip-header with no trusted proxies is ignored. -->
-    <default-property name="webapp_web_protection" value="true"/>
+        node, name it in webapp-list/webapp[webroot]@trusted-proxies (.env): a client-ip-header with no trusted proxies is ignored. -->
+    <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
-    <!-- The link and web access (.env): webapp_http_host, this node's own public name, where nodes pair and its System
+    <!-- The link and web access (.env): webapp-list/webapp[webroot]@http-host, this node's own public name, where nodes pair and its System
         app is. The HTTPS listener needs a WebPKI certificate in runtime/cert for it, which a node checks when it pairs;
         no TLS-terminating proxy before this node, since the links need ALPN and client certificates end to end. Bind
-        443 (docs/Run-Deploy.md, Listen ports and URL ports): the listener binds webapp_https_listen_port, 8443 by
+        443 (docs/Run-Deploy.md, Listen ports and URL ports): the listener binds webapp-list/webapp[webroot]@https-listen-port, 8443 by
         default. The links use this node's own key, edge_link_key, generated into .env at the first start; a changed key
         means every node behind it must pair again. edge_public_addresses: this node's public IPv4 and IPv6 addresses,
         comma-separated, which the wizard checks the host names' A and AAAA records against.

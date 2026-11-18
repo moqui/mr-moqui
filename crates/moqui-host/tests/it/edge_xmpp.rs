@@ -127,7 +127,10 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
         Some(DATA),
         "",
         &[
-            ("webapp_https_listen_port", &local_port),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &local_port,
+            ),
             ("xmpp_domain", "moqui.local"),
             ("xmpp_tls_port", "0"),
             ("xmpp_tls_host", "127.0.0.1"),
@@ -152,7 +155,10 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
         "",
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
             ("edge_xmpp_port", &tunnel_text),
             ("edge_xmpp_tls_port", &tunnel_tls_text),
             ("edge_xmpp_host", "127.0.0.1"),

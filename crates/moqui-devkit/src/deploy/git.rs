@@ -22,7 +22,7 @@
 //! them would do ([`super::load::preview_staged`]); deploy moves them into place and loads the component
 //! ([`super::load::load`]). An update fetches again, writes the new commit beside the deployed one, and reloads the
 //! paths that changed. Deploying runs the component's code and loads its data, so it needs the sealed
-//! `COMPONENT_DEPLOY` permission, and on a production instance also `component_deploy_enabled=true`.
+//! `COMPONENT_DEPLOY` permission, and on a production instance also `moqui_conf__component_deploy__enabled=true`.
 //!
 //! An attested deploy ([`deploy_attested`]) is a source server's deployment: an attestation, signed with the secret
 //! this server issued, addressed to this server and of a component, repository and branch its `component-deploy`
@@ -163,10 +163,11 @@ fn attested() -> Option<Attested> {
 }
 
 /// Whether the current user may deploy here: the `COMPONENT_DEPLOY` permission (or an attested deploy, which the
-/// secret this server issued stands for), and on a production instance `component_deploy_enabled=true` too, refused
+/// secret this server issued stands for), and on a production instance `component-deploy` `enabled="true"` too, refused
 /// there with no more said.
 fn gate() -> Result<(), String> {
-    if moqui_core::web::is_production() && moqui_lib::env::get_prop_or_env("component_deploy_enabled") != "true" {
+    if moqui_core::web::is_production() && moqui_core::context::conf_env::setting("component-deploy@enabled") != "true"
+    {
         return Err("Deploying a component is not available on this server".to_string());
     }
     if attested().is_some() {

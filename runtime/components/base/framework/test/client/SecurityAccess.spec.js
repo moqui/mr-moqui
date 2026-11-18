@@ -346,7 +346,7 @@ feature("A01 Basic auth with SearchRemote gets past authorization on /search", {
 // From SecurityStatus.spec.js, merged here to share a spec run.
 // A01 Broken Access Control for /status over HTTP, ported from Moqui Java's pytest proofs
 // (framework/test/test_a01_more.py; the catalog in README.md). Each request connects from loopback, as that suite
-// does. With webapp_client_ip_header empty, X-Forwarded-For and Forwarded are ignored, so they neither hide the
+// does. With webapp-list/webapp[webroot]@client-ip-header empty, X-Forwarded-For and Forwarded are ignored, so they neither hide the
 // loopback JSON nor grant the sensitive map. /status calls getStatusMap() with no flag, so DataSources is omitted;
 // Heap and VmVendor are Java keys this server never sends. Passes on any conf.
 

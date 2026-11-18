@@ -149,7 +149,7 @@ feature("#path shows #text", {
 | `requires: [...]` | On the spec, a feature or a row: skipped in a binary without the build feature, with `requires git, not built into this binary (moqui version)` |
 | `skip(reason)` | Called in a block: the feature is reported as SKIPPED with the reason. In `setupSpec` it skips every feature of the spec, and `cleanupSpec` still runs |
 | A missing tool | A case that does not say `requires`, and fails only because the binary reports that a tool is not built in (`git is not built into this host`, `scheme git is not supported`, and the same messages for the other tools), is skipped the same way. So is a `setupSpec` that fails that way: its features are skipped |
-| No Chromium | A case that fails only because PDF is not available, on a machine with no Chromium (`./moq chromium-download`, or `moqui_chromium_path`), is skipped; the skip reason is that message |
+| No Chromium | A case that fails only because PDF is not available, on a machine with no Chromium (`./moq chromium-download`, or `screen-facade/pdf@chromium-path`), is skipped; the skip reason is that message |
 
 A stepwise file that is entirely about one tool says so with `requires` on `spec()`, so its later features are not
 started without their setup.

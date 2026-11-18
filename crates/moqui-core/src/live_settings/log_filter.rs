@@ -103,7 +103,7 @@ fn is_under(target: &str, prefix: &str) -> bool {
     }
 }
 
-/// A level name as `moqui_log_level` and the settings write it; anything else is None.
+/// A level name as `logging@level` and the settings write it; anything else is None.
 pub fn parse_level(text: &str) -> Option<Level> {
     match text.trim().to_ascii_lowercase().as_str() {
         "trace" => Some(Level::TRACE),
@@ -125,10 +125,14 @@ pub fn level_name(level: Level) -> &'static str {
     }
 }
 
-/// `moqui_log_level`, default `info`.
+/// The `logging` `level`, default `info`: read before boot from `-D` and the environment by its name
+/// (`moqui_conf__logging__level`), then the running conf ([`crate::context::conf_env::setting`]).
 pub fn level_from_env() -> Level {
-    parse_level(&moqui_lib::env::get_prop_or_env("moqui_log_level")).unwrap_or(Level::INFO)
+    parse_level(&crate::context::conf_env::setting(LEVEL)).unwrap_or(Level::INFO)
 }
+
+/// The `logging` `level` (plans/Conf-Paths.md §6.2).
+pub const LEVEL: &str = "logging@level";
 
 static DISK: OnceLock<LogFilter> = OnceLock::new();
 
@@ -144,7 +148,7 @@ pub fn install(level: Level, console: Console) {
     }
 }
 
-/// The filter the process started with: what [`install`] recorded, or `moqui_log_level` on stderr before that.
+/// The filter the process started with: what [`install`] recorded, or `logging@level` on stderr before that.
 pub fn disk() -> LogFilter {
     DISK.get()
         .cloned()

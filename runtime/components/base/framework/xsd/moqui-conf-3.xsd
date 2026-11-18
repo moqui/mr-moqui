@@ -60,7 +60,11 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="init-param">
         <xs:complexType>
             <xs:attribute name="name" type="xs:string" use="required"/>
-            <xs:attribute name="value" type="xs:string" use="required"/>
+            <xs:attribute name="value" type="xs:string"/>
+            <xs:attribute name="conf" type="xs:string"><xs:annotation><xs:documentation>A conf attribute by its selector
+                (search-facade/cluster@url) whose value the servlet or filter gets when value is empty, a secret one
+                too: the server reads it, so a script's handler is given a credential the conf keeps once (plans/Conf-Paths.md
+                §1). Read when the webapp's servlets are built.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="default-property">
@@ -653,6 +657,7 @@ along with this software (see the LICENSE.md file). If not, see
                         Most web sessions kept in memory. Over it, the sessions used longest ago are written and dropped,
                         and reload from HttpSession when they come back. 0 keeps every session. No Java counterpart.
                     </xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="cookie-key" type="xs:string"><xs:annotation><xs:documentation>The HMAC key of the session cookie, 32 random bytes in base64: at CHANGEME generated at the first start into runtime/.env (moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key), and the same on every member of a cluster. A secret, read at boot.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="endpoint">
                     <xs:annotation><xs:documentation>Add a WebSocket Endpoint</xs:documentation></xs:annotation>
@@ -728,6 +733,12 @@ along with this software (see the LICENSE.md file). If not, see
                 per-client parts of web-protection are on by default. Empty, the header is believed from any peer
                 (first hop), as before. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="https-listen-port" type="xs:string"><xs:annotation><xs:documentation>The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, off none. https-port is the port clients see in generated URLs, which differs behind a reverse proxy.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="http-bind" type="xs:string"><xs:annotation><xs:documentation>The address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>The Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a listener must name, comma separated, or it is answered 421; empty takes any.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="http2" type="boolean" default="true"><xs:annotation><xs:documentation>HTTP/2 on the HTTPS listener, chosen by ALPN beside HTTP/1.1: true, or false for HTTP/1.1 only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="dev-marker-color" type="xs:string"><xs:annotation><xs:documentation>The color of the dev/test instance marker of the Quasar shell, a CSS color; empty turns it off.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="qvt-static-only" type="boolean" default="false"><xs:annotation><xs:documentation>true sends the qvt pages with the Vue build that has no template compiler, for a deployment whose pages are all server-static and whose CSP has no unsafe-eval.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="status-ips" type="xs:string"><xs:annotation><xs:documentation>
                 Comma separated addresses that may read /health and /metrics, besides loopback. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
@@ -788,6 +799,7 @@ along with this software (see the LICENSE.md file). If not, see
                         Largest multipart/form-data body (webapp_max_upload, 2g). A request with no user (no session
                         signed in, no api_key or login_key, no Basic credentials that hold) takes max-body instead,
                         unless its path is one of anonymous-upload-paths.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="max-spool" type="xs:string"><xs:annotation><xs:documentation>The bytes the files of the uploads being read hold together, or with a k, m or g suffix; an upload past it is answered 503. 4 GiB by default.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="anonymous-upload-paths" type="xs:string"><xs:annotation><xs:documentation>
                         Path prefixes, comma separated, of the uploads taken without a user, such as a public share's
                         file drop (webapp_anonymous_upload_paths, /s/); an upload there may be max-upload with no user.
@@ -1100,6 +1112,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="blob-gc-prune-days" type="non-neg-int-expandable" default="14"><xs:annotation><xs:documentation>How many days a content blob nothing refers to is kept (gc#ContentBlobs). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-timeout" type="xs:string"><xs:annotation><xs:documentation>Seconds a script may run when no transaction limits it (a widget condition, a
                 transaction="ignore" service), on every thread; a transaction's own timeout replaces it, and 0 is no
                 limit. Empty, a script on a request worker is limited to the webapp's request-timeout and one on a
@@ -1222,6 +1235,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="boundary-comments" default="false" type="boolean"/>
             <xs:attribute name="default-paginate-rows" type="xs:string" default="20"/>
             <xs:attribute name="default-autocomplete-rows" type="xs:string" default="10"/>
+            <xs:attribute name="tx-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A screen transition's transaction (and a screen's with begin-transaction) holds its writes in the transaction cache, as a service marked transaction="cache" does; false begins it as transaction="use". Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="stream-threshold" type="xs:string" default="65536"><xs:annotation><xs:documentation>
                 The bytes of an html or text screen render (html, html-print, text, csv, xml) kept before its response
                 is sent to the client as it is written, as a servlet response commits when its buffer fills. A smaller
@@ -1288,6 +1302,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="distributed-factory" type="xs:string"><xs:annotation><xs:documentation>
                 The name of the ToolFactory to use for the distributed async service ExecutorService implementation.
             </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tx-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A service whose definition has no transaction attribute begins its transaction with the transaction cache, as one marked transaction="cache" does (a service of XML actions or a script); false begins it as transaction="use". Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="scheduled-job-check-time" type="non-neg-int-expandable"><xs:annotation><xs:documentation>
                 How often to check for and run scheduled service jobs in seconds. Set to 0 (zero) to disable.
             </xs:documentation></xs:annotation></xs:attribute>
@@ -2183,10 +2198,12 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <xs:element name="logging">
-        <xs:annotation><xs:documentation>The log files moqui.log (all events) and moqui-error.log (warn and error).
-            The stderr level and color are the properties moqui_log_level and moqui_log_color, read before the conf.
+        <xs:annotation><xs:documentation>The log files moqui.log (all events) and moqui-error.log (warn and error),
+            and the log on stderr.
         </xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:attribute name="level" type="xs:string" default="info"><xs:annotation><xs:documentation>The stderr log: trace, debug, info, warn or error. Read before boot from -D and the environment only (moqui_conf__logging__level), then from the conf.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="color" type="xs:string" default="auto"><xs:annotation><xs:documentation>The stderr header color: auto (a terminal, and not NO_COLOR), always or never. Read as level is.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dir" type="xs:string" default="runtime://log"><xs:annotation><xs:documentation>A path or runtime:// location; empty writes no files.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-size-mb" type="non-neg-int-expandable" default="100"><xs:annotation><xs:documentation>A file rolls over to moqui.yyyy-MM-dd.N.log (UTC) at this size or when the day changes.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-files" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>Only this many of the newest rolled files of each kind are kept.</xs:documentation></xs:annotation></xs:attribute>
@@ -2592,6 +2609,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:complexType>
                 </xs:element>
             </xs:sequence>
+            <xs:attribute name="enabled" type="xs:string"><xs:annotation><xs:documentation>Deploying a component from a git URL needs the sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true. Read at start.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="require-passed-run" type="xs:string" default="false"><xs:annotation><xs:documentation>true:
                 deploy#Component, update#Component and load#Component refuse to deploy a commit unless the request
                 carries an attestation, signed with attestation-secret, that the commit passed its environment's

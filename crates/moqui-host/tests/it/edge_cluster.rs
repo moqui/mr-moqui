@@ -271,7 +271,10 @@ impl EdgeCluster {
             EDGE_CONF,
             &[
                 ("node_role", role),
-                ("webapp_https_listen_port", &first_port_text),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    &first_port_text,
+                ),
                 ("edge_link_url", &first_url),
                 ("edge_link_key", &link_key),
                 ("cluster_https_port", &cluster_port),
@@ -300,7 +303,10 @@ impl EdgeCluster {
             EDGE_CONF,
             &[
                 ("node_role", role),
-                ("webapp_https_listen_port", &second_port),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    &second_port,
+                ),
                 ("edge_link_url", &second_url),
                 ("edge_link_key", &link_key),
             ],

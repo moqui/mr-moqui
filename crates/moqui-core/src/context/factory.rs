@@ -347,6 +347,10 @@ impl ExecutionContextFactory {
             (names, PropertyRollback::default())
         } else {
             super::conf_env::generate_secrets(&conf_node, &overrides, &env_path)?;
+            check_session_cookie_key(&super::conf_env::conf_attribute(
+                &conf_node,
+                crate::user::session::COOKIE_KEY,
+            ))?;
             let applied = apply_default_properties(&conf_node, &env_path, purpose_from_environment)?;
             log_instance_purpose(applied.2, &discovered_purpose);
             (applied.0, applied.1)
@@ -420,6 +424,7 @@ impl ExecutionContextFactory {
             (extension.after_boot)(&factory);
         }
         set_by_boot.keep();
+        *write(&RUNNING) = Arc::downgrade(&factory);
         factory.pools.attach(&factory);
         // The host calls cluster::start after the entity facade is installed.
         install_session_flush(&factory);
@@ -991,6 +996,13 @@ impl ExecutionContextFactory {
         lock(&self.tarpit_hits).by_key.len()
     }
 
+    /// The server factory this process booted last (not one for artifacts only), while it lives: for code that reads
+    /// the conf with no factory or context at hand ([`super::conf_env::setting`]).
+    #[must_use]
+    pub fn running() -> Option<Arc<Self>> {
+        read(&RUNNING).upgrade()
+    }
+
     /// The merged conf as XML text. A conf reload replaces it, so read it again rather than keep it.
     pub fn conf_text(&self) -> Arc<str> {
         Arc::clone(&self.conf.load().text)
@@ -1085,9 +1097,6 @@ impl ExecutionContextFactory {
             tracing::info!("Generated secret property {name}");
         } else {
             log_property(name, &value, secret, true);
-        }
-        if name == SESSION_COOKIE_KEY {
-            check_session_cookie_key(&value)?;
         }
         env::set_property(name, value.clone());
         self.conf_properties().insert(name.to_string(), value.clone());
@@ -1742,6 +1751,9 @@ fn canonicalize_dir(path: &Path) -> Result<PathBuf, Error> {
         .map_err(|err| Error::new(format!("could not resolve directory {}", path.display())).with_source(err))
 }
 
+/// The server factory this process booted last ([`ExecutionContextFactory::running`]).
+static RUNNING: RwLock<std::sync::Weak<ExecutionContextFactory>> = RwLock::new(std::sync::Weak::new());
+
 /// The merged conf of a factory: its text, the attribute map read from it on first use, and its generation.
 pub(crate) struct ConfState {
     text: Arc<str>,
@@ -1902,11 +1914,11 @@ fn apply_default_properties(
     }
     install_tls_pair(&mut generated, &mut set_by_boot, cert_slot, key_slot)?;
     append_env_secrets(env_path, &generated)?;
-    check_session_cookie_key(&env::get_prop_or_env(SESSION_COOKIE_KEY))?;
     Ok((names, set_by_boot, purpose_source))
 }
 
-const SESSION_COOKIE_KEY: &str = "session_cookie_key";
+/// What names the session cookie key in the boot's messages.
+const SESSION_COOKIE_KEY: &str = "the session cookie key (session-config cookie-key)";
 
 /// The session cookie's HMAC key as an operator set it (the environment, `runtime/.env`, a conf), checked before it signs
 /// anything: one still ending in `CHANGEME`, one that is not standard base64, and one under 32 bytes are refused, so the

@@ -10,7 +10,7 @@
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="instance_purpose" value="production"/>
 
-    <!-- Web access (.env): webapp_http_host, this node's own public name, such as erp.branch-a.example.com; the wizard
+    <!-- Web access (.env): webapp-list/webapp[webroot]@http-host, this node's own public name, such as erp.branch-a.example.com; the wizard
         offers it as this node's first host name. A passthrough name ends its TLS here, with a certificate for it in
         runtime/cert; a terminate name is ended on the edge node. -->
 

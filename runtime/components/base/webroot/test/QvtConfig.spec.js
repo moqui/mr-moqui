@@ -27,7 +27,8 @@ function configFor(policy, savedMode) {
     const context = {
         user: {userId: 'UI_TEST', username: 'ui.test', userAccount: {}, getPreference: key => preferences[key] || null},
         entity: {find: () => find}, service: {sync: () => service}, context: {sharedMap: {}},
-        web: {getHostName: () => 'localhost'}, l10n: {localize: text => text}, factory: {moquiVersion: 'test'},
+        web: {getHostName: () => 'localhost'}, l10n: {localize: text => text},
+        factory: {moquiVersion: 'test', getConfValue: () => null},
         logger: {error: message => { throw new Error(message) }}
     }
     const sri = {getThemeValues: () => [], getCurrentThemeId: () => 'DEFAULT_QUASAR', buildUrl: path => ({url: path})}

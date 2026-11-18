@@ -443,7 +443,7 @@ message Offer {
 message SshOffer {
   // A tunnel port goes to the asking node.
   bool available = 1;
-  // The edge node's public name (its first public name, webapp_http_host).
+  // The edge node's public name (its first public name, webapp-list/webapp[webroot]@http-host).
   string host = 2;
   // The node's own EdgePort row of kind ssh, else edge_ssh_tunnel_port while the node is the one active pairing; 0
   // when neither.

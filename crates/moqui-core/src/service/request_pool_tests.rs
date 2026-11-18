@@ -346,9 +346,10 @@ fn a_script_on_a_request_worker_is_limited_to_the_request_timeout() {
         .recv_timeout(Duration::from_secs(30))
         .unwrap()
         .unwrap();
-    let expected = moqui_lib::env::get_prop_or_env("webapp_request_timeout")
-        .parse::<u64>()
-        .unwrap_or(300);
+    let expected =
+        crate::context::conf_env::setting("webapp-list/webapp[webroot]/web-protection/requests@request-timeout")
+            .parse::<u64>()
+            .unwrap_or(300);
     if expected > 0 {
         assert!(
             left.is_some_and(|left| left <= Duration::from_secs(expected) && left > Duration::ZERO),

@@ -18,7 +18,7 @@
 //!   link and whenever they change ([`names_for_front`]): the hosts of its own sites (its mr-pass sites and its chat
 //!   address) as terminate hosts, so the front sees the session cookie and balances them sticky by it; and with the
 //!   front set (`front_edge`) every name of the local nodes linked to it, each in its own mode, which it forwards on.
-//!   Its own `webapp_http_host` stays its own: its link and its System app are reached at it directly. The edge
+//!   Its own `webapp-list/webapp[webroot]@http-host` stays its own: its link and its System app are reached at it directly. The edge
 //!   cluster's members share a database and a `.env`, so they are one pairing on the front, pooled and balanced there.
 //! - **A local node with two pairings** (behind `edge` members, which forward no web access) sends the wizard's host
 //!   names and XMPP domain to its front, and its mail, chat bridges and PASS sites to its edge cluster
@@ -37,7 +37,7 @@ use moqui_core::edge::{EdgeHostInfo, NodeRole, HOST_TERMINATE};
 use moqui_lib::error::Error;
 
 /// The host names an edge node of `role` gives its front (plans/Edge-Node2.md §4.7), in name order: its own sites'
-/// hosts and its chat address's host (and an all-in-one node's own `webapp_http_host`) as terminate hosts, and with the
+/// hosts and its chat address's host (and an all-in-one node's own `webapp-list/webapp[webroot]@http-host`) as terminate hosts, and with the
 /// front set every active pairing's names in their modes. A name that is not a public host name is left out, logged.
 pub(crate) fn names_for_front(factory: &ExecutionContextFactory, role: NodeRole) -> Result<Vec<EdgeHostInfo>, Error> {
     let mut own = moqui_core::screen::public_site_hosts(factory);
@@ -45,7 +45,9 @@ pub(crate) fn names_for_front(factory: &ExecutionContextFactory, role: NodeRole)
     // name is its link's and its System app's, reached directly (19B makes the link names the front's passthrough
     // hosts)
     if role.all_in_one() {
-        own.push(moqui_lib::env::get_prop_or_env("webapp_http_host"));
+        own.push(moqui_core::context::conf_env::setting(
+            "webapp-list/webapp[webroot]@http-host",
+        ));
     }
     let chat = moqui_lib::env::get_prop_or_env(moqui_core::edge::setup::CHAT_PUBLIC_URL);
     own.extend(moqui_core::edge::claims::url_host(&chat));

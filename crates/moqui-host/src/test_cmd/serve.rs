@@ -37,7 +37,11 @@ pub(super) struct Setup {
 
 /// The listeners besides HTTP that bind a fixed port by default or by the conf (the cluster on 8444, the dev conf's SSH
 /// on 2222). The server of a test run binds a free port for each instead, so it starts beside a running server.
-const OTHER_PORTS: [&str; 3] = ["cluster_https_port", "ssh_port", "webapp_https_listen_port"];
+const OTHER_PORTS: [&str; 3] = [
+    "cluster_https_port",
+    "ssh_port",
+    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+];
 
 impl Setup {
     /// Watch standard input from the start, so a client that dies during the specs gets no server, and note the ports

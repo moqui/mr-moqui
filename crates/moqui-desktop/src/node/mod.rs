@@ -275,13 +275,23 @@ impl Node {
 /// listener on loopback at a port of the kernel's choosing, and no OpenSearch (search runs on Postgres). The edge link
 /// dials out, so nothing listens for it. The node in process sets them as process properties; the sidecar gets them
 /// as `-D name=value`. The HTTP listener answers only for its own loopback names, so a page of another site that
-/// rebinds its name to 127.0.0.1 is refused (`webapp_allowed_hosts`, SEC-CLI-01).
+/// rebinds its name to 127.0.0.1 is refused (the webroot webapp's `allowed-hosts`, SEC-CLI-01). The webapp's are
+/// conf attributes by their environment names (plans/Conf-Paths.md §1).
 pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
     vec![
-        ("webapp_http_bind", "127.0.0.1".to_string()),
-        ("webapp_http_port", port.to_string()),
-        ("webapp_allowed_hosts", format!("127.0.0.1:{port},localhost:{port}")),
-        ("webapp_https_listen_port", "off".to_string()),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__http_bind",
+            "127.0.0.1".to_string(),
+        ),
+        ("moqui_conf__webapp_list__webapp__WEBROOT__http_port", port.to_string()),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__allowed_hosts",
+            format!("127.0.0.1:{port},localhost:{port}"),
+        ),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+            "off".to_string(),
+        ),
         ("cluster_bind_address", "127.0.0.1".to_string()),
         ("cluster_https_port", "0".to_string()),
         ("opensearch_run", "false".to_string()),
@@ -336,10 +346,12 @@ pub(crate) fn save_port(path: &Path, port: u16) {
     }
 }
 
-/// Whether a server already answers on this runtime's own port (`webapp_http_port`, default 8080), as `moqui tui`
-/// checks: two nodes on one runtime would share its Postgres. A development run on this repository's runtime only.
+/// Whether a server already answers on this runtime's own port (the webroot webapp's `http-port`, default 8080), as
+/// `moqui tui` checks: two nodes on one runtime would share its Postgres. A development run on this repository's
+/// runtime only.
 pub(crate) fn served_on_runtime_port() -> Option<u16> {
-    let port = moqui_core::web::effective_http_port(&moqui_lib::env::get_prop_or_env("webapp_http_port")).ok()?;
+    let port =
+        moqui_core::web::effective_http_port(&moqui_core::context::conf_env::webroot_setting("http-port")).ok()?;
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     std::net::TcpStream::connect_timeout(&address, Duration::from_millis(300))
         .ok()

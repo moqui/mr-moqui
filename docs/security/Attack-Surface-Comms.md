@@ -69,8 +69,8 @@ refused once the link is revoked or expired. The page's transitions are `joinGue
 `recordingState`, `ackRecording`, `withdrawRecording` and `leaveGuest`, all
 without the session token. `joinGuest` takes a name of up to 60 characters and gives a 40-character credential that
 lasts 4 hours (hash kept). basic-comms declares a per-client rate limit for it (`call-guest`: `POST /call/*/joinGuest`,
-10 a minute, burst 5), which applies only while per-client web protection is on (`webapp_trusted_proxies` set, or
-`webapp_web_protection` `true`; [Web protection](Attack-Surface-Web.md#web-protection)). On the default conf `joinGuest`
+10 a minute, burst 5), which applies only while per-client web protection is on (`webapp-list/webapp[webroot]@trusted-proxies` set, or
+`webapp-list/webapp[webroot]/web-protection@enabled` `true`; [Web protection](Attack-Surface-Web.md#web-protection)). On the default conf `joinGuest`
 has no per-client limit.
 
 - A guest's credential reaches only that call's signaling, on `GET /callws`. The guest page never puts it in a URL.

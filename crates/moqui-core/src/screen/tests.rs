@@ -45,10 +45,13 @@ struct Env {
 impl Env {
     fn new() -> Self {
         let lock = crate::user::session::cookie_property_lock();
-        moqui_lib::env::set_property("session_cookie_key", test_cookie_key());
+        moqui_lib::env::set_property(
+            "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+            test_cookie_key(),
+        );
         Self {
             _lock: lock,
-            names: vec!["session_cookie_key".to_string()],
+            names: vec!["moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key".to_string()],
         }
     }
 
@@ -537,7 +540,18 @@ fn redirect_json_list_security_headers_and_cors() {
     );
     assert!(header_value(&response, "Strict-Transport-Security").is_some());
 
-    world._env.set("webapp_allow_origins", "https://app.example");
+    world._env.set(
+        "moqui_conf__webapp_list__webapp__WEBROOT__allow_origins",
+        "https://app.example",
+    );
+    world
+        .factory
+        .set_conf_value(
+            "webapp-list/webapp[webroot]@allow-origins",
+            Some("https://app.example"),
+            false,
+        )
+        .unwrap();
     let mut cors = request("GET", "/");
     cors.set_header("origin", "https://app.example");
     let response = serve_at(&world.factory, cors, &web);
@@ -550,7 +564,13 @@ fn redirect_json_list_security_headers_and_cors() {
         Some("true")
     );
     // an origin only `*` allows may read, never with credentials (SEC-WEB-10)
-    world._env.set("webapp_allow_origins", "*");
+    world
+        ._env
+        .set("moqui_conf__webapp_list__webapp__WEBROOT__allow_origins", "*");
+    world
+        .factory
+        .set_conf_value("webapp-list/webapp[webroot]@allow-origins", Some("*"), false)
+        .unwrap();
     let mut any = request("GET", "/");
     any.set_header("origin", "https://any.example");
     let response = serve_at(&world.factory, any, &web);
@@ -563,7 +583,18 @@ fn redirect_json_list_security_headers_and_cors() {
         None,
         "* with credentials"
     );
-    world._env.set("webapp_allow_origins", "https://app.example");
+    world._env.set(
+        "moqui_conf__webapp_list__webapp__WEBROOT__allow_origins",
+        "https://app.example",
+    );
+    world
+        .factory
+        .set_conf_value(
+            "webapp-list/webapp[webroot]@allow-origins",
+            Some("https://app.example"),
+            false,
+        )
+        .unwrap();
 
     let mut options = request("OPTIONS", "/rest/s1/moqui/basic/enumTypes");
     options.set_header("origin", "https://app.example");
@@ -630,7 +661,18 @@ fn the_webapp_conf_sets_the_response_headers_and_cors() {
     let mut world = World::open(
         r#"<moqui-conf><webapp-list><webapp name="webroot" handle-cors="false"/></webapp-list></moqui-conf>"#,
     );
-    world._env.set("webapp_allow_origins", "https://app.example");
+    world._env.set(
+        "moqui_conf__webapp_list__webapp__WEBROOT__allow_origins",
+        "https://app.example",
+    );
+    world
+        .factory
+        .set_conf_value(
+            "webapp-list/webapp[webroot]@allow-origins",
+            Some("https://app.example"),
+            false,
+        )
+        .unwrap();
     let mut get = request("GET", "/");
     get.set_header("origin", "https://app.example");
     let response = serve_at(&world.factory, get, &web);
@@ -690,7 +732,18 @@ fn a_disallowed_origin_is_refused_before_the_request_runs() {
     )
     .unwrap();
     let root = path.to_string_lossy().into_owned();
-    world._env.set("webapp_allow_origins", "https://app.example");
+    world._env.set(
+        "moqui_conf__webapp_list__webapp__WEBROOT__allow_origins",
+        "https://app.example",
+    );
+    world
+        .factory
+        .set_conf_value(
+            "webapp-list/webapp[webroot]@allow-origins",
+            Some("https://app.example"),
+            false,
+        )
+        .unwrap();
     let send = |method: &str, origin: Option<&str>| {
         let mut call = request(method, "/go");
         call.set_header("host", "erp.example:8080");

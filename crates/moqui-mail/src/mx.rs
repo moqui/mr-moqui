@@ -121,11 +121,11 @@ pub fn mta() -> Mta {
     }
 }
 
-/// The name this node gives in EHLO: `smtp_hostname`, else `webapp_http_host`, else `localhost`.
+/// The name this node gives in EHLO: `smtp_hostname`, else the webroot webapp's `http-host`, else `localhost`.
 #[must_use]
 pub fn hostname() -> String {
-    for name in ["smtp_hostname", "webapp_http_host"] {
-        let value = moqui_lib::env::get_prop_or_env(name);
+    for name in ["smtp_hostname", "webapp-list/webapp[webroot]@http-host"] {
+        let value = moqui_core::context::conf_env::setting_or_property(name);
         if !value.trim().is_empty() {
             return value.trim().to_string();
         }

@@ -14,7 +14,7 @@
 
 //! Timed overrides of logging and telemetry settings (plans/archive/Monitor-Settings.md; guide docs/tools/Monitoring.md,
 //! "Changing settings for a while"). An override is in memory only: it always expires, at most 24 hours on, and is gone
-//! on restart. The on-disk value (the merged conf, or `moqui_log_level`) is always known beside it. A change applies
+//! on restart. The on-disk value (the merged conf, or `logging@level`) is always known beside it. A change applies
 //! here and is published on the `runtime-settings` cluster topic, so it applies to every running instance; each
 //! instance expires its own copy at the absolute time the message carries.
 

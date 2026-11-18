@@ -52,7 +52,13 @@ fn start_edge(label: &str, root_cert: &(String, String)) -> (Gate, u16) {
     let edge = crate::common::start_second_with(
         label,
         "",
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port_text)],
+        &[
+            ("node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+        ],
         &[("cert/default.crt", &root_cert.0), ("cert/default.key", &root_cert.1)],
     );
     (edge, port)
@@ -410,7 +416,7 @@ const MEMBER_LINK: &str = "MOQUI_EDGE_BALANCE_LINK";
 const MEMBER_TEST: &str = "edge_balance::balance_member_process";
 /// The generated secrets a second member of the cluster takes from the first: its session cookies are the first's.
 const SHARED_SECRETS: [&str; 4] = [
-    "session_cookie_key",
+    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
     "cluster_tls_cert",
     "cluster_tls_key",
     "moqui_conf__entity_facade__crypt_pass",

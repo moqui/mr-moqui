@@ -66,22 +66,22 @@ pub(crate) struct ClientAddr(pub IpAddr);
 /// or not the per-client parts of [`Guard`] are on.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ListenLimits {
-    /// `header-timeout` (`webapp_header_timeout`), default 30: a client sends its whole request head in this time.
+    /// `header-timeout` (`webapp-list/webapp[webroot]/web-protection/connections@header-timeout`), default 30: a client sends its whole request head in this time.
     /// A kept-alive connection that sends nothing for as long is closed too.
     pub header: Option<Duration>,
-    /// `body-timeout` (`webapp_body_timeout`), default 60: the whole request body arrives in this time, or the answer
+    /// `body-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@body-timeout`), default 60: the whole request body arrives in this time, or the answer
     /// is 408. Not for a `multipart/form-data` upload, which is read as it arrives.
     pub body: Option<Duration>,
-    /// `upload-idle-timeout` (`webapp_upload_idle_timeout`), default 60: an upload that sends nothing for this long
+    /// `upload-idle-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`), default 60: an upload that sends nothing for this long
     /// is cut off with 408.
     pub upload_idle: Option<Duration>,
-    /// `request-timeout` (`webapp_request_timeout`), default 300: from the request head to the response head, or the
+    /// `request-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@request-timeout`), default 300: from the request head to the response head, or the
     /// answer is 504. `/notws` and `/termws` are exempt, and a response body, such as a long download, is sent after it.
     pub request: Option<Duration>,
-    /// `max` (`webapp_max_connections`), default 4096: connections served at once, HTTP and HTTPS together, upgraded
+    /// `max` (`webapp-list/webapp[webroot]/web-protection/connections@max`), default 4096: connections served at once, HTTP and HTTPS together, upgraded
     /// WebSockets included until they close. Past it the listeners stop accepting until one closes.
     pub connections: usize,
-    /// `shutdown-timeout` (`webapp_shutdown_timeout`), default 30: after a stop, how long open connections may take to
+    /// `shutdown-timeout` (`webapp-list/webapp[webroot]/web-protection/connections@shutdown-timeout`), default 30: after a stop, how long open connections may take to
     /// finish before the listener stops without them.
     pub shutdown: Option<Duration>,
     /// `max-uri-length`, default 8192: a longer path and query is answered 414.
@@ -90,10 +90,10 @@ pub(crate) struct ListenLimits {
     pub max_header_bytes: usize,
     /// `max-headers`, default 100: a request head with more header fields is answered 431.
     pub max_headers: usize,
-    /// `http2-max-streams` (`webapp_http2_max_streams`), default 100: the requests one HTTP/2 connection may have
+    /// `http2-max-streams` (`webapp-list/webapp[webroot]/web-protection/connections@http2-max-streams`), default 100: the requests one HTTP/2 connection may have
     /// open at once.
     pub http2_max_streams: u32,
-    /// `write-timeout` (`webapp_write_timeout`), default 60: a write to a client that takes nothing for this long fails
+    /// `write-timeout` (`webapp-list/webapp[webroot]/web-protection/connections@write-timeout`), default 60: a write to a client that takes nothing for this long fails
     /// and the connection closes, a WebSocket's too; `TCP_USER_TIMEOUT` is set to it where the platform has it.
     pub write: Option<Duration>,
 }
@@ -104,35 +104,29 @@ const MIN_HEADER_BYTES: usize = 8 * 1024;
 impl ListenLimits {
     /// From `web-protection` (`None` for the properties and defaults alone).
     pub(crate) fn from_node(node: Option<&moqui_lib::node::MNode>) -> Self {
-        let seconds = |child: &str, name: &str, property: &str, default: u64| {
-            let seconds = setting(node, child, name, property).parse::<u64>().unwrap_or(default);
+        let seconds = |child: &str, name: &str, default: u64| {
+            let seconds = setting(node, child, name).parse::<u64>().unwrap_or(default);
             (seconds > 0).then(|| Duration::from_secs(seconds))
         };
-        let count = |child: &str, name: &str, property: &str, default: usize| {
-            setting(node, child, name, property)
+        let count = |child: &str, name: &str, default: usize| {
+            setting(node, child, name)
                 .parse::<usize>()
                 .ok()
                 .filter(|count| *count > 0)
                 .unwrap_or(default)
         };
         Self {
-            header: seconds("connections", "header-timeout", "webapp_header_timeout", 30),
-            body: seconds("requests", "body-timeout", "webapp_body_timeout", 60),
-            upload_idle: seconds("requests", "upload-idle-timeout", "webapp_upload_idle_timeout", 60),
-            request: seconds("requests", "request-timeout", "webapp_request_timeout", 300),
-            connections: count("connections", "max", "webapp_max_connections", 4096),
-            shutdown: seconds("connections", "shutdown-timeout", "webapp_shutdown_timeout", 30),
-            max_uri: count("requests", "max-uri-length", "", 8192),
-            max_header_bytes: count("requests", "max-header-bytes", "", 64 * 1024).max(MIN_HEADER_BYTES),
-            max_headers: count("requests", "max-headers", "", 100),
-            http2_max_streams: u32::try_from(count(
-                "connections",
-                "http2-max-streams",
-                "webapp_http2_max_streams",
-                100,
-            ))
-            .unwrap_or(u32::MAX),
-            write: seconds("connections", "write-timeout", "webapp_write_timeout", 60),
+            header: seconds("connections", "header-timeout", 30),
+            body: seconds("requests", "body-timeout", 60),
+            upload_idle: seconds("requests", "upload-idle-timeout", 60),
+            request: seconds("requests", "request-timeout", 300),
+            connections: count("connections", "max", 4096),
+            shutdown: seconds("connections", "shutdown-timeout", 30),
+            max_uri: count("requests", "max-uri-length", 8192),
+            max_header_bytes: count("requests", "max-header-bytes", 64 * 1024).max(MIN_HEADER_BYTES),
+            max_headers: count("requests", "max-headers", 100),
+            http2_max_streams: u32::try_from(count("connections", "http2-max-streams", 100)).unwrap_or(u32::MAX),
+            write: seconds("connections", "write-timeout", 60),
         }
     }
 
@@ -195,7 +189,7 @@ fn record_web_listeners(
         None => listener(
             factory,
             "HTTPS",
-            State::off("no certificate in runtime/cert, or webapp_https_listen_port is off"),
+            State::off("no certificate in runtime/cert, or the webroot webapp's https-listen-port is off"),
         ),
     }
     if cluster.port() == 0 {
@@ -959,7 +953,7 @@ async fn termination_signal() {
     }
 }
 
-/// Empty `webapp_http_port` is 8080.
+/// Empty `webapp-list/webapp[webroot]@http-port` is 8080.
 pub(crate) fn http_port(raw: &str) -> Result<u16, Error> {
     moqui_core::web::effective_http_port(raw)
 }
@@ -1126,7 +1120,7 @@ async fn dispatch_screen(
     web.headers = header_map(&parts.headers);
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
     web.raw_query = parts.uri.query().map(str::to_string);
-    // The limit is `webapp_max_body` (10 MiB), or `webapp_max_upload` for a multipart body, and it stops the read.
+    // The limit is `webapp-list/webapp[webroot]/web-protection/requests@max-body` (10 MiB), or `webapp-list/webapp[webroot]/web-protection/requests@max-upload` for a multipart body, and it stops the read.
     let mut limit = moqui_core::web::body_limit_for(Some(&state.factory), &web);
     let declared = parts
         .headers
@@ -1228,7 +1222,7 @@ const DEFAULT_STREAM_STALL: Duration = Duration::from_secs(60);
 const UPLOAD_FEED: usize = 1024 * 1024;
 
 /// A `multipart/form-data` body read as it arrives, up to `limit` bytes: its fields, and its files in memory or (past
-/// 256 KiB) spooled to `runtime/tmp/upload`. Each chunk must come within `webapp_upload_idle_timeout`.
+/// 256 KiB) spooled to `runtime/tmp/upload`. Each chunk must come within `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`.
 async fn read_multipart(
     state: &HttpState,
     body: axum::body::Body,
@@ -1287,7 +1281,7 @@ async fn read_multipart(
 
 /// A body that is one file (a DAV `PUT`) read as it arrives, up to `limit` bytes, as an upload's file part is: in
 /// memory up to 256 KiB, then spooled to `runtime/tmp/upload`, never held whole (SEC-FIL-04). Each chunk must come
-/// within `webapp_upload_idle_timeout`. A body refused or cut short leaves no file.
+/// within `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`. A body refused or cut short leaves no file.
 pub(crate) async fn read_to_spool(
     state: &HttpState,
     body: axum::body::Body,
@@ -1351,7 +1345,7 @@ pub(crate) enum BodyRefused {
     Malformed(String),
     /// An upload that could not be spooled.
     Failed(String),
-    /// The uploads being read fill the spool (`webapp_max_spool`).
+    /// The uploads being read fill the spool (`webapp-list/webapp[webroot]/web-protection/requests@max-spool`).
     SpoolFull,
 }
 
@@ -1423,7 +1417,7 @@ async fn upload_has_user(
     matches!(found, Ok(true))
 }
 
-/// The request body, up to `limit` bytes and within `webapp_body_timeout`.
+/// The request body, up to `limit` bytes and within `webapp-list/webapp[webroot]/web-protection/requests@body-timeout`.
 pub(crate) async fn read_body(
     state: &HttpState,
     body: axum::body::Body,

@@ -203,7 +203,13 @@ fn only_the_lock_holder_sends_replication_and_a_new_holder_sends_whole() {
     let edge = crate::common::start_second_with(
         "edge-pool-work-edge",
         EDGE_CONF,
-        &[("node_role", "edge"), ("webapp_https_listen_port", &edge_port_text)],
+        &[
+            ("node_role", "edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
+        ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
     let local_id = moqui_core::cluster::instance_id(local.server.factory()).unwrap();
@@ -416,8 +422,11 @@ fn a_ban_on_one_member_holds_on_another_and_the_view_lifts_it() {
         return;
     }
     let properties = [
-        ("webapp_client_ip_header", "X-Forwarded-For"),
-        ("webapp_trusted_proxies", "127.0.0.1"),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__client_ip_header",
+            "X-Forwarded-For",
+        ),
+        ("moqui_conf__webapp_list__webapp__WEBROOT__trusted_proxies", "127.0.0.1"),
     ];
     let first = crate::common::start_with_conf_files("edge-pool-ban", None, BAN_CONF, &properties, &[]);
     let (second, _second_runtime) =

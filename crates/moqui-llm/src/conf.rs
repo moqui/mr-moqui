@@ -610,7 +610,7 @@ pub struct McpConf {
     /// The base URL the server advertises (its card, the approval links); else from the request.
     pub public_url: Option<String>,
     pub trust_forwarded_headers: bool,
-    /// The key of the `requestState` MACs, standard base64; else one derived from `session_cookie_key`.
+    /// The key of the `requestState` MACs, standard base64; else one derived from `webapp-list/webapp[webroot]/session-config@cookie-key`.
     pub request_state_key: Option<String>,
     /// Seconds a retry of a call whose approval is still pending waits for the decision before it answers again.
     pub approval_wait: u64,

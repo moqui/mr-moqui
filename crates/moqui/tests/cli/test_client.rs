@@ -187,7 +187,10 @@ fn wait_finds_a_late_server_and_the_runtime_files_are_untouched() {
     std::fs::create_dir_all(runtime.join("log")).unwrap();
     std::fs::create_dir_all(runtime.join("db/embedded/data")).unwrap();
     let kept = [
-        (runtime.join(".env"), "webapp_http_port=8080\n"),
+        (
+            runtime.join(".env"),
+            "moqui_conf__webapp_list__webapp__WEBROOT__http_port=8080\n",
+        ),
         (runtime.join("log/moqui.log"), "a line of the server\n"),
         (runtime.join("db/embedded/data/postmaster.pid"), "4242\n"),
     ];

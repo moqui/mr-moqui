@@ -137,19 +137,21 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
         required: true,
     };
     // a node reached in process only has no HTTP, HTTPS, cluster or gRPC port
-    let http = crate::listen_address(bind)?;
+    let webroot = |name: &str| {
+        moqui_core::context::conf_env::conf_attribute(
+            conf,
+            &format!("{}@{name}", moqui_core::context::conf_env::WEBROOT),
+        )
+    };
+    let http = crate::listen_address(bind, &webroot)?;
     #[cfg_attr(not(feature = "grpc"), allow(unused_variables))]
     let mut https = false;
     if let Some(http) = http {
-        targets.push(required("HTTP", "webapp_http_port", http.ip().to_string(), http.port()));
-        if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property))? {
+        targets.push(required("HTTP", "http-port", http.ip().to_string(), http.port()));
+        let listen_port = webroot("https-listen-port");
+        if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property), &listen_port)? {
             https = true;
-            targets.push(required(
-                "HTTPS",
-                "webapp_https_listen_port",
-                http.ip().to_string(),
-                port,
-            ));
+            targets.push(required("HTTPS", "https-listen-port", http.ip().to_string(), port));
         }
         targets.push(required(
             "Cluster",

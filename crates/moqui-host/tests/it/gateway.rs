@@ -1445,7 +1445,15 @@ fn the_gateway_bounds_a_call_by_its_own_timeout_and_app_passwords_need_a_client(
         upstream.port
     );
     // the webapp's request deadline is shorter than the gateway's timeout: the gateway's own bounds the call
-    let gate = start_with_conf_properties("gateway-timeout", Some(DATA), &conf, &[("webapp_request_timeout", "1")]);
+    let gate = start_with_conf_properties(
+        "gateway-timeout",
+        Some(DATA),
+        &conf,
+        &[(
+            "moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__request_timeout",
+            "1",
+        )],
+    );
     let factory = Arc::clone(gate.server.factory());
     let address = gate.server.address();
     let ann = key_of(&factory, "ann.gw", None);

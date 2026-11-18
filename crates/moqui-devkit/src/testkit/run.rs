@@ -1218,10 +1218,10 @@ mod tests {
             Some(moqui_core::screen::PDF_UNAVAILABLE.to_string())
         );
         let quoted =
-            "out.errors == \"\"\n|\n| \"PDF is not available: moqui_chromium_path names /nowhere, which is not a file\"";
+            "out.errors == \"\"\n|\n| \"PDF is not available: screen-facade/pdf@chromium-path names /nowhere, which is not a file\"";
         assert_eq!(
             pdf_unavailable(quoted).as_deref(),
-            Some("PDF is not available: moqui_chromium_path names /nowhere, which is not a file")
+            Some("PDF is not available: screen-facade/pdf@chromium-path names /nowhere, which is not a file")
         );
         assert_eq!(missing_tool(moqui_core::screen::PDF_UNAVAILABLE), None);
         assert_eq!(pdf_unavailable("pdf.magic == \"%PDF\"\n|\nfalse"), None);

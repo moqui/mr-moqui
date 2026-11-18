@@ -201,7 +201,7 @@ struct ServeChild {
 }
 
 /// The browser the child renders PDF with: the one `--chromium` names, when nothing names one for PDF
-/// (`moqui_chromium_path` as a property, in the environment or in `runtime/.env`). Otherwise the child's own search
+/// (`screen-facade/pdf@chromium-path` as a property, in the environment or in `runtime/.env`). Otherwise the child's own search
 /// finds the one this client drives.
 fn pdf_browser(args: &ClientArgs) -> Option<PathBuf> {
     if !crate::chromium::configured_chromium().is_empty() {
@@ -239,7 +239,7 @@ fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> R
         command.env(name, value);
     }
     if let Some(browser) = pdf_browser(args) {
-        command.env(crate::chromium::CHROMIUM_PATH, browser);
+        command.env(crate::chromium::CHROMIUM_PATH_ENV, browser);
     }
     let mut process = command
         .spawn()

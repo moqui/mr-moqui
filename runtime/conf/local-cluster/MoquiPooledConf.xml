@@ -15,7 +15,7 @@
         (moqui_conf__entity_facade__datasource__TRANSACTIONAL__host and the rest). Back it up with its own tools:
         the backup job covers an embedded database only. -->
 
-    <!-- The same secrets on every member, as in MoquiLocalConf.xml: session_cookie_key, cluster_tls_cert,
+    <!-- The same secrets on every member, as in MoquiLocalConf.xml: webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert,
         cluster_tls_key and moqui_conf__entity_facade__crypt_pass, which the first member's first start generates into its .env.
         The pairing is the cluster's, made once on one member (System › Edge Node, Pair with an edge node), which writes
         edge_node_url, edge_node_key (the pairing's key), edge_node_pin, edge_node_id and edge_node_pairing (the id the
@@ -47,8 +47,8 @@
     <default-property name="cluster_transport" value=""/>
     <default-property name="cluster_protocol" value=""/>
 
-    <!-- Web access through the edge node: the client's address comes over the link, so no webapp_trusted_proxies or
-        webapp_client_ip_header; each member's web protection counts by it. A passthrough name ends its TLS on the
+    <!-- Web access through the edge node: the client's address comes over the link, so no webapp-list/webapp[webroot]@trusted-proxies or
+        webapp-list/webapp[webroot]@client-ip-header; each member's web protection counts by it. A passthrough name ends its TLS on the
         member, so each member needs the certificate in runtime/cert (the same files on each); a terminate name ends on
         the edge node and needs none here.
         Balancing (on the edge node): web requests to a terminate name by request, sticky by the session cookie (the

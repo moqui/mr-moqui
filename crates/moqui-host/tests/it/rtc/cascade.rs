@@ -42,7 +42,7 @@ const LEG_NODE_START: Duration = Duration::from_secs(30);
 const PROPERTIES: [(&str, &str); 2] = [("rtc_media_port", "0"), ("rtc_cascade_enabled", "true")];
 /// The generated secrets a second member of the cluster takes from the first.
 const SHARED_SECRETS: [&str; 5] = [
-    "session_cookie_key",
+    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
     "cluster_tls_cert",
     "cluster_tls_key",
     "moqui_conf__entity_facade__crypt_pass",

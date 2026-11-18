@@ -73,14 +73,14 @@ On the server:
 2. Put the certificate for your host in `/opt/moqui/cert/`, for example certbot's `cert/erp.example.com/fullchain.pem`
    and `privkey.pem` ([certificates](#certificates)).
 3. Write the host's settings to `/opt/moqui/.env`. The first start adds the generated secrets to the same file.
-   `webapp_https_port` is the port clients use; leave it out when they reach the server on 443.
+   `webapp-list/webapp[webroot]@https-port` is the port clients use; leave it out when they reach the server on 443.
    `initial_admin_enabled=true` turns on the form that creates the first administrator (step 5); it is off unless set.
 
    ```sh
    sudo -u moqui tee /opt/moqui/.env > /dev/null <<'EOF'
-   webapp_http_host=erp.example.com
-   webapp_https_enabled=true
-   webapp_https_port=8443
+   moqui_conf__webapp_list__webapp__WEBROOT__http_host=erp.example.com
+   moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true
+   moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443
    initial_admin_enabled=true
    EOF
    sudo chmod 600 /opt/moqui/.env
@@ -215,9 +215,9 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
   it up. Without `moqui_conf__entity_facade__crypt_pass` the encrypted fields cannot be read
   ([conf](#runtime-directory-and-conf)).
 - **Data**: no demo data, so no `john.doe` with password `moqui` ([first start](#data-and-the-first-start)).
-- **HTTPS**: a certificate in `runtime/cert`, or a proxy in front with `webapp_trusted_proxies` set
+- **HTTPS**: a certificate in `runtime/cert`, or a proxy in front with `webapp-list/webapp[webroot]@trusted-proxies` set
   ([HTTPS](#https-ports-and-proxies)).
-- **Ports**: firewall 8080. `webapp_http_bind` sets the address of both HTTP and HTTPS, so `127.0.0.1` suits only a
+- **Ports**: firewall 8080. `webapp-list/webapp[webroot]@http-bind` sets the address of both HTTP and HTTPS, so `127.0.0.1` suits only a
   server behind a proxy on the same machine. The cluster listener (8444) starts on every server, on every address, so
   firewall it unless cluster members use it ([ports](#ports)).
 - **Backups**: run the embedded database's backup job, or back up the external database
@@ -225,7 +225,7 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 - **Disk and memory**: the thresholds at which the System home warns are `resource-watch`'s; copy the disk, memory
   and CPU alert rules so someone is told ([resource watch](#resource-watch)).
 - **Listeners**: SSH, inbound SMTP, A2A, MCP and the LLM gateway are off by default. Turn on only the ones that are used.
-- **CORS**: leave `webapp_allow_origins` empty. The dev conf names `localhost,127.0.0.1` (this machine on any port);
+- **CORS**: leave `webapp-list/webapp[webroot]@allow-origins` empty. The dev conf names `localhost,127.0.0.1` (this machine on any port);
   `*` is never sent with credentials.
 - **Lock-down**: the full list is in [Attack-Surface.md, Heavy lock-down](security/Attack-Surface.md#heavy-lock-down).
 
@@ -297,7 +297,7 @@ this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch
 the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
 and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
 start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
-`moqui_chromium_path` and `runtime/chromium`, before an installed one.
+`screen-facade/pdf@chromium-path` and `runtime/chromium`, before an installed one.
 
 **Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
 (the packed runtime files as built), and `postgres`, `opensearch` and `chromium` (each the `sha256sum` of the archive
@@ -363,7 +363,7 @@ A `default-property` in a conf is a default only. A property is looked up in thi
 3. `runtime/.env`;
 4. the merged conf's `default-property`.
 
-Use the underscore names (`webapp_http_port`), not dotted ones. An empty value counts as unset, so it cannot clear a
+Use the underscore names (`webapp-list/webapp[webroot]@http-port`), not dotted ones. An empty value counts as unset, so it cannot clear a
 conf's default; to clear one, override the `default-property` in the runtime conf.
 
 `runtime/.env` holds `KEY=value` lines. Blank lines and `#` comments are ignored, a matching pair of quotes is
@@ -371,7 +371,7 @@ stripped, and `$` is not expanded. It is read after the conf merge, so it cannot
 with `--no-data` leaves it out, so it is the place for per-host settings that should survive an upgrade.
 
 When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
-covers `session_cookie_key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
+covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
 `cluster_tls_key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
 `mail_dkim_key` (empty by default) is made there too, the first time a server needs it.
 
@@ -381,20 +381,20 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 |---|---|---|
 | `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
 | `default_locale`, `default_time_zone`, `database_time_zone` | `en_US`, `UTC`, `UTC` | |
-| `webapp_http_host` | empty: the request's host | The host in generated URLs |
-| `webapp_http_bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
-| `webapp_http_port` | empty: 8080 | The HTTP listen port (`-p`) |
-| `webapp_https_listen_port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
-| `webapp_https_port` | empty: 443 | The HTTPS port in generated URLs and redirects |
-| `webapp_https_enabled` | `false` | `true` makes generated URLs https |
-| `webapp_allow_origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
-| `webapp_trusted_proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
-| `webapp_client_ip_header` | empty | The header those proxies put the client address in |
-| `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
-| `scheduled_job_check_time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
+| `webapp-list/webapp[webroot]@http-host` | empty: the request's host | The host in generated URLs |
+| `webapp-list/webapp[webroot]@http-bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
+| `webapp-list/webapp[webroot]@http-port` | empty: 8080 | The HTTP listen port (`-p`) |
+| `webapp-list/webapp[webroot]@https-listen-port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
+| `webapp-list/webapp[webroot]@https-port` | empty: 443 | The HTTPS port in generated URLs and redirects |
+| `webapp-list/webapp[webroot]@https-enabled` | `false` | `true` makes generated URLs https |
+| `webapp-list/webapp[webroot]@allow-origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
+| `webapp-list/webapp[webroot]@trusted-proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
+| `webapp-list/webapp[webroot]@client-ip-header` | empty | The header those proxies put the client address in |
+| `webapp-list/webapp[webroot]@status-ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
+| `service-facade@scheduled-job-check-time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
 | `terminal_command_line`, `terminal_host_sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `true` on for any purpose, `false` off; any other value, empty included, is off with an error in the log ([Terminal](ui/Terminal.md#conf)) |
 | `terminal_remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `terminal_remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
-| `moqui_chromium_path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
+| `screen-facade/pdf@chromium-path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `load_runner_targets`, `load_runner_max_runs`, `load_runner_max_users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
 | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `rtc_media_port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
@@ -420,7 +420,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `sip_registrar_enabled`, `sip_domain` | `false`, empty | The registrar for desk and soft phones, off even with the SIP listeners on; the realm and domain phones register to (`sip_public_address`, else `moqui`, when empty) ([SIP, Registrar](interfaces/SIP.md#registrar)) |
 | `xmpp_domain`, `xmpp_rooms_domain`, `xmpp_upload_domain` | empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): off while `xmpp_domain` is empty; users are `user@<domain>`, rooms `room@rooms.<domain>` |
 | `xmpp_port`, `xmpp_host`, `xmpp_tls_port`, `xmpp_tls_host`, `xmpp_websocket_enabled` | empty, `0.0.0.0`, empty, `xmpp_host`, `false` | The XMPP client listeners: STARTTLS (5222 by convention) and direct TLS (5223), each off while empty; `/xmpp-websocket` on the HTTP listener when `true` |
-| `xmpp_upload_url`, `xmpp_upload_max_bytes`, `xmpp_upload_secret` | `https://<domain>` (with `webapp_https_port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
+| `xmpp_upload_url`, `xmpp_upload_max_bytes`, `xmpp_upload_secret` | `https://<domain>` (with `webapp-list/webapp[webroot]@https-port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
 | `xmpp_resume_seconds`, `xmpp_fast_token_days` | `300`, `14` | How long a dropped session waits for stream resumption, and how long a FAST token lasts |
 | `xmpp_upload_seconds` | `300` | The longest a PUT to an upload slot may take |
 | `xmpp_turn_enabled`, `xmpp_turn_per_hour` | `false`, `30` | External services (XEP-0215): TURN credentials for XMPP apps' calls, never to an external user, at most so many a user an hour |
@@ -454,7 +454,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `mail_delivery_retry_seconds`, `mail_delivery_days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
 | `mail_mx_require_tls` | empty | On an edge node with the MTA in moqui, the recipient domains (comma-separated, `*` for every one) whose MX gets mail only over STARTTLS with a certificate valid for the host, as under an MTA-STS `enforce` policy whatever the domain publishes: an MX with no STARTTLS or a failed handshake or certificate is tried again later and the message bounces after `mail_delivery_days`, never sent in clear text. Empty: STARTTLS when offered, with any certificate, else clear text ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-out)) |
 | `mail_mx_override`, `mail_dns_offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
-| `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
+| `logging@level`, `logging@dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
 | `demo_disabled` | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
@@ -521,8 +521,8 @@ Server options:
 
 | Option | What it does |
 |---|---|
-| `-p N`, `--port N` | The HTTP port (`webapp_http_port`) |
-| `--https-port N` | The HTTPS listen port (`webapp_https_listen_port`), or `off` |
+| `-p N`, `--port N` | The HTTP port (`webapp-list/webapp[webroot]@http-port`) |
+| `--https-port N` | The HTTPS listen port (`webapp-list/webapp[webroot]@https-listen-port`), or `off` |
 | `-c FILE`, `--conf FILE` | The runtime conf, as `MOQUI_CONF` does |
 | `--no-run-es` | Do not start the OpenSearch in `runtime/opensearch` (`opensearch_run=false`) |
 | `-D name=value` | Set a property for this run; repeatable |
@@ -548,7 +548,7 @@ given `--nobuild`.
 ## Data and the first start
 
 When a server starts on a database with no `moqui.basic.Enumeration` rows, it loads the data types in
-`entity_empty_db_load` (default `seed,seed-initial,install`; `all` in the dev conf). It then starts its factory again,
+`tools@empty-db-load` (default `seed,seed-initial,install`; `all` in the dev conf). It then starts its factory again,
 and the log has:
 
 ```
@@ -780,8 +780,8 @@ a backup asked for now with the job's own parameters ([Attack-Surface](security/
 
 | Port | Listener | Default | Properties |
 |---|---|---|---|
-| 8080 | HTTP | On, every address | `webapp_http_port`, `webapp_http_bind` |
-| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp_https_listen_port` (`off`), `webapp_http2` |
+| 8080 | HTTP | On, every address | `webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind` |
+| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-port` (`off`), `webapp-list/webapp[webroot]@http2` |
 | 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address`, `cluster_protocol` |
 | `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
 | `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
@@ -795,8 +795,8 @@ XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTL
 (5223, direct TLS, XEP-0368), both at the host's name; the certificates in `runtime/cert` must cover the domain,
 `rooms.<domain>` and `upload.<domain>` (a wildcard of the domain does). `_xmpp-server._tcp` waits for federation (C3b).
 
-`/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
-Through a reverse proxy whose client-ip header is believed, the client it names must be in `webapp_status_ips` too:
+`/health` answers `{"ready":true}` to loopback and to the addresses in `webapp-list/webapp[webroot]@status-ips`, and 404 to everyone else.
+Through a reverse proxy whose client-ip header is believed, the client it names must be in `webapp-list/webapp[webroot]@status-ips` too:
 list a monitor that probes through the proxy, or have it probe the port directly.
 
 The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass_authority_grpc_port`) and the edge tunnel
@@ -813,18 +813,18 @@ its own once the properties are set (`Instance purpose dev (from the conf), node
 ### HTTP/2
 
 The HTTPS listener offers HTTP/2 and HTTP/1.1 by ALPN, so browsers and other clients that speak HTTP/2 use it; the
-plain HTTP listener is HTTP/1.1 only. `webapp_http2=false` keeps HTTPS to HTTP/1.1.
+plain HTTP listener is HTTP/1.1 only. `moqui_conf__webapp_list__webapp__WEBROOT__http2=false` keeps HTTPS to HTTP/1.1.
 
 - **WebSockets** (`/notws`, `/callws`, `/termws`, `/xmpp-websocket`) open on an HTTP/2 connection by extended CONNECT
   (RFC 8441), or on a connection of their own over HTTP/1.1, as the client chooses.
 - **gRPC.** When the OTLP/gRPC receiver or the PASS authority's gRPC is on, the HTTPS listener takes their calls over
   HTTP/2 too, so a client can use the HTTPS port instead of 4317; the gRPC listener stays.
-- **Limits.** One HTTP/2 connection carries at most `webapp_http2_max_streams` (100) requests at once. One with no
-  request for `webapp_header_timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
+- **Limits.** One HTTP/2 connection carries at most `webapp-list/webapp[webroot]/web-protection/connections@http2-max-streams` (100) requests at once. One with no
+  request for `webapp-list/webapp[webroot]/web-protection/connections@header-timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
   and so is a client's connection when web protection refuses that client.
-- **Slow readers.** A connection whose client takes nothing of a response for `webapp_write_timeout` (60 seconds) is
+- **Slow readers.** A connection whose client takes nothing of a response for `webapp-list/webapp[webroot]/web-protection/connections@write-timeout` (60 seconds) is
   closed, a WebSocket's included; a download that keeps moving is not. A WebSocket keeps its connection's place in
-  `webapp_max_connections` and web protection's `max-per-client` until it closes.
+  `webapp-list/webapp[webroot]/web-protection/connections@max` and web protection's `max-per-client` until it closes.
 - **Behind a proxy**, HTTP/2 is between the client and the proxy; the proxy may reach the server over HTTP/1.1 or, on
   the HTTPS port, over HTTP/2 (gRPC through a proxy needs HTTP/2 to the server).
 
@@ -842,7 +842,7 @@ again within seconds of a change, so a renewal needs no restart.
 
 In dev (`instance_purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
-`runtime/cert` (seen within a minute). A `webapp_https_listen_port` set explicitly with no certificate no longer fails
+`runtime/cert` (seen within a minute). A `webapp-list/webapp[webroot]@https-listen-port` set explicitly with no certificate no longer fails
 the start: the listener waits the same way.
 
 **System › Certificates** lists the names this node answers (its own host, its sites' hosts, the SMTP host, the XMPP
@@ -881,14 +881,14 @@ asked for a name nobody set up there.
 
 ### Listen ports and URL ports
 
-`webapp_https_listen_port` is the port the server binds. `webapp_https_port` is the port clients see in generated URLs
-and https redirects; empty is 443, as in Moqui Java. To make generated URLs use https, set `webapp_https_enabled=true`.
+`webapp-list/webapp[webroot]@https-listen-port` is the port the server binds. `webapp-list/webapp[webroot]@https-port` is the port clients see in generated URLs
+and https redirects; empty is 443, as in Moqui Java. To make generated URLs use https, set `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`.
 
 | Clients reach the server | Set |
 |---|---|
-| Directly on 8443 | `webapp_https_enabled=true`, `webapp_https_port=8443` |
-| On 443, through a port redirect or a proxy | `webapp_https_enabled=true`; leave `webapp_https_port` empty |
-| On 443, which the server binds itself | `webapp_https_enabled=true`, `webapp_https_listen_port=443`, and the capability to bind it (below) |
+| Directly on 8443 | `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`, `moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443` |
+| On 443, through a port redirect or a proxy | `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`; leave `webapp-list/webapp[webroot]@https-port` empty |
+| On 443, which the server binds itself | `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`, `moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port=443`, and the capability to bind it (below) |
 
 A firewall redirect from 443 to 8443 (nftables or iptables) keeps the server unprivileged. To bind 443 directly under
 systemd, add a drop-in `/etc/systemd/system/moqui.service.d/https-443.conf`:
@@ -896,27 +896,27 @@ systemd, add a drop-in `/etc/systemd/system/moqui.service.d/https-443.conf`:
 ```ini
 [Service]
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-Environment=webapp_https_listen_port=443
+Environment=moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port=443
 ```
 
 ### Behind a proxy or load balancer
 
 The server terminates HTTPS itself, so a proxy is optional. A proxy or load balancer in front needs these settings:
 
-- `webapp_trusted_proxies` lists the proxies' address ranges (`10.0.0.0/8`, `fd00::/8`, or single addresses). Only
+- `webapp-list/webapp[webroot]@trusted-proxies` lists the proxies' address ranges (`10.0.0.0/8`, `fd00::/8`, or single addresses). Only
   those peers are believed for `X-Forwarded-Proto` and the client address header. The client address is then the
   rightmost address that is not a trusted proxy.
-- `webapp_client_ip_header` names the header: `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or
+- `webapp-list/webapp[webroot]@client-ip-header` names the header: `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or
   `CloudFront-Viewer-Address`.
-- Setting `webapp_trusted_proxies` also turns on the per-client web protection: rate limits, connection limits and
-  bans by client address. Without a proxy, `webapp_web_protection=true` turns it on.
+- Setting `webapp-list/webapp[webroot]@trusted-proxies` also turns on the per-client web protection: rate limits, connection limits and
+  bans by client address. Without a proxy, `moqui_conf__webapp_list__webapp__WEBROOT__web_protection__enabled=true` turns it on.
 - A `rate-limit` or a client, path or user-agent rule with `host="shop.example.com"` (or `*.example.com`) applies only
   to that site, on top of the rules without `host`, so one site can be stricter than the others.
 - A ban is shared with the other cluster members and up the edge link: a ban a local node starts (a sign-in that
   keeps failing) is told to its edge node, which refuses that client for that node's host names only. An edge node
   tells the nodes behind it nothing, as its bans may come from another pairing's visitors. System › Security › Web
   Protection lists what each rule refused and the bans held now, and lifts one.
-- Leave `webapp_https_port` empty when the proxy serves 443.
+- Leave `webapp-list/webapp[webroot]@https-port` empty when the proxy serves 443.
 
 ## One production server
 
@@ -988,7 +988,7 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 
 | Service | How |
 |---|---|
-| PDF | Chromium: `./moq chromium-download` into `runtime/chromium`, or `moqui_chromium_path`. The server starts without it, and PDF is unavailable |
+| PDF | Chromium: `./moq chromium-download` into `runtime/chromium`, or `screen-facade/pdf@chromium-path`. The server starts without it, and PDF is unavailable |
 | OpenSearch | [Search](#search) |
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
@@ -1025,7 +1025,7 @@ every host gets `webroot.xml`, the apps on paths under it, until a `root-screen`
 
 - **Links.** A link made in a request to such a host keeps that host, with the webapp's scheme and port: only a host a
   `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
-  `webapp_http_host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
+  `webapp-list/webapp[webroot]@http-host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
   apps, which that host does not serve.
 - **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. Over
   https it is `__Host-moqui.session`, which no other host of the domain and no plain-http page can set or shadow; a
@@ -1082,7 +1082,7 @@ The confs, the `.env` names each node needs and the commands are in
 runs the Maximal package, or Enterprise with an external database (both have the link), with the base components and
 mr-pass (`./moq component-get edge`). Its HTTPS listener needs a WebPKI certificate ([Certificates](#certificates)),
 which local nodes check when they pair, and no TLS-terminating proxy in front: the link needs ALPN and client
-certificates end to end. If a proxy is in front of it, name it in `webapp_trusted_proxies`; on an edge node a
+certificates end to end. If a proxy is in front of it, name it in `webapp-list/webapp[webroot]@trusted-proxies`; on an edge node a
 client-IP header with no trusted proxies is ignored.
 
 The browser terminal goes through too, in both web access modes: a client of the edge node is another machine to the
@@ -1467,7 +1467,7 @@ The confs, the `.env` names per tier, the DNS and the order to pair are in
 [runtime/conf/full-stack](../runtime/conf/full-stack/README.md). Each cluster is as in [Cluster](#cluster); the edge
 cluster as in [An edge cluster](#an-edge-cluster).
 
-1. Start the front node. Start the edge cluster and give its own name (`webapp_http_host`, at the members' own
+1. Start the front node. Start the edge cluster and give its own name (`webapp-list/webapp[webroot]@http-host`, at the members' own
    addresses) a certificate (below). Pair one edge member with the front (System › Edge Node, Pair with a
    front node) and copy the `front_node_*` lines to every edge member. On the front, add port 25 of kind SMTP for the
    edge cluster's pairing (Edge Clients › Ports).
@@ -1491,7 +1491,7 @@ cluster as in [An edge cluster](#an-edge-cluster).
   instead (443 open on it) to keep the links up without the front.
 - **The edge members' first certificate.** An edge member with no certificate starts no link server (no EdgeServer,
   no relay down), and an ACME standby listener takes no links, so a link name's first certificate cannot come through
-  the front. Give the edge cluster's own name (`webapp_http_host`, its System app, with address records at the
+  the front. Give the edge cluster's own name (`webapp-list/webapp[webroot]@http-host`, its System app, with address records at the
   members' own addresses) a certificate first: System › Certificates with ACME at a member, which answers the
   challenge on its own 443, or a copied one in `runtime/cert`. The `AcmeCertificate` rows are shared, so every member
   writes it. Pair the local nodes there, or at a link name once its certificate is set up the same way.
@@ -1521,7 +1521,7 @@ Sessions are rows in the shared database, so any member can serve any request.
 ```
                    clients
                       | https
-               load balancer             webapp_trusted_proxies on each member
+               load balancer             webapp-list/webapp[webroot]@trusted-proxies on each member
            +----------+----------+
        member 1   member 2   member 3    conf/local-cluster/MoquiLocalConf.xml; 8444 between members only
            +----------+----------+
@@ -1538,9 +1538,9 @@ node](#a-local-cluster-with-an-edge-node).
 - **One external database.** Postgres, or MySQL with the default transport. The Enterprise package has no embedded
   Postgres, so a member cannot start on a database of its own by mistake. The content database shares it unless
   the content datasource's `database-conf-name` names another ([Content database](#content-database)).
-- **The same secrets on every member**: `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key` and
+- **The same secrets on every member**: `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`, `cluster_tls_key` and
   `moqui_conf__entity_facade__crypt_pass`. Startup fails when a live member has a different session key or certificate, with
-  "session_cookie_key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
+  "webapp-list/webapp[webroot]/session-config@cookie-key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
   For git hosting, `ssh_host_key` and `git_lfs_token_key` too: behind a load balancer or an edge node's pool a client's
   SSH connections and LFS requests reach any member, and another one after a failover, so a member with its own host
   key is a changed host to git clients and one with its own LFS key refuses the others' tokens. A member whose SSH
@@ -1559,7 +1559,7 @@ node](#a-local-cluster-with-an-edge-node).
 4. Open port 8444 between the members only.
 5. The conf writes each session change before the response (`<session-config flush="guarantee"/>`), for a load
    balancer that does not keep a client on one member. With sticky sessions it can go.
-6. Set `webapp_trusted_proxies` and `webapp_client_ip_header` for the load balancer, then start the other members.
+6. Set `webapp-list/webapp[webroot]@trusted-proxies` and `webapp-list/webapp[webroot]@client-ip-header` for the load balancer, then start the other members.
 7. Check the cluster with `SELECT instance_id, cluster_base_url, heartbeat FROM cluster_member;` on the shared database.
 
 ### Transports
@@ -1654,8 +1654,8 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
    ones bound at the authority. Put `pass_client_secret` in `.env`.
 4. Embedded Postgres is enough. The PASS server stores framework tables and sessions, and the sessions hold each
    visitor's delegation from the authority.
-5. Put the certificate for the public host in `cert/`. Behind a proxy, set `webapp_trusted_proxies` and
-   `webapp_client_ip_header`. Each call to the authority carries the visitor's address, and the authority's sign-in rate
+5. Put the certificate for the public host in `cert/`. Behind a proxy, set `webapp-list/webapp[webroot]@trusted-proxies` and
+   `webapp-list/webapp[webroot]@client-ip-header`. Each call to the authority carries the visitor's address, and the authority's sign-in rate
    limits count by it.
 6. Check:
    - the site answers at its host;
@@ -1766,7 +1766,7 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
    contributor agreement's warning and Sign). Checking out a merge request runs its code here (the file watcher
    reloads it): read it first. Merging stays on the server's page. For a pre-commit hook or a coding agent in a
    terminal, `moqui check --agreement` asks the server the same (`MOQUI_GROUP_SERVER`, `MOQUI_GROUP_TOKEN`).
-4. **Binding.** Set `webapp_http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
+4. **Binding.** Set `moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
    not be reachable from the network.
 
 The same by hand, as before Connect: a `myaddons.xml` repository (`<repository name="team"><location type="git"
@@ -1777,7 +1777,7 @@ url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_
 
 1. Run a dev instance (`./moq run`, or `MOQUI_CONF=conf/MoquiDevConf.xml`) with the components the users extend, and
    set `dev_aide_shared=true`.
-2. Give it a certificate, leave `webapp_http_bind` empty, and do not publish 8080. Set `webapp_allow_origins` to the
+2. Give it a certificate, leave `webapp-list/webapp[webroot]@http-bind` empty, and do not publish 8080. Set `webapp-list/webapp[webroot]@allow-origins` to the
    server's own origin, such as `https://dev.example.com`, in place of the dev conf's `*`. An empty value would not
    replace it.
 3. Put its users in `DEV_AIDE_EXTENDERS`, who may write site components and publish them, or `DEV_AIDE_USERS`, who may

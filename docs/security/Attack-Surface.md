@@ -36,27 +36,27 @@ To report an issue that should stay private until it is fixed, write to [moqui-b
 
 A request goes from the client, through a reverse proxy or TLS, to hyper and axum in `crates/moqui-host/src/http.rs`, then screen dispatch, artifact authorization, and on to the database, search, mail, and jobs.
 
-This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) when the HTTPS listener is started. It is still meant to run behind a proxy. `webapp_https_enabled` defaults to false and is the flag generated URLs use when they pick https. Starting the listener is the separate rule in [HTTP container](Attack-Surface-Web.md#http-container).
+This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) when the HTTPS listener is started. It is still meant to run behind a proxy. `webapp-list/webapp[webroot]@https-enabled` defaults to false and is the flag generated URLs use when they pick https. Starting the listener is the separate rule in [HTTP container](Attack-Surface-Web.md#http-container).
 
 **Defaults** are `runtime/components/base/framework/conf/MoquiDefaultConf.xml`. **On** and **off** mean those defaults. Rows say what untrusted input can reach, and what to keep in mind during a review. Designed admin tools are privileged on purpose.
 
-`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance_purpose` to `dev`, `webapp_allow_origins` to `localhost,127.0.0.1` (this machine on any port), and `ssh_port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
+`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance_purpose` to `dev`, `webapp-list/webapp[webroot]@allow-origins` to `localhost,127.0.0.1` (this machine on any port), and `ssh_port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
 
 ## Heavy lock-down
 
 A production install keeps the default conf's closed switches and does not publish the listeners that are on.
 
-- Do not publish the HTTP port. Empty `webapp_http_bind` is every address, and empty `webapp_http_port` is 8080.
-- Do not leave `moqui_conf__entity_facade__crypt_pass` or `session_cookie_key` as `CHANGEME`. Startup writes generated values into `runtime/.env` when they still end in `CHANGEME`. Keep that file private (mode `0600`). The same generator fills `ssh_host_key`, the cluster certificate and key, and `git_lfs_token_key`. `entity-facade@crypt-pass-old` stays the sentinel on purpose.
+- Do not publish the HTTP port. Empty `webapp-list/webapp[webroot]@http-bind` is every address, and empty `webapp-list/webapp[webroot]@http-port` is 8080.
+- Do not leave `moqui_conf__entity_facade__crypt_pass` or `webapp-list/webapp[webroot]/session-config@cookie-key` as `CHANGEME`. Startup writes generated values into `runtime/.env` when they still end in `CHANGEME`. Keep that file private (mode `0600`). The same generator fills `ssh_host_key`, the cluster certificate and key, and `git_lfs_token_key`. `entity-facade@crypt-pass-old` stays the sentinel on purpose.
 - Do not load demo users.
 - Leave tarpits on. The dev conf turns them off for screens, transitions, and services.
-- Leave `webapp_allow_origins` empty. The dev conf names localhost and 127.0.0.1. A foreign origin is then refused. Own origin stays allowed.
+- Leave `webapp-list/webapp[webroot]@allow-origins` empty. The dev conf names localhost and 127.0.0.1. A foreign origin is then refused. Own origin stays allowed.
 - Leave SSH off unless you want it. The default port is empty. The dev conf sets `2222` on `127.0.0.1`.
 - Leave A2A, MCP, and the gateway off unless a client is configured. The model facade can stay on without those servers.
 - Leave git `allow-http` false, and DAV `account-password` false.
 - The cluster listener binds every interface on 8444 and requires a client certificate. Keep it on a private network.
 - Leave inbound SMTP off unless a gateway and a non-empty allow-list are in place. An empty allow-list does not start the listener.
-- Per-client web protection is off until `webapp_trusted_proxies` is set or `webapp_web_protection` is `true`. Set the proxy list when a reverse proxy is in front, so the client address and the per-client rules see the client rather than the proxy.
+- Per-client web protection is off until `webapp-list/webapp[webroot]@trusted-proxies` is set or `webapp-list/webapp[webroot]/web-protection@enabled` is `true`. Set the proxy list when a reverse proxy is in front, so the client address and the per-client rules see the client rather than the proxy.
 
 ## Public demo server
 

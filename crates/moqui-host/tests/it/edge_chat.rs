@@ -316,7 +316,10 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
         CONF,
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
             ("channels_webhooks_enabled", "true"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],

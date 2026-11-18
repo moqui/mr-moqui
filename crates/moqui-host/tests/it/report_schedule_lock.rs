@@ -113,7 +113,7 @@ fn lock(factory: &Arc<ExecutionContextFactory>, id: &str) -> moqui_core::entity:
 }
 fn schedule(factory: &Arc<ExecutionContextFactory>, location: &str, template: Option<&str>) -> String {
     // the fixtures save under the test's own directories (report save-roots, SEC-TLS-06)
-    moqui_lib::env::set_property("report_save_roots", "/");
+    factory.set_conf_value("report@save-roots", Some("/"), false).unwrap();
     owner(factory,"org.moqui.report.ReportServices.create#Schedule",json!({"definitionId":"lease-dashboard","cronExpression":"0 0 0 * * ?","renderMode":"csv","saveToLocation":location,"emailTemplateId":template,"userId":"EX_JOHN_DOE"}))["screenScheduledId"].as_str().unwrap().to_string()
 }
 #[test]
@@ -130,7 +130,7 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
       <moqui.basic.email.EmailTemplate emailTemplateId="REPORT_LEASE_CAPTURE" emailServerId="REPORT_LEASE_CAPTURE" fromAddress="reports@example.test" subject="Lease report" bodyScreenLocation="component://framework/screen/DashboardReportEmail.xml" webappName="webroot"/>
       <moqui.basic.email.EmailTemplate emailTemplateId="REPORT_LEASE_FAIL_NO_BODY" emailServerId="REPORT_LEASE_CAPTURE" fromAddress="reports@example.test" subject="Intentionally invalid delivery template"/>
     </entity-facade-xml>"#;
-    let properties = vec![("scheduled_job_check_time", "0")];
+    let properties = vec![("moqui_conf__service_facade__scheduled_job_check_time", "0")];
     let mut gate = common::start_with_files(
         "report-schedule-lock",
         Some(fixture),

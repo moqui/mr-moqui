@@ -142,14 +142,14 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "web.public",
         external: true,
-        hosts: &["webapp_http_host"],
+        hosts: &["webapp-list/webapp[webroot]@http-host"],
         ports: &[],
         default_port: "",
     },
     Target {
         key: "ssh.public",
         external: true,
-        hosts: &["ssh_public_host", "webapp_http_host"],
+        hosts: &["ssh_public_host", "webapp-list/webapp[webroot]@http-host"],
         ports: &["ssh_public_port", "ssh_port"],
         default_port: "",
     },
@@ -273,7 +273,7 @@ fn get_protocol_facts(
 }
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    crate::context::conf_env::setting_or_property(name).trim().to_string()
 }
 
 fn first_property(names: &[&str]) -> String {
@@ -289,11 +289,11 @@ fn first_property(names: &[&str]) -> String {
 fn target_address(target: &Target) -> Result<(String, u16), &'static str> {
     let mut host = first_property(target.hosts);
     let port_text = if target.key == "web.public" {
-        let https = property("webapp_https_enabled") == "true";
+        let https = property("webapp-list/webapp[webroot]@https-enabled") == "true";
         match first_property(if https {
-            &["webapp_https_port"]
+            &["webapp-list/webapp[webroot]@https-port"]
         } else {
-            &["webapp_http_port"]
+            &["webapp-list/webapp[webroot]@http-port"]
         }) {
             port if port.is_empty() => if https { "443" } else { "80" }.to_string(),
             port => port,

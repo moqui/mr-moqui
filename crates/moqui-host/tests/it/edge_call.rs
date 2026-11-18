@@ -199,7 +199,7 @@ fn edge_node_process() {
         "",
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &port),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
             ("rtc_media_port", "0"),
             ("turn_port", "0"),
             ("turn_relay_ports", "51200-51300"),

@@ -604,7 +604,7 @@ pub struct SshOffer {
     /// A tunnel port goes to the asking node.
     #[prost(bool, tag = "1")]
     pub available: bool,
-    /// The edge node's public name (its first public name, webapp_http_host).
+    /// The edge node's public name (its first public name, webapp-list/webapp\[webroot\]@http-host).
     #[prost(string, tag = "2")]
     pub host: ::prost::alloc::string::String,
     /// The node's own EdgePort row of kind ssh, else edge_ssh_tunnel_port while the node is the one active pairing; 0

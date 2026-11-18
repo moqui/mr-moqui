@@ -26,11 +26,11 @@ which pools the members of a pairing and balances over them. Requirements, what 
 ## `.env`
 
 - **Every member, the same**: the transactional datasource's `host`, `port`, `database`, `user`
-  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first member generates, `session_cookie_key`, `cluster_tls_cert`,
+  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first member generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`,
   `cluster_tls_key`, `moqui_conf__entity_facade__crypt_pass`, and for git hosting `ssh_host_key` and `git_lfs_token_key`: a client's
   SSH connections and LFS requests reach any member, and another one after a failover (a member whose SSH host key
-  differs warns at startup). Copying the first member's whole `.env` gives each the same. Behind your own load balancer: `webapp_trusted_proxies`,
-  `webapp_client_ip_header`. With an edge node: what pairing writes on the first member, `edge_node_url`,
+  differs warns at startup). Copying the first member's whole `.env` gives each the same. Behind your own load balancer: `webapp-list/webapp[webroot]@trusted-proxies`,
+  `webapp-list/webapp[webroot]@client-ip-header`. With an edge node: what pairing writes on the first member, `edge_node_url`,
   `edge_node_key`, `edge_node_pin`, `edge_node_id` and `edge_node_pairing`.
 - **Each member, its own**: `cluster_base_url=https://<this member's private address>:8444`. Never copy `runtime/db`:
   each member keeps its own instance id and edge member key there.

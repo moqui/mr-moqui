@@ -380,7 +380,7 @@ pub fn check_client(id: &str, secret: &str) -> Result<String, Refused> {
 /// good only for those.
 const CLIENT_ATTRIBUTE: &str = "passClientId";
 const SITE_ATTRIBUTE: &str = "passSiteId";
-/// The label of the key a handle is signed with, derived from `session_cookie_key`, so a handle's MAC is never a
+/// The label of the key a handle is signed with, derived from `webapp-list/webapp[webroot]/session-config@cookie-key`, so a handle's MAC is never a
 /// session cookie's, as the MCP requestState's is not.
 const HANDLE_LABEL: &str = "moqui pass authority session handle v1";
 /// The prefix of a handle, which makes it no `moqui.session` cookie value even in form.
@@ -390,7 +390,7 @@ fn handle_mac(id: &str) -> Result<hmac::Hmac<sha2::Sha256>, Error> {
     use hmac::{KeyInit as _, Mac as _};
     let key = crate::user::session::derived_cookie_key(HANDLE_LABEL).map_err(|err| Error::new(err.message()))?;
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&key)
-        .map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+        .map_err(|_| Error::new("the session cookie key cannot be used as an HMAC key"))?;
     mac.update(id.as_bytes());
     Ok(mac)
 }

@@ -392,7 +392,10 @@ mod mail {
             ];
             let mut properties = vec![
                 ("node_role", "front_edge"),
-                ("webapp_https_listen_port", first_port_text.as_str()),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    first_port_text.as_str(),
+                ),
                 ("edge_link_url", first_url.as_str()),
                 ("edge_link_key", link_key.as_str()),
                 ("cluster_https_port", cluster_port.as_str()),
@@ -405,7 +408,10 @@ mod mail {
             let (second_port_text, second_url) = (second_port.to_string(), format!("https://localhost:{second_port}"));
             let mut properties = vec![
                 ("node_role", "front_edge"),
-                ("webapp_https_listen_port", second_port_text.as_str()),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    second_port_text.as_str(),
+                ),
                 ("edge_link_url", second_url.as_str()),
                 ("edge_link_key", link_key.as_str()),
             ];

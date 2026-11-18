@@ -519,7 +519,13 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
     let edge = crate::common::start_second_with(
         "edge-again-edge",
         "",
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port_text)],
+        &[
+            ("node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+        ],
         &[
             ("cert/default.crt", &certs.cert_pem),
             ("cert/default.key", &certs.key_pem),
@@ -631,7 +637,7 @@ const MEMBER_ENV: &str = "MOQUI_EDGE_POOL_MEMBER_CLUSTER";
 const MEMBER_TEST: &str = "edge_pool::pool_member_process";
 /// The generated secrets a second member of the cluster takes from the first.
 const SHARED_SECRETS: [&str; 4] = [
-    "session_cookie_key",
+    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
     "cluster_tls_cert",
     "cluster_tls_key",
     "moqui_conf__entity_facade__crypt_pass",
@@ -727,7 +733,13 @@ fn edge_for(
     let edge = crate::common::start_second_with(
         label,
         "",
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port_text)],
+        &[
+            ("node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+        ],
         &[
             ("cert/default.crt", &certs.cert_pem),
             ("cert/default.key", &certs.key_pem),

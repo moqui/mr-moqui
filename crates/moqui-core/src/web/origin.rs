@@ -255,12 +255,15 @@ mod tests {
         assert_eq!(request_site(false, false, None, None, None), None);
     }
 
+    /// The webroot webapp's `allow-origins` by its environment name, which a reader with no factory takes.
+    const ALLOW_ORIGINS: &str = "moqui_conf__webapp_list__webapp__WEBROOT__allow_origins";
+
     /// Stricter than Java, which compares the host only: the request's own origin is its scheme, host and port.
     #[test]
     fn an_origin_is_allowed_by_its_scheme_host_and_port() {
         let _lock = crate::user::session::cookie_property_lock();
         moqui_lib::env::set_property(
-            "webapp_allow_origins",
+            ALLOW_ORIGINS,
             "moqui.org, https://app.example:8443, http://plain.example",
         );
         let own = [site("http://site.test:8080")];
@@ -294,16 +297,16 @@ mod tests {
         assert!(allowed(Some("http://moqui.org:8080")));
         assert!(!allowed(Some("https://foo-moqui.org")));
         assert!(!allowed(Some("https://evil.test")));
-        moqui_lib::env::set_property("webapp_allow_origins", "ported.example:8443, [::2]");
+        moqui_lib::env::set_property(ALLOW_ORIGINS, "ported.example:8443, [::2]");
         assert!(allowed(Some("http://www.ported.example:8443")));
         assert!(!allowed(Some("https://ported.example")));
         assert!(allowed(Some("http://[::2]:3000")));
         // an opaque or non-web origin
         assert!(!allowed(Some("null")));
         assert!(!allowed(Some("file://site.test")));
-        moqui_lib::env::set_property("webapp_allow_origins", "*");
+        moqui_lib::env::set_property(ALLOW_ORIGINS, "*");
         assert!(allowed(Some("null")));
-        moqui_lib::env::clear_property("webapp_allow_origins");
+        moqui_lib::env::clear_property(ALLOW_ORIGINS);
     }
 
     /// SEC-WEB-10: `*` allows any origin but never with credentials; the dev conf names only this machine, on any port
@@ -312,7 +315,7 @@ mod tests {
     fn a_wildcard_origin_carries_no_credentials_and_the_dev_conf_allows_only_this_machine() {
         let _lock = crate::user::session::cookie_property_lock();
         let own = [site("http://site.test:8080")];
-        moqui_lib::env::set_property("webapp_allow_origins", "*");
+        moqui_lib::env::set_property(ALLOW_ORIGINS, "*");
         assert!(origin_allowed_by(None, Some("https://evil.test"), &own));
         assert!(!origin_credentialed_by(None, Some("https://evil.test"), &own));
         assert!(
@@ -327,12 +330,12 @@ mod tests {
         ))
         .expect("the dev conf");
         let value = conf
-            .split("name=\"webapp_allow_origins\" value=\"")
+            .split("allow-origins=\"")
             .nth(1)
             .and_then(|rest| rest.split('"').next())
-            .expect("the dev conf names webapp_allow_origins");
+            .expect("the dev conf sets the webroot webapp's allow-origins");
         assert!(!value.split(',').any(|entry| entry.trim() == "*"), "{value}");
-        moqui_lib::env::set_property("webapp_allow_origins", value);
+        moqui_lib::env::set_property(ALLOW_ORIGINS, value);
         let credentialed = |origin: &str| origin_credentialed_by(None, Some(origin), &own);
         assert!(credentialed("http://localhost:5173"));
         assert!(credentialed("https://localhost:8443"));
@@ -341,6 +344,6 @@ mod tests {
         assert!(!credentialed("http://www.localhost:5173"));
         assert!(!credentialed("http://evil.127.0.0.1:3000"));
         assert!(!origin_allowed_by(None, Some("https://evil.test"), &own));
-        moqui_lib::env::clear_property("webapp_allow_origins");
+        moqui_lib::env::clear_property(ALLOW_ORIGINS);
     }
 }

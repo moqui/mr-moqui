@@ -70,7 +70,7 @@ the node's router in this process (`moqui_host::in_process`), on worker threads 
   sidecar): the Dev AIDE (`/qapps/dev`) and the example component load from the bundle's `components/dev`, and the
   browser terminal offers the command line and shells, local to this computer. Off by default, when the conf says
   (production for a bundle). The default build carries the dev tools (`devtools`); a build without them has no item.
-- **PDF:** where the node finds no Chromium of its own (`moqui_chromium_path`, `runtime/chromium` or an installed one),
+- **PDF:** where the node finds no Chromium of its own (`screen-facade/pdf@chromium-path`, `runtime/chromium` or an installed one),
   it prints on the app's own CEF (`src/pdf.rs`): a hidden window with no capability, driven over the DevTools Protocol
   with the server's page sequence (`moqui_host::pdf::print_page`), its requests failed. The bundle carries Chromium's
   notices as `notices/chromium-credits.html`.
@@ -216,7 +216,7 @@ MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign i
   after it is first set: the earlier start leaves Chromium's `devtools.remote_debugging.allowed` off in the profile, and
   the app turns it back on only once Chromium has started. A bundled app never opens it.
 - **A server on the same runtime:** a node's mode refuses to start while a server answers on the runtime's own port
-  (`webapp_http_port`, default 8080). Two nodes would share its Postgres. The client mode has no runtime.
+  (`webapp-list/webapp[webroot]@http-port`, default 8080). Two nodes would share its Postgres. The client mode has no runtime.
 
 The runtime is, in order: `MOQUI_RUNTIME`; in a development run, this repository's `runtime`; the first one with a
 `components/base` directory of `runtime` in the working directory, `runtime` beside the executable (for an AppImage, the

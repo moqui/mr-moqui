@@ -385,7 +385,7 @@ fn is_expand_name(name: &str) -> bool {
 
 /// The environment variables a child process the server starts keeps from the server's own ([`limit_child_env`]): what
 /// finding a program, the user's home, the locale and the temporary directory need, and on Windows what any process
-/// needs to start. Secrets given to the server as environment variables (the database password, `session_cookie_key`,
+/// needs to start. Secrets given to the server as environment variables (the database password, `webapp-list/webapp[webroot]/session-config@cookie-key`,
 /// API keys) are not among them.
 pub const CHILD_ENV_NAMES: &[&str] = &[
     "PATH",

@@ -74,7 +74,7 @@ fn authorized_http_with_real_store_and_optional_collector() {
     let os = std::env::var("MONITOR_PERF_OPENSEARCH_URL").ok();
     let collector = std::env::var("MONITOR_PERF_COLLECTOR_URL").unwrap_or_default();
     let prefix = format!("monitor_perf_{}_", std::process::id());
-    let mut properties = vec![("scheduled_job_check_time", "0")];
+    let mut properties = vec![("moqui_conf__service_facade__scheduled_job_check_time", "0")];
     if let Some(url) = &os {
         properties.extend([
             ("search_backend", "opensearch"),

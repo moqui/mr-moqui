@@ -1,6 +1,6 @@
 // A02 CORS over HTTP, ported from Moqui Java's pytest proofs (framework/test/test_a02_headers.py; the catalog in
 // README.md): an unknown origin is refused, and the server's own origin is allowed with credentials. These need a
-// server that allows no foreign origin, the production conf (the default conf's empty webapp_allow_origins); the dev
+// server that allows no foreign origin, the production conf (the default conf's empty webapp-list/webapp[webroot]@allow-origins); the dev
 // conf allows localhost and 127.0.0.1 on any port (SEC-WEB-10), so the other-port proofs fail there, as the Python
 // suite's require_production_conf fails it.
 // A preflight answers 204 (Java 200). The origin is compared whole, scheme, host and port, where Java compares the host

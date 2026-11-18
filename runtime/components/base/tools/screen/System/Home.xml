@@ -104,10 +104,10 @@ along with this software (see the LICENSE.md file). If not, see
                 : status.Ready === true ? {text: L('Ready'), color: 'positive'} : {text: L('Not ready'), color: 'negative'}
             nowText = ec.l10n.format(ec.user.nowTimestamp, 'HH:mm:ss')
             requestDetails = read('request details', () => ec.web.getRequestDetails(), '')
-            const statusIps = String(System.getProperty('webapp_status_ips') || '').trim()
+            const statusIps = String(ec.factory.getConfValue('webapp-list/webapp[webroot]@status-ips') || '').trim()
             statusReadersText = statusIps
-                ? L('Both answer only requests from this machine and from these addresses (webapp_status_ips):') + ' ' + statusIps
-                : L('Both answer only requests from this machine; webapp_status_ips names other addresses that may read them.')
+                ? L('Both answer only requests from this machine and from these addresses (the status-ips of the webroot webapp):') + ' ' + statusIps
+                : L('Both answer only requests from this machine; the status-ips of the webroot webapp names other addresses that may read them.')
 
             // ---- needs attention ----
             const SEVERITIES = {critical: {text: L('Critical'), color: 'negative'}, warning: {text: L('Warning'), color: 'warning'},
@@ -176,11 +176,11 @@ along with this software (see the LICENSE.md file). If not, see
             const telemetry = integrations.find(entry => entry.name === 'Telemetry')
             // a process that reported no Telemetry entry (a test, a command) follows the setting
             const telemetryState = notBuilt.includes('Telemetry') ? 'notBuilt' : telemetry ? telemetry.state
-                : String(System.getProperty('telemetry_enabled') || '') === 'false' ? 'off' : 'on'
+                : String(ec.factory.getConfValue('telemetry@enabled') || '') === 'false' ? 'off' : 'on'
             telemetryOn = telemetryState === 'on'
             telemetryOffText = telemetryState === 'notBuilt' ? L('Telemetry is not in this build, so there is no history.')
                 : L('Telemetry is off, so there is no history.') + ' ' + (telemetry && telemetry.detail ? telemetry.detail
-                    : L('The setting is telemetry_enabled.'))
+                    : L('The setting is telemetry enabled.'))
 
             // the counters' sparklines: each gauge's values over the period, when there is telemetry to read
             counterSeries = telemetryOn ? read('counter series', () => ec.service.sync().name('moqui.tools.SystemHomeServices.get#CounterSeries')

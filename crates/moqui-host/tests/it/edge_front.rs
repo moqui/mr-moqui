@@ -162,7 +162,10 @@ fn host(name: &str, mode: &str) -> EdgeHostInfo {
 fn front_properties(port: &str, key: &str) -> Vec<(&'static str, String)> {
     vec![
         ("node_role", "front".to_string()),
-        ("webapp_https_listen_port", port.to_string()),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+            port.to_string(),
+        ),
         ("edge_link_key", key.to_string()),
     ]
 }
@@ -308,7 +311,10 @@ fn an_edge_node_dials_its_front_and_forwards_its_local_nodes_names() {
         "edge-front-dial-local",
         None,
         EDGE_CONF,
-        &[("webapp_https_listen_port", &local_port)],
+        &[(
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+            &local_port,
+        )],
         &files(&[("cert/default.crt", &local_cert.0), ("cert/default.key", &local_cert.1)]),
     );
     let front_cert = issue(&authority, &["localhost", ERP]);
@@ -333,7 +339,10 @@ fn an_edge_node_dials_its_front_and_forwards_its_local_nodes_names() {
         EDGE_CONF,
         &[
             ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
             ("edge_link_key", &new_key().unwrap()),
             (moqui_core::edge::FRONT_URL, &front_url),
             (moqui_core::edge::FRONT_KEY, &edge_pairing.key),
@@ -426,7 +435,10 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
         EDGE_CONF,
         &[
             ("node_role", "edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
             ("edge_link_key", &new_key().unwrap()),
         ],
         &files(&[("cert/default.crt", &edge_cert.0), ("cert/default.key", &edge_cert.1)]),
@@ -443,7 +455,7 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
         &[
             ("node_role", ""),
             // the edge node's port is still a property of this process
-            ("webapp_https_listen_port", "off"),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "off"),
             (moqui_core::edge::NODE_URL, &edge_url),
             (moqui_core::edge::NODE_KEY, &to_edge.key),
             (moqui_core::edge::NODE_PIN, &to_edge.pin),

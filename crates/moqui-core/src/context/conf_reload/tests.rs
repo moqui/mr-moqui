@@ -379,6 +379,12 @@ fn every_top_level_element_of_the_default_conf_has_a_unit() {
 fn a_property_reference_is_found_whole() {
     assert!(super::diff::refers("${webapp_http_port}", "webapp_http_port"));
     assert!(super::diff::refers("${webapp_http_port ?: '8080'}", "webapp_http_port"));
-    assert!(!super::diff::refers("${webapp_http_port_x}", "webapp_http_port"));
-    assert!(!super::diff::refers("webapp_http_port", "webapp_http_port"));
+    assert!(!super::diff::refers(
+        "${webapp_http_port_x}",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_port"
+    ));
+    assert!(!super::diff::refers(
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_port",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_port"
+    ));
 }

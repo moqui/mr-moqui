@@ -103,10 +103,16 @@ feature("a check of an edited conf file previews each change with its class and 
         const file = editableFile(view)
         const read = call("get#ConfFile", {fileIndex: file.index})
         const text = String(read.out.text || "")
-        const added =
-            '    <webapp-list><webapp name="webroot" http-port="18080"><session-config timeout="61"/></webapp></webapp-list>\n'
-        const edited = text.replace("</moqui-conf>", added + "</moqui-conf>")
-        const addedLine = edited.slice(0, edited.indexOf("<webapp-list>")).split("\n").length
+        // the port and a session-config on the file's webroot webapp, or the whole element where the file has none
+        // (the dev conf has one, for its allow-origins)
+        const own = /<webapp name="webroot"([^>]*?)(\/?)>/.exec(text)
+        const edited = own
+            ? text.replace(own[0], '<webapp name="webroot"' + own[1] + ' http-port="18080"><session-config timeout="61"/>'
+                + (own[2] ? '</webapp>' : ''))
+            : text.replace("</moqui-conf>",
+                '    <webapp-list><webapp name="webroot" http-port="18080"><session-config timeout="61"/></webapp></webapp-list>\n'
+                + "</moqui-conf>")
+        const addedLine = edited.slice(0, edited.indexOf('<webapp name="webroot"')).split("\n").length
         const {out, errors} = call("check#ConfFile", {fileIndex: file.index, text: edited})
         const changes = (out.report?.changes || []).map(
             change => `${change.unit}@${change.attribute} ${change.class} ${change.outcome}`
@@ -114,7 +120,6 @@ feature("a check of an edited conf file previews each change with its class and 
         const line = (out.lines || []).find(info => info.line == addedLine && info.path == "webapp-list/webapp[webroot]")
         return {
             readErrors: read.errors,
-            hadWebappList: text.includes("<webapp-list"),
             errors,
             savable: out.savable,
             changes,
@@ -124,8 +129,6 @@ feature("a check of an edited conf file previews each change with its class and 
     },
     then(found) {
         found.readErrors == ""
-        // the edit adds the element only to a file that has none
-        found.hadWebappList == false
         found.errors == ""
         found.savable == true
         found.changes.includes("webapp-list/webapp[webroot]@http-port restart pending-restart")

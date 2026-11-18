@@ -18,7 +18,7 @@ instances). `./moq archive` zips this directory, without `log/`, `tmp/`, `save/`
 | `db/` | no | Embedded database cluster and related files |
 | `log/` | no | Log files |
 | `opensearch/` | no | Managed OpenSearch install and data |
-| `chromium/` | no | Chromium from `./moq chromium-download`, for PDF when `moqui_chromium_path` is not set |
+| `chromium/` | no | Chromium from `./moq chromium-download`, for PDF when `screen-facade/pdf@chromium-path` is not set |
 | `tmp/` | no | Scratch files |
 | `txlog/` | no | Transaction logs |
 | `.env` | no | Generated secrets and local overrides |

@@ -33,7 +33,7 @@ with the front as well, for its names, XMPP domain and ports.
 
 ## `.env`
 
-- **Front node**: `webapp_http_host` (`front.example.com`), `edge_public_addresses` (its addresses), and the secrets
+- **Front node**: `webapp-list/webapp[webroot]@http-host` (`front.example.com`), `edge_public_addresses` (its addresses), and the secrets
   of its first start (`edge_link_key` among them). A certificate in `cert/` for its own name and the sites' hosts, or
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
@@ -55,7 +55,7 @@ with the front as well, for its names, XMPP domain and ports.
 - **At the front's addresses**: `front.example.com`; the sites (`forum.example.org`, `shop.example.com`); the local
   cluster's own names (`erp.example.com`); each edge member's link name (`edge1.example.com`, `edge2.example.com`),
   which the front passes through to that member alone; the MX of each mail domain.
-- **At each edge member's own address**: the edge cluster's own name (`edge.example.com`, its `webapp_http_host`, an
+- **At each edge member's own address**: the edge cluster's own name (`edge.example.com`, its `webapp-list/webapp[webroot]@http-host`, an
   address record per member), its `turn_public_host`, its `smtp_hostname` (with reverse DNS for the address), and the
   SIP SRV records (`_sip._udp`, `_sip._tcp`, `_sips._tcp`) naming every member; with `front_edge` members the XMPP SRV
   records too (with `edge` members they name the front, whose ports take each local node's domain).

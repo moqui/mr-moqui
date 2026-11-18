@@ -68,8 +68,11 @@ fn tx_cache_speed() {
     let batches = env_usize("TX_CACHE_SPEED_BATCHES", 5);
     let only = std::env::var("TX_CACHE_SPEED_ROW").unwrap_or_default();
     // No scheduler passes: the seed's cron jobs would run between the rows.
-    moqui_lib::env::set_property("scheduled_job_check_time", "0");
-    moqui_lib::env::set_property("session_cookie_key", "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=");
+    moqui_lib::env::set_property("moqui_conf__service_facade__scheduled_job_check_time", "0");
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+    );
 
     let runtime = speed::temp_dir("txc-speed-rt");
     let cluster_dir = speed::temp_dir("txc-speed-pg");

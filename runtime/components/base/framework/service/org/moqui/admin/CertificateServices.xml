@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
         up, and only for such a name (moqui.server.AcmeName). A refusal adds an error and answers reasonCode. -->
     <service verb="get" noun="Certificates" type="rust" location="moqui_host::acme::services::get_certificates"
             allow-remote="false" transaction="ignore">
-        <description>The names this node answers: its own host (webapp_http_host), each public-site host, the SMTP host
+        <description>The names this node answers: its own host (webapp-list/webapp[webroot]@http-host), each public-site host, the SMTP host
             (smtp_hostname), the XMPP domain, each terminate host of a pairing on an edge node, each name set up with
             ACME and each name with files in runtime/cert. For each: hostName, reasons (what makes it one of the names),
             found, and certificate when the HTTPS listener would serve one for it: pair (the files' name: the name, its

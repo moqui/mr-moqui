@@ -183,7 +183,7 @@ fn run_here(flags: &TuiFlags) -> Result<(), Error> {
 
     let (runtime, framework) = crate::runtime_framework_dirs();
     let cluster = runtime.join("db/embedded");
-    let port = crate::http::http_port(&moqui_lib::env::get_prop_or_env("webapp_http_port")).unwrap_or(8080);
+    let port = crate::http::http_port(&moqui_core::context::conf_env::webroot_setting("http-port")).unwrap_or(8080);
     if !flags.serve && served_on(port) {
         return Err(Error::new(format!(
             "moqui tui: a server already answers on port {port}, likely on this runtime. Stop it first, or reach it \

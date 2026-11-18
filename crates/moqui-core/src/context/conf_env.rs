@@ -212,6 +212,70 @@ pub fn compare_key(path: &AttrPath) -> String {
     out
 }
 
+/// The `webroot` webapp's path, for a selector of one of its settings (`{WEBROOT}@http-port`).
+pub const WEBROOT: &str = "webapp-list/webapp[webroot]";
+
+/// A conf attribute by its selector (`ssh-server@port`), trimmed, for code with no factory at hand: a process property
+/// (`-D`) or OS environment variable of the attribute's canonical environment name, which an override sets it to
+/// over every conf file; else the current execution context's factory's running conf; else that of the server factory
+/// this process booted last; else the loaded `runtime/.env`'s value of the name (a command before any boot). Empty
+/// when not set. A secret is answered too: this is for the server's own code, never a script's
+/// (`ec.factory.getConfValue`).
+#[must_use]
+pub fn setting(selector: &str) -> String {
+    let name = AttrPath::parse(selector).ok().and_then(|path| path.env_name());
+    if let Some(name) = &name {
+        let given = env::get_property(name).or_else(|| std::env::var(name).ok().filter(|value| !value.is_empty()));
+        if let Some(value) = given {
+            return value.trim().to_string();
+        }
+    }
+    let of = |factory: &super::ExecutionContextFactory| {
+        factory
+            .conf_value(selector)
+            .map(|found| found.value.trim().to_string())
+            .unwrap_or_default()
+    };
+    if let Some(value) = super::ExecutionContext::with_current(|ec| of(ec.factory())) {
+        return value;
+    }
+    if let Some(factory) = super::ExecutionContextFactory::running() {
+        return of(&factory);
+    }
+    name.map(|name| env::get_prop_or_env(&name).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The attribute of the merged `conf` at `selector`, trimmed; empty when it has none: for code that reads the conf
+/// before the factory is built (a `before_init` hook such as the port check).
+#[must_use]
+pub fn conf_attribute(conf: &MNode, selector: &str) -> String {
+    AttrPath::parse(selector)
+        .ok()
+        .and_then(|path| path::resolve(conf, &path, &conf_schema::keying, false).ok())
+        .and_then(|target| target.node.attribute(&target.attribute))
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// A name of a table that lists settings: a conf selector (it has an `@`) read by [`setting`], else a property not yet
+/// moved to the conf (plans/Conf-Paths.md §7), read as before. For the name tables (the edge's own ports, the protocol
+/// facts) while the settings move; a selector's own text is its name in their messages.
+#[must_use]
+pub fn setting_or_property(name: &str) -> String {
+    if name.contains('@') {
+        setting(name)
+    } else {
+        env::get_prop_or_env(name).trim().to_string()
+    }
+}
+
+/// [`setting`] of an attribute of the `webroot` webapp (`http-host`).
+#[must_use]
+pub fn webroot_setting(attribute: &str) -> String {
+    setting(&format!("{WEBROOT}@{attribute}"))
+}
+
 /// An attribute of the running conf, as [`attribute_values`] keeps it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfValue {
