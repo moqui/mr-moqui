@@ -38,6 +38,9 @@
 //!   unless a newer push of the room is unread there. A device that moves to another user drops what waits for it
 //!   ([`forget_device_pushes`]). `ack#Push` (the app or the service worker showed a push) keeps the device's acked
 //!   count.
+//! - `queue#ReminderPush` (plans/Comms-Messaging.md phase 15, §7.2 rule 9): a reminder the user set, one `PokReminder`
+//!   row a device ([`queue_reminder`]), sent as a `notification` push: not dropped by a read marker nor closed by a
+//!   room's clear, with a collapse key of its own; held during do not disturb as messages are.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -71,12 +74,13 @@ pub(in crate::service) fn register(
     rust_service!(map, queue_read_clear)?;
     rust_service!(map, ack_push)?;
     rust_service!(map, send_test_push)?;
+    rust_service!(map, queue_reminder_push)?;
     Ok(())
 }
 
 /// The notification topics this worker pushes: their notifications are stored and on the socket, and
 /// [`crate::notify::NotificationMessage::send`] pushes none of them, so a mention is not pushed twice.
-pub const PUSHED_TOPICS: [&str; 1] = ["ChatMention"];
+pub const PUSHED_TOPICS: [&str; 2] = ["ChatMention", "ChatReminder"];
 
 const JOB: &str = "moqui.chat.ChatPushJob";
 const OUTBOX: &str = "moqui.chat.PushOutbox";
@@ -95,6 +99,7 @@ const FAILED: &str = "PosFailed";
 const DROPPED: &str = "PosDropped";
 const KIND_MESSAGE: &str = "PokMessage";
 const KIND_CLEAR: &str = "PokClear";
+const KIND_REMINDER: &str = "PokReminder";
 
 /// How long a worker holds a job or a push it works.
 pub const LEASE_MILLIS: i64 = 60_000;
@@ -102,6 +107,8 @@ pub const LEASE_MILLIS: i64 = 60_000;
 pub const MESSAGE_TTL_SECONDS: i64 = 28 * 86_400;
 /// A clear's time to live: a day.
 pub const CLEAR_TTL_SECONDS: i64 = 86_400;
+/// A reminder's time to live: a day.
+pub const REMINDER_TTL_SECONDS: i64 = 86_400;
 /// The wait after the first send not taken; it doubles after each, to [`MAX_WAIT_MILLIS`].
 pub const FIRST_WAIT_MILLIS: i64 = 10_000;
 pub const MAX_WAIT_MILLIS: i64 = 3_600_000;
@@ -1188,6 +1195,7 @@ fn deliver_one(
     let user = text_of(row, "userId").unwrap_or_default();
     let room_id = text_of(row, "chatRoomId").unwrap_or_default();
     let clear = text_of(row, "kindEnumId").as_deref() == Some(KIND_CLEAR);
+    let reminder = text_of(row, "kindEnumId").as_deref() == Some(KIND_REMINDER);
     let fail = |reason: &str, error: Option<&str>| -> Result<Step, LibError> {
         finish(facade, &id, attempts, FAILED, Some(reason), error, now)?;
         device_result(facade, &subscription, DeviceResult::Failed, now);
@@ -1199,8 +1207,8 @@ fn deliver_one(
             Some("Its time to live ended before its push service took it"),
         );
     };
-    // read since it was queued (rule 3)
-    if !clear && read_past(facade, &user, &room_id, count_of(row, "eventSeq"))? {
+    // read since it was queued (rule 3); a reminder is of a message usually read already (rule 9)
+    if !clear && !reminder && read_past(facade, &user, &room_id, count_of(row, "eventSeq"))? {
         finish(facade, &id, attempts, DROPPED, Some("read"), None, now)?;
         return Ok(Step::Dropped);
     }
@@ -1262,6 +1270,12 @@ fn deliver_one(
     };
     let ttl_seconds = ((expires - now) / 1000).max(1);
     let endpoint = text_of(&device, "endpoint").unwrap_or_default();
+    // a reminder's collapse key is its own: it replaces no push of the room, and no later one of the room replaces it
+    let collapse_room = if reminder {
+        reminder_collapse_room(&room_id, count_of(row, "eventSeq"))
+    } else {
+        room_id.clone()
+    };
     let sent = match (provider, sealed) {
         (Provider::Fcm, sealed) => transport.fcm(
             &subscription,
@@ -1271,7 +1285,7 @@ fn deliver_one(
                 clear,
                 sealed.as_deref(),
                 ttl_seconds,
-                &room_id,
+                &collapse_room,
             ),
         ),
         (_, Some(body)) => transport.web(
@@ -1282,7 +1296,7 @@ fn deliver_one(
                 body,
                 ttl_seconds,
                 urgency: if clear { "normal" } else { "high" },
-                topic: &collapse_key(&subscription, &room_id, clear),
+                topic: &collapse_key(&subscription, &collapse_room, clear),
             },
         ),
         // a browser or distributor always has its keys; one without cannot be pushed to
@@ -1885,6 +1899,156 @@ fn send_test_push(
         wake_after_commit(facade);
     }
     out(ids)
+}
+
+// ---- reminders (plans/Comms-Messaging.md phase 15) ----
+
+/// What the collapse key of a reminder of message `seq` of `room_id` is made over, in place of the room.
+pub fn reminder_collapse_room(room_id: &str, seq: i64) -> String {
+    format!("{room_id}\0reminder\0{seq}")
+}
+
+/// A reminder's push to one user: the message it is about and the texts the caller made in the user's language.
+pub(crate) struct Reminder<'a> {
+    pub user: &'a str,
+    pub reminder_id: &'a str,
+    pub room_id: &'a str,
+    pub event_seq: i64,
+    /// The notification's title ("Reminder: Ann in Team").
+    pub title: &'a str,
+    /// Its body when the message's text is not shown (an encrypted room, previews off, a message of no text).
+    pub hidden_body: &'a str,
+}
+
+/// Queue `reminder` to each device of its user (rule 9): a `PokReminder` row, held while the user is on do not
+/// disturb, living a day, its payload a `notification` push that every client shows (`{kind: notification, topic:
+/// ChatReminder, title, body, link, tag}`), the body the message's snippet only in a plain room for a user whose
+/// previews are on (rule 5). Out: the rows written. Nothing for a room or message that is gone.
+pub(crate) fn queue_reminder(facade: &EntityFacade, reminder: &Reminder<'_>, now: i64) -> Result<usize, LibError> {
+    let room = facade
+        .find(ROOM)?
+        .eq("chatRoomId", Value::string(reminder.room_id))
+        .disable_authz()
+        .one()?;
+    let event = facade
+        .find(EVENT)?
+        .eq("chatRoomId", Value::string(reminder.room_id))
+        .eq("eventSeq", Value::I64(reminder.event_seq))
+        .disable_authz()
+        .one()?;
+    let (Some(room), Some(event)) = (room, event.filter(|event| text_of(event, "redactedDate").is_none())) else {
+        return Ok(0);
+    };
+    let users = [reminder.user.to_string()];
+    let devices = facade
+        .find(DEVICE)?
+        .eq("userId", Value::string(reminder.user))
+        .condition(Condition::is_null("disabledDate"))
+        .disable_authz()
+        .list()?
+        .values()
+        .to_vec();
+    if devices.is_empty() {
+        return Ok(0);
+    }
+    let content = Content::of(facade, &room, &event)?;
+    let preview = !preview_off(facade, &users)?.contains(reminder.user);
+    let held = on_dnd(facade, &users, now)?.contains(reminder.user);
+    let body = content
+        .snippet
+        .clone()
+        .filter(|_| preview && !content.encrypted)
+        .unwrap_or_else(|| reminder.hidden_body.to_string());
+    let payload = json!({
+        "v": 1,
+        "kind": "notification",
+        "topic": "ChatReminder",
+        "title": cut_chars(reminder.title, MAX_NAME * 2),
+        "body": body,
+        "link": format!("{}&eventSeq={}", content.link, content.event_seq),
+        "tag": format!("chat-reminder-{}", reminder.reminder_id),
+        "chatRoomId": content.room_id,
+        "eventSeq": content.event_seq,
+        "encrypted": content.encrypted,
+        "sentDate": now,
+    });
+    let factory = current_factory();
+    let transport = factory.as_deref().map(transport);
+    let mut queued = 0;
+    for device in &devices {
+        if transport
+            .as_ref()
+            .is_some_and(|transport| !transport.available(Provider::of(device)))
+        {
+            continue;
+        }
+        let subscription = text_of(device, "subscriptionId").unwrap_or_default();
+        let mut row = facade.make_value(OUTBOX)?;
+        row.set_sequenced_id_primary(facade)?;
+        row.set("subscriptionId", Value::string(&subscription));
+        row.set("userId", Value::string(reminder.user));
+        row.set("chatRoomId", Value::string(reminder.room_id));
+        row.set("eventSeq", Value::I64(reminder.event_seq));
+        row.set("kindEnumId", Value::string(KIND_REMINDER));
+        row.set("statusEnumId", Value::string(if held { HELD } else { PENDING }));
+        row.set("messageCount", Value::I64(1));
+        row.set("mention", Value::string("N"));
+        row.set("payloadJson", Value::string(payload.to_string()));
+        row.set("attemptCount", Value::I64(0));
+        row.set("nextAttemptDate", stamp(now));
+        row.set("createdDate", stamp(now));
+        row.set("expireDate", stamp(now + REMINDER_TTL_SECONDS * 1000));
+        row.create(facade)?;
+        queued += 1;
+    }
+    Ok(queued)
+}
+
+/// `queue#ReminderPush`: a reminder's push to each device of `userId`, in the caller's transaction, the worker woken
+/// after the commit. In: `userId`, `chatMessageReminderId`, `chatRoomId`, `eventSeq`, `title`, `hiddenBody`, and
+/// `nowMillis` (the tests' clock). Out: `queuedCount`.
+fn queue_reminder_push(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let (Some(user), Some(reminder_id), Some(room_id)) = (
+        param(parameters, "userId"),
+        param(parameters, "chatMessageReminderId"),
+        param(parameters, "chatRoomId"),
+    ) else {
+        return Err(LibError::new(
+            "queue#ReminderPush needs userId, chatMessageReminderId and chatRoomId",
+        ));
+    };
+    let event_seq = param(parameters, "eventSeq")
+        .and_then(|text| {
+            text.split('.')
+                .next()
+                .and_then(|whole| whole.trim().parse::<i64>().ok())
+        })
+        .ok_or_else(|| LibError::new("queue#ReminderPush needs eventSeq"))?;
+    let now = param(parameters, "nowMillis")
+        .and_then(|text| text.parse::<i64>().ok())
+        .unwrap_or_else(now_millis);
+    let title = param(parameters, "title").unwrap_or_else(|| "Reminder".to_string());
+    let hidden_body = param(parameters, "hiddenBody").unwrap_or_default();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let reminder = Reminder {
+        user: &user,
+        reminder_id: &reminder_id,
+        room_id: &room_id,
+        event_seq,
+        title: &title,
+        hidden_body: &hidden_body,
+    };
+    let queued = queue_reminder(facade, &reminder, now)?;
+    if queued > 0 {
+        wake_after_commit(facade);
+    }
+    Ok(BTreeMap::from([(
+        "queuedCount".to_string(),
+        Value::I64(i64::try_from(queued).unwrap_or(i64::MAX)),
+    )]))
 }
 
 #[cfg(all(test, feature = "web-push"))]

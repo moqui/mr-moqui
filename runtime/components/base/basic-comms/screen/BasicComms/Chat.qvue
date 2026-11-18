@@ -133,6 +133,22 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- Activity and Threads (Comms-Messaging §3): my mentions, replies and reactions to my messages across rooms, and
             the threads I am in, newest first, more as the list scrolls; each opens its message -->
         <div v-if="feedShown" class="col scroll m-chat-feed" style="min-height:0" :data-feed="filter" @scroll="onFeedScroll">
+            <!-- the reminders that wait (Comms-Messaging phase 15): each opens its message; the × cancels it -->
+            <q-list v-if="reminderRows().length" dense class="m-chat-reminders">
+                <q-item-label header class="q-py-xs q-px-sm text-caption text-weight-medium">{{t('Reminders')}}</q-item-label>
+                <q-item v-for="row in reminderRows()" :key="row.chatMessageReminderId" clickable class="q-py-xs q-px-sm m-chat-reminder-row" :data-reminder="row.chatMessageReminderId"
+                        @click="openReminder(row)">
+                    <q-item-section avatar style="min-width:42px"><q-avatar size="32px" rounded class="m-tonal text-primary" icon="sym_o_alarm"></q-avatar></q-item-section>
+                    <q-item-section style="min-width:0">
+                        <q-item-label class="row no-wrap items-center"><span class="ellipsis">{{row.senderName || t('Someone')}}</span><q-space></q-space>
+                            <span class="text-caption m-muted text-no-wrap q-ml-xs">{{reminderWhen(row)}}</span></q-item-label>
+                        <q-item-label caption class="ellipsis m-muted">{{reminderRoom(row)}}<template v-if="reminderSnippet(row)"> · {{reminderSnippet(row)}}</template></q-item-label>
+                    </q-item-section>
+                    <q-item-section side><q-btn flat round dense size="sm" icon="sym_o_close" class="m-chat-reminder-cancel" :aria-label="t('Cancel the reminder')"
+                            @click.stop="cancelReminder(row)"><q-tooltip>{{t('Cancel the reminder')}}</q-tooltip></q-btn></q-item-section>
+                </q-item>
+                <q-separator></q-separator>
+            </q-list>
             <q-list dense>
                 <q-item v-for="item in feedRows" :key="item.key" clickable class="q-py-xs q-px-sm m-chat-feed-row" :data-kind="item.kind" :data-room="item.chatRoomId"
                         @click="openFeedItem(item)">
@@ -628,7 +644,8 @@ const messageTemplate = `
                 <q-btn flat dense no-caps size="sm" :label="room.t('Discard')" @click="room.discardChange(change)"></q-btn>
             </template>
         </div>
-        <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span></div>
+        <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span><q-icon v-if="room.reminderOf(item)"
+                name="sym_o_alarm" size="12px" class="q-ml-xs m-chat-reminder"><q-tooltip>{{room.reminderText(item)}}</q-tooltip></q-icon></div>
         <div v-if="item.readers && item.readers.length && (item.mine || !room.useBubbles)" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
@@ -844,6 +861,13 @@ const editTemplate = `
 // ---- the composer of the room or of a thread ----
 const composerTemplate = `
 <div class="m-chat-composer" @keydown.capture="onKeydown" @paste="onPaste">
+    <!-- the room's scheduled messages (Comms-Messaging phase 15): a line that opens their list -->
+    <div v-if="!threadRoot && room.scheduledLineText" class="row items-center no-wrap q-pl-sm q-mb-xs text-caption cursor-pointer m-chat-scheduled-bar"
+            role="button" tabindex="0" @click="room.openScheduled()" @keydown.enter="room.openScheduled()">
+        <q-icon name="sym_o_schedule_send" size="16px" class="q-mr-xs text-primary"></q-icon>
+        <span class="ellipsis">{{room.scheduledLineText}}</span>
+        <span v-if="room.scheduledLine.failed" class="text-negative q-ml-sm text-no-wrap">{{room.scheduledFailedText}}</span>
+    </div>
     <div v-if="!threadRoot && room.replyTo" class="row items-center no-wrap q-pl-sm q-mb-xs text-caption rounded-borders">
         <div class="self-stretch bg-primary" style="width:3px;border-radius:2px"></div>
         <q-icon name="sym_o_reply" size="16px" class="q-mx-xs text-primary"></q-icon>
@@ -895,8 +919,20 @@ const composerTemplate = `
         </div>
         <q-btn v-else-if="showVoice" dense unelevated round color="primary" icon="sym_o_mic" class="m-chat-voice" :aria-label="room.t('Record a voice note')" @click="startVoice">
             <q-tooltip>{{room.t('Record a voice note')}}</q-tooltip></q-btn>
-        <q-btn v-else dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.useBubbles ? undefined : room.t('Send')" :aria-label="room.t('Send')"
-                :disable="!canSend" :loading="sending" @click="send"></q-btn>
+        <template v-else>
+        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.useBubbles ? undefined : room.t('Send')" :aria-label="room.t('Send')"
+                :disable="!canSend" :loading="sending" @click="send">
+            <!-- Send later (Comms-Messaging phase 15): a long press on a phone, a right click on a desktop -->
+            <q-menu context-menu class="m-chat-send-menu" @show="room.buzz()"><q-list style="min-width:220px"><q-item clickable v-close-popup :disable="!!laterOff" class="m-chat-send-later" @click="sendLater">
+                <q-item-section avatar><q-icon name="sym_o_schedule_send"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{room.t('Send later…')}}</q-item-label><q-item-label v-if="laterOff" caption>{{laterOff}}</q-item-label></q-item-section></q-item></q-list></q-menu></q-btn>
+        <q-btn v-if="!room.useBubbles" dense unelevated color="primary" icon="sym_o_expand_more" class="m-chat-send-more" :aria-label="room.t('More ways to send')"
+                style="min-width:22px;padding:0 1px;margin-left:1px" :disable="sending">
+            <q-tooltip>{{room.t('More ways to send')}}</q-tooltip>
+            <q-menu anchor="top right" self="bottom right"><q-list style="min-width:220px"><q-item clickable v-close-popup :disable="!!laterOff" class="m-chat-send-later" @click="sendLater">
+                <q-item-section avatar><q-icon name="sym_o_schedule_send"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{room.t('Send later…')}}</q-item-label><q-item-label v-if="laterOff" caption>{{laterOff}}</q-item-label></q-item-section></q-item></q-list></q-menu></q-btn>
+        </template>
     </div>
     <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file>
         <input ref="camera" type="file" accept="image/*" capture="environment" :name="'chatCamera' + uid" @change="onNative">
@@ -935,6 +971,15 @@ const chatComposer = {
         },
         hint() {
             return this.room.prefs.enterSends === false ? t('Ctrl+Enter to send') : t('Enter to send, Shift+Enter for a new line');
+        },
+        // why Send later cannot be used now (it shows disabled with this), or null
+        laterOff() {
+            if (this.room.offline) return t('Send later needs a connection');
+            if (this.uploading) return t('Wait for the files to finish uploading');
+            if (!this.canSend) return t('Write a message first');
+            if (this.room.sealed && this.files.length) return t('In an encrypted room a message with files is sent now');
+            if (this.room.sealed && !(moqui.crypto && moqui.crypto.thisDeviceId && moqui.crypto.thisDeviceId())) return t('This browser has no encryption device yet');
+            return null;
         }
     },
     watch: {
@@ -1004,6 +1049,12 @@ const chatComposer = {
                 this.body = body;
                 this.files = files;
             });
+        },
+        // Send later (Comms-Messaging phase 15): the room asks when and schedules it; the composer is cleared once it is
+        sendLater() {
+            if (this.laterOff || this.voice || this.voiceStarting) return;
+            const ids = this.files.filter((file) => file.chatAttachmentId).map((file) => file.chatAttachmentId);
+            this.room.openSendLater({ body: isEmptyHtml(this.body) ? '' : this.body, attachmentIds: ids, threadRoot: this.threadRoot || null }, () => this.clear());
         },
         clear() {
             this.body = '';
@@ -1968,7 +2019,110 @@ const roomTemplate = `
             </q-card-section>
         </q-card>
     </q-dialog>
+    <!-- Send later and Remind me (Comms-Messaging phase 15) -->
+    <chat-when v-model="whenBox.open" :kind="whenBox.kind" :title="whenBox.title" :note="whenBox.note" :current="whenBox.current" @pick="whenPicked" @clear="whenCleared"></chat-when>
+    <chat-scheduled v-model="scheduledBox.open" :room="self"></chat-scheduled>
 </div>`;
+
+// ---- Send later and Remind me (Comms-Messaging phase 15): when, and the room's scheduled messages ----
+const WHEN_LABELS = { hour: 'In 1 hour', tomorrowMorning: 'Tomorrow morning', tomorrowAfternoon: 'Tomorrow afternoon', monday: 'Monday morning',
+    minutes20: 'In 20 minutes', tomorrow: 'Tomorrow' };
+const whenTemplate = `
+<m-dialog :model-value="modelValue" :title="title" width="400" @update:model-value="(open) => $emit('update:modelValue', open)">
+    <div v-if="note" class="text-caption m-muted q-mb-sm m-chat-when-note">{{note}}</div>
+    <q-list dense class="m-chat-when">
+        <q-item v-for="choice in choices" :key="choice.key" clickable :data-when="choice.key" @click="$emit('pick', choice.at)">
+            <q-item-section>{{choice.label}}</q-item-section>
+            <q-item-section side class="text-caption">{{choice.text}}</q-item-section>
+        </q-item>
+    </q-list>
+    <div class="row items-center no-wrap q-gutter-x-sm q-mt-sm">
+        <q-input v-model="custom" dense outlined stack-label type="datetime-local" class="col" name="chatWhenCustom" :label="t('Pick a date and time')"></q-input>
+        <q-btn dense unelevated no-caps color="primary" class="m-chat-when-set" :label="t('Set')" :disable="customAt == null" @click="$emit('pick', customAt)"></q-btn>
+    </div>
+    <div v-if="custom && customAt == null" class="text-caption text-negative q-mt-xs">{{t('Pick a time at least a minute from now and within a year')}}</div>
+    <div v-if="current" class="row q-mt-md"><q-btn flat dense no-caps color="negative" class="m-chat-when-clear" :label="t('Cancel the reminder')" @click="$emit('clear')"></q-btn></div>
+</m-dialog>`;
+const chatWhen = {
+    name: 'ChatWhen',
+    props: { modelValue: Boolean, kind: { type: String, default: 'send' }, title: String, note: String, current: Object },
+    emits: ['update:modelValue', 'pick', 'clear'],
+    data() { return { custom: '', now: Date.now() }; },
+    computed: {
+        choices() {
+            return moqui.chat.whenChoices(this.kind, this.now).map((choice) => Object.assign({ label: t(WHEN_LABELS[choice.key] || choice.key),
+                text: moqui.chat.whenText(choice.at, this.now) }, choice));
+        },
+        // the date and time picked, in this device's zone, when it may be used
+        customAt() {
+            // read in the user's zone, as the choices and their labels are
+            const at = this.custom ? moqui.chat.wallTime(this.custom) : NaN;
+            return moqui.chat.timeAllowed(at, Date.now()) ? at : null;
+        }
+    },
+    watch: { modelValue(open) { if (open) { this.now = Date.now(); this.custom = ''; } } },
+    methods: { t },
+    template: whenTemplate
+};
+const scheduledTemplate = `
+<m-dialog :model-value="modelValue" :title="t('Scheduled messages')" width="560" @update:model-value="(open) => $emit('update:modelValue', open)">
+    <q-list separator class="m-chat-scheduled">
+        <q-item v-for="row in room.scheduledHere" :key="row.chatScheduledMessageId" class="q-px-none" :data-scheduled="row.chatScheduledMessageId" :data-status="row.status">
+            <q-item-section>
+                <q-item-label class="row items-center no-wrap text-caption" :class="room.scheduledFailed(row) ? 'text-negative' : 'm-muted'">
+                    <q-icon :name="room.scheduledIcon(row)" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.scheduledWhen(row)}}</span></q-item-label>
+                <template v-if="editing === row.chatScheduledMessageId">
+                    <m-rich-text v-model="editBody" :name="'chatScheduledEdit' + row.chatScheduledMessageId" light rows="2" :label="t('Edit message')"
+                            :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}"></m-rich-text>
+                    <div class="row q-gutter-x-sm q-mt-xs">
+                        <q-btn dense unelevated no-caps color="primary" size="sm" :label="t('Save')" :loading="busy" @click="save(row)"></q-btn>
+                        <q-btn dense flat no-caps size="sm" :label="t('Change the time…')" @click="room.retimeScheduled(row)"></q-btn>
+                        <q-btn dense flat no-caps size="sm" :label="t('Cancel')" @click="editing = null"></q-btn>
+                    </div>
+                </template>
+                <q-item-label v-else class="ellipsis-2-lines text-body2">{{room.scheduledText(row)}}</q-item-label>
+                <q-item-label v-if="row.files && row.files.length" caption class="ellipsis">{{row.files.map((file) => file.fileName).join(', ')}}</q-item-label>
+                <q-item-label v-if="row.threadRootEventSeq" caption>{{t('In a thread')}}</q-item-label>
+                <q-item-label v-else-if="row.replyToEventSeq" caption>{{t('A reply')}}</q-item-label>
+            </q-item-section>
+            <q-item-section side top>
+                <div class="row no-wrap">
+                    <q-btn v-if="room.canEditScheduled(row)" flat round dense size="sm" icon="sym_o_edit" class="m-chat-scheduled-edit" :aria-label="t('Edit')" @click="edit(row)">
+                        <q-tooltip>{{t('Edit')}}</q-tooltip></q-btn>
+                    <q-btn v-if="row.reviewNeeded && room.isHolder(row)" flat dense no-caps size="sm" color="primary" class="m-chat-scheduled-review" :label="t('Review and send')"
+                            @click="room.reviewScheduled(row)"></q-btn>
+                    <q-btn v-else-if="room.canSendScheduled(row)" flat round dense size="sm" icon="sym_o_send" class="m-chat-scheduled-now" :aria-label="t('Send now')" @click="room.sendScheduledNow(row)">
+                        <q-tooltip>{{t('Send now')}}</q-tooltip></q-btn>
+                    <q-btn v-if="row.status === 'sent'" flat round dense size="sm" icon="sym_o_close" class="m-chat-scheduled-dismiss" :aria-label="t('Dismiss')" @click="room.dismissScheduled(row)">
+                        <q-tooltip>{{t('Dismiss')}}</q-tooltip></q-btn>
+                    <q-btn v-else flat round dense size="sm" icon="sym_o_delete" class="m-chat-scheduled-cancel" :aria-label="t('Cancel the message')" @click="room.cancelScheduled(row)">
+                        <q-tooltip>{{t('Cancel the message')}}</q-tooltip></q-btn>
+                </div>
+            </q-item-section>
+        </q-item>
+    </q-list>
+    <div v-if="!room.scheduledHere.length" class="text-caption m-muted q-pa-md text-center">{{t('Nothing is scheduled in this room')}}</div>
+</m-dialog>`;
+const chatScheduled = {
+    name: 'ChatScheduled',
+    props: { modelValue: Boolean, room: Object },
+    emits: ['update:modelValue'],
+    data() { return { editing: null, editBody: '', busy: false }; },
+    methods: {
+        t,
+        edit(row) {
+            this.editing = row.chatScheduledMessageId;
+            if (!row.held) { this.editBody = row.body || ''; return; }
+            this.editBody = '';
+            moqui.chat.openHeld(row.chatScheduledMessageId, moqui.crypto.openLocal).then((draft) => { this.editBody = (draft && draft.body) || ''; }, () => {});
+        },
+        save(row) {
+            this.busy = true;
+            this.room.saveScheduled(row, this.editBody).then(() => { this.busy = false; this.editing = null; }, () => { this.busy = false; });
+        }
+    },
+    template: scheduledTemplate
+};
 
 let roomCount = 0;
 const chatRoom = {
@@ -1979,7 +2133,8 @@ const chatRoom = {
         // room is shown (a dm link's unsaved message, sealed here in an encrypted room)
         rooms: { type: Array, default: () => [] }, firstMessage: String },
     emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
-    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox },
+    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox,
+        'chat-when': chatWhen, 'chat-scheduled': chatScheduled },
     data() {
         roomCount += 1;
         return {
@@ -2005,11 +2160,27 @@ const chatRoom = {
             lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             peopleBox: { open: false, title: '', people: [] }, infoBox: { open: false, item: null, inThread: false, event: null, members: [], loading: false },
-            quickReactions: QUICK_REACTIONS, levels: LEVELS
+            quickReactions: QUICK_REACTIONS, levels: LEVELS,
+            // Send later and Remind me (phase 15): the time asked, what it is for (onPick, onClear), the room's scheduled list
+            // and the texts of this device's held drafts, opened here
+            whenBox: { open: false, kind: 'send', title: '', note: '', current: null, onPick: null, onClear: null }, scheduledBox: { open: false }, heldTexts: {}
         };
     },
     computed: {
         self() { return this; },
+        // ---- scheduled messages and reminders (phase 15; moqui.chat.state.schedule, read by Chat) ----
+        scheduleState() { return (moqui.chat && moqui.chat.state.schedule) || { scheduledList: [], reminderList: [] }; },
+        scheduledHere() { return (this.scheduleState.scheduledList || []).filter((row) => row.chatRoomId === this.roomId); },
+        scheduledLine() { return moqui.chat.scheduledLine(this.scheduleState.scheduledList, this.roomId); },
+        scheduledLineText() {
+            const line = this.scheduledLine;
+            if (!line.total) return '';
+            if (line.waiting === 1) return fill(t('Scheduled: {when}'), { when: this.whenText(line.next) });
+            if (line.waiting > 1) return fill(t('{count} scheduled messages'), { count: line.waiting });
+            if (line.late) return t('A scheduled message was sent late');
+            return t('Scheduled messages');
+        },
+        scheduledFailedText() { return fill(t('{count} not sent'), { count: this.scheduledLine.failed }); },
         // archived by me until a message after the archive
         archivedByMe() {
             const seq = this.member && this.member.archivedEventSeq;
@@ -3187,6 +3358,10 @@ const chatRoom = {
             if (this.canEdit(item)) add('edit', 'sym_o_edit', t('Edit'), () => this.startEdit(item));
             if (this.canPost) add('pin', 'sym_o_keep', item.pinned ? t('Unpin') : t('Pin to the room'), () => this.pin(item, !item.pinned));
             if (this.isMember && !inThread) add('unread', 'sym_o_mark_chat_unread', t('Mark unread from here'), () => this.markUnreadFrom(item));
+            if (this.access.canRead && item.eventSeq != null && !item.pending) {
+                const reminder = this.reminderOf(item);
+                add('remind', 'sym_o_alarm', reminder ? fill(t('Reminder at {time}…'), { time: this.whenText(reminder.remindDate) }) : t('Remind me…'), () => this.openRemind(item));
+            }
             list.push({ key: 'sep-apps', separator: true });
             if (!this.sealed) list.push({ key: 'apps' });
             if (this.prefs.recordLink && !this.sealed) add('file', 'sym_o_add_link', t('File on a record…'), () => this.openFileOn(item));
@@ -4124,6 +4299,128 @@ const chatRoom = {
             this.markRead(true);
             return true;
         },
+        // ---- Send later and Remind me (Comms-Messaging phase 15) ----
+        whenText(at) { return moqui.chat.whenText(at, Date.now()); },
+        // a long press on Send that opened its menu: a short vibration on a phone
+        buzz() { if (this.useBubbles && navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } } },
+        reminderOf(item) { return item && item.eventSeq != null ? moqui.chat.reminderOf(this.scheduleState.reminderList, this.roomId, item.eventSeq) : null; },
+        reminderText(item) { const reminder = this.reminderOf(item); return reminder ? fill(t('Reminder at {time}'), { time: this.whenText(reminder.remindDate) }) : ''; },
+        askWhen(kind, title, note, current, onPick, onClear) { this.whenBox = { open: true, kind, title, note: note || '', current: current || null, onPick, onClear: onClear || null }; },
+        whenPicked(at) { const box = this.whenBox; this.whenBox = Object.assign({}, box, { open: false }); if (box.onPick) box.onPick(at); },
+        whenCleared() { const box = this.whenBox; this.whenBox = Object.assign({}, box, { open: false }); if (box.onClear) box.onClear(); },
+        reloadSchedule() { return moqui.chat.loadSchedule((name) => this.url(name)); },
+        openRemind(item) {
+            const reminder = this.reminderOf(item);
+            this.askWhen('remind', t('Remind me'), '', reminder, (at) => this.post('setReminder', { chatRoomId: this.roomId, eventSeq: item.eventSeq, remindDate: at }).then((json) => {
+                if (json.chatMessageReminderId) moqui.notifyMessages([{ type: 'success', message: fill(t('Reminder set for {time}'), { time: this.whenText(at) }) }]);
+                return this.reloadSchedule();
+            }, () => {}), reminder ? () => this.post('cancelReminder', { chatMessageReminderId: reminder.chatMessageReminderId }).then(() => this.reloadSchedule(), () => {}) : null);
+        },
+        // Send later from a composer: when, then the message scheduled (done clears the composer). In an encrypted room this
+        // device keeps the draft, sealed, and the server only its time.
+        openSendLater(message, done) {
+            const note = this.sealed ? t('This device keeps the message and sends it at its time. It must be open then; if it is not, it sends it when it next opens.') : '';
+            this.askWhen('send', t('Send later'), note, null, (at) => this.scheduleMessage(message, at, done));
+        },
+        scheduleMessage(message, at, done) {
+            const threadRoot = message.threadRoot ? Number(message.threadRoot) : null;
+            const replyTo = threadRoot ? null : this.replyTo;
+            const where = { chatRoomId: this.roomId, sendDate: at, replyToEventSeq: replyTo ? replyTo.eventSeq : '', threadRootEventSeq: threadRoot || '' };
+            const scheduled = () => {
+                if (!threadRoot) this.replyTo = null;
+                done();
+                moqui.notifyMessages([{ type: 'success', message: fill(t('Scheduled for {time}'), { time: this.whenText(at) }) }]);
+                return this.reloadSchedule();
+            };
+            if (!this.sealed) {
+                return this.post('scheduleMessage', Object.assign(where, { body: message.body || '', chatAttachmentIds: (message.attachmentIds || []).join(',') }))
+                    .then((json) => (json.chatScheduledMessageId ? scheduled() : null), () => {});
+            }
+            const deviceId = moqui.crypto && moqui.crypto.thisDeviceId ? moqui.crypto.thisDeviceId() : null;
+            return this.post('scheduleMessage', Object.assign(where, { heldByDeviceId: deviceId || '' })).then((json) => {
+                const id = json.chatScheduledMessageId;
+                if (!id) return null;
+                const draft = { body: message.body || '', replyToEventSeq: where.replyToEventSeq || null, threadRootEventSeq: threadRoot };
+                return moqui.chat.keepHeld(id, draft, moqui.crypto.sealLocal).then(scheduled, (err) => {
+                    // the draft could not be kept here: no placeholder either
+                    console.error('A held message was not kept', err);
+                    moqui.notifyMessages([{ type: 'warning', message: t('This browser could not keep the message: it was not scheduled') }]);
+                    return this.post('cancelScheduled', { chatScheduledMessageId: id }).then(() => this.reloadSchedule(), () => {});
+                });
+            }, () => {});
+        },
+        openScheduled() {
+            this.scheduledBox.open = true;
+            // this device's held drafts: their texts, opened here only
+            for (const row of this.scheduledHere) {
+                if (!this.isHolder(row) || this.heldTexts[row.chatScheduledMessageId] != null) continue;
+                moqui.chat.openHeld(row.chatScheduledMessageId, moqui.crypto.openLocal).then((draft) => {
+                    this.heldTexts = Object.assign({}, this.heldTexts, { [row.chatScheduledMessageId]: draft ? plainOf(draft.body) : t('The draft is not on this device') });
+                }, () => { this.heldTexts = Object.assign({}, this.heldTexts, { [row.chatScheduledMessageId]: t('The draft does not open on this device') }); });
+            }
+        },
+        isHolder(row) { return !!(row && row.held && moqui.crypto && moqui.crypto.thisDeviceId && moqui.crypto.thisDeviceId() === row.heldByDeviceId); },
+        scheduledFailed(row) { return row.status === 'failed' || moqui.chat.heldStuck(row) || (row.status === 'scheduled' && row.reviewNeeded); },
+        scheduledIcon(row) { return this.scheduledFailed(row) ? 'sym_o_error' : row.status === 'sent' ? 'sym_o_schedule' : row.held ? 'sym_o_devices' : 'sym_o_schedule_send'; },
+        reasonText(code) {
+            return t({ notMember: 'You are no longer in the room', archived: 'The room is archived', blocked: 'You blocked this conversation',
+                accountDisabled: 'Your account is closed', noAccess: 'You no longer have the app', deviceGone: 'The draft was on a device that is gone',
+                deviceAway: 'The device that keeps it has not been open since it was due',
+                draftLost: 'The draft was lost on the device that held it' }[code] || 'The message could not be sent');
+        },
+        scheduledWhen(row) {
+            if (row.status === 'failed') return fill(t('Not sent: {reason}'), { reason: this.reasonText(row.reasonCode) });
+            if (row.status === 'sent' && row.sentAfterCancel) return fill(t('Sent after you cancelled it, at {time}'), { time: this.whenText(row.sentDate) });
+            if (row.status === 'sent') return fill(t('Sent late, at {time}'), { time: this.whenText(row.sentDate) });
+            if (row.deviceGone) return fill(t("Can't be sent: the draft was on {device}"), { device: row.heldByDeviceName || t('another device') });
+            // a device not seen for a week: it fails once overdue that long
+            if (row.deviceAway) return fill(t("Can't be sent from {device}: it has not been open for a week"), { device: row.heldByDeviceName || t('another device') });
+            if (row.reviewNeeded) return t('Waiting for you: someone in the room has a new device or identity');
+            if (row.held && !this.isHolder(row)) return fill(t('Sends {time}, from {device}'), { time: this.whenText(row.sendDate), device: row.heldByDeviceName || t('another device') });
+            return fill(t('Sends {time}'), { time: this.whenText(row.sendDate) });
+        },
+        scheduledText(row) {
+            if (!row.held) return row.bodyText || (row.files && row.files.length ? t('Files') : '');
+            if (this.isHolder(row)) return this.heldTexts[row.chatScheduledMessageId] != null ? this.heldTexts[row.chatScheduledMessageId] : '…';
+            return fill(t('Held on {device}'), { device: row.heldByDeviceName || t('another device') });
+        },
+        canEditScheduled(row) { return row.status === 'scheduled' && !row.deviceGone && (!row.held || this.isHolder(row)); },
+        // a failed held one is not sent again: its draft went from this device
+        canSendScheduled(row) { return row.held ? row.status === 'scheduled' && !row.deviceGone && this.isHolder(row) : row.status === 'scheduled' || row.status === 'failed'; },
+        // a held message waiting for the sender's decision: the problems asked as the composer asks them, then sent
+        reviewScheduled(row) {
+            return moqui.chat.sendHeld(row, (name) => this.url(name), true).then((out) => {
+                if (out && out.review) this.sealRefused(out.error, () => this.reviewScheduled(row));
+                return this.reloadSchedule();
+            }, (err) => { console.error('A held message was not sent', err); return this.reloadSchedule(); });
+        },
+        retimeScheduled(row) {
+            this.askWhen('send', t('Change the time'), '', null, (at) => this.post('updateScheduled', { chatScheduledMessageId: row.chatScheduledMessageId, sendDate: at,
+                deviceId: row.held ? moqui.crypto.thisDeviceId() || '' : '' }).then(() => this.reloadSchedule(), () => {}));
+        },
+        // a new text: the server's, or (held) this device's sealed draft
+        saveScheduled(row, body) {
+            if (!row.held) return this.post('updateScheduled', { chatScheduledMessageId: row.chatScheduledMessageId, body }).then(() => this.reloadSchedule());
+            return moqui.chat.openHeld(row.chatScheduledMessageId, moqui.crypto.openLocal).then((draft) => moqui.chat.keepHeld(row.chatScheduledMessageId,
+                Object.assign({}, draft || {}, { body }), moqui.crypto.sealLocal)).then(() => {
+                this.heldTexts = Object.assign({}, this.heldTexts, { [row.chatScheduledMessageId]: plainOf(body) });
+            });
+        },
+        sendScheduledNow(row) {
+            const sent = row.held ? moqui.chat.sendHeld(row, (name) => this.url(name), true) : this.post('sendScheduledNow', { chatScheduledMessageId: row.chatScheduledMessageId });
+            return Promise.resolve(sent).then((out) => {
+                if (out && out.lost) moqui.notifyMessages([{ type: 'warning', message: this.reasonText('draftLost') }]);
+                return this.reloadSchedule();
+            }, (err) => { console.error('A scheduled message was not sent now', err); return this.reloadSchedule(); });
+        },
+        cancelScheduled(row) {
+            return this.confirm(t('Cancel the message'), t('The scheduled message is deleted and not sent.'), t('Cancel the message'), true)
+                .then(() => this.post('cancelScheduled', { chatScheduledMessageId: row.chatScheduledMessageId })).then(() => {
+                    if (this.isHolder(row)) moqui.chat.dropHeld(row.chatScheduledMessageId);
+                    return this.reloadSchedule();
+                }, () => {});
+        },
+        dismissScheduled(row) { return this.post('dismissScheduled', { chatScheduledMessageId: row.chatScheduledMessageId }).then(() => this.reloadSchedule(), () => {}); },
         // a confirmation (Quasar's Dialog plugin): resolves on OK; Cancel, Esc or a click outside resolves nothing
         confirm(title, message, okLabel, danger) {
             return new Promise((resolve) => {
@@ -4455,8 +4752,38 @@ module.exports = {
             if (el && this.feed.next != null && !this.feed.loading && el.scrollHeight <= el.clientHeight + 8) this.loadFeed(true);
         },
         feedIcon(item) {
-            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', thread: 'sym_o_forum', reaction: 'sym_o_add_reaction' }[item.kind] || 'sym_o_chat';
+            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', thread: 'sym_o_forum', reaction: 'sym_o_add_reaction',
+                reminder: 'sym_o_alarm' }[item.kind] || 'sym_o_chat';
         },
+        // ---- scheduled messages and reminders (Comms-Messaging phase 15) ----
+        // read, then this device's drafts of rows it no longer holds waiting dropped, and its due ones sent
+        loadSchedule() {
+            return moqui.chat.loadSchedule((name) => this.url(name)).then((schedule) => {
+                const deviceId = moqui.crypto && moqui.crypto.thisDeviceId ? moqui.crypto.thisDeviceId() : null;
+                if (schedule && schedule.loaded && deviceId) moqui.chat.pruneHeld(schedule.scheduledList, deviceId);
+                return this.sendHeldDue();
+            });
+        },
+        // this device's held messages that are due (an encrypted room's), one at a time; one that fails waits for the next look
+        sendHeldDue() {
+            const crypto = moqui.crypto;
+            if (this.heldBusy || !crypto || !crypto.thisDeviceId || !moqui.chat.sendHeld) return;
+            const due = moqui.chat.dueHeld(moqui.chat.state.schedule.scheduledList, crypto.thisDeviceId(), Date.now());
+            if (!due.length) return;
+            this.heldBusy = true;
+            due.reduce((chain, row) => chain.then(() => moqui.chat.sendHeld(row, (name) => this.url(name), false).then((out) => {
+                // a verified person's new device or identity: the sender decides, from the room's scheduled list
+                if (out && out.review) moqui.notifyMessages([{ type: 'warning', message: t('A scheduled message waits for you: someone in the room has a new device or identity') }]);
+            }).catch((err) => console.error('A held message was not sent; it is tried again', err))), Promise.resolve())
+                .then(() => { this.heldBusy = false; return moqui.chat.loadSchedule((name) => this.url(name)); });
+        },
+        // the reminders at the top of Activity: the pending ones, soonest first
+        reminderRows() { return this.filter === 'activity' && moqui.chat ? (moqui.chat.state.schedule.reminderList || []) : []; },
+        reminderWhen(row) { return moqui.chat.whenText(row.remindDate, Date.now()); },
+        reminderRoom(row) { return row.roomName || (moqui.chat.state.roomNames || {})[row.chatRoomId] || ''; },
+        reminderSnippet(row) { return row.encrypted ? t('Encrypted message') : row.gone ? t('Message removed') : (row.snippet || ''); },
+        openReminder(row) { this.openFeedItem({ chatRoomId: row.chatRoomId, messageEventSeq: row.eventSeq }); },
+        cancelReminder(row) { return this.post('cancelReminder', { chatMessageReminderId: row.chatMessageReminderId }).then(() => moqui.chat.loadSchedule((name) => this.url(name)), () => {}); },
         feedTitle(item) {
             const name = item.actorName || t('Someone');
             if (item.kind === 'thread') {
@@ -4468,6 +4795,7 @@ module.exports = {
             if (item.kind === 'reply') return fill(t('{name} replied to you'), { name });
             if (item.kind === 'threadReply') return fill(t('{name} replied in a thread'), { name });
             if (item.kind === 'reaction') return item.reactionKey ? fill(t('{name} reacted {key} to your message'), { name, key: item.reactionKey }) : fill(t('{name} reacted to your message'), { name });
+            if (item.kind === 'reminder') return fill(t("Reminder: {name}'s message"), { name });
             return name;
         },
         feedText(item) {
@@ -4817,6 +5145,12 @@ module.exports = {
         this.roomsReady.then(() => this.$nextTick(() => this.measure()));
         // this browser's crypto device, made in idle time once the rooms show, so new chats can be encrypted (§6.5)
         this.roomsReady.then(() => { if (moqui.chat && moqui.chat.makeDeviceSoon) moqui.chat.makeDeviceSoon(); });
+        // scheduled messages and reminders (phase 15): read now and on each change; this device's held ones go when due
+        if (moqui.chat && moqui.chat.loadSchedule) {
+            this.roomsReady.then(() => this.loadSchedule());
+            this.unsubscribe.push(moqui.chat.on('schedule', () => this.loadSchedule()));
+            this.heldTimer = setInterval(() => this.sendHeldDue(), 60000);
+        }
         this.applyParams();
         setTimeout(() => this.measure(), 300);
     },
@@ -4827,6 +5161,7 @@ module.exports = {
         if (this.unregisterKeys) this.unregisterKeys();
         clearTimeout(this.roomsTimer);
         clearTimeout(this.feedTimer);
+        clearInterval(this.heldTimer);
     }
 };
 </script>

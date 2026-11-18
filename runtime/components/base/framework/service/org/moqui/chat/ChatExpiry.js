@@ -21,6 +21,8 @@
 //   ChatRoom.federationEnabled (it is data only): one that does must refuse a room with a timer, as checkBridge does.
 // - A failing room is skipped for FAILED_SKIP_MILLIS on this node and the worker waits before it tries again, so one
 //   room never spins the worker or holds the others back.
+// - Scheduled send (phase 15): a scheduled message gets its time when it is sent (append#Event), by the room's timer
+//   then; a pending reminder of a message that went is dropped (messageGone).
 
 const ROOM = 'moqui.chat.ChatRoom'
 const EVENT = 'moqui.chat.ChatEvent'
@@ -56,6 +58,7 @@ const FAILED_CACHE = 'chat.expiry.failed'
 const SESSION_MARGIN_MILLIS = 10 * 60000
 const WEEK_MILLIS = 7 * 86400000
 const PENDING_SESSION = 'moqui.chat.ChatExpirySession'
+const REMINDER = 'moqui.chat.ChatMessageReminder'
 
 const find = (entity) => ec.entity.find(entity).disableAuthz()
 const one = (entity, fields) => find(entity).condition(fields).one()
@@ -447,6 +450,9 @@ function expireRoom(p) {
     find(ACTIVITY).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
     find(OPEN).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
     find(CHANGE).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
+    // a reminder of what went is not sent (phase 15's ChatMessageReminder: dropped, as for a message deleted)
+    find(REMINDER).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).condition('statusEnumId', 'CrmPending')
+      .updateAll({ statusEnumId: 'CrmDropped', reasonCode: 'messageGone' })
     deletedCount += find(EVENT).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
   }
   // the thread roots that stand: their count and last reply

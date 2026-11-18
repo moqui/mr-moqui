@@ -104,6 +104,7 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::chat_bridge::register(&mut map),
         super::chat_push::register(&mut map),
         super::chat_expiry::register(&mut map),
+        super::chat_schedule::register(&mut map),
         super::web_push::register(&mut map),
         super::edge::register(&mut map),
         super::edge_claims::register(&mut map),

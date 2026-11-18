@@ -1348,3 +1348,211 @@ test("disappearing messages: the timer in words, the server's clock, what is due
     assert.equal(await expiry.secureScreen("viewOnce", true), false);
     expiry.resetClock();
 });
+
+// ---- scheduled sends and reminders (plans/Comms-Messaging.md phase 15) ----
+
+test("the times offered: Remind me in 20 minutes, an hour and tomorrow at 9; Send later's Monday morning only from a Friday or Saturday", () => {
+    // a Friday 15:30:20 and a Wednesday 15:30, in the user's zone (UTC here)
+    moqui.l10n.setTimeZone("UTC");
+    try {
+    const friday = Date.UTC(2026, 10, 20, 15, 30, 20);
+    const wednesday = Date.UTC(2026, 10, 18, 15, 30);
+    const remind = chat.whenChoices("remind", friday);
+    assert.deepEqual(remind.map((choice) => choice.key), ["minutes20", "hour", "tomorrow"]);
+    assert.equal(remind[0].at, Date.UTC(2026, 10, 20, 15, 51), "a whole minute, never before the 20 minutes");
+    assert.equal(remind[1].at, Date.UTC(2026, 10, 20, 16, 31));
+    assert.equal(remind[2].at, Date.UTC(2026, 10, 21, 9, 0));
+    const later = chat.whenChoices("send", friday);
+    assert.deepEqual(later.map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon", "monday"]);
+    assert.equal(later[3].at, Date.UTC(2026, 10, 23, 8, 0));
+    assert.deepEqual(chat.whenChoices("send", wednesday).map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon"]);
+    assert.equal(chat.whenChoices("send", Date.UTC(2026, 10, 21, 10, 0)).slice(-1)[0].at, Date.UTC(2026, 10, 23, 8, 0), "from a Saturday");
+    assert.ok(remind.concat(later).every((choice) => chat.timeAllowed(choice.at, friday)));
+    assert.equal(chat.timeAllowed(friday + 30000, friday), false, "less than a minute ahead");
+    assert.equal(chat.timeAllowed(friday - 60000, friday), false);
+    assert.equal(chat.timeAllowed(friday + 367 * 86400000, friday), false, "more than a year ahead");
+    assert.equal(chat.timeAllowed(NaN, friday), false);
+    } finally {
+        moqui.l10n.setTimeZone(null);
+    }
+});
+
+test("a room's scheduled line, a message's reminder and this device's held messages due", () => {
+    const list = [{ chatScheduledMessageId: "S1", chatRoomId: "R1", status: "scheduled", sendDate: 5000 },
+        { chatScheduledMessageId: "S2", chatRoomId: "R1", status: "scheduled", sendDate: 3000, held: true, heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S3", chatRoomId: "R1", status: "failed", sendDate: 1000, reasonCode: "notMember" },
+        { chatScheduledMessageId: "S4", chatRoomId: "R1", status: "scheduled", sendDate: 2000, held: true, heldByDeviceId: "DEV2", deviceGone: true },
+        { chatScheduledMessageId: "S5", chatRoomId: "R1", status: "sent", sentLate: true, held: true, heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S6", chatRoomId: "R2", status: "scheduled", sendDate: 1000, held: true, heldByDeviceId: "DEV1" }];
+    assert.deepEqual(chat.scheduledLine(list, "R1"), { waiting: 2, failed: 2, late: 1, next: 3000, total: 5 });
+    assert.deepEqual(chat.scheduledLine(list, "R3"), { waiting: 0, failed: 0, late: 0, next: null, total: 0 });
+    assert.deepEqual(chat.dueHeld(list, "DEV1", 3000).map((row) => row.chatScheduledMessageId), ["S2", "S6"]);
+    assert.deepEqual(chat.dueHeld(list, "DEV1", 2999).map((row) => row.chatScheduledMessageId), ["S6"]);
+    assert.deepEqual(chat.dueHeld(list, "DEV2", 9000), [], "a device gone sends nothing");
+    assert.deepEqual(chat.dueHeld(list, null, 9000), []);
+    const reminders = [{ chatMessageReminderId: "M1", chatRoomId: "R1", eventSeq: 4, remindDate: 9000 }];
+    assert.equal(chat.reminderOf(reminders, "R1", "4").chatMessageReminderId, "M1");
+    assert.equal(chat.reminderOf(reminders, "R1", 5), null);
+    assert.equal(chat.reminderOf(reminders, "R2", 4), null);
+});
+
+test("a held draft is stored sealed, never as its text, opened again by its device, and dropped", async () => {
+    const seal = (text) => Promise.resolve({ v: 1, iv: "aXY", data: btoa(text.split("").reverse().join("")) });
+    const open = (sealed) => Promise.resolve(atob(sealed.data).split("").reverse().join(""));
+    const draft = { body: "<p>The secret plan</p>", replyToEventSeq: 7, threadRootEventSeq: null };
+    await chat.keepHeld("S9", draft, seal);
+    const stored = localStorage.getItem(chat.heldKey());
+    assert.ok(stored && !stored.includes("secret"), "only the sealed draft is stored");
+    assert.equal(chat.hasHeld("S9"), true);
+    assert.deepEqual(await chat.openHeld("S9", open), draft);
+    assert.equal(await chat.openHeld("S8", open), null, "none of another device's");
+    chat.dropHeld("S9");
+    assert.equal(chat.hasHeld("S9"), false);
+    assert.equal(localStorage.getItem(chat.heldKey()), null);
+    let refused = false;
+    try { await chat.keepHeld("S7", draft, () => Promise.reject(new Error("no key"))); } catch (err) { refused = true; }
+    assert.ok(refused, "a draft that cannot be sealed is not kept");
+    assert.equal(chat.hasHeld("S7"), false);
+});
+
+test("a schedule push to the user is answered so Chat reads the lists again", () => {
+    const state = freshState();
+    assert.deepEqual(chat.reduce(state, push("chatUser:ann", { kind: "schedule", chatRoomId: "R1", what: "reminder" }), "ann", 1),
+        { kind: "schedule", chatRoomId: "R1", what: "reminder" });
+});
+
+test("the times offered follow the user's zone, not the device's: tomorrow and Monday are the user's", () => {
+    moqui.l10n.setTimeZone("Pacific/Auckland");
+    try {
+        // Friday 2026-11-20 at 20:00 in Auckland (UTC+13) is 07:00 UTC that day
+        const now = Date.UTC(2026, 10, 20, 7, 0);
+        const later = chat.whenChoices("send", now);
+        assert.deepEqual(later.map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon", "monday"], "a Friday there");
+        assert.equal(later[1].at, Date.UTC(2026, 10, 20, 19, 0), "Saturday 08:00 in Auckland");
+        assert.equal(later[3].at, Date.UTC(2026, 10, 22, 19, 0), "Monday 08:00 in Auckland");
+        assert.equal(chat.whenChoices("remind", now)[2].at, Date.UTC(2026, 10, 20, 20, 0), "tomorrow at 9:00 there");
+        assert.equal(chat.wallTime("2026-11-21T08:30"), Date.UTC(2026, 10, 20, 19, 30), "a picked time is read in the user's zone");
+        assert.ok(Number.isNaN(chat.wallTime("tomorrow")));
+    } finally {
+        moqui.l10n.setTimeZone(null);
+    }
+});
+
+test("the drafts this device no longer holds waiting are dropped on a read of the schedule", () => {
+    chat.writeHeld({ S1: { v: 1 }, S2: { v: 1 }, S3: { v: 1 }, S4: { v: 1 } });
+    const dropped = chat.pruneHeld([{ chatScheduledMessageId: "S1", held: true, status: "scheduled", heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S2", held: true, status: "cancelled", heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S3", held: true, status: "scheduled", heldByDeviceId: "DEV2" }], "DEV1");
+    assert.deepEqual(dropped.sort(), ["S2", "S3", "S4"]);
+    assert.deepEqual(Object.keys(chat.readHeld()), ["S1"]);
+    chat.dropHeld("S1");
+});
+
+test("a draft sealed under this device's store key opens again here only, and a changed one does not open", async () => {
+    if (!(globalThis.crypto && globalThis.crypto.subtle)) return;
+    const was = { vue: moqui.webrootVue, fetch: globalThis.fetch };
+    const asked = [];
+    const pointer = moqui.scopedKey("moqui.crypto.device.sealer");
+    moqui.webrootVue = { userId: "sealer" };
+    localStorage.setItem(pointer, JSON.stringify({ deviceId: "SD1", user_id: "@sealer:example" }));
+    globalThis.fetch = (to, init) => {
+        asked.push(to);
+        const body = JSON.parse((init && init.body) || "{}");
+        return Promise.resolve({ ok: true, status: 200, headers: { get: () => null },
+            text: () => Promise.resolve(JSON.stringify({ storeKey: "store-key-of-" + body.deviceId })) });
+    };
+    try {
+        const sealed = await moqui.crypto.sealLocal("<p>The plan</p>");
+        assert.ok(sealed.v === 1 && sealed.iv && sealed.data && !JSON.stringify(sealed).includes("plan"));
+        assert.equal(await moqui.crypto.openLocal(sealed), "<p>The plan</p>");
+        assert.ok(asked.length && asked.every((to) => /\/ChatKeys\/storeKey$/.test(to)));
+        let changed = false;
+        try { await moqui.crypto.openLocal(Object.assign({}, sealed, { data: "AAAA" + sealed.data.slice(4) })); } catch (err) { changed = true; }
+        assert.ok(changed, "a changed draft does not open");
+        localStorage.setItem(pointer, JSON.stringify({ deviceId: "SD2", user_id: "@sealer:example" }));
+        let other = false;
+        try { await moqui.crypto.openLocal(sealed); } catch (err) { other = true; }
+        assert.ok(other, "another device's key does not open it");
+    } finally {
+        localStorage.removeItem(pointer);
+        moqui.webrootVue = was.vue;
+        globalThis.fetch = was.fetch;
+    }
+});
+
+test("a held message's send: claimed, sealed and sent with its claim checked; a lost report, a lost draft, a refusal counted, a review, a cancel meanwhile", async () => {
+    const was = { request: moqui.request, crypto: moqui.crypto, seal: chat.sealMessage };
+    const url = (name) => "/apps/BasicComms/Chat/" + name;
+    let answers = {};
+    let asked = [];
+    moqui.request = (to, options) => {
+        const name = to.split("/").pop();
+        asked.push({ name, params: (options && options.params) || {} });
+        const answer = answers[name];
+        return answer && answer.reject ? Promise.reject(answer.reject) : Promise.resolve({ json: answer || {} });
+    };
+    moqui.crypto = { thisDeviceId: () => "DEV1", openLocal: (sealed) => Promise.resolve(atob(sealed.data)) };
+    let sealError = null;
+    chat.sealMessage = (roomId, members, html) => (sealError ? Promise.reject(sealError)
+        : Promise.resolve({ encryptedJson: JSON.stringify({ sealed: html, to: members }), mentionUserIds: "" }));
+    const row = { chatScheduledMessageId: "H1", chatRoomId: "R9", held: true, heldByDeviceId: "DEV1", status: "scheduled", sendDate: 1 };
+    const keep = () => chat.keepHeld("H1", { body: "<p>Later</p>", replyToEventSeq: null, threadRootEventSeq: null },
+        (text) => Promise.resolve({ v: 1, iv: "x", data: btoa(text) }));
+    const names = () => asked.map((call) => call.name);
+    try {
+        await keep();
+        answers = { claimHeld: { claimed: true, clientRef: "sched:H1" }, room: { memberList: [{ userId: "ann" }, { userId: "bob" }] }, sendHeld: { eventSeq: 12 } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { sent: true, sentLate: false });
+        assert.deepEqual(names(), ["claimHeld", "room", "sendHeld"]);
+        assert.equal(asked[2].params.deviceId, "DEV1");
+        assert.deepEqual(JSON.parse(asked[2].params.encryptedJson).to, ["ann", "bob"]);
+        assert.equal(chat.hasHeld("H1"), false, "the draft goes once it is sent");
+        // the report was lost: the claim finds it sent
+        await keep();
+        answers = { claimHeld: { sent: true } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { sent: true });
+        assert.equal(chat.hasHeld("H1"), false);
+        // no draft here: reported lost
+        asked = [];
+        answers = { completeHeld: {} };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { lost: true });
+        assert.equal(asked[0].params.draftLost, true);
+        // a refusal of the send: one try, reported with its reason; the fifth fails it
+        await keep();
+        asked = [];
+        answers = { claimHeld: { claimed: true, clientRef: "sched:H1" }, room: { memberList: [] },
+            sendHeld: { reject: { status: 400, json: { reasonCode: "sendRefused", errors: "No" } } }, reportHeld: { failed: false } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { retry: true });
+        assert.equal(asked.find((call) => call.name === "reportHeld").params.reasonCode, "sendRefused");
+        answers.reportHeld = { failed: true };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { failed: true });
+        assert.equal(chat.hasHeld("H1"), true, "the draft stays until the list drops it");
+        // a verified person's new device: a review, not a try
+        asked = [];
+        sealError = { reasonCode: "verifiedUserProblem", problems: [{ userId: "bob" }] };
+        answers.reportHeld = {};
+        const review = await chat.sendHeld(row, url, false);
+        assert.equal(review.review, true);
+        assert.equal(review.error.reasonCode, "verifiedUserProblem");
+        assert.equal(asked.find((call) => call.name === "reportHeld").params.review, "true");
+        sealError = null;
+        // cancelled meanwhile: nothing went from here
+        answers.sendHeld = { reject: { status: 400, json: { reasonCode: "notClaimed" } } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { waiting: true, reasonCode: "notClaimed" });
+        // no answer: rejects, the row and the draft stay
+        answers.claimHeld = { reject: { status: 0 } };
+        let rejected = false;
+        try { await chat.sendHeld(row, url, false); } catch (err) { rejected = true; }
+        assert.ok(rejected);
+        assert.equal(chat.hasHeld("H1"), true);
+        // another device's row: nothing asked
+        asked = [];
+        assert.deepEqual(await chat.sendHeld(Object.assign({}, row, { heldByDeviceId: "DEV2" }), url, false), { waiting: true });
+        assert.equal(asked.length, 0);
+    } finally {
+        chat.dropHeld("H1");
+        moqui.request = was.request;
+        moqui.crypto = was.crypto;
+        chat.sealMessage = was.seal;
+    }
+});

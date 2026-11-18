@@ -241,6 +241,43 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
     server deletes the file once everyone has opened it, and a view-once message nobody opened goes after 14 days
     (`chat_view_once_days`). While it is open the Android app blocks screenshots and screen recording; a browser and the
     desktop app cannot, and the viewer says so.
+- **Send later and reminders** (plans/Comms-Messaging.md §18.3 phase 15; `org.moqui.chat.ChatScheduleServices`).
+  - *Send later.* A long press on Send on a phone, or the arrow beside Send or a right click on it on a desktop, opens
+    Send later: in an hour, tomorrow morning or afternoon, Monday morning (on a Friday or Saturday), or a date and time
+    you pick (a minute to a year ahead). A line above the composer says what is scheduled in the room ("Scheduled:
+    tomorrow at 8:00", or how many, and how many were not sent); it opens the list, where each message can be edited
+    (its text and time), sent now or cancelled. Nobody else sees a scheduled message until it is sent.
+  - *At its time* the server sends it as you, with your rights then: if your account was closed, you no longer have the
+    app, you have left the room, it was archived, or you blocked the conversation since, it is not sent, the list says why
+    and you get a notice. A sign-in lock (too many wrong passwords) or a password you must change does not stop it: a lock
+    only makes it wait until the lock's time is over. At most 20 of your messages go in one minute; the rest go in the next
+    minutes. In a phone room (SMS, RCS) or a bridged room it goes out through the network as any message does at that
+    moment, with its checks then (an opt-out, the day's limits). If the other person blocked you, it is sent as any message
+    would be; nothing tells you. Once a message is sent or cancelled the server keeps no copy of its text; one that was not
+    sent keeps it for 7 days, so you can see and resend it.
+  - *In an encrypted room* the server cannot encrypt for you, so the device you scheduled it on keeps it, sealed in that
+    browser under its encryption keys, and sends it at its time. The limits:
+    - That device sends it only while its Chat screen is open (a browser tab with Chat, the desktop app's Chat window, or
+      the phone app's Chat while Android lets it run). If Chat is not open at the time, it sends the message when Chat
+      next opens there, and the list says "Sent late".
+    - If that device's Chat does not open within 7 days of the time, the message is not sent ("the device that keeps it
+      has not been open since it was due"). A device not seen for 7 days shows as "can't be sent from" it before then.
+    - A device removed from My devices, or removed by the daily cleanup of devices Chat made and nobody used for 30 days,
+      takes its messages with it: they are not sent, and the list says the draft was on a device that is gone. A browser
+      whose data was cleared is a new device: its old drafts are gone, and they end the same way.
+    - Only text: a message with files is sent now.
+    - It can be edited and sent now only on that device; your other devices list it ("Held on Firefox on Linux") and can
+      cancel it. A message that could not be sent is not sent again from the list.
+    - If someone in the room has a new device or identity at the time, it waits for you: the list shows "Review and send",
+      which asks you as the composer would. A message the device fails to encrypt or send five times is not sent, and you
+      get a notice.
+  - *Remind me* on any message (its menu): in 20 minutes, in an hour, tomorrow at 9:00, or a time you pick. At that time
+    you get a notification on each of your devices (held during do not disturb, and sent when it ends) and an Activity
+    row. The reminders that wait are at the top of Activity, each with a × to cancel; the message's menu changes its time
+    or cancels it, and an alarm by its time shows that it has one. A reminder keeps only the room and the message, never
+    its text: a plain room's notification shows the message's start (unless message previews are off), an encrypted
+    room's does not. A reminder of a message deleted since, or of a room you can no longer read, does not come, nor one
+    of an account closed or without the app; a sign-in lock only makes it wait.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
@@ -462,7 +499,9 @@ and its limits, notices, transcription and its retry, and the trash. `./moq test
 soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, voicemail
 after the tabs and phones ring or a phone declines, a phone's own call). `./moq test framework --spec CallHandling,RingGroup`:
 the rules, schedules across a time zone, forward loops and permissions, do not disturb and call waiting, simultaneous ring,
-the strategies, the shared box, and the first answer winning. `./moq test framework --spec ChatKeys`: crypto devices,
+the strategies, the shared box, and the first answer winning. `./moq test framework --spec ChatSchedule`: scheduled
+sends and their refusals at the send time, a bridged room's delivery, an encrypted room's message held by its device,
+and reminders; `cargo test -p moqui-core --lib chat_push`: a reminder's push. `./moq test framework --spec ChatKeys`: crypto devices,
 their keys and to-device messages; `./moq test-client basic-comms --serve --spec CryptoFlow`: two browsers exchanging an
 Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). `./moq test framework --spec CallEncryption`: the
 policy and every refusal of end-to-end encrypted calls, an encrypted room's calls among them; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:

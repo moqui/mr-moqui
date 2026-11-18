@@ -307,3 +307,30 @@ feature("a room that failed lately is skipped on this node, and the other rooms'
         finally_
     }
 })
+
+feature("scheduled send: a message sent at its time takes the room's timer then, and a reminder of it is dropped once it went", {
+    when() {
+        const room = as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Expiry scheduled", memberUserIdList: [B]}).chatRoomId
+        as(A, EXPIRY + "set#RoomTimer", {chatRoomId: room, seconds: 3600})
+        const scheduled = as(A, "org.moqui.chat.ChatScheduleServices.schedule#Message", {chatRoomId: room, body: "<p>later, then gone</p>",
+            sendDate: Date.now() + 2 * 60000})
+        const sendAt = Date.now() + 3 * 60000
+        ec.user.setEffectiveTime(sendAt)
+        try { sys(() => ec.service.sync().name("org.moqui.chat.ChatScheduleServices.send#DueMessages").call()) } finally { ec.user.setEffectiveTime(null) }
+        ec.message.clearErrors()
+        const sent = sys(() => ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId: room, eventTypeEnumId: "CetMessage"}).orderBy("-eventSeq").list()[0])
+        const reminder = as(B, "org.moqui.chat.ChatScheduleServices.set#Reminder", {chatRoomId: room, eventSeq: sent.eventSeq, remindDate: Date.now() + 30 * 60000})
+        expireAt(sendAt + 3600000 + 60000)
+        const after = sys(() => ec.entity.find("moqui.chat.ChatMessageReminder").condition("chatMessageReminderId", reminder.chatMessageReminderId).one())
+        return {scheduled, sendAt, sent, reminder, after, gone: event(room, sent.eventSeq) == null}
+    },
+    then({scheduled, sendAt, sent, reminder, after, gone}) {
+        scheduled.errors == ""
+        ec.user.timestampMillis(sent.sentDate) >= sendAt
+        ec.user.timestampMillis(sent.expireDate) == ec.user.timestampMillis(sent.sentDate) + 3600000
+        reminder.errors == ""
+        gone
+        after.statusEnumId == "CrmDropped"
+        after.reasonCode == "messageGone"
+    }
+})

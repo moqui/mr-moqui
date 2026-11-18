@@ -3423,7 +3423,8 @@ const messageTemplate = `
                 <q-btn flat dense no-caps size="sm" :label="room.t('Discard')" @click="room.discardChange(change)"></q-btn>
             </template>
         </div>
-        <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span></div>
+        <div class="m-chat-stamp text-caption m-muted">{{item.timeShort}}<span v-if="item.edited"> {{room.t('(edited)')}}</span><q-icon v-if="room.reminderOf(item)"
+                name="sym_o_alarm" size="12px" class="q-ml-xs m-chat-reminder"><q-tooltip>{{room.reminderText(item)}}</q-tooltip></q-icon></div>
         <div v-if="item.readers && item.readers.length && (item.mine || !room.useBubbles)" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
@@ -3639,6 +3640,13 @@ const editTemplate = `
 // ---- the composer of the room or of a thread ----
 const composerTemplate = `
 <div class="m-chat-composer" @keydown.capture="onKeydown" @paste="onPaste">
+    <!-- the room's scheduled messages (Comms-Messaging phase 15): a line that opens their list -->
+    <div v-if="!threadRoot && room.scheduledLineText" class="row items-center no-wrap q-pl-sm q-mb-xs text-caption cursor-pointer m-chat-scheduled-bar"
+            role="button" tabindex="0" @click="room.openScheduled()" @keydown.enter="room.openScheduled()">
+        <q-icon name="sym_o_schedule_send" size="16px" class="q-mr-xs text-primary"></q-icon>
+        <span class="ellipsis">{{room.scheduledLineText}}</span>
+        <span v-if="room.scheduledLine.failed" class="text-negative q-ml-sm text-no-wrap">{{room.scheduledFailedText}}</span>
+    </div>
     <div v-if="!threadRoot && room.replyTo" class="row items-center no-wrap q-pl-sm q-mb-xs text-caption rounded-borders">
         <div class="self-stretch bg-primary" style="width:3px;border-radius:2px"></div>
         <q-icon name="sym_o_reply" size="16px" class="q-mx-xs text-primary"></q-icon>
@@ -3690,8 +3698,20 @@ const composerTemplate = `
         </div>
         <q-btn v-else-if="showVoice" dense unelevated round color="primary" icon="sym_o_mic" class="m-chat-voice" :aria-label="room.t('Record a voice note')" @click="startVoice">
             <q-tooltip>{{room.t('Record a voice note')}}</q-tooltip></q-btn>
-        <q-btn v-else dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.useBubbles ? undefined : room.t('Send')" :aria-label="room.t('Send')"
-                :disable="!canSend" :loading="sending" @click="send"></q-btn>
+        <template v-else>
+        <q-btn dense unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-send" :label="room.useBubbles ? undefined : room.t('Send')" :aria-label="room.t('Send')"
+                :disable="!canSend" :loading="sending" @click="send">
+            <!-- Send later (Comms-Messaging phase 15): a long press on a phone, a right click on a desktop -->
+            <q-menu context-menu class="m-chat-send-menu" @show="room.buzz()"><q-list style="min-width:220px"><q-item clickable v-close-popup :disable="!!laterOff" class="m-chat-send-later" @click="sendLater">
+                <q-item-section avatar><q-icon name="sym_o_schedule_send"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{room.t('Send later…')}}</q-item-label><q-item-label v-if="laterOff" caption>{{laterOff}}</q-item-label></q-item-section></q-item></q-list></q-menu></q-btn>
+        <q-btn v-if="!room.useBubbles" dense unelevated color="primary" icon="sym_o_expand_more" class="m-chat-send-more" :aria-label="room.t('More ways to send')"
+                style="min-width:22px;padding:0 1px;margin-left:1px" :disable="sending">
+            <q-tooltip>{{room.t('More ways to send')}}</q-tooltip>
+            <q-menu anchor="top right" self="bottom right"><q-list style="min-width:220px"><q-item clickable v-close-popup :disable="!!laterOff" class="m-chat-send-later" @click="sendLater">
+                <q-item-section avatar><q-icon name="sym_o_schedule_send"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{room.t('Send later…')}}</q-item-label><q-item-label v-if="laterOff" caption>{{laterOff}}</q-item-label></q-item-section></q-item></q-list></q-menu></q-btn>
+        </template>
     </div>
     <div class="hidden"><m-file ref="picker" v-model="picked" :name="'chatFile' + uid" multiple @update:model-value="onPicked"></m-file>
         <input ref="camera" type="file" accept="image/*" capture="environment" :name="'chatCamera' + uid" @change="onNative">
@@ -3730,6 +3750,15 @@ const chatComposer = {
         },
         hint() {
             return this.room.prefs.enterSends === false ? t('Ctrl+Enter to send') : t('Enter to send, Shift+Enter for a new line');
+        },
+        // why Send later cannot be used now (it shows disabled with this), or null
+        laterOff() {
+            if (this.room.offline) return t('Send later needs a connection');
+            if (this.uploading) return t('Wait for the files to finish uploading');
+            if (!this.canSend) return t('Write a message first');
+            if (this.room.sealed && this.files.length) return t('In an encrypted room a message with files is sent now');
+            if (this.room.sealed && !(moqui.crypto && moqui.crypto.thisDeviceId && moqui.crypto.thisDeviceId())) return t('This browser has no encryption device yet');
+            return null;
         }
     },
     watch: {
@@ -3799,6 +3828,12 @@ const chatComposer = {
                 this.body = body;
                 this.files = files;
             });
+        },
+        // Send later (Comms-Messaging phase 15): the room asks when and schedules it; the composer is cleared once it is
+        sendLater() {
+            if (this.laterOff || this.voice || this.voiceStarting) return;
+            const ids = this.files.filter((file) => file.chatAttachmentId).map((file) => file.chatAttachmentId);
+            this.room.openSendLater({ body: isEmptyHtml(this.body) ? '' : this.body, attachmentIds: ids, threadRoot: this.threadRoot || null }, () => this.clear());
         },
         clear() {
             this.body = '';
@@ -4763,7 +4798,110 @@ const roomTemplate = `
             </q-card-section>
         </q-card>
     </q-dialog>
+    <!-- Send later and Remind me (Comms-Messaging phase 15) -->
+    <chat-when v-model="whenBox.open" :kind="whenBox.kind" :title="whenBox.title" :note="whenBox.note" :current="whenBox.current" @pick="whenPicked" @clear="whenCleared"></chat-when>
+    <chat-scheduled v-model="scheduledBox.open" :room="self"></chat-scheduled>
 </div>`;
+
+// ---- Send later and Remind me (Comms-Messaging phase 15): when, and the room's scheduled messages ----
+const WHEN_LABELS = { hour: 'In 1 hour', tomorrowMorning: 'Tomorrow morning', tomorrowAfternoon: 'Tomorrow afternoon', monday: 'Monday morning',
+    minutes20: 'In 20 minutes', tomorrow: 'Tomorrow' };
+const whenTemplate = `
+<m-dialog :model-value="modelValue" :title="title" width="400" @update:model-value="(open) => $emit('update:modelValue', open)">
+    <div v-if="note" class="text-caption m-muted q-mb-sm m-chat-when-note">{{note}}</div>
+    <q-list dense class="m-chat-when">
+        <q-item v-for="choice in choices" :key="choice.key" clickable :data-when="choice.key" @click="$emit('pick', choice.at)">
+            <q-item-section>{{choice.label}}</q-item-section>
+            <q-item-section side class="text-caption">{{choice.text}}</q-item-section>
+        </q-item>
+    </q-list>
+    <div class="row items-center no-wrap q-gutter-x-sm q-mt-sm">
+        <q-input v-model="custom" dense outlined stack-label type="datetime-local" class="col" name="chatWhenCustom" :label="t('Pick a date and time')"></q-input>
+        <q-btn dense unelevated no-caps color="primary" class="m-chat-when-set" :label="t('Set')" :disable="customAt == null" @click="$emit('pick', customAt)"></q-btn>
+    </div>
+    <div v-if="custom && customAt == null" class="text-caption text-negative q-mt-xs">{{t('Pick a time at least a minute from now and within a year')}}</div>
+    <div v-if="current" class="row q-mt-md"><q-btn flat dense no-caps color="negative" class="m-chat-when-clear" :label="t('Cancel the reminder')" @click="$emit('clear')"></q-btn></div>
+</m-dialog>`;
+const chatWhen = {
+    name: 'ChatWhen',
+    props: { modelValue: Boolean, kind: { type: String, default: 'send' }, title: String, note: String, current: Object },
+    emits: ['update:modelValue', 'pick', 'clear'],
+    data() { return { custom: '', now: Date.now() }; },
+    computed: {
+        choices() {
+            return moqui.chat.whenChoices(this.kind, this.now).map((choice) => Object.assign({ label: t(WHEN_LABELS[choice.key] || choice.key),
+                text: moqui.chat.whenText(choice.at, this.now) }, choice));
+        },
+        // the date and time picked, in this device's zone, when it may be used
+        customAt() {
+            // read in the user's zone, as the choices and their labels are
+            const at = this.custom ? moqui.chat.wallTime(this.custom) : NaN;
+            return moqui.chat.timeAllowed(at, Date.now()) ? at : null;
+        }
+    },
+    watch: { modelValue(open) { if (open) { this.now = Date.now(); this.custom = ''; } } },
+    methods: { t },
+    template: whenTemplate
+};
+const scheduledTemplate = `
+<m-dialog :model-value="modelValue" :title="t('Scheduled messages')" width="560" @update:model-value="(open) => $emit('update:modelValue', open)">
+    <q-list separator class="m-chat-scheduled">
+        <q-item v-for="row in room.scheduledHere" :key="row.chatScheduledMessageId" class="q-px-none" :data-scheduled="row.chatScheduledMessageId" :data-status="row.status">
+            <q-item-section>
+                <q-item-label class="row items-center no-wrap text-caption" :class="room.scheduledFailed(row) ? 'text-negative' : 'm-muted'">
+                    <q-icon :name="room.scheduledIcon(row)" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.scheduledWhen(row)}}</span></q-item-label>
+                <template v-if="editing === row.chatScheduledMessageId">
+                    <m-rich-text v-model="editBody" :name="'chatScheduledEdit' + row.chatScheduledMessageId" light rows="2" :label="t('Edit message')"
+                            :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}"></m-rich-text>
+                    <div class="row q-gutter-x-sm q-mt-xs">
+                        <q-btn dense unelevated no-caps color="primary" size="sm" :label="t('Save')" :loading="busy" @click="save(row)"></q-btn>
+                        <q-btn dense flat no-caps size="sm" :label="t('Change the time…')" @click="room.retimeScheduled(row)"></q-btn>
+                        <q-btn dense flat no-caps size="sm" :label="t('Cancel')" @click="editing = null"></q-btn>
+                    </div>
+                </template>
+                <q-item-label v-else class="ellipsis-2-lines text-body2">{{room.scheduledText(row)}}</q-item-label>
+                <q-item-label v-if="row.files && row.files.length" caption class="ellipsis">{{row.files.map((file) => file.fileName).join(', ')}}</q-item-label>
+                <q-item-label v-if="row.threadRootEventSeq" caption>{{t('In a thread')}}</q-item-label>
+                <q-item-label v-else-if="row.replyToEventSeq" caption>{{t('A reply')}}</q-item-label>
+            </q-item-section>
+            <q-item-section side top>
+                <div class="row no-wrap">
+                    <q-btn v-if="room.canEditScheduled(row)" flat round dense size="sm" icon="sym_o_edit" class="m-chat-scheduled-edit" :aria-label="t('Edit')" @click="edit(row)">
+                        <q-tooltip>{{t('Edit')}}</q-tooltip></q-btn>
+                    <q-btn v-if="row.reviewNeeded && room.isHolder(row)" flat dense no-caps size="sm" color="primary" class="m-chat-scheduled-review" :label="t('Review and send')"
+                            @click="room.reviewScheduled(row)"></q-btn>
+                    <q-btn v-else-if="room.canSendScheduled(row)" flat round dense size="sm" icon="sym_o_send" class="m-chat-scheduled-now" :aria-label="t('Send now')" @click="room.sendScheduledNow(row)">
+                        <q-tooltip>{{t('Send now')}}</q-tooltip></q-btn>
+                    <q-btn v-if="row.status === 'sent'" flat round dense size="sm" icon="sym_o_close" class="m-chat-scheduled-dismiss" :aria-label="t('Dismiss')" @click="room.dismissScheduled(row)">
+                        <q-tooltip>{{t('Dismiss')}}</q-tooltip></q-btn>
+                    <q-btn v-else flat round dense size="sm" icon="sym_o_delete" class="m-chat-scheduled-cancel" :aria-label="t('Cancel the message')" @click="room.cancelScheduled(row)">
+                        <q-tooltip>{{t('Cancel the message')}}</q-tooltip></q-btn>
+                </div>
+            </q-item-section>
+        </q-item>
+    </q-list>
+    <div v-if="!room.scheduledHere.length" class="text-caption m-muted q-pa-md text-center">{{t('Nothing is scheduled in this room')}}</div>
+</m-dialog>`;
+const chatScheduled = {
+    name: 'ChatScheduled',
+    props: { modelValue: Boolean, room: Object },
+    emits: ['update:modelValue'],
+    data() { return { editing: null, editBody: '', busy: false }; },
+    methods: {
+        t,
+        edit(row) {
+            this.editing = row.chatScheduledMessageId;
+            if (!row.held) { this.editBody = row.body || ''; return; }
+            this.editBody = '';
+            moqui.chat.openHeld(row.chatScheduledMessageId, moqui.crypto.openLocal).then((draft) => { this.editBody = (draft && draft.body) || ''; }, () => {});
+        },
+        save(row) {
+            this.busy = true;
+            this.room.saveScheduled(row, this.editBody).then(() => { this.busy = false; this.editing = null; }, () => { this.busy = false; });
+        }
+    },
+    template: scheduledTemplate
+};
 
 let roomCount = 0;
 const chatRoom = {
@@ -4774,7 +4912,8 @@ const chatRoom = {
         // room is shown (a dm link's unsaved message, sealed here in an encrypted room)
         rooms: { type: Array, default: () => [] }, firstMessage: String },
     emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
-    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox },
+    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox,
+        'chat-when': chatWhen, 'chat-scheduled': chatScheduled },
     data() {
         roomCount += 1;
         return {
@@ -4800,11 +4939,27 @@ const chatRoom = {
             lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             peopleBox: { open: false, title: '', people: [] }, infoBox: { open: false, item: null, inThread: false, event: null, members: [], loading: false },
-            quickReactions: QUICK_REACTIONS, levels: LEVELS
+            quickReactions: QUICK_REACTIONS, levels: LEVELS,
+            // Send later and Remind me (phase 15): the time asked, what it is for (onPick, onClear), the room's scheduled list
+            // and the texts of this device's held drafts, opened here
+            whenBox: { open: false, kind: 'send', title: '', note: '', current: null, onPick: null, onClear: null }, scheduledBox: { open: false }, heldTexts: {}
         };
     },
     computed: {
         self() { return this; },
+        // ---- scheduled messages and reminders (phase 15; moqui.chat.state.schedule, read by Chat) ----
+        scheduleState() { return (moqui.chat && moqui.chat.state.schedule) || { scheduledList: [], reminderList: [] }; },
+        scheduledHere() { return (this.scheduleState.scheduledList || []).filter((row) => row.chatRoomId === this.roomId); },
+        scheduledLine() { return moqui.chat.scheduledLine(this.scheduleState.scheduledList, this.roomId); },
+        scheduledLineText() {
+            const line = this.scheduledLine;
+            if (!line.total) return '';
+            if (line.waiting === 1) return fill(t('Scheduled: {when}'), { when: this.whenText(line.next) });
+            if (line.waiting > 1) return fill(t('{count} scheduled messages'), { count: line.waiting });
+            if (line.late) return t('A scheduled message was sent late');
+            return t('Scheduled messages');
+        },
+        scheduledFailedText() { return fill(t('{count} not sent'), { count: this.scheduledLine.failed }); },
         // archived by me until a message after the archive
         archivedByMe() {
             const seq = this.member && this.member.archivedEventSeq;
@@ -5982,6 +6137,10 @@ const chatRoom = {
             if (this.canEdit(item)) add('edit', 'sym_o_edit', t('Edit'), () => this.startEdit(item));
             if (this.canPost) add('pin', 'sym_o_keep', item.pinned ? t('Unpin') : t('Pin to the room'), () => this.pin(item, !item.pinned));
             if (this.isMember && !inThread) add('unread', 'sym_o_mark_chat_unread', t('Mark unread from here'), () => this.markUnreadFrom(item));
+            if (this.access.canRead && item.eventSeq != null && !item.pending) {
+                const reminder = this.reminderOf(item);
+                add('remind', 'sym_o_alarm', reminder ? fill(t('Reminder at {time}…'), { time: this.whenText(reminder.remindDate) }) : t('Remind me…'), () => this.openRemind(item));
+            }
             list.push({ key: 'sep-apps', separator: true });
             if (!this.sealed) list.push({ key: 'apps' });
             if (this.prefs.recordLink && !this.sealed) add('file', 'sym_o_add_link', t('File on a record…'), () => this.openFileOn(item));
@@ -6919,6 +7078,128 @@ const chatRoom = {
             this.markRead(true);
             return true;
         },
+        // ---- Send later and Remind me (Comms-Messaging phase 15) ----
+        whenText(at) { return moqui.chat.whenText(at, Date.now()); },
+        // a long press on Send that opened its menu: a short vibration on a phone
+        buzz() { if (this.useBubbles && navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no vibration here */ } } },
+        reminderOf(item) { return item && item.eventSeq != null ? moqui.chat.reminderOf(this.scheduleState.reminderList, this.roomId, item.eventSeq) : null; },
+        reminderText(item) { const reminder = this.reminderOf(item); return reminder ? fill(t('Reminder at {time}'), { time: this.whenText(reminder.remindDate) }) : ''; },
+        askWhen(kind, title, note, current, onPick, onClear) { this.whenBox = { open: true, kind, title, note: note || '', current: current || null, onPick, onClear: onClear || null }; },
+        whenPicked(at) { const box = this.whenBox; this.whenBox = Object.assign({}, box, { open: false }); if (box.onPick) box.onPick(at); },
+        whenCleared() { const box = this.whenBox; this.whenBox = Object.assign({}, box, { open: false }); if (box.onClear) box.onClear(); },
+        reloadSchedule() { return moqui.chat.loadSchedule((name) => this.url(name)); },
+        openRemind(item) {
+            const reminder = this.reminderOf(item);
+            this.askWhen('remind', t('Remind me'), '', reminder, (at) => this.post('setReminder', { chatRoomId: this.roomId, eventSeq: item.eventSeq, remindDate: at }).then((json) => {
+                if (json.chatMessageReminderId) moqui.notifyMessages([{ type: 'success', message: fill(t('Reminder set for {time}'), { time: this.whenText(at) }) }]);
+                return this.reloadSchedule();
+            }, () => {}), reminder ? () => this.post('cancelReminder', { chatMessageReminderId: reminder.chatMessageReminderId }).then(() => this.reloadSchedule(), () => {}) : null);
+        },
+        // Send later from a composer: when, then the message scheduled (done clears the composer). In an encrypted room this
+        // device keeps the draft, sealed, and the server only its time.
+        openSendLater(message, done) {
+            const note = this.sealed ? t('This device keeps the message and sends it at its time. It must be open then; if it is not, it sends it when it next opens.') : '';
+            this.askWhen('send', t('Send later'), note, null, (at) => this.scheduleMessage(message, at, done));
+        },
+        scheduleMessage(message, at, done) {
+            const threadRoot = message.threadRoot ? Number(message.threadRoot) : null;
+            const replyTo = threadRoot ? null : this.replyTo;
+            const where = { chatRoomId: this.roomId, sendDate: at, replyToEventSeq: replyTo ? replyTo.eventSeq : '', threadRootEventSeq: threadRoot || '' };
+            const scheduled = () => {
+                if (!threadRoot) this.replyTo = null;
+                done();
+                moqui.notifyMessages([{ type: 'success', message: fill(t('Scheduled for {time}'), { time: this.whenText(at) }) }]);
+                return this.reloadSchedule();
+            };
+            if (!this.sealed) {
+                return this.post('scheduleMessage', Object.assign(where, { body: message.body || '', chatAttachmentIds: (message.attachmentIds || []).join(',') }))
+                    .then((json) => (json.chatScheduledMessageId ? scheduled() : null), () => {});
+            }
+            const deviceId = moqui.crypto && moqui.crypto.thisDeviceId ? moqui.crypto.thisDeviceId() : null;
+            return this.post('scheduleMessage', Object.assign(where, { heldByDeviceId: deviceId || '' })).then((json) => {
+                const id = json.chatScheduledMessageId;
+                if (!id) return null;
+                const draft = { body: message.body || '', replyToEventSeq: where.replyToEventSeq || null, threadRootEventSeq: threadRoot };
+                return moqui.chat.keepHeld(id, draft, moqui.crypto.sealLocal).then(scheduled, (err) => {
+                    // the draft could not be kept here: no placeholder either
+                    console.error('A held message was not kept', err);
+                    moqui.notifyMessages([{ type: 'warning', message: t('This browser could not keep the message: it was not scheduled') }]);
+                    return this.post('cancelScheduled', { chatScheduledMessageId: id }).then(() => this.reloadSchedule(), () => {});
+                });
+            }, () => {});
+        },
+        openScheduled() {
+            this.scheduledBox.open = true;
+            // this device's held drafts: their texts, opened here only
+            for (const row of this.scheduledHere) {
+                if (!this.isHolder(row) || this.heldTexts[row.chatScheduledMessageId] != null) continue;
+                moqui.chat.openHeld(row.chatScheduledMessageId, moqui.crypto.openLocal).then((draft) => {
+                    this.heldTexts = Object.assign({}, this.heldTexts, { [row.chatScheduledMessageId]: draft ? plainOf(draft.body) : t('The draft is not on this device') });
+                }, () => { this.heldTexts = Object.assign({}, this.heldTexts, { [row.chatScheduledMessageId]: t('The draft does not open on this device') }); });
+            }
+        },
+        isHolder(row) { return !!(row && row.held && moqui.crypto && moqui.crypto.thisDeviceId && moqui.crypto.thisDeviceId() === row.heldByDeviceId); },
+        scheduledFailed(row) { return row.status === 'failed' || moqui.chat.heldStuck(row) || (row.status === 'scheduled' && row.reviewNeeded); },
+        scheduledIcon(row) { return this.scheduledFailed(row) ? 'sym_o_error' : row.status === 'sent' ? 'sym_o_schedule' : row.held ? 'sym_o_devices' : 'sym_o_schedule_send'; },
+        reasonText(code) {
+            return t({ notMember: 'You are no longer in the room', archived: 'The room is archived', blocked: 'You blocked this conversation',
+                accountDisabled: 'Your account is closed', noAccess: 'You no longer have the app', deviceGone: 'The draft was on a device that is gone',
+                deviceAway: 'The device that keeps it has not been open since it was due',
+                draftLost: 'The draft was lost on the device that held it' }[code] || 'The message could not be sent');
+        },
+        scheduledWhen(row) {
+            if (row.status === 'failed') return fill(t('Not sent: {reason}'), { reason: this.reasonText(row.reasonCode) });
+            if (row.status === 'sent' && row.sentAfterCancel) return fill(t('Sent after you cancelled it, at {time}'), { time: this.whenText(row.sentDate) });
+            if (row.status === 'sent') return fill(t('Sent late, at {time}'), { time: this.whenText(row.sentDate) });
+            if (row.deviceGone) return fill(t("Can't be sent: the draft was on {device}"), { device: row.heldByDeviceName || t('another device') });
+            // a device not seen for a week: it fails once overdue that long
+            if (row.deviceAway) return fill(t("Can't be sent from {device}: it has not been open for a week"), { device: row.heldByDeviceName || t('another device') });
+            if (row.reviewNeeded) return t('Waiting for you: someone in the room has a new device or identity');
+            if (row.held && !this.isHolder(row)) return fill(t('Sends {time}, from {device}'), { time: this.whenText(row.sendDate), device: row.heldByDeviceName || t('another device') });
+            return fill(t('Sends {time}'), { time: this.whenText(row.sendDate) });
+        },
+        scheduledText(row) {
+            if (!row.held) return row.bodyText || (row.files && row.files.length ? t('Files') : '');
+            if (this.isHolder(row)) return this.heldTexts[row.chatScheduledMessageId] != null ? this.heldTexts[row.chatScheduledMessageId] : '…';
+            return fill(t('Held on {device}'), { device: row.heldByDeviceName || t('another device') });
+        },
+        canEditScheduled(row) { return row.status === 'scheduled' && !row.deviceGone && (!row.held || this.isHolder(row)); },
+        // a failed held one is not sent again: its draft went from this device
+        canSendScheduled(row) { return row.held ? row.status === 'scheduled' && !row.deviceGone && this.isHolder(row) : row.status === 'scheduled' || row.status === 'failed'; },
+        // a held message waiting for the sender's decision: the problems asked as the composer asks them, then sent
+        reviewScheduled(row) {
+            return moqui.chat.sendHeld(row, (name) => this.url(name), true).then((out) => {
+                if (out && out.review) this.sealRefused(out.error, () => this.reviewScheduled(row));
+                return this.reloadSchedule();
+            }, (err) => { console.error('A held message was not sent', err); return this.reloadSchedule(); });
+        },
+        retimeScheduled(row) {
+            this.askWhen('send', t('Change the time'), '', null, (at) => this.post('updateScheduled', { chatScheduledMessageId: row.chatScheduledMessageId, sendDate: at,
+                deviceId: row.held ? moqui.crypto.thisDeviceId() || '' : '' }).then(() => this.reloadSchedule(), () => {}));
+        },
+        // a new text: the server's, or (held) this device's sealed draft
+        saveScheduled(row, body) {
+            if (!row.held) return this.post('updateScheduled', { chatScheduledMessageId: row.chatScheduledMessageId, body }).then(() => this.reloadSchedule());
+            return moqui.chat.openHeld(row.chatScheduledMessageId, moqui.crypto.openLocal).then((draft) => moqui.chat.keepHeld(row.chatScheduledMessageId,
+                Object.assign({}, draft || {}, { body }), moqui.crypto.sealLocal)).then(() => {
+                this.heldTexts = Object.assign({}, this.heldTexts, { [row.chatScheduledMessageId]: plainOf(body) });
+            });
+        },
+        sendScheduledNow(row) {
+            const sent = row.held ? moqui.chat.sendHeld(row, (name) => this.url(name), true) : this.post('sendScheduledNow', { chatScheduledMessageId: row.chatScheduledMessageId });
+            return Promise.resolve(sent).then((out) => {
+                if (out && out.lost) moqui.notifyMessages([{ type: 'warning', message: this.reasonText('draftLost') }]);
+                return this.reloadSchedule();
+            }, (err) => { console.error('A scheduled message was not sent now', err); return this.reloadSchedule(); });
+        },
+        cancelScheduled(row) {
+            return this.confirm(t('Cancel the message'), t('The scheduled message is deleted and not sent.'), t('Cancel the message'), true)
+                .then(() => this.post('cancelScheduled', { chatScheduledMessageId: row.chatScheduledMessageId })).then(() => {
+                    if (this.isHolder(row)) moqui.chat.dropHeld(row.chatScheduledMessageId);
+                    return this.reloadSchedule();
+                }, () => {});
+        },
+        dismissScheduled(row) { return this.post('dismissScheduled', { chatScheduledMessageId: row.chatScheduledMessageId }).then(() => this.reloadSchedule(), () => {}); },
         // a confirmation (Quasar's Dialog plugin): resolves on OK; Cancel, Esc or a click outside resolves nothing
         confirm(title, message, okLabel, danger) {
             return new Promise((resolve) => {
@@ -7250,8 +7531,38 @@ module.exports = {
             if (el && this.feed.next != null && !this.feed.loading && el.scrollHeight <= el.clientHeight + 8) this.loadFeed(true);
         },
         feedIcon(item) {
-            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', thread: 'sym_o_forum', reaction: 'sym_o_add_reaction' }[item.kind] || 'sym_o_chat';
+            return { mention: 'sym_o_alternate_email', reply: 'sym_o_reply', threadReply: 'sym_o_forum', thread: 'sym_o_forum', reaction: 'sym_o_add_reaction',
+                reminder: 'sym_o_alarm' }[item.kind] || 'sym_o_chat';
         },
+        // ---- scheduled messages and reminders (Comms-Messaging phase 15) ----
+        // read, then this device's drafts of rows it no longer holds waiting dropped, and its due ones sent
+        loadSchedule() {
+            return moqui.chat.loadSchedule((name) => this.url(name)).then((schedule) => {
+                const deviceId = moqui.crypto && moqui.crypto.thisDeviceId ? moqui.crypto.thisDeviceId() : null;
+                if (schedule && schedule.loaded && deviceId) moqui.chat.pruneHeld(schedule.scheduledList, deviceId);
+                return this.sendHeldDue();
+            });
+        },
+        // this device's held messages that are due (an encrypted room's), one at a time; one that fails waits for the next look
+        sendHeldDue() {
+            const crypto = moqui.crypto;
+            if (this.heldBusy || !crypto || !crypto.thisDeviceId || !moqui.chat.sendHeld) return;
+            const due = moqui.chat.dueHeld(moqui.chat.state.schedule.scheduledList, crypto.thisDeviceId(), Date.now());
+            if (!due.length) return;
+            this.heldBusy = true;
+            due.reduce((chain, row) => chain.then(() => moqui.chat.sendHeld(row, (name) => this.url(name), false).then((out) => {
+                // a verified person's new device or identity: the sender decides, from the room's scheduled list
+                if (out && out.review) moqui.notifyMessages([{ type: 'warning', message: t('A scheduled message waits for you: someone in the room has a new device or identity') }]);
+            }).catch((err) => console.error('A held message was not sent; it is tried again', err))), Promise.resolve())
+                .then(() => { this.heldBusy = false; return moqui.chat.loadSchedule((name) => this.url(name)); });
+        },
+        // the reminders at the top of Activity: the pending ones, soonest first
+        reminderRows() { return this.filter === 'activity' && moqui.chat ? (moqui.chat.state.schedule.reminderList || []) : []; },
+        reminderWhen(row) { return moqui.chat.whenText(row.remindDate, Date.now()); },
+        reminderRoom(row) { return row.roomName || (moqui.chat.state.roomNames || {})[row.chatRoomId] || ''; },
+        reminderSnippet(row) { return row.encrypted ? t('Encrypted message') : row.gone ? t('Message removed') : (row.snippet || ''); },
+        openReminder(row) { this.openFeedItem({ chatRoomId: row.chatRoomId, messageEventSeq: row.eventSeq }); },
+        cancelReminder(row) { return this.post('cancelReminder', { chatMessageReminderId: row.chatMessageReminderId }).then(() => moqui.chat.loadSchedule((name) => this.url(name)), () => {}); },
         feedTitle(item) {
             const name = item.actorName || t('Someone');
             if (item.kind === 'thread') {
@@ -7263,6 +7574,7 @@ module.exports = {
             if (item.kind === 'reply') return fill(t('{name} replied to you'), { name });
             if (item.kind === 'threadReply') return fill(t('{name} replied in a thread'), { name });
             if (item.kind === 'reaction') return item.reactionKey ? fill(t('{name} reacted {key} to your message'), { name, key: item.reactionKey }) : fill(t('{name} reacted to your message'), { name });
+            if (item.kind === 'reminder') return fill(t("Reminder: {name}'s message"), { name });
             return name;
         },
         feedText(item) {
@@ -7612,6 +7924,12 @@ module.exports = {
         this.roomsReady.then(() => this.$nextTick(() => this.measure()));
         // this browser's crypto device, made in idle time once the rooms show, so new chats can be encrypted (§6.5)
         this.roomsReady.then(() => { if (moqui.chat && moqui.chat.makeDeviceSoon) moqui.chat.makeDeviceSoon(); });
+        // scheduled messages and reminders (phase 15): read now and on each change; this device's held ones go when due
+        if (moqui.chat && moqui.chat.loadSchedule) {
+            this.roomsReady.then(() => this.loadSchedule());
+            this.unsubscribe.push(moqui.chat.on('schedule', () => this.loadSchedule()));
+            this.heldTimer = setInterval(() => this.sendHeldDue(), 60000);
+        }
         this.applyParams();
         setTimeout(() => this.measure(), 300);
     },
@@ -7622,6 +7940,7 @@ module.exports = {
         if (this.unregisterKeys) this.unregisterKeys();
         clearTimeout(this.roomsTimer);
         clearTimeout(this.feedTimer);
+        clearInterval(this.heldTimer);
     }
 };
         })(module.exports);
@@ -8030,6 +8349,106 @@ module.exports = {
                               "data-feed": _ctx.filter,
                               onScroll: _ctx.onFeedScroll
                             }, [
+                              (_ctx.reminderRows().length)
+                                ? (_openBlock(), _createBlock(_component_q_list, {
+                                    key: 0,
+                                    dense: "",
+                                    class: "m-chat-reminders"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_label, {
+                                        header: "",
+                                        class: "q-py-xs q-px-sm text-caption text-weight-medium"
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.t('Reminders')), 1)
+                                        ]),
+                                        _: 1
+                                      }),
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.reminderRows(), (row) => {
+                                        return (_openBlock(), _createBlock(_component_q_item, {
+                                          key: row.chatMessageReminderId,
+                                          clickable: "",
+                                          class: "q-py-xs q-px-sm m-chat-reminder-row",
+                                          "data-reminder": row.chatMessageReminderId,
+                                          onClick: $event => (_ctx.openReminder(row))
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, {
+                                              avatar: "",
+                                              style: {"min-width":"42px"}
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_avatar, {
+                                                  size: "32px",
+                                                  rounded: "",
+                                                  class: "m-tonal text-primary",
+                                                  icon: "sym_o_alarm"
+                                                })
+                                              ]),
+                                              _: 1
+                                            }),
+                                            _createVNode(_component_q_item_section, { style: {"min-width":"0"} }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_label, { class: "row no-wrap items-center" }, {
+                                                  default: _withCtx(() => [
+                                                    _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(row.senderName || _ctx.t('Someone')), 1),
+                                                    _createVNode(_component_q_space),
+                                                    _createElementVNode("span", { class: "text-caption m-muted text-no-wrap q-ml-xs" }, _toDisplayString(_ctx.reminderWhen(row)), 1)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024),
+                                                _createVNode(_component_q_item_label, {
+                                                  caption: "",
+                                                  class: "ellipsis m-muted"
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.reminderRoom(row)), 1),
+                                                    (_ctx.reminderSnippet(row))
+                                                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                          _createTextVNode(" · " + _toDisplayString(_ctx.reminderSnippet(row)), 1)
+                                                        ], 64))
+                                                      : _createCommentVNode("", true)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            _createVNode(_component_q_item_section, { side: "" }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_btn, {
+                                                  flat: "",
+                                                  round: "",
+                                                  dense: "",
+                                                  size: "sm",
+                                                  icon: "sym_o_close",
+                                                  class: "m-chat-reminder-cancel",
+                                                  "aria-label": _ctx.t('Cancel the reminder'),
+                                                  onClick: _withModifiers($event => (_ctx.cancelReminder(row)), ["stop"])
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_tooltip, null, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(_ctx.t('Cancel the reminder')), 1)
+                                                      ]),
+                                                      _: 1
+                                                    })
+                                                  ]),
+                                                  _: 1
+                                                }, 8, ["aria-label", "onClick"])
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1032, ["data-reminder", "onClick"]))
+                                      }), 128)),
+                                      _createVNode(_component_q_separator)
+                                    ]),
+                                    _: 1
+                                  }))
+                                : _createCommentVNode("", true),
                               _createVNode(_component_q_list, { dense: "" }, {
                                 default: _withCtx(() => [
                                   (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.feedRows, (item) => {
@@ -8105,7 +8524,7 @@ module.exports = {
                               }),
                               (_ctx.feed.loading)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 0,
+                                    key: 1,
                                     class: "row justify-center q-pa-sm"
                                   }, [
                                     _createVNode(_component_q_spinner, {
@@ -8115,7 +8534,7 @@ module.exports = {
                                   ]))
                                 : (_ctx.feed.loaded && !_ctx.feedRows.length)
                                   ? (_openBlock(), _createElementBlock("div", {
-                                      key: 1,
+                                      key: 2,
                                       class: "column items-center q-pa-lg text-center m-chat-feed-empty"
                                     }, [
                                       _createVNode(_component_q_icon, {
@@ -8943,6 +9362,8 @@ module.exports = {
                   const _component_chat_message_menu = _resolveComponent("chat-message-menu")
                   const _component_q_card_section = _resolveComponent("q-card-section")
                   const _component_q_inner_loading = _resolveComponent("q-inner-loading")
+                  const _component_chat_when = _resolveComponent("chat-when")
+                  const _component_chat_scheduled = _resolveComponent("chat-scheduled")
                   const _directive_close_popup = _resolveDirective("close-popup")
 
                   return (_openBlock(), _createElementBlock("div", {
@@ -13087,7 +13508,22 @@ module.exports = {
                           : _createCommentVNode("", true)
                       ]),
                       _: 1
-                    }, 8, ["modelValue", "onUpdate:modelValue", "position", "onHide"])
+                    }, 8, ["modelValue", "onUpdate:modelValue", "position", "onHide"]),
+                    _createVNode(_component_chat_when, {
+                      modelValue: _ctx.whenBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.whenBox.open) = $event),
+                      kind: _ctx.whenBox.kind,
+                      title: _ctx.whenBox.title,
+                      note: _ctx.whenBox.note,
+                      current: _ctx.whenBox.current,
+                      onPick: _ctx.whenPicked,
+                      onClear: _ctx.whenCleared
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "kind", "title", "note", "current", "onPick", "onClear"]),
+                    _createVNode(_component_chat_scheduled, {
+                      modelValue: _ctx.scheduledBox.open,
+                      "onUpdate:modelValue": $event => ((_ctx.scheduledBox.open) = $event),
+                      room: _ctx.self
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "room"])
                   ], 42, ["onDragover", "onDragleave", "onDrop"]))
                 }
             })();
@@ -13262,7 +13698,7 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-composer"];
             target.render = (function () {
-                const { createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createBlock: _createBlock, withCtx: _withCtx, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, withKeys: _withKeys, createTextVNode: _createTextVNode, renderList: _renderList, Fragment: _Fragment, createBlock: _createBlock, withCtx: _withCtx, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_icon = _resolveComponent("q-icon")
@@ -13278,6 +13714,7 @@ module.exports = {
                   const _component_q_menu = _resolveComponent("q-menu")
                   const _component_m_emoji_picker = _resolveComponent("m-emoji-picker")
                   const _component_q_space = _resolveComponent("q-space")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
                   const _component_m_file = _resolveComponent("m-file")
                   const _directive_close_popup = _resolveDirective("close-popup")
 
@@ -13286,9 +13723,32 @@ module.exports = {
                     onKeydownCapture: _ctx.onKeydown,
                     onPaste: _ctx.onPaste
                   }, [
-                    (!_ctx.threadRoot && _ctx.room.replyTo)
+                    (!_ctx.threadRoot && _ctx.room.scheduledLineText)
                       ? (_openBlock(), _createElementBlock("div", {
                           key: 0,
+                          class: "row items-center no-wrap q-pl-sm q-mb-xs text-caption cursor-pointer m-chat-scheduled-bar",
+                          role: "button",
+                          tabindex: "0",
+                          onClick: $event => (_ctx.room.openScheduled()),
+                          onKeydown: _withKeys($event => (_ctx.room.openScheduled()), ["enter"])
+                        }, [
+                          _createVNode(_component_q_icon, {
+                            name: "sym_o_schedule_send",
+                            size: "16px",
+                            class: "q-mr-xs text-primary"
+                          }),
+                          _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.scheduledLineText), 1),
+                          (_ctx.room.scheduledLine.failed)
+                            ? (_openBlock(), _createElementBlock("span", {
+                                key: 0,
+                                class: "text-negative q-ml-sm text-no-wrap"
+                              }, _toDisplayString(_ctx.room.scheduledFailedText), 1))
+                            : _createCommentVNode("", true)
+                        ], 40, ["onClick", "onKeydown"]))
+                      : _createCommentVNode("", true),
+                    (!_ctx.threadRoot && _ctx.room.replyTo)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 1,
                           class: "row items-center no-wrap q-pl-sm q-mb-xs text-caption rounded-borders"
                         }, [
                           _createElementVNode("div", {
@@ -13318,7 +13778,7 @@ module.exports = {
                       : _createCommentVNode("", true),
                     (_ctx.files.length)
                       ? (_openBlock(), _createElementBlock("div", {
-                          key: 1,
+                          key: 2,
                           class: "row q-mb-xs"
                         }, [
                           (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.files, (file) => {
@@ -13677,20 +14137,155 @@ module.exports = {
                               ]),
                               _: 1
                             }, 8, ["aria-label", "onClick"]))
-                          : (_openBlock(), _createBlock(_component_q_btn, {
-                              key: 5,
-                              dense: "",
-                              unelevated: "",
-                              "no-caps": "",
-                              color: "primary",
-                              icon: "sym_o_send",
-                              class: "m-chat-send",
-                              label: _ctx.room.useBubbles ? undefined : _ctx.room.t('Send'),
-                              "aria-label": _ctx.room.t('Send'),
-                              disable: !_ctx.canSend,
-                              loading: _ctx.sending,
-                              onClick: _ctx.send
-                            }, null, 8, ["label", "aria-label", "disable", "loading", "onClick"]))
+                          : (_openBlock(), _createElementBlock(_Fragment, { key: 5 }, [
+                              _createVNode(_component_q_btn, {
+                                dense: "",
+                                unelevated: "",
+                                "no-caps": "",
+                                color: "primary",
+                                icon: "sym_o_send",
+                                class: "m-chat-send",
+                                label: _ctx.room.useBubbles ? undefined : _ctx.room.t('Send'),
+                                "aria-label": _ctx.room.t('Send'),
+                                disable: !_ctx.canSend,
+                                loading: _ctx.sending,
+                                onClick: _ctx.send
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_menu, {
+                                    "context-menu": "",
+                                    class: "m-chat-send-menu",
+                                    onShow: $event => (_ctx.room.buzz())
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_list, { style: {"min-width":"220px"} }, {
+                                        default: _withCtx(() => [
+                                          _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            clickable: "",
+                                            disable: !!_ctx.laterOff,
+                                            class: "m-chat-send-later",
+                                            onClick: _ctx.sendLater
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, { name: "sym_o_schedule_send" })
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_label, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.room.t('Send later…')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  (_ctx.laterOff)
+                                                    ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                        key: 0,
+                                                        caption: ""
+                                                      }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.laterOff), 1)
+                                                        ]),
+                                                        _: 1
+                                                      }))
+                                                    : _createCommentVNode("", true)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["disable", "onClick"])), [
+                                            [_directive_close_popup]
+                                          ])
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }, 8, ["onShow"])
+                                ]),
+                                _: 1
+                              }, 8, ["label", "aria-label", "disable", "loading", "onClick"]),
+                              (!_ctx.room.useBubbles)
+                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                    key: 0,
+                                    dense: "",
+                                    unelevated: "",
+                                    color: "primary",
+                                    icon: "sym_o_expand_more",
+                                    class: "m-chat-send-more",
+                                    "aria-label": _ctx.room.t('More ways to send'),
+                                    style: {"min-width":"22px","padding":"0 1px","margin-left":"1px"},
+                                    disable: _ctx.sending
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_tooltip, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.room.t('More ways to send')), 1)
+                                        ]),
+                                        _: 1
+                                      }),
+                                      _createVNode(_component_q_menu, {
+                                        anchor: "top right",
+                                        self: "bottom right"
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_list, { style: {"min-width":"220px"} }, {
+                                            default: _withCtx(() => [
+                                              _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                clickable: "",
+                                                disable: !!_ctx.laterOff,
+                                                class: "m-chat-send-later",
+                                                onClick: _ctx.sendLater
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, { name: "sym_o_schedule_send" })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_label, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.room.t('Send later…')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      }),
+                                                      (_ctx.laterOff)
+                                                        ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                            key: 0,
+                                                            caption: ""
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              _createTextVNode(_toDisplayString(_ctx.laterOff), 1)
+                                                            ]),
+                                                            _: 1
+                                                          }))
+                                                        : _createCommentVNode("", true)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }, 8, ["disable", "onClick"])), [
+                                                [_directive_close_popup]
+                                              ])
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }, 8, ["aria-label", "disable"]))
+                                : _createCommentVNode("", true)
+                            ], 64))
                     ]),
                     _createElementVNode("div", { class: "hidden" }, [
                       _createVNode(_component_m_file, {
@@ -14478,6 +15073,24 @@ module.exports = {
                         _createTextVNode(_toDisplayString(_ctx.item.timeShort), 1),
                         (_ctx.item.edited)
                           ? (_openBlock(), _createElementBlock("span", { key: 0 }, _toDisplayString(_ctx.room.t('(edited)')), 1))
+                          : _createCommentVNode("", true),
+                        (_ctx.room.reminderOf(_ctx.item))
+                          ? (_openBlock(), _createBlock(_component_q_icon, {
+                              key: 1,
+                              name: "sym_o_alarm",
+                              size: "12px",
+                              class: "q-ml-xs m-chat-reminder"
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_tooltip, null, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(_ctx.room.reminderText(_ctx.item)), 1)
+                                  ]),
+                                  _: 1
+                                })
+                              ]),
+                              _: 1
+                            }))
                           : _createCommentVNode("", true)
                       ]),
                       (_ctx.item.readers && _ctx.item.readers.length && (_ctx.item.mine || !_ctx.room.useBubbles))
@@ -15040,6 +15653,387 @@ module.exports = {
                       ], 2)
                     ])
                   ], 8, ["data-pending", "data-client-ref"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-scheduled"];
+            target.render = (function () {
+                const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, normalizeClass: _normalizeClass, withCtx: _withCtx, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, createBlock: _createBlock } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_m_rich_text = _resolveComponent("m-rich-text")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_tooltip = _resolveComponent("q-tooltip")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+                  const _component_m_dialog = _resolveComponent("m-dialog")
+
+                  return (_openBlock(), _createBlock(_component_m_dialog, {
+                    "model-value": _ctx.modelValue,
+                    title: _ctx.t('Scheduled messages'),
+                    width: "560",
+                    "onUpdate:modelValue": (open) => _ctx.$emit('update:modelValue', open)
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_list, {
+                        separator: "",
+                        class: "m-chat-scheduled"
+                      }, {
+                        default: _withCtx(() => [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.room.scheduledHere, (row) => {
+                            return (_openBlock(), _createBlock(_component_q_item, {
+                              key: row.chatScheduledMessageId,
+                              class: "q-px-none",
+                              "data-scheduled": row.chatScheduledMessageId,
+                              "data-status": row.status
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_item_section, null, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_label, {
+                                      class: _normalizeClass(["row items-center no-wrap text-caption", _ctx.room.scheduledFailed(row) ? 'text-negative' : 'm-muted'])
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_icon, {
+                                          name: _ctx.room.scheduledIcon(row),
+                                          size: "14px",
+                                          class: "q-mr-xs"
+                                        }, null, 8, ["name"]),
+                                        _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.scheduledWhen(row)), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1032, ["class"]),
+                                    (_ctx.editing === row.chatScheduledMessageId)
+                                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                          _createVNode(_component_m_rich_text, {
+                                            modelValue: _ctx.editBody,
+                                            "onUpdate:modelValue": $event => ((_ctx.editBody) = $event),
+                                            name: 'chatScheduledEdit' + row.chatScheduledMessageId,
+                                            light: "",
+                                            rows: "2",
+                                            label: _ctx.t('Edit message'),
+                                            "mention-url": _ctx.room.url('mentionUsers'),
+                                            "mention-parameters": {chatRoomId: _ctx.room.roomId}
+                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label", "mention-url", "mention-parameters"]),
+                                          _createElementVNode("div", { class: "row q-gutter-x-sm q-mt-xs" }, [
+                                            _createVNode(_component_q_btn, {
+                                              dense: "",
+                                              unelevated: "",
+                                              "no-caps": "",
+                                              color: "primary",
+                                              size: "sm",
+                                              label: _ctx.t('Save'),
+                                              loading: _ctx.busy,
+                                              onClick: $event => (_ctx.save(row))
+                                            }, null, 8, ["label", "loading", "onClick"]),
+                                            _createVNode(_component_q_btn, {
+                                              dense: "",
+                                              flat: "",
+                                              "no-caps": "",
+                                              size: "sm",
+                                              label: _ctx.t('Change the time…'),
+                                              onClick: $event => (_ctx.room.retimeScheduled(row))
+                                            }, null, 8, ["label", "onClick"]),
+                                            _createVNode(_component_q_btn, {
+                                              dense: "",
+                                              flat: "",
+                                              "no-caps": "",
+                                              size: "sm",
+                                              label: _ctx.t('Cancel'),
+                                              onClick: $event => (_ctx.editing = null)
+                                            }, null, 8, ["label", "onClick"])
+                                          ])
+                                        ], 64))
+                                      : (_openBlock(), _createBlock(_component_q_item_label, {
+                                          key: 1,
+                                          class: "ellipsis-2-lines text-body2"
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.room.scheduledText(row)), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024)),
+                                    (row.files && row.files.length)
+                                      ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                          key: 2,
+                                          caption: "",
+                                          class: "ellipsis"
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(row.files.map((file) => file.fileName).join(', ')), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024))
+                                      : _createCommentVNode("", true),
+                                    (row.threadRootEventSeq)
+                                      ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                          key: 3,
+                                          caption: ""
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('In a thread')), 1)
+                                          ]),
+                                          _: 1
+                                        }))
+                                      : (row.replyToEventSeq)
+                                        ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                            key: 4,
+                                            caption: ""
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('A reply')), 1)
+                                            ]),
+                                            _: 1
+                                          }))
+                                        : _createCommentVNode("", true)
+                                  ]),
+                                  _: 2
+                                }, 1024),
+                                _createVNode(_component_q_item_section, {
+                                  side: "",
+                                  top: ""
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createElementVNode("div", { class: "row no-wrap" }, [
+                                      (_ctx.room.canEditScheduled(row))
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 0,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            size: "sm",
+                                            icon: "sym_o_edit",
+                                            class: "m-chat-scheduled-edit",
+                                            "aria-label": _ctx.t('Edit'),
+                                            onClick: $event => (_ctx.edit(row))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Edit')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["aria-label", "onClick"]))
+                                        : _createCommentVNode("", true),
+                                      (row.reviewNeeded && _ctx.room.isHolder(row))
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 1,
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            size: "sm",
+                                            color: "primary",
+                                            class: "m-chat-scheduled-review",
+                                            label: _ctx.t('Review and send'),
+                                            onClick: $event => (_ctx.room.reviewScheduled(row))
+                                          }, null, 8, ["label", "onClick"]))
+                                        : (_ctx.room.canSendScheduled(row))
+                                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: 2,
+                                              flat: "",
+                                              round: "",
+                                              dense: "",
+                                              size: "sm",
+                                              icon: "sym_o_send",
+                                              class: "m-chat-scheduled-now",
+                                              "aria-label": _ctx.t('Send now'),
+                                              onClick: $event => (_ctx.room.sendScheduledNow(row))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_tooltip, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Send now')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["aria-label", "onClick"]))
+                                          : _createCommentVNode("", true),
+                                      (row.status === 'sent')
+                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 3,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            size: "sm",
+                                            icon: "sym_o_close",
+                                            class: "m-chat-scheduled-dismiss",
+                                            "aria-label": _ctx.t('Dismiss'),
+                                            onClick: $event => (_ctx.room.dismissScheduled(row))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Dismiss')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["aria-label", "onClick"]))
+                                        : (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: 4,
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            size: "sm",
+                                            icon: "sym_o_delete",
+                                            class: "m-chat-scheduled-cancel",
+                                            "aria-label": _ctx.t('Cancel the message'),
+                                            onClick: $event => (_ctx.room.cancelScheduled(row))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Cancel the message')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["aria-label", "onClick"]))
+                                    ])
+                                  ]),
+                                  _: 2
+                                }, 1024)
+                              ]),
+                              _: 2
+                            }, 1032, ["data-scheduled", "data-status"]))
+                          }), 128))
+                        ]),
+                        _: 1
+                      }),
+                      (!_ctx.room.scheduledHere.length)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 0,
+                            class: "text-caption m-muted q-pa-md text-center"
+                          }, _toDisplayString(_ctx.t('Nothing is scheduled in this room')), 1))
+                        : _createCommentVNode("", true)
+                    ]),
+                    _: 1
+                  }, 8, ["model-value", "title", "onUpdate:modelValue"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-when"];
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, createElementVNode: _createElementVNode } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+                  const _component_q_input = _resolveComponent("q-input")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_m_dialog = _resolveComponent("m-dialog")
+
+                  return (_openBlock(), _createBlock(_component_m_dialog, {
+                    "model-value": _ctx.modelValue,
+                    title: _ctx.title,
+                    width: "400",
+                    "onUpdate:modelValue": (open) => _ctx.$emit('update:modelValue', open)
+                  }, {
+                    default: _withCtx(() => [
+                      (_ctx.note)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 0,
+                            class: "text-caption m-muted q-mb-sm m-chat-when-note"
+                          }, _toDisplayString(_ctx.note), 1))
+                        : _createCommentVNode("", true),
+                      _createVNode(_component_q_list, {
+                        dense: "",
+                        class: "m-chat-when"
+                      }, {
+                        default: _withCtx(() => [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.choices, (choice) => {
+                            return (_openBlock(), _createBlock(_component_q_item, {
+                              key: choice.key,
+                              clickable: "",
+                              "data-when": choice.key,
+                              onClick: $event => (_ctx.$emit('pick', choice.at))
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_item_section, null, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(choice.label), 1)
+                                  ]),
+                                  _: 2
+                                }, 1024),
+                                _createVNode(_component_q_item_section, {
+                                  side: "",
+                                  class: "text-caption"
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(choice.text), 1)
+                                  ]),
+                                  _: 2
+                                }, 1024)
+                              ]),
+                              _: 2
+                            }, 1032, ["data-when", "onClick"]))
+                          }), 128))
+                        ]),
+                        _: 1
+                      }),
+                      _createElementVNode("div", { class: "row items-center no-wrap q-gutter-x-sm q-mt-sm" }, [
+                        _createVNode(_component_q_input, {
+                          modelValue: _ctx.custom,
+                          "onUpdate:modelValue": $event => ((_ctx.custom) = $event),
+                          dense: "",
+                          outlined: "",
+                          "stack-label": "",
+                          type: "datetime-local",
+                          class: "col",
+                          name: "chatWhenCustom",
+                          label: _ctx.t('Pick a date and time')
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                        _createVNode(_component_q_btn, {
+                          dense: "",
+                          unelevated: "",
+                          "no-caps": "",
+                          color: "primary",
+                          class: "m-chat-when-set",
+                          label: _ctx.t('Set'),
+                          disable: _ctx.customAt == null,
+                          onClick: $event => (_ctx.$emit('pick', _ctx.customAt))
+                        }, null, 8, ["label", "disable", "onClick"])
+                      ]),
+                      (_ctx.custom && _ctx.customAt == null)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 1,
+                            class: "text-caption text-negative q-mt-xs"
+                          }, _toDisplayString(_ctx.t('Pick a time at least a minute from now and within a year')), 1))
+                        : _createCommentVNode("", true),
+                      (_ctx.current)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 2,
+                            class: "row q-mt-md"
+                          }, [
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              dense: "",
+                              "no-caps": "",
+                              color: "negative",
+                              class: "m-chat-when-clear",
+                              label: _ctx.t('Cancel the reminder'),
+                              onClick: $event => (_ctx.$emit('clear'))
+                            }, null, 8, ["label", "onClick"])
+                          ]))
+                        : _createCommentVNode("", true)
+                    ]),
+                    _: 1
+                  }, 8, ["model-value", "title", "onUpdate:modelValue"]))
                 }
             })();
             delete target.template;
