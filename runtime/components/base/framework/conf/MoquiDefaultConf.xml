@@ -254,6 +254,11 @@
     <default-property name="chat_device_active_days" value="90"/>
     <default-property name="chat_device_auto_expire_days" value="30"/>
 
+    <!-- The spam purge (plans/Comms-Messaging.md §18.3 phase 11; docs/interfaces/SMS.md "Blocked numbers and spam"): above 0,
+        the daily clean#ChatRetention deletes the texts older than this many days in each phone room every current member
+        has in Spam (SmsSpamServices purge#SpamRooms), each room on its own; 0 keeps everything. -->
+    <default-property name="chat_spam_purge_days" value="0"/>
+
     <!-- Call media (the rtc feature; plans/archive/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
         rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an

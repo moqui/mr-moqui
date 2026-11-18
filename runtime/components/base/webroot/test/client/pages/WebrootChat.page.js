@@ -62,6 +62,27 @@ test("unread and mention counts: others' messages in rooms not shown, cleared by
     assert.equal(chat.reduce(state, push("chatUser:ann", { kind: "other" }), "ann", 5), null);
 });
 
+test("Spam & blocked (Comms-Messaging §18.3 phase 11): a filtered room is level none and counts nothing; the server's counts reset a room they no longer name; hidden messages fold into one line", () => {
+    const state = Object.assign(freshState(), { levels: { R1: "all" } });
+    assert.equal(chat.levelOf("CnlAll", false, "spam"), "none");
+    assert.equal(chat.levelOf("CnlAll", false, null), "all");
+    state.unread.R1 = { unread: 3, mentions: 1 };
+    chat.reduce(state, push("chatUser:ann", { kind: "room", action: "settings", chatRoomId: "R1", notificationLevelEnumId: "CnlAll", filtered: "spam" }), "ann", 1);
+    assert.equal(state.levels.R1, "none");
+    assert.deepEqual(chat.unreadOf(state, "R1"), { unread: 0, mentions: 0 });
+    chat.reduce(state, push("chatUser:ann", { kind: "room", action: "settings", chatRoomId: "R1", notificationLevelEnumId: "CnlAll", filtered: null }), "ann", 2);
+    assert.equal(state.levels.R1, "all");
+    state.unread = { R1: { unread: 2, mentions: 0 }, R2: { unread: 4, mentions: 1 } };
+    chat.applyCounts(state, { R2: { unread: 1, mentions: 0, counted: 1 }, R3: { unread: 5, mentions: 2 } });
+    assert.deepEqual(state.unread, { R1: { unread: 0, mentions: 0 }, R2: { unread: 1, mentions: 0 }, R3: { unread: 5, mentions: 2 } });
+    const out = [];
+    const rows = [event({ eventSeq: 1 }), event({ eventSeq: 2, hidden: "blocked" }), event({ eventSeq: 3, hidden: "blocked" }), event({ eventSeq: 4 }), event({ eventSeq: 5, hidden: "blocked" })];
+    const kinds = rows.map((row) => chat.hiddenLine(out, row) ? "h" : (out.push({ kind: "message", eventSeq: row.eventSeq }), "m"));
+    assert.deepEqual(kinds, ["m", "h", "h", "m", "h"]);
+    assert.deepEqual(out.map((row) => row.kind), ["message", "hidden", "message", "hidden"]);
+    assert.equal(out[1].eventSeq, 2);
+});
+
 test("a pushed event merged into a timeline: messages in order, edits, reactions, redactions, pins and threads", () => {
     const list = [event({ eventSeq: 2, bodyText: "one", reactions: [], threadReplyCount: 0 }), event({ eventSeq: 5, bodyText: "three" })];
     chat.applyEvent(list, event({ eventSeq: 3, bodyText: "two" }), "ann");

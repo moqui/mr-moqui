@@ -1364,3 +1364,40 @@ fn a_twilio_group_room_takes_the_conversation_twilio_has_of_its_numbers() {
         Some(format!("/v1/Conversations/{theirs}/Messages"))
     );
 }
+
+// ---- the number lookup (plans/Comms-Messaging.md §18.3 phase 11) ----
+
+/// The spam filter's lookup: Lookup v2's line type and carrier on the fake, through the adapter; a number not in
+/// E.164 is never asked; a refusal is an error, so the filter adds nothing.
+#[test]
+fn a_twilio_lookup_reads_the_line_type_and_a_failure_is_an_error() {
+    let fake = Fake::start(&TWILIO);
+    let number = "+15553330101";
+    fake.file(
+        "v2/PhoneNumbers/%2B15553330101?Fields=line_type_intelligence",
+        "application/json",
+        json!({"phone_number": number, "line_type_intelligence":
+            {"type": "nonFixedVoip", "carrier_name": "Example Voice", "error_code": null}})
+        .to_string()
+        .as_bytes(),
+    );
+    let bridge = moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: BRIDGE.to_string(),
+        type_enum_id: "CbtSms".to_string(),
+        adapter_name: "sms-twilio".to_string(),
+        name: "Twilio".to_string(),
+        config: json!({"accountSid": ACCOUNT, "apiKeySid": API_KEY, "apiKeySecret": "key-secret", "authToken": TOKEN,
+            "lookupsBaseUrl": format!("{}/media", fake.base), "allowInternalAddresses": true}),
+    };
+    let found = adapter().lookup_number(&bridge, number).unwrap().unwrap();
+    assert_eq!(found.line_type.as_deref(), Some("nonFixedVoip"));
+    assert_eq!(found.carrier_name.as_deref(), Some("Example Voice"));
+    assert_eq!(
+        adapter().lookup_number(&bridge, "12345").unwrap(),
+        None,
+        "not E.164: not asked"
+    );
+    let missing = adapter().lookup_number(&bridge, "+15553330102").unwrap_err();
+    assert!(missing.contains("404"), "{missing}");
+    assert_eq!(twilio::lookup::answer(r#"{"line_type_intelligence": null}"#), None);
+}

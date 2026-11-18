@@ -12,7 +12,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Call handling (plans/archive/Comms-Framework.md §5.3, §5.5, V3), the component CallHandling.xml serves in the qvue render mode: do
-    not disturb, call waiting, the mobile that rings too, Hide my number; the rules in the order they are read, each with Edit,
+    not disturb, call waiting, the mobile that rings too, Hide my number; the Blocked numbers and Filter spam texts
+    (plans/Comms-Messaging.md §18.3 phase 11); the rules in the order they are read, each with Edit,
     Off and Remove, and Add a rule (what, for which callers, where to, when); the caller lists with their numbers. -->
 <template><div class="m-call-handling q-pa-sm column q-gutter-md" style="max-width:900px">
     <div class="row items-center">
@@ -20,6 +21,22 @@ along with this software (see the LICENSE.md file). If not, see
         <q-btn flat dense no-caps color="primary" icon="sym_o_voicemail" :label="t('Phone and voicemail settings')" @click="$root.setUrl(sibling('Phone'))"></q-btn>
     </div>
     <q-banner v-if="loaded && !phoneActive" dense rounded class="m-tonal">{{t('Phone calls are not available here; these settings apply when calls are enabled.')}}</q-banner>
+
+    <!-- blocked numbers and the spam filter (plans/Comms-Messaging.md §18.3 phase 11) -->
+    <q-card flat bordered class="m-call-blocked"><q-card-section class="column q-gutter-sm">
+        <div class="text-subtitle1">{{t('Blocked numbers')}}</div>
+        <div class="text-caption m-muted">{{t('Their calls are refused, and their texts go to Spam & blocked in Chat without notifying you.')}}</div>
+        <div class="row q-gutter-xs">
+            <q-chip v-for="e in blocked" :key="e.phoneNumber" removable dense :data-blocked="e.phoneNumber" @remove="change('unblockNumber', {phoneNumber: e.phoneNumber})">
+                <span class="text-mono">{{e.phoneNumber}}</span><span v-if="e.name">&nbsp;· {{e.name}}</span></q-chip>
+            <span v-if="!blocked.length" class="m-muted text-caption">{{t('No numbers blocked.')}}</span>
+        </div>
+        <div class="row items-center q-gutter-sm">
+            <q-input dense outlined v-model="blockEntry" :label="t('Number, or a prefix ending in *')" style="width:240px" @keyup.enter="blockNumber"></q-input>
+            <q-btn flat dense no-caps icon="sym_o_block" :label="t('Block')" @click="blockNumber" :disable="!blockEntry"></q-btn>
+        </div>
+        <q-toggle v-model="s.spamFilter" :label="t('Filter spam texts: texts that look like spam go to Spam & blocked')" @update:model-value="save({spamFilter: s.spamFilter})"></q-toggle>
+    </q-card-section></q-card>
 
     <q-card flat bordered><q-card-section class="column q-gutter-sm">
         <q-toggle v-model="s.dnd" :label="t('Do not disturb: calls go straight to voicemail')" @update:model-value="save({dnd: s.dnd})"></q-toggle>
@@ -102,9 +119,9 @@ const SELECTIVE = ['ChrSelectiveReject', 'ChrSelectiveAccept', 'ChrSelectiveForw
 module.exports = {
     name: 'CallHandling',
     data() {
-        return { loaded: false, phoneActive: false, rules: [], lists: [], schedules: [], groups: [], kinds: [], targets: [],
-            s: { dnd: false, callWaiting: false, hideCallerId: false, ringMobile: false, mobileNumber: '', mobileScheduleId: null, forwardEnabled: false },
-            editing: false, busy: false, form: {}, newListName: '', entry: {} };
+        return { loaded: false, phoneActive: false, rules: [], lists: [], blocked: [], schedules: [], groups: [], kinds: [], targets: [],
+            s: { dnd: false, callWaiting: false, hideCallerId: false, ringMobile: false, mobileNumber: '', mobileScheduleId: null, forwardEnabled: false, spamFilter: true },
+            editing: false, busy: false, form: {}, newListName: '', entry: {}, blockEntry: '' };
     },
     computed: {
         selective() { return SELECTIVE.indexOf(this.form.kindEnumId) >= 0; },
@@ -133,6 +150,7 @@ module.exports = {
                 if (json.errors) moqui.notifyMessages([], json.errors);
                 this.rules = json.ruleList || [];
                 this.lists = json.callerListList || [];
+                this.blocked = json.blockedList || [];
                 this.schedules = json.scheduleList || [];
                 this.groups = json.groupList || [];
                 this.kinds = json.kindList || [];
@@ -173,6 +191,10 @@ module.exports = {
         addList() {
             if (!this.newListName) return;
             this.change('storeList', { name: this.newListName }).then((json) => { if (!json.errors) this.newListName = ''; }, () => null);
+        },
+        blockNumber() {
+            if (!this.blockEntry) return;
+            this.change('blockNumber', { phoneNumber: this.blockEntry }).then((json) => { if (!json.errors) this.blockEntry = ''; }, () => null);
         },
         addEntry(list) {
             const number = this.entry[list.callerListId];

@@ -176,7 +176,9 @@ along with this software (see the LICENSE.md file). If not, see
                     const names = page.userNames || {}
                     eventList = Array.from(page.eventList || []).map((event) => {
                         const files = event.encrypted ? [] : Array.from(event.attachments || []).map((file) => file.fileName || file.name || '').filter((name) => name)
-                        let text = event.redacted ? (event.removedLabel || ec.l10n.localize('Message removed'))
+                        // a message of someone the user blocked (plans/Comms-Messaging.md §18.3 phase 11): its line says so, nothing of it shows
+                        let text = event.hidden ? ec.l10n.localize('Hidden: a message from someone you blocked')
+                            : event.redacted ? (event.removedLabel || ec.l10n.localize('Message removed'))
                             : event.encrypted ? ec.l10n.localize('Encrypted message')
                             : (event.bodyText || (event.poll ? ec.l10n.localize('Poll') + ': ' + (event.poll.question || '') : ''))
                         if (files.length) text = (text ? text + ' ' : '') + '[' + files.join(', ') + ']'

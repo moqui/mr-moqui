@@ -46,6 +46,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::chat_bridge::edge::store_edge_media",
         "moqui_core::service::chat_bridge::get_bridge_capabilities",
         "moqui_core::service::chat_bridge::get_local_actors",
+        "moqui_core::service::chat_bridge::lookup_bridge_number",
         "moqui_core::service::chat_bridge::provider::clean_provider_content",
         "moqui_core::service::chat_bridge::provider::send_bridge_typing",
         "moqui_core::service::chat_bridge::run_bridge_deliveries",

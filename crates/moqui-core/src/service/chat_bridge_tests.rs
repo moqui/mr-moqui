@@ -1263,3 +1263,18 @@ fn a_rooms_typing_goes_to_each_bridge_at_most_once_in_15_seconds_and_one_failing
     typing(start + super::TYPING_EVERY_MILLIS + 1);
     assert_eq!(bed.b.typed().len(), 2, "past the window it goes again");
 }
+
+/// The spam filter's number lookup (plans/Comms-Messaging.md §18.3 phase 11): a bridge whose adapter has none, and a
+/// bridge not found, answer notSupported, never an error, so the text it judges goes on.
+#[test]
+fn a_bridge_with_no_number_lookup_answers_not_supported() {
+    let bed = bed("lookup", false);
+    let _entered = bed.ctx.enter();
+    for id in ["BA", "NONE"] {
+        let out = ok(
+            &format!("{BRIDGES}.lookup#BridgeNumber"),
+            &[("chatBridgeId", text(id)), ("phoneNumber", text("+15550001111"))],
+        );
+        assert_eq!(out_text(&out, "reasonCode"), "notSupported", "{id}");
+    }
+}

@@ -54,6 +54,7 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | `fetch_media` | The bytes of a file a network's message names, within a bound (`store#BridgeMedia`). The default fetches nothing. |
 | `typing` | Show the other side that a user of ours is typing (`send#BridgeTyping`, which `signal#Typing` starts asynchronously, at most once in 15 seconds a room): business RCS. Nothing is kept or retried; a failure is logged. The default sends nothing. |
 | `delete_content` | Delete a content the adapter made at its network for a send (`ChatBridgeDelivery.providerContentId`, kept by `note#DeliveryContent`: a Twilio Content of a rich message), on the message's final receipt or by the delivery worker's daily sweep of those older than 2 days (`clean#ProviderContent`). The default has none. |
+| `lookup_number` | What the network's provider knows of an outside number (`NumberLookup`: line type, carrier, caller name), for the spam filter (`lookup#BridgeNumber`, [SMS, Blocked numbers and spam](SMS.md#blocked-numbers-and-spam)); a paid request, asked only when its answer can change a verdict. The default has none (`notSupported`); the SMS adapter asks its provider's `lookup_request` (Twilio Lookup v2). |
 
 The web side is `chat_bridge_web.rs`: `chat_bridge::webhook` (the host's route; an unknown bridge, one with no adapter
 and a disabled one to anyone but its network answer as an unsigned request does, 401, so bridge ids cannot be probed; a

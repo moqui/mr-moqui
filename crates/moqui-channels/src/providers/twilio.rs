@@ -53,6 +53,7 @@
 //! Messaging Service, with SMS and MMS as its fallback ([`rcs`], docs/interfaces/RCS.md).
 
 pub mod group;
+pub mod lookup;
 pub mod rcs;
 
 use aws_lc_rs::hmac;
@@ -101,6 +102,8 @@ pub struct Config {
     pub content_language: String,
     /// The RCS agent's id (`rcsSenderId`: `rcs:` and it is the typing indicator's `from`); none sends no indicator.
     pub rcs_sender_id: Option<String>,
+    /// Lookup's (the spam filter's line type, [`lookup`]). No trailing `/`.
+    pub lookups_base_url: String,
     /// `allowInternalAddresses` off production: the Conversations and media addresses may be http (a test's fake).
     pub allow_internal: bool,
 }
@@ -216,6 +219,7 @@ impl SmsProvider for Twilio {
             rcs_sender_id: text_of(config, "rcsSenderId")
                 .map(|id| rcs::bare(&id).chars().take(128).collect::<String>())
                 .filter(|id| !id.is_empty()),
+            lookups_base_url: base("lookupsBaseUrl", "https://lookups.twilio.com"),
             allow_internal: Settings::of(config, &self.defaults()).allow_internal,
         }
     }
@@ -247,6 +251,7 @@ impl SmsProvider for Twilio {
             ("mediaContentBaseUrl", &config.media_content_base_url),
             ("contentBaseUrl", &config.content_base_url),
             ("messagingBaseUrl", &config.messaging_base_url),
+            ("lookupsBaseUrl", &config.lookups_base_url),
         ] {
             if !(url.starts_with("https://") || (config.allow_internal && url.starts_with("http://"))) {
                 return Err(format!("The Twilio bridge's {key} is not an https address"));
@@ -496,6 +501,14 @@ impl SmsProvider for Twilio {
 
     fn media_auth(&self, config: &Config) -> Option<(String, String)> {
         config.authorization().map(|value| ("authorization".to_string(), value))
+    }
+
+    fn lookup_request(&self, config: &Config, settings: &Settings, number: &str) -> Option<ApiRequest> {
+        lookup::request(config, settings, number)
+    }
+
+    fn lookup_of(&self, body: &str) -> Option<moqui_core::service::chat_bridge::NumberLookup> {
+        lookup::answer(body)
     }
 }
 

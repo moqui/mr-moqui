@@ -472,14 +472,24 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="CallerList" package="moqui.call" use="configuration" cache="never">
-        <description>A user's list of callers for their selective rules (forward, reject, accept).</description>
+        <description>A user's list of callers for their selective rules (forward, reject, accept). listTypeEnumId CltBlocked
+            is the user's one Blocked list (plans/Comms-Messaging.md §18.3 phase 11): made on the first block, named by its
+            type, never renamed, deleted or named by a rule; its callers are refused before every rule and its numbers'
+            texts are kept out of the user's sight (Spam &amp; blocked). Empty: a list of the user's own.</description>
         <field name="callerListId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
         <field name="name" type="text-medium"/>
+        <field name="listTypeEnumId" type="id"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="CallerListType" related="moqui.basic.Enumeration" short-alias="listType">
+            <key-map field-name="listTypeEnumId"/></relationship>
         <relationship type="many" related="moqui.call.CallerListEntry" short-alias="entries">
             <key-map field-name="callerListId"/></relationship>
         <index name="CALLER_LIST_USER"><index-field name="userId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Caller List Type" enumTypeId="CallerListType"/>
+            <moqui.basic.Enumeration description="Blocked numbers" enumId="CltBlocked" enumCode="blocked" enumTypeId="CallerListType" sequenceNum="1"/>
+        </seed-data>
     </entity>
 
     <entity entity-name="CallerListEntry" package="moqui.call" use="configuration" cache="never">
@@ -547,6 +557,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="ringMobile" type="text-indicator"/>
         <field name="mobileScheduleId" type="id"/>
         <field name="hideCallerId" type="text-indicator"/>
+        <field name="spamFilter" type="text-indicator"><description>N: the spam filter never puts the user's phone rooms in
+            Spam (SmsSpamServices); on when empty</description></field>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="one-nofk" title="Mobile" related="moqui.call.CommsSchedule" short-alias="mobileSchedule">
             <key-map field-name="mobileScheduleId" related="commsScheduleId"/></relationship>
@@ -807,6 +819,89 @@ along with this software (see the LICENSE.md file). If not, see
             sends a day (1000 when empty), counted for the number (promo:(phoneNumber)): a campaign's texts, sent with no
             user, count here and not against smsSystemMaxPerDay, so they never use up what sign-in codes need; a user's
             promotional text counts here too, beside the user's limits</description></field>
+        <field name="smsSpamFilter" type="text-indicator"><description>N turns the spam filter of texts from outside
+            numbers off for everyone (SmsSpamServices, plans/Comms-Messaging.md §18.3 phase 11); on when empty</description></field>
+        <field name="smsSpamThreshold" type="number-integer"><description>The score at which a text is spam (100 when
+            empty): the sum of the weights of the SmsSpamRule rows it matches</description></field>
+        <field name="smsSpamLookup" type="text-indicator"><description>Y: a first text from an unknown number may ask the
+            provider's paid number lookup (its line type), only when the answer can change the verdict; off when empty</description></field>
+        <field name="smsSpamLookupDays" type="number-integer"><description>How long a lookup's answer is kept for its
+            number (30 days when empty)</description></field>
+        <field name="smsSpamLookupMaxPerDay" type="number-integer"><description>Lookups a day at most (100 when empty),
+            counted in SmsSendCount as lookup</description></field>
+    </extend-entity>
+    <entity entity-name="SmsSpamRule" package="moqui.call" use="configuration" cache="never">
+        <description>A rule of the spam filter of texts from outside numbers (plans/Comms-Messaging.md §18.3 phase 11): a
+            text's score is the sum of the weights of the rules it matches, spam at VoicePolicy.smsSpamThreshold. The kinds
+            (ruleTypeEnumId): SsrFirstContact (the first text of a new conversation from a number nobody here knows),
+            SsrLink (any link), SsrLinkHost (a link to the host pattern, exactly or under a leading *.), SsrKeyword (the
+            words of pattern, on word boundaries, ignoring case), SsrNumber (the sender is pattern, or starts with it when it
+            ends in *), SsrReported (its weight for each distinct user here who reported the number, less its not-spam votes; an admin report reaches the threshold alone: SmsSpamVote), SsrLineType (the
+            provider's lookup says pattern, with VoicePolicy.smsSpamLookup on). Patterns are plain text: no regular
+            expressions. hitCount, notSpamCount and spamCount count the texts it matched, and the Not spam and Report spam
+            of their rooms, for the admin who sets the weights.</description>
+        <field name="smsSpamRuleId" type="id" is-pk="true"/>
+        <field name="ruleTypeEnumId" type="id"/>
+        <field name="pattern" type="text-medium"/>
+        <field name="weight" type="number-integer"/>
+        <field name="description" type="text-medium"/>
+        <field name="disabled" type="text-indicator"/>
+        <field name="hitCount" type="number-integer"/>
+        <field name="notSpamCount" type="number-integer"/>
+        <field name="spamCount" type="number-integer"/>
+        <field name="lastHitDate" type="date-time"/>
+        <relationship type="one" title="SmsSpamRuleType" related="moqui.basic.Enumeration" short-alias="ruleType">
+            <key-map field-name="ruleTypeEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="SMS Spam Rule Type" enumTypeId="SmsSpamRuleType"/>
+            <moqui.basic.Enumeration description="First contact from an unknown number" enumId="SsrFirstContact" enumCode="firstContact" enumTypeId="SmsSpamRuleType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="A link" enumId="SsrLink" enumCode="link" enumTypeId="SmsSpamRuleType" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="A link to a host" enumId="SsrLinkHost" enumCode="linkHost" enumTypeId="SmsSpamRuleType" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Words" enumId="SsrKeyword" enumCode="keyword" enumTypeId="SmsSpamRuleType" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="A number or a prefix" enumId="SsrNumber" enumCode="number" enumTypeId="SmsSpamRuleType" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Reported as spam here" enumId="SsrReported" enumCode="reported" enumTypeId="SmsSpamRuleType" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="The provider's line type" enumId="SsrLineType" enumCode="lineType" enumTypeId="SmsSpamRuleType" sequenceNum="7"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="SmsSpamNumber" package="moqui.call" use="transactional" cache="never">
+        <description>What this deployment knows of an outside number for the spam filter: its last verdict (lastScore and
+            lastReasonsJson, the rules that matched: the banner's reasons, the counts Not spam and Report spam add to) and the
+            provider's lookup (lookupJson {lineType, carrierName, callerName}, lookupDate, the bridge that asked), kept
+            VoicePolicy.smsSpamLookupDays.</description>
+        <field name="phoneNumber" type="id" is-pk="true"/>
+        <field name="lastScore" type="number-integer"/>
+        <field name="lastReasonsJson" type="text-medium"/>
+        <field name="lastJudgedDate" type="date-time"/>
+        <field name="lookupJson" type="text-medium"/>
+        <field name="lookupDate" type="date-time"/>
+        <field name="lookupBridgeId" type="id"/>
+    </entity>
+    <entity entity-name="SmsSpamVote" package="moqui.call" use="transactional" cache="never">
+        <description>A user's one vote of an outside number: SsvSpam (Report spam) or SsvNotSpam (Not spam). Each distinct
+            reporter adds the rule SsrReported's weight (50: two reporters reach the threshold; an admin's report, byAdmin,
+            reaches it alone), less one for each not-spam vote. A not-spam vote trusts the number for its voter's own rooms;
+            for everyone it takes an admin's, or three distinct users' that outnumber the spam votes (TRUST_VOTES, SmsSpam.js).
+            A report keeps the room it came from (chatRoomId) and the teammates' rooms it put in Spam (filteredJson, [{userId,
+            chatRoomId}]), so the reporter's Unblock withdraws it and brings those back.</description>
+        <field name="phoneNumber" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="voteEnumId" type="id"/>
+        <field name="voteDate" type="date-time"/>
+        <field name="byAdmin" type="text-indicator"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="filteredJson" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="SmsSpamVote" related="moqui.basic.Enumeration" short-alias="vote">
+            <key-map field-name="voteEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="SMS Spam Vote" enumTypeId="SmsSpamVote"/>
+            <moqui.basic.Enumeration description="Spam" enumId="SsvSpam" enumCode="spam" enumTypeId="SmsSpamVote" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Not spam" enumId="SsvNotSpam" enumCode="notSpam" enumTypeId="SmsSpamVote" sequenceNum="2"/>
+        </seed-data>
+    </entity>
+    <extend-entity entity-name="ChatRoomBridge" package="moqui.chat">
+        <field name="notSpamDate" type="date-time"><description>A member said Not spam (plans/Comms-Messaging.md §18.3 phase 11):
+            the conversation is never judged spam again (SmsSpamServices judge#SmsText); a block still applies</description></field>
     </extend-entity>
     <extend-entity entity-name="ChatBridgeDelivery" package="moqui.chat">
         <field name="receiptStatus" type="text-short"><description>What the network's delivery receipt last said: sent,

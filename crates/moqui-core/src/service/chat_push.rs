@@ -732,7 +732,8 @@ fn level_of(member: &EntityValue) -> Level {
 /// Who gets the push of `event`, each with whether it mentions or replies to them (rules 1, 3 and 6): each member but
 /// the sender and the agents (in a direct room also one who left), by level, not one who read it; a user it mentions
 /// who is not a member (a public or record room); for a call's event, a missed call's users or a voicemail's room
-/// (each member whose level is not None, as a mention would).
+/// (each member whose level is not None, as a mention would). Never a member whose room is out of their sight (Spam &
+/// blocked: `filterEnumId`), nor a user who blocked a local sender (`ChatUserBlock`; plans/Comms-Messaging.md phase 11).
 fn recipients(
     facade: &EntityFacade,
     room: &EntityValue,
@@ -781,6 +782,7 @@ fn recipients(
         .eq("chatRoomId", Value::string(&room_id))
         .disable_authz()
         .list()?;
+    let blockers = blockers_of(facade, sender.as_deref())?;
     for member in rows.values() {
         let Some(user) = text_of(member, "userId") else {
             continue;
@@ -788,7 +790,13 @@ fn recipients(
         members.insert(user.clone());
         let gone = !direct && text_of(member, "leftDate").is_some();
         let agent = text_of(member, "roleEnumId").as_deref() == Some("CmrAgent");
-        if sender.as_deref() == Some(user.as_str()) || gone || agent || count_of(member, "lastReadEventSeq") >= seq {
+        let filtered = text_of(member, "filterEnumId").is_some() || blockers.contains(&user);
+        if sender.as_deref() == Some(user.as_str())
+            || gone
+            || agent
+            || filtered
+            || count_of(member, "lastReadEventSeq") >= seq
+        {
             continue;
         }
         let mention = mentioned.contains(&user);
@@ -808,12 +816,28 @@ fn recipients(
     }
     if call.is_none() {
         for user in mentioned {
-            if !members.contains(&user) && sender.as_deref() != Some(user.as_str()) {
+            if !members.contains(&user) && sender.as_deref() != Some(user.as_str()) && !blockers.contains(&user) {
                 out.insert(user, true);
             }
         }
     }
     Ok(out)
+}
+
+/// The users who blocked the local user `sender` in chat (`ChatUserBlock`); none for an external sender.
+fn blockers_of(facade: &EntityFacade, sender: Option<&str>) -> Result<HashSet<String>, LibError> {
+    let Some(sender) = sender.filter(|sender| !sender.is_empty()) else {
+        return Ok(HashSet::new());
+    };
+    Ok(facade
+        .find("moqui.chat.ChatUserBlock")?
+        .eq("blockedUserId", Value::string(sender))
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .filter_map(|row| text_of(row, "userId"))
+        .collect())
 }
 
 /// Work one job: its recipients' devices get a push each (written or merged), each in a transaction of its own, so one
