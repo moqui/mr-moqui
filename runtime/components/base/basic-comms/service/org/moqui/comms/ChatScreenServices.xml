@@ -540,13 +540,20 @@ along with this software (see the LICENSE.md file). If not, see
             let sealed = encrypted == null ? null : !!encrypted
             // the default (E2EE by default): a public room is never encrypted
             if (sealed == null && type === 'CrtPublic') sealed = false
-            if (sealed == null && type === 'CrtDirect') {
+            const peopleIds = Array.from(new Set([ec.user.userId].concat(ids))).sort()
+            const people = peopleIds.join(',')
+            const directRooms = (key) => Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('roomTypeEnumId', 'CrtDirect').condition('directKey', key)
+                    .orderBy('createdDate').orderBy('chatRoomId').selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
+            if (type === 'CrtDirect') {
+                // two makes of the same people's direct room at once wait for each other: their accounts' rows are locked in
+                // one order, so the second finds the first's room (create#Room answers it) instead of making another
+                for (const id of peopleIds) ec.entity.find('moqui.security.UserAccount').condition('userId', id).selectField('userId')
+                        .forUpdate(true).disableAuthz().one()
                 // the direct room of these people there is: the encrypted one first, then the plain one (create#Room's keys)
-                const people = Array.from(new Set([ec.user.userId].concat(ids))).sort().join(',')
-                const existing = (key) => ec.entity.find('moqui.chat.ChatRoom').condition('roomTypeEnumId', 'CrtDirect').condition('directKey', key)
-                        .disableAuthz().count() > 0
-                if (existing('e2ee:' + people)) sealed = true
-                else if (existing(people)) sealed = false
+                if (sealed == null) {
+                    if (directRooms('e2ee:' + people).length) sealed = true
+                    else if (directRooms(people).length) sealed = false
+                }
             }
             if (sealed == null) sealed = ec.service.sync().name('org.moqui.chat.ChatKeyServices.check#DevicesReady')
                     .parameter('userIdList', ids).call()?.ready === true
@@ -557,6 +564,12 @@ along with this software (see the LICENSE.md file). If not, see
             chatRoomId = out.chatRoomId
             created = !!out.created
             encrypted = sealed
+            // a direct room made beside one of the same people anyway (a make that did not wait for the lock, as one of
+            // another server before this): the oldest is the one answered, as the pickers choose it; the newer is left as it is
+            if (type === 'CrtDirect') {
+                const oldest = directRooms((sealed ? 'e2ee:' : '') + people)[0]
+                if (oldest && oldest !== chatRoomId) { chatRoomId = oldest; created = false }
+            }
         ]]></script></actions>
     </service>
 

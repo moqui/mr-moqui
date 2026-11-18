@@ -449,10 +449,10 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- a direct message with these users: the room there is (the encrypted one first), or a new one, encrypted when everyone
         in it has a crypto device; encrypted true: the encrypted direct room of these people, made when there is none (Start an
-        encrypted chat in a plain direct room) -->
+        encrypted chat in a plain direct room); false: the plain one (a page that cannot encrypt, a call's decline with a text) -->
     <transition name="createDirect">
         <actions><script><![CDATA[
-            const sealed = encrypted === true || encrypted === 'true' || encrypted === 'Y' ? true : null
+            const sealed = encrypted === true || encrypted === 'true' || encrypted === 'Y' ? true : encrypted === false || encrypted === 'false' || encrypted === 'N' ? false : null
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.create#ChatRoom').parameters({roomTypeEnumId: 'direct',
                 memberUserIds: userIds || null, encrypted: sealed}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {chatRoomId: out.chatRoomId, created: out.created, encrypted: !!out.encrypted})

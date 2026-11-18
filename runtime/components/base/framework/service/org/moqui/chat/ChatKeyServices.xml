@@ -34,9 +34,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="create" noun="ChatDevice">
         <description>A new crypto device for the current user (one browser's store): a deviceId (10 letters) and the
-            Matrix user ID (user_id) the store is made for. Up to 50 devices that are not revoked; then tooManyDevices.</description>
+            Matrix user ID (user_id) the store is made for. Up to 50 devices in use (not revoked, seen in the last
+            chat_device_active_days); then tooManyDevices. automatic: Chat made it when it opened (madeAutomatically).</description>
         <in-parameters>
             <parameter name="displayName"/>
+            <parameter name="automatic" type="Boolean"/>
             <parameter name="userAgent"/>
         </in-parameters>
         <out-parameters>
@@ -459,7 +461,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="EncryptionDefault">
         <description>One bit for the people of userIdList (at most 50): encrypted, whether a new direct or private room of
             the current user and them is end-to-end encrypted by default, which is when every one of them has a crypto device
-            in use (not revoked, its identity keys uploaded, seen in the last chat_device_active_days, default 90). Nothing
+            in use (not revoked, its identity keys uploaded, seen in the last chat_device_active_days, default 90; one Chat made
+            by itself only once seen on a later day than it was made, or verified by its user). Nothing
             else of their devices: no IDs, counts, names or dates. A user an app's chat-target provider keeps from this one
             (get#RefusedUsers), or one that does not exist or is disabled, counts as one with no device. Refused, answered
             false: more than 50 people (reasonCode tooMany), past 600 people an hour a user (rateLimited).</description>
@@ -469,6 +472,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('encryptionDefault', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="AutomaticDevice" allow-remote="false">
+        <description>Internal (clean#ChatToDevice): one device Chat made by itself revoked, as its user's revoke does (its
+            keys, signatures and queue go); nothing for a device that is not automatic or already revoked.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="deviceId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('revokeAutomatic', context))</script></actions>
     </service>
 
     <service verb="check" noun="DevicesReady" allow-remote="false">
@@ -524,11 +538,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="clean" noun="ChatToDevice" authenticate="anonymous-all">
         <description>The job clean_ChatToDevice_daily: deletes to-device messages waiting longer than
-            chat_to_device_retention_days (default 30) and one-time keys claimed over a day ago. Each part that fails is
-            logged and the other still runs.</description>
+            chat_to_device_retention_days (default 30) and one-time keys claimed over a day ago; and revokes the devices Chat
+            made by itself (madeAutomatically) that their user never verified and that were not seen for
+            chat_device_auto_expire_days (default 30), each in its own transaction (revoke#AutomaticDevice) and logged. Each
+            part, and each device, that fails is logged and the rest still runs.</description>
         <out-parameters>
             <parameter name="messagesDeleted" type="Integer"/>
             <parameter name="keysDeleted" type="Integer"/>
+            <parameter name="devicesRevoked" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('clean', context))</script></actions>
     </service>

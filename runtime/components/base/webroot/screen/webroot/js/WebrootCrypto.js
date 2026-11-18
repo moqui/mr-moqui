@@ -65,7 +65,8 @@
  *   deviceId}: the store cannot be read)}.
  * - setupStatus(): whether this device reads what was sent before it (plans/Comms-Messaging.md §6.5): {deviceId, backup,
  *   restored, verified, otherDevices}. A verification with another of this user's devices asks it for the secrets this
- *   device lacks; a backup key it sends is used when it opens the current backup, and the backup is restored with it.
+ *   device lacks (requestSecrets asks again); a backup key it sends is used when it opens the current backup, and the
+ *   backup is restored with it. ensureDevice({automatic: true}) is Chat's, as it opens: a device made so is marked.
  */
 (function (root) {
     "use strict";
@@ -419,10 +420,10 @@
         state.problem = { reasonCode: err.reasonCode, deviceId: pointer.deviceId, userId: user, errors: err.errors };
     }
 
-    async function open(user, retry) {
+    async function open(user, retry, automatic) {
         let pointer = readPointer(user);
         if (!pointer) {
-            const made = await call("device", { displayName: deviceName() });
+            const made = await call("device", automatic ? { displayName: deviceName(), automatic: true } : { displayName: deviceName() });
             pointer = { deviceId: made.deviceId, user_id: made.user_id };
             writePointer(user, pointer);
         }
@@ -473,7 +474,9 @@
         }
     }
 
-    function ensureDevice() {
+    // options.automatic: Chat asks for the device as it opens (plans/Comms-Messaging.md §6.5); a device made by it is marked
+    // so on the server, where it counts toward the encryption default only once it was used on another day or verified
+    function ensureDevice(options) {
         if (elsewhere()) return Promise.reject(elsewhereError());
         const user = currentUser();
         if (!user) return Promise.reject(new Error("Sign in first"));
@@ -484,7 +487,7 @@
         loading = serial(async () => {
             if (machine && me !== user) await closeNow();
             await loadSdk();
-            if (!machine && role !== "follower") await open(user, false);
+            if (!machine && role !== "follower") await open(user, false, !!(options && options.automatic));
             return identity();
         }).then((out) => {
             loading = null;
@@ -1355,9 +1358,10 @@
                 const own = await machine.getDevice(new sdk.UserId(state.matrixUserId), new sdk.DeviceId(state.deviceId), 5);
                 signed = !!(own && own.isCrossSigningTrusted());
             } catch (err) { signed = false; }
-            const others = (listed.deviceList || []).filter((d) => d && d.deviceId !== state.deviceId && d.hasKeys && !d.revoked)
+            // the user's other devices in use (the server's active: seen in chat_device_active_days), the last seen first
+            const others = (listed.deviceList || []).filter((d) => d && d.deviceId !== state.deviceId && d.hasKeys && !d.revoked && d.active !== false)
                 .sort((a, b) => (Number(b.lastSeenDate) || 0) - (Number(a.lastSeenDate) || 0))
-                .map((d) => ({ deviceId: d.deviceId, displayName: d.displayName || null, lastSeenDate: d.lastSeenDate || null }));
+                .map((d) => ({ deviceId: d.deviceId, displayName: d.displayName || null, createdDate: d.createdDate || null, lastSeenDate: d.lastSeenDate || null }));
             return { deviceId: state.deviceId, backup: current ? String(current.version) : null, restored, verified: signed || setupMarked(), otherDevices: others };
         });
     }
@@ -1392,10 +1396,16 @@
     // it lacks (the backup key, the cross-signing keys), which the SDK sends only to a verified device of the same user
     function askSecrets() {
         markSetup();
-        setTimeout(() => serial(async () => {
-            if (!machine) return;
-            if (await machine.requestMissingSecretsIfNeeded()) await flushNow();
-        }).catch((err) => console.info("The secrets were not asked for", err)), 0);
+        setTimeout(() => requestSecretsNow().catch((err) => console.info("The secrets were not asked for", err)), 0);
+    }
+    /** The secrets this device lacks asked of the user's verified devices again (the set-up card's Try again). */
+    function requestSecretsNow() {
+        return serial(async () => {
+            if (!machine) throw closedError();
+            const asked = !!(await machine.requestMissingSecretsIfNeeded());
+            if (asked) await flushNow();
+            return asked;
+        });
     }
 
     // ---- cross-signing ----
@@ -1612,7 +1622,7 @@
         encryptRoom: api("encryptRoom", encryptRoomNow), decryptRoom: api("decryptRoom", decryptRoomNow), rotateRoom: api("rotateRoom", rotateRoomNow),
         roomTrust: api("roomTrust", roomTrustNow), leftOut: relayOnly("leftOut", leftOutNow), acceptProblems: acceptProblemsNow, problemsOf, readAllowed, onTrust,
         backupStatus: api("backupStatus", backupStatusNow), enableBackup: api("enableBackup", enableBackupNow),
-        restoreBackup: api("restoreBackup", restoreBackupNow), setupStatus: api("setupStatus", setupStatusNow), crossSigningStatus: api("crossSigningStatus", crossSigningStatusNow),
+        restoreBackup: api("restoreBackup", restoreBackupNow), setupStatus: api("setupStatus", setupStatusNow), requestSecrets: api("requestSecrets", requestSecretsNow), crossSigningStatus: api("crossSigningStatus", crossSigningStatusNow),
         setupCrossSigning: api("setupCrossSigning", setupCrossSigningNow), verifyDevice: api("verifyDevice", verifyDeviceNow),
         verification: api("verification", verificationNow), dismissVerification: api("dismissVerification", dismissVerification) };
 })(window);

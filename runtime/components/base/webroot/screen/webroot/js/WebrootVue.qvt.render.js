@@ -3202,7 +3202,7 @@
               ], 4))
             }
         } },
-        "m-chat-device-setup": { hash: "c119d19d", make: function (Vue) {
+        "m-chat-device-setup": { hash: "73e6a134", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, withCtx: _withCtx, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, withModifiers: _withModifiers, withKeys: _withKeys, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, createBlock: _createBlock, normalizeStyle: _normalizeStyle } = Vue
 
             return function render(_ctx, _cache) {
@@ -3386,9 +3386,32 @@
                                 (_ctx.waitedLong)
                                   ? (_openBlock(), _createElementBlock("div", {
                                       key: 3,
-                                      class: "text-negative q-mt-sm m-chat-device-setup-slow",
+                                      class: "q-mt-sm m-chat-device-setup-slow",
                                       role: "status"
-                                    }, _toDisplayString(_ctx.t('Your other device did not send the keys. Open Chat there and keep it open, or use your recovery key.')), 1))
+                                    }, [
+                                      _createElementVNode("div", { class: "text-negative" }, _toDisplayString(_ctx.t('Your other device did not send the keys. Open Chat there and keep it open, then try again, or use your recovery key.')), 1),
+                                      _createElementVNode("div", { class: "row q-gutter-xs q-mt-xs" }, [
+                                        _createVNode(_component_q_btn, {
+                                          unelevated: "",
+                                          "no-caps": "",
+                                          color: "primary",
+                                          label: _ctx.t('Try again'),
+                                          class: "m-chat-device-setup-again",
+                                          onClick: _ctx.askAgain
+                                        }, null, 8, ["label", "onClick"]),
+                                        (_ctx.hasBackup)
+                                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: 0,
+                                              flat: "",
+                                              "no-caps": "",
+                                              color: "primary",
+                                              label: _ctx.t('Use your recovery key'),
+                                              class: "m-chat-device-setup-use-key",
+                                              onClick: _ctx.useRecoveryKey
+                                            }, null, 8, ["label", "onClick"]))
+                                          : _createCommentVNode("", true)
+                                      ])
+                                    ]))
                                   : _createCommentVNode("", true)
                               ], 64))
                         ]),

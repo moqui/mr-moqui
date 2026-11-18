@@ -1495,7 +1495,8 @@ test("a number the phone's dialer handed the app is filled in, never placed by i
 
 test("E2EE by default (Comms-Messaging §6.5): Chat makes the device; a dm link's unsaved chat shows the label it will have; a plain direct chat offers Start an encrypted chat, which links back; Set up this device; My devices in the shell", async () => {
     const crypto = moqui.crypto;
-    const keptCrypto = { setupStatus: crypto.setupStatus, roomTrust: crypto.roomTrust, restoreBackup: crypto.restoreBackup, verifyDevice: crypto.verifyDevice, status: crypto.state.status };
+    const keptCrypto = { setupStatus: crypto.setupStatus, roomTrust: crypto.roomTrust, restoreBackup: crypto.restoreBackup, verifyDevice: crypto.verifyDevice,
+        requestSecrets: crypto.requestSecrets, status: crypto.state.status };
     const keptChat = { openEvents: moqui.chat.openEvents, openEvent: moqui.chat.openEvent };
     const keptAnswers = Object.assign({}, answers);
     const direct = { chatRoomId: "R6", roomTypeEnumId: "CrtDirect", roomName: null, displayName: "Bob", otherUserId: "bob", otherUserIdList: ["bob"],
@@ -1546,6 +1547,7 @@ test("E2EE by default (Comms-Messaging §6.5): Chat makes the device; a dm link'
         assert.ok(earlier.textContent.includes("Earlier messages with Bob are in a chat that is not end-to-end encrypted"), earlier.textContent);
         assert.equal(sealed.plainSibling, "R6");
         // the picker opens the encrypted one now that there are both
+        await plain.loadRooms();
         await until(() => moqui.chat.directRoomFor(plain.rooms, ["bob"], "ann") === "R7", "the encrypted one picked once the rooms are read again");
         // a new device: Set up this device in the banner's place, the message it cannot read, and the card's two ways
         let status = { deviceId: "N1", backup: "3", restored: false, verified: false, otherDevices: [{ deviceId: "O1", displayName: "Desktop", lastSeenDate: Date.now() }] };
@@ -1575,12 +1577,35 @@ test("E2EE by default (Comms-Messaging §6.5): Chat makes the device; a dm link'
         await until(() => document.querySelector(".m-chat-device-setup-done"), "the card says it is set up");
         await until(() => !sealed.$el.querySelector(".m-chat-setup-bar"), "the bar gone");
         sealed.setupOpen = false;
+        await settle();
+        // verified with the other device, its backup key not here yet: still not set up, the card waits; after two minutes
+        // it says the keys did not come, with Try again (the secrets asked again) and Use your recovery key
+        const secretAsks = [];
+        crypto.requestSecrets = () => { secretAsks.push(1); return Promise.resolve(true); };
+        status = Object.assign({}, status, { restored: false, verified: true });
+        sealed.loadSetup();
+        await until(() => sealed.$el.querySelector(".m-chat-setup-bar"), "the bar stays while the keys have not come");
+        sealed.openSetup();
+        const waiting = await until(() => document.querySelector(".m-chat-device-setup-waiting"), "the card waits for the keys");
+        assert.ok(waiting.textContent.includes("Getting your keys from the other device"), waiting.textContent);
+        assert.equal(document.querySelector(".m-chat-device-setup-done"), null, "not set up");
+        const cardVm = await until(() => sealed.$refs.setupCard, "the card's component");
+        cardVm.verifiedAt = Date.now() - 121000;
+        cardVm.now = Date.now();
+        const slow = await until(() => document.querySelector(".m-chat-device-setup-slow"), "the keys did not come");
+        assert.ok(slow.textContent.includes("did not send the keys"), slow.textContent);
+        assert.ok(document.querySelector(".m-chat-device-setup-use-key"), "Use your recovery key");
+        document.querySelector(".m-chat-device-setup-again").click();
+        await until(() => secretAsks.length, "the secrets asked again");
+        await until(() => !document.querySelector(".m-chat-device-setup-slow"), "waiting again");
+        sealed.setupOpen = false;
         // My devices is the shell's own screen now
         const devices = await open("/qapps/BasicComms/Settings/Devices", "devices");
         await until(() => devices.$el && devices.$el.querySelector && devices.$el.querySelector(".m-chat-devices") || document.querySelector(".m-chat-devices"), "My devices in the shell");
         await until(() => asked("/apps/BasicComms/Settings/Devices/devices").length, "its devices asked of the server");
     } finally {
-        Object.assign(crypto, { setupStatus: keptCrypto.setupStatus, roomTrust: keptCrypto.roomTrust, restoreBackup: keptCrypto.restoreBackup, verifyDevice: keptCrypto.verifyDevice });
+        Object.assign(crypto, { setupStatus: keptCrypto.setupStatus, roomTrust: keptCrypto.roomTrust, restoreBackup: keptCrypto.restoreBackup,
+            verifyDevice: keptCrypto.verifyDevice, requestSecrets: keptCrypto.requestSecrets });
         crypto.state.status = keptCrypto.status;
         Object.assign(moqui.chat, keptChat);
         Object.keys(answers).forEach((key) => { if (!(key in keptAnswers)) delete answers[key]; });

@@ -208,7 +208,8 @@ module.exports = {
         // Start: the number's room, a named room, or the direct or group chat (moqui.chat.startChat)
         startDirect() {
             const pick = { values: this.newUserIds || [], name: this.newName, fromNumber: this.fromNumber };
-            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            // one Start at a time: a second would race the first to make the same room
+            if (moqui.chat.pickKind(pick.values) === 'none' || this.busy) return;
             this.busy = true;
             moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.busy = false;
@@ -4031,7 +4032,7 @@ const roomTemplate = `
                             <div class="text-caption m-muted">{{startText}}</div>
                             <div v-if="label.banner" class="text-caption m-muted q-mt-xs m-chat-e2ee-intro"><q-icon :name="label.icon" size="14px" class="q-mr-xs"></q-icon><span class="m-chat-e2ee-intro-text">{{label.banner}}</span></div>
                             <!-- a plain direct chat's encrypted one, and an encrypted one's earlier plain chat (Comms-Messaging §6.5) -->
-                            <q-btn v-if="encryptOffered" flat dense no-caps color="primary" icon="sym_o_lock" class="q-mt-xs m-chat-start-encrypted"
+                            <q-btn v-if="encryptOffered" flat dense no-caps color="primary" icon="sym_o_lock" class="q-mt-xs m-chat-start-encrypted" :loading="encryptBusy"
                                     :label="encryptedSibling ? t('Open the encrypted chat') : t('Start an encrypted chat')" @click="startEncrypted"></q-btn>
                             <div v-if="plainSibling" class="text-caption m-muted q-mt-xs m-chat-earlier-plain">{{earlierText}}
                                 <q-btn flat dense no-caps size="sm" color="primary" :label="t('Open')" @click="go(linkBase + '?chatRoomId=' + encodeURIComponent(plainSibling))"></q-btn></div>
@@ -4381,7 +4382,7 @@ const roomTemplate = `
                 @retry="retryVerify" @step="verifyStepped"></m-chat-verification>
     </m-dialog>
     <!-- Set up this device: the recovery key, or a verification with another of the user's devices (Comms-Messaging §6.5) -->
-    <m-chat-device-setup v-if="sealed" v-model="setupOpen" :status="setup" @refresh="loadSetup" @later="setupLaterNow"></m-chat-device-setup>
+    <m-chat-device-setup v-if="sealed" ref="setupCard" v-model="setupOpen" :status="setup" @refresh="loadSetup" @later="setupLaterNow"></m-chat-device-setup>
     <!-- another person asks to verify with this device: shown in the room, as on My devices -->
     <m-dialog :model-value="incomingFlows.length > 0 && !verifyBox.open" :title="t('Verify')" width="520" @update:model-value="(open) => { if (!open) dismissIncoming(); }">
         <m-chat-verification v-for="flow in incomingFlows" :key="flow.flowId" :flow="flow" :who="incomingWho(flow)" class="q-mb-sm m-chat-incoming"
@@ -4548,7 +4549,7 @@ const chatRoom = {
             bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
             verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
-            setup: null, setupOpen: false, setupTick: 0, encryptDefault: null, firstSent: false,
+            setup: null, setupOpen: false, setupTick: 0, encryptDefault: null, firstSent: false, encryptBusy: false,
             lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
             peopleBox: { open: false, title: '', people: [] }, infoBox: { open: false, item: null, inThread: false, event: null, members: [], loading: false },
@@ -4848,13 +4849,16 @@ const chatRoom = {
         },
         // the encrypted direct chat of the same people, made or opened (createDirect with encrypted); the plain one stays
         startEncrypted() {
-            if (needsConnection()) return;
+            if (needsConnection() || this.encryptBusy) return;
             if (this.encryptedSibling) { this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(this.encryptedSibling)); return; }
+            // one at a time: a second click would race the first to make the room (the server answers the oldest anyway)
+            this.encryptBusy = true;
             this.post('createDirect', { userIds: this.otherIds.join(','), encrypted: 'true' }).then((json) => {
+                this.encryptBusy = false;
                 if (!json || !json.chatRoomId) return;
                 this.$emit('changed');
                 this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(json.chatRoomId));
-            }, () => null);
+            }, () => { this.encryptBusy = false; });
         },
         // Verify: My devices, where this user's own devices are verified by emoji or QR code
         openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
@@ -6544,8 +6548,9 @@ module.exports = {
             pendingDirect: null,
             // that message, sent by the room once createDirect made it: {roomId, body}
             firstMessage: null,
-            // my other devices' requests to verify with this one (a new device being set up, §6.5), dismissed here
-            dismissedOwn: {}
+            // my other devices' requests to verify with this one (a new device being set up, §6.5), dismissed here, and those
+            // devices by deviceId (their names and when they were added)
+            dismissedOwn: {}, ownDevices: {}
         };
     },
     computed: {
@@ -6650,6 +6655,15 @@ module.exports = {
         }
     },
     watch: {
+        // a request from another of my devices: its name and when it was added, read once (moqui.crypto.setupStatus)
+        ownRequests(list) {
+            if (!(list || []).some((flow) => flow.otherDeviceId && !this.ownDevices[flow.otherDeviceId]) || !moqui.crypto || !moqui.crypto.setupStatus) return;
+            moqui.crypto.setupStatus().then((status) => {
+                const known = Object.assign({}, this.ownDevices);
+                ((status && status.otherDevices) || []).forEach((device) => { known[device.deviceId] = device; });
+                this.ownDevices = known;
+            }, () => null);
+        },
         // New room's Encrypted follows the default for the people picked, until the user sets it (§6.5)
         'newRoom.userIds'(ids) { if (this.newRoom.open) this.newRoomDefault(ids); },
         // Activity and Threads read their feed when shown
@@ -7015,7 +7029,8 @@ module.exports = {
         // Start in New direct message: the number's room, a named room, or the direct chat (moqui.chat.startChat)
         startPicked() {
             const pick = { values: this.newDirect.userIds || [], name: this.newDirect.name, fromNumber: this.newDirect.fromNumber };
-            if (moqui.chat.pickKind(pick.values) === 'none') return;
+            // one Start at a time: a second would race the first to make the same room
+            if (moqui.chat.pickKind(pick.values) === 'none' || this.newDirect.busy) return;
             this.newDirect.busy = true;
             moqui.chat.startChat((name, params) => this.post(name, params), pick).then((json) => {
                 this.newDirect.busy = false;
@@ -7037,10 +7052,17 @@ module.exports = {
             }, () => null);
         },
         dismissOwn(flow) { this.dismissedOwn = Object.assign({}, this.dismissedOwn, { [flow.flowId]: true }); },
+        // whom an own request is from: the device's name and when it was added, not its id
+        ownWho(flow) {
+            const device = this.ownDevices[flow.otherDeviceId];
+            if (!device) return t('another of your devices');
+            const name = device.displayName || t('another of your devices');
+            return device.createdDate ? fill(t('{name}, added {when}'), { name, when: moqui.chat.dateTime(device.createdDate) }) : name;
+        },
         // New direct message's people (or those given) in their direct chat, made or found now
         startDirect(userIds) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
-            if (!ids.length) return;
+            if (!ids.length || this.newDirect.busy) return;
             this.newDirect.busy = true;
             this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
                 Object.assign(this.newDirect, { open: false, userIds: [], busy: false, name: '' });
@@ -8181,7 +8203,7 @@ module.exports = {
                           return (_openBlock(), _createBlock(_component_m_chat_verification, {
                             key: flow.flowId,
                             flow: flow,
-                            who: flow.otherDeviceId,
+                            who: _ctx.ownWho(flow),
                             class: "q-mb-sm m-chat-own-request"
                           }, null, 8, ["flow", "who"]))
                         }), 128))
@@ -9561,9 +9583,10 @@ module.exports = {
                                                       color: "primary",
                                                       icon: "sym_o_lock",
                                                       class: "q-mt-xs m-chat-start-encrypted",
+                                                      loading: _ctx.encryptBusy,
                                                       label: _ctx.encryptedSibling ? _ctx.t('Open the encrypted chat') : _ctx.t('Start an encrypted chat'),
                                                       onClick: _ctx.startEncrypted
-                                                    }, null, 8, ["label", "onClick"]))
+                                                    }, null, 8, ["loading", "label", "onClick"]))
                                                   : _createCommentVNode("", true),
                                                 (_ctx.plainSibling)
                                                   ? (_openBlock(), _createElementBlock("div", {
@@ -11570,6 +11593,7 @@ module.exports = {
                     (_ctx.sealed)
                       ? (_openBlock(), _createBlock(_component_m_chat_device_setup, {
                           key: 3,
+                          ref: "setupCard",
                           modelValue: _ctx.setupOpen,
                           "onUpdate:modelValue": $event => ((_ctx.setupOpen) = $event),
                           status: _ctx.setup,

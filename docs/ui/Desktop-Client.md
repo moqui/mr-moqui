@@ -358,8 +358,9 @@ window's account while that account is current (`open_in_shell`).
 A browser device of the same user is a device of its own; the shell's is made new, with no migration from a store of
 an app window or a browser, when Chat opens. Its older room keys come from the key backup, or from another device it is
 verified with: an encrypted room says Set up this device until then ([Chat keys](../interfaces/Chat-Keys.md#a-new-device)).
-My devices (BasicComms `Settings/Devices`) is bundled in the shell, in the account menu as "My devices (encryption)":
-the key backup, verification and Set up this device are the shell's.
+My devices (BasicComms `Settings/Devices`) is bundled in the shell and opened there from its account menu ("My devices
+(encryption)") and from a link to it (`SHELL_SCREENS` in `client/windows.rs`, Root's route): the shell's device backs up,
+verifies and is set up there.
 
 ## Calls
 

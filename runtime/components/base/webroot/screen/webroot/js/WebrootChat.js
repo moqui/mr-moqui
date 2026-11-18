@@ -1322,7 +1322,10 @@
             if (!wanted) return null;
             const of = (room) => room && room.roomTypeEnumId === "CrtDirect" && room.isMember
                 && Array.from(new Set((room.otherUserIdList || (room.otherUserId ? [room.otherUserId] : [])).map(String))).sort().join(",") === wanted;
-            const list = (rooms || []).filter(of);
+            // the oldest of each kind, as the server answers it (two made at once: create#ChatRoom answers the oldest)
+            const order = (a, b) => (Number(a.createdDate) || 0) - (Number(b.createdDate) || 0)
+                || (/^\d+$/.test(a.chatRoomId) && /^\d+$/.test(b.chatRoomId) ? Number(a.chatRoomId) - Number(b.chatRoomId) : String(a.chatRoomId).localeCompare(String(b.chatRoomId)));
+            const list = (rooms || []).filter(of).sort(order);
             const found = (plain ? null : list.find((room) => room.encrypted)) || list.find((room) => !room.encrypted);
             return found ? found.chatRoomId : null;
         },
@@ -1638,13 +1641,18 @@
             return tr("Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.");
         },
         // ---- a new device (Comms-Messaging §6.5, first sign-in) ----
-        // Whether this device must be set up to read what was sent before it, from moqui.crypto.setupStatus's answer: not when
-        // it holds the current backup's key or was verified with another of the user's devices, and only when the user has a
-        // key backup or another device to set it up from (a first device needs none).
+        // Whether this device must be set up to read what was sent before it, from moqui.crypto.setupStatus's answer: until it
+        // can read that, which is when it holds the current backup's key, or (with no backup on the server to receive) it was
+        // verified with another of the user's devices, which then forwards keys; and only when the user has a key backup or
+        // another device to set it up from (a first device needs none). Verified with a backup there is not enough: the
+        // backup key must come too (setupWaiting).
         setupNeeded(status) {
-            if (!status || status.restored || status.verified) return false;
+            if (!status || status.restored) return false;
+            if (status.verified && !status.backup) return false;
             return !!status.backup || (Array.isArray(status.otherDevices) && status.otherDevices.length > 0);
         },
+        // verified with another device, the backup key not here yet: the card says it is getting the keys
+        setupWaiting(status) { return !!status && !!status.verified && !!status.backup && !status.restored; },
         // a user's first device with encrypted rooms and no key backup: offer to set one up (once, closed per account)
         backupHinted(status) { return !!status && !status.backup && !chat.setupHintClosed(); },
         setupHintKey() { return moqui.scopedKey("moqui.chat.backupHint." + (chat.me || "")); },
@@ -1669,7 +1677,7 @@
             const crypto = moqui.crypto;
             if (!crypto || !crypto.ensureDevice || (crypto.elsewhere && crypto.elsewhere())) return false;
             if (typeof root.WebAssembly !== "object" || !root.indexedDB) return false;
-            const run = () => crypto.ensureDevice().catch((err) => console.info("This browser has no chat crypto device", err));
+            const run = () => crypto.ensureDevice({ automatic: true }).catch((err) => console.info("This browser has no chat crypto device", err));
             if (typeof root.requestIdleCallback === "function") root.requestIdleCallback(run, { timeout: 5000 });
             else setTimeout(run, 1500);
             return true;
@@ -1934,14 +1942,15 @@
         computed: {
             phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
             hasBackup() { return !!(this.status && this.status.backup); },
-            devices() { return (this.status && this.status.otherDevices) || []; },
+            // the user's other devices in use (seen lately: the server's active), each by its name and when it was last seen
+            devices() { return ((this.status && this.status.otherDevices) || []).filter((d) => d.active !== false); },
             me() { return (root.moqui && root.moqui.webrootVue && root.moqui.webrootVue.userId) || chat.me || null; },
             // the verifications with the user's own devices (another person's are Chat's)
             flows() { return ((moqui.crypto && moqui.crypto.state.verifications) || []).filter((v) => v.otherUserId === this.me); },
             done() { return !chat.setupNeeded(this.status); },
             // verified, and the keys not here yet: they come from the other device while it is open (two minutes, then said)
-            waiting() { return !!this.verifiedAt && !this.done; },
-            waitedLong() { return this.waiting && this.now - this.verifiedAt > 120000; }
+            waiting() { return !this.done && (!!this.verifiedAt || chat.setupWaiting(this.status)); },
+            waitedLong() { return this.waiting && this.now - (this.verifiedAt || this.now) > 120000; }
         },
         watch: {
             flows(list) {
@@ -1952,6 +1961,7 @@
             },
             waiting(on) {
                 clearInterval(this.timer);
+                if (on && !this.verifiedAt) this.verifiedAt = Date.now();
                 this.timer = on ? setInterval(() => { this.now = Date.now(); this.$emit("refresh"); }, 10000) : null;
             }
         },
@@ -1981,6 +1991,17 @@
                         : (err && err.errors) || tr("The keys were not restored");
                     if (moqui.notifyMessages) moqui.notifyMessages([], text);
                 });
+            },
+            // the keys asked of the other devices again, and two more minutes to wait
+            askAgain() {
+                this.verifiedAt = Date.now();
+                this.now = this.verifiedAt;
+                if (moqui.crypto && moqui.crypto.requestSecrets) moqui.crypto.requestSecrets().catch(() => null);
+            },
+            useRecoveryKey() {
+                const input = this.$el && this.$el.querySelector ? this.$el.querySelector("input[name='setupRecoveryKey']") : null;
+                const field = input || (document.querySelector && document.querySelector(".m-chat-device-setup input[name='setupRecoveryKey']"));
+                if (field && field.focus) field.focus();
             },
             verify(device) {
                 this.verifiedAt = 0;
@@ -2024,7 +2045,9 @@
                     '</div>' +
                     '<m-chat-verification v-for="v in flows" :key="v.flowId" :flow="v" :who="whoOf(v)" :can-retry="canRetry(v)" class="q-mt-md" @retry="retry(v)"></m-chat-verification>' +
                     '<div v-if="waiting && !waitedLong" class="m-muted q-mt-sm m-chat-device-setup-waiting" role="status">{{t(\'Verified. Getting your keys from the other device…\')}}</div>' +
-                    '<div v-if="waitedLong" class="text-negative q-mt-sm m-chat-device-setup-slow" role="status">{{t(\'Your other device did not send the keys. Open Chat there and keep it open, or use your recovery key.\')}}</div>' +
+                    '<div v-if="waitedLong" class="q-mt-sm m-chat-device-setup-slow" role="status"><div class="text-negative">{{t(\'Your other device did not send the keys. Open Chat there and keep it open, then try again, or use your recovery key.\')}}</div>' +
+                        '<div class="row q-gutter-xs q-mt-xs"><q-btn unelevated no-caps color="primary" :label="t(\'Try again\')" class="m-chat-device-setup-again" @click="askAgain"></q-btn>' +
+                        '<q-btn v-if="hasBackup" flat no-caps color="primary" :label="t(\'Use your recovery key\')" class="m-chat-device-setup-use-key" @click="useRecoveryKey"></q-btn></div></div>' +
                     '</template>' +
                 '</q-card-section>' +
                 '<q-card-actions align="right">' +

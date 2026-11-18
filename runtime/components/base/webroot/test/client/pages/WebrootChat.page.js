@@ -1150,6 +1150,10 @@ test("a dm link opens the direct room of exactly those people, the encrypted one
     assert.equal(chat.directRoomFor(both, ["bob"], "ann"), "E2");
     assert.equal(chat.directRoomFor(both, ["bob"], "ann", true), "D1");
     assert.equal(chat.directRoomFor(rooms, ["dee"], "ann", true), null, "no plain one");
+    // two of a kind (made at once): the oldest, as the server answers it
+    const twins = [{ chatRoomId: "100012", roomTypeEnumId: "CrtDirect", isMember: true, encrypted: true, otherUserIdList: ["hal"] },
+        { chatRoomId: "100009", roomTypeEnumId: "CrtDirect", isMember: true, encrypted: true, otherUserIdList: ["hal"] }];
+    assert.equal(chat.directRoomFor(twins, ["hal"], "ann"), "100009");
     assert.equal(chat.directRoomFor(rooms, ["eve"], "ann"), null, "a private room is no direct chat");
     assert.equal(chat.directRoomFor(rooms, ["fay"], "ann"), null, "one I am not in");
     assert.equal(chat.directRoomFor(rooms, ["gus"], "ann"), null);
@@ -1163,7 +1167,12 @@ test("a new device needs setting up only while it holds neither the backup's key
     assert.equal(chat.setupNeeded(status({ backup: "2" })), true, "a key backup to restore");
     assert.equal(chat.setupNeeded(status({ otherDevices: [{ deviceId: "O1" }] })), true, "another device to verify with");
     assert.equal(chat.setupNeeded(status({ backup: "2", restored: true })), false, "restored");
-    assert.equal(chat.setupNeeded(status({ otherDevices: [{ deviceId: "O1" }], verified: true })), false, "verified");
+    assert.equal(chat.setupNeeded(status({ otherDevices: [{ deviceId: "O1" }], verified: true })), false, "verified, with no backup to receive");
+    // verified with a key backup on the server: not set up until its key came and the backup was restored
+    assert.equal(chat.setupNeeded(status({ backup: "2", otherDevices: [{ deviceId: "O1" }], verified: true })), true, "verified, the backup key not here yet");
+    assert.equal(chat.setupWaiting(status({ backup: "2", verified: true })), true, "getting the keys");
+    assert.equal(chat.setupWaiting(status({ backup: "2", verified: true, restored: true })), false);
+    assert.equal(chat.setupWaiting(status({ backup: "2" })), false, "not verified: nothing to wait for");
     // the key backup hint of a first device: once, closed per account
     chat.me = "ann";
     try { localStorage.removeItem(chat.setupHintKey()); } catch (err) { /* none */ }

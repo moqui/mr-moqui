@@ -377,6 +377,19 @@ feature("a new direct or private room is encrypted when everyone in it has a dev
         ec.user.internalLoginUser(username(A))
         const switched = json("createDirect", {userIds: E, encrypted: "true"})
         const afterSwitch = json("createDirect", {userIds: E})
+        // a second encrypted room of the same people (two makes at once on two servers): the oldest is answered
+        const twin = sys(() => {
+            const first = ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", switched.chatRoomId).one()
+            const row = ec.entity.makeValue("moqui.chat.ChatRoom")
+            row.setSequencedIdPrimary()
+            row.setFields({roomTypeEnumId: "CrtDirect", visibilityEnumId: "CrvMembers", directKey: first.directKey, encrypted: "Y",
+                createdByUserId: A, createdDate: new Date(Date.now() + 1000), lastEventSeq: 0, lastEventDate: ec.user.nowTimestamp}, true, null, null)
+            row.create()
+            return row.chatRoomId
+        })
+        ec.user.internalLoginUser(username(A))
+        const withTwin = json("createDirect", {userIds: E})
+        sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", twin).updateAll({directKey: null}))
         // the encrypted direct room is answered after a device of theirs went
         sys(() => ec.entity.find("moqui.chat.ChatDevice").condition("userId", D).updateAll({revokedDate: ec.user.nowTimestamp}))
         const afterRevoke = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [D]})
@@ -391,12 +404,12 @@ feature("a new direct or private room is encrypted when everyone in it has a dev
         const bitSelf = json("encryptionDefault", {userIds: ""})
         const encryptedOf = (out) => (out && out.chatRoomId ? roomRow(out.chatRoomId).encrypted === "Y" : null)
         return {direct, directAgain, group, privateRoom, privateNoDevice, privateChosen, publicRoom, noDevice, plainFirst,
-            plainAgain, switched, afterSwitch, afterRevoke, bitE, bitD, bitC, bitOutside, bitSelf,
+            plainAgain, switched, afterSwitch, withTwin, twin, afterRevoke, bitE, bitD, bitC, bitOutside, bitSelf,
             stored: {direct: encryptedOf(direct), privateRoom: encryptedOf(privateRoom), noDevice: encryptedOf(noDevice), ownDefault: encryptedOf(ownDefault),
                 plainFirst: encryptedOf(plainFirst), switched: encryptedOf(switched)}}
     },
     then({direct, directAgain, group, privateRoom, privateNoDevice, privateChosen, publicRoom, noDevice, plainFirst,
-          plainAgain, switched, afterSwitch, afterRevoke, bitE, bitD, bitC, bitOutside, bitSelf, stored}) {
+          plainAgain, switched, afterSwitch, withTwin, twin, afterRevoke, bitE, bitD, bitC, bitOutside, bitSelf, stored}) {
         direct.errors == "" && direct.created == true && direct.encrypted == true && stored.direct == true
         directAgain.chatRoomId == direct.chatRoomId && directAgain.created == false && directAgain.encrypted == true
         group.encrypted == true && group.chatRoomId != direct.chatRoomId
@@ -410,6 +423,7 @@ feature("a new direct or private room is encrypted when everyone in it has a dev
         plainAgain.chatRoomId == plainFirst.chatRoomId && plainAgain.encrypted == false
         switched.encrypted == true && switched.created == true && switched.chatRoomId != plainFirst.chatRoomId && stored.switched == true
         afterSwitch.chatRoomId == switched.chatRoomId && afterSwitch.encrypted == true
+        twin != switched.chatRoomId && withTwin.chatRoomId == switched.chatRoomId
         afterRevoke.chatRoomId == direct.chatRoomId && afterRevoke.encrypted == true
         bitE.encrypted == true
         bitD.encrypted == false
