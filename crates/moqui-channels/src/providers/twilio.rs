@@ -47,9 +47,13 @@
 //!
 //! Its encryption is `None` (plans/Comms-Messaging.md §6.3): the API is reached over TLS, but Twilio, the carriers and
 //! the phone network read every text.
+//!
+//! The same provider is also the `rcs-twilio` adapter's ([`Twilio::rcs`]): business RCS through an RCS sender in a
+//! Messaging Service, with SMS and MMS as its fallback ([`rcs`], docs/interfaces/RCS.md).
 
 pub mod group;
 pub mod lookup;
+pub mod rcs;
 
 use aws_lc_rs::hmac;
 use base64::Engine;
@@ -60,8 +64,8 @@ use moqui_lib::http::{Method, RestClient};
 use serde_json::Value as Json;
 
 use crate::sms::{
-    exchange, text_of, ApiBody, ApiRequest, Defaults, Inbound, InboundMedia, Keyword, OptSignal, Outgoing,
-    ProviderError, Receipt, ReceiptStatus, Refusal, Settings, SmsEvent, SmsProvider,
+    exchange, postback_of, text_of, ApiBody, ApiRequest, Channel, Defaults, Inbound, InboundMedia, Keyword, OptSignal,
+    Outgoing, ProviderError, Receipt, ReceiptStatus, Refusal, Settings, SmsEvent, SmsProvider,
 };
 
 /// The most outside numbers of a group text: a Twilio group MMS Conversation has at most 10 participants, our number
@@ -81,6 +85,8 @@ pub struct Config {
     pub auth_token: Option<String>,
     pub messaging_service_sid: Option<String>,
     pub conversation_service_sid: Option<String>,
+    /// An RCS bridge's home number ([`rcs`]): our number of an RCS message that comes in.
+    pub fallback_from: Option<String>,
     /// No trailing `/`.
     pub conversations_base_url: String,
     /// No trailing `/`.
@@ -106,11 +112,27 @@ impl Config {
     }
 }
 
-/// The Twilio provider of the `sms-twilio` adapter.
+/// The Twilio provider of the `sms-twilio` adapter, and of the `rcs-twilio` adapter ([`Twilio::rcs`]).
 #[derive(Default)]
 pub struct Twilio {
     /// The participants of each group text's Conversation, read from Twilio once a process ([`group`]).
     pub(crate) participants: group::Participants,
+    /// SMS and MMS (`sms-twilio`), or business RCS (`rcs-twilio`).
+    channel: Channel,
+}
+
+impl Twilio {
+    /// The provider of the `rcs-twilio` adapter.
+    pub fn rcs() -> Self {
+        Self {
+            channel: Channel::Rcs,
+            ..Self::default()
+        }
+    }
+
+    fn is_rcs(&self) -> bool {
+        self.channel == Channel::Rcs
+    }
 }
 
 /// Whether `sid` is a Twilio SID of `prefix` (two letters and 32 hex digits): never anything that could change a path.
@@ -125,8 +147,25 @@ impl SmsProvider for Twilio {
         "Twilio"
     }
 
+    fn channel(&self) -> Channel {
+        self.channel
+    }
+
     fn adapter_name(&self) -> &'static str {
-        "sms-twilio"
+        if self.is_rcs() {
+            "rcs-twilio"
+        } else {
+            "sms-twilio"
+        }
+    }
+
+    fn sms_adapter_name(&self) -> Option<&'static str> {
+        self.is_rcs().then_some("sms-twilio")
+    }
+
+    /// The account (`AC...`): a webhook's `AccountSid`.
+    fn account_of(&self, config: &Json) -> Option<String> {
+        text_of(config, "accountSid")
     }
 
     fn defaults(&self) -> Defaults {
@@ -153,6 +192,7 @@ impl SmsProvider for Twilio {
             auth_token: text_of(config, "authToken"),
             messaging_service_sid: text_of(config, "messagingServiceSid"),
             conversation_service_sid: text_of(config, "conversationServiceSid"),
+            fallback_from: text_of(config, "fallbackFrom"),
             conversations_base_url: base("conversationsBaseUrl", "https://conversations.twilio.com"),
             media_content_base_url: base("mediaContentBaseUrl", "https://mcs.us1.twilio.com"),
             lookups_base_url: base("lookupsBaseUrl", "https://lookups.twilio.com"),
@@ -191,15 +231,26 @@ impl SmsProvider for Twilio {
                 return Err(format!("The Twilio bridge's {key} is not an https address"));
             }
         }
+        if self.is_rcs() {
+            return rcs::check(config);
+        }
         Ok(())
     }
 
     fn group_max(&self) -> usize {
-        GROUP_MAX
+        // RBM has no group chats
+        if self.is_rcs() {
+            0
+        } else {
+            GROUP_MAX
+        }
     }
 
-    /// A text to one number on the Messages API (a group text is [`group::send`]'s).
+    /// A text to one number on the Messages API (a group text is [`group::send`]'s; an RCS bridge's is [`rcs::request`]).
     fn request(&self, config: &Config, settings: &Settings, out: &Outgoing<'_>) -> ApiRequest {
+        if self.is_rcs() {
+            return rcs::request(config, settings, out);
+        }
         let to = out.theirs.first().cloned().unwrap_or_default();
         let mut form = vec![("To".to_string(), to)];
         match &config.messaging_service_sid {
@@ -252,7 +303,7 @@ impl SmsProvider for Twilio {
     }
 
     fn send(&self, client: &RestClient, config: &Config, settings: &Settings, out: &Outgoing<'_>) -> DeliveryOutcome {
-        if out.group() {
+        if out.group() && !self.is_rcs() {
             return group::send(self, client, config, settings, out);
         }
         exchange(self, client, out, &self.request(config, settings, out))
@@ -327,11 +378,17 @@ impl SmsProvider for Twilio {
         };
         Some(WebhookEventKey {
             event_id: event_id.unwrap_or_else(hash),
-            conversation: conversation.map(str::to_string),
+            // their number, an RCS address's too
+            conversation: conversation.map(|address| rcs::bare(address).to_string()),
         })
     }
 
     fn parse(&self, request: &WebhookRequest) -> Result<SmsEvent, WebhookResponse> {
+        self.parse_with(&Config::default(), request)
+    }
+
+    /// The Messages API's events; an RCS bridge's need its `fallbackFrom` ([`rcs::our_number`]).
+    fn parse_with(&self, config: &Config, request: &WebhookRequest) -> Result<SmsEvent, WebhookResponse> {
         let Some(form) = Form::parse(&request.body) else {
             return Err(WebhookResponse::text(400, "the body is not a form"));
         };
@@ -339,9 +396,18 @@ impl SmsProvider for Twilio {
             // a Conversations event: its numbers are the local node's to find (parse_on)
             return Ok(SmsEvent::Ignored("a Conversations event".to_string()));
         }
+        // an SMS bridge takes no RCS message (an `rcs:` address): the RCS bridge's own webhook does. A receipt it keeps (a
+        // Messaging Service with an RCS sender sends its texts as RCS first)
+        let rcs_address = ["From", "To"]
+            .iter()
+            .any(|name| form.get(name).is_some_and(|value| value.starts_with(rcs::PREFIX)));
+        if rcs_address && !self.is_rcs() && status_of(&form).is_none() {
+            return Ok(SmsEvent::Ignored("an RCS message on an SMS bridge".to_string()));
+        }
+        let rcs = self.is_rcs().then_some(config);
         match status_of(&form) {
-            Some(status) => Ok(receipt(&form, status)),
-            None => received(&form),
+            Some(status) => Ok(receipt(&form, status, rcs)),
+            None => received(&form, rcs),
         }
     }
 
@@ -355,8 +421,11 @@ impl SmsProvider for Twilio {
         request: &WebhookRequest,
     ) -> Result<SmsEvent, WebhookResponse> {
         match Form::parse(&request.body) {
-            Some(form) if form.get("EventType").is_some() => group::event(self, client, bridge, config, &form),
-            _ => self.parse(request),
+            // an RCS bridge has no group Conversations
+            Some(form) if form.get("EventType").is_some() && !self.is_rcs() => {
+                group::event(self, client, bridge, config, &form)
+            }
+            _ => self.parse_with(config, request),
         }
     }
 
@@ -598,10 +667,16 @@ pub(crate) fn error_text(code: &str) -> String {
 }
 
 /// An inbound text: `MessageSid`, `From`, `To`, `Body`, `NumMedia` and `MediaUrl{N}`, `MediaContentType{N}` (from 0).
-fn received(form: &Form) -> Result<SmsEvent, WebhookResponse> {
+/// On an RCS bridge (`rcs`, its configuration) also an RCS message ([`rcs`]): its addresses, a place and a tapped
+/// suggestion.
+fn received(form: &Form, rcs: Option<&Config>) -> Result<SmsEvent, WebhookResponse> {
     let (Some(message_id), Some(theirs), Some(ours)) = (form.get("MessageSid"), form.get("From"), form.get("To"))
     else {
         return Err(WebhookResponse::text(400, "a text names its message and both numbers"));
+    };
+    let (theirs, ours) = match rcs {
+        Some(config) => (rcs::their_number(theirs), rcs::our_number(config, ours)?),
+        None => (theirs.to_string(), ours.to_string()),
     };
     let count = form
         .get("NumMedia")
@@ -619,21 +694,25 @@ fn received(form: &Form) -> Result<SmsEvent, WebhookResponse> {
     Ok(SmsEvent::Inbound(Inbound {
         event_id: message_id.to_string(),
         message_id: message_id.to_string(),
-        our_number: ours.to_string(),
-        their_number: theirs.to_string(),
+        our_number: ours,
+        their_number: theirs,
         text: form
             .pairs
             .iter()
             .find(|(key, _)| key == "Body")
             .map(|(_, body)| body.clone()),
         media,
+        location: rcs.and_then(|_| rcs::location_of(form)),
+        postback: rcs.and_then(|_| postback_of(form.get("ButtonPayload"))),
+        account: form.get("AccountSid").map(str::to_string),
         ..Inbound::default()
     }))
 }
 
 /// A status callback: one a change of the message's state, in no set order (`note#DeliveryReceipt` never takes a
-/// delivered text back to sent). `queued`, `accepted`, `scheduled` and `sending` are before the carrier: left.
-fn receipt(form: &Form, status: &str) -> SmsEvent {
+/// delivered text back to sent). `queued`, `accepted`, `scheduled` and `sending` are before the carrier: left. On an
+/// RCS bridge (`rcs`, its configuration) it also tells the way the message went ([`rcs::path_of`]).
+fn receipt(form: &Form, status: &str, rcs: Option<&Config>) -> SmsEvent {
     let Some(message_id) = form.get("MessageSid") else {
         return SmsEvent::Ignored("a status with no message".to_string());
     };
@@ -645,12 +724,19 @@ fn receipt(form: &Form, status: &str) -> SmsEvent {
         other => return SmsEvent::Ignored(other.to_string()),
     };
     let code = form.get("ErrorCode").filter(|code| *code != "0");
+    // an RCS message's addresses: the agent's (our number is the bridge's home number) and the person's, `rcs:` taken off
+    let ours = match (rcs, form.get("From")) {
+        (Some(config), Some(from)) => rcs::our_number(config, from).ok(),
+        (None, from) => from.map(str::to_string),
+        _ => None,
+    };
+    let theirs = form.get("To").map(|to| rcs::bare(to).to_string());
     // failed for the person's STOP (Twilio holds it): the pair is marked opted out too, once for this message
-    let opt_signal = match (status, code, form.get("From"), form.get("To")) {
+    let opt_signal = match (status, code, ours, theirs) {
         (ReceiptStatus::Failed, Some("21610"), Some(ours), Some(theirs)) => Some(OptSignal {
             event_id: format!("{message_id}:21610"),
-            our_number: ours.to_string(),
-            their_number: theirs.to_string(),
+            our_number: ours,
+            their_number: theirs,
             keyword: Keyword::Stop,
         }),
         _ => None,
@@ -665,5 +751,6 @@ fn receipt(form: &Form, status: &str) -> SmsEvent {
         other_remote_event_id: None,
         receipt_millis: None,
         opt_signal,
+        path: rcs.and_then(|_| rcs::path_of(form)),
     })
 }

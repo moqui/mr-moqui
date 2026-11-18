@@ -62,6 +62,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Voicemail.md](interfaces/Voicemail.md) | Voicemail on the SIP engine: when a call goes there, the greeting and recording, phone access with a PIN and its limits, notices, transcription, the prompts an admin supplies |
 | [Chat-Bridges.md](interfaces/Chat-Bridges.md) | Chat actors and the bridge layer: the adapter contract, input stored before it is acknowledged, durable delivery with leases and idempotency keys, the C1 migration |
 | [SMS.md](interfaces/SMS.md) | SMS and MMS on Telnyx: setup and 10DLC, the number pair's room shared with calls and voicemail, signed webhooks, the checks before a send, opt-out, the system's texts |
+| [RCS.md](interfaces/RCS.md) | Business RCS on Twilio and Sinch (not yet tested with the provider): the brand's agent, the fallback to SMS and MMS, the path of each message, replies to a fallback text, the system's number kept on SMS |
 | [XMPP.md](interfaces/XMPP.md) | XMPP apps on Moqui chat: the listeners and WebSocket, sign-in with app passwords (SCRAM-PLUS, SASL2, FAST), rooms as MUC, history, PEP and OMEMO, uploads, what is served |
 
 ## ai: Agents and Models

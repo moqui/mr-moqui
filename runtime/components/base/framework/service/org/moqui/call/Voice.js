@@ -1133,6 +1133,14 @@ function findNumbers() {
   }
 }
 
+/** An RCS bridge's home number in E.164 (its configJson's fallbackFrom on Twilio, smsSender on Sinch), or null. */
+function rcsHomeNumber(bridge) {
+  let config = {}
+  try { config = JSON.parse(String(bridge.configJson || '{}')) || {} } catch (err) { config = {} }
+  const home = config.fallbackFrom || config.smsSender
+  return blank(home) ? null : toE164(String(home), policy().homeCountryCode)
+}
+
 function storeNumber(p) {
   const denied = notAdmin()
   if (denied) return denied
@@ -1157,9 +1165,21 @@ function storeNumber(p) {
     return refuse('notFound', 'Ring group not found')
   }
   if (!blank(p.emergencyLocationId) && !one(LOCATION, { emergencyLocationId: p.emergencyLocationId })) return refuse('notFound', 'Emergency location not found')
-  // C4-SMS: its texts' bridge, an SMS one
+  // C4-SMS: its texts' bridge, an SMS one or an RCS one (plans/Comms-Messaging.md §16: its texts go RCS first)
   const bridge = blank(p.messagingBridgeId) ? null : one('moqui.chat.ChatBridge', { chatBridgeId: p.messagingBridgeId })
-  if (!blank(p.messagingBridgeId) && (!bridge || bridge.typeEnumId !== 'CbtSms')) return refuse('notFound', 'SMS bridge not found')
+  if (!blank(p.messagingBridgeId) && (!bridge || !['CbtSms', 'CbtRcs'].includes(bridge.typeEnumId))) return refuse('notFound', 'SMS or RCS bridge not found')
+  if (bridge && bridge.typeEnumId === 'CbtRcs') {
+    // the system's own texts (sign-in codes) stay plain SMS: its number is never an RCS bridge's
+    if (pol.smsSystemNumber === phoneNumber) {
+      return refuse('systemNumber', 'This number sends the system\'s own texts (sign-in codes), which stay on an SMS bridge; choose another number for RCS, or another system number first')
+    }
+    // phase 1: an RCS bridge has one number, its home number (several need routing and opt-out per person across them)
+    const others = find(NUMBER).condition('messagingBridgeId', bridge.chatBridgeId).condition('phoneNumber', 'not-equals', phoneNumber).count()
+    if (others > 0) return refuse('rcsOneNumber', 'An RCS bridge has one number, its home number, and this bridge has one already')
+    if (rcsHomeNumber(bridge) !== phoneNumber) {
+      return refuse('notHomeNumber', 'An RCS bridge\'s number is its home number: set the bridge\'s fallbackFrom (Twilio) or smsSender (Sinch) to this number first')
+    }
+  }
   const fields = { voiceTrunkId: p.voiceTrunkId || null, routeTypeEnumId, routeId: p.routeId || null,
     emergencyLocationId: p.emergencyLocationId || null, description: p.description || null }
   // left as it is when not given (a caller from before C4-SMS)
@@ -1321,6 +1341,10 @@ function updatePolicy(p) {
       const number = toE164(p[key], policy().homeCountryCode)
       const row = number ? one(NUMBER, { phoneNumber: number }) : null
       if (!row || blank(row.messagingBridgeId)) return refuse('badPolicy', 'The system texts from one of our numbers that has messaging')
+      // sign-in codes go as plain SMS, never from a brand's RCS agent
+      if ((one('moqui.chat.ChatBridge', { chatBridgeId: row.messagingBridgeId }) || {}).typeEnumId === 'CbtRcs') {
+        return refuse('systemNumber', 'The system texts from a number on an SMS bridge; this number\'s texts go through RCS')
+      }
       fields[key] = number
     } else if (/^(max|auth|smsMax)/.test(key)) {
       const number = Number(p[key])

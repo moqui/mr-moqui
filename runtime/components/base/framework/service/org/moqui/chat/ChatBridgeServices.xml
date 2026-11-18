@@ -679,7 +679,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="EventDeliveries" allow-remote="false">
         <description>Internal: the delivery state of messages of a room (eventSeqList): deliveryMap eventSeq to {state (failed,
             uncertain, pending or accepted: the worst of its destinations), retryable, destinations [{chatBridgeDeliveryId,
-            chatBridgeId, bridgeName, networkName, state, reasonCode, error, attemptCount, retryable}]}. retryable: failed or
+            chatBridgeId, bridgeName, networkName, state, reasonCode, error, attemptCount, retryable, receipt, recipients,
+            path (an RCS bridge's: rcs, sms or mms, note#DeliveryPath)}]}. retryable: failed or
             uncertain (retry#Delivery decides who may). Messages that went nowhere are left out. The caller has checked access.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
@@ -714,7 +715,7 @@ along with this software (see the LICENSE.md file). If not, see
                 entry.destinations.push({chatBridgeDeliveryId: row.chatBridgeDeliveryId, chatBridgeId: row.chatBridgeId, bridgeName: bridge.name ?? null,
                     networkName: types[bridge.typeEnumId]?.description || null, state: state, reasonCode: row.reasonCode ?? null,
                     error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
-                    receipt: row.receiptStatus ?? null, recipients: recipientsOf(row)})
+                    receipt: row.receiptStatus ?? null, recipients: recipientsOf(row), path: row.deliveryPath ?? null})
                 if (RANK[state] > RANK[entry.state]) entry.state = state
                 if (state === 'failed' || state === 'uncertain') entry.retryable = true
             }
@@ -825,6 +826,49 @@ along with this software (see the LICENSE.md file). If not, see
             if (overall === 'failed' && row.statusEnumId === 'CdsAccepted') Object.assign(fields, {statusEnumId: 'CdsFailed', reasonCode: 'deliveryFailed',
                 lastErrorText: error ? String(error).slice(0, 2000) : ec.l10n.localize('The network could not deliver it')})
             row.setFields(fields, true, null, null)
+            row.update()
+            changed = true
+            ec.service.sync().name('org.moqui.chat.ChatBridgeServices.push#DeliveryState').parameters({chatRoomId: row.chatRoomId,
+                eventSeq: row.eventSeq}).disableAuthz().call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="note" noun="DeliveryPath" allow-remote="false" transaction="force-new">
+        <description>Internal (an RCS bridge's adapter, plans/Comms-Messaging.md §16): the way a sent message went, path rcs,
+            sms or mms, or fallback (SMS or MMS, which the report does not say: mms when the message has files), kept as
+            its delivery's deliveryPath. The delivery is chatBridgeDeliveryId (a send known to go as RCS), else the one of
+            remoteEventId on chatBridgeId (a report). A fallback never goes back to RCS: once sms or mms, an rcs changes
+            nothing, and the same path again changes nothing. The room hears of a change (push#DeliveryState). In a
+            transaction of its own. Out: found, changed.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="chatBridgeDeliveryId"/>
+            <parameter name="remoteEventId"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="changed" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            found = false; changed = false
+            if (!['rcs', 'sms', 'mms', 'fallback'].includes(path)) { ec.message.addError('Unknown delivery path ' + path); return }
+            let find = ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId).forUpdate(true).disableAuthz()
+            if (chatBridgeDeliveryId) find = find.condition('chatBridgeDeliveryId', chatBridgeDeliveryId)
+            else if (remoteEventId) find = find.condition('remoteEventId', remoteEventId)
+            else return
+            const row = Array.from(find.list())[0]
+            if (!row) return
+            found = true
+            let way = path
+            if (way === 'fallback') {
+                const files = ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', row.chatRoomId).condition('eventSeq', row.eventSeq)
+                        .disableAuthz().count()
+                way = files > 0 ? 'mms' : 'sms'
+            }
+            const before = row.deliveryPath || null
+            if (before === way || (before && before !== 'rcs' && way === 'rcs')) return
+            row.set('deliveryPath', way)
             row.update()
             changed = true
             ec.service.sync().name('org.moqui.chat.ChatBridgeServices.push#DeliveryState').parameters({chatRoomId: row.chatRoomId,
@@ -983,6 +1027,8 @@ along with this software (see the LICENSE.md file). If not, see
             configJson (JSON; its secrets are kept encrypted; empty keeps the old; its publicKey is also kept as
             webhookPublicKey, its webhookToleranceSeconds as webhookToleranceSeconds), inboundToken (its hash is kept; empty keeps the
             old), sendsPerMinute, disabled (Y stops its deliveries and input; N lets the worker start it). The worker is woken.
+            The network and the adapter agree (CbtRcs: rcs-...; CbtSms: sms or sms-...), and an RCS bridge has one number,
+            its home number (fallbackFrom or smsSender), never the system's (plans/Comms-Messaging.md §16).
             On an all-in-one node a new bridge's id skips the ids its paired node's bridges have, and a bridge a paired node
             holds is refused (EdgeClaims.secas.xml, plans/archive/Edge-Node.md §10).</description>
         <in-parameters>
@@ -1032,6 +1078,26 @@ along with this software (see the LICENSE.md file). If not, see
                     .parameters({token: inboundToken, hashOnly: true}).call().tokenHash)
             if (disabled === 'Y') row.set('statusId', 'CbsDisabled')
             else if (disabled === 'N' && row.statusId === 'CbsDisabled') row.set('statusId', 'CbsNotConnected')
+            // a network and its adapter agree: an RCS bridge's adapter is rcs-..., an SMS bridge's sms or sms-...
+            const adapter = String(row.adapterName || '')
+            if (row.typeEnumId === 'CbtRcs' && !/^rcs-/.test(adapter)) {
+                ec.message.addError(ec.l10n.localize('An RCS bridge\'s adapter is rcs-twilio or rcs-sinch')); return }
+            if (row.typeEnumId === 'CbtSms' && adapter && !/^sms(-|$)/.test(adapter)) {
+                ec.message.addError(ec.l10n.localize('An SMS bridge\'s adapter is sms, sms-twilio or sms-sinch')); return }
+            // an RCS bridge (plans/Comms-Messaging.md §16, phase 10): one number, its home number, never the system's
+            if (row.typeEnumId === 'CbtRcs' && !created) {
+                const numbers = Array.from(ec.entity.find('moqui.call.PhoneNumber').condition('messagingBridgeId', row.chatBridgeId).disableAuthz().list())
+                        .map((number) => number.phoneNumber)
+                const system = (ec.entity.find('moqui.call.VoicePolicy').condition('voicePolicyId', 'DEFAULT').disableAuthz().one() || {}).smsSystemNumber
+                if (numbers.length > 1) { ec.message.addError(ec.l10n.localize('An RCS bridge has one number, its home number: move the others to an SMS bridge first')); return }
+                if (system && numbers.includes(system)) {
+                    ec.message.addError(ec.l10n.localize('The system\'s number is on this bridge, and the system texts stay on an SMS bridge: choose another system number first')); return }
+                let config = {}
+                try { config = JSON.parse(String(row.configJson || '{}')) || {} } catch (err) { config = {} }
+                const home = String(config.fallbackFrom || config.smsSender || '').trim()
+                if (numbers.length === 1 && home !== numbers[0]) {
+                    ec.message.addError(ec.l10n.localize('An RCS bridge\'s home number (fallbackFrom on Twilio, smsSender on Sinch) is its number') + ': ' + numbers[0]); return }
+            }
             if (created) row.create(); else row.update()
             chatBridgeId = row.chatBridgeId
             ec.service.sync().name('org.moqui.chat.ChatServices.wake#BridgeDelivery').disableAuthz().call()

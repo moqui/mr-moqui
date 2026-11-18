@@ -227,6 +227,9 @@ along with this software (see the LICENSE.md file). If not, see
                             : ec.l10n.localize(STATES[one.state] || one.state)
                         infoList.push({label: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + ' · ' + one.bridgeName : network(one),
                             text: text + (one.error && one.state !== 'accepted' ? ': ' + one.error : '')})
+                        // an RCS bridge's: the way it went (plans/Comms-Messaging.md §16)
+                        const PATHS = {rcs: 'RCS', sms: 'SMS: the phone did not take RCS', mms: 'MMS: the phone did not take RCS'}
+                        if (PATHS[one.path]) say('Sent as', ec.l10n.localize(PATHS[one.path]))
                     }
                     const thread = event.threadRootEventSeq != null
                     if (thread) infoNote = ec.l10n.localize('A thread has no read receipts.')

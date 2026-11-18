@@ -24,13 +24,13 @@ use crate::providers::twilio::{self, Twilio};
 use crate::sms::SmsProvider as _;
 use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
 
-const ACCOUNT: &str = concat!("AC", "0123456789abcdef", "0123456789abcdef");
-const API_KEY: &str = concat!("SK", "0123456789abcdef", "0123456789abcdef");
-const TOKEN: &str = "twilio-auth-token";
+pub(super) const ACCOUNT: &str = concat!("AC", "0123456789abcdef", "0123456789abcdef");
+pub(super) const API_KEY: &str = concat!("SK", "0123456789abcdef", "0123456789abcdef");
+pub(super) const TOKEN: &str = "twilio-auth-token";
 const WEBHOOK: &str = "https://moqui.example.test/channels/SMS1/webhook";
 
 /// A Twilio SID of `prefix` and number `n`.
-fn sid(prefix: &str, n: u64) -> String {
+pub(super) fn sid(prefix: &str, n: u64) -> String {
     format!("{prefix}{n:032x}")
 }
 
@@ -72,7 +72,7 @@ fn twilio_bed() -> Bed {
     bed_for(TWILIO, "")
 }
 
-fn form(pairs: &[(&str, &str)]) -> Vec<u8> {
+pub(super) fn form(pairs: &[(&str, &str)]) -> Vec<u8> {
     let owned: Vec<(String, String)> = pairs
         .iter()
         .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
@@ -85,11 +85,11 @@ fn adapter() -> crate::sms::SmsAdapter<Twilio> {
 }
 
 /// The form pairs a send posted.
-fn posted(seen: &Seen) -> Vec<(String, String)> {
+pub(super) fn posted(seen: &Seen) -> Vec<(String, String)> {
     twilio::Form::parse(seen.body.as_bytes()).unwrap().pairs
 }
 
-fn value<'a>(pairs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+pub(super) fn value<'a>(pairs: &'a [(String, String)], name: &str) -> Option<&'a str> {
     pairs
         .iter()
         .find(|(key, _)| key == name)
