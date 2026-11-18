@@ -217,7 +217,9 @@ alert state changes and notes.
 
 - CI posts JSON to `POST /v1/annotations` with an ingest key: `time` (default now), optional `timeEnd`, `source`
   (`deploy`, `config`, `release` or `user`), `text`, `tags`, and optionally `serviceName`, `instanceId`, `version`,
-  `revision`, `dashboardId` and `panelId`.
+  `revision`, `dashboardId` and `panelId`. A `release` of this server's own service is refused: the server records its
+  own releases at start. Received telemetry that names this server's own `service.name` is stored as
+  `<name> (received)`, another service, so a sender cannot move the local service's regressions or releases.
 - A signed-in user or a script with a login key can post the same to `/rest/s1/moqui/monitor/annotations`.
 - Dashboards › Annotations lists them and adds notes by hand.
 

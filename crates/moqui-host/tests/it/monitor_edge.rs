@@ -220,6 +220,22 @@ fn otlp_keys_partial_success_compression_and_request_context() {
         .0,
         200
     );
+    // a business event is its owner's domain service's, never a telemetry key's (SEC-TLS-15)
+    let business = json!({"source":"business","text":"forged close","organizationPartyId":"ORG_ZIZI_RETAIL",
+        "event":"PeriodClosed","time":now})
+    .to_string();
+    assert_eq!(
+        post(
+            address,
+            "/v1/annotations",
+            token,
+            "application/json",
+            None,
+            business.as_bytes()
+        )
+        .0,
+        400
+    );
     let telemetry = moqui_core::telemetry::for_factory(factory);
     telemetry.flush();
     let search = moqui_core::search::installed(factory).unwrap();
