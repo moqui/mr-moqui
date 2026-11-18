@@ -559,6 +559,9 @@ too (2026-11-17).
 9. **Reminders** (phase 15). A reminder the user set pushes to each of their devices at its time, as a `notification`
    push with its own tag and collapse key. It is not dropped by a read marker or closed by a room's clear, it is held
    during do not disturb, and rule 5 applies to its text.
+10. **One-time codes** (phase 21). A text with a code found in it carries `otp {code, label}` in its push only where
+   the push carries the snippet (rule 5). The web shows a Copy action where the browser shows actions, and the Android
+   app (its next APK) a Copy code action, with the lock screen's version hiding the code.
 
 ### 7.3 Server work
 
@@ -1018,10 +1021,10 @@ that adds it. "New" means this plan adds it (§17).
 | Default SMS app | `sim-sms` build | §10 |
 | Scheduled send | Send later on the composer's Send (a long press on a phone, an arrow on a desktop): the server holds the message (`ChatScheduledMessage`) and sends it at its time as the sender, through the normal path, so bridges and their send checks apply then, as mail's due drafts are sent (`send#DueDrafts`). The room lists its scheduled messages: edit, send now, cancel. In an encrypted room, which the server cannot encrypt for, the sender's own device holds it and sends it, the server keeping a placeholder with no text | Designed: phase 15 (§18.3) |
 | Spam protection, block, report | Block a number: its calls and texts, on the user's Blocked list (a `CallerList`, Settings, Call handling); its texts kept out of sight in "Spam & blocked". Block a person in chat: their messages hidden in shared rooms, their direct rooms and invites refused. Spam filter for outside numbers: local rules (first contact, links, keywords, numbers, reports here), on by default; the provider's number lookup optional and off. Not spam and Report spam | Designed: phase 11 (§18.3); the caller lists are built |
-| One-time codes: copy, delete after 24 h | Detect codes in SMS; Copy button in the notification; optional delete | New |
+| One-time codes: copy, delete after 24 h | Codes found in incoming texts (a keyword near 4 to 8 digits, with care for numbers, prices and dates); a Copy chip on the message and a Copy button in the notification (web push where the browser shows actions; Android in its next APK); an optional delete after 24 h through the disappearing-message timer, with Keep | Designed: phase 21 (§18.3) |
 | Message reminders | "Remind me" on a message (in 20 minutes, in 1 hour, tomorrow, a time picked): a push through the chat push worker and an Activity row then; pending reminders listed at the top of Activity and cancelled there. A reminder keeps the room and the message's number only, never its text | Designed: phase 15 (§18.3) |
 | Smart replies, writing help | Suggested replies from `moqui-llm`, plain rooms only (never encrypted rooms) | New |
-| Photo quality choice | Send original or compressed | New |
+| Photo quality choice | Compressed (2048 px JPEG, metadata dropped) by default, or Original, per send; a room that goes out by text fits the photo under its MMS limit. Today every photo goes at full size | Designed: phase 21 (§18.3) |
 | Messages for web | The web client and the desktop app | Built |
 
 ### 14.3 iMessage and FaceTime
@@ -1032,8 +1035,8 @@ that adds it. "New" means this plan adds it (§17).
 | Tapbacks | Reactions | Built |
 | Edit and unsend within minutes | Edit, redact | Built |
 | Send later | Scheduled send (§14.2); in an encrypted room by the sender's own device | Designed: phase 15 (§18.3) |
-| Message effects, stickers, GIFs | Sticker packs; GIF search through a provider the server proxies; effects: no | New (stickers, GIFs) |
-| Share location, live location | A location message with a map, and live location for a set time. The map needs the Maps app, which is a design only ([Maps](Maps.md)) | New, after Maps |
+| Message effects, stickers, GIFs | Sticker packs, local: the server's (an administrator's) and each user's own; PNG, WebP or GIF, animated too; a picker beside the emoji picker; a sticker shows large, and goes to bridges as its picture or as text. GIF search waits for a provider; effects: no | Stickers designed: phase 20 (§18.3); GIFs later |
+| Share location, live location | A location message with no map: coordinates or an address, a label, "Open in maps" (`geo:` in the Android app, OpenStreetMap on the web) and Copy; the device's position or a typed place, no geocoding. Bridges get the text with the link; Sinch RCS its location message. Live location waits for the Maps app ([Maps](Maps.md)) | Location designed: phase 20 (§18.3); live location after Maps |
 | Check In (tell a contact you arrived) | Later, on live location | Later |
 | FaceTime audio and video, group FaceTime | WebRTC calls | Built; §8 |
 | Handoff of a call between devices | "Move to this device" | §8 |
@@ -1052,7 +1055,7 @@ that adds it. "New" means this plan adds it (§17).
 | Usernames, phone number hidden | Usernames; a user's phone number is not in chat's data and is never shown to other MR Moqui users. An outside number shows to the members of its own room | Built |
 | Linked devices list | Apps and devices | Built |
 | Registration lock, PIN | Device keys, password, recovery key for key backup | Built |
-| Screen security (no screenshots) | Android `FLAG_SECURE` option, per app or per encrypted room | New |
+| Screen security (no screenshots) | Android `FLAG_SECURE`: a user setting (off, in encrypted rooms, the whole app) and a per-room switch in an encrypted room, through phase 16's reasons (`app:`, `room:`) | Designed: phase 21 (§18.3) |
 | Group links with admin approval | Room invite links and QR codes, with optional approval | New |
 | Stories | Later, if wanted | Later |
 | Sealed sender | Not possible: the server sees who sends. The UI says so (§6) | Not planned |
@@ -1067,7 +1070,7 @@ that adds it. "New" means this plan adds it (§17).
 | Group invite links and QR | Invite links | New |
 | Likes | Heart reaction; across the GroupMe bridge a like is a heart both ways | Built; the bridge in phase 14 |
 | Topics (subgroups) | Threads, or linked sub-rooms. A bridged Topic is a room of its own, "Group › Topic" | Built (threads); the bridge in phase 14 |
-| Events with RSVP | An event message with Going / Maybe / No, and a calendar entry | New |
+| Events with RSVP | An event message (title, start and end in a time zone, place, details) with Going / Maybe / No, the counts and who answered, a reminder before it, a calendar entry through an app's `chat-calendar` provider or an `.ics` file (the phone's calendar app on Android); changes and a cancellation post to the room; bridges get the text. Not in encrypted rooms, as polls | Designed: phase 19 (§18.3) |
 | Polls | Polls | Built |
 | Gallery | Media tab | §5 |
 | Mute, @all | Mute, `@room`; across the GroupMe bridge `@all` and `@room` map both ways | Built; the bridge in phase 14 |
@@ -1083,7 +1086,7 @@ that adds it. "New" means this plan adds it (§17).
 | Contacts on other XMPP servers | C3b federation | Not built |
 | Group chats (MUC) | Rooms are MUC rooms | Built |
 | Ad-hoc commands (XEP-0050) | Not needed after the number moves | Not planned |
-| Stickers, reactions, replies, threads | Stickers new; the rest built | Partly |
+| Stickers, reactions, replies, threads | Stickers designed (phase 20); the rest built | Partly |
 | Push without Google (UnifiedPush) | UnifiedPush option | §7.4 |
 
 ### 14.7 Android Phone app
@@ -1307,9 +1310,9 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 4 | Disappearing messages (exact timer) and view-once media | §14.4 |
 | 5 | Invite links and QR, with approval; join requests | §14.4, §14.5 |
 | 6 | SMS members of a room (GroupMe's SMS join) | §14.5 |
-| 7 | Stickers, GIF search, location and live location | §14.3 |
-| 8 | Event messages with RSVP | §14.5 |
-| 9 | Screen security option; one-time code helper; send original photo | §14.2, §14.4 |
+| 7 | Stickers, GIF search, location and live location: sticker packs and location designed, phase 20 (§18.3); GIF search and live location later | §14.3 |
+| 8 | Event messages with RSVP: designed, phase 19 (§18.3) | §14.5 |
+| 9 | Screen security option; one-time code helper; send original photo: designed, phase 21 (§18.3) | §14.2, §14.4 |
 | 10 | GroupMe adapter (`groupme`): designed, phase 14 (§18.3) | §13.3 |
 | 11 | Signal adapter on `signal-cli` (`signal.rs`), optional build feature | §13.3 |
 | 12 | iMessage adapter on BlueBubbles (`bluebubbles.rs`), optional build feature | §13.3 |
@@ -3207,6 +3210,576 @@ on Send, and a reminder's notification on the phone.
   - Android's reminder body and its link to the message (the next APK change);
   - a held message's send from the phone app in the background.
 
+#### Phase 19: event messages with RSVP
+
+Designed 2026-11-17 (D2e; §14.5, §17 #8). An event is a message with a title, a start and an end in a time zone, a
+place and a description. Members answer Going, Maybe or No; the card shows the counts and who answered. A member who
+goes gets an optional reminder (phase 15's), and a calendar entry where the server has a calendar, else an `.ics` file.
+A change or a cancellation is posted to the room as a message, so everyone, every bridge and every text sees it.
+
+The poll is the model (§14.1, `create#Poll`): the message's body is the event in words, which every client, bridge,
+search and notification already uses; the answers are rows, read into the timeline and pushed as updates.
+
+**What a calendar is here.** The framework keeps no calendar (`docs/interfaces/Sync.md`): CalDAV is the framework's,
+its data an adapter's, and mr-mantle has the calendars (`mantle.work.calendar.Calendar`, a `WetEvent` `WorkEffort`, a
+`WorkEffortParty` per attendee, `CalendarWorkEffort`). mr-boss already puts a mail invitation on a user's calendar
+through the `invitation` provider hook (`ironstone.comms.InboxServices.respond#Invitation`). So:
+- **A new provider hook `chat-calendar`** (`PROVIDER_HOOKS` in `crates/moqui-core/src/screen/shell.rs`, its element in
+  `xml-screen-3.xsd`, the interface `org.moqui.comms.ProviderInterfaces.chat#CalendarEntry`). It takes only `chatRoomId`,
+  `eventSeq` and `action` (`answer`, `change`, `cancel`). The provider reads `ChatCalEvent` and the caller's
+  `ChatCalAnswer` itself, so no title, time or user passed in is trusted. On `answer` it puts, changes or removes the
+  current user's entry. On `change` and `cancel` it updates or cancels the entries it made for that event (UID
+  below). It answers `eventUrl`.
+- **Without a provider** (the framework alone, or mr-mantle without an app that declares the hook): "Add to calendar"
+  is the event as an `.ics` file (the framework's `ICalendar` tool, `write({method: PUBLISH, events})`; CANCEL once
+  cancelled), and in the Android app the phone's calendar app opened on a new event (below).
+- The UID is `chat-<chatRoomId>-<eventSeq>@<host>` (the host of `comms_app_root`), and the SEQUENCE is the event's
+  `revision`. A calendar that imports the file again after a change updates its entry rather than adding one.
+- mr-boss's provider is a change in its own repository, `respond#Invitation`'s path with the UID as `universalId`. It
+  is not in this branch (§19.1 asks).
+
+**Data model** (new `framework/entity/ChatCalEntities.xml`, listed in `MoquiDefaultConf.xml` `load-entity`)
+
+| Entity, field | What |
+|---|---|
+| `moqui.chat.ChatCalEvent` (`chatRoomId`, `eventSeq` pk: the message) | `title`, `startDate`, `endDate` (instants), `timeZone` (an IANA zone: the times are shown and written in it), `allDay` (Y: whole days in that zone), `place`, `description`, `createdByUserId`, `revision` (0, then +1 a change), `cancelledDate`, `cancelledByUserId`, `lastChangeEventSeq` (the last change message), `goingCount`, `maybeCount`, `noCount`. Index (`startDate`) |
+| `moqui.chat.ChatCalAnswer` (`chatRoomId`, `eventSeq`, `chatActorId` pk) | A member's answer: `userId`, `answerEnumId`, `answeredDate`, `remindMinutes` (empty: no reminder), `chatMessageReminderId` (the phase 15 reminder this answer made), `calendarDate` (when the provider last put the entry), `calendarRevision`. `chatActorId` as in `ChatPollVote`, so a bridge's answer can come later |
+| `ChatCalAnswerType` (Enumeration) | `CcaGoing`, `CcaMaybe`, `CcaNo` |
+
+`content.calEvent` is `{title}` on the message, as `content.poll` is `{question}`; the state is in the rows.
+
+Limits: a title of 1 to 200 characters, a place up to 300, a description up to 2,000; it ends after it starts, at most 31
+days later, and in the future; it starts within 2 years; a known zone (`ec.l10n.getAvailableTimeZones`); at most 20
+changes an event.
+
+**The event in words** (`ChatCal.js` `fallbackText`, in the sender's locale, the times in the event's zone):
+
+```
+Event: Picnic
+Sat 21 Nov 2026, 14:00–16:00 (America/Denver)
+Where: Liberty Park
+Bring a chair
+```
+
+An all-day event reads "Sat 21 Nov 2026, all day". This is the message's body and `bodyText`: the room list, search,
+notifications, the terminal, XMPP, SMS and every bridge show it. A change message reads "Changed: Picnic. Now Sun
+22 Nov 2026, 14:00–16:00 (America/Denver), at Liberty Park"; a cancellation "Cancelled: Picnic, Sat 21 Nov 2026".
+
+**Services** (new `org.moqui.chat.ChatCalServices`, logic in `ChatCal.js`; operations table as `ChatRich.js`)
+
+| Service | What |
+|---|---|
+| `create#CalEvent` | `chatRoomId`, `title`, `startDate`, `endDate`, `timeZone`, `allDay`, `place`, `description`, `threadRootEventSeq`, `clientRef`, `roomUrl`. A member of a room that is not archived. Refused: an encrypted room (`encryptedRoom`, as polls: the server keeps the answers and makes the text), a bad time or zone (`badTime`), too long (`tooLong`). `send#Message` with the body above, then `content.calEvent` and the row, then `push#Update {calEvent}` (the shared state). Out: `eventSeq`, `event` (with `calEvent`), `duplicate`, `reasonCode` |
+| `get#CalEventStates` (internal) | `chatRoomId`, `eventSeqList`, `shared`: `calEventMap` eventSeq to `{title, start, end, timeZone, allDay, place, description, revision, cancelled, cancelledDate, ended, createdByUserId, going, maybe, no (counts), answers {going, maybe, no: [userId]}, mine, myRemindMinutes, myCalendarDate}`. `shared` leaves out the `my…` fields, as `get#PollStates` does |
+| `answer#CalEvent` | `chatRoomId`, `eventSeq`, `answer` (`going`, `maybe`, `no`, or empty to take it back), `remindMinutes` (0 to 10,080; empty for none), `addToCalendar`. A member who may post; refused when cancelled (`cancelled`) or ended (`ended`). The row is replaced and the counts are kept on `ChatCalEvent` (locked). Then each of the following on its own, each failure logged and answered (`reminderFailed`, `calendarFailed`), the answer standing: <br>• the reminder: Going or Maybe with `remindMinutes` sets one through `ChatScheduleServices.set#Reminder` at the start less the minutes, or moves the one the answer made; none when that time is less than a minute ahead (`reminderSkipped`); No or a take-back cancels it; <br>• the calendar: with `addToCalendar` and a provider, `chat-calendar` `answer`; No or a take-back removes the entry the provider made. <br>`push#Update {calEvent}` (shared). Out: `calEvent` (with `mine`), `eventUrl` |
+| `update#CalEvent` | Its creator while a member who may post, or a moderator or owner. Any of the fields; `revision` + 1. A change of the title, time, place or description posts a change message: `send#Message` as the changer, `replyToEventSeq` the event and in its thread, `content.calChange {eventSeq, revision, what: [title, when, place, description]}`. The answers' reminders move with the start, each on its own (dropped when now past: `CrmCancelled`). Then `chat-calendar` `change`. Refused while it is cancelled or ended, and after 20 changes (`tooManyChanges`) |
+| `cancel#CalEvent` | The same people. `cancelledDate`; a cancellation message (`content.calChange {eventSeq, cancelled: true}`); the answers' pending reminders `CrmCancelled`; `chat-calendar` `cancel`. It cannot be undone |
+| `get#CalEventIcs` | For one who can read the room: `fileText` (`text/calendar`), `fileName` (`<title>.ics`). PUBLISH, or CANCEL once cancelled; the UID and SEQUENCE above; `DTSTART;TZID=` in the event's zone, or a `VALUE=DATE` for a whole day; `LOCATION`, `DESCRIPTION`, and the message's link as `URL`. Refused with no `ICalendar` tool (`noIcs`) |
+| `forget#CalEvent` (internal) | When the message goes (a redaction through `clear#MessageContent`, retention, phase 16's expiry): the rows go, the answers' pending reminders are cancelled, and `chat-calendar` `cancel` is called. Each part on its own |
+
+**Transitions** (new `basic-comms/template/ChatCalTransitions.xml`, one `transition-include` line each in `Chat.xml`):
+`createCalEvent`, `answerCalEvent`, `updateCalEvent`, `cancelCalEvent`, `calEventIcs` (a GET that sends the file, as
+`attachment` does), `calEventFields` (the zone choices). A refusal is answered with its `reasonCode`.
+
+**Screens** (`Chat.qvue`: two sub-components in a block of their own, `chat-cal-box` and `chat-cal-card`)
+
+| Part | Phone (bubbles) | Desktop |
+|---|---|---|
+| Make one | "Event" in the composer's new More menu (below), and in the thread composer | The same menu |
+| `chat-cal-box` | Full screen: Title, All day, Starts and Ends (`m-date-time`; Ends follows Starts, one hour later), Time zone (the user's zone first, then a searchable list), Place, Details. Change uses the same box with the event's values. In a room with a disappearing timer (phase 16) it says "This room's messages disappear after 1 day: the event's card goes too" | A 520 px dialog |
+| `chat-cal-card` | In the message, beside the poll's card: a date badge, the title, the time in the viewer's zone, and the event's own when it differs ("20:00 in America/New_York"), the place, the details (3 lines, More). Going, Maybe and No as one toggle row: a tap answers, the same tap again takes it back. "5 going · 2 maybe · 1 can't go" opens who answered in three groups (a bottom sheet). After Going or Maybe: "Remind me" (none, 15 minutes, 1 hour, 1 day before: only the times still ahead; 1 hour by default for Going, none for Maybe) and "Add to calendar". Cancelled: the title struck through, "Cancelled", no buttons. Ended: "Ended", no buttons. The creator's and a moderator's menu: Change, Cancel the event (confirmed) | The same card; who answered is a menu |
+| A change message | Its text, and an "Event changed" chip that scrolls to the card | Same |
+
+- The More menu (`sym_o_add_circle`, beside the poll's button; on a phone also the attach menu's last items) holds
+  Event and Share location (phase 20). It is hidden in an encrypted room's composer as the poll's button is; Share
+  location stays there.
+- "Add to calendar" is one action whose path depends on where it runs:
+  - with a provider, it answers with `addToCalendar` and then shows "Open in calendar" (`eventUrl`);
+  - without one, on the web and the desktop app, it downloads `calEventIcs`;
+  - in the Android app, it opens the phone's calendar app on a new event, filled in. This is a new host command
+    `calendar_insert` (`commands.rs`, then `android.rs`, then a small `CalendarIntent.kt` with
+    `Intent.ACTION_INSERT` on `CalendarContract.Events.CONTENT_URI`). It needs no calendar permission, since the
+    phone's calendar app saves the event, and it needs the next APK. Until then the phone gets the `.ics` file.
+- The helpers (`WebrootChat.js`, a block `moqui.chat.cal`): `when(event, zone)` (the time line in the viewer's zone),
+  `zoneNote(event, zone)`, `countLine(event)`, `remindChoices(event, now)`, `canAnswer(event, now)`. The card reads
+  `item.calEvent`, kept current by `push#Update`, as a poll's state is.
+- `/event` stays the apps' quick create (`quickCreateText`); the chat event is the menu's.
+- Every text through `t()`.
+
+**Hooks in shared files** (small, so the parallel phases merge):
+- `ChatServices.xml`:
+  - `get#Timeline`: the batch read, as for polls, and `calEvent: redacted ? null : calEvents[seq] || null`;
+  - `send#Message`'s event: `calEvent: null`;
+  - `edit#Message` refuses an event ("An event is changed with Change");
+  - `clear#MessageContent` calls `forget#CalEvent`.
+- `Chat.xml`: the six `transition-include` lines.
+- `Chat.qvue`: the card in `messageTemplate`, the More menu, the box.
+- `ChatTui.xml`: none (it shows the body).
+- `shell.rs`, `xml-screen-3.xsd`, `ProviderInterfaces.xml`: the hook.
+- After phase 16 merges: its expiry's delete list calls `forget#CalEvent`.
+
+**Bridges and encryption.**
+- Every bridge sends the event's text, and each change or cancellation as a message of its own, through the normal
+  path (`ChatBridgeDelivery`).
+- SMS, RCS and SMS members (phase 18) get the text. An answer by text ("going") is not read: left out.
+- GroupMe's own events are not mapped (left out); a GroupMe group gets the text.
+- An encrypted room has no events, as it has no polls: the server keeps the answers and makes the text and the
+  calendar file.
+
+**Phone and desktop.** The same bundled Chat (`bundled-screens.js` regenerated). The desktop app downloads the `.ics`
+through its save path.
+
+**Failure tolerance.**
+- An answer stands when its reminder or calendar step fails: each runs on its own, logs its failure and answers it.
+- A change moves each answer's reminder on its own.
+- A provider that fails on `change` or `cancel` is logged, and the change message still goes.
+- `forget#CalEvent` does each part on its own.
+
+**Security and abuse.**
+- Only members who may post answer. Who answered is visible to whoever can read the room, as a poll that is not
+  anonymous is.
+- Only the creator (still a member) or a moderator changes or cancels. At most 20 changes, each one a message under
+  the room's send limits.
+- The provider is given ids only and reads the rows itself. The `.ics` goes only to a reader of the room.
+- The place and description are plain text, never HTML. The client makes the map search link
+  (`openstreetmap.org/search?query=`, with `encodeURIComponent`) only when the person taps it; the server fetches
+  nothing.
+- A reminder keeps the room and the message's number only (phase 15).
+
+**Left out.** Events in encrypted rooms; recurring events; answers by text or from another network; guests outside the
+room; a limit on places and a waiting list; a note with an answer; telling the creator of each answer; answering in the
+terminal; GroupMe's native events; floating times with no zone.
+
+**Tests (regression).**
+- Server: `framework/test/ChatCal.spec.js` (new):
+  - `create#CalEvent`'s refusals: an encrypted room, archived, not a member, ended, over 31 days, past 2 years, a bad
+    zone, too long;
+  - the body in the event's zone, and an all-day event's;
+  - answers: the counts, a replaced answer, a take-back; refused once cancelled, once ended, and from one who is not a
+    member;
+  - `get#Timeline`'s `calEvent` with `mine`, and the update push with none;
+  - reminders: Going with 60 makes a `CrmPending` reminder an hour before the start; a change moves it; No and a
+    cancellation cancel it; one too near is skipped;
+  - a change: the reply message with `calChange`, `revision` + 1, by its creator or a moderator only, and at most 20;
+  - a redaction removes the rows and cancels the reminders; `edit#Message` refused;
+  - the `.ics`: PUBLISH with UID, SEQUENCE and TZID, then CANCEL; refused for one who cannot read the room;
+  - no provider: `calendarFailed` false, no entry, `eventUrl` empty;
+  - a bridged room: the event's and the change's `ChatBridgeDelivery` rows, with the text.
+- Rust: `shell.rs`'s hook list (`chat-calendar`) where its test lists the hooks.
+- Client, offline: `webroot/test/client/WebrootChat`: `moqui.chat.cal` (the viewer's zone and the event's,
+  `remindChoices` past the start, `countLine`).
+- basic-comms client: nothing (its budget).
+- No acceptance spec.
+
+**Docs.**
+- [Comms](../docs/tools/Comms.md): events; "Provider hooks" gains `chat-calendar`.
+- [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): an event and its changes as text.
+- [Mobile-Client](../docs/ui/Mobile-Client.md): Add to calendar on Android.
+- The BasicComms README.
+- §14.5.
+
+**Done when.** The regression specs above pass within their budgets; on a real phone, the row of §18.4.
+
+#### Phase 20: sticker packs and location messages
+
+Designed 2026-11-17 (D2f; §14.3, §17 #7, as decided in the batch: packs local with no outside service, GIF search
+later; a location with no map, live location later with Maps).
+
+**Stickers.** An administrator keeps the server's packs, and each user keeps packs of their own. A sticker is a
+picture stored as content: PNG, WebP or GIF, animated ones too. A sticker picker sits beside the emoji picker, and a
+sticker is a message that shows large.
+
+**A sent sticker is a copy in the room.** Sending one copies its picture into the room as an ordinary
+`ChatAttachment`. Stickers are small (512 KB at most), and the copy means:
+- every path files already take works for it: access by the room, retention, redaction, disappearing messages, the
+  bridges' files and MMS;
+- removing a pack or a sticker never breaks a message already sent;
+- a user pack stays private to its owner.
+
+**Data model** (new `framework/entity/ChatStickerEntities.xml`, in `load-entity`)
+
+| Entity, field | What |
+|---|---|
+| `moqui.chat.ChatStickerPack` (`chatStickerPackId` pk, sequenced) | `packName` (up to 60), `ownerUserId` (empty: the server's pack), `statusEnumId`, `sequenceNum`, `coverStickerId`, `createdByUserId`, `createdDate`. Index (`ownerUserId`, `statusEnumId`) |
+| `ChatStickerPackStatus` (Enumeration) | `CspActive`, `CspHidden` (kept, not offered) |
+| `moqui.chat.ChatSticker` (`chatStickerId` pk, sequenced) | `chatStickerPackId`, `sequenceNum`, `emoji` (one emoji: search and the text form), `altText` (up to 80: the description a screen reader reads), `contentLocation`, `thumbLocation` (a still PNG of 128 px, `ec.resource.makeThumbnail`), `contentType`, `fileSize`, `width`, `height`, `digest` (SHA-256: the same picture once a pack), `createdDate` |
+| `ChatAttachment.stickerOf` (extend-entity) | The `chatStickerId` a room's copy came from: `find#RoomFiles` leaves stickers out of the Media and Files tabs |
+
+- Storage: `${chat_sticker_root || 'dbresource://chat-stickers'}/<packId>/<stickerId>/<n>.<ext>`, through
+  `ec.resource`.
+- The type is read from the bytes, never from the name or the browser: PNG, GIF or WebP magic, and the picture must
+  decode (`makeThumbnail` answers its width and height, or null).
+- Limits (properties): `chat_sticker_max_bytes` 512 KB; 512 × 512 px at most and 64 px at least a side; 200
+  stickers a pack; 50 server packs; 10 packs and 100 stickers a pack for a user.
+
+**Services** (new `org.moqui.chat.ChatStickerServices`, logic in `ChatSticker.js`)
+
+| Service | What |
+|---|---|
+| `get#StickerPacks` | The caller's own packs, then the server's active ones, each with its stickers `{chatStickerId, emoji, altText, width, height}` and a `version` (the newest change), so Chat reads them again only when they changed |
+| `create#StickerPack`, `update#StickerPack`, `delete#StickerPack` | A user's own pack. A server pack needs the `ChatStickerAdmin` permission (ADMIN has it, in `ChatSetupData.xml`). Delete removes its files, each on its own; a sent copy stays |
+| `add#Sticker`, `update#Sticker`, `remove#Sticker` | The pack's owner or a sticker admin. `file`, `emoji`, `altText`. Refused: a type other than PNG, WebP or GIF (`badType`), too large or of the wrong size (`tooLarge`), the same picture again (`duplicate`), over the limits (`tooMany`) |
+| `get#StickerImage` | `chatStickerId`, `thumb`, for the `stickerImage` transition. A server pack's sticker, for any chat user; a user pack's, for its owner only. The bytes are sent with their stored type, `X-Content-Type-Options: nosniff`, inline, and cached privately for a day |
+| `send#Sticker` | `chatRoomId`, `chatStickerId`, `replyToEventSeq`, `threadRootEventSeq`, `clientRef`, `roomUrl`. A sticker the caller may use, in a plain room. The picture is copied as the room's `ChatAttachment` (`stickerOf`, the name `sticker.<ext>`, in the daily file quota), then `send#Message` with no body, that file, and `content.sticker {chatStickerId, packName, emoji, altText, width, height}`. Refused in an encrypted room (`encryptedRoom`): the client sends it there itself (below) |
+
+**Transitions** (new `basic-comms/template/ChatStickerTransitions.xml`): `stickerPacks`, `stickerImage`, `sendSticker`,
+and the manage screens' own.
+
+**Location.** A location message carries coordinates or an address or both, an optional label, and "Open in maps".
+There is no map, no geocoding and no outside request.
+- `content.location {latitude, longitude, label, address, accuracy, source}`:
+  - `latitude` and `longitude` are rounded to 6 places;
+  - `label` is up to 100 characters and `address` up to 300;
+  - `accuracy` is in metres, from the device;
+  - `source` is `here` (the device's position), `typed`, or `network` (an inbound RCS location).
+- **Its words** (`ChatLocation.js` `fallbackText`; the client's `moqui.chat.locationFallback` makes the same for an
+  encrypted room, and a spec keeps the two in step):
+
+  ```
+  Location: Liberty Park, 600 E 900 S, Salt Lake City
+  https://www.openstreetmap.org/?mlat=40.745210&mlon=-111.875000#map=17/40.745210/-111.875000
+  ```
+
+  With an address only, the link is `https://www.openstreetmap.org/search?query=<address>`: a search the person runs on
+  OpenStreetMap's site by tapping it; the server never makes it. This is phase 10's `placeText` (`Sms.js`), moved to
+  `ChatLocation.js` and used for both directions.
+- **Open in maps**:
+  - in the Android app: `geo:<lat>,<lon>?q=<lat>,<lon>(<label>)` (RFC 5870, with Android's `q`), or
+    `geo:0,0?q=<address>`, which Android hands to the person's maps app;
+  - on the web and the desktop app: the OpenStreetMap link.
+
+  The card also has Copy (the coordinates, or the address).
+- `send#Location` (`ChatLocationServices`, a plain room): `chatRoomId`, `location`, `replyToEventSeq`,
+  `threadRootEventSeq`, `clientRef`, `roomUrl`. Refused: neither coordinates nor an address, a coordinate out of range
+  or not finite, too long (`badLocation`). `send#Message` with the words as the body, then `content.location`.
+- In an encrypted room the client puts `location` and the words in the ciphertext and sends as any encrypted message;
+  the server never sees the place.
+- **Inbound.** An RCS location (Twilio `Latitude`/`Longitude`/`Label`/`Address`, Sinch `location_message`: phase 10's
+  `sms::Location`) becomes a location message (`source: network`) with the same words. `Sms.js` gives the ingest item
+  `location`, and `ingest#Event` sets `content.location`, a hook in `ChatBridgeServices.xml`. A GroupMe location
+  attachment takes the same path if the phase 14 adapter hands it over (checked at build).
+
+**Sharing a location** (`chat-location-box`, a sub-component of `Chat.qvue`)
+- **"Use my current location"**: `navigator.geolocation.getCurrentPosition`, high accuracy, a 15 s timeout, a fix up to
+  a minute old. It shows the coordinates and "± 12 m", with a Label field.
+  - Android app: the manifest gains `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`. The patched wry
+    `RustWebChromeClient.onGeolocationPermissionsShowPrompt` already asks for them at first use, so only the next APK
+    is needed.
+  - Browser: its own permission prompt.
+  - Denied: "Location is off for this app: allow it in the phone's or the browser's settings, or enter the place". With
+    no geolocation (an http page, a desktop WebView without it), only Enter it shows.
+- **"Enter it"**: one text field, read by `moqui.chat.parseLocation`:
+  - coordinates ("40.7452, -111.875", or degrees, minutes and seconds with N/S/E/W);
+  - a `geo:` URI;
+  - a pasted OpenStreetMap, Google Maps or Apple Maps link: its coordinates read from the link text (`mlat`/`mlon`,
+    `@lat,lon`, `q=`, `ll=`), and nothing fetched;
+  - any other text: the address.
+- A preview of the card, then Send.
+
+**Screens** (`Chat.qvue`, in a block of their own: `chat-sticker-picker`, `chat-sticker`, `chat-location-box`,
+`chat-location-card`)
+
+| Part | Phone (bubbles) | Desktop |
+|---|---|---|
+| Sticker button | Beside the emoji button (`sym_o_sticky_note_2`); a bottom sheet of half the height | A 360 × 420 menu, as the emoji picker's |
+| `chat-sticker-picker` | Tabs: Recent (`localStorage` `moqui.chat.recentStickers.<userId>`, 24), then each pack by its cover, the user's own first. A search by emoji or description. The grid shows the still thumbnails; a long press plays one. A tap sends it at once (in the thread, or as the reply being written). "Manage stickers" opens Settings, Stickers. Empty: "No stickers yet: add your own in Settings, Stickers" | A hover plays one |
+| A sticker message | The picture at up to 160 px a side, no bubble, its description as `alt`, the time below; a tap opens the image viewer | Up to 180 px |
+| Share location | In the More menu (phase 19) and the phone's attach menu; full-screen `chat-location-box` | A 440 px dialog |
+| `chat-location-card` | A pin icon, the label (bold), the address, the coordinates with "± 12 m", Open in maps, Copy | Same; Open in maps opens a new tab |
+
+- Manage: `Settings/Stickers.xml` (basic-comms, a plain XML screen with forms, so it renders in every mode): the
+  user's packs, New pack, each pack's stickers with Add (file, emoji, description), Hide and Remove.
+  `System/ChatStickers.xml` (beside `PushHealth.xml`, permission `ChatStickerAdmin`) does the same for the server's
+  packs. Both include one `template/StickerPackWidgets.xml`.
+- Helpers in `WebrootChat.js` (a block of their own): `moqui.chat.parseLocation`, `locationFallback`, `geoUri`,
+  `osmUrl`, `stickerSearch`, `recentStickers`.
+- Every text through `t()`.
+
+**Encrypted rooms.**
+- A sticker: the client fetches the picture (`stickerImage`), seals it (`sealFile`), uploads it and sends an encrypted
+  message whose content has `sticker` and the file: the ordinary encrypted send. The server sees a sealed file.
+- A location: in the ciphertext only.
+
+**Bridges** (outbound):
+- A sticker goes as its picture on a bridge that sends files (MMS, GroupMe's image service, XMPP's file links), with no
+  text. A bridge that sends no files, or whose limit refuses the picture, gets "Sticker: 👍 thumbs up". That is
+  `request_of`'s text fallback in `chat_bridge.rs`, as a poll's question is.
+- WebP over MMS shows on most phones, and GIF and PNG on all. No conversion is done.
+- A location goes as its words everywhere, with these exceptions:
+  - **Sinch RCS** sends `location_message` (`coordinates`, `title` the label, `label` the address) with the words as the
+    SMS fallback. Sinch's RCS page says RCS has no location message of its own, and the Conversation API makes it a
+    text with a location choice (read 2026-11-17). Not yet tested with Sinch.
+  - **Twilio RCS** sends the words: `twilio/location` is WhatsApp only (Twilio's Content API page, read 2026-11-17).
+- `DeliveryRequest` gains `location` (phase 10's `sms::Location`), set from `content.location`. Only the Sinch RCS path
+  reads it.
+- The room list and the push snippet read "Sticker 👍" and "Location: Liberty Park": hooks in `snippetOf` and
+  `chat_push.rs` `Content::of`.
+
+**Hooks in shared files.**
+- `ChatServices.xml`:
+  - `get#Timeline` and `send#Message`'s event: `sticker` and `location` from the content;
+  - `find#RoomFiles` leaves out `stickerOf` files;
+  - `snippetOf` reads stickers and locations.
+- `ChatBridgeServices.xml` `ingest#Event`: `location`.
+- `Sms.js`: `placeText` replaced by `ChatLocation.js`, and the item's `location`.
+- `chat_bridge.rs`: the sticker's text and `location`.
+- `chat_push.rs`: the snippet.
+- `sinch.rs`, `sinch/rcs.rs`: the location message.
+- `Chat.xml`: three `transition-include` lines.
+- `Chat.qvue`: the sticker button, the More menu's item, the two renderers.
+- `AndroidManifest.xml`: the two location permissions.
+- `ChatSetupData.xml`: the permission and its grant.
+
+**Terminal.** A sticker reads "Sticker 👍", and a location shows its words.
+
+**Failure tolerance.**
+- A pack's delete removes each file on its own.
+- A sticker that fails its check is refused alone; the others of an upload go on.
+- A thumbnail that cannot be made refuses that sticker only.
+- A geolocation timeout leaves Enter it open.
+- Chat works without stickers when `get#StickerPacks` fails, which is logged; the button says "Stickers could not be
+  loaded".
+
+**Security and abuse.**
+- A sticker is checked by its bytes (magic and decode), so an SVG, HTML or script cannot pass as a picture. It is
+  served with its stored type, `nosniff` and no `Content-Disposition: attachment` trickery.
+- A user pack's pictures go to its owner only. Another member sees the copy, under the room's access.
+- Size and count limits apply, and each copy counts in `chat_attachment_daily_bytes`.
+- In an encrypted room, a sealed file's size may tell the server which sticker it is (stickers are known files): said
+  in [Comms](../docs/tools/Comms.md).
+- A location is shared only by the person's act, never in the background, and a device position only with the device's
+  permission. Coordinates are kept as sent, rounded to about 10 cm. An address-only location reveals only what the
+  person typed.
+- Every link is built with `encodeURIComponent`. A pasted maps link is read as text and never fetched.
+
+**Left out.** GIF search; live location and Check In (Maps); a map image or tiles; geocoding; saving another person's
+sticker to one's own pack; Lottie or other vector stickers; sticker packs from Signal or Telegram; GroupMe's own
+location attachment outbound (its text goes).
+
+**Tests (regression).**
+- Server:
+  - `framework/test/ChatSticker.spec.js`:
+    - a pack per user and the server's (refused without `ChatStickerAdmin`);
+    - `add#Sticker` takes PNG, WebP and GIF and refuses an SVG renamed `.png`, an HTML file, an oversized one and the
+      same picture twice;
+    - `get#StickerImage` is refused for another user's pack;
+    - `send#Sticker` makes a copy (`stickerOf`) and `content.sticker`, is left out of `find#RoomFiles`, reads "Sticker
+      👍" in the snippet, is refused in an encrypted room, and stays after the pack is deleted;
+    - a bridged room's delivery carries the file.
+  - `framework/test/ChatLocation.spec.js`: `send#Location`'s refusals, the words with coordinates and with an address
+    only, `content.location` in the timeline; an inbound RCS location through `receive#Sms` becomes a location message
+    with the same words.
+- Rust:
+  - `moqui-channels`: Sinch RCS sends `location_message` with the SMS fallback text (fake server); Twilio sends the
+    text;
+  - `moqui-core` `chat_bridge_tests`: a sticker's text fallback, and `location` set on the request.
+- Client, offline: `webroot/test/client/WebrootChat`:
+  - `parseLocation`: decimal, DMS, `geo:`, the three maps links, an address, out of range;
+  - `locationFallback`, the same as the server's for the same input;
+  - `geoUri` with a label to escape;
+  - `stickerSearch`.
+- basic-comms client: nothing.
+- No acceptance spec.
+
+**Docs.**
+- [Comms](../docs/tools/Comms.md): stickers, their management, location.
+- [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): stickers and locations across bridges.
+- [RCS](../docs/interfaces/RCS.md): Sinch's location message.
+- [Mobile-Client](../docs/ui/Mobile-Client.md): the location permission.
+- The BasicComms README, and §14.3.
+
+**Done when.** The regression specs above pass within their budgets; on a real phone, the row of §18.4.
+
+#### Phase 21: screen security, one-time codes, send original
+
+Designed 2026-11-17 (D2g; §14.2, §14.4, §17 #9). Builds on phase 16's `ScreenSecurity` and `secure_screen`, and on its
+per-event `expireDate`, so it is built after phase 16 merges.
+
+**Screen security** (Android `FLAG_SECURE`: no screenshots, no screen recording, a blank recents thumbnail)
+- A user setting `CHAT_SCREEN_SECURITY`, under Settings, Chat, Privacy:
+  - Off (the default);
+  - In encrypted rooms (while one is open);
+  - Everywhere in the app.
+- An encrypted room's details also have "Block screenshots in this room", the member's own choice
+  (`ChatRoomMember.screenSecure`, an extend-entity in phase 21's file), for when the setting is Off.
+- Reasons in phase 16's set (`ScreenSecurity.kt`, through `moquiDesktop.secureScreen(reason, on)`):
+  - `room:<chatRoomId>` while such a room is shown. Chat sets it when the room opens and clears it when the room
+    closes, when another room opens, and when Chat goes;
+  - `app:<account>` from the shell's start, read from the account's preference
+    (`moqui.config.preferences.CHAT_SCREEN_SECURITY`), and on the setting's change.
+
+  The flag is on while any reason holds, so `viewOnce` and these work together.
+- **The app reason is remembered on the phone.** `ScreenSecurity.kt` keeps the `app:` reasons in its
+  SharedPreferences and sets the flag in `attach()` before the first frame. From the next start, the splash and the
+  account list are covered too. This is a small Kotlin change, and it needs the next APK.
+- On the web and the desktop app, `secureScreen` answers false, and the setting reads "Only the Android app can stop
+  screenshots; this browser and the desktop app cannot".
+
+**One-time codes**
+- **Found in incoming texts only**: SMS, MMS and RCS into a phone room (and an SMS member's reply, phase 18). Never in
+  chat between users. `ChatOtp.js` `detect(text)` (in `Sms.js` `receive()`, before `ingest#Event`):
+  - a text of at most 600 characters, with a keyword: `chat_otp_keywords`, by default code, verification, verify,
+    OTP, passcode, one-time, PIN, security code, login, sign in, 2FA, authentication, confirm;
+  - a candidate is 4 to 8 digits on word boundaries, with one space or dash allowed inside ("123 456", "123-456"), or
+    the digits after a `G-` style prefix;
+  - not a candidate:
+    - part of a phone number (a `+`, a group of 10 or more digits, `(555) 123-4567`);
+    - a price or amount (a currency sign or code next to it, a decimal point);
+    - a date or time (`11/17`, `12:30`, `2026-11-17`);
+    - a year (19xx or 20xx) unless it follows "code" or "is";
+    - inside a URL;
+  - the candidate nearest a keyword, within 40 characters. Two equally near are ambiguous, and none is taken.
+
+  The result is `{code, strong}`. `strong` means exactly one candidate in the whole text.
+- `content.otp {code}` on the message (`ingest#Event`'s item `otp`, a hook beside phase 20's `location`). The timeline
+  gives `otp`, and the message shows a chip under the text: "Code 123456 · Copy".
+- **Copy in the notification.**
+  - The push gets `otp: {code, label}` only when it gets the snippet: rule 5, a plain room with previews on (`chat_push.rs`
+    `Content::payload`). `label` is the action's words, "Copy 123456", made by the server in the user's language, since
+    the service worker has no `t()`.
+  - **Web push** (`sw.js`): `showNotification` gets `actions: [{action: 'copy', title: label}]` where the browser
+    shows actions (Chrome on desktop and Android). A service worker cannot write the clipboard, so `notificationclick`
+    with `copy` opens or focuses Chat at the message with `copyCode=1`. Chat then writes the code with
+    `navigator.clipboard.writeText` and says "Code copied". If the browser refuses that without a tap, the chip's Copy
+    is highlighted for one tap. The plain tap opens the message as today.
+  - **Android: the current APK cannot do this.** Its actions are fixed in `ChatNotifications.showRoom` and no payload
+    field adds one. The Kotlin change is small:
+    - `showRoom` reads `otp` and adds "Copy code" (`action()`, a new `COPY` in `ChatActionReceiver`, the code in the
+      intent's extras, `FLAG_IMMUTABLE`, an explicit component);
+    - the receiver writes it with `ClipboardManager.setPrimaryClip` (`ClipDescription.EXTRA_IS_SENSITIVE` on Android
+      13 and later, so the keyboard's clipboard preview hides it) and shows "Code copied" before Android 13, which
+      shows its own;
+    - a notification with a code is `VISIBILITY_PRIVATE`, with a public version "A code from +1 555…", so the lock
+      screen does not show it.
+  - **The desktop app**: no button. Its notification plugin has actions, but they need a Rust change and are left out.
+    A click opens the message with its Copy.
+- **Delete after 24 hours** (`CHAT_OTP_DELETE`, Settings, Chat, Privacy; off by default): a message with a `strong`
+  code gets `expireDate` = its time + 24 h when every local member of the room has the setting on. A shared number's
+  room keeps it if anyone wants it. Phase 16's worker deletes it on the server and on every device, as any
+  disappearing message. The chip then reads "Deletes tomorrow at 15:40 · Keep". Keep (`keep#CodeMessage`, any member)
+  clears `expireDate` and pushes the change. The provider and the carrier keep their own copies: the setting says so.
+
+**Send original** (today the client sends every photo as it is, at full size: there is no compression anywhere. So
+compressed is a new default, which §19.1 asks about)
+- In the composer's file strip, a photo (`image/jpeg`, `image/png`, `image/webp`, a still image) shows
+  "Compressed ▾", which can be switched to Original, for that send. The default is compressed.
+- `moqui.chat.compressPhoto(file, {maxSide, quality, maxBytes})` (`WebrootChat.js`, its own block):
+  - `createImageBitmap(file, {imageOrientation: 'from-image'})` onto a canvas, then `toBlob('image/jpeg', 0.85)`, with
+    a long side of 2048 px;
+  - a PNG is made smaller as a PNG, and only when it is larger than that (screenshots keep their sharp text);
+  - a GIF, a video, an image the browser cannot decode (HEIC on most) and one that comes out larger are sent as they
+    are.
+
+  A compressed photo loses its metadata, its GPS position among them. The Original choice says "Keeps the photo's
+  details, its location among them".
+- **Encrypted rooms**: it compresses before `sealFile`.
+- **MMS.** A room that goes out by text reports its limit. `Capabilities` gains `media_max_bytes`; the SMS adapter
+  reports its bridge's `maxMediaBytes`: Telnyx 1 MiB, Twilio 5 MB, Sinch 1 MiB. `get#Room` answers
+  `textMediaMaxBytes`, the smallest of its outbound bridges'. Then:
+  - compressed steps down (quality 0.85, 0.7, 0.55; side 2048, 1600, 1280) until the files fit;
+  - Original over the limit is disabled with the reason "Too large for a text (over 1 MB): it goes compressed";
+  - the adapter's `mediaTooLarge` refusal stays for what still does not fit.
+
+**Data model.** The preferences `CHAT_SCREEN_SECURITY` and `CHAT_OTP_DELETE` (`get#ChatPrefs`, `store#ChatPrefs`), and
+`ChatRoomMember.screenSecure` (new `framework/entity/ChatPrivacyEntities.xml`, in `load-entity`). There is no new
+entity: a code is in the message's content, and its deletion is phase 16's `expireDate`.
+
+**Services.**
+- `org.moqui.chat.ChatPrivacyServices`, logic in `ChatOtp.js`:
+  - `detect#OneTimeCode` (internal, for `Sms.js` and the spec);
+  - `keep#CodeMessage`;
+  - `set#RoomScreenSecure` (the caller's own member row).
+- `get#ChatPrefs` and `store#ChatPrefs` gain the two settings.
+- The transitions `keepCode` and `roomScreenSecure` (in `ChatPrivacyTransitions.xml`).
+
+**Screens.**
+- Settings, Chat: a Privacy section with the two settings, its own form, so it does not touch the existing form's
+  fields.
+- Chat: the code chip, the room toggle, and the `secureScreen` calls on room open and close.
+- The composer: the photo choice.
+- The shell: the `app:` reason at start.
+- Phone and desktop alike, but `FLAG_SECURE` and the notification's Copy are Android's.
+
+**Hooks in shared files.**
+- `Sms.js`: the detection and the item's `otp`.
+- `ChatBridgeServices.xml` `ingest#Event`: `otp` and `expireDate`.
+- `ChatServices.xml` `get#Timeline`: `otp`.
+- `chat_push.rs`: `otp` in the payload.
+- `chat_bridge.rs` `Capabilities.media_max_bytes`, and `sms.rs` reporting it.
+- `sw.js`: actions and the click.
+- `Chat.qvue`: the chip, the toggle, the room's `secureScreen`, the file strip's choice.
+- `Settings/Chat.xml`: the Privacy section.
+- Kotlin: `ScreenSecurity.kt` (the remembered `app:` reasons), `ChatNotifications.kt` and `ChatActionReceiver.kt`
+  (Copy, the private lock-screen version).
+
+**Bridges and encryption.**
+- Codes come only from the SMS, MMS and RCS adapters' inbound texts.
+- A code in an encrypted room never exists: an outside number's room is never encrypted.
+- Delete after 24 h deletes nothing on the provider or the phone network.
+- Screen security is the same in every room kind.
+
+**Failure tolerance.**
+- A detection that throws is logged, and the text comes in without a code.
+- A push without `otp` (previews off) still shows the message.
+- A clipboard write that the browser refuses leaves the chip.
+- `secureScreen` failing is logged, and the room opens anyway; the setting shows that it did not hold.
+- A photo that cannot be compressed goes as it is.
+
+**Security and abuse.**
+- **False positives**: a wrong code adds only a chip and a button. Deletion needs the opt-in, a `strong` detection, and
+  every member's setting, and Keep undoes it.
+- A sender cannot make someone's message delete itself: only inbound texts are read, and only the recipients'
+  settings act.
+- The code goes in the push payload only where the snippet already goes. It is encrypted to the device, as the
+  snippet is, marked sensitive on the clipboard, and hidden on the lock screen.
+- Nothing fills a code in for the person.
+- `FLAG_SECURE` hides what the screen shows from screenshots and recordings. It does not stop a camera, and the setting
+  says so.
+- Compression drops GPS metadata. The original keeps it, and the choice says so.
+
+**Left out.**
+- A Copy button on the desktop app and on browsers that show no actions.
+- Codes in mail.
+- Autofilling a code into another app (Android's SMS Retriever is for the app's own codes).
+- Codes in other languages beyond what an operator adds to `chat_otp_keywords`.
+- `FLAG_SECURE` on the desktop and the web, which is not possible there.
+- Video compression.
+- A remembered default for Original.
+
+**Tests (regression).**
+- Server:
+  - `framework/test/ChatOtp.spec.js`:
+    - `detect#OneTimeCode` over a table of texts:
+      - found: "Your code is 123456", "G-482913 is your Google verification code", "123-456", "OTP: 9012";
+      - not found: a phone number, "$1234", "Pay 1234.50", "on 11/17", "at 12:30", "in 2026", a URL with digits, two
+        codes as near, no keyword;
+    - `receive#Sms` puts `content.otp` on the message;
+    - with every member's `CHAT_OTP_DELETE`, `expireDate` is 24 h on; with one member's only, nothing;
+    - Keep clears it;
+    - a plain room's `PushOutbox` payload has `otp`, and none with previews off.
+  - `BasicCommsChat` (an existing spec, one feature): the two preferences saved and read.
+- Rust:
+  - `chat_push_tests`: `otp` in the payload only with a snippet;
+  - `moqui-channels`: `media_max_bytes` from the bridge's settings.
+- Client, offline: `webroot/test/client/WebrootChat`:
+  - `compressPhoto` on a generated 4000 × 3000 canvas image: it comes out at 2048 px, as a JPEG, smaller; a small PNG
+    is kept; it steps down to a 1 MiB limit;
+  - the code chip's line;
+  - the `sw.js` notification options with actions (its existing offline check, if there is one; else a helper
+    `moqui.push.notificationOptions` in `WebrootPush.js` that both use, checked there).
+- Android (on the phone only, §18.4): Copy, the lock screen, `FLAG_SECURE`.
+- basic-comms client: nothing.
+- No acceptance spec.
+
+**Docs.**
+- [Comms](../docs/tools/Comms.md): the three features.
+- [Mobile-Client](../docs/ui/Mobile-Client.md): screen security, the Copy action, the remembered app reason.
+- [SMS](../docs/interfaces/SMS.md): codes and the MMS limit in the composer.
+- The BasicComms README.
+- §7.2 (the `otp` field).
+
+**Done when.** The regression specs above pass within their budgets; on a real phone, the row of §18.4.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -3244,6 +3817,9 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (each provider's group receipts are from its documentation), on Telnyx and on Twilio |
 | 12 | First sign-in on a new phone with the Android app: the device made when Chat opens (and how long the module takes to load), Set up this device in an encrypted room, the recovery key typed and pasted, then on another new phone Verify with the desktop by emoji, older messages readable after each; My devices in the app at the phone's width, with the keyboard up and in dark mode; a direct chat started from the phone with a person who has a device is encrypted, and with one who has none is plain |
 | 15 | A long press on Send opens Send later (and its vibration); a message scheduled from the phone in a plain room arrives at its time with the app closed; one scheduled in an encrypted room goes at its time with the app open, and when the app next opens if it was closed (sent late); a reminder's notification at its time, with the app closed and during do not disturb (held, then shown); the current APK shows a reminder's title only, and opens the app, not the message |
+| 19 | Add to calendar opens the phone's calendar app filled in (time, zone, place); an event's reminder at its time; an `.ics` from the web imported into the phone's calendar, then imported again after a change, updating the same entry |
+| 20 | The location permission's question at the first Use my current location, its fix and accuracy indoors and out, Deny and then Enter it; Open in maps hands `geo:` to the maps app (with a label, and an address only); a sticker sent and received as MMS (PNG, GIF and an animated WebP) on Telnyx and Twilio; the sticker sheet at the phone's width |
+| 21 | Screen security: a screenshot and a screen recording blocked in an encrypted room, then allowed after it closes; Everywhere covers the splash and the account list after a restart, and the recents thumbnail is blank; together with a view-once photo open. A text with a code: Copy code in the notification puts it on the clipboard (the keyboard hides it as sensitive), the lock screen shows "A code from …"; delete after 24 h removes it from the phone. A photo from the camera sent compressed (its size and that the GPS is gone) and as the original; a photo into a phone room fitted under the MMS limit |
 
 ## 19. Decisions and open questions
 
@@ -3256,6 +3832,8 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-17 | Business RCS goes through the same provider modules, Twilio and Sinch first; Telnyx RCS is optional (§16.4, §19.4 Q9) |
 | 2026-11-17 | A reply to an RCS fallback text goes to the RCS room when the fallback number is that RCS bridge's own, and to the number's SMS room otherwise (§16.4 step 11, phase 10) |
 | 2026-11-17 | Scheduled send in an encrypted room is held by the sender's own device: it keeps the draft sealed under its store key and encrypts and sends it at the time, claiming the server's placeholder (no text) so one device sends it; if no device is open then, it goes when that device next opens, marked sent late; a device that is gone leaves it "can't be sent". Plain, phone and bridged rooms use the server-held send. Reminders are held during do not disturb (phase 15) |
+| 2026-11-17 | Sticker packs now, local only: the server's and each user's, stored as content; GIF search waits until a provider is chosen (phase 20) |
+| 2026-11-17 | A location message has no map: coordinates or an address, a label and "Open in maps" (`geo:`, OpenStreetMap on the web), from the device's position or typed in, with no geocoding service; live location waits for the Maps app (phase 20) |
 | 2026-11-16 | The layout thresholds stay as built: 1024 px for the stacked layout, 640 px for bubbles, 900 px for a pane over the timeline (§1) |
 | 2026-11-16 | Room rows keep the built swipes: right pins, left archives. Mark read is in the long-press sheet (§2.1) |
 | 2026-11-16 | Every call in an encrypted room is E2EE, direct rooms included. No fallback to a plain call (§6.1 rule 4) |
