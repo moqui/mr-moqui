@@ -1613,10 +1613,50 @@
         return refreshVerifications();
     }
 
+    // ---- what this device keeps sealed in the browser's storage (plans/Comms-Messaging.md phase 15) ----
+    // An encrypted room's scheduled message is kept by the device that scheduled it until its time: sealed with AES-GCM
+    // under a key derived (HKDF) from the device's store key, which the server gives only to the device's own signed-in
+    // user and does not store. Neither the stored draft nor the server alone opens it. The key lives in this page only.
+    let localKey = null;
+    let localKeyOf = null;
+    const b64 = (bytes) => root.btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
+    const unb64 = (text) => Uint8Array.from(root.atob(String(text || "")), (c) => c.charCodeAt(0));
+    async function localKeyNow() {
+        const subtle = root.crypto && root.crypto.subtle;
+        const user = currentUser();
+        const pointer = user ? readPointer(user) : null;
+        if (!subtle || !root.TextEncoder) throw { reasonCode: "noCrypto", errors: "This browser cannot keep a sealed message" };
+        if (!pointer) throw { reasonCode: "noDevice", errors: "This browser has no encryption device" };
+        const id = user + "/" + pointer.deviceId;
+        if (localKey && localKeyOf === id) return localKey;
+        const answer = await call("storeKey", { deviceId: pointer.deviceId });
+        if (!answer || !answer.storeKey) throw { reasonCode: "noDevice", errors: "This browser has no encryption device" };
+        const encoder = new root.TextEncoder();
+        const base = await subtle.importKey("raw", encoder.encode(answer.storeKey), "HKDF", false, ["deriveKey"]);
+        localKey = await subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: encoder.encode("moqui-chat-held-draft"), info: encoder.encode(id) },
+            base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+        localKeyOf = id;
+        return localKey;
+    }
+    /** text sealed for this device: {v, iv, data} (base64), for the browser's storage. */
+    async function sealLocal(text) {
+        const key = await localKeyNow();
+        const iv = root.crypto.getRandomValues(new Uint8Array(12));
+        const data = await root.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new root.TextEncoder().encode(String(text)));
+        return { v: 1, iv: b64(iv), data: b64(new Uint8Array(data)) };
+    }
+    /** The text of what sealLocal made on this device; a rejection when it is not this device's or was changed. */
+    async function openLocal(sealed) {
+        if (!sealed || sealed.v !== 1) throw { reasonCode: "notSealed", errors: "Not a sealed draft" };
+        const key = await localKeyNow();
+        const plain = await root.crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(sealed.iv) }, key, unb64(sealed.data));
+        return new root.TextDecoder().decode(plain);
+    }
+
     // a page that goes away closes its store (logout closes it before the logout request, WebrootVue.qvt.js logoutClick)
     if (root.addEventListener) root.addEventListener("pagehide", () => { if (machine) closeNow(); });
 
-    moqui.crypto = { state, ensureDevice, elsewhere, onToDevice, close, thisDeviceId, matrixId, userIdOf, onRoomKeys, encryptFile, decryptFile,
+    moqui.crypto = { state, ensureDevice, elsewhere, onToDevice, close, thisDeviceId, sealLocal, openLocal, matrixId, userIdOf, onRoomKeys, encryptFile, decryptFile,
         sendToDevices: api("sendToDevices", sendToDevicesNow), devicesOf: api("devicesOf", devicesOfNow), sync: relayOnly("sync", sync),
         forget: relayOnly("forget", forgetNow), startOver: startOverNow, settingsChanged: relayOnly("settingsChanged", settingsChanged),
         encryptRoom: api("encryptRoom", encryptRoomNow), decryptRoom: api("decryptRoom", decryptRoomNow), rotateRoom: api("rotateRoom", rotateRoomNow),

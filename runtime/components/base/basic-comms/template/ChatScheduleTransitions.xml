@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of scheduled sends and reminders in Chat (plans/Comms-Messaging.md §18.3 phase 15;
+    org.moqui.chat.ChatScheduleServices), each included by name in Chat.xml: chatSchedule (the user's scheduled messages
+    and reminders), scheduleMessage (with the body's record cards, as send#ChatMessage looks them up), updateScheduled,
+    cancelScheduled, dismissScheduled, sendScheduledNow, claimHeld, sendHeld, reportHeld and completeHeld (an encrypted
+    room's message, sent by the device that holds it), setReminder and cancelReminder. A refusal is an answer with its reasonCode and the errors,
+    as send's is. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="chatSchedule" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.get#ChatSchedule').call() || {}
+            ec.web.sendJsonResponse({scheduledList: out.scheduledList || [], reminderList: out.reminderList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="scheduleMessage">
+        <actions><script><![CDATA[
+            const number = (value) => value == null || value === '' ? null : Number(value)
+            const ids = chatAttachmentIds ? String(chatAttachmentIds).split(',').map((id) => id.trim()).filter((id) => id) : []
+            const records = heldByDeviceId || !body ? [] : ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records')
+                    .parameters({operation: 'links', body: body || ''}).call().recordList || []
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.schedule#Message').parameters({chatRoomId: chatRoomId || '',
+                body: body || null, replyToEventSeq: number(replyToEventSeq), threadRootEventSeq: number(threadRootEventSeq), chatAttachmentIdList: ids,
+                recordList: records, sendDate: number(sendDate), heldByDeviceId: heldByDeviceId || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null}
+                    : {chatScheduledMessageId: out.chatScheduledMessageId, scheduled: out.scheduled})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="updateScheduled">
+        <actions><script><![CDATA[
+            const text = body != null && body !== '' ? body : null
+            // a new text: its record cards again
+            const records = text ? ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records')
+                    .parameters({operation: 'links', body: text}).call().recordList || [] : null
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.update#ScheduledMessage').parameters({
+                chatScheduledMessageId: chatScheduledMessageId || '', body: text, recordList: records,
+                sendDate: sendDate ? Number(sendDate) : null, deviceId: deviceId || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {scheduled: out.scheduled})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="cancelScheduled">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.cancel#ScheduledMessage')
+                    .parameter('chatScheduledMessageId', chatScheduledMessageId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="dismissScheduled">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.chat.ChatScheduleServices.dismiss#ScheduledMessage').parameter('chatScheduledMessageId', chatScheduledMessageId || '').call()
+            ec.web.sendJsonResponse({})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sendScheduledNow">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.send#ScheduledMessageNow')
+                    .parameter('chatScheduledMessageId', chatScheduledMessageId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="claimHeld">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.claim#HeldMessage').parameters({
+                chatScheduledMessageId: chatScheduledMessageId || '', deviceId: deviceId || '', atOnce: atOnce === 'true' || atOnce === true}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null}
+                    : {claimed: !!out.claimed, sent: !!out.sent, clientRef: out.clientRef || null, reasonCode: out.reasonCode || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sendHeld">
+        <actions><script><![CDATA[
+            let sealed = null
+            try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
+            const mentionList = mentionUserIds ? String(mentionUserIds).split(',').map((id) => id.trim()).filter((id) => id) : null
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.send#HeldMessage').parameters({
+                chatScheduledMessageId: chatScheduledMessageId || '', deviceId: deviceId || '', encrypted: sealed, mentionUserIdList: mentionList}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null}
+                    : {eventSeq: out.eventSeq, event: out.event || null, sentLate: !!out.sentLate})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="reportHeld">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.report#HeldFailure').parameters({
+                chatScheduledMessageId: chatScheduledMessageId || '', deviceId: deviceId || '', review: review === 'true' || review === true,
+                reasonCode: reasonCode || null, failText: failText || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {failed: !!out.failed, reviewNeeded: !!out.reviewNeeded})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="completeHeld">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.complete#HeldMessage').parameters({
+                chatScheduledMessageId: chatScheduledMessageId || '', deviceId: deviceId || '', eventSeq: eventSeq ? Number(eventSeq) : null,
+                draftLost: draftLost === 'true' || draftLost === true}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {sent: !!out.sent, sentLate: !!out.sentLate})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="setReminder">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.set#Reminder').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: eventSeq ? Number(eventSeq) : null, remindDate: remindDate ? Number(remindDate) : null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null}
+                    : {chatMessageReminderId: out.chatMessageReminderId, remindDate: out.remindDate})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="cancelReminder">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.cancel#Reminder')
+                    .parameter('chatMessageReminderId', chatMessageReminderId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>
