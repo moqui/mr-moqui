@@ -632,6 +632,7 @@ fn send_mms(local: &Gate, telnyx: &str, bridge_id: &str, key: &str, attachment: 
             }],
             target_remote_id: None,
             reaction_key: None,
+            rich: None,
             attempt: 1,
         };
         moqui_channels::sms::SmsAdapter::new(moqui_channels::providers::telnyx::Telnyx).deliver(&info, &request)

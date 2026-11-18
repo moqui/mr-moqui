@@ -153,7 +153,15 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
   administrator allows them. See [SMS](../interfaces/SMS.md). A number on an RCS bridge texts as the brand's RCS
   agent, with SMS from the number when the phone has no RCS; each message's caption and Info say when it went as SMS
-  or MMS ([RCS](../interfaces/RCS.md)).
+  or MMS ([RCS](../interfaces/RCS.md)). Its header says "RCS Business - not end-to-end encrypted" and its banner who can
+  read it; a message the phone read says "Read on RCS"; the person sees the agent typing while you type.
+- <a id="cards"></a>**Cards and buttons.** The composer's Card (beside Poll, not in an encrypted room) sends a card: a
+  title, words, a picture and up to 4 buttons, each a reply, a link or a call; with no title and no picture it is a
+  message with buttons under it. The dialog shows the text a phone without RCS gets. Apps send cards and carousels too
+  (`ChatRichServices.send#Rich`). A card goes as RCS cards on an RCS bridge and as that text (and its picture) on SMS
+  and every other bridge. Tap a reply on someone else's card to answer with its words (in a bridged room the buttons
+  are the other person's to tap, on their phone); a link opens, a call dials. On a phone the buttons of a message are
+  one row that scrolls sideways; on a desktop they wrap. A card is not edited.
 - <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
   app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Settings, Chat apps
   shows the address to sign in as (`username@domain`; an email-style username has its `@` written as `\40`), the
