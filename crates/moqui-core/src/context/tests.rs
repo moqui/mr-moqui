@@ -94,14 +94,14 @@ fn component_conf_mounts_and_runtime_conf_wins() {
     std::fs::create_dir_all(&component).unwrap();
     std::fs::write(
         component.join("MoquiConf.xml"),
-        r#"<moqui-conf><default-property name="instance_purpose" value="component"/>
+        r#"<moqui-conf><instance purpose="component"/>
                 <screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
                     <subscreens-item name="app" location="component://app/screen/App.xml"/></screen></screen-facade></moqui-conf>"#,
     )
     .unwrap();
     std::fs::write(
         runtime.path().join("conf/MoquiDevConf.xml"),
-        r#"<moqui-conf><default-property name="instance_purpose" value="dev"/></moqui-conf>"#,
+        r#"<moqui-conf><instance purpose="dev"/></moqui-conf>"#,
     )
     .unwrap();
     let none = super::merge_component_confs(
@@ -147,10 +147,8 @@ fn component_conf_mounts_and_runtime_conf_wins() {
         .unwrap()
         .first_named_attrs("subscreens-item", &[("name", "app")]);
     assert!(item.is_some());
-    let purpose = conf
-        .first_named_attrs("default-property", &[("name", "instance_purpose")])
-        .unwrap();
-    assert_eq!(purpose.attribute("value").as_deref(), Some("dev"));
+    let purpose = conf.first_named("instance").unwrap();
+    assert_eq!(purpose.attribute("purpose").as_deref(), Some("dev"));
 }
 
 #[test]
@@ -221,14 +219,9 @@ fn dev_conf_merge_sets_purpose_and_entity_definition_idle() {
     let base = MNode::parse_file(root.join("runtime/components/base/framework/conf/MoquiDefaultConf.xml")).unwrap();
     let over = MNode::parse_file(root.join("runtime/conf/MoquiDevConf.xml")).unwrap();
     super::merge_conf(&base, &over);
-    let purpose = base
-        .first_named_attrs("default-property", &[("name", "instance_purpose")])
-        .unwrap();
-    assert_eq!(purpose.attribute("value").as_deref(), Some("dev"));
-    let locale = base
-        .first_named_attrs("default-property", &[("name", "default_locale")])
-        .unwrap();
-    assert_eq!(locale.attribute("value").as_deref(), Some("en_US"));
+    let instance = base.first_named("instance").unwrap();
+    assert_eq!(instance.attribute("purpose").as_deref(), Some("dev"));
+    assert_eq!(instance.attribute("default-locale").as_deref(), Some("en_US"));
     let entity = base
         .first_named("cache-list")
         .unwrap()

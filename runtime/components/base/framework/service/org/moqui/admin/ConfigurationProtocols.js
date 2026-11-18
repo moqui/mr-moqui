@@ -159,7 +159,7 @@ const smtpConfigured = (facts, listening) => ({
     listenHost: facts.conf("smtp-server/@listen-host"),
     proxyProtocol: yes(facts.conf("smtp-server/@proxy-protocol")),
     internet: yes(facts.conf("smtp-server/@internet")),
-    edgeNode: ["front", "front_edge", "edge"].includes(text(facts.prop("node_role")).toLowerCase())
+    edgeNode: ["front", "front_edge", "edge"].includes(text(ec.factory.getConfValue("instance@node-role")).toLowerCase())
 })
 
 // The mail relays, each EmailServer no EmailAccount owns (ConfigurationConnections.js), SYSTEM among them: what outgoing

@@ -96,7 +96,7 @@ pub(crate) fn start(
 ) -> Started {
     if moqui_core::edge::takes_links() {
         tracing::error!(
-            "node_role is set (front, front_edge, edge or all-in-one), but this binary has no edge link (the edge feature: Maximal or Enterprise)"
+            "instance@node-role is set (front, front_edge, edge or all-in-one), but this binary has no edge link (the edge feature: Maximal or Enterprise)"
         );
     }
     for name in [moqui_core::edge::NODE_URL, moqui_core::edge::FRONT_URL] {

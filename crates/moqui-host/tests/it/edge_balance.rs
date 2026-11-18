@@ -13,7 +13,7 @@
  */
 
 //! Balancing a pool's traffic (plans/Edge-Node2.md §4.4, E17 part B). The edge node is a real server
-//! (`node_role=front_edge`) with a certificate for `shop.localhost`, a terminate host of one pairing.
+//! (`moqui_conf__instance__node_role=front_edge`) with a certificate for `shop.localhost`, a terminate host of one pairing.
 //!
 //! - **Regression** (`a_pool_shares_a_host_by_turn_and_a_session_stays_on_one_member`): the pool is two dialers of the
 //!   pairing, each with its own instance id and a [`FixedMember`] for its state and cluster, both serving one real local
@@ -44,7 +44,7 @@ use crate::edge_web::{authority, call, issue, pair_node, wait_until};
 
 const SHOP: &str = "shop.localhost";
 
-/// The edge node, started after the local server (`node_role` is a process property the local server must not read),
+/// The edge node, started after the local server (`instance@node-role` is a process property the local server must not read),
 /// with HTTPS on a port of its own and a certificate for `localhost` and [`SHOP`].
 fn start_edge(label: &str, root_cert: &(String, String)) -> (Gate, u16) {
     let port = crate::common::free_port();
@@ -53,7 +53,7 @@ fn start_edge(label: &str, root_cert: &(String, String)) -> (Gate, u16) {
         label,
         "",
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,

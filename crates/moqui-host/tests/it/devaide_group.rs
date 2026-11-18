@@ -425,7 +425,7 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         "dev-aide-group",
         Some(&data),
         &[
-            ("instance_purpose", "dev"),
+            ("moqui_conf__instance__purpose", "dev"),
             ("dev_aide_site_component", "my-site"),
             ("dev_aide_shared", "false"),
             ("moqui_conf__llm_facade__gateway__enabled", "true"),

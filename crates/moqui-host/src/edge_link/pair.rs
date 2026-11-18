@@ -378,7 +378,7 @@ pub async fn check(
 /// Why a node with a role of its own does not pair with a node of `role` (plans/Edge-Node2.md §4.7).
 pub(crate) fn not_front(role: &str) -> String {
     format!(
-        "this node takes links (node_role is set), so it pairs only with a front node, and that node's role is {}",
+        "this node takes links (instance@node-role is set), so it pairs only with a front node, and that node's role is {}",
         if role.is_empty() { "not front" } else { role }
     )
 }

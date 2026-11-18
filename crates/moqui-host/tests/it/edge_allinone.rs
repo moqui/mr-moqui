@@ -16,7 +16,7 @@
 //! calls, numbers and XMPP domain that is also the edge node of a local node with no listening port. The server runs
 //! in a child process of this test binary (the test `edge_allinone::server_process`), on a database of its own, as
 //! `edge_call.rs`'s edge node does: the media driver, the notification socket's bindings, the SIP engine, the XMPP
-//! server and the fixed DNS records are process globals, and `node_role` is a process property. The child answers
+//! server and the fixed DNS records are process globals, and `instance@node-role` is a process property. The child answers
 //! commands on its stdin (a service call as a user, a find, a direct write that skips the services' checks), so the
 //! test reads and changes the server's own data as it does the local node's. The local node runs in the test's
 //! process, pairs with the server, and its link is a dialer the test drives.
@@ -115,7 +115,7 @@ fn server_process() {
     let label = setup["label"].as_str().unwrap().to_string();
     let conf = setup["conf"].as_str().unwrap_or_default().to_string();
     let mut properties: Vec<(String, String)> = vec![
-        ("node_role".to_string(), "all-in-one".to_string()),
+        ("moqui_conf__instance__node_role".to_string(), "all-in-one".to_string()),
         (
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port".to_string(),
             port,
@@ -297,7 +297,7 @@ struct Starting {
 }
 
 impl Server {
-    /// Start the server's process with these properties (beside `node_role=all-in-one` and its HTTPS port) and conf.
+    /// Start the server's process with these properties (beside `moqui_conf__instance__node_role=all-in-one` and its HTTPS port) and conf.
     fn spawn(label: &str, conf: &str, properties: &[(&str, &str)]) -> Starting {
         let (root, cert, key) = certs();
         let https_port = crate::common::free_port();

@@ -1085,7 +1085,7 @@ fn listen(factory: &Arc<ExecutionContextFactory>) {
 pub fn ensure(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     if !enabled(factory) {
         return Err(Error::new(
-            "the artifact index is kept only on a dev instance with a database (instance_purpose dev)",
+            "the artifact index is kept only on a dev instance with a database (instance@purpose dev)",
         ));
     }
     if state(factory).built.load(Ordering::SeqCst) {
@@ -1139,7 +1139,7 @@ pub fn clear(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
 pub fn rebuild(factory: &Arc<ExecutionContextFactory>, full: bool) -> Result<BuildReport, Error> {
     if !enabled(factory) {
         return Err(Error::new(
-            "the artifact index is kept only on a dev instance with a database (instance_purpose dev)",
+            "the artifact index is kept only on a dev instance with a database (instance@purpose dev)",
         ));
     }
     if full {

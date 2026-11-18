@@ -12,7 +12,7 @@ needs the `ssh` feature, which Default leaves out.
 
 ```
 moqui tui                                   the apps on this runtime, after a login
-moqui tui --user john.doe                   log in as john.doe (an instance_purpose of dev only)
+moqui tui --user john.doe                   log in as john.doe (an instance@purpose of dev only)
 moqui tui --path /apps/gallery/List         start on a screen
 moqui tui --serve                           also open the HTTP, SSH and cluster ports, for the browser beside it
 moqui tui --snapshot /apps/gallery/Detail --size 100x40     print one screen as text and exit
@@ -48,7 +48,7 @@ an email that is not one) shows in the dialog and clears both passwords. If an a
 made the first one: the dialog is the login again, with the username kept. Over SSH a refused creation counts as a
 refused login, and the session still closes without a login within 2 minutes ("Over SSH"). In `--agent` the overlay is
 `initial admin`, its fields are the elements (`set Full name Ada Admin`; `do login.joinAdvanced` sets the check), and
-`do Create and log in` sends it. While `initial_admin_enabled` is off (the default conf), the server answers that no setup
+`do Create and log in` sends it. While `user-facade/login@initial-admin-enabled` is off (the default conf), the server answers that no setup
 is needed, so the dialog stays the login.
 `GET /Login?renderMode=tui` (and `--snapshot /Login`) shows the same form while no account exists.
 

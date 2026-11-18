@@ -27,8 +27,8 @@ mr-pass's `docs/Deployment.md`, Full stack.
 | Each edge member | `MoquiEdgeConf.xml` | Maximal with an external database, or Enterprise; base components and mr-pass (`./moq component-get edge`), the same on each |
 | Each local member | `MoquiLocalConf.xml` | Enterprise (`--enterprise`) with the apps (`./moq component-get mr-boss`), the same on each |
 
-The edge members run `node_role=front_edge` (the default here): they forward their local nodes' names, and a local node
-has one pairing. With `node_role=edge` they forward no web access and bind no tunnel port, and each local node pairs
+The edge members run `moqui_conf__instance__node_role=front_edge` (the default here): they forward their local nodes' names, and a local node
+has one pairing. With `moqui_conf__instance__node_role=edge` they forward no web access and bind no tunnel port, and each local node pairs
 with the front as well, for its names, XMPP domain and ports.
 
 ## `.env`

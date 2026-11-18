@@ -13,13 +13,12 @@
     Use the Maximal package with an external database, or Enterprise; the runtime has the base components and mr-pass
     (./moq component-get edge), the same on each member. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production" node-role="front_edge"/>
     <!-- front_edge: the front and edge sets, so the members forward their local nodes' own host names (the apps, as
         erp.example.com) to them, and the front gets those names from the members; a local node has one pairing, with
         the edge cluster. edge: the edge set alone, so the members forward no web access and bind no tunnel port, and
         each local node pairs with the front too, for its names, XMPP domain and ports (a second pairing). Either way the
         members give the front their own sites' hosts as terminate hosts. -->
-    <default-property name="node_role" value="front_edge"/>
     <!-- each member's own web protection counts by the client the front names on its link; the front's protection comes
         first, and a ban started here is shared with the other members and told up to the front -->
 

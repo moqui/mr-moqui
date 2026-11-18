@@ -116,11 +116,20 @@ fn the_dev_tools_follow_the_variable_then_the_purpose_file_and_are_off_by_defaul
     assert!(dev_purpose(Some("dev"), None));
     assert!(!dev_purpose(Some("production"), Some("dev")), "the variable is taken first");
     assert!(dev_purpose(Some(" "), Some("dev")), "an empty variable is passed over");
-    assert_eq!(purpose_properties(true), vec![("instance_purpose", "dev".to_string())]);
-    assert!(purpose_properties(false).is_empty(), "off leaves the conf's own purpose");
+    assert_eq!(
+        purpose_properties(true),
+        vec![("moqui_conf__instance__purpose", "dev".to_string())]
+    );
+    assert!(
+        purpose_properties(false).is_empty(),
+        "off leaves the conf's own purpose"
+    );
     assert_eq!(
         setup_properties(),
-        vec![("initial_admin_enabled", "true".to_string())],
+        vec![(
+            "moqui_conf__user_facade__login__initial_admin_enabled",
+            "true".to_string()
+        )],
         "the first run offers the first administrator"
     );
 

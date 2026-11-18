@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
 <!-- The front node of the full stack (conf/full-stack/README.md; plans/Edge-Node2.md §3, §4.7): the front option set
-    alone (node_role front) before an edge cluster, whose members pair with it once and each dial it, as one pairing
+    alone (instance@node-role front) before an edge cluster, whose members pair with it once and each dial it, as one pairing
     and its pool. It is conf/front/MoquiFrontConf.xml, whose comments say what each setting does; this one says what the
     full stack adds. Nothing of it is set here by hand: the names and the link names come from the edge members, and the
     mail port is a row.
@@ -21,8 +21,7 @@
       node's domain by its front pairing.
     Build and run as conf/front: Maximal (embedded Postgres is enough), the base components only. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
-    <default-property name="node_role" value="front"/>
+    <instance purpose="production" node-role="front"/>
     <!-- before anything goes to an edge member; a ban an edge member starts is told up its front link, and the front
         refuses that client for the pairing's names. A ban is not told on: one a local node starts reaches its own edge
         members (and the front only by its own front pairing, with edge members), not the front through them. Every local node behind front_edge members is part of the edge

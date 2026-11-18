@@ -12,7 +12,7 @@
 // §4.6) lists this node's own cluster from its rows with each member's link address, one that is not https marked as
 // not used, the member holding the SIP trunk lock (none once its lease lapsed), the front node it is paired with from
 // what pairing wrote (plans/Edge-Node2.md §4.7; none without), and get#EdgeCluster refuses on a node that takes no
-// links. No link runs under moqui test: node_role is set to front_edge around each step, the pairings
+// links. No link runs under moqui test: instance@node-role is set to front_edge around each step, the pairings
 // are rows, and no member is linked. A local node's links to each edge member (System › Edge Node, Edge cluster) need
 // a running link: their rows are get#LinkStatus's edgeMemberList, shaped in moqui-core's service::edge tests.
 // Run: ./moq test framework --spec EdgeScreens
@@ -58,8 +58,8 @@ function sys(run) {
         if (!wasDisabled) ec.artifactExecution.enableAuthz()
     }
 }
-/** Run `fn` as a dedicated edge node would (node_role front_edge), with the property put back after. */
-const edge = (fn) => withProperty("node_role", "front_edge", fn)
+/** Run `fn` as a dedicated edge node would (instance@node-role front_edge), with the property put back after. */
+const edge = (fn) => withConf("instance@node-role", "front_edge", fn)
 /** A service with authorization off (the rules, not the access), its errors returned. */
 function invoke(name, parameters) {
     let out = {}
@@ -471,7 +471,7 @@ feature("an administrator lets a displaced node link again on Clients; a user wi
 
 feature("a local node's Edge Node shows its own cluster, and it drains and resumes itself", {
     when() {
-        // paired by its .env, with the link not running in this process (no node_role: a local node)
+        // paired by its .env, with the link not running in this process (no instance@node-role: a local node)
         context.out = withProperty("edge_node_url", "https://edge.edge-screens-spec.example.test", () => {
             const before = invoke("get#LocalCluster")
             const drained = invoke("drain#EdgeMember", {drain: true})

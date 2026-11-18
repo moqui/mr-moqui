@@ -310,7 +310,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="EdgeReplicaConflict" package="moqui.edge" use="transactional" cache="never">
-        <description>On an all-in-one node (node_role=all-in-one, plans/archive/Edge-Node.md §10), a record of a paired node's
+        <description>On an all-in-one node (moqui_conf__instance__node_role=all-in-one, plans/archive/Edge-Node.md §10), a record of a paired node's
             replicated set that was not applied because it claims an item the server holds itself: a mail address, a
             chat bridge id or a phone number (claimKind: MailAddress, ChatBridge, PhoneNumber; itemKey the item). The
             server's own item wins; ownerText names its holder. Keyed as the EdgeReplicaValue it would have been, with
@@ -355,7 +355,7 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgePort" package="moqui.edge" use="configuration" cache="never">
         <description>On an edge node, a TCP port whose connections each go down one paired local node's link as a byte
             tunnel (plans/Edge-Node2.md §4.1, §4.10 Ports, E16): tunnelKind ssh to the node's SSH server, xmpp
-            (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS, and on a front node (node_role
+            (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS, and on a front node (instance@node-role
             front, §4.7) smtp to the SMTP listener of a member of the pairing's pool (an edge cluster's mail edge), with
             a PROXY v2 header naming the client. A port is one row; the node listens on it while its pairing is active,
             within seconds of org.moqui.edge.EdgeServices adding it (on edge_ssh_tunnel_host, edge_xmpp_host or

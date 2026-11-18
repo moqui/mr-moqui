@@ -5,7 +5,7 @@
     https://github.com/moqui/moqui-framework/blob/master/framework/src/main/resources/MoquiDefaultConf.xml -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
 
-    <default-property name="instance_purpose" value="dev"/>
+    <instance purpose="dev"/>
     <!-- A front-end dev server on another port of this machine (Vite, a second app) may call the server with the
         session cookie: localhost and 127.0.0.1 on any port and either scheme, and no other site (SEC-WEB-10). Name
         another origin here when a dev server runs elsewhere; `*` would let any site read the responses, and never
@@ -13,7 +13,7 @@
     <webapp-list><webapp name="webroot" allow-origins="localhost,127.0.0.1"/></webapp-list>
     <tools empty-db-load="all"/>
     <!-- the first administrator's form on an empty database (off by default, MoquiDefaultConf.xml) -->
-    <default-property name="initial_admin_enabled" value="true"/>
+    <user-facade><login initial-admin-enabled="true"/></user-facade>
     <transaction-facade use-lock-track="true"/>
     <!-- The built-in SSH server on localhost (its host defaults to 127.0.0.1): the apps in the terminal over SSH for
         every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/ui/TUI.md "Over SSH" -->

@@ -72,17 +72,17 @@ along with this software (see the LICENSE.md file). If not, see
             refreshSeconds = Number(refresh) > 0 ? Math.max(60, Math.round(Number(refresh))) : 0
             instanceId = read('instance id', () => ec.factory.getInstanceId(), null)
             activityVariables = instanceId ? {instance: instanceId} : {}
-            // The dashboard of the Activity strip: the administrator's own (the system_home_dashboard setting, a definition
+            // The dashboard of the Activity strip: the administrator's own (the screen-facade@system-home-dashboard setting, a definition
             // id) when it is there for this reader, else the shipped system-home. One that is not there is logged.
             activityDashboard = 'system-home'
-            const ownDashboard = String(System.getProperty('system_home_dashboard') || '').trim()
+            const ownDashboard = String(ec.factory.getConfValue('screen-facade@system-home-dashboard') || '').trim()
             if (ownDashboard && ownDashboard !== activityDashboard) {
                 let own = null
                 try { own = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId: ownDashboard}).call()?.definition }
                 catch (error) { own = null }
                 if (ec.message.hasError()) { own = null; ec.message.clearErrors() }
                 if (own && own.type === 'dashboard') activityDashboard = ownDashboard
-                else ec.logger.warn('System home: the dashboard of system_home_dashboard, ' + ownDashboard + ', is not one this user may read; the shipped one is shown')
+                else ec.logger.warn('System home: the dashboard of screen-facade@system-home-dashboard, ' + ownDashboard + ', is not one this user may read; the shipped one is shown')
             }
 
             // ---- identity and state ----

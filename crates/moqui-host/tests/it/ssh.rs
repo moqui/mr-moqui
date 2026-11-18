@@ -1291,7 +1291,7 @@ fn sh_at_the_ssh_prompt_runs_a_host_program() {
         &[
             ("moqui_conf__ssh_server__port", "0"),
             ("moqui_conf__ssh_server__host_key", &seed),
-            ("instance_purpose", "dev"),
+            ("moqui_conf__instance__purpose", "dev"),
             (helper.0, &helper.1),
         ],
     );
@@ -1347,7 +1347,7 @@ fn attach_at_the_ssh_prompt_takes_a_kept_session() {
         &[
             ("moqui_conf__ssh_server__port", "0"),
             ("moqui_conf__ssh_server__host_key", &seed),
-            ("instance_purpose", "dev"),
+            ("moqui_conf__instance__purpose", "dev"),
             (helper.0, &helper.1),
         ],
     );

@@ -41,7 +41,7 @@ pub const KINDS: [&str; 4] = ["ssh", "xmpp", "xmpps", SMTP];
 
 /// The kind of a front node's mail port (plans/Edge-Node2.md §4.7, E19): port 25 passed to an edge cluster's mail edge,
 /// a member of the pairing's pool by the client's address, behind a PROXY v2 header naming the client. Only on a front
-/// node (`node_role=front`): a node with the edge set takes mail itself.
+/// node (`moqui_conf__instance__node_role=front`): a node with the edge set takes mail itself.
 pub const SMTP: &str = "smtp";
 
 /// The listeners of the edge set, which a front node never starts (`super::front_refuses`): on a front their usual
@@ -239,7 +239,7 @@ pub fn add(
     let front = super::settings(factory).role == super::NodeRole::Front;
     if kind == SMTP && !front {
         return Err(Error::new(
-            "an smtp port is a front node's (node_role front, plans/Edge-Node2.md §4.7): a node with the edge set takes \
+            "an smtp port is a front node's (instance@node-role front, plans/Edge-Node2.md §4.7): a node with the edge set takes \
              mail on its own SMTP listener",
         ));
     }

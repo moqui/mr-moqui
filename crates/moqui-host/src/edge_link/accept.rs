@@ -86,7 +86,7 @@ use crate::tls_pin::{hex, public_key_sha256, Pin, PinVerifier};
 /// What a front node answers a call of the edge set's: the queue, replication, a delegated call, PASS
 /// (plans/Edge-Node2.md §4.7).
 pub(crate) const FRONT_REFUSES: &str =
-    "this is a front node (node_role front): it has no queue, replication, delegated calls, calls or PASS";
+    "this is a front node (instance@node-role front): it has no queue, replication, delegated calls, calls or PASS";
 
 /// The HTTPS listener's hand-off to the link on an edge node.
 pub(crate) struct Acceptor {

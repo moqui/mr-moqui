@@ -167,7 +167,7 @@ permission hooks: start the server outside it, or `claude` with those variables 
 ## Who may open what, and from where
 
 - The command line needs `SSH_SHELL` (sealed, on `ADMIN_ADV`), host sessions `TERMINAL_HOST` (sealed, on `ADMIN_ADV`),
-  both on a dev instance (`instance_purpose` dev), and a build with the dev tools (Maximal, Debug; not Lite or
+  both on a dev instance (`instance@purpose` dev), and a build with the dev tools (Maximal, Debug; not Lite or
   Enterprise). john.doe has both in the demo data; a plain `ADMIN` member gets the apps.
 - **From this machine** (a loopback peer, no forwarding header, the server's own loopback origin; or the Desktop app's
   node in process) nothing more is asked.

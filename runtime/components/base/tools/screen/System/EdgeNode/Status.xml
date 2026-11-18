@@ -504,7 +504,7 @@ along with this software (see the LICENSE.md file). If not, see
                         text="Every member of this node's cluster links to the edge node on its own, with the pairing's key, and the edge node balances work over the live ones. It admits a new member only when a linked one lists it as live here. Drain a member before stopping or upgrading it."/>
                 <container style="q-pa-sm">
                     <form-single name="OwnMember" map="ownMember">
-                        <field name="instanceId"><default-field title="This node" tooltip="Its instance id: the instance_id property when set, else the one kept in runtime/db/instance_id"><display/></default-field></field>
+                        <field name="instanceId"><default-field title="This node" tooltip="Its instance id: the conf's instance@id when set, else the one kept in runtime/db/instance_id"><display/></default-field></field>
                         <field name="stateLabel"><default-field title="State on its links" tooltip="What this node tells the edge node: starting, live, draining or stopping. Only a live member gets new work"><display/></default-field></field>
                         <field name="pairingId"><default-field title="Pairing" tooltip="The id the edge node knows this cluster by (edge_node_pairing in the .env the members share)"><display/></default-field></field>
                         <field-layout>

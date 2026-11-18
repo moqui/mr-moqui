@@ -341,6 +341,11 @@ pub static CATALOG: &[Unit] = &[
         keyed("queue-kind", &["name"], EDGE),
         keyed("replicate", &["set"], EDGE).children(&[keyed("entity", &["name"], EDGE)]),
     ]),
+    // read at boot: which components load, the node's role, the server's time zone
+    single(
+        "instance",
+        Class::Restart("the purpose, role and time zone are read at boot"),
+    ),
     single("email-client", Class::Live)
         .attrs(&[("idle-enabled", LISTENER)])
         .children(&[keyed("oauth-provider", &["id"], Class::Live).secrets(&[("client-secret", Secret::Kept)])]),
@@ -462,15 +467,7 @@ const FIXED_PROPERTY_PREFIXES: &[&str] = &[
     "moqui_log_",
 ];
 const FIXED_PROPERTY_SUFFIXES: &[&str] = &["_port", "_host", "_bind", "_key", "_secret", "_pass", "_password"];
-const FIXED_PROPERTIES: &[&str] = &[
-    "instance_purpose",
-    "instance_id",
-    "node_role",
-    "MOQUI_CONF",
-    "default_time_zone",
-    "database_time_zone",
-    "default_locale",
-];
+const FIXED_PROPERTIES: &[&str] = &["MOQUI_CONF"];
 
 /// Why the property `name` is not changed by a conf reload, or `None` when it may be.
 #[must_use]

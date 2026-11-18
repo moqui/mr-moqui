@@ -24,13 +24,13 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 //!
-//! On an edge node (`node_role=front_edge`, plans/archive/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
+//! On an edge node (`moqui_conf__instance__node_role=front_edge`, plans/archive/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
 //! no row of its own, since it has no call state. Its media address and TURN URLs go in its link Hello
 //! (`moqui_core::edge::media::set_advert`), and the local node keeps its `CallMediaNode` row from the link. Its frames,
 //! replies and controls go over the link (`moqui_core::edge::signal`), its media events and captions' services are
 //! delegated to the local node, and its recordings' segments are queued there (`recorder.rs`).
 //!
-//! An all-in-one node (`node_role=all-in-one`, plans/archive/Edge-Node.md §10, E12) is both: it registers its own row for its
+//! An all-in-one node (`moqui_conf__instance__node_role=all-in-one`, plans/archive/Edge-Node.md §10, E12) is both: it registers its own row for its
 //! own calls and advertises its media node to its paired node. The driver keys a paired node's rooms by node and call
 //! (`moqui_core::edge::media::room_key`, from the link's stamp on each message), so the two databases' call ids never
 //! meet; the room's work (media events, captions, recordings) goes to the room's owner.
@@ -334,7 +334,12 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     if let Some(port) = config.tcp_port {
         targets.push(Target::optional(LISTENER, "rtc_media_tcp_port", host, port, Proto::Tcp));
     }
-    if let Ok(Some(turn)) = turn::settings(&moqui_lib::env::get_prop_or_env, config.bind, config.public, &[]) {
+    if let Ok(Some(turn)) = turn::settings(
+        &moqui_core::context::conf_env::setting_or_property,
+        config.bind,
+        config.public,
+        &[],
+    ) {
         if let Some(port) = turn.port {
             targets.push(Target::optional(
                 TURN_LISTENER,
@@ -463,7 +468,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         }
     }
     // the embedded TURN server, when its ports are set: one that does not start is logged, and calls go on without it
-    let turn_node = match turn::settings(&moqui_lib::env::get_prop_or_env, bound, public, &[]) {
+    let turn_node = match turn::settings(&moqui_core::context::conf_env::setting_or_property, bound, public, &[]) {
         Ok(Some(settings)) => match crate::port_check::busy(TURN_LISTENER) {
             Some(busy) => {
                 listener(factory, TURN_LISTENER, State::Skipped(busy));

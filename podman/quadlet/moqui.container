@@ -16,7 +16,7 @@ Pull=never
 PublishPort=8080:8080
 PublishPort=8443:8443
 Volume=moqui-data.volume:/var/lib/moqui
-Environment=instance_purpose=production
+Environment=moqui_conf__instance__purpose=production
 Notify=true
 StopTimeout=60
 HealthCmd=curl -fsS http://127.0.0.1:8080/health

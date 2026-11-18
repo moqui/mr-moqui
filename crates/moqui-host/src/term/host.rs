@@ -298,7 +298,11 @@ pub(crate) fn environment(of: &EnvFor<'_>) -> Vec<(String, String)> {
     let mut env: BTreeMap<String, String> = of
         .server
         .iter()
-        .filter(|(name, _)| !names.contains(name) && !name.starts_with("MOQUI_") && name != exec::EXEC_ENV)
+        // MOQUI_ in any case: the conf's own (MOQUI_CONF) and every conf attribute's environment name
+        // (moqui_conf__entity_facade__crypt_pass), which may hold a secret
+        .filter(|(name, _)| {
+            !names.contains(name) && !name.to_ascii_uppercase().starts_with("MOQUI_") && name != exec::EXEC_ENV
+        })
         .cloned()
         .collect();
     env.insert("TERM".to_string(), "xterm-256color".to_string());

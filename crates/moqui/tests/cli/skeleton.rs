@@ -209,7 +209,7 @@ fn a_lone_binary_reads_its_built_in_files_in_place_and_loads_serves_and_extracts
             "cluster_https_port=0",
             // the first administrator's form is off unless this is set (MoquiDefaultConf.xml)
             "-D",
-            "initial_admin_enabled=true",
+            "moqui_conf__user_facade__login__initial_admin_enabled=true",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

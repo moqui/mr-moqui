@@ -13,7 +13,7 @@
  */
 
 //! A front node before an edge cluster (plans/Edge-Node2.md §4.7, E19 part B): its TCP ports and the edge members'
-//! link names. Every node is a real server in the test's own process; `node_role` and the other properties are process
+//! link names. Every node is a real server in the test's own process; `instance@node-role` and the other properties are process
 //! properties each server reads as it starts, so the order of the starts decides each one's settings.
 //!
 //! - **SMTP through the front.** An `EdgePort` row of kind `smtp` on the front sends each connection to a member of the
@@ -67,7 +67,7 @@ fn start_front(label: &str, port: u16, cert: &(String, String)) -> Gate {
         label,
         None,
         &[
-            ("node_role", "front"),
+            ("moqui_conf__instance__node_role", "front"),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
             ("edge_link_key", &key),
         ],
@@ -156,7 +156,7 @@ fn a_front_passes_smtp_to_an_edge_member_with_the_clients_address() {
         "front-smtp-edge",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port,
@@ -325,7 +325,7 @@ fn an_edge_members_link_name_passes_through_the_front_to_it_alone() {
         "front-names-edge1",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &first_port,
@@ -465,7 +465,7 @@ fn a_front_keeps_its_own_link_name_and_takes_links_at_other_passthrough_hosts() 
         "front-own-front",
         None,
         &[
-            ("node_role", "front"),
+            ("moqui_conf__instance__node_role", "front"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &front_port.to_string(),
@@ -632,7 +632,10 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
     let local1 = crate::common::start_with_properties(
         "full-local-1",
         None,
-        &[("node_role", ""), ("cluster_https_port", &local_cluster_port)],
+        &[
+            ("moqui_conf__instance__node_role", ""),
+            ("cluster_https_port", &local_cluster_port),
+        ],
     );
     let local2 = crate::common::start_member("full-local-2", &local1.cluster_dir, &[]);
 
@@ -643,7 +646,7 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         "full-edge-db",
         EDGE_CONF,
         &[
-            ("node_role", ""),
+            ("moqui_conf__instance__node_role", ""),
             ("cluster_https_port", &edge_cluster_port),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "off"),
         ],
@@ -659,7 +662,7 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         &edge_db.cluster_dir,
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_ports[0].to_string(),
@@ -712,7 +715,7 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         "full-front",
         "",
         &[
-            ("node_role", "front"),
+            ("moqui_conf__instance__node_role", "front"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &front_port.to_string(),

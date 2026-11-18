@@ -625,7 +625,7 @@ fn the_edge_node_passes_a_passthrough_names_challenge_down_the_tunnel() {
         "acme-edge",
         "",
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
@@ -786,7 +786,7 @@ fn acceptance_certificates_for_an_edge_node_and_its_local_node() {
         &[("acme-root.pem", &authority.root_pem)],
     );
     let mut edge_properties = vec![
-        ("node_role", "front_edge"),
+        ("moqui_conf__instance__node_role", "front_edge"),
         (
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
             edge_port_text.as_str(),

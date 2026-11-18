@@ -160,7 +160,7 @@ feature("a load script reaches neither ec nor the server's own functions, and ma
 feature("an ssh connect of a run reaches only what the target rule allows", {
     expect() {
         // the rule is the run's from its start: a production instance's, which reaches loopback but not another host
-        const started = withProperty("instance_purpose", "production", () =>
+        const started = withConf("instance@purpose", "production", () =>
             start({ scriptLocation: REACH, parameters: { mode: "ssh" } }))
         started.error == ""
         runIds.push(started.runId)
@@ -209,7 +209,7 @@ feature("a file that is not a load script and a target the run may not reach are
         start({ scriptLocation: "component://tools/test/LoadRunner.spec.js" }).error.includes("not a load script")
         start({ scriptLocation: "component://tools/test/load/../LoadRunner.spec.js" }).error.includes("not a load script")
         // a dev instance reaches any URL; a production one only this server, loopback and load_runner_targets
-        withProperty("instance_purpose", "production", () =>
+        withConf("instance@purpose", "production", () =>
             start({ targetKind: "url", targetUrl: "https://example.org/" }).error).includes("load_runner_targets")
         // ServiceCall calls services in process: over HTTP it is refused
         start({ targetKind: "this" }).error.includes("service target")

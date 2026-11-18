@@ -7,7 +7,7 @@
     edge node admits it, gives it every name of the pairing, and tells its administrators. Nothing starts the standby by
     itself. Per-host settings go in .env. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production"/>
 
     <!-- The same .env on both machines: the pairing's (edge_node_url, edge_node_key, edge_node_pin, edge_node_id and
         edge_node_pairing, which pairing wrote on the first machine), moqui_conf__entity_facade__crypt_pass, webapp-list/webapp[webroot]/session-config@cookie-key, and

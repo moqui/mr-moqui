@@ -15,7 +15,7 @@ sections:
   remote: Checks and references from a running dev instance with --server
 ---
 A Moqui component is XML (entities, services, screens, ECA rules, data), JavaScript (scripts and expressions), and
-sometimes Rust. On a dev instance (`instance_purpose` dev, the default `./moq run`), the server watches every component
+sometimes Rust. On a dev instance (`instance@purpose` dev, the default `./moq run`), the server watches every component
 directory: save a file and what it defines is live a moment later. Check what you changed with `moqui check` before
 you say it is done.
 

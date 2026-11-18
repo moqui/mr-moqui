@@ -30,7 +30,7 @@
 //! The directory is read again at most every [`RECHECK`], so a renewed or added certificate is served without a
 //! restart. A pair whose files changed but do not load keeps serving the one loaded before.
 //!
-//! In dev (`instance_purpose=dev`) an empty directory gets a self-signed `localhost` certificate and a `default` copy.
+//! In dev (`moqui_conf__instance__purpose=dev`) an empty directory gets a self-signed `localhost` certificate and a `default` copy.
 //!
 //! The SMTP listener looks up the name the gateway asks for, then its own `smtp-server` `hostname` (a gateway that
 //! connects by address sends no name), then `default`; or it serves the files `tls-cert-file` and `tls-key-file` name,
@@ -91,7 +91,7 @@ pub(crate) fn plan(
         return Ok(None);
     };
     let dir = runtime_dir.join("cert");
-    if moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+    if moqui_core::context::conf_env::instance_purpose() == "dev" {
         if let Err(err) = ensure_dev_cert(&dir) {
             tracing::warn!(
                 "Could not generate a development certificate in {}: {err}",
@@ -128,7 +128,7 @@ pub(crate) fn planned_port(
     let Some(port) = listen_port(raw, use_default_port)? else {
         return Ok(None);
     };
-    if !raw.is_empty() || moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+    if !raw.is_empty() || moqui_core::context::conf_env::instance_purpose() == "dev" {
         return Ok(Some(port));
     }
     Ok((!CertStore::new(runtime_dir.join("cert")).is_empty()).then_some(port))
@@ -304,7 +304,7 @@ pub(crate) fn smtp_server_config(
 ) -> Result<rustls::ServerConfig, Error> {
     let resolver: Arc<dyn ResolvesServerCert> = if cert_file.is_empty() && key_file.is_empty() {
         let dir = runtime_dir.join("cert");
-        if moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+        if moqui_core::context::conf_env::instance_purpose() == "dev" {
             if let Err(err) = ensure_dev_cert(&dir) {
                 tracing::warn!(
                     "Could not generate a development certificate in {}: {err}",

@@ -89,12 +89,7 @@ pub fn discover_again(factory: &super::ExecutionContextFactory) -> Result<Vec<Co
 }
 
 pub(super) fn discover(runtime_dir: &Path, framework_dir: &Path, conf: &MNode) -> Result<Vec<ComponentInfo>, Error> {
-    discover_for(
-        runtime_dir,
-        framework_dir,
-        conf,
-        effective_instance_purpose(conf, runtime_dir),
-    )
+    discover_for(runtime_dir, framework_dir, conf, effective_instance_purpose(conf))
 }
 
 fn discover_for(
@@ -163,7 +158,7 @@ impl Discovery<'_> {
             return true;
         }
         tracing::warn!(
-            "Excluding component {} ({}): it loads only when instance_purpose is {} ({source}); this instance is {}",
+            "Excluding component {} ({}): it loads only when instance@purpose is {} ({source}); this instance is {}",
             info.name,
             info.location.display(),
             info.purposes.join(" or "),
@@ -177,37 +172,11 @@ impl Discovery<'_> {
     }
 }
 
-/// The `instance_purpose` the boot will set, read before the default properties are applied (discovery runs first):
-/// a process property or environment variable, else `runtime/.env`, else the merged conf's `default-property`. A
-/// component's own conf merges after discovery, so it cannot change which components load.
-pub(super) fn effective_instance_purpose(conf: &MNode, runtime_dir: &Path) -> String {
-    purpose_from(
-        env::get_prop_or_env("instance_purpose"),
-        vfs::read_to_string(runtime_dir.join(".env")).ok().as_deref(),
-        conf,
-    )
-}
-
-/// [`effective_instance_purpose`] from what was set (a property or the environment), the `.env` text and the conf.
-fn purpose_from(set: String, dotenv: Option<&str>, conf: &MNode) -> String {
-    if !set.is_empty() {
-        return set;
-    }
-    if let Some(text) = dotenv {
-        let from_env = env::parse_dotenv(text)
-            .into_iter()
-            .filter(|(key, value)| (key == "instance_purpose" || key == "instance.purpose") && !value.is_empty())
-            .map(|(_, value)| value)
-            .next();
-        if let Some(value) = from_env {
-            return value;
-        }
-    }
-    conf.named_iter("default-property")
-        .find(|node| node.attribute("name").as_deref() == Some("instance_purpose"))
-        .and_then(|node| node.attribute("value"))
-        .map(|raw| env::expand(&raw).unwrap_or(raw))
-        .unwrap_or_default()
+/// The `instance` `purpose` the components are chosen for: the merged default and runtime conf's, with its
+/// environment name applied (a process property, the environment, `runtime/.env`). A component's own conf merges after
+/// discovery, so it cannot change which components load.
+pub(super) fn effective_instance_purpose(conf: &MNode) -> String {
+    super::conf_env::conf_attribute(conf, super::conf_env::PURPOSE)
 }
 
 /// The comma-separated purposes of a `purpose` attribute; none when it is missing or empty.
@@ -776,20 +745,18 @@ mod tests {
     }
 
     #[test]
-    fn the_purpose_is_set_then_dotenv_then_conf() {
-        let conf = MNode::parse_text(
-            "conf",
-            r#"<moqui-conf><default-property name="instance_purpose" value="production"/></moqui-conf>"#,
-        )
-        .unwrap();
-        assert_eq!(purpose_from("test".into(), Some("instance_purpose=dev"), &conf), "test");
-        assert_eq!(
-            purpose_from(String::new(), Some("# x\ninstance_purpose='dev'\n"), &conf),
-            "dev"
-        );
-        assert_eq!(purpose_from(String::new(), Some("other=1"), &conf), "production");
-        assert_eq!(purpose_from(String::new(), None, &conf), "production");
+    fn the_purpose_is_the_confs_with_its_environment_name_applied() {
+        let conf = MNode::parse_text("conf", r#"<moqui-conf><instance purpose="production"/></moqui-conf>"#).unwrap();
+        assert_eq!(effective_instance_purpose(&conf), "production");
+        // an override of its environment name, as the merge applies it, in any case
+        let names = vec![(
+            "MOQUI_CONF__INSTANCE__PURPOSE".to_string(),
+            "dev".to_string(),
+            super::super::conf_env::Source::DotEnv,
+        )];
+        let _ = super::super::conf_env::apply_from(&conf, names);
+        assert_eq!(effective_instance_purpose(&conf), "dev");
         let empty = MNode::parse_text("conf", "<moqui-conf/>").unwrap();
-        assert_eq!(purpose_from(String::new(), None, &empty), "");
+        assert_eq!(effective_instance_purpose(&empty), "");
     }
 }

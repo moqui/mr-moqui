@@ -113,7 +113,7 @@ moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--keys S
     the log. It asks for a login, as the browser does. F1 lists the keys; docs/ui/TUI.md has the rest.
 
   --path PATH        The first screen (default /apps).
-  --user NAME        Log in as NAME without a password. Only on an instance whose instance_purpose is dev.
+  --user NAME        Log in as NAME without a password. Only on an instance whose instance@purpose is dev.
   --serve            Also start the HTTP, SSH and cluster listeners, so the browser can work beside the TUI.
   --ascii            Plain ASCII for borders and symbols (also when TERM is linux or vt100).
   --no-color         Monochrome: reverse video and underline only (also when NO_COLOR is set).

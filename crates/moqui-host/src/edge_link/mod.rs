@@ -476,10 +476,10 @@ pub struct EdgeConfig {
     /// (`<edge ssh-tunnels>`).
     pub max_ssh_tunnels: usize,
     /// This node has the front set (plans/Edge-Node2.md §4.3): it passes passthrough hosts' connections down links. An
-    /// edge node behind a front node (`node_role=edge`) does not.
+    /// edge node behind a front node (`moqui_conf__instance__node_role=edge`) does not.
     pub front: bool,
     /// This node has the edge set (plans/Edge-Node2.md §4.3): the queue, delegated calls, replication, call signaling
-    /// and PASS go over its links. A front node (`node_role=front`) has none of them and refuses each.
+    /// and PASS go over its links. A front node (`moqui_conf__instance__node_role=front`) has none of them and refuses each.
     pub edge: bool,
     /// Where local nodes dial this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6); empty when
     /// they dial only the URL they paired with.

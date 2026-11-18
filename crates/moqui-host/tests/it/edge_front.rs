@@ -13,7 +13,7 @@
  */
 
 //! A front node, and the nodes that dial it (plans/Edge-Node2.md §4.7, E19 part A). Every node is a real server in the
-//! test's own process. `node_role` is a process property each server reads as it starts and keeps, so the order of the
+//! test's own process. `instance@node-role` is a process property each server reads as it starts and keeps, so the order of the
 //! starts decides each one's role; the edge link hook the services reach is the last one started.
 //!
 //! - **Regression.** A front node starts none of the edge set's services though they are configured, offers web access
@@ -161,7 +161,7 @@ fn host(name: &str, mode: &str) -> EdgeHostInfo {
 /// A front node: HTTPS on `port`, a link key of its own, a certificate for `localhost` and `names`; `properties` more.
 fn front_properties(port: &str, key: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("node_role", "front".to_string()),
+        ("moqui_conf__instance__node_role", "front".to_string()),
         (
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
             port.to_string(),
@@ -338,7 +338,7 @@ fn an_edge_node_dials_its_front_and_forwards_its_local_nodes_names() {
         "edge-front-dial-edge",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
@@ -434,7 +434,7 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
         "edge-front-two-edge",
         EDGE_CONF,
         &[
-            ("node_role", "edge"),
+            ("moqui_conf__instance__node_role", "edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
@@ -453,7 +453,7 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
         "edge-front-two-local",
         EDGE_CONF,
         &[
-            ("node_role", ""),
+            ("moqui_conf__instance__node_role", ""),
             // the edge node's port is still a property of this process
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "off"),
             (moqui_core::edge::NODE_URL, &edge_url),

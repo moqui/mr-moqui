@@ -523,7 +523,7 @@ pub const NOT_AVAILABLE: &str = "project: not available on this instance";
 /// index answers. With `java` it is read as a Java Moqui checkout whatever its sources ([`super::detect_java`]). A Java
 /// Moqui checkout is read with the server's own framework conf. With `model`, see [`open`].
 ///
-/// A production instance (`instance_purpose` production) reads no other project: any but its own runtime (or the
+/// A production instance (`instance@purpose` production) reads no other project: any but its own runtime (or the
 /// clone it is in) is [`NOT_AVAILABLE`], before anything of the path is looked at but its canonical form.
 ///
 /// # Errors

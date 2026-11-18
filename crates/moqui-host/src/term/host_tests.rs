@@ -18,7 +18,7 @@ use std::path::Path;
 use super::{argv, available, conf_profiles, directory, environment, own_profiles, EnvFor, Profile};
 
 const CONF: &str = r#"<moqui-conf>
-    <default-property name="instance_purpose" value="dev"/>
+    <instance purpose="dev"/>
     <default-property name="entity_ds_password" value=""/>
     <terminal>
         <host-profile name="shell" title="My shell" integration="true"/>
@@ -99,6 +99,11 @@ fn the_environment_leaves_out_the_confs_properties_and_sets_the_terminals() {
         ("entity_ds_password".to_string(), "secret".to_string()),
         ("ENTITY_DS_PASSWORD".to_string(), "secret".to_string()),
         ("MOQUI_CONF".to_string(), "conf/x.xml".to_string()),
+        (
+            "moqui_conf__entity_facade__crypt_pass".to_string(),
+            "secret".to_string(),
+        ),
+        ("MOQUI_CONF__SSH_SERVER__HOST_KEY".to_string(), "secret".to_string()),
         ("TERM".to_string(), "dumb".to_string()),
     ];
     let properties: BTreeSet<String> = BTreeSet::from(["entity_ds_password".to_string()]);
@@ -119,6 +124,8 @@ fn the_environment_leaves_out_the_confs_properties_and_sets_the_terminals() {
     assert_eq!(get("entity_ds_password"), None);
     assert_eq!(get("ENTITY_DS_PASSWORD"), None);
     assert_eq!(get("MOQUI_CONF"), None);
+    assert_eq!(get("moqui_conf__entity_facade__crypt_pass"), None);
+    assert_eq!(get("MOQUI_CONF__SSH_SERVER__HOST_KEY"), None);
     assert_eq!(get("TERM"), Some("xterm-256color"));
     assert_eq!(get("LANG"), Some("C.UTF-8"));
     assert_eq!(get("MOQUI_TERMINAL_SESSION"), Some("s1"));

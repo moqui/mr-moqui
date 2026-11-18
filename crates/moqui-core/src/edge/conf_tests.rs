@@ -192,7 +192,7 @@ fn the_first_byte_wait_and_the_caps_on_huge_numbers() {
     assert!(later > std::time::Instant::now());
 }
 
-/// A spec step run as an edge node (`withProperty("node_role", ...)`) on a node that started as a normal node read the
+/// A spec step run as an edge node (`withProperty("moqui_conf__instance__node_role", ...)`) on a node that started as a normal node read the
 /// edge settings first, and every spec after it in that process delegated its calls to a link that was not there. Boot
 /// now holds the node to the role it booted with, whatever is read later for another role.
 #[test]
@@ -204,7 +204,7 @@ fn settings_read_for_another_role_are_not_kept_for_a_normal_node() {
     let by_role = factory.extension(|_| ByRole::default());
     // a step as an edge node: its role's settings, read and kept for that role
     assert!(read(factory, &by_role, NodeRole::FrontEdge).edge_node());
-    // the role it booted with (no node_role in a unit test): a normal node's settings, delegating nothing
+    // the role it booted with (no instance@node-role in a unit test): a normal node's settings, delegating nothing
     let own = settings(factory);
     assert!(!own.takes_links(), "the step's role was kept: {:?}", own.role);
     assert!(super::super::delegate::listed("a.B.call#Remote").is_none());

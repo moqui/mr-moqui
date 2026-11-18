@@ -220,7 +220,7 @@ pub(crate) fn settings(
         max_per_user: 2,
         max_kbps: number("turn_max_kbps", 4_000),
         // a node that takes links: its paired nodes' usernames name their pairings (E16)
-        pairings: moqui_core::edge::NodeRole::parse(&property("node_role")).takes_links(),
+        pairings: moqui_core::edge::NodeRole::parse(&property(moqui_core::edge::NODE_ROLE)).takes_links(),
     };
     Ok(Some(TurnSettings {
         bind,

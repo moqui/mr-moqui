@@ -108,7 +108,7 @@ from marker paths: Java Moqui when it has `framework/src/main/java` or `framewor
 `framework/build.gradle` with `.java` or `.groovy` files under `framework/src`) beside `runtime/`, else MR Moqui when
 it has `runtime/components/base/framework` (a clone) or `components/base/framework` (a runtime); a relative path, a `.`
 or `..` part, or a directory that is neither is refused with why. `projectLayout: "java"` reads it as a Java checkout
-whatever its sources (`--java DIR` sends it). A production instance (`instance_purpose` production) reads no other
+whatever its sources (`--java DIR` sends it). A production instance (`instance@purpose` production) reads no other
 project: any `project` but its own runtime gets one error that does not say whether the path is there. The project is booted inside the server for its
 artifacts only (no database, threads, properties or hooks of its own; a Java checkout with the server's framework conf)
 and read into memory on the first call, which holds only that project; later calls look at its files at most every

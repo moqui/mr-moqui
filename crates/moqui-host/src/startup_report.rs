@@ -33,13 +33,12 @@ pub(crate) struct Header {
 /// listener's routes, `listeners` false for a boot that opens none (`moqui tui`).
 pub(crate) fn log(factory: &ExecutionContextFactory, routes: &str, listeners: bool) {
     record_integrations(factory);
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
     let header = Header {
         version: env!("CARGO_PKG_VERSION"),
         package: crate::build_package(),
         seconds: crate::process_started().elapsed().as_secs_f64(),
-        purpose: property("instance_purpose"),
-        role: property("node_role"),
+        purpose: moqui_core::context::conf_env::setting_on(factory, moqui_core::context::conf_env::PURPOSE),
+        role: moqui_core::context::conf_env::setting_on(factory, moqui_core::edge::NODE_ROLE),
     };
     let report = moqui_core::startup::report(factory);
     // scripts read the same report (ec.factory.getStartupReport(), plans/archive/Tools-Fancy.md B1)

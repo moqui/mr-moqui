@@ -275,7 +275,9 @@ function described(setting, preference, canManage) {
         // a script reads no secret property (System.getProperty answers null): whether one is set comes from the server
         valueSet: secret
             ? setting.propertyName && !editable
-                ? System.isPropertySet(setting.propertyName)
+                ? setting.propertyName.includes("@")
+                    ? ec.factory.isConfValueSet(setting.propertyName)
+                    : System.isPropertySet(setting.propertyName)
                 : !!found.value && found.value !== "CHANGEME"
             : found.value !== "",
         source: found.source,

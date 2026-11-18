@@ -439,14 +439,14 @@ fn client_value(client: &EdgeClientInfo) -> Value {
     Value::Map(row)
 }
 
-/// Refuses on a node that takes no links (`node_role` as it is now, as `get#LinkStatus` says it): the rows of the
+/// Refuses on a node that takes no links (`instance@node-role` as it is now, as `get#LinkStatus` says it): the rows of the
 /// System app's Edge Clients screens are only a dedicated edge node's or an all-in-one node's.
 fn takes_links(what: &str) -> Result<(), LibError> {
     if crate::edge::takes_links() {
         Ok(())
     } else {
         Err(LibError::new(format!(
-            "only a node that takes links (a node_role set) has {what}"
+            "only a node that takes links (an instance@node-role set) has {what}"
         )))
     }
 }
@@ -715,7 +715,7 @@ fn get_edge_balancing(parameters: &BTreeMap<String, Value>, _facade: &EntityFaca
 fn drain_edge_member(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let factory = current_factory()?;
     let drain = !parameters.contains_key("drain") || flag(parameters, "drain");
-    // node_role as it is now, as the other services read it (the kept settings hold the role of their first read)
+    // instance@node-role as it is now, as the other services read it (the kept settings hold the role of their first read)
     let state = if crate::edge::takes_links() {
         let node = required(parameters, "pairedNodeId")?;
         let member = required(parameters, "instanceId")?;

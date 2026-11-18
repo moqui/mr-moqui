@@ -51,7 +51,7 @@ fn allowed(what: &str) -> bool {
     if !moqui_core::devtools::is_dev_instance() {
         ExecutionContext::with_current(|ec| {
             ec.message()
-                .add_error(format!("{what} is only available when instance_purpose is dev"));
+                .add_error(format!("{what} is only available when instance@purpose is dev"));
         });
         return false;
     }
@@ -71,7 +71,7 @@ fn allowed_read(what: &str) -> bool {
     if !moqui_core::devtools::is_dev_instance() {
         ExecutionContext::with_current(|ec| {
             ec.message()
-                .add_error(format!("{what} is only available when instance_purpose is dev"));
+                .add_error(format!("{what} is only available when instance@purpose is dev"));
         });
         return false;
     }
@@ -106,7 +106,7 @@ pub(crate) const NOT_ALLOWED: &str = "projectId: not an allowed project on this 
 /// Who reads the index, for [`choose_source`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Access {
-    /// `instance_purpose` dev.
+    /// `instance@purpose` dev.
     pub dev: bool,
     /// One of the dev-aide's permissions or `ADMIN` ([`dev_permitted`]).
     pub dev_reader: bool,

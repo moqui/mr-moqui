@@ -31,7 +31,7 @@ use crate::notify::{self, TopicMessage};
 use crate::user::{now_millis, now_value, stamp_value};
 
 const PROPS: &[&str] = &[
-    "instance_id",
+    "moqui_conf__instance__id",
     "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
     "cluster_tls_cert",
     "cluster_tls_key",
@@ -254,7 +254,7 @@ impl Sender for Scripted {
 
 fn preset(instance_id: &str) {
     let (cert, key) = super::generate_cert_pair().expect("cert pair");
-    env::set_property("instance_id", instance_id);
+    env::set_property("moqui_conf__instance__id", instance_id);
     env::set_property(
         "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
         "session-key-for-tests",
@@ -875,7 +875,7 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     factory.set_entity(crate::testing::open());
     super::start(&factory).unwrap();
     let instance = super::instance_id(&factory).unwrap();
-    assert!(env::get_prop_or_env("instance_id").is_empty());
+    assert!(env::get_prop_or_env("moqui_conf__instance__id").is_empty());
     assert_eq!(instance.len(), 36);
     assert!(instance.contains('-'));
     let names = factory.property_names().to_vec();
@@ -890,7 +890,7 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     // The instance id is the instance's own, in runtime/db, not in the .env the members share.
     assert!(!std::fs::read_to_string(temp.path().join(".env"))
         .unwrap()
-        .contains("instance_id"));
+        .contains("moqui_conf__instance__id"));
     assert_eq!(
         std::fs::read_to_string(temp.path().join("db/instance_id"))
             .unwrap()

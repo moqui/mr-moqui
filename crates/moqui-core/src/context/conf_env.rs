@@ -214,6 +214,28 @@ pub fn compare_key(path: &AttrPath) -> String {
 
 /// The `webroot` webapp's path, for a selector of one of its settings (`{WEBROOT}@http-port`).
 pub const WEBROOT: &str = "webapp-list/webapp[webroot]";
+/// The instance's purpose (production, dev, test): what much of the server's behavior turns on.
+pub const PURPOSE: &str = "instance@purpose";
+/// The instance's id, when the conf names one; else the cluster member keeps its own (`runtime/db/instance_id`).
+pub const INSTANCE_ID: &str = "instance@id";
+/// The zone of a session with no user zone, and of the server's own times.
+pub const TIME_ZONE: &str = "instance@default-time-zone";
+
+/// The canonical environment name of `selector` (`moqui_conf__instance__purpose`); empty when it does not parse or
+/// has a key with no letter or digit.
+#[must_use]
+pub fn env_name_of(selector: &str) -> String {
+    AttrPath::parse(selector)
+        .ok()
+        .and_then(|path| path.env_name())
+        .unwrap_or_default()
+}
+
+/// [`setting`] of the instance's purpose ([`PURPOSE`]).
+#[must_use]
+pub fn instance_purpose() -> String {
+    setting(PURPOSE)
+}
 
 /// A conf attribute by its selector (`ssh-server@port`), trimmed, for code with no factory at hand: a process property
 /// (`-D`) or OS environment variable of the attribute's canonical environment name, which an override sets it to
@@ -243,6 +265,24 @@ pub fn setting(selector: &str) -> String {
         return of(&factory);
     }
     name.map(|name| env::get_prop_or_env(&name).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// [`setting`] on `factory`: the process property or OS environment variable of the attribute's environment name, else
+/// `factory`'s running conf. For code with its factory at hand, which must not read another factory's conf (a process
+/// of several, a test's).
+#[must_use]
+pub fn setting_on(factory: &super::ExecutionContextFactory, selector: &str) -> String {
+    let name = env_name_of(selector);
+    if !name.is_empty() {
+        let given = env::get_property(&name).or_else(|| std::env::var(&name).ok().filter(|value| !value.is_empty()));
+        if let Some(value) = given {
+            return value.trim().to_string();
+        }
+    }
+    factory
+        .conf_value(selector)
+        .map(|found| found.value.trim().to_string())
         .unwrap_or_default()
 }
 

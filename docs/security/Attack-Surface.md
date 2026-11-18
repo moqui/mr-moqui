@@ -40,7 +40,7 @@ This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) w
 
 **Defaults** are `runtime/components/base/framework/conf/MoquiDefaultConf.xml`. **On** and **off** mean those defaults. Rows say what untrusted input can reach, and what to keep in mind during a review. Designed admin tools are privileged on purpose.
 
-`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance_purpose` to `dev`, `webapp-list/webapp[webroot]@allow-origins` to `localhost,127.0.0.1` (this machine on any port), and `ssh-server@port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
+`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance@purpose` to `dev`, `webapp-list/webapp[webroot]@allow-origins` to `localhost,127.0.0.1` (this machine on any port), and `ssh-server@port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
 
 ## Heavy lock-down
 

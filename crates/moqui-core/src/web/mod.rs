@@ -2659,18 +2659,18 @@ pub(crate) fn status_for(err: &Error) -> u16 {
 
 #[cfg(any(test, feature = "test-support"))]
 thread_local! {
-    /// A test's `instance_purpose` for this thread only, so it does not change other tests' instance.
+    /// A test's `instance@purpose` for this thread only, so it does not change other tests' instance.
     #[doc(hidden)]
     pub static TEST_PRODUCTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
-/// Whether this instance runs with `instance_purpose` production.
+/// Whether this instance runs with `instance@purpose` production.
 pub fn is_production() -> bool {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(production) = TEST_PRODUCTION.with(std::cell::Cell::get) {
         return production;
     }
-    moqui_lib::env::get_prop_or_env("instance_purpose") == "production"
+    crate::context::conf_env::instance_purpose() == "production"
 }
 
 /// The text a client gets for `err` sent with `status`. In production a 500's detail, which can hold SQL, file paths,

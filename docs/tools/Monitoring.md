@@ -253,7 +253,7 @@ It is mostly dashboards shipped from `tools/report/` and Explore presets. It has
 is the short name of its screens.
 
 The System home shows the shipped `system-home` dashboard as its Activity strip. To show another there, set
-`system_home_dashboard` to that dashboard's definition id (a conf property, so System › Configuration or the
+`screen-facade@system-home-dashboard` to that dashboard's definition id (a conf property, so System › Configuration or the
 environment): it gets the home's period and, as its `instance` variable, this server. A reader who may not read it sees
 the shipped one.
 

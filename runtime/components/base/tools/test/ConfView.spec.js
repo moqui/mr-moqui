@@ -64,7 +64,7 @@ feature("the merged conf names each value's file and class, with the default con
     when() {
         const {out, errors} = call("get#ConfView")
         const view = out.view || {files: [], root: {}}
-        const purpose = child(view.root, "default-property", "instance_purpose")
+        const purpose = child(view.root, "instance")
         const webapp = child(child(view.root, "webapp-list"), "webapp", "webroot")
         const apps = child(child(view.root, "screen-facade"), "screen", "component://webroot/screen/webroot/apps.xml")
         const system = child(apps, "subscreens-item", "system")
@@ -86,9 +86,9 @@ feature("the merged conf names each value's file and class, with the default con
         found.errors == ""
         found.canEdit == true
         found.firstRole == "default"
-        found.purposePath == "default-property[instance_purpose]"
+        found.purposePath == "instance"
         found.purposeFrom == "default"
-        found.purposeComments.includes("recommended values: production, dev, test")
+        found.purposeComments.includes("purpose: production, dev or test")
         found.portClass == "restart"
         found.webappClass == "live"
         // the System mount is the tools component's, appended whole
@@ -228,7 +228,7 @@ feature("the Settings and Edit tabs render in their modes", {
         view.output.includes("Merged in this order")
         viewTui.errors == ""
         viewTui.output.includes("Merged from")
-        viewTui.output.includes("default-property[instance_purpose]")
+        viewTui.output.includes("webapp[webroot]")
         edit.errors == ""
         edit.output.includes("Review and save")
         editTui.errors == ""

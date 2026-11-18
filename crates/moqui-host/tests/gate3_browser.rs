@@ -4480,7 +4480,10 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide",
         Some(security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -4644,7 +4647,10 @@ fn a_pull_conflict_is_resolved_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-git",
         Some(security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -4848,7 +4854,10 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-browse",
         Some(security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -4999,7 +5008,10 @@ fn a_qvue_screen_is_designed_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-qvue",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5110,7 +5122,10 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-entity",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5374,7 +5389,10 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-screen",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5667,7 +5685,10 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-service",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5972,7 +5993,10 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-change-set",
         Some(&data),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );

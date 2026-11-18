@@ -9,11 +9,10 @@
     visitor sessions as rows. Use the Maximal package with an external database, or Enterprise; the runtime has the base
     components and mr-pass (./moq component-get edge), the same on each member. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production" node-role="front_edge"/>
     <!-- takes links from paired local nodes on the HTTPS listener: the front and edge sets, as an edge node as built.
         System › Edge Clients › Edge cluster lists the members with their link addresses; Clients shows the links to the
         member it is open on. With a front node before the cluster, front_edge or edge: conf/full-stack -->
-    <default-property name="node_role" value="front_edge"/>
     <!-- rate limits, connection limits and bans by client address, counted on each member; a ban one member starts is
         shared with the others on the cluster topic web-ban (System › Security › Web Protection) -->
     <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>

@@ -2,12 +2,12 @@
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
 <!-- A member of a local cluster pooled and balanced by an edge node (conf/local-cluster/README.md; plans/Edge-Node2.md
     §4.4): every member runs this conf, on one external database, and links to the edge node on its own with the
-    pairing's key. The edge node (node_role front_edge, conf/edge/MoquiEdgeConf.xml) pools the members linked for the
+    pairing's key. The edge node (instance@node-role front_edge, conf/edge/MoquiEdgeConf.xml) pools the members linked for the
     pairing and balances its host names over the live ones, so no load balancer of your own is needed, and the members
     need no open port, port forward or fixed address. It is MoquiLocalConf.xml's cluster with the edge node in the load
     balancer's place; what differs is said here. Use the Enterprise package (--enterprise), as for any cluster. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production"/>
 
     <!-- The shared database, as in MoquiLocalConf.xml: Postgres (or MySQL with the default cluster transport), its
         settings in .env, the same on every member: the transactional datasource's host, port,

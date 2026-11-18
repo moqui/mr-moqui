@@ -303,8 +303,8 @@ feature("DAV is off and the sync addresses offer no SFTP", {
 feature("the demo's conf turns on the Login screen's Test Login", {
     expect() {
         System.getProperty("demo_test_login") == "true"
-        withProperty("instance_purpose", "production",
-            () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered) === withProperty("instance_purpose", "test",
+        withConf("instance@purpose", "production",
+            () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered) === withConf("instance@purpose", "test",
             () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered)
     },
 })

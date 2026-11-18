@@ -59,7 +59,7 @@ pub fn current() -> Option<Tier> {
 /// Returns an error saying why otherwise.
 pub fn require(least: Tier) -> Result<Tier, Error> {
     if !moqui_core::devtools::is_dev_instance() {
-        return Err(Error::new("Dev AIDE is only available when instance_purpose is dev"));
+        return Err(Error::new("Dev AIDE is only available when instance@purpose is dev"));
     }
     // a program that logs in by a header (an API key) reads, but never writes files or runs git (15)
     if least >= Tier::Extend && moqui_core::screen::gate::header_authenticated_request() {

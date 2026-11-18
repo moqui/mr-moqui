@@ -25,7 +25,7 @@
 //! - DNS: `check#EdgeDns` against fixed records, one host pointing elsewhere, and the XMPP client SRV records.
 //! - Test: `test#EdgeSetup`'s round trips on the queue answer for mail in, mail out and webhooks.
 //! - The wizard: with the dialer behind the services (the process's one edge link slot holds the edge node's hook, and
-//!   `node_role` is a process property, so both are set for the local node for that part), the Discover, Apply and
+//!   `instance@node-role` is a process property, so both are set for the local node for that part), the Discover, Apply and
 //!   Test steps and the status render, Discover's choices are kept, Apply applies, and the test passes. Then the XMPP
 //!   area: Discover offers it for this node's `xmpp_domain` and adds the domain to the passthrough names, Apply sends
 //!   it (the edge node keeps it and has the name), and Test probes the tunnel ports (this node runs no XMPP server, so
@@ -296,7 +296,7 @@ impl EdgeLink for DialerLink {
     }
 }
 
-/// The process as the local node for the wizard: the dialer behind the services and no `node_role`; put back as the
+/// The process as the local node for the wizard: the dialer behind the services and no `instance@node-role`; put back as the
 /// edge node's when dropped, also when the walk panics.
 struct LocalRole;
 
@@ -307,14 +307,14 @@ impl LocalRole {
             runtime: runtime.clone(),
             factory: Arc::clone(local.server.factory()),
         }));
-        moqui_lib::env::clear_property("node_role");
+        moqui_lib::env::clear_property("moqui_conf__instance__node_role");
         Self
     }
 }
 
 impl Drop for LocalRole {
     fn drop(&mut self) {
-        moqui_lib::env::set_property("node_role", "front_edge".to_string());
+        moqui_lib::env::set_property("moqui_conf__instance__node_role", "front_edge".to_string());
         moqui_core::edge::clear_edge_link();
     }
 }
@@ -1052,7 +1052,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         "edge-setup-edge",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,

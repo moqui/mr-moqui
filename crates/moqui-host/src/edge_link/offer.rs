@@ -485,7 +485,8 @@ fn refuse_other_sets(
         });
     };
     if !role.has_front() {
-        let why = "this edge node forwards no web access or ports (node_role edge): the front node takes this name";
+        let why =
+            "this edge node forwards no web access or ports (instance@node-role edge): the front node takes this name";
         if checked.set_hosts {
             for host in &checked.hosts {
                 refuse(&host.host_name, &host.mode_enum_id, why);
@@ -499,7 +500,7 @@ fn refuse_other_sets(
         }
     }
     if !role.has_edge() {
-        let why = "this front node has no mail, chat, PASS or SIP (node_role front): its edge node takes this";
+        let why = "this front node has no mail, chat, PASS or SIP (instance@node-role front): its edge node takes this";
         for (field, items) in [
             ("mailDomains", &mut checked.mail_domains),
             ("chatBridgeIds", &mut checked.chat_bridge_ids),

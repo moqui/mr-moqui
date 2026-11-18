@@ -1,6 +1,6 @@
 # The dev set
 
-Components that load only on a dev instance (`instance_purpose` is `dev`, as with `./moq run` and `./moq test`):
+Components that load only on a dev instance (`instance@purpose` is `dev`, as with `./moq run` and `./moq test`):
 `../components.xml` lists this directory as a `component-dir` with `purpose="dev"`. `./moq archive` leaves the set out
 unless `--with-dev`. The framework's are in the
 mr-moqui repository (each has its own `.gitignore` exception); a developer's own sit beside them in repositories of

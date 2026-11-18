@@ -2,14 +2,14 @@
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
 <!-- A member of a local cluster behind a front node (conf/front/README.md; plans/Edge-Node2.md §4.7): every member runs
     this conf, on one external database, and links to the front node on its own with the pairing's key. The front node
-    (node_role front, conf/front/MoquiFrontConf.xml) pools the members linked for the pairing and balances its host
+    (instance@node-role front, conf/front/MoquiFrontConf.xml) pools the members linked for the pairing and balances its host
     names over the live ones, behind its web protection, so no load balancer of your own is needed, and the members need
     no open port, port forward or fixed address. It is conf/local-cluster/MoquiPooledConf.xml with a front node in the
     edge node's place: that conf's comments on the database, the secrets, admission and draining hold here as they are,
     and this one says what differs. A front has none of the edge set, so the cluster keeps its own mail, chat, calls,
     phones and PASS, or has none. Use the Enterprise package (--enterprise), as for any cluster. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production"/>
 
     <!-- The shared database, as in conf/local-cluster: Postgres (or MySQL with the default cluster transport), its
         settings in .env, the same on every member. Back it up with its own tools: the backup job covers an embedded

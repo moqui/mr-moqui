@@ -542,7 +542,7 @@ fn reconcile(
             .ok_or_else(|| format!("{} is not a tunnel kind", row.tunnel_kind))
             .and_then(|kind| {
                 if kind == TUNNEL_SMTP && !front_only {
-                    return Err("an smtp port is a front node's (node_role front)".to_string());
+                    return Err("an smtp port is a front node's (instance@node-role front)".to_string());
                 }
                 Ok((kind, row_bind(kind, row.port)?))
             })

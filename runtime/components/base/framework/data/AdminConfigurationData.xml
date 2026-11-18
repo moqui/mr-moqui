@@ -28,18 +28,18 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- The instance preferences (editable Y), each read by the code its description names through
         ConfigurationServices.get#InstancePreference. Presentation: what the instance is called and the locale and time zone
-        shown for a person who has none of their own; the conf's default_locale and default_time_zone hold until one is set.
-        The server's own zone (how the server reads a timestamp with no zone) stays default_time_zone, deployment
+        shown for a person who has none of their own; the conf's instance@default-locale and instance@default-time-zone hold until one is set.
+        The server's own zone (how the server reads a timestamp with no zone) stays instance@default-time-zone, deployment
         configuration below. -->
     <moqui.server.InstanceSetting settingKey="instance.displayName" title="Instance name" settingGroup="Presentation"
             description="What this instance is called where people see it: the name of the company or of the installation"
             valueTypeEnumId="IsvText" maxLength="80" defaultValue="" editable="Y" sequenceNum="10"/>
     <moqui.server.InstanceSetting settingKey="instance.defaultLocale" title="Default locale" settingGroup="Presentation"
             description="The language and formats shown for a person who has chosen none; a person's own locale wins"
-            valueTypeEnumId="IsvLocale" defaultValue="en_US" propertyName="default_locale" editable="Y" sequenceNum="20"/>
+            valueTypeEnumId="IsvLocale" defaultValue="en_US" propertyName="instance@default-locale" editable="Y" sequenceNum="20"/>
     <moqui.server.InstanceSetting settingKey="instance.defaultTimeZone" title="Default time zone" settingGroup="Presentation"
             description="The time zone times are shown in for a person who has chosen none; a person's own zone wins, and business dates keep their owners' meaning"
-            valueTypeEnumId="IsvTimeZone" defaultValue="UTC" propertyName="default_time_zone" editable="Y" sequenceNum="30"/>
+            valueTypeEnumId="IsvTimeZone" defaultValue="UTC" propertyName="instance@default-time-zone" editable="Y" sequenceNum="30"/>
     <!-- design-admin §19 Q6: how long a client may go unseen before a sign-in from it counts as a new device
         (IdentityServices.notify#NewDeviceSignIn, impl-admin P10) -->
     <moqui.server.InstanceSetting settingKey="signin.newDeviceWindowDays" title="New-device sign-in window (days)" settingGroup="Sign-in"
@@ -51,22 +51,22 @@ along with this software (see the LICENSE.md file). If not, see
             description="The most recipients one scheduled report or business alert rule may deliver to as a group; an organization's own cap is at most this"
             valueTypeEnumId="IsvInteger" minValue="1" maxValue="500" defaultValue="200" editable="Y" sequenceNum="210"/>
 
-    <!-- Deployment configuration shown read only (editable N): nonsecret default-properties of the conf an administrator is
-        asked about. A property that holds a secret is not registered here. -->
+    <!-- Deployment configuration shown read only (editable N): nonsecret settings of the conf an administrator is asked
+        about. A setting that holds a secret is not registered here. -->
     <moqui.server.InstanceSetting settingKey="conf.instancePurpose" title="Instance purpose" settingGroup="Deployment"
             description="Production, test or development: what the instance is run for" valueTypeEnumId="IsvText"
-            propertyName="instance_purpose" restartRequired="Y" sequenceNum="1010"
-            operatorNote="Set instance_purpose in the environment or the runtime conf and restart"/>
+            propertyName="instance@purpose" restartRequired="Y" sequenceNum="1010"
+            operatorNote="Set moqui_conf__instance__purpose in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="conf.defaultLocale" title="Server default locale" settingGroup="Deployment"
             description="The locale of a session with no user and no preference above" valueTypeEnumId="IsvText"
-            propertyName="default_locale" restartRequired="Y" sequenceNum="1020"
-            operatorNote="Set default_locale in the environment or the runtime conf and restart"/>
+            propertyName="instance@default-locale" restartRequired="Y" sequenceNum="1020"
+            operatorNote="Set moqui_conf__instance__default_locale in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="conf.defaultTimeZone" title="Server time zone" settingGroup="Deployment"
             description="The zone the server reads a time with no zone in" valueTypeEnumId="IsvText"
-            propertyName="default_time_zone" restartRequired="Y" sequenceNum="1030"
-            operatorNote="Set default_time_zone in the environment or the runtime conf and restart"/>
+            propertyName="instance@default-time-zone" restartRequired="Y" sequenceNum="1030"
+            operatorNote="Set moqui_conf__instance__default_time_zone in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="conf.databaseTimeZone" title="Database time zone" settingGroup="Deployment"
-            description="The zone times are stored in" valueTypeEnumId="IsvText" propertyName="database_time_zone"
+            description="The zone times are stored in" valueTypeEnumId="IsvText" propertyName="entity-facade@database-time-zone"
             restartRequired="Y" sequenceNum="1040"
             operatorNote="Set before the first start; changing it later changes the meaning of stored times"/>
     <moqui.server.InstanceSetting settingKey="conf.publicHost" title="Public host name" settingGroup="Deployment"

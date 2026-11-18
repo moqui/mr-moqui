@@ -11,7 +11,7 @@
     sites and bind their hosts and mounts with mantle.public.SiteServices.create#Site and store#Mounts (mr-pass's
     docs/Deployment.md, Provisioning). -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production"/>
 
     <!-- The client forum: its secret goes in .env, never here, as
             pass_client_forum_secret=...

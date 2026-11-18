@@ -190,7 +190,7 @@ function described(flow, context) {
         // (Y, or not N on an instance that is not production: the sign-in's rule, outbound::deny_private_network)
         privateNetwork:
             flow.allowPrivateNetwork === "Y" ||
-            (flow.allowPrivateNetwork !== "N" && text(System.getProperty("instance_purpose")) !== "production"),
+            (flow.allowPrivateNetwork !== "N" && text(ec.factory.getConfValue("instance@purpose")) !== "production"),
         sequenceNum: flow.sequenceNum ?? null,
         testedDate: iso(flow.testedDate),
         roleMapCount: context.roleCounts.get(flow.authFlowId) || 0
@@ -481,7 +481,7 @@ function storeIdentityProvider(p) {
         // a provider started here reaches no internal address on a production instance (the server would fetch a URL
         // its integration administrator chose from inside the network); an instance administrator allows one (Tools)
         flow = {authFlowId, authFlowTypeEnumId: typeEnumId, disabled: "Y"}
-        if (text(System.getProperty("instance_purpose")) === "production") flow.allowPrivateNetwork = "N"
+        if (text(ec.factory.getConfValue("instance@purpose")) === "production") flow.allowPrivateNetwork = "N"
     } else {
         flow = map(stored)
         if (flow.inbound === "Y")

@@ -15,7 +15,7 @@
 //! A local node linked to every member of an edge cluster (plans/Edge-Node2.md §4.6, E18 part A). The edge cluster is
 //! two servers on one database in the test's own process: the first a gate, the second `common::start_member` on its
 //! database, each with its own HTTPS port and `edge_link_url` and the one shared `edge_link_key`. The local node is a
-//! gate on a database of its own, started first (`node_role` is a process property it must not read), linked by a
+//! gate on a database of its own, started first (`instance@node-role` is a process property it must not read), linked by a
 //! dialer driven with an explicit `LocalConfig` serving its app. Both ends have a test queue kind whose handler writes
 //! an `edgetest.EdgeTestEcho` row per item, so an item applied twice would show.
 //!
@@ -270,7 +270,7 @@ impl EdgeCluster {
             &format!("{label}-edge1"),
             EDGE_CONF,
             &[
-                ("node_role", role),
+                ("moqui_conf__instance__node_role", role),
                 (
                     "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                     &first_port_text,
@@ -302,7 +302,7 @@ impl EdgeCluster {
             &first.cluster_dir,
             EDGE_CONF,
             &[
-                ("node_role", role),
+                ("moqui_conf__instance__node_role", role),
                 (
                     "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                     &second_port,

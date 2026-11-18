@@ -52,7 +52,7 @@ const minMinutes = 30
 const maxPerDay = 3
 const maxArchives = 500
 const runsRead = 60
-const zone = () => text(System.getProperty("default_time_zone")) || "UTC"
+const zone = () => text(ec.factory.getConfValue("instance@default-time-zone")) || "UTC"
 const zoned = value => (value == null ? "" : ec.l10n.format(Number(value), "yyyy-MM-dd HH:mm", null, zone()))
 const now = () => ms(ec.user.nowTimestamp)
 

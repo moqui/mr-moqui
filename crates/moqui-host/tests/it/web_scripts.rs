@@ -105,7 +105,7 @@ fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
         </webapp></webapp-list>"#
     );
     // production: the upstream on loopback is reached only because ProxyServlet.js says allowInternal()
-    let gate = start_with_conf("web-scripts", &conf, &[("instance_purpose", "production")]);
+    let gate = start_with_conf("web-scripts", &conf, &[("moqui_conf__instance__purpose", "production")]);
     let address = gate.server.address();
 
     let (status, headers, body) = exchange_bytes(

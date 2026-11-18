@@ -19,6 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="moqui-conf">
         <xs:complexType>
             <xs:sequence>
+                <xs:element minOccurs="0" ref="instance"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -1035,6 +1036,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>How long to disable the account (0 means no limit, ie forever)</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-store" type="boolean" default="true">
                 <xs:annotation><xs:documentation>Store records of login attempts?</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="initial-admin-enabled" type="boolean-expandable" default="false">
+                <xs:annotation><xs:documentation>The Login page's Create Initial Admin Account form and
+                    create#InitialAdminAccount, while no account exists but the seed ones.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-incorrect-password" type="boolean" default="false">
                 <xs:annotation><xs:documentation>Ignored: the password a login tried is never stored, as that is too much
                     security risk (UserLoginHistory.passwordUsed is removed). Kept so a Java conf that sets it is still
@@ -1236,6 +1240,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="boundary-comments" default="false" type="boolean"/>
             <xs:attribute name="default-paginate-rows" type="xs:string" default="20"/>
             <xs:attribute name="default-autocomplete-rows" type="xs:string" default="10"/>
+            <xs:attribute name="system-home-dashboard" type="xs:string"><xs:annotation><xs:documentation>The dashboard the System home shows as its Activity strip, by its definition id; empty for the shipped system-home.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="tx-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A screen transition's transaction (and a screen's with begin-transaction) holds its writes in the transaction cache, as a service marked transaction="cache" does; false begins it as transaction="use". Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="stream-threshold" type="xs:string" default="65536"><xs:annotation><xs:documentation>
                 The bytes of an html or text screen render (html, html-print, text, csv, xml) kept before its response
@@ -1244,7 +1249,7 @@ along with this software (see the LICENSE.md file). If not, see
                 size).
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="check-interval-ms" type="xs:string"><xs:annotation><xs:documentation>
-                How often a screen file is checked for changes, in milliseconds; empty is never when instance_purpose is
+                How often a screen file is checked for changes, in milliseconds; empty is never when instance@purpose is
                 production and two seconds otherwise. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
@@ -2030,6 +2035,22 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
 
+    <xs:element name="instance">
+        <xs:annotation><xs:documentation>This instance: its purpose, id, node role, and the locale and time zone of a
+            session with no user locale or zone.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="purpose" type="xs:string" default="production"><xs:annotation><xs:documentation>production,
+                dev or test: what the server varies its behavior by. Set it in the runtime conf or by its environment name
+                (moqui_conf__instance__purpose): a component's conf merges after the components are chosen for
+                it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="id" type="xs:string"><xs:annotation><xs:documentation>This server's id; empty for the one a
+                cluster member keeps in runtime/db/instance_id.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="node-role" type="xs:string"><xs:annotation><xs:documentation>Empty for a normal node, else
+                front, front_edge, edge or all-in-one (plans/Edge-Node2.md §4.3).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="default-locale" type="xs:string" default="en_US"/>
+            <xs:attribute name="default-time-zone" type="xs:string" default="UTC"/>
+        </xs:complexType>
+    </xs:element>
     <xs:element name="smtp-server">
         <xs:annotation><xs:documentation>The inbound SMTP listener for hosted and shared mail accounts, behind the edge
             gateway (docs/interfaces/Mail-Inbound.md).</xs:documentation></xs:annotation>
@@ -2095,10 +2116,10 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:sequence>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="delegate">
-                    <xs:annotation><xs:documentation>A service an edge node (node_role=front_edge) runs on its local node
+                    <xs:annotation><xs:documentation>A service an edge node (moqui_conf__instance__node_role=front_edge) runs on its local node
                         instead of itself, for a synchronous call (an async call or a scheduled job runs where it was
                         queued): the call goes down the link at once and fails with "local node offline" while the link
-                        is down. An all-in-one node (node_role=all-in-one) delegates only a call for a paired node's
+                        is down. An all-in-one node (moqui_conf__instance__node_role=all-in-one) delegates only a call for a paired node's
                         item, to that node; the same service runs there for the server's own items. With the service's definition on the edge node, its authorization and authenticate are
                         checked there first. The local node runs it as the user _EDGE_, with authorization, and only
                         when its own conf lists it too. Credentials (auth parameters) are never
@@ -2696,7 +2717,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ================= Development ================= -->
     <xs:element name="dev-reload">
         <xs:annotation><xs:documentation>The dev file watcher (plans/design-dev-aide.md 6.3): on a dev instance
-            (instance_purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component
+            (instance@purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component
             directory is watched, and a changed file reloads what it defines: its services, its screen, the ECA rule
             set of its kind, its REST API or skill; an entity, conf or Rust change logs that it needs a restart or a
             rebuild. On unless enabled is false. Not on any other purpose.</xs:documentation></xs:annotation>
@@ -2771,9 +2792,9 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="location" type="xs:string" use="required"/>
             <xs:attribute name="purpose" type="xs:string" use="optional"><xs:annotation><xs:documentation>
-                The instance purposes (instance_purpose) each component in the directory loads on, comma separated, such as dev; empty or
+                The instance purposes (instance@purpose) each component in the directory loads on, comma separated, such as dev; empty or
                 missing for every purpose. On another purpose each is left out with a WARN naming it. Read
-                when the components are discovered, before the default properties are applied: instance_purpose
+                when the components are discovered, before the default properties are applied: instance@purpose
                 comes from a -D option or environment variable, else runtime/.env, else the runtime conf's
                 default-property, never from a component's own conf. A component that loads on every purpose may
                 not depend on one that loads only on some; it is left out with an error.
@@ -2798,9 +2819,9 @@ along with this software (see the LICENSE.md file). If not, see
                 variable can turn it on for a run.
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="purpose" type="xs:string" use="optional"><xs:annotation><xs:documentation>
-                The instance purposes (instance_purpose) the component (in a component.xml, or on a component element that names it) loads on, comma separated, such as dev; empty or
+                The instance purposes (instance@purpose) the component (in a component.xml, or on a component element that names it) loads on, comma separated, such as dev; empty or
                 missing for every purpose. On another purpose it is left out with a WARN naming it. Read
-                when the components are discovered, before the default properties are applied: instance_purpose
+                when the components are discovered, before the default properties are applied: instance@purpose
                 comes from a -D option or environment variable, else runtime/.env, else the runtime conf's
                 default-property, never from a component's own conf. A component that loads on every purpose may
                 not depend on one that loads only on some; it is left out with an error.

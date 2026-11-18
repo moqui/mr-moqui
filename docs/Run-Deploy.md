@@ -74,14 +74,14 @@ On the server:
    and `privkey.pem` ([certificates](#certificates)).
 3. Write the host's settings to `/opt/moqui/.env`. The first start adds the generated secrets to the same file.
    `webapp-list/webapp[webroot]@https-port` is the port clients use; leave it out when they reach the server on 443.
-   `initial_admin_enabled=true` turns on the form that creates the first administrator (step 5); it is off unless set.
+   `moqui_conf__user_facade__login__initial_admin_enabled=true` turns on the form that creates the first administrator (step 5); it is off unless set.
 
    ```sh
    sudo -u moqui tee /opt/moqui/.env > /dev/null <<'EOF'
    moqui_conf__webapp_list__webapp__WEBROOT__http_host=erp.example.com
    moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true
    moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443
-   initial_admin_enabled=true
+   moqui_conf__user_facade__login__initial_admin_enabled=true
    EOF
    sudo chmod 600 /opt/moqui/.env
    ```
@@ -98,7 +98,7 @@ On the server:
    form is there only while nobody has an account. From any machine but the server itself it also asks for the setup
    secret, which the server writes to its log at startup (`moqui.log`, the line that begins "No user account exists
    yet"). Check **Also join Administrators - Advanced** only if this account needs the advanced tools
-   ([the first administrator](#the-first-administrator)). Then take `initial_admin_enabled=true` out of `.env`.
+   ([the first administrator](#the-first-administrator)). Then take `moqui_conf__user_facade__login__initial_admin_enabled=true` out of `.env`.
 6. Back up `/opt/moqui/.env` with the database. It holds `moqui_conf__entity_facade__crypt_pass`, the key of the encrypted
    fields.
 
@@ -209,7 +209,7 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
   warns at start when it finds them on a production one. A production image leaves them out: `./moq build --enterprise`,
   or Maximal without them (`cargo build --profile release --no-default-features -F maximal -p moqui`)
   ([Packaging](Build-Test.md#packages), SEC-OUT-14).
-- **Purpose**: `instance_purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
+- **Purpose**: `instance@purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Secrets**: the first start writes generated secrets to `runtime/.env` with mode 0600. Keep the file private and back
   it up. Without `moqui_conf__entity_facade__crypt_pass` the encrypted fields cannot be read
@@ -379,8 +379,8 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 
 | Property | Default | What it does |
 |---|---|---|
-| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
-| `default_locale`, `default_time_zone`, `database_time_zone` | `en_US`, `UTC`, `UTC` | |
+| `instance@purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
+| `instance@default-locale`, `instance@default-time-zone`, `entity-facade@database-time-zone` | `en_US`, `UTC`, `UTC` | |
 | `webapp-list/webapp[webroot]@http-host` | empty: the request's host | The host in generated URLs |
 | `webapp-list/webapp[webroot]@http-bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
 | `webapp-list/webapp[webroot]@http-port` | empty: 8080 | The HTTP listen port (`-p`) |
@@ -434,7 +434,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
 | `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
 | `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
-| `node_role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it ([A front node](#a-front-node), [Full stack](#full-stack)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
+| `instance@node-role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it ([A front node](#a-front-node), [Full stack](#full-stack)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
@@ -560,7 +560,7 @@ Every start checks the tables. A datasource's `startup-add-missing` (default `tr
 missing columns and indexes. Columns are never dropped or changed.
 
 While the only accounts are the seeded ones nobody logs in as (`_NA_` and the agents' chat users) and
-`initial_admin_enabled` is `true`, the login page shows **Create Initial Admin Account**
+`user-facade/login@initial-admin-enabled` is `true`, the login page shows **Create Initial Admin Account**
 ([the first administrator](#the-first-administrator)). Once any person has an account, the form is gone and the
 service refuses the call. A request from the server's own machine (a loopback peer, straight to the listener, with no
 proxy's forwarding header) creates it as is; from any other address the form asks for the one-time setup secret the
@@ -589,8 +589,8 @@ Either way, concurrent calls for one new key do not fail on it
 
 ### The first administrator
 
-`initial_admin_enabled` is `false` in the default conf and `true` in the dev conf (and on the Desktop app's node). On a
-server, set it for the setup, usually as a line in `.env` (`initial_admin_enabled=true`), restart, and take it out once
+`user-facade/login@initial-admin-enabled` is `false` in the default conf and `true` in the dev conf (and on the Desktop app's node). On a
+server, set it for the setup, usually as a line in `.env` (`moqui_conf__user_facade__login__initial_admin_enabled=true`), restart, and take it out once
 the account is made. While it is off and no account exists, the login page and the startup log say how to turn it on,
 and the service refuses the call.
 
@@ -840,7 +840,7 @@ A subdomain falls back one label up only: first to `_wildcard.<parent>` (mkcert)
 After that, `default` serves any other name. A domain with no certificate gets a refused handshake. The files are read
 again within seconds of a change, so a renewal needs no restart.
 
-In dev (`instance_purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
+In dev (`moqui_conf__instance__purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
 `runtime/cert` (seen within a minute). A `webapp-list/webapp[webroot]@https-listen-port` set explicitly with no certificate no longer fails
 the start: the listener waits the same way.
@@ -1056,7 +1056,7 @@ included, on the first start:
 The component keeps the apps writable and takes away running code or SQL, bulk import and export, the file manager,
 writes in Tools and System, SSH, WebDAV, MCP, A2A, the LLM gateway, mail to other hosts, and changes that would lock
 visitors out of the shared login ([its README](../runtime/components/dev/demo/README.md)). Restore the saved database on
-a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `instance_purpose=dev`:
+a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `moqui_conf__instance__purpose=dev`:
 the Dev AIDE loads there.
 
 ## A local server with an edge node
@@ -1169,7 +1169,7 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
  local node        conf/edge/MoquiLocalConf.xml            the apps and the data
 ```
 
-- **Conf.** Run `conf/all-in-one/MoquiAllInOneConf.xml` (`node_role=all-in-one`) with the server's full runtime, on
+- **Conf.** Run `conf/all-in-one/MoquiAllInOneConf.xml` (`moqui_conf__instance__node_role=all-in-one`) with the server's full runtime, on
   the Maximal package. The `.env` names and the commands are in
   [runtime/conf/all-in-one](../runtime/conf/all-in-one/README.md). It needs what an edge node needs: a WebPKI
   certificate on the HTTPS listener, `edge_public_addresses`, and the edge node's mail, calls and SIP properties in
@@ -1391,7 +1391,7 @@ The conf, the `.env` names, the DNS records and the commands are in
   per member, so a phone that reaches another member is challenged again ([SIP](interfaces/SIP.md)).
 - **Stopping a member** leaves the others serving its names: DNS sends visitors to each member's address, so a client
   of the stopped one retries another record, and each local node's other links carry its work.
-- **A clustered all-in-one server** takes links on every member the same way: `node_role=all-in-one` on each, on one
+- **A clustered all-in-one server** takes links on every member the same way: `moqui_conf__instance__node_role=all-in-one` on each, on one
   external database.
 
 **Before the cluster** a front node can face visitors and mail servers: [Full stack](#full-stack). **Not built**:
@@ -1399,7 +1399,7 @@ cascading call media between edge members (so a phone on one member rings for a 
 
 ## A front node
 
-A front node has the front option set alone (`node_role=front`, [plan](../plans/Edge-Node2.md#47-a-front-node) §4.7):
+A front node has the front option set alone (`moqui_conf__instance__node_role=front`, [plan](../plans/Edge-Node2.md#47-a-front-node) §4.7):
 web access by host name, terminate or passthrough; load balancing over a pairing's members, sticky by the session
 cookie, with health and set-aside; web protection with rules per host; TLS and certificates; TCP ports; the offline
 page. It has none of the edge set (no mail, call media, TURN, SIP, XMPP server, queue, delegated calls, replication or
@@ -1546,7 +1546,7 @@ node](#a-local-cluster-with-an-edge-node).
   key is a changed host to git clients and one with its own LFS key refuses the others' tokens. A member whose SSH
   host key differs from a live member's warns at startup; no member row shows the LFS key. Copying the first member's
   whole `.env` gives each the same ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
-- **A distinct instance id**: each member keeps its own in `runtime/db/instance_id` (or `instance_id`). It is not in
+- **A distinct instance id**: each member keeps its own in `runtime/db/instance_id` (or `instance@id`). It is not in
   `.env`, so copying `.env` between members is safe.
 
 ### Steps

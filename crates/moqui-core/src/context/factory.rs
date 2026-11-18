@@ -307,7 +307,6 @@ impl ExecutionContextFactory {
         // runtime/.env before the first merge, so its conf names (plans/Conf-Paths.md §3) are in every merge, component
         // discovery's too; MOQUI_CONF was chosen without it
         let env_path = runtime_dir.join(".env");
-        let purpose_from_environment = !env::get_prop_or_env("instance_purpose").is_empty();
         ensure_env_readable(&env_path)?;
         if env_path.is_file() {
             env::load_dotenv_file(&env_path)?;
@@ -321,7 +320,7 @@ impl ExecutionContextFactory {
             .as_deref()
             .map(canonicalize_dir)
             .transpose()?;
-        let discovered_purpose = component::effective_instance_purpose(&conf_node, &runtime_dir);
+        let discovered_purpose = component::effective_instance_purpose(&conf_node);
         let components = component::discover(
             &runtime_dir,
             framework_component.as_deref().unwrap_or(&framework_dir),
@@ -351,14 +350,14 @@ impl ExecutionContextFactory {
                 &conf_node,
                 crate::user::session::COOKIE_KEY,
             ))?;
-            let applied = apply_default_properties(&conf_node, &env_path, purpose_from_environment)?;
-            log_instance_purpose(applied.2, &discovered_purpose);
-            (applied.0, applied.1)
+            let applied = apply_default_properties(&conf_node, &env_path)?;
+            log_instance_purpose(&conf_node, &overrides, &discovered_purpose);
+            applied
         };
         if let Some(before_init) = &options.before_init {
             before_init(&conf_node)?;
         }
-        crate::l10n::init_server_time_zone();
+        crate::l10n::init_server_time_zone(&super::conf_env::conf_attribute(&conf_node, super::conf_env::TIME_ZONE));
         let entity = Arc::new(RwLock::new(None));
         let resource = ResourceFacade::new(runtime_dir.clone(), component_roots(&components), Arc::clone(&entity));
         tracing::info!("Resource Facade initialized");
@@ -1816,56 +1815,34 @@ fn component_roots(components: &[ComponentInfo]) -> std::collections::HashMap<St
         .collect()
 }
 
-/// Where the `instance_purpose` of this boot came from, for its startup line.
-#[derive(Clone, Copy)]
-enum PurposeSource {
-    /// A process property or environment variable set before the boot.
-    Environment,
-    /// `runtime/.env`.
-    DotEnv,
-    /// A `default-property` of the merged conf.
-    Conf,
-}
-
 /// The instance purpose, once the properties are final, on a line of its own: it decides much of what follows
 /// (dev tools, restricted components, HTTPS defaults). A WARN when component discovery, which runs before the
 /// component confs merge, chose the components for another purpose.
-fn log_instance_purpose(source: PurposeSource, discovered: &str) {
-    let purpose = env::get_prop_or_env("instance_purpose");
-    let role = env::get_prop_or_env("node_role");
+fn log_instance_purpose(conf: &MNode, overrides: &[super::conf_env::Override], discovered: &str) {
+    use super::conf_env::{conf_attribute, PURPOSE};
+    let purpose = conf_attribute(conf, PURPOSE);
+    let role = conf_attribute(conf, crate::edge::NODE_ROLE);
+    let source = overrides
+        .iter()
+        .find(|applied| applied.applied() && applied.selector.as_deref() == Some(PURPOSE))
+        .map_or("the conf", |applied| applied.source.name());
     tracing::info!(
-        "Instance purpose {} (from {}), node role {}",
+        "Instance purpose {} (from {source}), node role {}",
         if purpose.is_empty() { "unset" } else { &purpose },
-        match source {
-            PurposeSource::Environment => "the environment",
-            PurposeSource::DotEnv => "runtime/.env",
-            PurposeSource::Conf => "the conf",
-        },
         if role.is_empty() { "all" } else { &role }
     );
     if purpose != discovered {
         tracing::warn!(
-            "instance_purpose is {purpose}, set by a component's conf, but the components were chosen for {}: set it in \
-             the runtime conf, runtime/.env or the environment",
+            "{PURPOSE} is {purpose}, set by a component's conf, but the components were chosen for {}: set it in the \
+             runtime conf, runtime/.env or the environment",
             if discovered.is_empty() { "unset" } else { discovered }
         );
     }
 }
 
 /// Set each `default-property` of the merged conf as a process property unless one is set already. `runtime/.env` is
-/// loaded before the merge; `purpose_from_environment` is whether `instance_purpose` was set before it was.
-fn apply_default_properties(
-    conf_node: &MNode,
-    env_path: &Path,
-    purpose_from_environment: bool,
-) -> Result<(Vec<String>, PropertyRollback, PurposeSource), Error> {
-    let purpose_source = if purpose_from_environment {
-        PurposeSource::Environment
-    } else if !env::get_prop_or_env("instance_purpose").is_empty() {
-        PurposeSource::DotEnv
-    } else {
-        PurposeSource::Conf
-    };
+/// loaded before the merge.
+fn apply_default_properties(conf_node: &MNode, env_path: &Path) -> Result<(Vec<String>, PropertyRollback), Error> {
     let mut names = Vec::new();
     let mut set_by_boot = PropertyRollback::default();
     let mut generated = Vec::new();
@@ -1914,7 +1891,7 @@ fn apply_default_properties(
     }
     install_tls_pair(&mut generated, &mut set_by_boot, cert_slot, key_slot)?;
     append_env_secrets(env_path, &generated)?;
-    Ok((names, set_by_boot, purpose_source))
+    Ok((names, set_by_boot))
 }
 
 /// What names the session cookie key in the boot's messages.

@@ -36,7 +36,7 @@
 //!
 //! The Received field's `with` is the protocol spoken: SMTP, ESMTP, ESMTPS, LMTP, LMTPS, UTF8SMTP, UTF8LMTPS and so on.
 //!
-//! On an edge node (`node_role=front_edge`) the listener takes mail for its local node's accounts and queues it for the
+//! On an edge node (`moqui_conf__instance__node_role=front_edge`) the listener takes mail for its local node's accounts and queues it for the
 //! local node instead of storing it ([`queue`], plans/archive/Edge-Node.md §5.4).
 //!
 //! Behind a front node (plans/Edge-Node2.md §4.7, E19) the front's port 25 passes each connection down an edge member's

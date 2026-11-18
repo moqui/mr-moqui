@@ -391,7 +391,7 @@ mod mail {
                 ("cert/default.key", cert.1.as_str()),
             ];
             let mut properties = vec![
-                ("node_role", "front_edge"),
+                ("moqui_conf__instance__node_role", "front_edge"),
                 (
                     "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                     first_port_text.as_str(),
@@ -407,7 +407,7 @@ mod mail {
             let second_port = crate::common::free_port();
             let (second_port_text, second_url) = (second_port.to_string(), format!("https://localhost:{second_port}"));
             let mut properties = vec![
-                ("node_role", "front_edge"),
+                ("moqui_conf__instance__node_role", "front_edge"),
                 (
                     "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                     second_port_text.as_str(),

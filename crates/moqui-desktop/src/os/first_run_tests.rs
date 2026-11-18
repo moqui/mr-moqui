@@ -49,21 +49,26 @@ fn the_wizard_is_on_the_node() {
 fn a_paired_node_or_one_that_takes_links_needs_no_pairing() {
     let none = |_: &str| String::new();
     assert!(needs_pairing("", none));
-    assert!(needs_pairing("# comment\nedge_node_url=\nnode_role=normal\n", none));
+    assert!(needs_pairing(
+        "# comment\nedge_node_url=\nmoqui_conf__instance__node_role=normal\n",
+        none
+    ));
     assert!(!needs_pairing("edge_node_url=https://edge.example.com\n", none));
     assert!(!needs_pairing(
         "export edge_node_url=\"https://edge.example.com\"\n",
         none
     ));
-    assert!(!needs_pairing("node_role=all-in-one\n", none));
+    assert!(!needs_pairing("moqui_conf__instance__node_role=all-in-one\n", none));
     assert!(!needs_pairing("", |name: &str| if name == "edge_node_url" {
         "https://edge.example.com".to_string()
     } else {
         String::new()
     }));
-    assert!(!needs_pairing("", |name: &str| if name == "node_role" {
-        "edge".to_string()
-    } else {
-        String::new()
+    assert!(!needs_pairing("", |name: &str| {
+        if name == "moqui_conf__instance__node_role" {
+            "edge".to_string()
+        } else {
+            String::new()
+        }
     }));
 }

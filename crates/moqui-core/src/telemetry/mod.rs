@@ -544,7 +544,7 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
     let slot = factory.extension(|_| std::sync::OnceLock::<Arc<Telemetry>>::new());
     let telemetry = Arc::clone(slot.get_or_init(|| {
         let mut resource = Resource::default();
-        let configured = moqui_lib::env::get_prop_or_env("instance_id");
+        let configured = crate::context::conf_env::setting_on(factory, crate::context::conf_env::INSTANCE_ID);
         let known = crate::cluster::instance_id(factory)
             .or_else(|| (!configured.is_empty()).then_some(configured))
             .or_else(|| {

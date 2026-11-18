@@ -15,10 +15,10 @@
 //! The edge link as `moqui_core::edge` sees it ([`EdgeLink`]), installed when the HTTP listeners start: the local
 //! node's dialer (started when `edge_node_url` is set, and by pairing without a restart) and, on an edge node, its
 //! [`EdgeServer`] with its web front, SSH tunnel port and delegated calls; on both, the queue's metrics and retention.
-//! An all-in-one node (`node_role=all-in-one`, §10) starts what an edge node does and never dials; its own web, mail
+//! An all-in-one node (`moqui_conf__instance__node_role=all-in-one`, §10) starts what an edge node does and never dials; its own web, mail
 //! and XMPP stay a normal node's, and only its paired node's `EdgeHost` names go down the link. A node whose role has
-//! no front set (`node_role=edge`, plans/Edge-Node2.md §4.3) forwards no web access: its local nodes' names are reached
-//! through a front node. A front node (`node_role=front`, §4.7) has the front set alone: no queue, ports only as the
+//! no front set (`moqui_conf__instance__node_role=edge`, plans/Edge-Node2.md §4.3) forwards no web access: its local nodes' names are reached
+//! through a front node. A front node (`moqui_conf__instance__node_role=front`, §4.7) has the front set alone: no queue, ports only as the
 //! front's, and nothing of the edge set.
 //! Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to `runtime/.env` and sets them as properties;
 //! unpairing removes them (plans/archive/Edge-Node.md §5.1, §5.2, §5.3, §5.7).
@@ -156,7 +156,9 @@ pub(crate) fn start(
     // the edge conf is read now, with the role this node started with (plans/archive/Edge-Node.md §5.2)
     let settings = moqui_core::edge::settings(factory);
     if settings.role != role {
-        tracing::warn!("node_role changed after this server read its edge conf; it keeps the role it started with");
+        tracing::warn!(
+            "instance@node-role changed after this server read its edge conf; it keeps the role it started with"
+        );
     }
     // the web protection, which also admits the SSH tunnel port's connections on an edge node
     let guard = Arc::clone(&down.app.guard);
@@ -183,7 +185,7 @@ pub(crate) fn start(
                 }
                 Err(err) => {
                     tracing::error!(
-                        "node_role is {}, but {}: {err}; this node takes no links",
+                        "instance@node-role is {}, but {}: {err}; this node takes no links",
                         role.as_str(),
                         moqui_core::edge::LINK_KEY
                     );
@@ -193,7 +195,7 @@ pub(crate) fn start(
         }
         (true, None) => {
             tracing::error!(
-                "node_role is {}, but the HTTPS listener is off (no certificate in runtime/cert, or \
+                "instance@node-role is {}, but the HTTPS listener is off (no certificate in runtime/cert, or \
                  https-listen-port off): this node takes no links",
                 role.as_str()
             );
@@ -253,7 +255,7 @@ pub(crate) fn start(
             .is_empty()
     {
         tracing::warn!(
-            "edge_node_url is set on an edge node (node_role={}): it does not dial an edge node itself; it dials only a \
+            "edge_node_url is set on an edge node (instance@node-role {}): it does not dial an edge node itself; it dials only a \
              front node (front_node_url)",
             role.as_str()
         );
@@ -359,7 +361,7 @@ pub(crate) fn start(
                 listener(
                     factory,
                     super::TUNNEL_LISTENER,
-                    State::off("node_role edge has no ports: its front node takes them"),
+                    State::off("instance@node-role edge has no ports: its front node takes them"),
                 );
             } else if ports.is_empty() {
                 listener(
@@ -417,7 +419,7 @@ pub(crate) fn start(
                 State::off(if takes_links {
                     "this node takes no links"
                 } else {
-                    "node_role is not set"
+                    "instance@node-role is not set"
                 }),
             );
             Started::default()
@@ -462,7 +464,9 @@ fn offline_page(factory: &ExecutionContextFactory) -> Arc<str> {
 }
 
 fn instance_id(factory: &ExecutionContextFactory) -> String {
-    moqui_core::cluster::instance_id(factory).unwrap_or_else(|| moqui_lib::env::get_prop_or_env("instance_id"))
+    moqui_core::cluster::instance_id(factory).unwrap_or_else(|| {
+        moqui_core::context::conf_env::setting_on(factory, moqui_core::context::conf_env::INSTANCE_ID)
+    })
 }
 
 struct Hook {
@@ -489,7 +493,7 @@ impl Hook {
 
     fn server(&self) -> Result<Arc<EdgeServer>, Error> {
         if !self.role.takes_links() {
-            return Err(Error::new("this is not an edge node (node_role is not set)"));
+            return Err(Error::new("this is not an edge node (instance@node-role is not set)"));
         }
         self.server
             .as_ref()

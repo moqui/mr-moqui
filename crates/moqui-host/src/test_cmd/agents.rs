@@ -86,9 +86,16 @@ pub(super) fn dispatch(args: &TestArgs, runtime: &Path, framework: &Path) -> Res
         )));
     }
     // a dev component's agents run on a dev instance, where it loads (plans/design-dev-aide.md 3.1)
-    if super::needs_dev_purpose(runtime, &components) && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty()
+    if super::needs_dev_purpose(runtime, &components)
+        && moqui_lib::env::get_prop_or_env(&moqui_core::context::conf_env::env_name_of(
+            moqui_core::context::conf_env::PURPOSE,
+        ))
+        .is_empty()
     {
-        moqui_lib::env::set_property("instance_purpose", "dev");
+        moqui_lib::env::set_property(
+            &moqui_core::context::conf_env::env_name_of(moqui_core::context::conf_env::PURPOSE),
+            "dev",
+        );
     }
     let started = Instant::now();
     let fixture = fixture::open(runtime, framework, args.db, args.keep)?;

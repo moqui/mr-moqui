@@ -427,7 +427,7 @@ pub fn start_with_links(
 }
 
 /// [`start_with_files`] with symlinks too: a component the seed template does not carry, linked in (such as a dev
-/// component, with `instance_purpose` dev among the properties).
+/// component, with `instance@purpose` dev among the properties).
 #[allow(dead_code)]
 pub fn start_with_files_and_links(
     label: &str,

@@ -786,7 +786,7 @@ fn the_dev_tools_over_mcp() {
         "mcp-dev",
         Some(&data),
         CONF,
-        &[("instance_purpose", "dev")],
+        &[("moqui_conf__instance__purpose", "dev")],
         &FILES,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );

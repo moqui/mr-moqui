@@ -56,7 +56,7 @@ pub const NOT_BUILT: &str = "edge link not built into this host";
 
 /// The property that sets a node's role ([`NodeRole`]): `front`, `front_edge`, `edge`, `all-in-one`, or empty for a
 /// normal node (plans/Edge-Node2.md §4.3).
-pub const NODE_ROLE: &str = "node_role";
+pub const NODE_ROLE: &str = "instance@node-role";
 /// A local node's link properties, in `runtime/.env`, written by pairing and removed by unpairing (§5.1).
 pub const NODE_URL: &str = "edge_node_url";
 pub const NODE_KEY: &str = "edge_node_key";
@@ -95,7 +95,7 @@ pub const HOST_LINK_NAME: &str = "EdgeHostLinkName";
 
 /// Why a front node starts none of the edge set's services (plans/Edge-Node2.md §4.7): call media and TURN, SIP, the
 /// SMTP listener and MX delivery, an XMPP server; the startup report shows each off with it.
-pub const FRONT_ONLY: &str = "a front node (node_role front) has only the front set";
+pub const FRONT_ONLY: &str = "a front node (instance@node-role front) has only the front set";
 
 /// Whether `factory`'s node is a front node, logging once per area named in `what` that its setting is ignored when
 /// `configured`: the start of an edge set's service asks it (plans/Edge-Node2.md §4.7).
@@ -104,43 +104,51 @@ pub fn front_refuses(factory: &crate::context::ExecutionContextFactory, what: &s
         return false;
     }
     if configured {
-        tracing::warn!("{what} is set on a front node (node_role front), which has only the front set: not started");
+        tracing::warn!(
+            "{what} is set on a front node (instance@node-role front), which has only the front set: not started"
+        );
     }
     true
 }
 
-/// `node_role`, trimmed and lowercase.
+/// The conf's `instance` `node-role` ([`NODE_ROLE`]), trimmed and lowercase, by
+/// [`crate::context::conf_env::setting`]; code with a factory reads its own ([`role_of`]).
 pub fn node_role() -> String {
-    moqui_lib::env::get_prop_or_env(NODE_ROLE).trim().to_ascii_lowercase()
+    crate::context::conf_env::setting(NODE_ROLE).to_ascii_lowercase()
 }
 
-/// A node's role (`node_role`, plans/Edge-Node2.md §4.3, decision 16): which of the two option sets it has. The
+/// The role of `factory` by its conf's `instance` `node-role` as it is now.
+pub fn role_of(factory: &crate::context::ExecutionContextFactory) -> NodeRole {
+    NodeRole::parse(&crate::context::conf_env::setting_on(factory, NODE_ROLE))
+}
+
+/// A node's role (`instance@node-role`, plans/Edge-Node2.md §4.3, decision 16): which of the two option sets it has. The
 /// **front** set faces browsers: links taken, web access by host name, TCP ports, balancing, web protection and
 /// certificates. The **edge** set is the rest of an edge node: delegate, queue and replicate, the mail edge, chat
 /// webhooks, the media node and TURN, SIP, mr-pass's sites. Every role but a normal node's takes links.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum NodeRole {
-    /// A normal node (`node_role` empty): its own data, and a local node when paired with an edge node.
+    /// A normal node (`instance@node-role` empty): its own data, and a local node when paired with an edge node.
     #[default]
     Normal,
-    /// A front node (`node_role=front`, plans/Edge-Node2.md §4.7): the front set alone. Its Hello offers only web
+    /// A front node (`moqui_conf__instance__node_role=front`, plans/Edge-Node2.md §4.7): the front set alone. Its Hello offers only web
     /// access and ports; it starts none of the edge set's services and refuses the edge set's calls on its links, and
     /// dials no other node.
     Front,
-    /// An edge node as built before E17 (`node_role=front_edge`): both sets, so it balances a local cluster with no
+    /// An edge node as built before E17 (`moqui_conf__instance__node_role=front_edge`): both sets, so it balances a local cluster with no
     /// other node. No business data of its own.
     FrontEdge,
-    /// An edge node behind a front node (`node_role=edge`): the edge set alone. It takes its local nodes' links for
+    /// An edge node behind a front node (`moqui_conf__instance__node_role=edge`): the edge set alone. It takes its local nodes' links for
     /// the queue, delegate, replicate, comms and PASS, and forwards no web access itself and binds no ports; its sites
     /// are reached through the front, which it dials (`front_node_url`).
     Edge,
-    /// An all-in-one node (`node_role=all-in-one`, E12): a full server with both sets, which also takes the links of
+    /// An all-in-one node (`moqui_conf__instance__node_role=all-in-one`, E12): a full server with both sets, which also takes the links of
     /// paired local nodes and routes each item by its owner ([`owner`]).
     AllInOne,
 }
 
 impl NodeRole {
-    /// The role of a `node_role` value, trimmed and in any case. An unknown value is logged as an error (once per
+    /// The role of a `instance@node-role` value, trimmed and in any case. An unknown value is logged as an error (once per
     /// process) and means a normal node.
     pub fn parse(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
@@ -153,7 +161,7 @@ impl NodeRole {
                 static LOGGED: std::sync::Once = std::sync::Once::new();
                 LOGGED.call_once(|| {
                     tracing::error!(
-                        "{NODE_ROLE}={other} is not a node role (front, front_edge, edge, all-in-one, or empty); this \
+                        "{NODE_ROLE} {other} is not a node role (front, front_edge, edge, all-in-one, or empty); this \
                          is a normal node"
                     );
                 });
@@ -162,7 +170,7 @@ impl NodeRole {
         }
     }
 
-    /// The `node_role` value of the role: empty for a normal node.
+    /// The `instance@node-role` value of the role: empty for a normal node.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Normal => "",
@@ -213,7 +221,7 @@ impl NodeRole {
     }
 }
 
-/// This node's role, from `node_role` as it is now. A factory keeps the role it started with in
+/// This node's role, from `instance@node-role` as it is now. A factory keeps the role it started with in
 /// [`EdgeSettings::role`]; code with a factory reads that.
 pub fn node_role_kind() -> NodeRole {
     NodeRole::parse(&node_role())
@@ -285,7 +293,7 @@ pub struct EdgeInfo {
     /// realm, and its phones ring only with the registrar on.
     pub sip_domain: String,
     pub sip_registrar: bool,
-    /// Its `node_role` as its Hello names it (`front`, `front_edge`, `edge`, `all-in-one`); empty from a node before
+    /// Its `instance@node-role` as its Hello names it (`front`, `front_edge`, `edge`, `all-in-one`); empty from a node before
     /// E19. Pairing with a `front` keeps the pairing as this node's front pairing ([`FRONT_URL`]).
     pub role: String,
     /// The link versions are close enough to link.

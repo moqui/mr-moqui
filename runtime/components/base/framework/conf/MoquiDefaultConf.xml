@@ -5,23 +5,16 @@
     <!-- Settings in this file can be overridden in a component (MoquiConf.xml) and/or runtime conf file that has
         any of the desired sub-elements. -->
 
+    <!-- The instance. purpose: production, dev or test, which the server varies its behavior by (scripts read it as
+        ec.factory.getConfValue('instance@purpose')); set it by moqui_conf__instance__purpose or the runtime conf, as a
+        component's conf merges after the components are chosen for it. id: this server's id, else a cluster member
+        keeps its own in runtime/db/instance_id. node-role: empty for a normal node, else front, front_edge, edge or
+        all-in-one (plans/Edge-Node2.md §4.3). default-locale and default-time-zone: of a session with no user locale or
+        zone, and the server's own times (the entity facade's database-time-zone is the zone times are stored in). -->
+    <instance purpose="production" id="" node-role="" default-locale="en_US" default-time-zone="UTC"/>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
-    <!-- recommended values: production, dev, test; any code may look at these Java System properties to vary behavior (System.getProperty("instance_purpose")) -->
-    <default-property name="instance_purpose" value="production"/>
-    <!-- The Login page's Create Initial Admin Account form, and create#InitialAdminAccount, while no account exists but
-        the seed ones: off unless true. Set initial_admin_enabled=true in runtime/.env (or the environment) to set up a
-        new system, and take it out once the first administrator is made (docs/Run-Deploy.md). -->
-    <default-property name="initial_admin_enabled" value="false"/>
-
-    <!-- Locale and Time Zone Properties -->
-    <default-property name="default_locale" value="en_US"/>
-    <default-property name="default_time_zone" value="UTC"/>
-    <default-property name="database_time_zone" value="UTC"/>
-
-    <!-- The dashboard the System home shows as its Activity strip, by its definition id, in place of the shipped
-        system-home; empty for that one. It gets the period of the home and, as its instance variable, this server. -->
-    <default-property name="system_home_dashboard" value=""/>
     <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
         nobody set up there. acme_directory_url fills in the authority's directory on that screen, Let's Encrypt's; the
         screen offers its staging directory for a first try and takes any other authority's. acme_account_key is the seed
@@ -219,9 +212,9 @@
         xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
         of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
         xmpp_s2s_port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
-        behind an edge node it will be the edge node's (plans/archive/Edge-Node.md §5.4). On an edge node (node_role=front_edge) no XMPP
+        behind an edge node it will be the edge node's (plans/archive/Edge-Node.md §5.4). On an edge node (moqui_conf__instance__node_role=front_edge) no XMPP
         server starts: its edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node. An all-in-one node
-        (node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge_xmpp_port and
+        (moqui_conf__instance__node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge_xmpp_port and
         edge_xmpp_tls_port, which must differ from them (a tunnel port on the same port is off, logged). -->
     <default-property name="xmpp_domain" value=""/>
     <default-property name="xmpp_rooms_domain" value=""/>
@@ -302,9 +295,8 @@
     <default-property name="cluster_protocol" value=""/>
     <!-- The address the cluster listener binds; empty for every interface, as a member on another host must reach it. -->
     <default-property name="cluster_bind_address" value=""/>
-    <default-property name="instance_id" value=""/>
-    <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.6; plans/Edge-Node2.md §4.3). node_role is empty on a normal
-        node; any other role takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1) and names the
+    <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.6; plans/Edge-Node2.md §4.3). The instance element's node-role
+        is empty on a normal node; any other role takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1) and names the
         option sets it has: front_edge for an edge node as built (web access, ports and balancing, and the edge set:
         delegate, queue, replicate, mail, chat, calls, SIP, PASS; runtime/conf/edge/MoquiEdgeConf.xml), front for the
         front set alone (a front node, E19), edge for the edge set alone (behind a front node, which forwards its web
@@ -315,7 +307,6 @@
         node's private key, base64 PKCS#8; a secret), edge_node_pin (the SHA-256 of the edge node's link key, below),
         edge_node_id and edge_node_pairing (the id the pairing is known by, which every member of the cluster keeps) to
         runtime/.env, and unpairing removes them; they are not generated at startup. -->
-    <default-property name="node_role" value=""/>
     <default-property name="edge_node_url" value=""/>
     <default-property name="edge_node_key" value="" is-secret="true"/>
     <default-property name="edge_node_pin" value=""/>
@@ -710,7 +701,11 @@
         <password encrypt-hash-type="SHA-256" min-length="8" min-digits="1" min-others="1"
                   history-limit="5" change-weeks="104" email-require-change="false" email-expire-hours="48"/>
         <login-key encrypt-hash-type="SHA-256" expire-hours="144" device-expire-hours="2160"/><!-- default expire 6 days, 144 hours; a device's key 90 days -->
-        <login max-failures="3" disable-minutes="5" history-store="true"/>
+        <!-- initial-admin-enabled: the Login page's Create Initial Admin Account form, and create#InitialAdminAccount,
+            while no account exists but the seed ones: off unless true. Set
+            moqui_conf__user_facade__login__initial_admin_enabled=true in runtime/.env (or the environment) to set up a new
+            system, and take it out once the first administrator is made (docs/Run-Deploy.md). -->
+        <login max-failures="3" disable-minutes="5" history-store="true" initial-admin-enabled="false"/>
         <!-- privileged-groups: UserGroupMember create/update/delete for these groups is allowed only if the caller is
             already a member (seed/install and disableAuthz skip the check). SYSMSG_RECEIVE is one: its members may call
             receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission
@@ -803,8 +798,11 @@
         it is written (a smaller page is sent whole); 0 keeps every response whole. tx-cache: a screen transition's
         transaction (and a screen's with begin-transaction) holds its writes in the transaction cache, as a service marked
         transaction="cache" does; false begins it as transaction="use". -->
+    <!-- system-home-dashboard: the dashboard the System home shows as its Activity strip, by its definition id, in place
+        of the shipped system-home; empty for that one. It gets the period of the home and, as its instance variable,
+        this server. -->
     <screen-facade boundary-comments="false" default-autocomplete-rows="20" default-paginate-rows="20"
-            check-interval-ms="" stream-threshold="65536" tx-cache="true">
+            check-interval-ms="" stream-threshold="65536" tx-cache="true" system-home-dashboard="">
         <!-- PDF, the html-print render through headless Chromium. chromium-path names the executable (below);
             page-limit is the pages that print (or preview) at once; timeout is the seconds one
             document may take; preview-max-size is the largest PDF, in bytes, that Files previews. -->
@@ -1907,7 +1905,7 @@
 
     <component-list>
         <!-- runtime/components: the sets of components that its components.xml lists, in load order: base, addon, dev
-            (loaded only when instance_purpose is dev) and test (dev and test); plans/archive/Components-Dir.md. -->
+            (loaded only when instance@purpose is dev) and test (dev and test); plans/archive/Components-Dir.md. -->
         <component-dir location="components"/>
         <!-- Here are some examples of explicitly loading the example component in different ways: -->
         <!-- <component name="example" location="components/addon/example"/> -->

@@ -7,7 +7,7 @@
     work from the pool and draining hold here as they are, and this one says what differs. Use the Enterprise package
     (--enterprise), as for any cluster, with the apps (mr-boss brings mr-mantle). -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production"/>
 
     <!-- The shared database and .env, as in conf/local-cluster: the transactional datasource's settings and the secrets the first member makes the
         same on every member, cluster_base_url each member's own, runtime/db never copied. -->
@@ -21,7 +21,7 @@
         member. Each member then links to every live edge member, at each one's link name through the front, and keeps
         the list in runtime/db/edge_members. The edge members balance the cluster's work over its live members, and
         the queue, delegated calls, replication, mail, chat, calls, phones and PASS go over this pairing.
-        With edge members (node_role edge, which forward no web access), a second pairing, with the front (System › Edge
+        With edge members (instance@node-role edge, which forward no web access), a second pairing, with the front (System › Edge
         Node, the same Pair flow: the Pair screen shows the role front, and the pairing goes there): front_node_url,
         front_node_key, front_node_pin and front_node_id, copied to every member as well. The wizard then sends the host
         names and XMPP domain to the front, and the mail domains, chat bridges and PASS sites to the edge cluster; the

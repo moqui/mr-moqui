@@ -16,7 +16,7 @@
 //!
 //! The formatters are in `moqui_lib::format`. The locale is the session locale, else `en_US`.
 //! The time zone is the session time zone (the user's `UserAccount.timeZone`), else the server's: the zone
-//! `default_time_zone` names at start (MoquiDefaultConf's `UTC`), as Java's `TimeZone.setDefault` makes it the JVM
+//! `instance@default-time-zone` names at start (MoquiDefaultConf's `UTC`), as Java's `TimeZone.setDefault` makes it the JVM
 //! default that `ec.user.getTimeZone()` falls back to.
 //!
 //! Timestamp text without an offset is read in the session time zone wherever text becomes a timestamp, as Java's
@@ -63,13 +63,12 @@ pub fn time_zone() -> TimeZone {
 /// The server's zone once [`init_server_time_zone`] has read it.
 static SERVER_TIME_ZONE: RwLock<Option<TimeZone>> = RwLock::new(None);
 
-/// Java's start, which sets the JVM default zone (`TimeZone.setDefault`) to the one the `default_time_zone` property
-/// or environment variable names, `UTC` from MoquiDefaultConf unless the runtime names another. An unknown name is
+/// Java's start, which sets the JVM default zone (`TimeZone.setDefault`) to the one the conf's `instance`
+/// `default-time-zone` names (`name`), `UTC` from MoquiDefaultConf unless the runtime names another. An unknown name is
 /// logged and leaves the zone as it was. Also registers [`time_zone`] as the zone `moqui_lib` reads timestamp text in
 /// where it converts a person's or a script's text (a condition value against a timestamp column).
-pub fn init_server_time_zone() {
+pub fn init_server_time_zone(name: &str) {
     moqui_lib::object::set_text_time_zone(time_zone);
-    let name = moqui_lib::env::get_prop_or_env("default_time_zone");
     let name = name.trim();
     if name.is_empty() {
         return;
@@ -83,7 +82,7 @@ pub fn init_server_time_zone() {
     }
 }
 
-/// The zone a session with no user zone is in: what `default_time_zone` named at start, else the machine's (the JVM
+/// The zone a session with no user zone is in: what `instance@default-time-zone` named at start, else the machine's (the JVM
 /// default with no property), else UTC. A unit test with no start has UTC, MoquiDefaultConf's default, so it reads the
 /// same on any machine.
 pub fn server_time_zone() -> TimeZone {

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The edge link (plans/archive/Edge-Node.md §5.2, §5.3, §5.7) for the System app: on a local node its Edge Node screen
-    (check, pair, status, unpair), and on an edge node (node_role=front_edge) its Edge Clients screen (pairing codes, paired
+    (check, pair, status, unpair), and on an edge node (moqui_conf__instance__node_role=front_edge) its Edge Clients screen (pairing codes, paired
     local nodes, revoke, their public host names); the link's queue and replication on both. The bodies are Rust
     (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/, the edge
     feature, in Maximal and Enterprise). In a binary without it each service fails with "edge link not built into this
@@ -28,11 +28,11 @@ along with this software (see the LICENSE.md file). If not, see
             without the edge link, notStarted in one with it where no HTTP listener started it, as under moqui test),
             the edge node's URL, the link generation, the round trip of the last Ping on the up connection, when the link
             last came up, the last error, the links lost since start, and the edge node as its last Hello said, with the
-            pinned fingerprint. nodeRole is this node's node_role; on an edge node linkFingerprint is its own link key's
+            pinned fingerprint. nodeRole is this node's instance@node-role; on an edge node linkFingerprint is its own link key's
             fingerprint.</description>
         <out-parameters>
             <parameter name="nodeRole"/>
-            <parameter name="takesLinks" type="Boolean"><description>This node takes links: node_role is set (front,
+            <parameter name="takesLinks" type="Boolean"><description>This node takes links: instance@node-role is set (front,
                 front_edge, edge or all-in-one, plans/Edge-Node2.md §4.3).</description></parameter>
             <parameter name="state"/>
             <parameter name="url"/>
@@ -501,7 +501,7 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false">
         <description>On an edge node: a TCP port whose connections go down an active paired local node's link, to its
             SSH server (tunnelKind ssh) or its XMPP server (xmpp for STARTTLS, xmpps for direct TLS); on a front node
-            (node_role front) also smtp, to the SMTP listener of a member of the pairing's pool with a PROXY header
+            (instance@node-role front) also smtp, to the SMTP listener of a member of the pairing's pool with a PROXY header
             naming the client (port 25 before an edge cluster, plans/Edge-Node2.md §4.7), refused on any other node. A
             port of this node's own listeners (its conf's tunnel ports included; on a front node not those of the edge
             set, which it never starts), and one another row has, are refused; the same row again is no change. The edge node listens on it within seconds (get#EdgePorts tells how it

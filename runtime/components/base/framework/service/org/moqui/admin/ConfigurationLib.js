@@ -91,7 +91,7 @@ function urlText(value, what) {
     if (!parts) throw new Error(what + " is not an http(s) URL with a host and no credentials or fragment")
     const host = parts[2].replace(/:\d+$/, "").toLowerCase()
     const local = ["localhost", "127.0.0.1", "[::1]"].includes(host)
-    if (parts[1] === "http" && (!local || text(System.getProperty("instance_purpose")) === "production"))
+    if (parts[1] === "http" && (!local || text(ec.factory.getConfValue("instance@purpose")) === "production"))
         throw new Error(what + " must be https")
     return found
 }

@@ -838,12 +838,12 @@ struct Member {
 /// The property that names where a local node dials this member of an edge cluster (plans/Edge-Node2.md §4.6).
 pub const EDGE_LINK_URL_PROPERTY: &str = "edge_link_url";
 
-/// `instance_id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
+/// The conf's `instance` `id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
 /// written to `runtime/.env`, which `plans/archive/Cluster.md` says to copy between members: two members with one id would
 /// each take the other's member row for its own.
 /// Nor is it set as a property, which another factory in this process would then take for its own.
 fn ensure_instance_id(factory: &ExecutionContextFactory) -> Result<String, Error> {
-    let current = env::get_prop_or_env("instance_id");
+    let current = crate::context::conf_env::setting_on(factory, crate::context::conf_env::INSTANCE_ID);
     if !current.is_empty() {
         return Ok(current);
     }

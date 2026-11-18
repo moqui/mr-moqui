@@ -285,7 +285,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (endpointChanged) {
                 for (const name of SECRETS) if (!given.includes(name) && textOf(row[name])) { row.set(name, null); secretCleared = true }
                 row.set('disabled', 'Y')
-                if (!given.includes('allowPrivateNetwork') && String(System.getProperty('instance_purpose') ?? '').trim() === 'production')
+                if (!given.includes('allowPrivateNetwork') && String(ec.factory.getConfValue('instance@purpose') ?? '').trim() === 'production')
                     row.set('allowPrivateNetwork', 'N')
             }
             row.update()

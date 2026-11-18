@@ -120,21 +120,24 @@ pub(crate) fn set_dev_tools(config_dir: &Path, on: bool) -> std::io::Result<()> 
     }
 }
 
-/// The node's purpose property when the dev tools are on: `instance_purpose=dev`, which the conf's default gives way
-/// to, so the Dev AIDE and the other `purpose="dev"` components load. Off, nothing: the conf's own purpose.
+/// The node's purpose when the dev tools are on: `instance@purpose` dev by its environment name, over the conf's, so
+/// the Dev AIDE and the other `purpose="dev"` components load. Off, nothing: the conf's own purpose.
 pub(crate) fn purpose_properties(dev: bool) -> Vec<(&'static str, String)> {
     if dev {
-        vec![("instance_purpose", "dev".to_string())]
+        vec![("moqui_conf__instance__purpose", "dev".to_string())]
     } else {
         Vec::new()
     }
 }
 
-/// The node's properties on every start: `initial_admin_enabled=true`, so the first run's /Login offers the first
-/// administrator (the default conf has it off, for a server set up from its `.env`). The node is this user's own, and
-/// the form goes once any account exists.
+/// The node's settings on every start: `user-facade/login@initial-admin-enabled` true, so the first run's /Login
+/// offers the first administrator (the default conf has it off, for a server set up from its `.env`). The node is this
+/// user's own, and the form goes once any account exists.
 pub(crate) fn setup_properties() -> Vec<(&'static str, String)> {
-    vec![("initial_admin_enabled", "true".to_string())]
+    vec![(
+        "moqui_conf__user_facade__login__initial_admin_enabled",
+        "true".to_string(),
+    )]
 }
 
 impl Mode {

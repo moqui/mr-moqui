@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
-<!-- A front node (conf/front/README.md; plans/Edge-Node2.md §4.3, §4.7): the front option set alone, node_role front.
+<!-- A front node (conf/front/README.md; plans/Edge-Node2.md §4.3, §4.7): the front option set alone, instance@node-role front.
     It faces browsers and balances the nodes behind it, which pair with it and dial it: web access by host name
     (terminate or passthrough, with the client's address passed on), TCP ports sent to a pairing, load balancing over a
     pairing's members with sticky sessions and health, web protection, TLS and certificates, and the offline page. It
@@ -13,13 +13,12 @@
     Build, archive and run with the release flag of ./moq: Maximal (embedded Postgres is enough), or Enterprise with an
     external database. The runtime needs the base components only. Per-host settings go in .env. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production" node-role="front"/>
     <!-- takes links from the nodes behind it on the HTTPS listener, told from browsers by ALPN; its Hello names the role
         front and offers web access and ports only, so a node pairing with it keeps it as its front pairing
         (front_node_url, front_node_key, front_node_pin and front_node_id) and the wizard there shows only those.
         System › Edge Clients makes pairing codes and shows the pairings, their members and names. A front node dials no
         other node. -->
-    <default-property name="node_role" value="front"/>
     <!-- rate limits, connection limits and bans by client address, run before anything goes down a link: the nodes
         behind it see the client's address, and a ban they start (failed sign-ins) is told up the link, so this node
         refuses that client for the pairing's own names (System › Security › Web Protection). With a proxy before this

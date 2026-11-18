@@ -8,9 +8,9 @@ This file covers what loads the dev set of components, the Dev AIDE app (`/apps/
 
 A component with purposes loads only when the instance purpose is one of them (`Discovery::allows`). A component found in a `component-dir` with a `purpose` takes the directory's purposes unless it has its own. A component left out is named in a WARN. An empty instance purpose matches no restricted component.
 
-The instance purpose used for discovery is read in this order (`effective_instance_purpose`): the process property or environment variable `instance_purpose`; then `instance_purpose` or `instance.purpose` in `runtime/.env`; then the merged conf's `default-property`. `runtime/components/base/framework/conf/MoquiDefaultConf.xml` sets `production`. `runtime/conf/MoquiDevConf.xml` sets `dev`. A component's own conf merges after discovery.
+The instance purpose used for discovery is read in this order (`effective_instance_purpose`): the process property or environment variable `instance@purpose`; then `instance@purpose` or `instance.purpose` in `runtime/.env`; then the merged conf's `default-property`. `runtime/components/base/framework/conf/MoquiDefaultConf.xml` sets `production`. `runtime/conf/MoquiDevConf.xml` sets `dev`. A component's own conf merges after discovery.
 
-At request time the dev tools ask again: `moqui_core::devtools::is_dev_instance()` is true only when the property or environment variable `instance_purpose` equals `dev` (`crates/moqui-core/src/devtools/mod.rs:27`).
+At request time the dev tools ask again: `moqui_core::devtools::is_dev_instance()` is true only when the property or environment variable `instance@purpose` equals `dev` (`crates/moqui-core/src/devtools/mod.rs:27`).
 
 | Component | Directory | `component.xml` | Loads when |
 |---|---|---|---|

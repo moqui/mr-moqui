@@ -32,7 +32,7 @@ struct Setup {
 }
 
 /// The connector on this test's thread is not production, whatever another test's boot left in
-/// the process's `instance_purpose`.
+/// the process's `instance@purpose`.
 fn setup() -> Setup {
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
     let facade = moqui_core::testing::open();

@@ -14,7 +14,7 @@
 
 //! Web access through an edge node (plans/archive/Edge-Node.md §5.3, E2). Both ends are real servers in the test's own
 //! process: the local node starts first, with its HTTPS listener on a certificate for `pass.localhost`, an SSH server
-//! and web protection that denies 203.0.113.0/24; then the edge node (`node_role=front_edge`, set only after the local node
+//! and web protection that denies 203.0.113.0/24; then the edge node (`moqui_conf__instance__node_role=front_edge`, set only after the local node
 //! has read its properties) with a certificate for `term.localhost` and an SSH tunnel port. The local node's link is
 //! its dialer driven with an explicit `LocalConfig` that serves the local server's own app (`local_web`), so the
 //! edge node's hook is the one the services reach.
@@ -374,7 +374,7 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
             ("moqui_conf__ssh_server__port", "0"),
             ("moqui_conf__ssh_server__host_key", &host_key),
             // the terminal's command line, through the edge node (plans/Terminal-Fancy.md §12)
-            ("instance_purpose", "dev"),
+            ("moqui_conf__instance__purpose", "dev"),
         ],
         &[("cert/default.crt", &local_cert), ("cert/default.key", &local_key)],
     );
@@ -384,7 +384,7 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
         "edge-web-edge",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,

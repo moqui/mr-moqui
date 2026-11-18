@@ -13,7 +13,7 @@
  */
 
 //! Pools of local nodes and failover to a standby (plans/Edge-Node2.md §4.4, §4.5, E17 part A). The edge node is a
-//! real server (`node_role=front_edge`); the members are dialers with explicit configs sharing one pairing's key, each
+//! real server (`moqui_conf__instance__node_role=front_edge`); the members are dialers with explicit configs sharing one pairing's key, each
 //! naming its own instance id, with a [`FixedMember`] for its state and its cluster's member list (no server), except
 //! where a delivery must be applied, which a real local server does (`local_web`).
 //!
@@ -520,7 +520,7 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
         "edge-again-edge",
         "",
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,
@@ -721,7 +721,7 @@ fn pool_member_process() {
     drop(runtime);
 }
 
-/// The edge node after the local servers (`node_role` is a process property they must not read), and the pairing of
+/// The edge node after the local servers (`instance@node-role` is a process property they must not read), and the pairing of
 /// `local` under its own instance id: the edge node, the pairing's key, and its URL.
 fn edge_for(
     label: &str,
@@ -734,7 +734,7 @@ fn edge_for(
         label,
         "",
         &[
-            ("node_role", "front_edge"),
+            ("moqui_conf__instance__node_role", "front_edge"),
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,

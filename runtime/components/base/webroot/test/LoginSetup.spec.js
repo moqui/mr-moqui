@@ -16,7 +16,7 @@
 // Login screen's anonymous initialAdminNeeded transition answer needed false and nothing else (no password rules, no
 // session token), and the Login screen in tui mode renders without the setup form (the NeedsSetupSection's tui text is
 // in its fail-widgets). The refusal of create#InitialAdminAccount itself is framework/test/client/SecurityAuthn.spec.js.
-// initial_admin_enabled (off by default) does not matter once accounts exist: needed and disabled are both false, and
+// user-facade/login@initial-admin-enabled (off by default) does not matter once accounts exist: needed and disabled are both false, and
 // the Login screen has no hint to turn it on. The empty database (needed with it on, ADMIN_ADV by joinAdvanced) is
 // crates/moqui/tests/cli/skeleton.rs, an acceptance test.
 // Run: ./moq test webroot --spec LoginSetup
@@ -41,8 +41,8 @@ feature("with accounts, initialAdminNeeded answers needed false and hands out no
     when() {
         const needed = () => ec.service.sync().name("org.moqui.impl.UserServices.get#InitialAdminNeeded").call()
         const out = needed()
-        return {out, on: withProperty("initial_admin_enabled", "true", needed),
-            off: withProperty("initial_admin_enabled", "false", needed), res: anonymousRender("Login/initialAdminNeeded", null, "get")}
+        return {out, on: withConf("user-facade/login@initial-admin-enabled", "true", needed),
+            off: withConf("user-facade/login@initial-admin-enabled", "false", needed), res: anonymousRender("Login/initialAdminNeeded", null, "get")}
     },
     then({out, on, off, res}) {
         out.needed === false
@@ -85,12 +85,12 @@ feature("the Test Login is offered only on a dev or test instance or a demo, and
         cache.clear()
         const out = {matches, hasAccount: account != null}
         withProperty("demo_test_login", null, () => {
-            out.production = withProperty("instance_purpose", "production", offered)
+            out.production = withConf("instance@purpose", "production", offered)
             out.productionCached = cache.size()
-            out.test = withProperty("instance_purpose", "test", offered)
-            out.dev = withProperty("instance_purpose", "dev", offered)
+            out.test = withConf("instance@purpose", "test", offered)
+            out.dev = withConf("instance@purpose", "dev", offered)
         })
-        out.demo = withProperty("demo_test_login", "true", () => withProperty("instance_purpose", "production", offered))
+        out.demo = withProperty("demo_test_login", "true", () => withConf("instance@purpose", "production", offered))
         out.cached = account != null && cache.containsKey(ec.resource.digestText(String(account.currentPassword)))
         return out
     },

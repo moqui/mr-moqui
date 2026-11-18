@@ -300,7 +300,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     }
     if moqui_core::edge::settings(factory).edge_node() {
         tracing::warn!(
-            "XMPP: xmpp_domain is set on a dedicated edge node (node_role {}), which starts no XMPP server: \
+            "XMPP: xmpp_domain is set on a dedicated edge node (instance@node-role {}), which starts no XMPP server: \
              edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node",
             moqui_core::edge::settings(factory).role.as_str()
         );
@@ -423,7 +423,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
 
 fn tls_acceptor(runtime_dir: &std::path::Path, direct: bool) -> Result<TlsAcceptor, String> {
     let dir = runtime_dir.join("cert");
-    if moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+    if moqui_core::context::conf_env::instance_purpose() == "dev" {
         if let Err(err) = crate::tls::ensure_dev_cert(&dir) {
             tracing::warn!("Could not make a development certificate in {}: {err}", dir.display());
         }

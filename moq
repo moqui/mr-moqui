@@ -1190,7 +1190,7 @@ root element.
 
 Options:
       --dev            Get the named components into runtime/components/dev, the components that load
-                       only when instance_purpose is dev; what they depend on still goes in
+                       only when instance@purpose is dev; what they depend on still goes in
                        runtime/components/addon
       --test           Get them into runtime/components/test, the test-only components that load on
                        a dev or test instance, never on production and not in ./moq archive unless
@@ -1221,7 +1221,7 @@ and has letters, digits, '-' and '_'. The new component loads at the next start.
   ./moq component-create my-api --rest --git-remote git@github.com:me/my-api.git --myaddons me
 
 Options:
-      --dev            Create it in runtime/components/dev, loaded only when instance_purpose is dev
+      --dev            Create it in runtime/components/dev, loaded only when instance@purpose is dev
       --test           Create it in runtime/components/test, loaded on a dev or test instance only
       --from NAME      Another template, in runtime/components/dev or runtime/components/addon (a component.xml
                        named @component@)

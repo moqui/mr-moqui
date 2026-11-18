@@ -25,7 +25,7 @@ pub mod restart;
 /// Whether this instance's purpose is `dev`, where the development tools run.
 #[must_use]
 pub fn is_dev_instance() -> bool {
-    moqui_lib::env::get_prop_or_env("instance_purpose") == "dev"
+    crate::context::conf_env::instance_purpose() == "dev"
 }
 
 /// The permissions of the dev-aide's tiers (plans/design-dev-aide.md 3.4); `ADMIN` holds `DEV_AIDE` by its seed.

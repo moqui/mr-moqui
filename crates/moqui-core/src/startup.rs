@@ -280,23 +280,22 @@ pub struct Identity {
     pub version: String,
     /// The build package (`crate::build_info::package`); empty before the host registers.
     pub package: String,
-    /// `instance_purpose`; empty when unset.
+    /// `instance@purpose`; empty when unset.
     pub purpose: String,
-    /// `node_role`; empty when unset, which is every role.
+    /// `instance@node-role`; empty when unset, which is every role.
     pub role: String,
 }
 
 impl Identity {
-    /// This process's: the framework version, the host's package and the `instance_purpose` and `node_role`
-    /// properties.
+    /// This process's: the framework version, the host's package and the conf's `instance` `purpose` and
+    /// `node-role`.
     #[must_use]
     pub fn current() -> Self {
-        let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
             package: crate::build_info::package().to_string(),
-            purpose: property("instance_purpose"),
-            role: property("node_role"),
+            purpose: crate::context::conf_env::instance_purpose(),
+            role: crate::context::conf_env::setting(crate::edge::NODE_ROLE),
         }
     }
 }

@@ -527,13 +527,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="TestLoginOffered" authenticate="anonymous-view" allow-remote="false">
         <description>Whether the Login screen offers its Test Login button, the john.doe login with the password moqui
-            (SEC-RTE-17): only on a dev or test instance (instance_purpose), or where demo_test_login is true (the demo
+            (SEC-RTE-17): only on a dev or test instance (instance@purpose), or where demo_test_login is true (the demo
             component's conf sets it for a public demo), and only while EX_JOHN_DOE's password is still moqui. That check
             is a slow hash an anonymous render would run each time, so its answer is kept a minute in the local cache
             webroot.login.test, keyed by a digest of the stored hash: a new password is a new key.</description>
         <out-parameters><parameter name="offered" type="Boolean" required="true"/></out-parameters>
         <actions><script><![CDATA[
-            const purpose = System.getProperty('instance_purpose')
+            const purpose = ec.factory.getConfValue('instance@purpose')
             let offered = false
             if (purpose === 'dev' || purpose === 'test' || System.getProperty('demo_test_login') === 'true') {
                 const account = ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE').disableAuthz().one()
@@ -560,13 +560,13 @@ along with this software (see the LICENSE.md file). If not, see
             screen's create form, its initialAdminNeeded transition and the terminal's login dialog ask this, and
             create#InitialAdminAccount refuses unless it holds. Seed data has accounts nobody logs in as, which do not
             count: _NA_, the edge node's delegate _EDGE_ (EdgeSetupData.xml) and the chat users of agents
-            (AgentTypeData.xml). It is needed only while initial_admin_enabled is true (MoquiDefaultConf.xml, false by
+            (AgentTypeData.xml). It is needed only while user-facade/login@initial-admin-enabled is true (MoquiDefaultConf.xml, false by
             default): with no account and the property off, needed is false and disabled is true. The password rules are
             answered only while needed is true.</description>
         <out-parameters>
             <parameter name="needed" type="Boolean" required="true"/>
             <parameter name="disabled" type="Boolean" required="true"><description>No account exists, but
-                initial_admin_enabled is not true, so the first administrator cannot be created now.</description></parameter>
+                user-facade/login@initial-admin-enabled is not true, so the first administrator cannot be created now.</description></parameter>
             <parameter name="minLength" type="Integer"/>
             <parameter name="minDigits" type="Integer"/>
             <parameter name="minOthers" type="Integer"/>
@@ -575,7 +575,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="noAccounts" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
                 ['_NA_', '_EDGE_'].concat(Array.from(ec.entity.find('moqui.agent.AgentDefinition').selectField('chatUserId').disableAuthz().list())
                     .map((agent) => agent.chatUserId).filter(Boolean))).disableAuthz().count() == 0"/>
-            <set field="enabled" from="String(System.getProperty('initial_admin_enabled') || '').trim() == 'true'"/>
+            <set field="enabled" from="String(ec.factory.getConfValue('user-facade/login@initial-admin-enabled') || '').trim() == 'true'"/>
             <set field="needed" from="noAccounts &amp;&amp; enabled"/>
             <set field="disabled" from="noAccounts &amp;&amp; !enabled"/>
             <if condition="needed">
@@ -604,7 +604,7 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- only allow this if there are no user accounts but the seed ones (get#InitialAdminNeeded) -->
             <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
             <if condition="adminNeeded.disabled">
-                <return error="true" message="Creating the initial admin account is off: set initial_admin_enabled=true (in .env) and restart"/></if>
+                <return error="true" message="Creating the initial admin account is off: set moqui_conf__user_facade__login__initial_admin_enabled=true (in .env) and restart"/></if>
             <if condition="!adminNeeded.needed">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
             <!-- The first caller became an administrator from any address (SEC-WEB-08, SEC-CLI-01): only a request from
@@ -618,7 +618,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field-map field-name="userId" value="_NA_"/></entity-find-one>
             <service-call name="org.moqui.impl.UserServices.get#InitialAdminNeeded" out-map="adminNeeded"/>
             <if condition="adminNeeded.disabled">
-                <return error="true" message="Creating the initial admin account is off: set initial_admin_enabled=true (in .env) and restart"/></if>
+                <return error="true" message="Creating the initial admin account is off: set moqui_conf__user_facade__login__initial_admin_enabled=true (in .env) and restart"/></if>
             <if condition="!adminNeeded.needed">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
             <service-call name="org.moqui.impl.UserServices.create#UserAccount" in-map="context" out-map="context"/>

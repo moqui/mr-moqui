@@ -333,6 +333,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     base.merge_child_with_child_key(over, "mail-delivery", "dkim", &[], None);
     // elements of settings only: an attribute of the override replaces the base one
     for name in [
+        // the instance's purpose, id, node role, locale and time zone (plans/Conf-Paths.md §6.1)
+        "instance",
         "ssh-server",
         "terminal",
         "git-server",
