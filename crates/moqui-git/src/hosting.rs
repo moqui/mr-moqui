@@ -258,6 +258,7 @@ impl GitProvider {
     /// with `mergeable` a trial merge of head into base. `None` when either names no commit. `head` is a revision
     /// of `head_repository` when one is given (another repository of the fork network, which the caller may view):
     /// the two are then read as one store.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn compare(
         &self,
         repository_id: &str,

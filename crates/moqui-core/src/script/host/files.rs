@@ -513,6 +513,7 @@ fn files_sticker_thumbnail(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// The memory one sticker's decode may take: a 512 px RGBA frame is 1 MiB; a GIF or WebP decodes its first frame.
+#[cfg(feature = "image")]
 pub(crate) const STICKER_MAX_ALLOC: u64 = 16 * 1024 * 1024;
 
 /// What a sticker's check found.
@@ -523,6 +524,8 @@ pub(crate) enum Sticker {
         width: Option<u32>,
         height: Option<u32>,
     },
+    /// Made only with an image decoder (the `image` feature).
+    #[cfg_attr(not(feature = "image"), allow(dead_code))]
     Made {
         format: &'static str,
         width: u32,
