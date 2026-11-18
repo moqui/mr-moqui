@@ -20,7 +20,7 @@
 //!   bridge whose row changed: its `lastUpdatedStamp`), claims or renews the leases of all of them in one pass
 //!   ([`claim_all`]: `moqui.edge.EdgeSenderLock` rows `groupme:<bridge>`, the replication sender's and the SIP trunks'
 //!   lock table) and runs a session for each bridge it holds, at most [`Timing::node_max`] (the property
-//!   `chat_groupme_node_max`, 50); a bridge another node holds runs nothing here. Its member name is the node's instance
+//!   `chat@groupme-node-max`, 50); a bridge another node holds runs nothing here. Its member name is the node's instance
 //!   id and a token of its own, so an old coordinator's release never frees a newer one's lease. The lease lasts
 //!   [`Timing::lease`] (120 s) and is renewed by the coordinator, apart from the sessions, so a long poll or a long
 //!   catch-up never outlasts it; a coordinator whose claims fail stops its sessions once two thirds of the lease passed
@@ -91,8 +91,7 @@ impl Default for Timing {
         Self {
             pass: Duration::from_secs(15),
             lease: Duration::from_secs(120),
-            node_max: moqui_lib::env::get_prop_or_env("chat_groupme_node_max")
-                .trim()
+            node_max: moqui_core::context::conf_env::setting("chat@groupme-node-max")
                 .parse::<usize>()
                 .ok()
                 .filter(|n| *n > 0)

@@ -519,15 +519,15 @@ function spamInfo(p) {
   return { filtered: { CmfSpam: 'spam', CmfBlocked: 'blocked' }[found.member.filterEnumId] || null, reasons: Array.from(new Set(reasons)) }
 }
 
-// ---------- the purge (chat_spam_purge_days) ----------
+// ---------- the purge (chat@spam-purge-days) ----------
 
 /**
- * Internal (ChatServices clean#ChatRetention, daily): with the property chat_spam_purge_days above 0, the texts older than
+ * Internal (ChatServices clean#ChatRetention, daily): with the property chat@spam-purge-days above 0, the texts older than
  * that in each phone room that every current member has in Spam are deleted (clean#RoomRetention). Each room on its own,
  * in its own transaction: one that fails is logged and the rest go on. Out: roomCount, deletedCount, failedCount.
  */
 function purgeSpam(p) {
-  const days = Math.floor(Number(blank(p.purgeDays) ? System.getProperty('chat_spam_purge_days') || 0 : p.purgeDays))
+  const days = Math.floor(Number(blank(p.purgeDays) ? ec.factory.getConfValue('chat@spam-purge-days') || 0 : p.purgeDays))
   const out = { roomCount: 0, deletedCount: 0, failedCount: 0 }
   if (!(days > 0)) return out
   const spamRooms = Array.from(new Set(Array.from(find(MEMBER).condition('filterEnumId', 'CmfSpam').condition('leftDate', null)

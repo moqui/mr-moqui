@@ -64,11 +64,11 @@ const blank = (value) => value == null || String(value).trim() === ''
 const message = (err) => (err && err.message ? err.message : String(err))
 const millis = (value) => (value == null || value === '' ? null : Number(value))
 const now = () => Number(ec.user.nowTimestamp)
-const property = (name, fallback) => { const value = Number(System.getProperty(name)); return value > 0 ? value : fallback }
+const property = (selector, fallback) => { const value = Number(ec.factory.getConfValue(selector)); return value > 0 ? value : fallback }
 /** A held message due longer than this is failed (deviceAway); a device unseen as long shows so in the lists. */
-const awayDays = () => property('chat_held_overdue_days', 7)
+const awayDays = () => property('chat@held-overdue-days', 7)
 /** The most messages of one sender a run of the job sends (a minute's): the rest wait for the next run. */
-const perUserPerRun = () => property('chat_schedule_user_per_run', 20)
+const perUserPerRun = () => property('chat@schedule-user-per-run', 20)
 const appRoot = () => (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '')
 const roomLink = (chatRoomId, eventSeq) => `${appRoot()}/Chat?chatRoomId=${encodeURIComponent(chatRoomId)}${eventSeq != null ? '&eventSeq=' + eventSeq : ''}`
 const parseList = (text) => { try { const value = text ? JSON.parse(text) : []; return Array.isArray(value) ? value : [] } catch (err) { return [] } }

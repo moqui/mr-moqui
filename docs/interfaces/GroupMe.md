@@ -46,7 +46,7 @@ bridge syncs.
   sync. Connecting again needs a token.
 - Only the owner, and an administrator with `ChatBridgeAdmin` (System, Chat Bridges), see or change the bridge.
 
-The property `chat_groupme_self_service` (`true` by default) turns this off when it is `false`: the section then shows
+The property `chat@groupme-self-service` (`true` by default) turns this off when it is `false`: the section then shows
 only a bridge the user already has, without its token form, and Connect is refused (`selfServiceOff`).
 
 **An administrator** can also make a GroupMe bridge in System, Chat Bridges:
@@ -80,7 +80,7 @@ The bridge's settings (`configJson`; a user's own bridge has the defaults, an ad
 | `maxInboundMediaBytes` | 20 MiB | The largest picture or video fetched |
 | `catchUpPageSize`, `catchUpPages` | 100, 5 | The messages a catch-up reads per page, and the pages a room per run |
 
-A server-wide property, `chat_groupme_node_max` (50), is the most GroupMe bridges one node holds the connections of;
+A server-wide property, `chat@groupme-node-max` (50), is the most GroupMe bridges one node holds the connections of;
 the others go to other nodes.
 
 ## How it works
@@ -97,7 +97,7 @@ the others go to other nodes.
   - **One node** holds each bridge's connection. Each node runs one coordinator thread for all GroupMe bridges. Every
     15 seconds it lists them in one query and claims or renews their leases in one pass (`moqui.edge.EdgeSenderLock`
     `groupme:<bridge>`, 120 seconds). It runs a session, a thread, only for each bridge it holds, up to
-    `chat_groupme_node_max`.
+    `chat@groupme-node-max`.
     - When that node stops, its leases go, and another node takes the connections over at its next pass.
     - A node whose claims fail stops its sessions before the lease can lapse.
     - Each coordinator claims under a name of its own, so an old one never frees a new one's lease.

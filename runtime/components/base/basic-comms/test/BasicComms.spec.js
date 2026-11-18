@@ -246,7 +246,7 @@ feature("the do not disturb allowed list keeps users, not oneself, and Settings 
         prefs.dndAllowed.length == 1 && prefs.dndAllowed[0].userId == USER && prefs.dndAllowed[0].name == "Basic Comms basic.comms.spec"
         page.status == 200 && !page.broken
         page.output.includes("Calls that ring through") && page.output.includes("Basic Comms basic.comms.spec")
-        // the user's own GroupMe (on unless chat_groupme_self_service is false): not connected, its token form
+        // the user's own GroupMe (on unless chat@groupme-self-service is false): not connected, its token form
         page.output.includes("Paste your GroupMe access token") && page.output.includes("Access token")
         after.dndAllowed.length == 0
     }

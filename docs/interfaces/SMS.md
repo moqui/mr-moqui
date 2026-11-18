@@ -271,7 +271,7 @@ applied first, as above, so an opt-out of a spammer still holds.
   `smsSpamLookupMaxPerDay` (100) are asked a day (`SmsSendCount` `lookup`, reserved in a transaction of its own so no
   lock is held through the provider's answer, and given back when the lookup fails), and a failure or a timeout (3 s)
   adds nothing. Telnyx's number lookup is not built.
-- **The purge.** With the property `chat_spam_purge_days` (MoquiDefaultConf.xml) above 0 (0, the default, keeps everything), the daily
+- **The purge.** With the property `chat@spam-purge-days` (MoquiDefaultConf.xml) above 0 (0, the default, keeps everything), the daily
   `clean#ChatRetention` deletes the texts older than that in each phone room that every current member has in Spam
   (`purge#SpamRooms`), each room on its own: one that fails is logged and the rest go on.
 - **Failure tolerance.** A judge that fails is logged and the text goes in unfiltered: an error never hides or loses a

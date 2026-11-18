@@ -1358,7 +1358,7 @@
                 const own = await machine.getDevice(new sdk.UserId(state.matrixUserId), new sdk.DeviceId(state.deviceId), 5);
                 signed = !!(own && own.isCrossSigningTrusted());
             } catch (err) { signed = false; }
-            // the user's other devices in use (the server's active: seen in chat_device_active_days), the last seen first
+            // the user's other devices in use (the server's active: seen in chat@device-active-days), the last seen first
             const others = (listed.deviceList || []).filter((d) => d && d.deviceId !== state.deviceId && d.hasKeys && !d.revoked && d.active !== false)
                 .sort((a, b) => (Number(b.lastSeenDate) || 0) - (Number(a.lastSeenDate) || 0))
                 .map((d) => ({ deviceId: d.deviceId, displayName: d.displayName || null, createdDate: d.createdDate || null, lastSeenDate: d.lastSeenDate || null }));

@@ -415,12 +415,12 @@ feature("held messages never hold up the server's: many held rows due first, one
             .condition("statusEnumId", "CsmScheduled").count())
         sys(() => ec.entity.find("moqui.chat.ChatScheduledMessage").condition("chatScheduledMessageId", "like", "CSM_HELD_%").deleteAll())
         // three of one sender a run
-        setProperty("chat_schedule_user_per_run", "3")
+        setConf("chat@schedule-user-per-run", "3")
         for (let i = 0; i < 5; i++) make("moqui.chat.ChatScheduledMessage", {chatScheduledMessageId: "CSM_RATE_" + i, chatRoomId: shared.team, senderUserId: B,
             statusEnumId: "CsmScheduled", sendDate: new Date(clock - MINUTE), body: "<p>rate " + i + "</p>", bodyText: "rate " + i, attemptCount: 0})
         const firstRun = job("send#DueMessages")
         const secondRun = job("send#DueMessages")
-        setProperty("chat_schedule_user_per_run", null)
+        setConf("chat@schedule-user-per-run", null)
         return {run, serverRow, overdue, heldWaiting, firstRun, secondRun}
     },
     then({run, serverRow, overdue, heldWaiting, firstRun, secondRun}) {

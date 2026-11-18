@@ -348,6 +348,7 @@ pub static CATALOG: &[Unit] = &[
     ),
     single("acme", Class::Live).secrets(&[("account-key", Secret::Generated)]),
     single("client-sync", Class::Live),
+    single("chat", Class::Live).secrets(&[("store-key-secret", Secret::Generated)]),
     single("email-client", Class::Live)
         .attrs(&[("idle-enabled", LISTENER)])
         .children(&[keyed("oauth-provider", &["id"], Class::Live).secrets(&[("client-secret", Secret::Kept)])]),

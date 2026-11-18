@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="ChatDevice">
         <description>A new crypto device for the current user (one browser's store): a deviceId (10 letters) and the
             Matrix user ID (user_id) the store is made for. Up to 50 devices in use (not revoked, seen in the last
-            chat_device_active_days); then tooManyDevices. automatic: Chat made it when it opened (madeAutomatically).</description>
+            chat@device-active-days); then tooManyDevices. automatic: Chat made it when it opened (madeAutomatically).</description>
         <in-parameters>
             <parameter name="displayName"/>
             <parameter name="automatic" type="Boolean"/>
@@ -102,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
             (OlmMachine.initialize store_passphrase), so a copied browser profile without a signed-in session cannot open the
             store. Derived, not stored (derive#ChatStoreKey): no table or export holds it, and it is the same at each ask
             until a revoke bumps the device's revision. Never logged and in no other answer. reasonCode notFound (another user's device, with the same parameters), revoked,
-            failed (chat_store_key_secret not set).</description>
+            failed (chat@store-key-secret not set).</description>
         <in-parameters><parameter name="deviceId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="storeKey"/>
@@ -114,7 +114,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="derive" noun="ChatStoreKey" type="rust" location="moqui_core::service::chat_keys::derive_store_key"
             allow-remote="false">
         <description>Internal (get#ChatDeviceStoreKey answers it to the device's own user only): the store key of userId's
-            device deviceId at revision, HMAC-SHA-256 under the platform secret chat_store_key_secret (an is-secret
+            device deviceId at revision, HMAC-SHA-256 under the platform secret chat@store-key-secret (an is-secret
             default-property, generated when unset) of userId|deviceId|revision, as 43 characters of URL-safe base64.</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
@@ -125,7 +125,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="ChatKeyIdentity">
-        <description>The current user's Matrix user ID (user_id) and the server name in it (chat_server_name).</description>
+        <description>The current user's Matrix user ID (user_id) and the server name in it (chat@server-name).</description>
         <out-parameters>
             <parameter name="user_id"/>
             <parameter name="serverName"/>
@@ -461,7 +461,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="EncryptionDefault">
         <description>One bit for the people of userIdList (at most 50): encrypted, whether a new direct or private room of
             the current user and them is end-to-end encrypted by default, which is when every one of them has a crypto device
-            in use (not revoked, its identity keys uploaded, seen in the last chat_device_active_days, default 90; one Chat made
+            in use (not revoked, its identity keys uploaded, seen in the last chat@device-active-days, default 90; one Chat made
             by itself only once seen on a later day than it was made, or verified by its user). Nothing
             else of their devices: no IDs, counts, names or dates. A user an app's chat-target provider keeps from this one
             (get#RefusedUsers), or one that does not exist or is disabled, counts as one with no device. Refused, answered
@@ -538,9 +538,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="clean" noun="ChatToDevice" authenticate="anonymous-all">
         <description>The job clean_ChatToDevice_daily: deletes to-device messages waiting longer than
-            chat_to_device_retention_days (default 30) and one-time keys claimed over a day ago; and revokes the devices Chat
+            chat@to-device-retention-days (default 30) and one-time keys claimed over a day ago; and revokes the devices Chat
             made by itself (madeAutomatically) that their user never verified and that were not seen for
-            chat_device_auto_expire_days (default 30), each in its own transaction (revoke#AutomaticDevice) and logged. Each
+            chat@device-auto-expire-days (default 30), each in its own transaction (revoke#AutomaticDevice) and logged. Each
             part, and each device, that fails is logged and the rest still runs.</description>
         <out-parameters>
             <parameter name="messagesDeleted" type="Integer"/>

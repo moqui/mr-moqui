@@ -1033,7 +1033,7 @@ minutes, so a late commit is not missed; a room joined since is a `membership` c
 
 A change replaces the earlier change of the same thing (a user's kind and room; a room's message) with a new number, so
 each feed holds one row per thing that changed. An agent's chat user and system users get no user changes. Changes older
-than `chat_changes_keep_days` (30) are purged daily (`clean#ChatChanges`). A thread reply is a new message and is in no
+than `chat@changes-keep-days` (30) are purged daily (`clean#ChatChanges`). A thread reply is a new message and is in no
 feed; when a reply is deleted its `redaction` change has the reply's `eventSeq` and its `threadRootEventSeq`, and the
 root's `threadReplyCount` and last reply change with it: read the root again (or the room's threads). The server side,
 and why it is split this way, is in `ChatServices.xml` (`record#UserChange`, `record#RoomChange`) and `ChatEntities.xml`

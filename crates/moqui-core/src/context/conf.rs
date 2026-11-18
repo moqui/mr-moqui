@@ -339,6 +339,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "acme",
         // the offline clients' logs and uploads (plans/Mobile-Desktop.md MD5)
         "client-sync",
+        // chat: devices and keys, attachments, retention (docs/interfaces/Chat-Keys.md)
+        "chat",
         "ssh-server",
         "terminal",
         "git-server",

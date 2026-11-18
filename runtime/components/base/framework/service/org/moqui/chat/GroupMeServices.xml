@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     CbtGroupMe whose adapter, crates/moqui-channels/src/groupme, holds the push connection to GroupMe. The logic is
     GroupMe.js beside this file. ensure#Room, receive#Likes and check#Bridge are internal (the adapter and store#Bridge);
     get#MyGroupMe, connect#MyGroupMe and disconnect#MyGroupMe are the current user's own bridge (Settings, Chat), unless
-    the property chat_groupme_self_service is false. No Java counterpart. -->
+    the property chat@groupme-self-service is false. No Java counterpart. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="ensure" noun="Room" allow-remote="false">
@@ -109,7 +109,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="connect" noun="MyGroupMe">
         <description>Connect the current user's own GroupMe with their access token (dev.groupme.com, Access Token): makes
             their GroupMe bridge (one per user, owned by them), or replaces its token and connects it again; an empty token
-            keeps the one kept. Refused (reasonCode) when the property chat_groupme_self_service is false (selfServiceOff),
+            keeps the one kept. Refused (reasonCode) when the property chat@groupme-self-service is false (selfServiceOff),
             for a token that is not one (badToken), or with none (tokenRequired).</description>
         <in-parameters><parameter name="accessToken"/></in-parameters>
         <out-parameters>

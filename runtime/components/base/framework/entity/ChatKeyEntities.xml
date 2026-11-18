@@ -51,9 +51,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="madeAutomatically" type="text-indicator"><description>Y: made by Chat when it opened (plans/Comms-Messaging.md
             §6.5), not because the user used encryption. It counts toward the encryption default only once seen on a later day
             than it was made or verified by its user, and the daily cleanup revokes it when never verified and not seen for
-            chat_device_auto_expire_days.</description></field>
+            chat@device-auto-expire-days.</description></field>
         <field name="storeRevision" type="number-integer" default="1"><description>The revision the device's store key is
-            derived from (derive#ChatStoreKey: userId|deviceId|revision under chat_store_key_secret); a revoke bumps
+            derived from (derive#ChatStoreKey: userId|deviceId|revision under chat@store-key-secret); a revoke bumps
             it.</description></field>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="many" related="moqui.chat.ChatDeviceKey" short-alias="keys">

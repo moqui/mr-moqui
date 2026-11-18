@@ -11,7 +11,7 @@
 // - receiveLikes: the likes of one message as a state, turned into heart reactions and their removal through
 //   ingest#Event.
 // - getMine, connectMine, disconnectMine: the current user's own GroupMe bridge (Settings, Chat, GroupMe), unless the
-//   property chat_groupme_self_service is false. A user has at most one GroupMe bridge; the token is write-only.
+//   property chat@groupme-self-service is false. A user has at most one GroupMe bridge; the token is write-only.
 // - checkBridge: store#Bridge's checks of an administrator's GroupMe bridge.
 //
 // The adapter keeps a bridge's lastErrorText as "code: text" (tokenRefused, connectFailed, noToken, roomLimit,
@@ -53,9 +53,9 @@ function refuse(reasonCode, text) {
   return { reasonCode }
 }
 
-/** Whether users may connect their own GroupMe (the property chat_groupme_self_service, on unless false). */
+/** Whether users may connect their own GroupMe (the property chat@groupme-self-service, on unless false). */
 function selfService() {
-  return String(System.getProperty('chat_groupme_self_service') || '').trim().toLowerCase() !== 'false'
+  return String(ec.factory.getConfValue('chat@groupme-self-service') || '').trim().toLowerCase() !== 'false'
 }
 
 /** The GroupMe bridges whose owner is userId (by the row's plain ownerUserId), oldest first. */
@@ -254,7 +254,7 @@ function getMine() {
 /**
  * Connect the current user's own GroupMe (Settings, Chat, GroupMe): their access token makes their GroupMe bridge, or
  * replaces its token and connects it again. An empty token keeps the one kept (to connect again after a failure).
- * Refused when the property chat_groupme_self_service is false (selfServiceOff).
+ * Refused when the property chat@groupme-self-service is false (selfServiceOff).
  */
 function connectMine(p) {
   const me = ec.user.userId

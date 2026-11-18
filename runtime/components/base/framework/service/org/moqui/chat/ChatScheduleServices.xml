@@ -131,11 +131,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="send" noun="DueMessages" transaction="ignore" authenticate="anonymous-all">
         <description>The ServiceJob send_DueChatMessages_frequent, every minute: the waiting messages the server holds that
-            are due (the held ones never in their way), oldest first, at most limit a run, chat_schedule_user_per_run (20)
+            are due (the held ones never in their way), oldest first, at most limit a run, chat@schedule-user-per-run (20)
             of one sender, and none started after timeBudgetSeconds, each in a transaction of its own
             (deliver#ScheduledMessage): one that fails is logged and the rest go on. A held message (an encrypted room's) is
             its device's to send: one whose device was revoked fails (deviceGone), and one due more than
-            chat_held_overdue_days (7) ago fails (deviceAway: its device was not open since).</description>
+            chat@held-overdue-days (7) ago fails (deviceAway: its device was not open since).</description>
         <in-parameters>
             <parameter name="limit" type="Integer" default="200"/>
             <parameter name="timeBudgetSeconds" type="Integer" default="45"/>

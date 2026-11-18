@@ -390,7 +390,7 @@ along with this software (see the LICENSE.md file). If not, see
             (eventSeq), with a new changeSeq. changeJson is {cause, causeEventSeq, redacted, threadRootEventSeq}
             (record#RoomChange). get#RoomChanges (the Chat screen's roomChanges) reads it after a cursor; get#UserChanges
             answers each room's lastChangeSeq in its heads. Retention removes the changes of the events it deletes, and
-            clean#ChatChanges those older than chat_changes_keep_days.</description>
+            clean#ChatChanges those older than chat@changes-keep-days.</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="changeSeq" type="number-integer" is-pk="true"/>
         <field name="eventSeq" type="number-integer"><description>The message that changed</description></field>
@@ -424,7 +424,7 @@ along with this software (see the LICENSE.md file). If not, see
             get#UserChanges answers give each room's lastEventSeq and lastChangeSeq. A change replaces the user's earlier
             change of the same kind and room, with a new changeSeq, so the feed holds one row per thing that changed, not
             one per write. changeJson is the kind's detail (record#UserChange). Agents' chat users get no changes.
-            clean#ChatChanges removes changes older than chat_changes_keep_days.</description>
+            clean#ChatChanges removes changes older than chat@changes-keep-days.</description>
         <field name="userId" type="id" is-pk="true"/>
         <field name="changeSeq" type="number-integer" is-pk="true"/>
         <field name="changeKindEnumId" type="id"/>

@@ -584,7 +584,7 @@ fn safe_name(given: Option<&str>, content_type: &str) -> String {
 
 /// `store#BridgeMedia`: fetch the file at `url` of a message from bridge `chatBridgeId` (its adapter's
 /// [`fetch_media`](super::ChatBridgeAdapter::fetch_media), at most `maxBytes`) and keep it as a `ChatAttachment` of room
-/// `chatRoomId` with no uploader and no event yet, at `chat_attachment_root`/(room)/(attachment)/(name), in the caller's
+/// `chatRoomId` with no uploader and no event yet, at `chat@attachment-root`/(room)/(attachment)/(name), in the caller's
 /// transaction. Out: chatAttachmentId, fileName, contentType, fileSize; or `error` (and no chatAttachmentId) when the file
 /// cannot be fetched, which is not an error of the call, so the caller's transaction (the message's) goes on without it.
 fn store_bridge_media(
@@ -634,7 +634,7 @@ fn store_bridge_media(
     let mut attachment = facade.make_value("moqui.chat.ChatAttachment")?;
     attachment.set_sequenced_id_primary(facade)?;
     let id = text_of(&attachment, "chatAttachmentId").unwrap_or_default();
-    let root = moqui_lib::env::get_property("chat_attachment_root")
+    let root = Some(crate::context::conf_env::setting("chat@attachment-root"))
         .filter(|root| !root.trim().is_empty())
         .unwrap_or_else(|| "dbresource://chat".to_string());
     let location = format!("{}/{room}/{id}/{file_name}", root.trim_end_matches('/'));

@@ -167,7 +167,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="purge" noun="SpamRooms" allow-remote="false" authenticate="anonymous-all">
-        <description>Internal (clean#ChatRetention, daily): with the property chat_spam_purge_days above 0 (0, the default,
+        <description>Internal (clean#ChatRetention, daily): with the property chat@spam-purge-days above 0 (0, the default,
             keeps everything), the texts older than that in each phone room every current member has in Spam are deleted
             (clean#RoomRetention), each room on its own. purgeDays in place of the property (a one-off run). Out: roomCount,
             deletedCount, failedCount.</description>

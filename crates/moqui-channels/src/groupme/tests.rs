@@ -1300,12 +1300,12 @@ fn a_user_connects_their_own_groupme_and_an_administrator_sets_one_up() {
     let mine = ok("org.moqui.chat.GroupMeServices.get#MyGroupMe", &[]);
     assert_eq!(out_text(&mine, "statusText"), "Disconnected");
 
-    moqui_lib::env::set_property("chat_groupme_self_service", "false");
+    moqui_lib::env::set_property("moqui_conf__chat__groupme_self_service", "false");
     let off = call(
         "org.moqui.chat.GroupMeServices.connect#MyGroupMe",
         &[("accessToken", text(&bob_token))],
     );
-    moqui_lib::env::set_property("chat_groupme_self_service", "true");
+    moqui_lib::env::set_property("moqui_conf__chat__groupme_self_service", "true");
     assert_eq!(out_text(&off, "reasonCode"), "selfServiceOff");
     errors();
 

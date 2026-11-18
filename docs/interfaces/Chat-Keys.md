@@ -25,12 +25,12 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
   first time this browser needs one for the user. Chat asks for it when it opens (in idle time once its rooms show; not
   in a desktop app window, nor in a browser without WebAssembly or IndexedDB), so new chats can be encrypted by default
   (below). A device made so is marked (`automatic`, `ChatDevice.madeAutomatically`).
-- **At most 50 in use.** A user holds at most 50 devices seen in the last `chat_device_active_days` (`tooManyDevices`);
+- **At most 50 in use.** A user holds at most 50 devices seen in the last `chat@device-active-days` (`tooManyDevices`);
   long-unused ones do not hold a new one back. `find#ChatDevices` answers each device's `active` (seen in that time) and
   `automatic`.
 - **Unused automatic devices go.** The daily job `clean_ChatToDevice_daily` (`clean#ChatToDevice`) revokes each device
   Chat made by itself that its user never verified (no cross-signing signature over it) and that was not seen for
-  `chat_device_auto_expire_days` (30), as a revoke by its user does, each in its own transaction (`revoke#AutomaticDevice`)
+  `chat@device-auto-expire-days` (30), as a revoke by its user does, each in its own transaction (`revoke#AutomaticDevice`)
   and logged; one that fails is logged and the rest go on. A private window's device, made each time it opens Chat, goes
   this way.
   - The store is IndexedDB, named `moqui-crypto-<userId>-<deviceId>`.
@@ -68,12 +68,12 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
     and leads; calls still waiting are asked of it. A call not answered in 30 seconds is refused (`busy`).
   - Encrypted files are encrypted and decrypted in any tab: that needs the module, not the store.
 - **At rest.** The store is encrypted with its store key, a passphrase the server derives for the device and does not
-  store: HMAC-SHA-256 under the platform secret `chat_store_key_secret` of `userId|deviceId|revision`
+  store: HMAC-SHA-256 under the platform secret `chat@store-key-secret` of `userId|deviceId|revision`
   (`derive#ChatStoreKey`). It is given only to the device's own signed-in user (`/ChatKeys/storeKey`); a revoke bumps the
   revision (`ChatDevice.storeRevision`). A copy of the browser profile alone does not open the store; with a signed-in
   session it does. No table or export holds the key, so an administrator with entity data access in Tools does not get it.
   - What it does not protect against: anyone who can sign in as the user (or holds a stolen session) together with the
-    browser profile; whoever holds the server's `chat_store_key_secret`; and script running in a page of this origin
+    browser profile; whoever holds the server's `chat@store-key-secret`; and script running in a page of this origin
     while the user is signed in. It is a lock against a copied or stolen profile, not against the server.
 - **A store that does not open.** It is tried again (three times); a passing IndexedDB failure never deletes it. Only a
   definite one (a wrong key, a store of another device, data that does not decode) stops it, and the store is kept: the
@@ -205,13 +205,13 @@ tracking them.
     nothing matches; at most 10,000 sessions from `offset`.
   - `backupKeysDelete` takes `{version, roomId, sessionId}` and answers `{count, etag}`.
 - **Etag and room IDs.** `etag` is a string that changes with the version's keys. Room IDs are the Matrix room IDs the
-  browser names (`!<chatRoomId>:<chat_server_name>`), opaque to the server, at most 255 characters.
+  browser names (`!<chatRoomId>:<chat@server-name>`), opaque to the server, at most 255 characters.
 - **Bounds.** `session_data` up to 16 KB each, 1,000 sessions in one put, 100,000 held by a user (`tooMany`).
 
-**User IDs.** A Matrix user ID is `@<localpart>:<chat_server_name>`.
+**User IDs.** A Matrix user ID is `@<localpart>:<chat@server-name>`.
 - The localpart is the userId with Matrix's mapping of other character sets: an upper-case letter is `_` and the letter,
   `_` is `__`, and any other byte is `=xx`.
-- Set `chat_server_name` (default `localhost`) before the first device. A change makes every device new, and C6a needs
+- Set `chat@server-name` (default `localhost`) before the first device. A change makes every device new, and C6a needs
   it to be the domain.
 
 ## Encrypted rooms
@@ -228,7 +228,7 @@ encrypted direct room is a room of its own beside the plain direct room of the s
 - a private room is encrypted on the same rule; a public room never.
 
 A device in use is not revoked, has uploaded its identity keys and was seen (a key upload or a sync) in the last
-`chat_device_active_days` (90). One Chat made by itself (`automatic`) counts only once it was seen on a later day than it
+`chat@device-active-days` (90). One Chat made by itself (`automatic`) counts only once it was seen on a later day than it
 was made, or its user verified it (a cross-signing signature over it), so one private window does not make its user one
 with a device. `create#Room`'s own default stays plain, so XMPP's direct chats, a call to a person and
 agents are unchanged. `createDirect` with `encrypted` true is Start an encrypted chat: a plain direct room's menu and
@@ -375,7 +375,7 @@ Until it is set up, an encrypted room shows "Set up this device to read messages
 up, in its banner's place, and each message it cannot read says "Sent before this device was set up", with Set up (the
 `m.unverified` text stays). Set up opens `m-chat-device-setup` (Chat; My devices has it at its top):
 - **Recovery key**: Restore (`restoreBackup`); a wrong key is said plainly and nothing is reset.
-- **Another device**: the user's other devices in use (seen in `chat_device_active_days`), by name and when last seen,
+- **Another device**: the user's other devices in use (seen in `chat@device-active-days`), by name and when last seen,
   each with Verify (emoji or QR, in the card). The other device shows the request in Chat as well as on My devices, naming
   the new device and when it was added. Once it is done, this device asks its verified devices for the secrets it
   lacks (`requestMissingSecretsIfNeeded`): the cross-signing keys, which the SDK imports, and the backup key
@@ -434,11 +434,11 @@ goes: `closeRoom`), or for the attachments named; opened again, it is fetched an
 
 | Property | Default | What |
 | --- | --- | --- |
-| `chat_server_name` | `localhost` | The server name in device user IDs |
-| `chat_device_active_days` | `90` | A device seen in this many days counts for the encryption default (Encrypted by default) and toward the 50 a user may hold |
-| `chat_device_auto_expire_days` | `30` | A device Chat made by itself, never verified, is revoked by the daily job after this many days unseen |
-| `chat_to_device_retention_days` | `30` | How long a to-device message waits for a device that does not acknowledge it (the job `clean_ChatToDevice_daily`, which also deletes one-time keys claimed over a day ago) |
-| `chat_store_key_secret` | generated | The secret the store keys are derived under. A new value makes every browser's store unreadable (each starts over and reads older messages from the key backup) |
+| `chat@server-name` | `localhost` | The server name in device user IDs |
+| `chat@device-active-days` | `90` | A device seen in this many days counts for the encryption default (Encrypted by default) and toward the 50 a user may hold |
+| `chat@device-auto-expire-days` | `30` | A device Chat made by itself, never verified, is revoked by the daily job after this many days unseen |
+| `chat@to-device-retention-days` | `30` | How long a to-device message waits for a device that does not acknowledge it (the job `clean_ChatToDevice_daily`, which also deletes one-time keys claimed over a day ago) |
+| `chat@store-key-secret` | generated | The secret the store keys are derived under. A new value makes every browser's store unreadable (each starts over and reads older messages from the key backup) |
 
 **Content Security Policy.** WebAssembly needs `'wasm-unsafe-eval'` in a policy that sets `script-src`. The default
 policy sets none.

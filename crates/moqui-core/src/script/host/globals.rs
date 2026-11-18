@@ -898,14 +898,18 @@ fn moqui_version(_: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `ec.factory.getConfValue(selector)`: the running conf's attribute at `selector` (`webapp-list/webapp[webroot]@http-port`,
-/// plans/Conf-Paths.md §1), null when the conf has none or it holds a secret, which a script never gets. A selector that
-/// does not parse is an error.
+/// plans/Conf-Paths.md §1), or a process property of its environment name set since the boot
+/// ([`crate::context::conf_env::conf_value_now`]); null when the conf has none or it holds a secret, which a script
+/// never gets. A selector that does not parse is an error.
 fn get_conf_value(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let selector = call.text_or_empty(0);
     if let Err(err) = moqui_lib::node::path::AttrPath::parse(&selector) {
         return Err(HostError::message(format!("getConfValue({selector}): {err}")));
     }
-    let found = crate::context::ExecutionContext::with_current(|ec| ec.factory().conf_value(&selector)).flatten();
+    let found = crate::context::ExecutionContext::with_current(|ec| {
+        crate::context::conf_env::conf_value_now(ec.factory(), &selector)
+    })
+    .flatten();
     Ok(found.filter(|found| !found.secret).map(|found| found.value).into())
 }
 
@@ -917,7 +921,10 @@ fn is_conf_value_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
     if let Err(err) = moqui_lib::node::path::AttrPath::parse(&selector) {
         return Err(HostError::message(format!("isConfValueSet({selector}): {err}")));
     }
-    let found = crate::context::ExecutionContext::with_current(|ec| ec.factory().conf_value(&selector)).flatten();
+    let found = crate::context::ExecutionContext::with_current(|ec| {
+        crate::context::conf_env::conf_value_now(ec.factory(), &selector)
+    })
+    .flatten();
     Ok(found
         .is_some_and(|found| {
             let value = found.value.trim();

@@ -22,7 +22,7 @@
 //! - `fetch#LinkPage` reads the head of one page and answers its title, description and site name: with the SSRF guard
 //!   of [`moqui_lib::http::RestClient`] (no internal address, also after a redirect), 5 seconds, the first 512 KB, 3
 //!   redirects to any host, `text/html` only. Text only: no image is read, so a reader's address never reaches a third
-//!   party. The property `chat_link_preview_service` names a service to ask in place of the network (for tests): it gets
+//!   party. The property `chat@link-preview-service` names a service to ask in place of the network (for tests): it gets
 //!   `url` and answers `status`, `contentType` and `body`.
 
 use std::collections::BTreeMap;
@@ -376,7 +376,9 @@ fn fetch_link_page(
         out.insert("error".to_string(), Value::string("not a link to preview"));
         return Ok(out);
     };
-    let page = match moqui_lib::env::get_property("chat_link_preview_service").filter(|name| !name.trim().is_empty()) {
+    let page = match Some(crate::context::conf_env::setting("chat@link-preview-service"))
+        .filter(|name| !name.trim().is_empty())
+    {
         Some(service) => ask_service(service.trim(), &url),
         None => fetch(&url),
     };
@@ -414,7 +416,7 @@ fn redacted(url: &str) -> String {
     crate::outbound::redacted(url)
 }
 
-/// The page from the service the property `chat_link_preview_service` names, in place of the network.
+/// The page from the service the property `chat@link-preview-service` names, in place of the network.
 fn ask_service(service: &str, url: &str) -> Result<Page, String> {
     let parameters = BTreeMap::from([("url".to_string(), Value::string(url))]);
     let out = crate::service::sync(service, &parameters).map_err(|err| err.to_string())?;

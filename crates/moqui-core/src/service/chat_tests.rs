@@ -339,14 +339,14 @@ impl Tape {
     }
 }
 
-/// Tests that store chat files set the property chat_attachment_root, which the whole process shares, to a folder of
+/// Tests that store chat files set the property chat@attachment-root, which the whole process shares, to a folder of
 /// their own: one at a time. The property is cleared before the lock goes.
 fn attachment_root(dir: &std::path::Path) -> (std::sync::MutexGuard<'static, ()>, String) {
     static ROOT: Mutex<()> = Mutex::new(());
     let guard = ROOT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     std::fs::create_dir_all(dir.join("chat")).unwrap();
     let root = format!("file:{}", dir.join("chat").display());
-    moqui_lib::env::set_property("chat_attachment_root", &root);
+    moqui_lib::env::set_property("moqui_conf__chat__attachment_root", &root);
     (guard, root)
 }
 
@@ -1633,7 +1633,7 @@ fn the_search_document_and_the_search_by_membership() {
 
 /// Files: uploaded to a room, sent with a message, read by those who may read the room, removed with the message; a
 /// file never sent goes after a day. The in-memory database has no DbResource store, so the files go under a file:
-/// root here (`chat_attachment_root`); `Chat.spec.js` stores them as DbResource files.
+/// root here (`chat@attachment-root`); `Chat.spec.js` stores them as DbResource files.
 #[test]
 fn files_go_with_their_message_and_go_away_with_it() {
     let (ctx, facade, dir) = setup("files", crate::service::ServicePools::idle());
@@ -1661,20 +1661,20 @@ fn files_go_with_their_message_and_go_away_with_it() {
     assert_eq!(bytes, b"the plan");
     // a file over the size limit, or over the user's bytes of the day, is refused (SEC-COM-03); the properties are the
     // process's, read under this test's attachment root lock
-    moqui_lib::env::set_property("chat_attachment_max_bytes", "4");
+    moqui_lib::env::set_property("moqui_conf__chat__attachment_max_bytes", "4");
     refused(
         "upload#Attachment",
         &[("chatRoomId", text(&chat)), ("file", upload("big.txt", b"too large"))],
         "larger than",
     );
-    moqui_lib::env::clear_property("chat_attachment_max_bytes");
-    moqui_lib::env::set_property("chat_attachment_daily_bytes", "12");
+    moqui_lib::env::clear_property("moqui_conf__chat__attachment_max_bytes");
+    moqui_lib::env::set_property("moqui_conf__chat__attachment_daily_bytes", "12");
     refused(
         "upload#Attachment",
         &[("chatRoomId", text(&chat)), ("file", upload("more.txt", b"8 more!!"))],
         "Too many files today",
     );
-    moqui_lib::env::clear_property("chat_attachment_daily_bytes");
+    moqui_lib::env::clear_property("moqui_conf__chat__attachment_daily_bytes");
 
     // another member may not send it; the uploader sends it alone, with no text
     login("flb");
@@ -1765,7 +1765,7 @@ fn files_go_with_their_message_and_go_away_with_it() {
             .is_none());
     }
     ctx.set_effective_time(None);
-    moqui_lib::env::clear_property("chat_attachment_root");
+    moqui_lib::env::clear_property("moqui_conf__chat__attachment_root");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1849,7 +1849,7 @@ fn a_file_put_over_xmpp_goes_with_the_last_message_that_has_it() {
     assert!(!dir.join("xmpp/7/photo.png").exists(), "the file is gone with the last message");
     assert!(uploads().is_empty(), "its upload URL is gone");
     moqui_lib::env::clear_property("xmpp_upload_root");
-    moqui_lib::env::clear_property("chat_attachment_root");
+    moqui_lib::env::clear_property("moqui_conf__chat__attachment_root");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1937,9 +1937,12 @@ fn an_agent_member_gets_each_message_through_its_entry_point() {
         ("agentRef", text("test.ChatStub.receive#AgentMessage")),
     ];
     refused("set#MemberRole", &named, "is not an agent's entry service");
-    moqui_lib::env::set_property("chat_agent_entry_services", "test.ChatStub.receive#AgentMessage");
+    moqui_lib::env::set_property(
+        "moqui_conf__chat__agent_entry_services",
+        "test.ChatStub.receive#AgentMessage",
+    );
     ok("set#MemberRole", &named);
-    moqui_lib::env::clear_property("chat_agent_entry_services");
+    moqui_lib::env::clear_property("moqui_conf__chat__agent_entry_services");
     send(&chat, "<p>what is due today?</p>");
     let in_transaction = crate::transaction::thread_in_transaction();
     let ran = ctx.factory().service_pools().run_pending();
@@ -2257,7 +2260,7 @@ fn the_files_and_the_threads_of_a_room_are_listed() {
     assert_eq!(number(&root, "threadReplyCount"), 1);
     assert_eq!(number(&root, "threadLastEventSeq"), early);
     ctx.set_effective_time(None);
-    moqui_lib::env::clear_property("chat_attachment_root");
+    moqui_lib::env::clear_property("moqui_conf__chat__attachment_root");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2372,7 +2375,7 @@ fn a_forward_is_made_from_a_message_the_sender_may_read() {
         ],
         "not found",
     );
-    moqui_lib::env::clear_property("chat_attachment_root");
+    moqui_lib::env::clear_property("moqui_conf__chat__attachment_root");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2587,7 +2590,7 @@ fn the_links_of_a_message_get_text_previews_after_the_commit() {
     let _entered = ctx.enter();
     install(&dir);
     users(&facade, &["lpa", "lpb"]);
-    moqui_lib::env::set_property("chat_link_preview_service", "test.ChatStub.get#LinkPage");
+    moqui_lib::env::set_property("moqui_conf__chat__link_preview_service", "test.ChatStub.get#LinkPage");
     let tape = Tape::start(&["lpa", "lpb"]);
     login("lpa");
     let chat = room("private", "Links", &["lpb"]);
@@ -2658,7 +2661,7 @@ fn the_links_of_a_message_get_text_previews_after_the_commit() {
     ctx.factory().service_pools().run_pending();
     assert!(maps(one_event(&chat, off).get("linkPreviews")).is_empty());
     assert_eq!(maps(one_event(&chat, on).get("linkPreviews")).len(), 1);
-    moqui_lib::env::clear_property("chat_link_preview_service");
+    moqui_lib::env::clear_property("moqui_conf__chat__link_preview_service");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

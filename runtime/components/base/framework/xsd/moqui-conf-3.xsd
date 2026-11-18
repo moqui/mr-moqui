@@ -22,6 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="instance"/>
                 <xs:element minOccurs="0" ref="acme"/>
                 <xs:element minOccurs="0" ref="client-sync"/>
+                <xs:element minOccurs="0" ref="chat"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2073,6 +2074,30 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="upload-min-chunk-bytes" type="non-neg-int-expandable" default="262144"/>
             <xs:attribute name="upload-max-count" type="non-neg-int-expandable" default="20"/>
             <xs:attribute name="upload-max-mb" type="non-neg-int-expandable" default="100"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="chat">
+        <xs:annotation><xs:documentation>Chat: its devices and keys, attachments, retention, previews and the agent and
+            GroupMe settings (MoquiDefaultConf.xml says each).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="server-name" type="xs:string" default="localhost"/>
+            <xs:attribute name="store-key-secret" type="xs:string"/>
+            <xs:attribute name="to-device-retention-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="device-active-days" type="non-neg-int-expandable" default="90"/>
+            <xs:attribute name="device-auto-expire-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="spam-purge-days" type="non-neg-int-expandable" default="0"/>
+            <xs:attribute name="attachment-root" type="xs:string" default="dbresource://chat"/>
+            <xs:attribute name="attachment-max-bytes" type="non-neg-int-expandable" default="26214400"/>
+            <xs:attribute name="attachment-daily-bytes" type="non-neg-int-expandable" default="1073741824"/>
+            <xs:attribute name="changes-keep-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="edit-window-minutes" type="non-neg-int-expandable" default="1440"/>
+            <xs:attribute name="link-previews" type="boolean-expandable" default="true"/>
+            <xs:attribute name="link-preview-service" type="xs:string"/>
+            <xs:attribute name="agent-entry-services" type="xs:string" default="org.moqui.agent.AgentServices.handle#ChatMessage"/>
+            <xs:attribute name="held-overdue-days" type="non-neg-int-expandable" default="7"/>
+            <xs:attribute name="schedule-user-per-run" type="non-neg-int-expandable" default="20"/>
+            <xs:attribute name="groupme-node-max" type="non-neg-int-expandable" default="50"/>
+            <xs:attribute name="groupme-self-service" type="boolean-expandable" default="true"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

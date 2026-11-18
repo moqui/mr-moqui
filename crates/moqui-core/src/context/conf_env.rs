@@ -286,6 +286,22 @@ pub fn setting_on(factory: &super::ExecutionContextFactory, selector: &str) -> S
         .unwrap_or_default()
 }
 
+/// The attribute of `factory`'s conf at `selector` as code reads it now: a process property of its environment name
+/// first (set after the boot, as a test or a spec does; at the boot one is applied into the conf), else the running
+/// conf's; `None` when neither has it. What `ec.factory.getConfValue` answers.
+#[must_use]
+pub fn conf_value_now(factory: &super::ExecutionContextFactory, selector: &str) -> Option<ConfValue> {
+    let path = AttrPath::parse(selector).ok()?;
+    let given = path.env_name().and_then(|name| env::get_property(&name));
+    match given {
+        Some(value) => Some(ConfValue {
+            value,
+            secret: attribute_secret(&path),
+        }),
+        None => factory.conf_value(selector),
+    }
+}
+
 /// The attribute of the merged `conf` at `selector`, trimmed; empty when it has none: for code that reads the conf
 /// before the factory is built (a `before_init` hook such as the port check).
 #[must_use]

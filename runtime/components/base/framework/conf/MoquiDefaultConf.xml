@@ -34,6 +34,33 @@
     <client-sync mail-change-keep-days="30" request-keep-days="30" upload-expire-hours="24" upload-min-chunk-bytes="262144"
             upload-max-count="20" upload-max-mb="100"/>
 
+    <!-- Chat (docs/interfaces/Chat-Keys.md, plans/Comms-Messaging.md). server-name is the server name in the Matrix user IDs
+        of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device new
+        (the Matrix client API, C6a, needs it to be the domain). to-device-retention-days: how long a to-device message
+        waits for a device that does not acknowledge it. store-key-secret: the platform secret each device's browser-store
+        key is derived under (HMAC of userId|deviceId|revision), so no table holds the keys; generated into runtime/.env
+        (moqui_conf__chat__store_key_secret). A new value makes every browser's store unreadable (each makes a new device;
+        older messages then need the key backup). device-active-days: a device seen in this many days counts as one in use,
+        so a new direct or private room of users who each have one is end-to-end encrypted by default (§6.5).
+        device-auto-expire-days: a device Chat made by itself, never verified, is revoked after this many days unseen.
+        spam-purge-days (§18.3 phase 11; docs/interfaces/SMS.md "Blocked numbers and spam"): above 0, the daily
+        clean#ChatRetention deletes the texts older than this many days in each phone room every current member has in
+        Spam, each room on its own; 0 keeps everything.
+        attachment-root: where a room's files are kept; attachment-max-bytes, the largest file, and attachment-daily-bytes,
+        what one user may send in a day. changes-keep-days: how long a user's change log is kept for a client to read.
+        edit-window-minutes: how long after sending a message may be edited. link-previews false makes none;
+        link-preview-service: a service that fetches a link's page in place of the server. agent-entry-services: the
+        services a message to an agent goes to, comma separated. held-overdue-days: a held message due longer is failed
+        (deviceAway); schedule-user-per-run: the most messages of one sender a run of the schedule job sends.
+        groupme-node-max: the GroupMe push connections one node holds; groupme-self-service false keeps users from
+        connecting their own GroupMe. -->
+    <chat server-name="localhost" store-key-secret="CHANGEME" to-device-retention-days="30" device-active-days="90"
+            device-auto-expire-days="30" spam-purge-days="0" attachment-root="dbresource://chat"
+            attachment-max-bytes="26214400" attachment-daily-bytes="1073741824" changes-keep-days="30"
+            edit-window-minutes="1440" link-previews="true" link-preview-service=""
+            agent-entry-services="org.moqui.agent.AgentServices.handle#ChatMessage" held-overdue-days="7"
+            schedule-user-per-run="20" groupme-node-max="50" groupme-self-service="true"/>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
     <!--
@@ -49,25 +76,6 @@
     <default-property name="load_runner_max_users" value="1000"/>
 
 
-    <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
-        user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device
-        new (the Matrix client API, C6a, needs it to be the domain). chat_to_device_retention_days: how long a to-device
-        message waits for a device that does not acknowledge it. chat_store_key_secret: the platform secret each device's
-        browser-store key is derived under (HMAC of userId|deviceId|revision), so no table holds the keys; generated when
-        unset. A new value makes every browser's store unreadable (each makes a new device; older messages then need the
-        key backup). chat_device_active_days: a device seen in this many days counts as one in use, so a new direct or
-        private room of users who each have one is end-to-end encrypted by default (plans/Comms-Messaging.md §6.5).
-        chat_device_auto_expire_days: a device Chat made by itself, never verified, is revoked after this many days unseen. -->
-    <default-property name="chat_server_name" value="localhost"/>
-    <default-property name="chat_to_device_retention_days" value="30"/>
-    <default-property name="chat_store_key_secret" value="CHANGEME" is-secret="true"/>
-    <default-property name="chat_device_active_days" value="90"/>
-    <default-property name="chat_device_auto_expire_days" value="30"/>
-
-    <!-- The spam purge (plans/Comms-Messaging.md §18.3 phase 11; docs/interfaces/SMS.md "Blocked numbers and spam"): above 0,
-        the daily clean#ChatRetention deletes the texts older than this many days in each phone room every current member
-        has in Spam (SmsSpamServices purge#SpamRooms), each room on its own; 0 keeps everything. -->
-    <default-property name="chat_spam_purge_days" value="0"/>
 
     <!-- Call media (the rtc feature; plans/archive/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
