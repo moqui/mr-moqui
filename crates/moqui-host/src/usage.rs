@@ -42,6 +42,7 @@ Check
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
   embedded         info | list | diff | extract | checksum  The runtime and programs built into this binary
+  conf             env [--names] [text]                     Each conf attribute with the environment name that sets it
 
 Test
   test             [component ...] [options]                Run component JavaScript specs
@@ -60,7 +61,8 @@ Server options
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
                      Also: conf=FILE, -conf=FILE, --conf=FILE. Same as MOQUI_CONF for this run.
   --no-run-es        Do not start OpenSearch (opensearch_run=false). Also: no-run-es, -no-run-es.
-  -D name=value      Set a conf property for this run. Repeatable. Use underscore names
+  -D name=value      Set a conf property for this run, or a conf attribute by its environment name
+                     (moqui_conf__ssh_server__port; moqui help conf). Repeatable. Use underscore names
                      (entity_ds_db_conf), not dotted ones.
 
   moqui --port 8081 --conf conf/MoquiProductionConf.xml
@@ -704,6 +706,22 @@ start. Lines naming other files are skipped, so the file also serves sha256sum -
   moqui embedded unpack all
 ";
 
+const CONF: &str = "\
+moqui conf env [--names] [text]
+    Each attribute of the conf this runtime merges (MoquiDefaultConf.xml, the components' MoquiConf.xml, the
+    runtime conf), as NAME=value  # selector, and for one an environment name set, which one and from where.
+    NAME is the environment name that sets the attribute over every conf file: moqui_conf__, then each element
+    from the root, a keyed element's key value next (in capitals), and the attribute last, with __ between them
+    (plans/Conf-Paths.md). Case and punctuation within a segment do not matter. Precedence: -D, then the
+    environment, then runtime/.env. A secret's value is masked.
+    --names  The names only, one per line
+    text     Only the attributes whose name or selector holds the text
+
+  moqui conf env ssh_server
+  moqui conf env --names
+  moqui_conf__ssh_server__port=2222 moqui
+";
+
 const VERSION: &str = "\
 moqui version
     The version, the package this binary was built as (lite, enterprise, maximal, or custom), and every
@@ -736,6 +754,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "autodoc" => Some(AUTODOC),
         "lsp" => Some(LSP),
         "embedded" => Some(EMBEDDED),
+        "conf" => Some(CONF),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "test-load" => Some(TEST_LOAD),
@@ -998,6 +1017,7 @@ pub fn command_usage(command: &str) -> Error {
         }
         "help" => "moqui help [command]",
         "version" => "moqui version",
+        "conf" => "moqui conf env [--names] [text]",
         "embedded" => {
             "moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum [--env] [<part>...] \
              | unpack [<program>...]"

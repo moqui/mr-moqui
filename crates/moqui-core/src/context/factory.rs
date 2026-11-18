@@ -304,8 +304,16 @@ impl ExecutionContextFactory {
                 framework_dir.display()
             )));
         }
+        // runtime/.env before the first merge, so its conf names (plans/Conf-Paths.md §3) are in every merge, component
+        // discovery's too; MOQUI_CONF was chosen without it
+        let env_path = runtime_dir.join(".env");
+        let purpose_from_environment = !env::get_prop_or_env("instance_purpose").is_empty();
+        ensure_env_readable(&env_path)?;
+        if env_path.is_file() {
+            env::load_dotenv_file(&env_path)?;
+        }
         let phase = std::time::Instant::now();
-        let conf_node = conf::load_merged_conf(&framework_dir, &runtime_dir)?;
+        let (conf_node, overrides) = conf::load_merged_conf_with(&framework_dir, &runtime_dir)?;
         tracing::info!("Merged configuration in {}ms", phase.elapsed().as_millis());
         let phase = std::time::Instant::now();
         let framework_component = options
@@ -325,8 +333,10 @@ impl ExecutionContextFactory {
             phase.elapsed().as_millis()
         );
         let component_dirs: Vec<_> = components.iter().map(|info| info.location.clone()).collect();
-        let conf_node = conf::merge_component_confs(&framework_dir, &runtime_dir, &component_dirs, options.test_confs)?
-            .unwrap_or(conf_node);
+        let (conf_node, overrides) =
+            conf::merge_component_confs_with(&framework_dir, &runtime_dir, &component_dirs, options.test_confs)?
+                .unwrap_or((conf_node, overrides));
+        super::conf_env::log_overrides(&overrides);
         let artifacts_only = options.artifacts_only;
         let native = crate::native::NativeRegistry::discover(&components, &conf_node, artifacts_only)?;
         let (property_names, mut set_by_boot) = if artifacts_only {
@@ -336,7 +346,8 @@ impl ExecutionContextFactory {
                 .collect();
             (names, PropertyRollback::default())
         } else {
-            let applied = apply_default_properties(&conf_node, &runtime_dir.join(".env"))?;
+            super::conf_env::generate_secrets(&conf_node, &overrides, &env_path)?;
+            let applied = apply_default_properties(&conf_node, &env_path, purpose_from_environment)?;
             log_instance_purpose(applied.2, &discovered_purpose);
             (applied.0, applied.1)
         };
@@ -885,6 +896,39 @@ impl ExecutionContextFactory {
             .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
+    }
+
+    /// The attribute of the running conf at `selector` (`webapp-list/webapp[webroot]@http-port`), names and keys compared
+    /// as environment names compare them (plans/Conf-Paths.md §1), with whether it holds a secret; `None` when the conf
+    /// has no such attribute or `selector` is not one. A live override of it (Monitor › Settings) comes first while it
+    /// lasts. The caller decides what a secret shows: a script never gets one (`ec.factory.getConfValue`).
+    pub fn conf_value(&self, selector: &str) -> Option<super::conf_env::ConfValue> {
+        let path = moqui_lib::node::path::AttrPath::parse(selector).ok()?;
+        if self.conf_overlaid.load(std::sync::atomic::Ordering::Acquire) {
+            if let Some(value) = read(&self.conf_overlay).get(&path.selector()) {
+                return Some(super::conf_env::ConfValue {
+                    value: value.clone(),
+                    secret: super::conf_env::attribute_secret(&path),
+                });
+            }
+        }
+        self.conf
+            .load()
+            .values()
+            .get(&super::conf_env::compare_key(&path))
+            .cloned()
+    }
+
+    /// Set the attribute at `selector` in the running conf over the conf files, or with `value` `None` put back what the
+    /// files and the environment give ([`super::conf_reload::set_value`]): kept in `runtime/.env` with `persist`, else
+    /// as a process property until the process ends. Answers what that environment name held before.
+    ///
+    /// # Errors
+    ///
+    /// When `selector` names no attribute with an environment name, `.env` cannot be written, or the conf does not
+    /// merge.
+    pub fn set_conf_value(&self, selector: &str, value: Option<&str>, persist: bool) -> Result<Option<String>, Error> {
+        super::conf_reload::set_value(self, selector, value, persist)
     }
 
     /// Replace the live overrides of conf settings, by `path@name`.
@@ -1702,6 +1746,8 @@ fn canonicalize_dir(path: &Path) -> Result<PathBuf, Error> {
 pub(crate) struct ConfState {
     text: Arc<str>,
     cache: std::sync::OnceLock<ConfCache>,
+    /// Every attribute by its path, for a read by selector ([`ExecutionContextFactory::conf_value`]), made on first use.
+    values: std::sync::OnceLock<std::collections::HashMap<String, super::conf_env::ConfValue>>,
     generation: u64,
 }
 
@@ -1710,12 +1756,18 @@ impl ConfState {
         Self {
             text: Arc::from(text),
             cache: std::sync::OnceLock::new(),
+            values: std::sync::OnceLock::new(),
             generation,
         }
     }
 
     fn cache(&self) -> &ConfCache {
         self.cache.get_or_init(|| ConfCache::parse(&self.text))
+    }
+
+    fn values(&self) -> &std::collections::HashMap<String, super::conf_env::ConfValue> {
+        self.values
+            .get_or_init(|| super::conf_env::attribute_values(&self.text))
     }
 }
 
@@ -1788,22 +1840,20 @@ fn log_instance_purpose(source: PurposeSource, discovered: &str) {
     }
 }
 
+/// Set each `default-property` of the merged conf as a process property unless one is set already. `runtime/.env` is
+/// loaded before the merge; `purpose_from_environment` is whether `instance_purpose` was set before it was.
 fn apply_default_properties(
     conf_node: &MNode,
     env_path: &Path,
+    purpose_from_environment: bool,
 ) -> Result<(Vec<String>, PropertyRollback, PurposeSource), Error> {
-    ensure_env_readable(env_path)?;
-    let mut purpose_source = if env::get_prop_or_env("instance_purpose").is_empty() {
-        PurposeSource::Conf
-    } else {
+    let purpose_source = if purpose_from_environment {
         PurposeSource::Environment
+    } else if !env::get_prop_or_env("instance_purpose").is_empty() {
+        PurposeSource::DotEnv
+    } else {
+        PurposeSource::Conf
     };
-    if env_path.is_file() {
-        env::load_dotenv_file(env_path)?;
-        if matches!(purpose_source, PurposeSource::Conf) && !env::get_prop_or_env("instance_purpose").is_empty() {
-            purpose_source = PurposeSource::DotEnv;
-        }
-    }
     let mut names = Vec::new();
     let mut set_by_boot = PropertyRollback::default();
     let mut generated = Vec::new();

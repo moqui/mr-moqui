@@ -989,3 +989,56 @@ throw new Error("the file fails")
         "put back by the run's finish"
     );
 }
+
+#[test]
+fn set_conf_and_with_conf_set_the_running_conf_and_are_put_back_when_the_spec_ends() {
+    let result = run(r#"
+const read = (selector) => ec.factory.getConfValue(selector)
+spec({
+    cleanupSpec() { if (read("ssh-server@public-host") !== "held.example") throw new Error("held through the spec") },
+})
+feature("setConf holds for the rest of the spec", {
+    when() { setConf("ssh-server@public-host", "held.example"); return {} },
+    then() { read("ssh-server@public-host") == "held.example" },
+})
+feature("withConf holds only in its function", {
+    when() {
+        const before = read("ssh-server@sftp-max-file")
+        const inside = withConf("ssh-server@sftp-max-file", "1234", () => read("ssh-server@sftp-max-file"))
+        return {before, inside, after: read("ssh-server@sftp-max-file")}
+    },
+    then({before, inside, after}) {
+        inside == "1234"
+        after == before
+    },
+})
+feature("a secret attribute is null to a script, and a malformed selector throws", {
+    when() {
+        let thrown = null
+        try { read("ssh-server") } catch (e) { thrown = String(e) }
+        return {secret: read("entity-facade@crypt-pass"), thrown}
+    },
+    then({secret, thrown}) {
+        secret == null
+        thrown.includes("getConfValue")
+    },
+})
+"#);
+    assert_eq!(
+        outcomes(&result).iter().filter(|(_, k)| *k == "passed").count(),
+        3,
+        "{:?} {:?}",
+        outcomes(&result),
+        result
+            .cases
+            .iter()
+            .map(|case| format!("{:?}", case.outcome))
+            .collect::<Vec<_>>()
+    );
+    assert!(result.setup_failure.is_none() && result.cleanup_failure.is_none());
+    assert_eq!(
+        moqui_lib::env::get_property("moqui_conf__ssh_server__public_host"),
+        None,
+        "put back after cleanupSpec"
+    );
+}

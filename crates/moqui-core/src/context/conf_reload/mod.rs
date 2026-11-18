@@ -26,12 +26,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use moqui_lib::env;
+use moqui_lib::node::path::AttrPath;
 use moqui_lib::node::MNode;
 use moqui_lib::sync::lock;
 use serde::Serialize;
 
-use super::{conf, ComponentInfo, Error, ExecutionContextFactory};
 use super::conf_schema::{self as catalog, Class, Group};
+use super::{conf, ComponentInfo, Error, ExecutionContextFactory};
 use diff::{Kind, UnitChange};
 
 /// What became of one change.
@@ -101,6 +102,10 @@ struct Pending(Mutex<Vec<ConfChange>>);
 #[derive(Default)]
 struct Applying(Mutex<()>);
 
+/// What each attribute [`set_value`] set held in the running conf before its first set, by its path's compare key.
+#[derive(Default)]
+struct Originals(Mutex<std::collections::HashMap<String, Option<String>>>);
+
 /// Run `hook` after a conf reload that changed a unit of `group`.
 pub fn on_apply(
     factory: &ExecutionContextFactory,
@@ -108,6 +113,83 @@ pub fn on_apply(
     hook: impl Fn(&ExecutionContextFactory) + Send + Sync + 'static,
 ) {
     lock(&factory.extension(|_| Hooks::default()).0).push((group, Arc::new(hook)));
+}
+
+/// Set the attribute at `selector` in the running conf, from now on and over the conf files, as an environment name
+/// sets one (plans/Conf-Paths.md §3); `value` `None` puts back what the files and the environment give now. With
+/// `persist` the value is kept in `runtime/.env` under the attribute's environment name, for a server that writes its
+/// own settings (edge pairing, the DKIM key made on first use); without, a process property of that name holds it until
+/// the process ends (a spec's `setConf`). Readers of the conf see it at once; one that read it at start keeps what it
+/// read. Answers the value that name held before in `.env` or as a process property, `None` when it held none.
+///
+/// # Errors
+///
+/// When `selector` does not name an attribute that has an environment name, the running conf does not parse, `.env`
+/// cannot be written, or the conf files do not merge.
+pub fn set_value(
+    factory: &ExecutionContextFactory,
+    selector: &str,
+    value: Option<&str>,
+    persist: bool,
+) -> Result<Option<String>, Error> {
+    let applying = factory.extension(|_| Applying::default());
+    let _applying = lock(&applying.0);
+    let path = AttrPath::parse(selector).map_err(|err| Error::new(format!("{selector}: {err}")))?;
+    let running = MNode::parse_text("running", &factory.conf_text())?;
+    let target = moqui_lib::node::path::resolve(&running, &path, &catalog::keying, true)
+        .map_err(|err| Error::new(format!("{selector}: {err}")))?;
+    let Some(name) = target.path.env_name() else {
+        return Err(Error::new(format!(
+            "{selector}: a key with no letter or digit has no environment name"
+        )));
+    };
+    let env_path = factory.runtime_dir().join(".env");
+    let before = if persist {
+        env::dotenv_entries()
+            .into_iter()
+            .find(|(held, _)| *held == name)
+            .map(|(_, value)| value)
+    } else {
+        env::get_property(&name)
+    };
+    match (value, persist) {
+        (Some(value), true) => env::update_dotenv_file(&env_path, &[(name.clone(), value.to_string())], &[])?,
+        (None, true) => env::update_dotenv_file(&env_path, &[], &[name.as_str()])?,
+        (Some(value), false) => env::set_property(&name, value),
+        (None, false) => env::clear_property(&name),
+    }
+    // the value the running conf had before the first set of this attribute since boot, for a put back with no conf
+    // files to merge (a factory of a unit test)
+    let originals = factory.extension(|_| Originals::default());
+    let original = {
+        let key = crate::context::conf_env::compare_key(&target.path);
+        let mut held = lock(&originals.0);
+        held.entry(key)
+            .or_insert_with(|| target.node.attribute(&target.attribute))
+            .clone()
+    };
+    let live = match value {
+        Some(value) => Some(value.to_string()),
+        None => match merged_from_files(factory, &factory.components()) {
+            Ok(files) => moqui_lib::node::path::resolve(&files, &target.path, &catalog::keying, false)
+                .ok()
+                .and_then(|found| found.node.attribute(&found.attribute)),
+            Err(error) => {
+                tracing::warn!(
+                    "{selector}: the conf files did not merge ({error}); putting back the value before it was set"
+                );
+                original
+            }
+        },
+    };
+    match live {
+        Some(live) => target.node.set_attribute(target.attribute.clone(), live),
+        None => {
+            target.node.remove_attribute(&target.attribute);
+        }
+    }
+    factory.replace_conf(running.write_string());
+    Ok(before)
 }
 
 /// The changes the last conf reload left waiting for a restart; empty before any reload.

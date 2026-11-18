@@ -58,6 +58,7 @@ pub mod chromium;
 pub use moqui_drivers as db;
 #[cfg(feature = "git")]
 mod ci_run;
+mod conf_cmd;
 mod detach;
 mod devtools_cmd;
 #[cfg(feature = "tui")]
@@ -765,6 +766,10 @@ where
         }
         [command, rest @ ..] if command == "embedded" => {
             embedded_files::dispatch(rest)?;
+            Ok(None)
+        }
+        [command, rest @ ..] if command == "conf" => {
+            conf_cmd::dispatch(rest)?;
             Ok(None)
         }
         [command, rest @ ..] if command == "check" => {

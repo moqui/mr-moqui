@@ -332,6 +332,26 @@ or SIGHUP, and the file watcher on a dev instance), and lists the rest as waitin
 component is the exception: `example_disabled=true` leaves it out. The demo dev component is off until
 `demo_disabled=false` or a conf names it ([Public demo server](#public-demo-server)).
 
+### Settings from the environment
+
+Any attribute of the merged conf can be set from the environment, over every conf file, by a name built from its path
+in the XML ([Conf-Paths](../plans/Conf-Paths.md), which is replacing the properties below):
+
+```sh
+moqui_conf__ssh_server__port=2222                              # <ssh-server port="2222"/>
+moqui_conf__webapp_list__webapp__WEBROOT__http_port=8091       # <webapp-list><webapp name="webroot" http-port="8091">
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
+```
+
+The name is `moqui_conf__`, then each element from the root with `__` between them, a keyed element's key value after
+it (in capitals by convention, so it stands out), and the attribute last. Case does not matter, nor punctuation within
+a segment (`http_port`, `HTTP_PORT` and `http-port` are one name). Precedence is the same as for a property: `-D`, then
+the environment, then `runtime/.env`; an empty value is not applied. A name for an element or attribute the conf does
+not have adds it, with a warning when its element is in the files (most often a misspelled name).
+`moqui conf env [text]` lists every attribute with its name and value (secrets masked), and System › Conf shows each
+attribute's name and what set it. A secret attribute left at `CHANGEME` is generated at startup and written to
+`runtime/.env` under its name.
+
 ### Properties
 
 A `default-property` in a conf is a default only. A property is looked up in this order:

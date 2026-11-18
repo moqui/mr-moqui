@@ -76,6 +76,16 @@ impl Group {
     }
 }
 
+/// A secret attribute: kept as given, or generated when the conf leaves it at `CHANGEME` (plans/Conf-Paths.md §2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Secret {
+    /// Never logged or shown, and null to scripts.
+    Kept,
+    /// As [`Secret::Kept`], and a value ending in `CHANGEME` at boot is replaced by 32 random bytes kept in
+    /// `runtime/.env` under the attribute's environment name.
+    Generated,
+}
+
 /// A unit of the conf: an element name, how its elements are told apart, its class, the attributes whose class
 /// differs from it, and its child units.
 #[derive(Clone, Copy, Debug)]
@@ -84,6 +94,8 @@ pub struct Unit {
     pub key: Key,
     pub class: Class,
     pub attrs: &'static [(&'static str, Class)],
+    /// The attributes that hold a secret.
+    pub secrets: &'static [(&'static str, Secret)],
     pub children: &'static [Unit],
 }
 
@@ -94,12 +106,18 @@ impl Unit {
             key,
             class,
             attrs: &[],
+            secrets: &[],
             children: &[],
         }
     }
 
     const fn attrs(mut self, attrs: &'static [(&'static str, Class)]) -> Self {
         self.attrs = attrs;
+        self
+    }
+
+    const fn secrets(mut self, secrets: &'static [(&'static str, Secret)]) -> Self {
+        self.secrets = secrets;
         self
     }
 
@@ -202,7 +220,9 @@ pub static CATALOG: &[Unit] = &[
                 keyed("init-param", &["name"], DERIVED),
                 sequence("url-pattern", DERIVED),
             ]),
-            single("session-config", Class::Live).attrs(&[("flush", BOOT), ("max", BOOT)]),
+            single("session-config", Class::Live)
+                .attrs(&[("flush", BOOT), ("max", BOOT)])
+                .secrets(&[("cookie-key", Secret::Generated)]),
             keyed(
                 "endpoint",
                 &["path"],
@@ -269,30 +289,40 @@ pub static CATALOG: &[Unit] = &[
     single(
         "search-facade",
         Class::Restart("the search backend is attached at boot"),
-    ),
+    )
+    .children(&[
+        single("cluster", Class::Restart("the search backend is attached at boot"))
+            .secrets(&[("password", Secret::Kept)]),
+    ]),
     single("llm-facade", LLM).children(&[
-        keyed("endpoint", &["id"], LLM).children(&[keyed("header", &["name"], LLM)]),
+        keyed("endpoint", &["id"], LLM)
+            .secrets(&[("api-key", Secret::Kept)])
+            .children(&[keyed("header", &["name"], LLM)]),
         keyed("model", &["id"], LLM).children(&[keyed("reasoning", &["level"], LLM)]),
         keyed("bind", &["feature"], LLM),
         keyed("data-entity", &["package", "entity"], LLM),
         keyed("user-facts", &["service"], LLM),
         keyed("constitution-provider", &["service"], LLM),
         keyed("ai-task", &["name"], LLM),
+        single("mcp", LLM).secrets(&[("request-state-key", Secret::Kept)]),
     ]),
-    single("entity-facade", Class::Restart("the entity facade is opened at boot")).children(&[
-        keyed(
-            "datasource",
-            &["group-name"],
-            Class::Restart("datasources connect at boot"),
-        ),
-        single("server-jndi", BOOT),
-        sequence("decrypt-alt", Class::Restart("the entity facade is opened at boot")),
-        sequence(
-            "load-entity",
-            Class::Restart("the entity model reads them when it is opened"),
-        ),
-        sequence("load-data", Class::Live),
-    ]),
+    single("entity-facade", Class::Restart("the entity facade is opened at boot"))
+        .secrets(&[("crypt-pass", Secret::Generated), ("crypt-pass-old", Secret::Kept)])
+        .children(&[
+            keyed(
+                "datasource",
+                &["group-name"],
+                Class::Restart("datasources connect at boot"),
+            )
+            .secrets(&[("password", Secret::Kept)]),
+            single("server-jndi", BOOT),
+            sequence("decrypt-alt", Class::Restart("the entity facade is opened at boot")),
+            sequence(
+                "load-entity",
+                Class::Restart("the entity model reads them when it is opened"),
+            ),
+            sequence("load-data", Class::Live),
+        ]),
     single(
         "database-list",
         Class::Restart("the database dialects are read when the entity facade is opened"),
@@ -312,9 +342,14 @@ pub static CATALOG: &[Unit] = &[
         keyed("replicate", &["set"], EDGE).children(&[keyed("entity", &["name"], EDGE)]),
     ]),
     single("email-client", Class::Live).attrs(&[("idle-enabled", LISTENER)]),
-    single("ssh-server", LISTENER),
+    single("ssh-server", LISTENER).secrets(&[("host-key", Secret::Generated)]),
     single("terminal", Class::Live).children(&[keyed("host-profile", &["name"], Class::Live)]),
-    single("git-server", Class::Live).attrs(&[("max-concurrent", LISTENER), ("max-queued", LISTENER)]),
+    single("git-server", Class::Live)
+        .attrs(&[("max-concurrent", LISTENER), ("max-queued", LISTENER)])
+        .secrets(&[
+            ("lfs-token-key", Secret::Generated),
+            ("lfs-token-key-previous", Secret::Kept),
+        ]),
     single("git-ci", Class::Live),
     single("dav-server", Class::Live).attrs(&[("sftp-drives", LISTENER)]),
     single("smtp-server", LISTENER),
@@ -331,7 +366,8 @@ pub static CATALOG: &[Unit] = &[
     single(
         "component-deploy",
         Class::Restart("the gate, its secret and its allow entries are read once at start"),
-    ),
+    )
+    .secrets(&[("attestation-secret", Secret::Kept)]),
     // the registry token commands of hosted instances, read at each image pull (service/registry_token.rs)
     single("instance-hosting", Class::Live).children(&[keyed("token-command", &["name"], Class::Live)]),
     // read by the desktop and mobile apps, not the server
@@ -361,6 +397,38 @@ pub fn unit(path: &[&str]) -> Option<&'static Unit> {
 #[must_use]
 pub fn keying(path: &[&str]) -> Key {
     unit(path).map_or(Key::Single, |unit| unit.key)
+}
+
+/// Whether the attribute `attr` of the elements at `path` holds a secret: the schema marks it ([`Unit::secrets`]), or
+/// its name says so ([`secret_name`]). Such a value is never logged, is masked wherever the conf is shown, and is null
+/// to `ec.factory.getConfValue`.
+#[must_use]
+pub fn attribute_secret(path: &[&str], attr: &str) -> bool {
+    unit(path).is_some_and(|unit| unit.secrets.iter().any(|(name, _)| *name == attr)) || secret_name(attr)
+}
+
+/// An attribute that holds a secret by its name: `password`, `jdbc-password`, `crypt-pass`, `api-key`,
+/// `lfs-token-key`, `client-secret`.
+#[must_use]
+pub fn secret_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    // the flag that says whether a value is a secret
+    if name == "is-secret" {
+        return false;
+    }
+    let secret_words = [
+        "password",
+        "pass",
+        "secret",
+        "api-key",
+        "token-key",
+        "state-key",
+        "private-key",
+    ];
+    secret_words
+        .iter()
+        .any(|word| name == *word || name.ends_with(&format!("-{word}")))
+        || name.contains("token-key")
 }
 
 /// The key attributes the merge matches the elements at `path` by: their unit's, so the merge, the conf reload and an

@@ -76,6 +76,28 @@
         }
     });
 
+    // A conf attribute by its selector, as its environment name sets it over the conf files (null puts back what the
+    // files and the environment give): a setting the code under test reads from the conf (plans/Conf-Paths.md §4). Put
+    // back when the spec ends, as a property is (T.restoreProperties). What the attribute's environment name held
+    // before as a process property, or null.
+    const putConf = (selector, value) => {
+        const key = String(selector);
+        const before = __moquiTestHost.setConf(key, value == null ? null : String(value));
+        if (!T.confs.has(key)) T.confs.set(key, before == null ? null : before);
+        return before == null ? null : before;
+    };
+    // setConf(selector, value): for the rest of the spec
+    define("setConf", (selector, value) => { putConf(selector, value); });
+    // withConf(selector, value, fn): for fn only, then back to what it was
+    define("withConf", (selector, value, fn) => {
+        const before = putConf(selector, value);
+        try {
+            return fn();
+        } finally {
+            putConf(selector, before);
+        }
+    });
+
     Object.defineProperty(g, "log", { get: () => ec.logger, configurable: true });
 
     // A spec with database: false sees no entity facade, service calls, or screen tests, even when this run opened a

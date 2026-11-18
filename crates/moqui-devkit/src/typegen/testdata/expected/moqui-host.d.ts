@@ -1433,6 +1433,8 @@ interface MoquiServerEc {
         /** Java's `getTool(name, parameters...)`: the object of a component's Rust tool factory. A tool that declares its type is in `MoquiToolMap` (`tools.d.ts`). */
         getTool<K extends keyof MoquiToolMap>(name: K, ...parameters: unknown[]): MoquiToolMap[K];
         getTool(name: string, ...parameters: unknown[]): MoquiTool;
+        /** The running conf's attribute at a selector (`webapp-list/webapp[webroot]@dev-marker-color`), or null when there is none or it is a secret. */
+        getConfValue(selector: string): string | null;
         /** The tool factory a conf `tool-factory` element selected, or null when there is none of that name. */
         getToolFactory<K extends keyof MoquiToolMap>(name: K): MoquiToolFactory<MoquiToolMap[K]> | null;
         getToolFactory(name: string): MoquiToolFactory | null;

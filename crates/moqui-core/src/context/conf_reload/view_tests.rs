@@ -98,7 +98,7 @@ fn the_view_has_each_values_file_class_and_default_comments() {
     assert!(file_infos(files)[2].editable);
 
     let merged = with_merge_sources(|| merge_files(files, None)).unwrap();
-    let view = build_view(files, &merged, None, &HashMap::new());
+    let view = build_view(files, &merged, None, &HashMap::new(), &[]);
 
     let purpose = child(&view.root, "default-property", Some("instance_purpose"));
     assert_eq!(purpose.path, "default-property[instance_purpose]");
@@ -182,7 +182,7 @@ fn the_lines_of_one_file_have_classes_and_follow_an_edited_text() {
     let merged = with_merge_sources(|| merge_files(files, Some((&runtime_path, &edited)))).unwrap();
     let lines = file_lines(files, 2, &merged);
     assert_eq!(lines.last().map(|line| line.line), Some(6));
-    let view = build_view(files, &merged, None, &HashMap::new());
+    let view = build_view(files, &merged, None, &HashMap::new(), &[]);
     let webapp = child(child(&view.root, "webapp-list", None), "webapp", Some("webroot"));
     assert_eq!(attr(child(webapp, "session-config", None), "timeout").value, "30");
 }
@@ -196,4 +196,36 @@ fn a_text_that_is_not_a_conf_file_is_a_problem() {
     let other = text_problems("x.xml", "<screen/>");
     assert!(other[0].message.contains("moqui-conf"));
     assert!(text_problems("x.xml", RUNTIME).is_empty());
+}
+
+/// Each attribute has its environment name; one an environment name set says which, from where; a secret by the
+/// schema (the SSH host key) is masked as one by its name is (plans/Conf-Paths.md §4).
+#[test]
+fn the_view_names_each_attributes_environment_name_and_what_set_it() {
+    let held = files();
+    let files = &held.files;
+    let merged = with_merge_sources(|| merge_files(files, None)).unwrap();
+    merged.append("ssh-server").set_attribute("host-key", "a-host-key");
+    let overrides = crate::context::conf_env::apply_from(
+        &merged,
+        vec![(
+            "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__HTTP_PORT".to_string(),
+            "8091".to_string(),
+            crate::context::conf_env::Source::DotEnv,
+        )],
+    );
+    let view = build_view(files, &merged, None, &HashMap::new(), &overrides);
+    let webapp = child(child(&view.root, "webapp-list", None), "webapp", Some("webroot"));
+    let port = attr(webapp, "http-port");
+    assert_eq!(port.value, "8091");
+    assert_eq!(
+        port.env.as_deref(),
+        Some("moqui_conf__webapp_list__webapp__WEBROOT__http_port")
+    );
+    let set_by = port.set_by.as_ref().expect("set by the environment name");
+    assert_eq!(set_by.name, "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__HTTP_PORT");
+    assert_eq!(set_by.source, "runtime/.env");
+    let ssh = child(&view.root, "ssh-server", None);
+    assert_eq!(attr(ssh, "host-key").value, MASKED);
+    assert!(attr(webapp, "name").set_by.is_none());
 }

@@ -26,11 +26,14 @@ use moqui_lib::node::{with_merge_sources, MNode, Source};
 use moqui_lib::xml_edit::comments::{element_comments, ElementComments};
 use serde::Serialize;
 
-use crate::context::conf_schema::{Class, Key, Unit, CATALOG, UNKNOWN};
 use super::diff::{join, keyed};
 use super::{conf_files, preview_conf, restart_reason, ConfChange, ConfReport};
-use crate::context::conf::{merge_files, ConfFile, ConfRole};
+use crate::context::conf::{merge_files, merge_files_with, ConfFile, ConfRole};
+use crate::context::conf_env::{compare_key, Override};
+use crate::context::conf_schema;
+use crate::context::conf_schema::{Class, Key, Unit, CATALOG, UNKNOWN};
 use crate::context::{Error, ExecutionContextFactory};
+use moqui_lib::node::path::AttrPath;
 
 /// The text shown for a value that is not shown.
 pub const MASKED: &str = "••••••";
@@ -78,6 +81,23 @@ pub struct ViewAttr {
     /// The change of it the files hold that is not running yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
+    /// Its environment name (`moqui_conf__ssh_server__port`), which sets it over every conf file; none for an element
+    /// of a list with no key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+    /// The environment name and source that set it, when one did: its value is not the files'.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set_by: Option<SetBy>,
+}
+
+/// An environment name that set an attribute over the conf files (plans/Conf-Paths.md §3).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetBy {
+    /// The name as given.
+    pub name: String,
+    /// `-D`, `the environment` or `runtime/.env`.
+    pub source: &'static str,
 }
 
 /// A value in the files that is not in the running conf.
@@ -228,22 +248,24 @@ fn writable(path: &Path) -> bool {
 /// When a conf file does not parse, or the running conf does not.
 pub fn view(factory: &ExecutionContextFactory) -> Result<ConfView, Error> {
     let files = files(factory)?;
-    let merged = with_merge_sources(|| merge_files(&files, None))?;
+    let (merged, overrides) = with_merge_sources(|| merge_files_with(&files, None))?;
     let report = preview_conf(factory, &merged)?;
     let set_by_conf = factory.conf_properties().clone();
-    Ok(build_view(&files, &merged, Some(&report), &set_by_conf))
+    Ok(build_view(&files, &merged, Some(&report), &set_by_conf, &overrides))
 }
 
 /// [`view`] of a merged tree: `report` is the preview against the running conf, `set_by_conf` the properties the conf
-/// set at boot or since, by name.
+/// set at boot or since, by name, and `overrides` what the environment's names did in the merge.
 #[must_use]
 pub fn build_view(
     files: &[ConfFile],
     merged: &MNode,
     report: Option<&ConfReport>,
     set_by_conf: &HashMap<String, String>,
+    overrides: &[Override],
 ) -> ConfView {
-    let walk = Walk::new(files, report, set_by_conf);
+    let mut walk = Walk::new(files, report, set_by_conf);
+    walk.set_by = set_by_of(overrides);
     let root = walk.node(merged, None, "", UNKNOWN, None);
     let changes = report.map(|report| report.changes.as_slice()).unwrap_or_default();
     ConfView {
@@ -348,6 +370,26 @@ struct Walk<'a> {
     comments: HashMap<u32, ElementComments>,
     changes: &'a [ConfChange],
     set_by_conf: &'a HashMap<String, String>,
+    /// The attributes an environment name set, by [`compare_key`].
+    set_by: HashMap<String, SetBy>,
+}
+
+/// The attributes `overrides` set, by [`compare_key`] of their path.
+fn set_by_of(overrides: &[Override]) -> HashMap<String, SetBy> {
+    overrides
+        .iter()
+        .filter(|item| item.applied())
+        .filter_map(|item| {
+            let path = AttrPath::parse(item.selector.as_deref()?).ok()?;
+            Some((
+                compare_key(&path),
+                SetBy {
+                    name: item.name.clone(),
+                    source: item.source.name(),
+                },
+            ))
+        })
+        .collect()
 }
 
 impl<'a> Walk<'a> {
@@ -370,6 +412,7 @@ impl<'a> Walk<'a> {
             comments,
             changes: report.map(|report| report.changes.as_slice()).unwrap_or_default(),
             set_by_conf,
+            set_by: HashMap::new(),
         }
     }
 
@@ -451,7 +494,16 @@ impl<'a> Walk<'a> {
             .into_iter()
             .map(|(name, value)| {
                 let attr_class = unit.map_or(class, |unit| unit.attr_class(&name));
-                let secret = (property_secret && name == "value") || secret_attribute(&name);
+                let attr_path = AttrPath::of(node, &name, &conf_schema::keying);
+                let schema_secret = attr_path.as_ref().map_or_else(
+                    || conf_schema::secret_name(&name),
+                    crate::context::conf_env::attribute_secret,
+                );
+                let secret = (property_secret && name == "value") || schema_secret;
+                let env_name = attr_path.as_ref().and_then(AttrPath::env_name);
+                let set_by = attr_path
+                    .as_ref()
+                    .and_then(|path| self.set_by.get(&compare_key(path)).cloned());
                 let source = node
                     .attribute_source(&name)
                     .and_then(|source| self.at(&source))
@@ -488,6 +540,8 @@ impl<'a> Walk<'a> {
                         .then(|| restart_reason(attr_class))
                         .filter(|text| !text.is_empty()),
                     pending,
+                    env: env_name,
+                    set_by,
                     name,
                 }
             })
@@ -497,8 +551,13 @@ impl<'a> Walk<'a> {
             let by_conf = self.set_by_conf.get(&name).is_some_and(|value| *value == current);
             // only a value other than the conf's own: the environment overriding it
             let conf_value = env::expand(&node.attribute("value").unwrap_or_default()).unwrap_or_default();
-            (!current.is_empty() && !by_conf && current != conf_value)
-                .then(|| if property_secret { MASKED.to_string() } else { current })
+            (!current.is_empty() && !by_conf && current != conf_value).then(|| {
+                if property_secret {
+                    MASKED.to_string()
+                } else {
+                    current
+                }
+            })
         });
         let comments = self.comments_of(node);
         let child_units = unit.map_or(&[][..], |unit| unit.children);
@@ -628,25 +687,6 @@ fn outcome_name(change: &ConfChange) -> &'static str {
         super::Outcome::NoEffect => "no-effect",
         super::Outcome::Failed => "failed",
     }
-}
-
-/// An attribute that holds a secret by its name: `password`, `jdbc-password`, `crypt-pass`, `api-key`,
-/// `lfs-token-key`.
-fn secret_attribute(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    let secret_words = [
-        "password",
-        "pass",
-        "secret",
-        "api-key",
-        "token-key",
-        "state-key",
-        "private-key",
-    ];
-    secret_words
-        .iter()
-        .any(|word| name == *word || name.ends_with(&format!("-{word}")))
-        || name.contains("token-key")
 }
 
 /// Whether a `${}` in `value` names a secret property.

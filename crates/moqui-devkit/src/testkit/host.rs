@@ -61,6 +61,14 @@ pub(super) static TEST_HOST: HostClass = HostClass {
         ),
         host_method!(
             "__moquiTestHost",
+            "setConf",
+            [Text, OptNullableText],
+            None,
+            leaf,
+            set_conf
+        ),
+        host_method!(
+            "__moquiTestHost",
             "sandboxBody",
             [Text, Texts],
             None,
@@ -139,6 +147,21 @@ fn set_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
         None => moqui_lib::env::clear_property(&name),
     }
     Ok(before.into())
+}
+
+/// `setConf(selector, value)`: the running conf's attribute at the selector, over the conf files, as its environment
+/// name would set it (`null` puts back what the files and the environment give); what that name held before as a
+/// process property, or `null`. Under `setConf` and `withConf` (server.js), which keep what to put back when the spec
+/// ends, as for properties (plans/Conf-Paths.md §4).
+fn set_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let selector = call.text(0).unwrap_or_default().to_string();
+    let value = call.text(1).map(str::to_string);
+    let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
+        .ok_or_else(|| HostError::message("setConf needs an execution context"))?;
+    factory
+        .set_conf_value(&selector, value.as_deref(), false)
+        .map(Ret::from)
+        .map_err(|err| HostError::message(err.message()))
 }
 
 /// `sandboxBody(source, names)`: the source as the body of `runInContext`'s function on an engine without `with`

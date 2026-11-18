@@ -75,6 +75,11 @@ along with this software (see the LICENSE.md file). If not, see
                         <q-tooltip>Set in {{fileOf(attr.source).path}}, line {{attr.source.line}}</q-tooltip></q-chip>
                     <q-chip v-if="attr.pending" dense square class="q-ma-none m-tonal text-warning">not running yet
                         <q-tooltip>{{pendingText(attr.pending)}}</q-tooltip></q-chip>
+                    <q-chip v-if="attr.setBy" dense square class="q-ma-none m-tonal text-info">{{attr.setBy.source}}
+                        <q-tooltip>Set by {{attr.setBy.name}} from {{attr.setBy.source}}, which wins over the conf files</q-tooltip></q-chip>
+                    <q-btn v-if="attr.env" flat dense round size="xs" icon="content_copy" class="m-muted"
+                            :aria-label="'Copy the environment name ' + attr.env" @click="copyEnv(attr.env)">
+                        <q-tooltip>{{attr.env}}: the environment name that sets it over the conf files (copy)</q-tooltip></q-btn>
                 </div>
                 <div v-if="row.node.environment != null" class="row items-center q-gutter-x-xs">
                     <q-chip dense square class="q-ma-none m-tonal text-info">environment</q-chip>
@@ -166,6 +171,11 @@ module.exports = {
         },
         go(name, query) {
             this.$root.setUrl(this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -1).concat(name).join('/') + (query || ''));
+        },
+        copyEnv(name) {
+            const done = () => moqui.notifyMessages('Copied ' + name, null);
+            if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(name).then(done, () => moqui.notifyMessages(null, name));
+            else moqui.notifyMessages(name, null);
         },
         openFile(index, line) {
             if (!this.canEdit) { moqui.notifyMessages(null, 'Opening a conf file needs the CONF_EDIT permission.'); return; }

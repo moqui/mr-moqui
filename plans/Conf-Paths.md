@@ -1,6 +1,7 @@
 # Conf Paths: settings by XML path, overridden from the environment
 
-Status 2026-11-17: plan; nothing built. Approved design; the phases are in [§7](#7-phases).
+Status 2026-11-18: phases 0 to 2 built (the path module, the conf schema, the overrides with `getConfValue`, `setConf`,
+the conf view's names and `moqui conf env`); 3 to 8 to do ([§7](#7-phases)).
 
 The conf was configured through about 330 flat `default-property` entries (279 in `MoquiDefaultConf.xml`, the rest in
 `runtime/conf/**` and component `MoquiConf.xml` files). Attributes referred to them by `${name}` and `${a ?: b}`,

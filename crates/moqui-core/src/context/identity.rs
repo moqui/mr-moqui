@@ -49,7 +49,7 @@ pub fn secret_parameter(key: &str) -> bool {
 }
 
 /// Whether `System.getProperty` refuses the property `name` to a script (plans/Security-Review-Medium.md SEC-SCR-03): a
-/// `default-property` the conf marks `is-secret="true"` (`conf_secrets`), a name [`secret_parameter`] calls a secret's
+/// conf attribute's environment name (`moqui_conf__...`, in any case), a `default-property` the conf marks `is-secret="true"` (`conf_secrets`), a name [`secret_parameter`] calls a secret's
 /// (password, secret, token, credential, a `_key` ending), and a name that ends in `_pass` or `_pw` or holds `crypt`;
 /// each in lower case with `.` read as `_`, as the lookup reads a name both ways. A script that needs a secret uses a
 /// named host function (`System.isPropertySet`, `System.propertyMatches`, `System.secretCodeHash`), and one that sends
@@ -58,7 +58,10 @@ pub fn secret_parameter(key: &str) -> bool {
 pub(crate) fn script_refused_property(name: &str, conf_secrets: &std::collections::BTreeSet<String>) -> bool {
     let lower = name.trim().to_ascii_lowercase();
     let under = lower.replace('.', "_");
-    conf_secret(name, conf_secrets)
+    // a conf attribute's environment name: a script reads the conf by selector (`ec.factory.getConfValue`), which never
+    // gives it a secret (plans/Conf-Paths.md §4)
+    moqui_lib::node::path::env_segments(name.trim()).is_some()
+        || conf_secret(name, conf_secrets)
         || secret_parameter(&lower)
         || secret_parameter(&under)
         || under.ends_with("_pass")

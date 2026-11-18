@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use moqui_lib::node::MNode;
 
+use super::conf_env::{self, Override};
 use super::conf_schema::merge_keys as keys;
 use super::Error;
 
@@ -70,18 +71,34 @@ pub(super) fn runtime_conf_from(runtime_dir: &Path, selected: Option<&OsStr>) ->
     }
 }
 
+/// The default conf with the runtime conf merged over it and the environment's names applied
+/// ([`conf_env::apply_overrides`]): the conf component discovery reads.
+///
+/// # Errors
+///
+/// When a conf file does not parse, or the runtime conf `MOQUI_CONF` names is missing.
 pub fn load_merged_conf(framework_dir: &Path, runtime_dir: &Path) -> Result<MNode, Error> {
+    load_merged_conf_with(framework_dir, runtime_dir).map(|(conf, _)| conf)
+}
+
+/// [`load_merged_conf`], with what each environment name did.
+///
+/// # Errors
+///
+/// As [`load_merged_conf`].
+pub fn load_merged_conf_with(framework_dir: &Path, runtime_dir: &Path) -> Result<(MNode, Vec<Override>), Error> {
     let base = MNode::parse_file(framework_dir.join("conf/MoquiDefaultConf.xml"))?;
     if let Some(runtime_conf) = runtime_conf(runtime_dir)? {
         tracing::info!("Merging runtime conf {}", runtime_conf.display());
         let over = MNode::parse_file(&runtime_conf)?;
         merge_conf(&base, &over);
     }
-    Ok(base)
+    let overrides = conf_env::apply_overrides(&base);
+    Ok((base, overrides))
 }
 
 /// The conf with each component's `MoquiConf.xml` merged in component order, then the runtime conf on top again, as
-/// Java merges them: default, components, runtime. `components` come from the conf `load_merged_conf` returned.
+/// Java merges them: default, components, runtime; then the environment's names applied. `components` come from the conf `load_merged_conf` returned.
 /// `test_confs` (a `moqui test` run, [`super::BootOptions::test_confs`]) merges each component's `test/MoquiConf.xml`
 /// right after its own `MoquiConf.xml` (plans/archive/ClientTestHarness.md 6). `None` when no component has a conf.
 pub fn merge_component_confs(
@@ -90,6 +107,21 @@ pub fn merge_component_confs(
     components: &[std::path::PathBuf],
     test_confs: bool,
 ) -> Result<Option<MNode>, Error> {
+    merge_component_confs_with(framework_dir, runtime_dir, components, test_confs)
+        .map(|merged| merged.map(|(conf, _)| conf))
+}
+
+/// [`merge_component_confs`], with what each environment name did.
+///
+/// # Errors
+///
+/// When a conf file does not parse, or the runtime conf named is missing.
+pub fn merge_component_confs_with(
+    framework_dir: &Path,
+    runtime_dir: &Path,
+    components: &[std::path::PathBuf],
+    test_confs: bool,
+) -> Result<Option<(MNode, Vec<Override>)>, Error> {
     let named: Vec<(String, PathBuf)> = components
         .iter()
         .map(|dir| (component_name(dir), dir.clone()))
@@ -98,7 +130,7 @@ pub fn merge_component_confs(
     if !files.iter().any(|file| file.role.component().is_some()) {
         return Ok(None);
     }
-    merge_files(&files, None).map(Some)
+    merge_files_with(&files, None).map(Some)
 }
 
 /// What a conf file is to the merge.
@@ -175,13 +207,23 @@ pub fn conf_files_of(
     Ok(files)
 }
 
-/// Merge `files` in order ([`conf_files_of`]): the first is the base. `replace` stands in a text for the file at its
-/// path, to see what an edit would make before it is saved.
+/// Merge `files` in order ([`conf_files_of`]): the first is the base; then the environment's names are applied
+/// ([`conf_env::apply_overrides`]). `replace` stands in a text for the file at its path, to see what an edit would make
+/// before it is saved.
 ///
 /// # Errors
 ///
 /// When a file cannot be read or does not parse.
 pub fn merge_files(files: &[ConfFile], replace: Option<(&Path, &str)>) -> Result<MNode, Error> {
+    merge_files_with(files, replace).map(|(conf, _)| conf)
+}
+
+/// [`merge_files`], with what each environment name did ([`conf_env::apply_overrides`]).
+///
+/// # Errors
+///
+/// When a file cannot be read or does not parse.
+pub fn merge_files_with(files: &[ConfFile], replace: Option<(&Path, &str)>) -> Result<(MNode, Vec<Override>), Error> {
     let parse = |file: &ConfFile| match replace {
         Some((path, text)) if path == file.path => MNode::parse_text(&file.location(), text),
         _ => MNode::parse_file(&file.path),
@@ -196,7 +238,8 @@ pub fn merge_files(files: &[ConfFile], replace: Option<(&Path, &str)>) -> Result
         }
         merge_conf(&base, &parse(file)?);
     }
-    Ok(base)
+    let overrides = conf_env::apply_overrides(&base);
+    Ok((base, overrides))
 }
 
 fn component_name(dir: &Path) -> String {

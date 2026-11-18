@@ -1214,6 +1214,7 @@ The server the execution context belongs to.
 | `entity`, `service`, `l10n`, `resource`, `cache`, `screen`, `logger` | The same objects as `ec.entity` and the rest |
 | `getTool(name, ...parameters)` | A tool (below) |
 | `getToolFactory(name)` | The tool factory a conf `tool-factory` element selected: `name` and `getInstance(...parameters)`; null when there is none of that name |
+| `getConfValue(selector)` | The running conf's attribute at a selector, `webapp-list/webapp[webroot]@dev-marker-color` ([Conf-Paths](../../plans/Conf-Paths.md#1-paths-and-names)): its value as set by the conf files or, over them, by its environment name; null when the conf has no such attribute, and for a secret attribute (a password, a key), which a script never gets. Element and attribute names and key values compare without case or punctuation. A selector that does not parse is an error |
 
 ### Tools
 

@@ -224,6 +224,8 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `uploadedFile(fileName, text, contentType = "text/plain")` | The `FileItem` that services taking an upload expect, holding the text |
 | `setProperty(name, value)` | A process property, as a conf property would set it (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. It holds for the rest of the spec, for a policy switch its features share such as `call_recording_enabled` |
 | `withProperty(name, value, fn)` | The property only while `fn` runs, then the value it had before; returns what `fn` returned. For one feature, such as `call_captions_enabled` off |
+| `setConf(selector, value)` | A conf attribute by its selector (`ssh-server@public-host`), set over the conf files as its environment name would set it ([Conf-Paths](../../plans/Conf-Paths.md#1-paths-and-names)): `ec.factory.getConfValue` and the server's readers of the conf see it; `null` puts back what the files and the environment give. It holds for the rest of the spec |
+| `withConf(selector, value, fn)` | The attribute only while `fn` runs, then as it was before; returns what `fn` returned |
 | `log` | `ec.logger`: `log.info(...)`, `log.warn(...)` |
 | `skip(reason)` | Skip the feature, or in `setupSpec` the spec ([Skipped and ignored](#skipped-and-ignored)) |
 | `assert(condition, message)` and its methods | [`assert`](#assert) |
@@ -231,8 +233,8 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `sum(list, field)` | The decimal sum of a field of a list's items, or of the items themselves with no `field`. An array or an entity list; a null or empty value counts as zero |
 | `runInContext(source, sandbox)` | Evaluate script text with `sandbox` as its global ([`runInContext`](#runincontext)) |
 
-Every property a spec changed, by `setProperty` or `withProperty`, is put back as it was before the spec after
-`cleanupSpec`, and when the spec ends without reaching it.
+Every property a spec changed, by `setProperty` or `withProperty`, and every conf attribute, by `setConf` or `withConf`,
+is put back as it was before the spec after `cleanupSpec`, and when the spec ends without reaching it.
 
 `ec.user.setEffectiveTime(millis)` pins the clock for `ec.user.nowTimestamp`, date filters with no date, and the
 `fromDate` defaults; the runner clears it after the spec.

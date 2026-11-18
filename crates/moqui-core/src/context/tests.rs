@@ -454,6 +454,61 @@ fn a_weak_session_cookie_key_stops_the_boot() {
     }
 }
 
+/// A conf attribute's environment name sets it over the conf files at boot: a process property (`-D`) over
+/// `runtime/.env`, and either over the runtime conf; a secret attribute left at `CHANGEME` is generated into `.env`
+/// under its canonical name, and the next boot reads it back (plans/Conf-Paths.md §3).
+#[test]
+fn environment_names_set_conf_attributes_at_boot_and_secrets_are_generated_under_them() {
+    let _lock = crate::user::session::cookie_property_lock();
+    let root = workspace_root();
+    let _env = EnvGuard::new(root.clone());
+    let before = repo_env_stamp(&root);
+    let temp = TempRuntime::new("conf-env");
+    std::fs::write(
+        temp.path().join("conf/MoquiDevConf.xml"),
+        r#"<moqui-conf><ssh-server public-host="from-conf" public-port="2200" host-key="CHANGEME"/></moqui-conf>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join(".env"),
+        "moqui_conf__ssh_server__public_host=from-dotenv\nmoqui_conf__ssh_server__public_port=2201\n",
+    )
+    .unwrap();
+    env::set_property("MOQUI_CONF__SSH_SERVER__PUBLIC_PORT", "2202");
+    let framework = root.join("runtime/components/base/framework");
+    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
+    assert_eq!(factory.conf_setting("ssh-server", "public-host"), "from-dotenv");
+    assert_eq!(
+        factory
+            .conf_value("ssh-server@public-port")
+            .map(|found| found.value)
+            .as_deref(),
+        Some("2202")
+    );
+    let key = factory.conf_value("ssh-server@host-key").unwrap();
+    assert!(key.secret);
+    assert!(!key.value.ends_with("CHANGEME"));
+    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
+    assert!(
+        env_text.contains(&format!("moqui_conf__ssh_server__host_key={}\n", key.value)),
+        "{env_text}"
+    );
+    env::clear_property("MOQUI_CONF__SSH_SERVER__PUBLIC_PORT");
+    for name in factory.property_names() {
+        env::clear_property(name);
+    }
+    drop(factory);
+    env::clear_dotenv();
+    let again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
+    assert_eq!(again.conf_value("ssh-server@host-key").unwrap().value, key.value);
+    assert_eq!(again.conf_setting("ssh-server", "public-port"), "2201");
+    for name in again.property_names() {
+        env::clear_property(name);
+    }
+    env::clear_dotenv();
+    assert_eq!(repo_env_stamp(&root), before);
+}
+
 fn write_probe_conf(runtime: &Path, name: &str, value: &str) {
     let text =
         format!("<moqui-conf><default-property name=\"{name}\" value=\"{value}\" is-secret=\"true\"/></moqui-conf>\n");
