@@ -1,0 +1,6 @@
+# This crate is a workspace of its own. Its builds go to the repository's target/ (cargo reads the path from the
+# crate's directory, the parent of .cargo/), so the root's `cargo clean` cleans them too, and a cargo run here or an
+# editor's leaves no target/ in the crate. CARGO_TARGET_DIR, which ./moq sets, still wins; the root's
+# .cargo/config.toml applies as well.
+[build]
+target-dir = "../../target"

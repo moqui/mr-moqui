@@ -38,7 +38,8 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   `[patch.crates-io]` ([patches/README.md](patches/README.md)).
 
 The crate is not a member of the repository's workspace. Its `Cargo.lock` is copied from the repository's by
-`./moq android`, as the desktop app's.
+`./moq android`, as the desktop app's, and `.cargo/config.toml` builds it into the repository's `target/`, so a
+`cargo clean` at the root cleans it too. The Gradle output in `gen/android` (`app/build`, `.gradle`) is Gradle's own.
 
 ## Run
 
@@ -57,7 +58,7 @@ adb logcat -s moqui-mobile                    # the app's log
 ## Test
 
 ```sh
-cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test   # the host logic, on the desktop
+cd crates/moqui-mobile && cargo test   # the host logic, on the desktop
 scripts/check-android.sh      # clippy for aarch64-linux-android and x86_64-linux-android
 scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready line, the frame check, a relaunch
                               # (MOQUI_MOBILE_APK=<a release APK>: what R8 kept for JNI instead of the frame check)

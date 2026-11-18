@@ -493,7 +493,7 @@ All of these are framework tests in the regression suite, run while working on t
 
 - `cargo test -p moqui-client`: accounts, keys, sign-in, proxy, sockets, the store and the conf;
   `scripts/check-android.sh` for the Android build.
-- `cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test`: the schemes, offline answers, pushes, the
+- `cd crates/moqui-desktop && cargo test`: the schemes, offline answers, pushes, the
   mirror, modes, the outbox and flusher, windows.
 - `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import, its
   notification rules and missed rooms.

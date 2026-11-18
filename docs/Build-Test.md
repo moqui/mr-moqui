@@ -478,7 +478,7 @@ adb reverse tcp:8080 tcp:8080                # ./moq run on this machine as the 
 
 `./moq android` (but `init`) first stages the client's shell into `target/mobile-shell`, the same step and layout as
 the desktop bundle's (`stage_client_shell`), which the app embeds as its Tauri assets. The app's host logic is tested on
-the desktop: `cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test` (a placeholder page stands in for an
+the desktop: `cd crates/moqui-mobile && cargo test` (a placeholder page stands in for an
 unstaged shell), and the Tauri glue it shares with the desktop app in `crates/moqui-client-tauri` the same way. How the
 app works on Android is [Mobile-Client](ui/Mobile-Client.md).
 

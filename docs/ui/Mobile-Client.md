@@ -477,9 +477,9 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
 
 ## Tests
 
-- `cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test`: the page check, where a navigation goes, the
+- `cd crates/moqui-mobile && cargo test`: the page check, where a navigation goes, the
   sealed key store, the schemes' redirect and `fetch` handling, the build's conf, the bridge's split by origin.
-- `cd crates/moqui-client-tauri && CARGO_TARGET_DIR=../../target cargo test`: the schemes' answer, with no network.
+- `cd crates/moqui-client-tauri && cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
 - `./gradlew :app:testUniversalDebugUnitTest` in `gen/android` (`ANDROID_HOME` set): the Kotlin rules' JVM tests
   (`CallRules`: the ring's time, the audio route, the screen at the ear, picture-in-picture, the service's types, the
