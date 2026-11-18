@@ -145,6 +145,39 @@ Medium; reported (confirmed in code); fixed.
 - **Not confirmed:** what the edge guard and per-client web protection limit here when they are on (the map says the rules are on when `trusted-proxies` is set or `enabled="true"`); whether spooled files of a refused request are removed at once (`ReleaseAtEnd` in `screen/mod.rs:213` covers a request that reached `serve_at_to`).
 - **Suggested fix:** Hold an anonymous multipart body to `webapp_max_body` unless the path is one that takes uploads without a user, and cap the spool directory's total size.
 
+#### SEC-RTE-82. A multipart body can hold the whole upload limit in memory, outside the spool total (SEC-RTE-07's fix counts spool files only)
+
+Medium; likely (lead).
+
+- **Where:** `crates/moqui-core/src/web/multipart.rs:650-665`, `:765-774`, `:536-545`; `crates/moqui-host/src/http.rs:1252-1281`; `crates/moqui-core/src/web/mod.rs:1995-2006`. Report: round 3 `A4.md`.
+- **Reached by:** any signed-in user, by a `multipart/` POST to any path (the limit is `webapp_max_upload`, 2 GiB); and anonymous on a path under `webapp_anonymous_upload_paths` (default `/s/`: any path with that prefix, whether a share exists or not). An anonymous request elsewhere stops at `webapp_max_body` (10 MiB).
+- **What happens:** SEC-RTE-07's fix counts spool files. Three things are never spooled or counted. (1) After a boundary the reader waits for the line's end; while the bytes are only spaces, tabs or `\r` it keeps them all and scans the whole buffer again on every feed, so 2 GiB of spaces is 2 GiB of memory and work quadratic in the body (feeds are 1 MiB). (2) A text field is kept in memory up to 1 MiB, and there may be 2000 parts: about 2 GiB. (3) A file part up to 256 KiB stays in memory: 2000 of them is about 500 MiB. `parse_body` then clones the parts. An upload is exempt from the request deadline while it arrives; only the 60 second idle timeout applies. A few such requests at once exhaust the server's memory.
+- **Evidence:** `multipart.rs:660-664` `let Some(line_end) = find(&self.buffer, b"\r\n", 0) else {` `if self.buffer.iter().any(|byte| !matches!(byte, b' ' | b'\t' | b'\r')) {` ... `return Ok(false);`
+- **Evidence:** `multipart.rs:630` `self.buffer.extend_from_slice(bytes);`
+- **Evidence:** `multipart.rs:35` `const MAX_PARTS: usize = 2000;`, `:380` `field_limit: 1024 * 1024,`, `:773` `part.memory.extend_from_slice(data);`
+- **Evidence:** `multipart.rs:537` `Some(spool) if self.memory.len() + data.len() > spool.memory_limit => {` (only then is `reserve` called)
+- **Evidence:** `web/mod.rs:2006` `(!open_upload_path(&paths, &request.path)).then_some(anonymous)`; `:2047` `const DEFAULT_MAX_UPLOAD: usize = 2 * 1024 * 1024 * 1024;`
+- **Evidence:** `http/serve.rs:710` `let deadline = request_deadline(limits.request, request.uri().path(), socket || upload, forwarded);`
+- **Not confirmed:** not run. What the edge guard allows one client at once, and whether a servlet `max-upload` lowers the limit on `/s/`. Looked for and not found: a cap on the bytes after a boundary, a total for the text fields, a count of in-memory file parts against `SPOOLED`, and a total time for an upload (none in `multipart.rs` or `read_multipart`).
+- **Suggested fix:** Refuse a boundary line longer than a small bound (say 1 KiB). Cap the sum of a request's text fields (for example at `webapp_max_body`). Count in-memory file parts against a per-request memory budget, or spool them once the request's in-memory total passes a few MiB.
+- **Re-check:** Read `multipart.rs:655-668` (after a boundary the buffer is kept until `\r\n` while it is white space; no cap seen there) and `:768-774` (a text field up to `field_limit` in memory). Not read by the lead: the count limits and `web/mod.rs:2006`.
+
+#### SEC-RTE-83. `print#ResourceDocument` sends any file the server can read to a printer the caller defines
+
+Medium; likely (lead).
+
+- **Where:** `crates/moqui-core/src/service/tools.rs:158-180`; `runtime/components/base/tools/service/moqui.rest.xml:137-141`, `:147-148`. Report: round 3 `B1.md`.
+- **Reached by:** a member of `ADMIN` who is not in `ADMIN_ADV`: `POST /rest/s1/moqui/print/printers` (an entity create of `NetworkPrinter`, with `serverHost` an IPP server of the caller's on a public address), then `POST /rest/s1/moqui/print/printers/{networkPrinterId}/print/resource` with `resourceLocation`.
+- **What happens:** The service reads `resourceLocation` through the resource facade with no check of the scheme or the path and passes the bytes to `print#Document`, which posts them to the printer's server. The facade takes `file:`, `runtime://`, `component://`, `http(s)://` and `dbresource://`, and joins a `runtime://` location's rest to the runtime directory with no check of `..`. So the caller gets the conf files under `runtime/conf`, key files, or any file the process reads, on a production instance. The `/resources` file manager holds the same group to `dbresource://`, `content://` and `git://` in production, and the host terminal is sealed to `ADMIN_ADV` (`SecurityTypeData.xml:200-201`), so this reaches past what `ADMIN` is given. A printer made by the entity create is not "disabled until a test print passes": that rule is `store#Connection`'s.
+- **Evidence:** `tools.rs:162-164` `let location = param_text(parameters, "resourceLocation"); let found = ExecutionContext::with_current(|ctx| ctx.factory().resource().get(&location))`
+- **Evidence:** `tools.rs:172` `let bytes = resource.read_bytes().map_err(|err| LibError::new(err.message()))?;` and `:179` `Ok(call(PRINT_DOCUMENT, &print, &CallOptions::default()))`
+- **Evidence:** `context/resource.rs:510-511` `"file" => self.file_ref(location),` `"runtime" => Ok(self.runtime_ref(location)),` and `:1070` `self.runtime_dir.join(relative)` (no check of `..`)
+- **Evidence:** `moqui.rest.xml:138` `<method type="post"><entity name="moqui.basic.print.NetworkPrinter" operation="create"/></method>`
+- **Evidence:** `tools.rs:419` `.is_some_and(|record| record.get("disabled").map(to_plain_string).as_deref() == Some("Y"));` (only a row marked disabled is refused)
+- **Not confirmed:** `locate::file_path` for a `file:` location and the IPP client's `print` were not read: that the IPP client sends the document to a public server without further checks is not confirmed. Whether mr-mantle's `Labels.js:331` passes a caller's location (another unit). Looked for and not found: a scheme or root check in `print_resource_document`; a production rule in `ResourceFacade::get`; a permission beyond the path grant on the service (`PrintServices.xml:66-73` has none); `NetworkPrinter` in `sensitive.rs` (in no list).
+- **Suggested fix:** Limit `resourceLocation` to `dbresource://` and `content://` (and a component's `template/` or label paths where an application needs them), as `/resources` does in production; refuse `file:`, `runtime://` and `http(s)://`. Put `NetworkPrinter` create and update behind `store#Connection`.
+- **Re-check:** Read `service/tools.rs:157-180`: `resourceLocation` goes to `resource().get` and its bytes to `print#Document`, with no location rule in these lines. Not read by the lead: who reaches the REST resource, what a printer row may name.
+
 ## Administration, identity and sign-in
 
 #### SEC-ADM-02. `update#Password` tests passwords with no lockout and tells right from wrong
