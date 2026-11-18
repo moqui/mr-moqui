@@ -40,7 +40,7 @@ fn only_the_shells_current_load_with_its_nonce_has_the_shells_commands() {
     assert!(!page.is_shell(Some(&url("http://moqui-app.localhost/")), Some(&nonce)));
     assert!(!page.is_shell(None, Some(&nonce)));
     // a navigation forgets the nonce: a document that is still there cannot call with it
-    page.navigating();
+    page.navigating(None);
     assert!(!page.is_shell(Some(&shell), Some(&nonce)));
     // the next load has a nonce of its own
     page.started(&shell);
@@ -65,8 +65,12 @@ fn only_the_shells_current_load_with_its_nonce_has_the_shells_commands() {
 fn a_server_page_is_its_accounts_only_while_that_account_is_current() {
     let page = PageState::default();
     page.bind_app("a1");
-    page.navigating();
-    // while the navigation is under way, no account
+    page.navigating(None);
+    // while a navigation to anywhere else is under way, no account
+    assert_eq!(page.account(Some("a1")), None);
+    page.navigating(Some(&url("about:blank")));
+    assert_eq!(page.account(Some("a1")), None);
+    page.navigating(Some(&url("http://moqui-shell.localhost/")));
     assert_eq!(page.account(Some("a1")), None);
     page.started(&url("http://moqui-app.localhost/qapps/system"));
     assert_eq!(page.account(Some("a1")).as_deref(), Some("a1"));
@@ -127,7 +131,7 @@ fn the_one_webview_goes_to_the_shell_and_the_servers_pages_and_the_web_goes_outs
     page.host_shows_shell();
     assert_eq!(page.from().as_deref(), Some(SHELL));
     page.started(&url("http://moqui-shell.localhost/"));
-    page.navigating();
+    page.navigating(None);
     assert_eq!(page.from(), None, "the host's showing ends as the shell's load begins");
     assert_eq!(
         goes(&url("http://moqui-app.localhost/qapps/x"), Some(APP), true),
@@ -158,4 +162,28 @@ fn a_server_page_opens_at_a_plain_path_only() {
     for bad in ["qapps", "//evil.example/x", "/a\\b", "/a\nb", "https://evil.example/"] {
         assert!(server_path(bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn the_document_of_a_server_page_opened_is_asked_for_with_its_account() {
+    // open_remote: bind, then navigate. The WebView asks the scheme for the document before onPageStarted, so the
+    // request comes while the load has not begun: it must have the bound account, or the page is a 401.
+    let page = PageState::default();
+    page.started(&url("http://moqui-shell.localhost/"));
+    page.bind_app("a1");
+    page.navigating(Some(&url("http://moqui-app.localhost/qapps/system")));
+    assert_eq!(page.account(Some("a1")).as_deref(), Some("a1"));
+    // only while the bound account is the current one
+    assert_eq!(page.account(Some("a2")), None);
+    // a link on a server page to another of them
+    page.started(&url("http://moqui-app.localhost/qapps/system"));
+    page.navigating(Some(&url("http://moqui-app.localhost/qapps/other")));
+    assert_eq!(page.account(Some("a1")).as_deref(), Some("a1"));
+    // the way back to the shell: no account until the shell's load begins
+    page.navigating(Some(&url("http://moqui-shell.localhost/")));
+    assert_eq!(page.account(Some("a1")), None);
+    // nothing bound (a sign-out unbinds): none
+    page.unbind_app(None);
+    page.navigating(Some(&url("http://moqui-app.localhost/qapps/system")));
+    assert_eq!(page.account(Some("a1")), None);
 }
