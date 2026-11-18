@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     The Internal account (internal messages and mailboxes) is an app's, not the framework's: it is listed only when an app the
     user may open declares an inbox-source provider (org.moqui.ui.ShellServices.get#Providers), as IronStone BOSS does.
-    Links to the Inbox go under the comms_app_root property (/qapps/BasicComms, or the app that mounts these screens).
+    Links to the Inbox go under the comms@app-root property (/qapps/BasicComms, or the app that mounts these screens).
 
     Failure tolerant (AGENTS.md): each account of the list, each member added and each part of a view stands alone; one that
     fails is logged by name and the rest is answered. -->
@@ -1578,7 +1578,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const threadKey = threadId ? store + ':' + threadId : null
                 // the Inbox (Mail.qvue) with the tested folder shown and the thread open in the reading pane
                 const query = {account: found.emailAccountId || null, folder: found.emailFolderId || null, thread: threadKey}
-                const inboxUrl = threadKey ? (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox?' + Object.keys(query).filter((key) => query[key])
+                const inboxUrl = threadKey ? (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Inbox?' + Object.keys(query).filter((key) => query[key])
                         .map((key) => key + '=' + encodeURIComponent(query[key])).join('&') : null
                 return {emailMessageId: found.emailMessageId, subject: found.subject || L('(no subject)'),
                     fromText: found.fromName ? (found.fromName + (found.fromAddress ? ' <' + found.fromAddress + '>' : '')) : (found.fromAddress || ''),

@@ -302,7 +302,7 @@ feature("DAV is off and the sync addresses offer no SFTP", {
 // demo's conf turns it on.
 feature("the demo's conf turns on the Login screen's Test Login", {
     expect() {
-        System.getProperty("demo_test_login") == "true"
+        ec.factory.getConfValue("demo@test-login") == "true"
         withConf("instance@purpose", "production",
             () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered) === withConf("instance@purpose", "test",
             () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered)

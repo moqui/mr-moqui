@@ -4482,7 +4482,7 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
         Some(security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -4649,7 +4649,7 @@ fn a_pull_conflict_is_resolved_in_chromium() {
         Some(security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -4856,7 +4856,7 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
         Some(security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -5010,7 +5010,7 @@ fn a_qvue_screen_is_designed_in_chromium() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -5124,7 +5124,7 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -5391,7 +5391,7 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -5687,7 +5687,7 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -5995,7 +5995,7 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
         Some(&data),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],

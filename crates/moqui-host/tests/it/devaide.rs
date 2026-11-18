@@ -153,8 +153,8 @@ fn the_workspace_saves_checks_commits_and_publishes() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
-            ("dev_aide_shared", "false"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+            ("moqui_conf__dev_aide__shared", "false"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -455,7 +455,7 @@ fn the_workspace_saves_checks_commits_and_publishes() {
     );
 
     // a shared server with its network git off: the push is refused, nothing goes out
-    moqui_lib::env::set_property("dev_aide_shared", "true");
+    factory.set_conf_value("dev-aide@shared", Some("true"), false).unwrap();
     let shared = call(
         &factory,
         "john.doe",
@@ -511,7 +511,7 @@ fn the_workspace_saves_checks_commits_and_publishes() {
     assert!(!stored.to_string().contains("s3cret"), "{stored}");
     let refused = call(&factory, "ext.user", &format!("{WS}get#Credentials"), &[]).unwrap_err();
     assert!(refused.contains("Dev AIDE") || refused.contains("admin"), "{refused}");
-    moqui_lib::env::set_property("dev_aide_shared", "false");
+    factory.set_conf_value("dev-aide@shared", Some("false"), false).unwrap();
 
     // the data files by component and type
     let data = call(
@@ -676,7 +676,7 @@ fn the_index_follows_reloads_and_extensions() {
         Some(security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -1565,7 +1565,7 @@ fn a_stamped_render_names_each_widgets_file() {
     <moqui.screen.form.DbFormUserGroup formId="DBF_FACTS" userGroupId="ADMIN"/>
 </entity-facade-xml>"#,
         )),
-        &[("moqui_conf__instance__purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[("moqui_conf__instance__purpose", "dev"), ("moqui_conf__dev_aide__site_component", "my-site")],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -1643,7 +1643,7 @@ fn the_screen_tree_orders_moves_and_removes() {
         )),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -1811,7 +1811,7 @@ fn writer_gate(label: &str) -> crate::common::Gate {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -2074,7 +2074,7 @@ fn an_entity_save_relinks_and_adds_its_column() {
         )),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -2316,8 +2316,8 @@ fn the_git_depth_writes_on_scratch_repositories() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
-            ("dev_aide_shared", "false"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+            ("moqui_conf__dev_aide__shared", "false"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -2763,7 +2763,7 @@ fn tasks_from_mantle_and_rest() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -2969,7 +2969,7 @@ fn a_qvue_screen_renders_from_its_buffer() {
         )),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -3262,8 +3262,8 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
         Some(&security),
         &[
             ("moqui_conf__instance__purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
-            ("dev_aide_shared", "false"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+            ("moqui_conf__dev_aide__shared", "false"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],

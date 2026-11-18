@@ -363,6 +363,9 @@ pub static CATALOG: &[Unit] = &[
         single("captions", Class::Live),
     ]),
     single("voicemail", Class::Live),
+    // the settings of basic-comms and demo, set in their MoquiConf.xml (plans/Conf-Paths.md §6.27)
+    single("comms", Class::Live),
+    single("demo", Class::Live),
     single("pass-authority", Class::Live)
         .attrs(&[
             ("grpc-enabled", LISTENER),
@@ -428,6 +431,13 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("components are found at boot; System › Components loads one on a running server"),
     ),
 ];
+
+/// Whether `name` is a top-level element of the conf schema, which the merge has a rule of its own for; any other is
+/// a component's settings element (`conf::merge_component_elements`).
+#[must_use]
+pub fn is_known_element(name: &str) -> bool {
+    CATALOG.iter().any(|unit| unit.name == name)
+}
 
 /// The unit of the elements at `path`, the element names from below the root (`["webapp-list", "webapp"]`), or `None`
 /// when no unit names them.

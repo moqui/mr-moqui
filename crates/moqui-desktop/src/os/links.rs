@@ -14,7 +14,7 @@
 
 //! The `mailto:`, `tel:` and `sip:` links the OS hands the app, as pages of the node (plans/Mobile-Desktop.md §4
 //! configuration 1): a mail link opens the Comms app's Compose filled in, a call link its Dialer with the number. The
-//! Comms app is the one under `comms_app_root` (`/qapps/BasicComms`, or `/qapps/Comms` with BOSS), as the node's own
+//! Comms app is the one under `comms@app-root` (`/qapps/BasicComms`, or `/qapps/Comms` with BOSS), as the node's own
 //! links use.
 
 use tauri::Url;
@@ -27,7 +27,7 @@ pub(crate) const SCHEMES: [&str; 3] = ["mailto", "tel", "sip"];
 /// client of a server (`crate::client`).
 pub(crate) const APP_SCHEME: &str = "org.moqui.desktop";
 
-/// The Comms app when `comms_app_root` is not set, as in the node's own links (basic-comms/MoquiConf.xml).
+/// The Comms app when `comms@app-root` is not set, as in the node's own links (basic-comms/MoquiConf.xml).
 pub(crate) const DEFAULT_COMMS_ROOT: &str = "/qapps/BasicComms";
 
 /// The links among a launch's arguments: a Linux handler runs `MR-Moqui mailto:...` (the `.desktop` file's `%u`), on a
@@ -40,7 +40,7 @@ pub(crate) fn from_args(args: impl IntoIterator<Item = String>) -> Vec<Url> {
 }
 
 /// The node's page for `link`, on the node at `node` (its origin is used), with the Comms app at `comms_root` (a path,
-/// as `comms_app_root`). `None` for a link of another scheme, or one with nothing to open (a `tel:` with no number).
+/// as `comms@app-root`). `None` for a link of another scheme, or one with nothing to open (a `tel:` with no number).
 pub(crate) fn route(link: &Url, node: &Url, comms_root: &str) -> Option<Url> {
     let root = comms_root.trim().trim_end_matches('/');
     let root = if root.is_empty() { DEFAULT_COMMS_ROOT } else { root };

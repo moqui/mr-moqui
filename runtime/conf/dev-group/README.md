@@ -9,7 +9,7 @@ Steps and what is not shared: [Run-Deploy](../../../docs/Run-Deploy.md#dev-insta
  laptop      ./moq run, dev, 127.0.0.1 ---+   git over https or ssh, /llm, /rest/s1/mantle/my/tasks
  laptop      ./moq run, dev, 127.0.0.1 ---+--------> group server team.example.com, production purpose
  shared dev-aide server, dev, https ------+          MoquiGroupConf.xml: mr-boss, mr-mantle
-   dev_aide_shared=true                              one server or a cluster (../local-cluster/)
+   moqui_conf__dev_aide__shared=true                 one server or a cluster (../local-cluster/)
 ```
 
 | Node | Conf | Package and runtime |
@@ -34,7 +34,7 @@ is a few properties.
   moqui_conf__llm_facade__model__DEFAULT__name=<alias>
   ```
 
-- **Shared dev-aide server**: `dev_aide_shared=true`, and `webapp-list/webapp[webroot]@allow-origins` set to its own origin, such as
+- **Shared dev-aide server**: `moqui_conf__dev_aide__shared=true`, and `webapp-list/webapp[webroot]@allow-origins` set to its own origin, such as
   `https://dev.example.com`, in place of the dev conf's `*`; a certificate in `cert/`, `webapp-list/webapp[webroot]@http-bind` empty.
 
 ## Commands

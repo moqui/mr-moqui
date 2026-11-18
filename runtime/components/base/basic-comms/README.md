@@ -17,7 +17,7 @@ usable with only the framework ([plans/archive/Comms-Framework.md](../../../../p
 An app adds to these screens without copying them: it mounts them under its own root, adds widgets and subscreens with
 `screen-extend`, answers the provider hooks (`inbox-source`, `record-link`, ...) from its root's `shell-providers`, and adds
 `ext-action` and `ext-panel` items ([docs/ui/Qvt-Client.md](../../../../docs/ui/Qvt-Client.md#declared-actions-and-panels)).
-IronStone BOSS does this for its Comms; it hides BasicComms from the launcher and sets `comms_app_root` to `/qapps/Comms`.
+IronStone BOSS does this for its Comms; it hides BasicComms from the launcher and sets `comms@app-root` to `/qapps/Comms`.
 
 The desktop client bundles the chat panel, Chat, Inbox (Mail), Compose, Calls/Call, Calls/Dialer and Settings/Devices
 (My devices) in its shell,

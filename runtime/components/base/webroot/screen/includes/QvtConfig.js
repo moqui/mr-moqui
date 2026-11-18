@@ -79,7 +79,7 @@ function build(ec, sri, options) {
         density: density, startApp: startApp,
         notificationEndpoint: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) || '',
         // calls (js/WebrootCall.js): the Comms app the call links and transitions are under, for a signed-in user with the socket
-        calls: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) ? { appRoot: (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '') } : null,
+        calls: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) ? { appRoot: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms').replace(/\/+$/, '') } : null,
         // the account menu's Terminal, when the host serves the browser terminal (the /termws endpoint)
         terminalUrl: (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) ? '/qapps/Terminal' : '',
         navPlugins: sri.getThemeValues('STRT_HEADER_NAVBAR_COMP'), accountPlugins: sri.getThemeValues('STRT_HEADER_ACCOUNT_COMP'),

@@ -73,7 +73,7 @@ feature("the Login screen renders in tui mode without the setup form while accou
     },
 })
 
-// SEC-RTE-17: the Test Login button (john.doe / moqui) only on a dev or test instance or where demo_test_login is true
+// SEC-RTE-17: the Test Login button (john.doe / moqui) only on a dev or test instance or where demo@test-login is true
 // (the demo component's conf), and its password check kept a minute by a digest of the stored hash.
 feature("the Test Login is offered only on a dev or test instance or a demo, and its password check is cached", {
     when() {
@@ -84,13 +84,13 @@ feature("the Test Login is offered only on a dev or test instance or a demo, and
         const cache = ec.cache.getCache("webroot.login.test")
         cache.clear()
         const out = {matches, hasAccount: account != null}
-        withProperty("demo_test_login", null, () => {
+        withConf("demo@test-login", "false", () => {
             out.production = withConf("instance@purpose", "production", offered)
             out.productionCached = cache.size()
             out.test = withConf("instance@purpose", "test", offered)
             out.dev = withConf("instance@purpose", "dev", offered)
         })
-        out.demo = withProperty("demo_test_login", "true", () => withConf("instance@purpose", "production", offered))
+        out.demo = withConf("demo@test-login", "true", () => withConf("instance@purpose", "production", offered))
         out.cached = account != null && cache.containsKey(ec.resource.digestText(String(account.currentPassword)))
         return out
     },

@@ -271,7 +271,7 @@ along with this software (see the LICENSE.md file). If not, see
             const mentionList = mentionUserIds ? String(mentionUserIds).split(',').map((id) => id.trim()).filter((id) => id) : null
             const ran = ec.service.sync().name('org.moqui.edge.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.chat.ChatServices.edit#Message',
                 clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '',
-                eventSeq: Number(eventSeq || 0), body: body || null, encrypted: sealed, mentionUserIdList: mentionList, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}}).call()
+                eventSeq: Number(eventSeq || 0), body: body || null, encrypted: sealed, mentionUserIdList: mentionList, roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}}).call()
             const out = (ran && ran.result) || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {editEventSeq: out.editEventSeq, event: out.event, duplicate: ran.duplicate === true})
         ]]></script></actions>
@@ -328,7 +328,7 @@ along with this software (see the LICENSE.md file). If not, see
                 optionList: Array.isArray(options) ? options.map((option) => String(option ?? '')) : [], anonymous: String(anonymous) === 'true',
                 multiple: String(multiple) === 'true', closesDate: closesDate ? Number(closesDate) : null,
                 threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
-                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
         ]]></script></actions>
         <default-response type="none"/>
@@ -360,7 +360,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.chat.ChatRichServices.send#Rich').parameters({chatRoomId: chatRoomId || '',
                 rich: rich && typeof rich === 'object' ? rich : {}, chatAttachmentIdList: attachmentIds ? String(attachmentIds).split(',').map((id) => id.trim()).filter((id) => id) : [],
                 threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
-                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
         ]]></script></actions>
         <default-response type="none"/>
@@ -371,7 +371,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.chat.ChatRichServices.reply#Suggestion').parameters({chatRoomId: chatRoomId || '',
                 eventSeq: Number(eventSeq || 0), index: Number(index || 0), cardIndex: cardIndex !== null && cardIndex !== undefined && cardIndex !== '' ? Number(cardIndex) : null,
                 clientRef: clientRef || null,
-                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
         ]]></script></actions>
         <default-response type="none"/>

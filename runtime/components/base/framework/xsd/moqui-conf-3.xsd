@@ -20,6 +20,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:sequence>
                 <xs:element minOccurs="0" ref="instance"/>
+                <xs:element minOccurs="0" ref="comms"/>
+                <xs:element minOccurs="0" ref="demo"/>
                 <xs:element minOccurs="0" ref="acme"/>
                 <xs:element minOccurs="0" ref="client-sync"/>
                 <xs:element minOccurs="0" ref="chat"/>
@@ -2328,6 +2330,25 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="scheduled" type="xs:string"/>
             <xs:attribute name="dir" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="comms">
+        <xs:annotation><xs:documentation>The basic-comms component's settings, set in its MoquiConf.xml.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="app-root" type="xs:string" default="/qapps/BasicComms"><xs:annotation><xs:documentation>Where
+                links to the Comms screens go in notifications, mail and push: an app that mounts the BasicComms screens
+                under its own root (IronStone BOSS: /qapps/Comms) sets it to that root.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="demo">
+        <xs:annotation><xs:documentation>The demo component's settings, set in its MoquiConf.xml.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="shared-user-ids" type="xs:string"><xs:annotation><xs:documentation>The users whose
+                password, sign-in factors, username and enabled state cannot be changed, comma separated: the shared
+                login of the Login screen's Test Login button.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="test-login" type="xs:string" default="false"><xs:annotation><xs:documentation>Whether the
+                Login screen offers the Test Login button, which a production instance otherwise leaves
+                out.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

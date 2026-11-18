@@ -224,7 +224,10 @@ pub(crate) fn comms_root_reported(app: &AppHandle, root: &str) {
     }
 }
 
-/// The Comms app's root: a client's server's; else what the node's pages last reported; else `comms_app_root` as the
+/// The environment name of the conf's `comms@app-root` (basic-comms's own element), which a node takes as an override.
+const COMMS_ROOT_ENV: &str = "moqui_conf__comms__app_root";
+
+/// The Comms app's root: a client's server's; else what the node's pages last reported; else `comms@app-root` as the
 /// node in process has it, or as the runtime's `.env` sets it; else BasicComms (which a node with BOSS still serves).
 fn comms_root() -> String {
     // a client's: its server's, as its client config says
@@ -240,7 +243,7 @@ fn comms_root() -> String {
     if let Some(root) = reported {
         return root;
     }
-    let own = moqui_lib::env::get_prop_or_env("comms_app_root");
+    let own = moqui_lib::env::get_prop_or_env(COMMS_ROOT_ENV);
     if !own.trim().is_empty() {
         return own;
     }
@@ -251,7 +254,7 @@ fn comms_root() -> String {
             moqui_lib::env::parse_dotenv(&text)
                 .into_iter()
                 .rev()
-                .find(|(key, _)| key == "comms_app_root")
+                .find(|(key, _)| key.eq_ignore_ascii_case(COMMS_ROOT_ENV))
                 .map(|(_, value)| value)
         })
         .unwrap_or_else(|| links::DEFAULT_COMMS_ROOT.to_string())

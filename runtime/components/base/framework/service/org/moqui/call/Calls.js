@@ -139,7 +139,7 @@ function isExternal(userId) {
 }
 
 function appRoot() {
-  return (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '')
+  return (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms').replace(/\/+$/, '')
 }
 
 function callLink(callSessionId) {

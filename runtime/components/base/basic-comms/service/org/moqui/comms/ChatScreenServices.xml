@@ -300,13 +300,13 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Rooms ========== -->
 
     <service verb="decorate" noun="Rooms" allow-remote="false">
-        <description>Internal: a room list as the rail shows it, each room with url (its Chat link, under comms_app_root) and,
+        <description>Internal: a room list as the rail shows it, each room with url (its Chat link, under comms@app-root) and,
             for a record room, record {visible, title, typeLabel, url, icon, entity, id} from the record-lookup providers
             (lookup#Records info). A record no provider answers for, or the user no longer sees, keeps the room's name.</description>
         <in-parameters><parameter name="roomList" type="List"/></in-parameters>
         <out-parameters><parameter name="roomList" type="List"/></out-parameters>
         <actions><script><![CDATA[
-            const appRoot = System.getProperty('comms_app_root') || '/qapps/BasicComms'
+            const appRoot = ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms'
             const rooms = Array.from(roomList || [])
             const wanted = rooms.filter((room) => room.recordEntityName && room.recordId)
                     .map((room) => ({recordEntityName: room.recordEntityName, recordId: room.recordId}))
@@ -707,7 +707,7 @@ along with this software (see the LICENSE.md file). If not, see
             const records = encrypted ? [] : ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records').parameters({operation: 'links', body: body || ''}).call().recordList
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters({chatRoomId: chatRoomId, body: body || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null, chatAttachmentIdList: ids,
-                recordList: records, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId), clientRef: clientRef || null,
+                recordList: records, roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId), clientRef: clientRef || null,
                 forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: forwardOfEventSeq ?? null,
                 encrypted: encrypted || null, mentionUserIdList: mentionUserIdList || null}).call()
             reasonCode = out?.reasonCode || null
@@ -771,7 +771,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="rows" type="List"/><parameter name="moreUrl"/></out-parameters>
         <actions><script><![CDATA[
             rows = []
-            const chatUrl = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat'
+            const chatUrl = (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat'
             moreUrl = chatUrl
             const L = (text) => ec.l10n.localize(text)
             const term = String(text || '').replace(/^#/, '').trim()
@@ -837,7 +837,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="rows" type="List"/><parameter name="moreUrl"/></out-parameters>
         <actions><script><![CDATA[
             rows = []
-            const chatUrl = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat'
+            const chatUrl = (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat'
             const L = (text) => ec.l10n.localize(text)
             const term = String(text || '').trim()
             const max = Math.max(1, Math.min(limit || 5, 20))
@@ -1006,7 +1006,7 @@ along with this software (see the LICENSE.md file). If not, see
             the mail address of the person's user account only (§19.1: a mail account they own or share, an alias, is not
             theirs to be credited with): a message from that address, or with it in its To or Cc as a whole address. Drafts,
             Spam and Trash are left out. mailList: [{userId, chatRoomId, subject, date, threadKey (email:rootEmailMessageId),
-            url (the thread in the Inbox under comms_app_root)}], one per person with mail. Read-only, in one query of the
+            url (the thread in the Inbox under comms@app-root)}], one per person with mail. Read-only, in one query of the
             mail for all of them: the last 180 days, the latest 300 matching messages (a person whose mail is older than
             those has no line). An outside person (no user of this server) waits for unified contacts and has none.</description>
         <out-parameters><parameter name="mailList" type="List"><parameter name="mail" type="Map"/></parameter></out-parameters>
@@ -1093,7 +1093,7 @@ along with this software (see the LICENSE.md file). If not, see
             const found = Array.from(find.selectField('emailMessageId').selectField('rootEmailMessageId').selectField('subject').selectField('messageDate')
                     .selectField('sentDate').selectField('fromAddress').selectField('toAddresses').selectField('ccAddresses')
                     .orderBy('-messageDate').limit(300).disableAuthz().list())
-            const inbox = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox'
+            const inbox = (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Inbox'
             const done = new Set()
             for (const message of found) {
                 const involved = [lower(message.fromAddress)].concat(addressesOf(message.toAddresses), addressesOf(message.ccAddresses))

@@ -90,7 +90,7 @@ function fallbacksChanged() {
 }
 
 function appRoot() {
-  return property('comms_app_root', '/qapps/BasicComms').replace(/\/+$/, '')
+  return property('comms@app-root', '/qapps/BasicComms').replace(/\/+$/, '')
 }
 
 /** The site's own address for a link in an email, from the webroot webapp's conf; empty gives a path alone. */

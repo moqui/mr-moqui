@@ -153,7 +153,7 @@ The attributes are in `moqui-conf-3.xsd` and
   on Linux.
 - **`mailto:`, `tel:`, `sip:`:** the package registers the app as a handler (`plugins.deep-link` in `tauri.conf.json`,
   `linux/main.desktop`). A mail link opens the Comms app's Compose filled in, a call link its Dialer, under
-  `comms_app_root` (default `/qapps/BasicComms`); a client's under its server's (`calls.appRoot` of the client
+  `comms@app-root` (default `/qapps/BasicComms`); a client's under its server's (`calls.appRoot` of the client
   config), both in the shell. "Make default for email and calls" makes the app the default:
   LaunchServices on macOS (the installed app only), `xdg-mime default` on Linux.
 - **First run:** once the initial admin is signed in on a node that is not paired and not an edge or all-in-one node,

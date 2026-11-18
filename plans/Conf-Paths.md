@@ -4,7 +4,8 @@ Status 2026-11-18: phases 0 to 4 built. Phases 0 to 2: the path module, the conf
 `getConfValue`, `setConf`, the conf view's names and `moqui conf env`. Phase 3: the attributes the default conf filled
 from properties (3a entity facade and databases, 3b web, logging, caches and reports, 3c SSH, git, SMTP and mail, 3d
 search and LLM). Phase 4: every setting that was only a property, in the elements of §6.1 and §6.13 to §6.26; the
-default conf has no default-property left. Phases 5 to 8 to do ([§7](#7-phases)): the component elements, scripts and
+default conf has no default-property left. Phase 5 (started): the generic merge of an add-on's own element,
+and the comms, demo and dev-aide settings. Phases 5 to 8 to do ([§7](#7-phases)): the component elements, scripts and
 packaging, the removal of default-property and `${}`, and the docs. Until phase 7 a name table may hold both kinds of
 name: `conf_env::setting_or_property` reads a selector (it has an `@`) from the conf and anything else as a property.
 

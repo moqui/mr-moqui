@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     The screens call run#Operation, which hands an operation to an app's inbox-source provider when there is one (its page is
     the list: IronStone's merges its internal messages and mailboxes with the mail) and else to these services. Links go
-    under the comms_app_root property. -->
+    under the comms@app-root property. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== The operations of the Inbox screens ========== -->
@@ -926,7 +926,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="search" noun="Messages">
         <description>The palette's Messages group: the user's mail whose text matches (find#InboxRows with the search line, so
-            its operators work), each a row {title, subtitle, icon, url} to the Inbox under comms_app_root. moreUrl is the
+            its operators work), each a row {title, subtitle, icon, url} to the Inbox under comms@app-root. moreUrl is the
             Inbox's search.</description>
         <in-parameters>
             <parameter name="text" required="true"/>
@@ -947,12 +947,12 @@ along with this software (see the LICENSE.md file). If not, see
                     const who = row.store === 'email' ? (row.fromName || row.fromAddress || '') : Array.from(row.participantList || []).map((item) => item.name).join(', ')
                     rows.push({title: row.subject || ec.l10n.localize('(no subject)'), subtitle: [row.store === 'email' ? ec.l10n.localize('Mail') : ec.l10n.localize('Message'),
                         who, row.snippet].filter((part) => part).join(' · ').substring(0, 160), icon: row.store === 'email' ? 'sym_o_mail' : 'sym_o_chat_bubble',
-                        url: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox?view=all&q=' + encodeURIComponent(term) + '&thread=' + encodeURIComponent(row.store + ':' + row.threadId)})
+                        url: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Inbox?view=all&q=' + encodeURIComponent(term) + '&thread=' + encodeURIComponent(row.store + ':' + row.threadId)})
                 }
             } catch (err) { ec.logger.warn(`Palette messages for ${term} failed: ${err && err.message ? err.message : err}`) }
             finally { ec.message.clearErrors(); ec.message.popErrors() }
             rows = rows.slice(0, max)
-            moreUrl = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox?q=' + encodeURIComponent(term)
+            moreUrl = (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Inbox?q=' + encodeURIComponent(term)
         ]]></script></actions>
     </service>
 

@@ -1695,7 +1695,7 @@ team's model keys. Developers who do not run a server, often business users who 
  laptop      ./moq run, dev, 127.0.0.1 ---+   git over https or ssh, /llm, /rest/s1/mantle/my/tasks
  laptop      ./moq run, dev, 127.0.0.1 ---+--------> group server team.example.com, production purpose
  shared dev-aide server, dev, https ------+          mr-boss, mr-mantle: Projects, git hosting, LLM gateway
-   dev_aide_shared=true                              one server or a cluster
+   moqui_conf__dev_aide__shared=true                 one server or a cluster
 ```
 
 The group server runs production purpose because it holds the team's real data. A dev instance loads Dev AIDE, which
@@ -1776,7 +1776,7 @@ url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_
 ### The shared dev-aide server
 
 1. Run a dev instance (`./moq run`, or `MOQUI_CONF=conf/MoquiDevConf.xml`) with the components the users extend, and
-   set `dev_aide_shared=true`.
+   set `moqui_conf__dev_aide__shared=true`.
 2. Give it a certificate, leave `webapp-list/webapp[webroot]@http-bind` empty, and do not publish 8080. Set `webapp-list/webapp[webroot]@allow-origins` to the
    server's own origin, such as `https://dev.example.com`, in place of the dev conf's `*`. An empty value would not
    replace it.

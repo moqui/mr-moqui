@@ -482,3 +482,51 @@ fn every_keyed_merge_has_its_key_in_the_conf_schema() {
         "the same key merges into one element"
     );
 }
+
+/// Every element the XSD takes under `moqui-conf` is one the conf schema knows, so the generic merge of a component's
+/// own settings element never merges a framework element a second time; an add-on's element (mr-pass's `pass`) merges
+/// by that rule: its attributes replace, a child with a name merges into the base's, any other child is added.
+#[test]
+fn an_add_on_element_merges_as_settings_and_the_frameworks_are_known() {
+    let xsd = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime/components/base/framework/xsd/moqui-conf-3.xsd"),
+    )
+    .unwrap();
+    let start = xsd.find(r#"<xs:element name="moqui-conf">"#).unwrap();
+    let end = start + xsd[start..].find("</xs:sequence>").unwrap();
+    let names: Vec<&str> = xsd[start..end]
+        .split(r#"ref=""#)
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert!(names.len() > 40, "{names:?}");
+    for name in names {
+        assert!(
+            super::super::conf_schema::is_known_element(name),
+            "the conf element {name} is not in the conf schema, so a component's copy would also merge as settings"
+        );
+    }
+    let base = MNode::parse_text(
+        "base",
+        r#"<moqui-conf><pass backend-url="https://a"><lane name="a" size="1"/></pass></moqui-conf>"#,
+    )
+    .unwrap();
+    let over = MNode::parse_text(
+        "over",
+        r#"<moqui-conf><pass backend-url="https://b"><lane name="a" size="2"/><lane name="b"/><note/></pass>
+            <mantle content-root="/c"/></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &over);
+    let pass = base.first_named("pass").unwrap();
+    assert_eq!(pass.attribute("backend-url").as_deref(), Some("https://b"));
+    assert_eq!(pass.children_named("lane").len(), 2);
+    let a = pass.first_named_attrs("lane", &[("name", "a")]).unwrap();
+    assert_eq!(a.attribute("size").as_deref(), Some("2"));
+    assert_eq!(pass.children_named("note").len(), 1);
+    assert_eq!(
+        base.first_named("mantle").unwrap().attribute("content-root").as_deref(),
+        Some("/c")
+    );
+}

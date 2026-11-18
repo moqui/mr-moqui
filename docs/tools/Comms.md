@@ -406,7 +406,7 @@ An app adds to BasicComms through four seams. None needs a copy of a BasicComms 
 
 To keep one Comms in the launcher, the app's `MoquiConf.xml` hides BasicComms
 (`<subscreens-item name="BasicComms" menu-include="false"/>` under `apps.xml`; `/qapps/BasicComms` still works) and sets
-`comms_app_root` to its own root, for the links in notifications and mail. A screen's own links are relative to the
+`comms@app-root` to its own root, for the links in notifications and mail. A screen's own links are relative to the
 mount (the `appRoot` its root sets, `mScreen.path`).
 
 **screen-extend.** A file at `<app>/screen-extend/basic-comms/screen/BasicComms/<path>.xml` adds transitions,

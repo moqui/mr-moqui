@@ -257,6 +257,46 @@ fn component_name(dir: &Path) -> String {
 pub fn merge_conf(base: &MNode, over: &MNode) {
     merge_config_component_nodes(base, over);
     merge_config_nodes(base, over);
+    merge_component_elements(base, over);
+}
+
+/// A top-level element the conf schema does not know, a component's own settings (basic-comms's `comms`, mr-pass's
+/// `pass`; plans/Conf-Paths.md §6.27), merged as a settings element: its attributes replace the base's, and each child
+/// with a `name` or `id` merges into the base's child of that element name and key (its attributes replace, its
+/// children replace when it has any), any other child is added. A component reading another's setting gets nothing
+/// when that component is absent.
+fn merge_component_elements(base: &MNode, over: &MNode) {
+    for over_child in over.children() {
+        let name = over_child.name().to_string();
+        if name == "component-list" || name == "default-property" || super::conf_schema::is_known_element(&name) {
+            continue;
+        }
+        let Some(base_child) = base.first_named(&name) else {
+            base.append_node(over_child.deep_copy());
+            continue;
+        };
+        base_child.copy_attributes_from(&over_child);
+        for grandchild in over_child.children() {
+            let key = ["name", "id"].into_iter().find_map(|attr| {
+                grandchild
+                    .attribute(attr)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| (attr, value))
+            });
+            let found = key
+                .as_ref()
+                .and_then(|(attr, value)| base_child.first_named_attrs(&grandchild.name(), &[(*attr, value.as_str())]));
+            match found {
+                Some(existing) => {
+                    existing.copy_attributes_from(&grandchild);
+                    if !grandchild.children().is_empty() {
+                        existing.replace_children_from(&grandchild);
+                    }
+                }
+                None => base_child.append_node(grandchild.deep_copy()),
+            }
+        }
+    }
 }
 
 fn merge_config_component_nodes(base: &MNode, over: &MNode) {
@@ -397,6 +437,9 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "voicemail",
         // backups of the embedded database
         "database-backup",
+        // the settings of basic-comms and demo, from their MoquiConf.xml
+        "comms",
+        "demo",
         "ssh-server",
         "terminal",
         "git-server",

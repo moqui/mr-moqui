@@ -69,7 +69,7 @@ const property = (selector, fallback) => { const value = Number(ec.factory.getCo
 const awayDays = () => property('chat@held-overdue-days', 7)
 /** The most messages of one sender a run of the job sends (a minute's): the rest wait for the next run. */
 const perUserPerRun = () => property('chat@schedule-user-per-run', 20)
-const appRoot = () => (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '')
+const appRoot = () => (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms').replace(/\/+$/, '')
 const roomLink = (chatRoomId, eventSeq) => `${appRoot()}/Chat?chatRoomId=${encodeURIComponent(chatRoomId)}${eventSeq != null ? '&eventSeq=' + eventSeq : ''}`
 const parseList = (text) => { try { const value = text ? JSON.parse(text) : []; return Array.isArray(value) ? value : [] } catch (err) { return [] } }
 

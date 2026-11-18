@@ -133,7 +133,7 @@ along with this software (see the LICENSE.md file). If not, see
             const nowMillis = toMillis(ec.user.nowTimestamp)
             const day = (millis) => ec.l10n.format(new Date(Number(millis)), 'yyyy-MM-dd')
             const todayText = day(nowMillis)
-            const APP = System.getProperty('comms_app_root') || '/qapps/BasicComms'
+            const APP = ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms'
             const INBOX = APP + '/Inbox'
             const count = (n) => ec.l10n.format(n, '#,##0')
             // one part: its own errors and transaction; a failure leaves it out

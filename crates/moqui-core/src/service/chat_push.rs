@@ -650,7 +650,7 @@ impl Content {
                 Some(cut_chars(&shown, MAX_SNIPPET))
             }
         };
-        let root = moqui_lib::env::get_prop_or_env("comms_app_root");
+        let root = crate::context::conf_env::setting("comms@app-root");
         let root = if root.trim().is_empty() {
             "/qapps/BasicComms".to_string()
         } else {
