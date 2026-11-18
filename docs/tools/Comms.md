@@ -298,15 +298,19 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   - *List in Browse.* A private room's owner lists it in Browse (the Invite links dialog): its name, topic and member count
     show to people who are not in it, under "Private rooms you can ask to join", and Ask to join sends a request. Its
     messages stay its members'.
-  - *Blocks.* A link whose maker blocked you does not work for you (it reads as not found), and a moderator who blocked
-    you does not see your request; another moderator does. An outside user of an app (`EXTERNAL_USER`) makes no links and
-    joins no public room by one.
+  - *Who a link takes.* A link takes only people its maker could add to the room: someone the maker blocked, or an app keeps
+    from the maker (its chat-target provider, as for Add people), gets the page of a link that does not exist, before and
+    after signing in; nothing says why. A moderator who blocked you does not see your request, and their count leaves it
+    out; another moderator does. An approval is checked as the approving moderator's add. An outside user of an app
+    (`EXTERNAL_USER`) makes no links and gets "not found" for a public room's link. A disabled maker's links take no one.
 - **Text members** (plans/Comms-Messaging.md §18.3 phase 18; `org.moqui.call.SmsRoomServices`;
-  [SMS](../interfaces/SMS.md#text-members-of-a-room)). In a private room that is not encrypted, a moderator's Add by phone
+  [SMS](../interfaces/SMS.md#text-members-of-a-room)). In a private room that is not encrypted and that not every user may read, a moderator's Add by phone
   number (People) adds someone without the app: they get each message as a text, "Ann: …", from one of our numbers
   marked for room texts, and their replies post to the room as them. The dialog asks for the number, their name in this
   room (only this room shows it; elsewhere the number, or its name in your phone book, shows), and your confirmation that
-  they agreed to get the room's texts; it says what it costs ("With 3 text members, one message is 3 texts"). A person
+  they agreed to get the room's texts; it says what it costs ("With 3 text members, one message is 3 texts"). The room's
+  texts to them go on you: your permission for the number's destination, your grant of our number and your day's limit;
+  if you lose them, their texts stop and the room's moderators are told. A person
   is a text member of one room on each of our numbers: for a second room the dialog picks another number, and when none
   is free it says "This person is already a text member of <room> on this number; another number is needed." While they
   are a member, their texts to that number go to the room, and your own texts to them from that number are not sent:

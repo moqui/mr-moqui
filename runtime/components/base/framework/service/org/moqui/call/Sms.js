@@ -433,8 +433,32 @@ function checkSend(p) {
   if (dest.destinationClass === 'emergency') return no('emergency', 'Texts to emergency numbers are not sent from here; call them')
   const chatRoomId = blank(p.chatRoomId) ? null : String(p.chatRoomId)
   if (chatRoomId && number.roomTextsEnabled !== 'Y') return no('roomTextsOff', 'This number no longer carries rooms\' texts')
-  const userId = chatRoomId || blank(p.userId) ? null : p.userId
-  if (userId && !Array.from(voice('grants', { userId }).numberList || []).includes(from)) {
+  // room mode: the room's texts to its member go on the moderator who added them, with their grant, their permissions and
+  // their day; when the adder can no longer text, the member's texts stop and the room's moderators hear of it
+  let userId = blank(p.userId) ? null : p.userId
+  if (chatRoomId) {
+    const mapping = Array.from(find(MAPPING).condition('externalRoomId', from + '/' + dest.number + '#' + chatRoomId).condition('thruDate', null).list())[0]
+    if (!mapping) return no('notMember', 'This number is not a text member of the room')
+    userId = mapping.addedByUserId || null
+    const adderNo = (reasonCode, text) => {
+      const refused = no(reasonCode, text)
+      try {
+        ec.resource.script(SMS_ROOM).execute('noteAdderProblem', { chatRoomBridgeId: mapping.chatRoomBridgeId, message: refused.message })
+      } catch (err) {
+        ec.logger.error(`The moderators of room ${chatRoomId} were not told that a text member's texts stopped: ${err && err.message ? err.message : err}`)
+      }
+      return refused
+    }
+    const account = userId ? one('moqui.security.UserAccount', { userId }) : null
+    if (!account || account.disabled === 'Y' || (account.terminateDate && ms(account.terminateDate) <= nowMs())) {
+      return adderNo('adderNotAllowed', 'The person who added this text member can no longer send texts: a moderator adds them again')
+    }
+    if (!Array.from(voice('grants', { userId }).numberList || []).includes(from)) {
+      return adderNo('adderNotAllowed', 'The person who added this text member may no longer text from this number: a moderator adds them again')
+    }
+    const adderClass = destinationRefusal(dest, userId)
+    if (adderClass) return adderNo(adderClass.reasonCode, adderClass.text)
+  } else if (userId && !Array.from(voice('grants', { userId }).numberList || []).includes(from)) {
     return no('numberNotGranted', 'You may not text from that number')
   }
   if (!chatRoomId && isTrue(p.inRoom)) {
@@ -453,6 +477,7 @@ function checkSend(p) {
   const limits = smsPolicy()
   const reserve = p.reserve === true || p.reserve === 'true' || p.reserve === 'Y'
   const counters = countersOf(userId, from, promotional, chatRoomId)
+  const counterUserId = userId
   const day = today()
   // reserve: the check and the count are one step, under the lock of the day's count of all users' texts, of the
   // system's, or of the number's promotional texts (made at 0 when there is none yet), so sends at once cannot pass a
@@ -472,7 +497,7 @@ function checkSend(p) {
   if (over) return no('dailyLimit', 'The limit of texts for a day is reached')
   if (reserve) countSent(counters.keys, day, 1)
   return { allowed: true, ourNumber: from, theirNumber: dest.number, chatBridgeId: number.messagingBridgeId, destinationClass: dest.destinationClass,
-    counterDay: reserve ? day : null }
+    counterDay: reserve ? day : null, counterUserId }
 }
 
 /**
@@ -481,8 +506,8 @@ function checkSend(p) {
  * (promo:<number>), and a promotional text with no user (a campaign's) that alone, so it never spends the system's budget.
  */
 function countersOf(userId, fromNumber, promotional, chatRoomId) {
-  // a room's text to its text member: the room's day and all users'
-  if (chatRoomId) return { keys: ['room:' + chatRoomId, 'all'], locks: ['all'] }
+  // a room's text to its text member: its adder's day, the room's day and all users'
+  if (chatRoomId) return { keys: (userId ? ['user:' + userId] : []).concat(['room:' + chatRoomId, 'all']), locks: ['all'] }
   const promo = promotional && fromNumber ? 'promo:' + fromNumber : null
   if (userId) return { keys: promo ? ['user:' + userId, 'all', promo] : ['user:' + userId, 'all'], locks: promo ? ['all', promo] : ['all'] }
   if (promo) return { keys: [promo], locks: [promo] }
@@ -873,6 +898,11 @@ const operations = {
   usersOf: (p) => {
     const number = blank(p.phoneNumber) ? null : one(NUMBER, { phoneNumber: p.phoneNumber })
     return { userIdList: number ? usersOf(number) : [] }
+  },
+  // a destination's class refused for userId (international, premium), as check#SmsSend refuses it (SmsRoom.js)
+  destinationRefusal: (p) => {
+    const dest = voice('classify', { phoneNumber: p.phoneNumber })
+    return (dest.number ? destinationRefusal(dest, blank(p.userId) ? null : p.userId) : null) || {}
   },
   ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, releaseSend, noteKeyword, noteOptSignal, receive, sendMessage, myTextNumbers,
   syncNumberRooms, phoneNames,

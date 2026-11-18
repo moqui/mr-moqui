@@ -1081,6 +1081,11 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
                 Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => reserved.push(BTreeMap::from([
                     ("chatRoomId".to_string(), Value::string(&request.chat_room_id)),
                     ("fromNumber".to_string(), Value::string(&ours)),
+                    // the adder's day it counted on too
+                    (
+                        "userId".to_string(),
+                        out.get("counterUserId").cloned().unwrap_or(Value::Null),
+                    ),
                     (
                         "counterDay".to_string(),
                         out.get("counterDay").cloned().unwrap_or(Value::Null),
@@ -1121,8 +1126,9 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
                     ("toNumber".to_string(), Value::string(to)),
                     ("userId".to_string(), Value::string(user)),
                     ("reserve".to_string(), Value::Bool(true)),
-                    // a room's text: refused while the number is a text member of a room on ours (inRoomByText)
-                    ("inRoom".to_string(), Value::Bool(true)),
+                    // a pair room's text: refused while the number is a text member of a room on ours
+                    // (inRoomByText); a group text with them goes as ever, since its replies come to the group
+                    ("inRoom".to_string(), Value::Bool(theirs.len() == 1)),
                 ]);
                 let refusal = match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
                     Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {

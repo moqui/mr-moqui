@@ -80,6 +80,7 @@ spec({
         shared.room = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Soccer parents", memberUserIdList: [MATE]}).chatRoomId
         shared.second = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Choir"}).chatRoomId
         shared.third = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Book club"}).chatRoomId
+        shared.fourth = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Garden"}).chatRoomId
         shared.pub = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPublic", roomName: "Everyone"}).chatRoomId
         shared.sealed = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Sealed"}).chatRoomId
         sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", shared.sealed).updateAll({encrypted: "Y"}))
@@ -257,5 +258,88 @@ feature("taking a member out ends its mapping, and an archived room's texts go t
         ended != null
         archived.chatRoomId != shared.second
         archived.chatRoomId == pairRoomOf(OURS2, THEIRS)
+    }
+})
+
+const policy = (fields) => make("moqui.call.VoicePolicy", Object.assign({voicePolicyId: "DEFAULT"}, fields))
+const NEXT = "+15552228103"
+const check = (parameters) => sys(() => ec.service.sync().name("org.moqui.call.SmsServices.check#SmsSend").parameters(parameters).call())
+
+feature("an archived room's member still takes the number, and two mappings of one person route to the pair room", {
+    when() {
+        const choices = as(MOD, ROOMS + "get#TextMemberChoices", {chatRoomId: shared.third, phoneNumber: THEIRS})
+        const third = as(MOD, ROOMS + "add#TextMember", {chatRoomId: shared.third, phoneNumber: THEIRS, consent: "Y", ourNumber: OURS2})
+        // a second mapping of THEIRS on OURS2, as no add makes one: the text goes to neither room
+        const second = mappingOf(OURS2, THEIRS, shared.second)
+        sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", shared.second).updateAll({archivedDate: null}))
+        make("moqui.chat.ChatRoomBridge", {chatRoomBridgeId: "SMS_ROOM_DUP", chatRoomId: shared.third, chatBridgeId: BRIDGE,
+            externalRoomId: OURS2 + "/" + THEIRS + "#" + shared.third, directionEnumId: "CrbBoth", fromDate: ec.user.nowTimestamp,
+            memberChatActorId: second.memberChatActorId})
+        const routed = text(OURS2, THEIRS, "Which room?")
+        sys(() => ec.entity.find("moqui.chat.ChatRoomBridge").condition("chatRoomBridgeId", "SMS_ROOM_DUP").deleteAll())
+        return {choices, third, routed}
+    },
+    then({choices, third, routed}) {
+        choices.numberList.find((choice) => choice.phoneNumber === OURS2).takenArchived == true
+        third.reasonCode == "noFreeNumber"
+        third.errors.includes("which is archived")
+        routed.chatRoomId == pairRoomOf(OURS2, THEIRS)
+    }
+})
+
+feature("the adder's own permissions and day: an international number refused, room texts counted on them, stopped when they lose the number", {
+    when() {
+        policy({internationalEnabled: "Y"})
+        const international = as(MOD, ROOMS + "add#TextMember", {chatRoomId: shared.third, phoneNumber: "+447700900123", consent: "Y"})
+        policy({internationalEnabled: null})
+        as(MOD, ROOMS + "add#TextMember", {chatRoomId: shared.third, phoneNumber: NEXT, consent: "Y"})
+        const before = counted("user:" + MOD)
+        const sent = check({fromNumber: OURS1, toNumber: NEXT, chatRoomId: shared.third, reserve: true})
+        const after = counted("user:" + MOD)
+        policy({smsMaxPerUserPerDay: after})
+        const overDay = check({fromNumber: OURS1, toNumber: NEXT, chatRoomId: shared.third})
+        policy({smsMaxPerUserPerDay: null})
+        sys(() => ec.entity.find("moqui.call.PhoneNumberUser").condition({phoneNumber: OURS1, userId: MOD}).deleteAll())
+        const noGrant = check({fromNumber: OURS1, toNumber: NEXT, chatRoomId: shared.third})
+        const told = sys(() => ec.entity.find("moqui.security.user.NotificationMessage").condition("topic", "ChatTextMember")
+            .condition("recordId", shared.third).count())
+        make("moqui.call.PhoneNumberUser", {phoneNumber: OURS1, userId: MOD, fromDate: new Date(Date.now() - 60000)})
+        return {international, sent, before, after, overDay, noGrant, told}
+    },
+    then({international, sent, before, after, overDay, noGrant, told}) {
+        international.reasonCode == "internationalNotEnabled"
+        sent.allowed == true
+        sent.counterUserId == MOD
+        after == before + 1
+        overDay.reasonCode == "dailyLimit"
+        noGrant.reasonCode == "adderNotAllowed"
+        told == 1
+    }
+})
+
+feature("an add's other refusals: a room open to every user, the room's members, the day's adds, a blocked number, one that replied STOP", {
+    when() {
+        const add = (chatRoomId, phoneNumber) => as(MOD, ROOMS + "add#TextMember", {chatRoomId, phoneNumber, consent: "Y"})
+        const open = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Open"}).chatRoomId
+        sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", open).updateAll({visibilityEnumId: "CrvUsers"}))
+        const openRoom = add(open, "+15552228111")
+        policy({smsRoomMaxMembers: 1})
+        const tooMany = add(shared.third, "+15552228112")
+        policy({smsRoomMaxMembers: null, smsRoomAddsPerDay: counted("roomAdds:" + MOD)})
+        const adds = add(shared.fourth, "+15552228113")
+        policy({smsRoomAddsPerDay: null})
+        as(MOD, "org.moqui.call.CallHandlingServices.block#PhoneNumber", {phoneNumber: "+15552228114"})
+        const blocked = add(shared.fourth, "+15552228114")
+        make("moqui.call.SmsOptOut", {phoneNumber: OURS1, otherNumber: "+15552228115", optedOut: "Y", changedDate: ec.user.nowTimestamp})
+        make("moqui.call.SmsOptOut", {phoneNumber: OURS2, otherNumber: "+15552228115", optedOut: "Y", changedDate: ec.user.nowTimestamp})
+        const optedOut = add(shared.fourth, "+15552228115")
+        return {openRoom, tooMany, adds, blocked, optedOut}
+    },
+    then({openRoom, tooMany, adds, blocked, optedOut}) {
+        openRoom.reasonCode == "openRoom"
+        tooMany.reasonCode == "tooManyMembers"
+        adds.reasonCode == "dailyLimit"
+        blocked.reasonCode == "blocked"
+        optedOut.reasonCode == "optedOut"
     }
 })

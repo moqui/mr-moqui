@@ -18,6 +18,19 @@ along with this software (see the LICENSE.md file). If not, see
     (get#RoomAccess); check#InviteToken and join#ByInvite take a token instead. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
+    <service verb="get" noun="RefusedUsersAs" type="rust" location="moqui_core::service::chat::get_refused_users_as"
+            allow-remote="false" transaction="ignore">
+        <description>Internal: ChatServices.get#RefusedUsers of userIdList asked as userId (an invite link's maker), with
+            authorization on, so a joiner the maker could not add is refused as add#Member refuses them. Everyone is refused
+            when userId has no account or the question fails.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="userIdList" type="List" required="true"/>
+            <parameter name="blocks" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
+    </service>
+
     <service verb="create" noun="InviteLink">
         <description>A room's invite link, /join/&lt;token&gt;: in a private room by a moderator or owner, with approval or not; in a public room by any member, never with approval. expiryHours 1 to 720, 0 for no end, empty for a week; maxUses 1, 5, 10, 25 or 100, empty for no limit; a label. The token is in the answer, and kept encrypted for the room's moderators. Refused (reasonCode): notAllowed (not a moderator of a private room, not a member of a public room, an external user), roomType (direct, record, phone), archived, tooManyLinks (20 in force), badExpiry, badUses.</description>
         <in-parameters>

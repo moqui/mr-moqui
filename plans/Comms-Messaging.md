@@ -3598,8 +3598,10 @@ A use is a join or a request. So a link with approval that allows 10 uses lets a
    - a person who left by themselves comes back as `add#Member` brings them back.
 4. Out: `outcome` (`joined`, `requested` or `member`), `chatRoomId`, `roomUrl` (`${comms_app_root}/Chat?chatRoomId=`).
    Refused with a `reasonCode`:
-   - `notFound`: a bad, revoked, expired or used-up link; a link whose maker blocked the person (D1: answered as not
-     found, SEC-COM-01); an external user (`EXTERNAL_USER`) and a public room;
+   - `notFound`: a bad, revoked, expired or used-up link, or one whose maker is disabled; a person the maker could not
+     add to the room: one the maker blocked (D1), or one `get#RefusedUsers` asked as the maker refuses (the apps'
+     chat-target providers, as `add#Member` asks them; answered as not found, SEC-COM-01, on the join page too); an
+     external user (`EXTERNAL_USER`) and a public room;
    - `notSignedIn`;
    - `deniedRecently`: a request to this room denied in the last 7 days;
    - `tooManyRequests`: 10 pending a person;
@@ -3767,6 +3769,20 @@ Hooks in shared files:
   (new: the page in qvue, its `join` and `signIn`, and Chat's invite transitions), `webroot/test/client/WebrootChat.spec.js`
   (the pure parts, the push, the components compiling), moqui-mobile `join_tests.rs` (the link, the account's pick).
 - Left: §18.4's row; the dialogs and the join page are not walked in a browser.
+
+**Review fixes (2026-11-18).**
+- A link takes only people its maker could add: `refusedBy` runs the maker's block and `get#RefusedUsers` asked as the
+  maker (`ChatInviteServices.get#RefusedUsersAs`, Rust `chat::get_refused_users_as`: `get#RefusedUsers` as the maker
+  with `answerWithAuthzOff`, the apps' chat-target providers asked with authorization on, as `call#Providers` requires;
+  everyone refused when it fails). The join page (`check#InviteToken`) answers such a person, and an external user on a
+  public room's link, as a bad token; `join#ByInvite` answers "not found". An approval is `add#Member` as the approving
+  moderator, so its refusal leaves the request pending.
+- A disabled or terminated maker's links take no one (`mayMake`).
+- Each moderator's pushed count is their own (`visibleCount`), without the requests of people they blocked.
+- `findListed` counts the members of the rooms shown in one query.
+- Tests: `ChatInvites.spec.js` (the page and a join refused alike for a blocked person, an expired link, an archived
+  room, a disabled maker; `tooManyRequests`, `queueFull`, `rateLimited`), `ChatJoin.spec.js` (a refusing chat-target
+  provider of the component's test app, `TextNamesServices.get#ChatTarget`: the page, the join and an approval).
 
 #### Phase 18: text members of a room (D2d, §14.5 "Join by SMS without the app", §17 #6)
 
@@ -4010,6 +4026,30 @@ rather than typed. The desktop app's bundled Chat is the same; offline, Add says
 - A room with a timer refuses text members (`timerOn`, `ChatRoom.messageTimerSeconds` of phase 16), and phase 16's
   `set#RoomTimer` refuses a room with text members (`bridged`: a mapping in force).
 - Left: §18.4's row; Add by phone number is not walked in a browser.
+
+**Review fixes (2026-11-18).**
+- *The adder's permissions.* `add#TextMember` checks the adder's own destination permissions (`VoiceUserSetting`, through
+  `Sms.js` `destinationRefusal`). In room mode `check#SmsSend` reads the mapping's `addedByUserId` and applies their
+  account (not disabled or terminated), their grant of the number and their permissions, and counts their day
+  (`user:<id>`, `smsMaxPerUserPerDay`) beside `room:` and `all` (`counterUserId` for the release). When the adder fails
+  them the member's texts stop (`adderNotAllowed`, or the permission's reason) and the room's moderators get the
+  `ChatTextMember` notification, once a day for the member (`noteAdderProblem`).
+- *One room per number holds.* `store#TextMember` locks our number's `PhoneNumber` row, then the room's (ChatExpiry
+  `checkBridge`), always in that order, and checks the room's rules and the timer again under them. A member of an
+  archived room still takes the number (`takenOn`; the dialog says the room is archived), so unarchiving never makes two
+  rooms for one person; their texts go to the pair room meanwhile (`liveOn`). `routeOf` never picks between two
+  mappings: with two it logs an error and the text goes to the pair room. The test bed runs one call at a time, so the
+  race itself is not tested; the lock order is in `storeTextMember`'s comment.
+- `inRoomByText` is a pair room's: the adapter passes `inRoom` only for one recipient, so a group text with a text member
+  goes as ever.
+- A private room every user may read (`visibilityEnumId` not `CrvMembers`) takes no text members (`openRoom`).
+- Shared numbers: SMS.md and the Numbers screen's help advise numbers of their own for room texts and say what adding a
+  customer of a shared number does; the add dialog's `pairRoomActive` warning names it.
+- HELP's answer names the deployment by `chat_server_name` when it is set (there is no other name property).
+- Tests: `SmsRoomMembers.spec.js` (an archived room's member taking the number, two mappings to the pair room, an
+  international number refused for the adder, room texts on the adder's day and its limit, the grant lost with the
+  moderators told, `openRoom`, `tooManyMembers`, `dailyLimit`, `blocked`, `optedOut`); moqui-channels (the adder's
+  day, a group text with a member sent, the pair room's text refused `inRoomByText`).
 
 #### Phase 10 and later
 

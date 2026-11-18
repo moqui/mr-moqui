@@ -77,7 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="messagingBridgeId"><default-field title="Texts through" tooltip="The SMS or RCS bridge its texts go through (System, Chat Bridges); empty for none. An RCS bridge sends RCS first, from the brand's agent; the system's number stays on SMS">
                         <drop-down allow-empty="true"><list-options list="messagingOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
-                    <field name="roomTextsEnabled"><default-field title="Room texts" tooltip="Carries the text members of chat rooms: one room per outside number on it, and that number's texts to it go to the room while it is a member. Each message in such a room is a text to each text member">
+                    <field name="roomTextsEnabled"><default-field title="Room texts" tooltip="Carries the text members of chat rooms: one room per outside number on it, and that number's texts to it go to the room while it is a member. Each message in such a room is a text to each text member. Mark a number of its own for this: on a shared number, adding a customer diverts that customer's texts from the conversation your colleagues have with them, and their texts to the customer from that conversation are not sent">
                         <check><option key="Y" text=" "/></check></default-field></field>
                     <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                     <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
@@ -106,7 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <field name="emergencyLocationId" from="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                             <field name="messagingBridgeId" from="messagingBridgeId"><default-field title="Texts through">
                                 <drop-down allow-empty="true"><list-options list="messagingOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
-                            <field name="roomTextsEnabled" from="roomTextsEnabled"><default-field title="Room texts" tooltip="Carries the text members of chat rooms: one room per outside number on it">
+                            <field name="roomTextsEnabled" from="roomTextsEnabled"><default-field title="Room texts" tooltip="Carries the text members of chat rooms: one room per outside number on it. Mark a number of its own for this: on a shared number, adding a customer diverts that customer's texts from your colleagues' conversation with them">
                                 <check><option key="Y" text=" "/></check></default-field></field>
                             <field name="description" from="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                             <field name="submitButton"><default-field title="Save"><submit/></default-field></field>

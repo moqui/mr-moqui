@@ -91,6 +91,9 @@ function linkKindOf(room) {
 function mayMake(room, userId) {
   const kind = linkKindOf(room)
   if (!kind || room.archivedDate || !userId) return false
+  // a disabled or terminated account's links take no one
+  const account = one(ACCOUNT, { userId })
+  if (!account || account.disabled === 'Y' || (account.terminateDate && ms(account.terminateDate) <= nowMs())) return false
   const member = one(MEMBER, { chatRoomId: room.chatRoomId, userId })
   if (!member || member.leftDate) return false
   if (kind === 'private' && !['CmrOwner', 'CmrModerator'].includes(member.roleEnumId)) return false
@@ -269,14 +272,39 @@ function seers(chatRoomId, userId) {
 
 /** The room's moderators hear the count of pending requests on the room's topic (the room's banner). */
 function pushCount(chatRoomId) {
-  try {
-    const moderators = moderatorsOf(chatRoomId)
-    if (!moderators.length) return
-    ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({ topic: 'chatRoom:' + chatRoomId, userIdList: moderators,
-      message: { kind: 'joinRequests', chatRoomId, pendingCount: pendingCount(chatRoomId) } }).disableAuthz().call()
-  } catch (err) {
-    ec.logger.error(`The join requests count of room ${chatRoomId} was not pushed: ${message(err)}`)
+  // each moderator their own count: the requests of people they blocked are not theirs to see (D1)
+  for (const userId of moderatorsOf(chatRoomId)) {
+    try {
+      ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({ topic: 'chatRoom:' + chatRoomId, userIdList: [userId],
+        message: { kind: 'joinRequests', chatRoomId, pendingCount: visibleCount(chatRoomId, userId) } }).disableAuthz().call()
+    } catch (err) {
+      ec.logger.error(`The join requests count of room ${chatRoomId} was not pushed to ${userId}: ${message(err)}`)
+    }
   }
+}
+
+/** The pending requests of a room that moderator userId sees (not those of people they blocked). */
+function visibleCount(chatRoomId, userId) {
+  const blocked = ec.resource.script(CHAT_BLOCKS).execute('blockedBy', { userId }).userIdList || []
+  let finder = find(REQUEST).condition({ chatRoomId, statusEnumId: 'CjrPending' })
+    .condition('requestedDate', '>=', new Date(nowMs() - REQUEST_DAYS * DAY))
+  if (blocked.length) finder = finder.condition('userId', 'not-in', blocked)
+  return finder.count()
+}
+
+/**
+ * Whether the link's maker could not have added userId to room: they blocked them (D1), or get#RefusedUsers asked as the
+ * maker refuses them (an app's chat-target provider, the maker's reach; for a private room, userId's block of the maker),
+ * the check add#Member makes. Such a person is answered as for a link that does not exist (SEC-COM-01), on the join page
+ * too. And an external user (EXTERNAL_USER) joins no public room by a link.
+ */
+function refusedBy(link, room, userId) {
+  const kind = linkKindOf(room)
+  if (kind === 'public' && isExternal(userId)) return true
+  if ((ec.resource.script(CHAT_BLOCKS).execute('blockersOf', { senderUserId: userId, userIdList: [link.createdByUserId] }).userIdList || []).length) return true
+  const refused = ec.service.sync().name('org.moqui.chat.ChatInviteServices.get#RefusedUsersAs').parameters({ userId: link.createdByUserId,
+    userIdList: [userId], blocks: kind === 'private' }).disableAuthz().call()?.refusedUserIdList || [userId]
+  return Array.from(refused).includes(userId)
 }
 
 /** The ChatJoinRequest notification to each moderator who sees the request, each on its own. */
@@ -365,6 +393,8 @@ function checkToken(p) {
   const room = link ? one(ROOM, { chatRoomId: link.chatRoomId }) : null
   if (!link || linkProblem(link, room)) return { valid: false, routeContext: null }
   const me = ec.user.userId
+  // a person the maker could not add, or blocked, sees the page a bad link gets: nothing tells them why
+  if (me && refusedBy(link, room, me)) return { valid: false, routeContext: null }
   const memberCount = find(MEMBER).condition('chatRoomId', room.chatRoomId).condition('leftDate', null).condition('userId', 'not-equals', null).count()
   const context = { roomName: room.roomName || ec.l10n.localize('A room'), memberCount, roomKind: linkKindOf(room),
     approval: link.approvalRequired === 'Y', encrypted: room.encrypted === 'Y', verifiedOnly: room.verifiedDevicesOnly === 'Y', signedIn: !!me }
@@ -392,10 +422,9 @@ function joinByInvite(p) {
   const notFound = () => refuse('notFound', 'This link has expired or was not found.')
   if (!link || linkProblem(link, room)) return notFound()
   const kind = linkKindOf(room)
-  // an external user joins no public room by a link
-  if (kind === 'public' && isExternal(me)) return notFound()
-  // the maker blocked them: answered as not found (SEC-COM-01)
-  if ((ec.resource.script(CHAT_BLOCKS).execute('blockersOf', { senderUserId: me, userIdList: [link.createdByUserId] }).userIdList || []).length) return notFound()
+  // a person the maker could not add (their block, the apps' chat-target providers), and an external user on a public
+  // room's link: answered as not found (SEC-COM-01)
+  if (refusedBy(link, room, me)) return notFound()
   const member = one(MEMBER, { chatRoomId: room.chatRoomId, userId: me })
   if (member && !member.leftDate) return { outcome: 'member', chatRoomId: room.chatRoomId, roomUrl: roomUrl(room.chatRoomId) }
   if (rateLimited(me)) return refuse('rateLimited', 'Too many joins in an hour; try again later')
@@ -538,12 +567,19 @@ function findListed(p) {
   const mine = new Set(Array.from(find(MEMBER).condition('userId', me).condition('leftDate', null).condition('chatRoomId', 'in', roomIds)
     .selectField('chatRoomId').list()).map((row) => row.chatRoomId))
   const shown = rooms.filter((room) => !mine.has(room.chatRoomId)).slice(0, 50)
+  const shownIds = shown.map((room) => room.chatRoomId)
   const pending = new Set(shown.length ? Array.from(find(REQUEST).condition('userId', me).condition('statusEnumId', 'CjrPending')
-    .condition('chatRoomId', 'in', shown.map((room) => room.chatRoomId)).selectField('chatRoomId').list()).map((row) => row.chatRoomId) : [])
+    .condition('chatRoomId', 'in', shownIds).selectField('chatRoomId').list()).map((row) => row.chatRoomId) : [])
+  // the members of every room shown, in one query, counted by room
+  const counts = {}
+  if (shownIds.length) {
+    for (const row of find(MEMBER).condition('chatRoomId', 'in', shownIds).condition('leftDate', null).condition('userId', 'not-equals', null)
+      .selectField('chatRoomId').list()) counts[row.chatRoomId] = (counts[row.chatRoomId] || 0) + 1
+  }
   return {
     roomList: shown.map((room) => ({
       chatRoomId: room.chatRoomId, roomName: room.roomName || null, topic: room.topic || null, pending: pending.has(room.chatRoomId),
-      memberCount: find(MEMBER).condition('chatRoomId', room.chatRoomId).condition('leftDate', null).condition('userId', 'not-equals', null).count(),
+      memberCount: counts[room.chatRoomId] || 0,
     })),
   }
 }
@@ -553,11 +589,7 @@ function requestCount(p) {
   const me = ec.user.userId
   const room = me ? one(ROOM, { chatRoomId: p.chatRoomId }) : null
   if (!room || !moderates(room, me)) return { pendingCount: 0 }
-  const blocked = ec.resource.script(CHAT_BLOCKS).execute('blockedBy', { userId: me }).userIdList || []
-  let finder = find(REQUEST).condition({ chatRoomId: room.chatRoomId, statusEnumId: 'CjrPending' })
-    .condition('requestedDate', '>=', new Date(nowMs() - REQUEST_DAYS * DAY))
-  if (blocked.length) finder = finder.condition('userId', 'not-in', blocked)
-  return { pendingCount: finder.count() }
+  return { pendingCount: visibleCount(room.chatRoomId, me) }
 }
 
 const operations = {

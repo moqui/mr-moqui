@@ -3874,7 +3874,7 @@
               }, 8, ["model-value", "onUpdate:modelValue", "title"]))
             }
         } },
-        "m-chat-text-members": { hash: "e3bb7f57", make: function (Vue) {
+        "m-chat-text-members": { hash: "c407eae1", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, createBlock: _createBlock, createCommentVNode: _createCommentVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -4108,8 +4108,8 @@
                     (_ctx.pairWarning)
                       ? (_openBlock(), _createElementBlock("div", {
                           key: 1,
-                          class: "text-caption text-warning q-mt-xs"
-                        }, _toDisplayString(_ctx.t('You text with this person from this number: while they are in this room by text, their replies come here, and texts from your conversation with them are not sent.')), 1))
+                          class: "text-caption text-warning q-mt-xs m-chat-text-pair-warning"
+                        }, _toDisplayString(_ctx.pairWarningText()), 1))
                       : _createCommentVNode("", true),
                     _createVNode(_component_q_checkbox, {
                       modelValue: _ctx.form.consent,

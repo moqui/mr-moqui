@@ -16,6 +16,8 @@
 // The name the adder gives is the room's alone (ChatRoomBridge.memberName): the shared ChatExternalUser keeps the number.
 
 const VOICE = 'component://framework/service/org/moqui/call/Voice.js'
+const SMS = 'component://framework/service/org/moqui/call/Sms.js'
+const EXPIRY = 'component://framework/service/org/moqui/chat/ChatExpiry.js'
 const CHAT_BLOCKS = 'component://framework/service/org/moqui/chat/ChatBlocks.js'
 const ROOM = 'moqui.chat.ChatRoom'
 const MEMBER = 'moqui.chat.ChatRoomMember'
@@ -64,26 +66,42 @@ function policy() {
   return out
 }
 
-/** The active text member mappings of theirs on ours (any room), with rooms that are not archived. */
-function activeOn(ours, theirs) {
+/**
+ * The text member mappings in force of theirs on ours, in any room: an archived room's too, so the number stays taken
+ * while that room is archived and unarchiving it never makes a second room for the person (one room per number).
+ */
+function takenOn(ours, theirs) {
   const prefix = ours + '/' + theirs + '#'
-  const list = Array.from(find(MAPPING).condition('externalRoomId', 'like', prefix + '%').condition('thruDate', null)
+  return Array.from(find(MAPPING).condition('externalRoomId', 'like', prefix + '%').condition('thruDate', null)
     .condition('memberChatActorId', 'not-equals', null).list()).filter((row) => String(row.externalRoomId).startsWith(prefix))
+}
+
+/** Of takenOn, those of rooms that are not archived: where the person's texts go. */
+function liveOn(ours, theirs) {
+  const list = takenOn(ours, theirs)
   if (!list.length) return []
   const live = new Set(Array.from(find(ROOM).condition('chatRoomId', 'in', list.map((row) => row.chatRoomId)).condition('archivedDate', null)
     .selectField('chatRoomId').list()).map((room) => room.chatRoomId))
   return list.filter((row) => live.has(row.chatRoomId))
 }
 
-/** Internal (receive#Sms): the text member mapping a pair text from theirNumber to ourNumber goes to, or none. */
+/**
+ * Internal (receive#Sms): the text member mapping a pair text from theirNumber to ourNumber goes to, or none. Never a pick
+ * between two: there is one at most (store#TextMember under the number's lock), and with two the text goes to the pair
+ * room and the error is logged.
+ */
 function routeOf(p) {
-  const mapping = activeOn(p.ourNumber, p.theirNumber).find((row) => row.chatBridgeId === p.chatBridgeId)
-  return { mapping: mapping || null }
+  const mappings = liveOn(p.ourNumber, p.theirNumber).filter((row) => row.chatBridgeId === p.chatBridgeId)
+  if (mappings.length > 1) {
+    ec.logger.error(`${p.theirNumber} is a text member of ${mappings.length} rooms on ${p.ourNumber} (${mappings.map((row) => row.chatRoomId).join(', ')}): its texts go to the pair room`)
+    return { mapping: null }
+  }
+  return { mapping: mappings[0] || null }
 }
 
 /** Internal (check#SmsSend inRoom): the room theirNumber is a text member of on ourNumber, by its name, or null. */
 function memberRoomName(p) {
-  const mapping = activeOn(p.ourNumber, p.theirNumber).find((row) => !p.chatBridgeId || row.chatBridgeId === p.chatBridgeId)
+  const mapping = liveOn(p.ourNumber, p.theirNumber).find((row) => !p.chatBridgeId || row.chatBridgeId === p.chatBridgeId)
   if (!mapping) return { roomName: null }
   const room = one(ROOM, { chatRoomId: mapping.chatRoomId })
   return { roomName: (room && room.roomName) || ec.l10n.localize('a room') }
@@ -103,6 +121,10 @@ function roomRefusal(room, roomAccess) {
   if (room.roomTypeEnumId !== 'CrtPrivate' || room.recordEntityName || room.visibilityEnumId === 'CrvRecord') {
     return { reasonCode: 'roomType', text: 'Only a private room has text members' }
   }
+  // a room every user may read or join: its membership is not controlled, so nobody outside is texted its messages
+  if (room.visibilityEnumId && room.visibilityEnumId !== 'CrvMembers') {
+    return { reasonCode: 'openRoom', text: 'A room every user may read has no text members' }
+  }
   if (room.encrypted === 'Y') return { reasonCode: 'encrypted', text: 'An end-to-end encrypted room has no text members: a text is not encrypted' }
   if (!blank(room.messageTimerSeconds)) return { reasonCode: 'timerOn', text: 'A room with disappearing messages has no text members: a text cannot be deleted' }
   if (room.archivedDate) return { reasonCode: 'archived', text: 'The room is archived' }
@@ -117,14 +139,14 @@ function access(chatRoomId) {
 /** The choices of our number for theirs: each of the user's room numbers, free or taken (by the room's name). */
 function choicesFor(userId, theirs) {
   return roomNumbersOf(userId).map((number) => {
-    const taken = theirs ? activeOn(number.phoneNumber, theirs)[0] : null
+    const taken = theirs ? takenOn(number.phoneNumber, theirs)[0] : null
     const room = taken ? one(ROOM, { chatRoomId: taken.chatRoomId }) : null
     // the pair room of the two had a text in the last 30 days: its replies would come to the room instead
     const pair = theirs ? Array.from(find(MAPPING).condition('chatBridgeId', number.messagingBridgeId)
       .condition('externalRoomId', number.phoneNumber + '/' + theirs).condition('thruDate', null).list())[0] : null
     const pairRoom = pair ? one(ROOM, { chatRoomId: pair.chatRoomId }) : null
     return { phoneNumber: number.phoneNumber, description: number.description || null, free: !taken,
-      takenChatRoomId: taken ? taken.chatRoomId : null, takenRoomName: room ? room.roomName || null : null,
+      takenChatRoomId: taken ? taken.chatRoomId : null, takenRoomName: room ? room.roomName || null : null, takenArchived: !!(room && room.archivedDate),
       pairRoomActive: !!pairRoom && !!pairRoom.lastMessageDate && ms(pairRoom.lastMessageDate) >= nowMs() - 30 * DAY }
   })
 }
@@ -169,9 +191,10 @@ function addTextMember(p) {
   const dest = voice('classify', { phoneNumber: String(p.phoneNumber || '').trim() })
   if (!dest.number || !/^\+[0-9]{5,15}$/.test(dest.number)) return refuse('badNumber', 'That is not a phone number')
   if (dest.destinationClass === 'emergency') return refuse('emergency', 'An emergency number cannot be a text member')
-  const pol = voice('policy')
-  if (dest.destinationClass === 'international' && pol.internationalEnabled !== 'Y') return refuse('internationalNotEnabled', 'Texts to international numbers are not enabled')
-  if (dest.destinationClass === 'premium' && pol.premiumEnabled !== 'Y') return refuse('premiumNotEnabled', 'Texts to premium numbers are not enabled')
+  // the adder's own permissions (VoiceUserSetting), as a text of theirs to the number would be checked: the room's texts
+  // to this member go on them (check#SmsSend's room mode)
+  const destination = ec.resource.script(SMS).execute('destinationRefusal', { phoneNumber: dest.number, userId: me })
+  if (destination.reasonCode) return refuse(destination.reasonCode, destination.text)
   if (one(NUMBER, { phoneNumber: dest.number })) return refuse('badNumber', 'That is one of our numbers')
   if (!isTrue(p.consent)) return refuse('consentRequired', 'Confirm that this person agreed to get the room\'s texts')
   if ((ec.resource.script(CHAT_BLOCKS).execute('blockersOf', { fromNumber: dest.number, userIdList: [me] }).userIdList || []).length) {
@@ -193,9 +216,7 @@ function addTextMember(p) {
     pick = choices.find((choice) => choice.free) || choices[0]
   }
   if (!pick.free) {
-    // one room per outside number on each of our numbers (plans/Comms-Messaging.md §19.1)
-    ec.message.addError(ec.resource.expand('This person is already a text member of ${roomName} on this number; another number is needed.', '',
-      { roomName: pick.takenRoomName || ec.l10n.localize('a room') }))
+    ec.message.addError(takenText(pick))
     return { reasonCode: 'noFreeNumber' }
   }
   const optOut = one(OPT_OUT, { phoneNumber: pick.phoneNumber, otherNumber: dest.number })
@@ -203,7 +224,7 @@ function addTextMember(p) {
   const stored = ec.service.sync().name('org.moqui.call.SmsRoomServices.store#TextMember').parameters({ chatRoomId: room.chatRoomId,
     ourNumber: pick.phoneNumber, theirNumber: dest.number, memberName: blank(p.memberName) ? null : String(p.memberName).trim().slice(0, 60) })
     .requireNewTransaction(true).call() || {}
-  if (ec.message.hasError() || !stored.chatRoomBridgeId) return {}
+  if (ec.message.hasError() || !stored.chatRoomBridgeId) return { reasonCode: stored.reasonCode || null }
   try {
     ec.transaction.runRequireNew(null, 'The text member add was not counted', () => countOne('roomAdds:' + me))
   } catch (err) {
@@ -219,17 +240,38 @@ function addTextMember(p) {
     warning: pick.pairRoomActive ? 'pairRoomActive' : null, welcomeSent: welcomed.sent, welcomeReasonCode: welcomed.reasonCode }
 }
 
-/** Internal (add#TextMember, in a transaction of its own): the external user and actor, the member, the mapping and the event. */
+/** Why the number of ours is taken for the person: the room they are a text member of on it (archived or not). */
+function takenText(choice) {
+  // one room per outside number on each of our numbers (plans/Comms-Messaging.md §19.1)
+  const roomName = choice.takenRoomName || ec.l10n.localize('a room')
+  return choice.takenArchived
+    ? ec.resource.expand('This person is still a text member of ${roomName}, which is archived, on this number; another number is needed, or take them out of it.', '', { roomName })
+    : ec.resource.expand('This person is already a text member of ${roomName} on this number; another number is needed.', '', { roomName })
+}
+
+/**
+ * Internal (add#TextMember, in a transaction of its own): the external user and actor, the member, the mapping and the event.
+ * The locks, always in this order: our number's PhoneNumber row (two adds of one person on one number, in any rooms, take
+ * one at a time, so the one-room check below holds), then the room's row (ChatExpiry checkBridge, which refuses a room
+ * with a timer as store#RoomBridge does). The room's rules are checked again under them.
+ */
 function storeTextMember(p) {
   const me = ec.user.userId
-  const number = one(NUMBER, { phoneNumber: p.ourNumber })
+  const number = find(NUMBER).condition('phoneNumber', p.ourNumber).forUpdate(true).one()
   if (!number || blank(number.messagingBridgeId)) return refuse('noMessaging', 'That number has no messaging')
   const chatBridgeId = number.messagingBridgeId
   const now = ec.user.nowTimestamp
-  // the room's row lock: two adds of one number at once make one member
-  const room = find(ROOM).condition('chatRoomId', p.chatRoomId).forUpdate(true).one()
-  if (!room) return refuse('notFound', 'Chat room not found')
-  if (activeOn(p.ourNumber, p.theirNumber).length) return refuse('noFreeNumber', 'This person is already a text member of a room on this number; another number is needed.')
+  const bridged = ec.resource.script(EXPIRY).execute('checkBridge', { chatRoomId: p.chatRoomId })
+  if (ec.message.hasError()) return { reasonCode: bridged.reasonCode || 'timerOn' }
+  const room = one(ROOM, { chatRoomId: p.chatRoomId })
+  const refusal = roomRefusal(room, room ? access(p.chatRoomId) : {})
+  if (refusal) return refuse(refusal.reasonCode, refusal.text)
+  const taken = takenOn(p.ourNumber, p.theirNumber)[0]
+  if (taken) {
+    const takenRoom = one(ROOM, { chatRoomId: taken.chatRoomId }) || {}
+    ec.message.addError(takenText({ takenRoomName: takenRoom.roomName, takenArchived: !!takenRoom.archivedDate }))
+    return { reasonCode: 'noFreeNumber' }
+  }
   const findExternal = () => Array.from(find(EXTERNAL).condition({ chatBridgeId, externalUserId: p.theirNumber }).list())[0]
   let external = findExternal()
   if (!external) {
@@ -297,7 +339,7 @@ function textOne(mapping, text, purpose) {
       if (out.outcome !== 'accepted' && out.outcome !== 'uncertain') {
         reasonCode = out.reasonCode || out.outcome || 'failed'
         ec.service.sync().name('org.moqui.call.SmsServices.release#SmsSend').parameters({ chatRoomId: mapping.chatRoomId, counterDay: check.counterDay,
-          fromNumber: ours }).requireNewTransaction(true).disableAuthz().call()
+          fromNumber: ours, userId: check.counterUserId || null }).requireNewTransaction(true).disableAuthz().call()
       } else if (out.outcome === 'uncertain') reasonCode = 'uncertain'
     }
   } catch (err) {
@@ -330,7 +372,12 @@ function noteMemberKeyword(p) {
   if (p.keyword === 'HELP') {
     if (mapping.helpReplyDate && ms(mapping.helpReplyDate) > nowMs() - DAY) return { done: false }
     const room = one(ROOM, { chatRoomId: mapping.chatRoomId }) || {}
-    const text = ec.resource.expand('Texts of ${roomName} from MR Moqui. Reply STOP to leave.', '', { roomName: room.roomName || ec.l10n.localize('a group') })
+    // the deployment's own name (chat_server_name, its chat and XMPP domain), unless it is still the default
+    const server = String(System.getProperty('chat_server_name') || '').trim()
+    const roomName = room.roomName || ec.l10n.localize('a group')
+    const text = server && server !== 'localhost'
+      ? ec.resource.expand('Texts of ${roomName}, from ${server}. Reply STOP to leave.', '', { roomName, server })
+      : ec.resource.expand('Texts of ${roomName}. Reply STOP to leave.', '', { roomName })
     return { done: textOne(mapping, text, 'help').sent }
   }
   if (p.keyword !== 'STOP') return { done: false }
@@ -343,6 +390,40 @@ function noteMemberKeyword(p) {
       senderActorId: mapping.memberChatActorId, content: { action: 'leave', chatActorId: mapping.memberChatActorId, via: 'stop' } }).disableAuthz().call()
   }
   return { done: true }
+}
+
+/** The problems a room's moderators heard of today, by mapping: one notification a day each. */
+const PROBLEMS = 'moqui.sms.room.problems'
+
+/**
+ * Internal (check#SmsSend's room mode): a text member's texts stopped for a reason of its adder (their grant of our number,
+ * their permissions or their account): the room's moderators hear of it, once a day for the member, each on its own.
+ */
+function noteAdderProblem(p) {
+  const mapping = one(MAPPING, { chatRoomBridgeId: p.chatRoomBridgeId })
+  if (!mapping) return { told: 0 }
+  const cache = ec.cache.getCache(PROBLEMS)
+  const key = mapping.chatRoomBridgeId + ':' + today()
+  if (cache.get(key)) return { told: 0 }
+  cache.put(key, true)
+  const room = one(ROOM, { chatRoomId: mapping.chatRoomId }) || {}
+  const moderators = Array.from(find(MEMBER).condition('chatRoomId', mapping.chatRoomId).condition('leftDate', null)
+    .condition('roleEnumId', 'in', ['CmrOwner', 'CmrModerator']).selectField('userId').list()).map((row) => row.userId).filter((id) => id)
+  const roomName = room.roomName || mapping.chatRoomId
+  const memberName = mapping.memberName || theirsOf(mapping)
+  let told = 0
+  for (const userId of moderators) {
+    try {
+      ec.makeNotificationMessage().topic('ChatTextMember').userIds([userId]).reason('system')
+        .message({ roomName, chatRoomId: mapping.chatRoomId, memberName, reason: String(p.message || '') })
+        .record('moqui.chat.ChatRoom', mapping.chatRoomId).link((System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId='
+          + encodeURIComponent(mapping.chatRoomId)).send()
+      told++
+    } catch (err) {
+      ec.logger.error(`Moderator ${userId} of room ${mapping.chatRoomId} was not told that ${memberName}'s texts stopped: ${message(err)}`)
+    }
+  }
+  return { told }
 }
 
 function endMapping(mapping) {
@@ -413,6 +494,7 @@ function renameTextMember(p) {
 }
 
 const operations = {
+  noteAdderProblem,
   routeOf, memberRoomName, textMemberChoices, addTextMember, storeTextMember, noteMemberKeyword, endTextMember, findTextMembers, renameTextMember,
 }
 

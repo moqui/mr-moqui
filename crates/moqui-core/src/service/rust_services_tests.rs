@@ -39,6 +39,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::registry_token::get_registry_token",
         "moqui_core::service::chat::check_record_visible",
         "moqui_core::service::chat::get_external_users",
+        "moqui_core::service::chat::get_refused_users_as",
         "moqui_core::service::chat::push_signal",
         "moqui_core::service::chat_bridge::check_bridge_token",
         "moqui_core::service::chat_bridge::edge::apply_edge_webhook",

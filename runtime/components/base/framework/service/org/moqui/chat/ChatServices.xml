@@ -315,12 +315,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="blocks" type="Boolean" default="false"><description>Also refuse the users who blocked the current
                 user (ChatUserBlock, plans/Comms-Messaging.md §18.3 phase 11): for a direct room, or a private room they
                 make or add to; never a public or record room, or the people search</description></parameter>
+            <parameter name="answerWithAuthzOff" type="Boolean" default="false"><description>Internal
+                (ChatInviteServices.get#RefusedUsersAs, which runs this as an invite link's maker): answer for the current
+                user even with authorization disabled</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
         <actions><script><![CDATA[
             refusedUserIdList = []
             const ids = Array.from(new Set(Array.from(userIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
-            if (!ids.length || ec.artifactExecution.authzDisabled()) return
+            if (!ids.length || (ec.artifactExecution.authzDisabled() && !answerWithAuthzOff)) return
             const me = ec.user.userId
             if (!me) { refusedUserIdList = ids; return }
             const asked = ids.filter((id) => id !== me)

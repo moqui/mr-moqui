@@ -1592,6 +1592,8 @@ test("a room's text members: the composer's cost line, the add dialog's note, th
     assert.equal(texts.costLine(3), "Also sent as a text to 3 numbers");
     assert.ok(texts.costNote(3).includes("With 3 text members, one message is 3 texts"));
     assert.equal(texts.takenText("Choir"), "This person is already a text member of Choir on this number; another number is needed.");
+    assert.ok(texts.takenText("Choir", true).includes("Choir, which is archived"));
+    assert.ok(texts.pairWarning().includes("comes to this room instead of that conversation"));
     assert.equal(texts.stateText({}), "");
     assert.equal(texts.stateText({ optedOut: true, lastFailure: "x" }), "Replied STOP: gets no texts");
     assert.equal(texts.stateText({ roomTextsOff: true }), "Texts off: the number no longer carries room texts");

@@ -146,20 +146,32 @@ An outside number in a private chat room by text (plans/Comms-Messaging.md §18.
 post to the room as it.
 
 - **Numbers for room texts.** An administrator marks a number (System, Voice, Numbers: Room texts,
-  `PhoneNumber.roomTextsEnabled`). A moderator or owner of the room adds a member on one of their granted numbers
+  `PhoneNumber.roomTextsEnabled`). Mark numbers of their own for this. On a number colleagues share with customers,
+  adding a customer as a text member diverts every text that customer sends to that number from the shared pair room to
+  the room, and blocks the colleagues' sends to them from the pair room (`inRoomByText`) while they are a member; the add
+  dialog warns when the pair room was active. A moderator or owner of the room adds a member on one of their granted numbers
   that is marked (`add#TextMember`), with their confirmation that the person agreed (`consentDate`), and the person gets
   a welcome text that names the room and the adder and says "Reply STOP to leave".
 - **One room per outside number on each of our numbers** (decided by the user, plans/Comms-Messaging.md §19.1). A text
   has no room in it, so while a number is a text member on one of ours, all of its pair texts to that number go to that
   room (`receive#Sms`, before the spam filter, which does not judge them). A second room takes another marked number; with
   none free, `noFreeNumber`: "This person is already a text member of <room> on this number; another number is needed."
-  While they are a member, a text from the pair room of the two numbers is refused (`inRoomByText`), so a reply never
-  lands somewhere unexpected; calls still use the pair room.
+  A member of an archived room still takes the number (their texts go to the pair room meanwhile), so unarchiving never
+  makes two rooms for one person; the dialog says the room is archived. Two adds at once take the number's row lock in
+  turn, and should two mappings ever be found, the text goes to the pair room and the error is logged. While they are a
+  member, a text from the pair room of the two numbers is refused (`inRoomByText`), so a reply never lands somewhere
+  unexpected; a group text with them goes as ever, and calls still use the pair room.
 - **The mapping.** The member is an external actor of the number's bridge (its `ChatExternalUser` keeps the number, not
   the adder's name for them, which is the room's own: `ChatRoomBridge.memberName`), and its mapping is a `ChatRoomBridge`
   with `memberChatActorId` and the external room id `<ours>/<theirs>#<chatRoomId>`. It gets messages only (edits,
   reactions, deletes, polls and calls stay in the room) and never its own member's; other members' replies reach it
   ([Chat-Bridges](Chat-Bridges.md#text-members)).
+- **The adder's permissions.** The room's texts to a member go on the moderator who added them
+  (`ChatRoomBridge.addedByUserId`): their account, their grant of the number, their own international and premium
+  permissions (`VoiceUserSetting`, checked when they add the number too) and their day's limit (`smsMaxPerUserPerDay`,
+  `user:<id>`). When the adder is disabled, loses the grant or the permission, the member's texts stop
+  (`adderNotAllowed`, or the permission's reason) and the room's moderators get the `ChatTextMember` notification, once a
+  day for the member; a moderator who may text adds them again.
 - **Out.** The adapter sends `<sender>: <text>` (the sender's name cut to 30 characters, the whole to the bridge's
   `maxTextLength`, ending "…"), photos, videos and sounds within the MMS limits, and a line for any other file. It checks
   each in room mode (`check#SmsSend` with `chatRoomId`: no user's grant, the number still marked (`roomTextsOff`), the
@@ -167,12 +179,14 @@ post to the room as it.
   delivery alone. No typing goes to a text member.
 - **STOP and HELP.** STOP is applied as for any text (the pair opts out) and also takes the member out: its mapping
   ends, its member row is left, and the room says "<name> left by replying STOP". START opts back in and does not add
-  them back. HELP gets one answer a day. A member taken out of the room (People, Take out) has its mapping ended by a SECA
+  them back. HELP gets one answer a day, naming the room and the deployment (`chat_server_name`, when set). A member taken out of the room (People, Take out) has its mapping ended by a SECA
   (`SmsRoom.secas.xml`); its texts go to the pair room again, as do texts to an archived room.
-- **Limits and cost.** Each message is a text to each text member. The add dialog and the composer say so. VoicePolicy
-  (System, Voice, Fraud): `smsRoomMaxMembers` (10 a room), `smsRoomMaxPerDay` (500 texts a room a day, counted as
-  `room:<chatRoomId>` and in `smsMaxPerDay`), `smsRoomAddsPerDay` (20 adds a user a day, `roomAdds:<userId>`).
-- **Never** in an encrypted room, a direct, record, phone or public room, or one with disappearing messages; a room with
+- **Limits and cost.** Each message is a text to each text member. The add dialog and the composer say so. A room's
+  text counts in its adder's day (`smsMaxPerUserPerDay`), the room's and everyone's. VoicePolicy (System, Voice, Fraud):
+  `smsRoomMaxMembers` (10 a room), `smsRoomMaxPerDay` (500 texts a room a day, counted as `room:<chatRoomId>` and in
+  `smsMaxPerDay`), `smsRoomAddsPerDay` (20 adds a user a day, `roomAdds:<userId>`).
+- **Never** in an encrypted room, a direct, record, phone or public room, a private room every user may read
+  (`visibilityEnumId` other than `CrvMembers`), or one with disappearing messages, checked again under the room's lock; a room with
   a text member cannot get a timer either, since it has a mapping in force.
 
 ## Texts that come in

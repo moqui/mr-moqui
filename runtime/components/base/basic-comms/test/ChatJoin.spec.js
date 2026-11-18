@@ -6,6 +6,9 @@
 const root = "component://basic-comms/screen/ChatJoin.xml"
 const OWNER = "BASIC_COMMS_JOIN_OWNER"
 const JOINER = "BASIC_COMMS_JOIN_JOINER"
+// test/service/moqui/basiccommstest/TextNamesServices.xml get#ChatTarget keeps a user of this prefix from everyone
+const REFUSED = "BASIC_COMMS_REFUSED_JOIN"
+const NAMES_APP = "BASIC_COMMS_JOIN_NAMES"
 const INVITES = "org.moqui.chat.ChatInviteServices."
 
 function sys(run) {
@@ -35,6 +38,15 @@ function render(path, parameters, method, mode) {
     ec.message.clearErrors()
     return {status: str.status, output: String(str.output || "")}
 }
+// a Chat transition, as the screen's user
+const chat = (path, parameters, method) => {
+    const str = ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").render(path, parameters || {}, method || null)
+    const errors = ec.message.hasError() ? ec.message.errorsString : ""
+    ec.message.clearErrors()
+    let out = {}
+    try { out = JSON.parse(String(str.output || "{}")) } catch (err) { out = {} }
+    return Object.assign({errors}, out)
+}
 const json = (out) => { try { return JSON.parse(out.output) } catch (err) { return {} } }
 const shared = {}
 
@@ -43,6 +55,15 @@ spec({
     setupSpec() {
         makeUser(OWNER)
         makeUser(JOINER)
+        makeUser(REFUSED)
+        // the test app root of the chat-target provider (test/screen/TextNamesApp.xml), opened by BasicComms' users
+        sys(() => {
+            ec.entity.makeValue("moqui.security.ArtifactGroup").setFields({artifactGroupId: NAMES_APP, description: "ChatJoin names"}, true, null, null).createOrUpdate()
+            ec.entity.makeValue("moqui.security.ArtifactGroupMember").setFields({artifactGroupId: NAMES_APP,
+                artifactName: "component://basic-comms/test/screen/TextNamesApp.xml", artifactTypeEnumId: "AT_XML_SCREEN", inheritAuthz: "Y"}, true, null, null).createOrUpdate()
+            ec.entity.makeValue("moqui.security.ArtifactAuthz").setFields({artifactAuthzId: NAMES_APP, artifactGroupId: NAMES_APP, userGroupId: "BASIC_COMMS_USERS",
+                authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL"}, true, null, null).createOrUpdate()
+        })
         sys(() => {
             ec.user.internalLoginUser(username(OWNER))
             shared.room = ec.service.sync().name("org.moqui.chat.ChatServices.create#Room").parameters({roomTypeEnumId: "CrtPrivate", roomName: "Join spec room"}).call().chatRoomId
@@ -50,7 +71,14 @@ spec({
             ec.message.clearErrors()
         })
     },
-    cleanupSpec() { ec.user.logoutUser() }
+    cleanupSpec() {
+        sys(() => {
+            ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", NAMES_APP).deleteAll()
+            ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", NAMES_APP).deleteAll()
+            ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", NAMES_APP).deleteAll()
+        })
+        ec.user.logoutUser()
+    }
 })
 
 feature("the join page renders, a signed-in person joins by its transition, and a bad token joins nobody", {
@@ -75,11 +103,6 @@ feature("the join page renders, a signed-in person joins by its transition, and 
 
 feature("Chat's invite transitions: links with their QR code, the requests' queue and its count, Browse's listed rooms", {
     when() {
-        const chat = (path, parameters, method) => {
-            const str = ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").render(path, parameters || {}, method || null)
-            ec.message.clearErrors()
-            try { return JSON.parse(String(str.output || "{}")) } catch (err) { return {} }
-        }
         ec.user.internalLoginUser(username(OWNER))
         const made = chat("Chat/createInviteLink", {chatRoomId: shared.room, approvalRequired: "true", maxUses: "5", expiryHours: "24"}, "post")
         const links = chat("Chat/inviteLinks", {chatRoomId: shared.room})
@@ -109,6 +132,31 @@ feature("Chat's invite transitions: links with their QR code, the requests' queu
         queue.requestList[0].note == "back again"
         decided.decided == true
         revoked.revoked == true
+    }
+})
+
+feature("a person an app keeps from the link's maker gets a link that does not exist, and an approval checks the approving moderator", {
+    when() {
+        ec.user.internalLoginUser(username(REFUSED))
+        const page = sys(() => ec.service.sync().name(INVITES + "check#InviteToken").parameter("token", shared.token).call())
+        const joined = json(render("join", {token: shared.token}, "post"))
+        const asked = sys(() => ec.service.sync().name(INVITES + "request#Join").parameters({chatRoomId: shared.room}).call() || {})
+        ec.message.clearErrors()
+        ec.user.internalLoginUser(username(OWNER))
+        const decided = chat("Chat/decideJoinRequest", {chatJoinRequestId: asked.chatJoinRequestId, decision: "approve"}, "post")
+        const errors = String(decided.errors || "") + JSON.stringify(decided)
+        const member = sys(() => ec.entity.find("moqui.chat.ChatRoomMember").condition({chatRoomId: shared.room, userId: REFUSED}).one())
+        const request = sys(() => ec.entity.find("moqui.chat.ChatJoinRequest").condition("chatJoinRequestId", asked.chatJoinRequestId).one())
+        return {page, joined, asked, decided, errors, member, request}
+    },
+    then({page, joined, asked, decided, errors, member, request}) {
+        page.valid == false
+        joined.reasonCode == "notFound"
+        asked.outcome == "requested"
+        decided.decided != true
+        errors.includes("not found")
+        member == null
+        request.statusEnumId == "CjrPending"
     }
 })
 

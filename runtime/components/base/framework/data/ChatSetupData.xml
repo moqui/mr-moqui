@@ -29,6 +29,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="ChatJoinRequest" inboxEnumId="NinNotifications" description="Asks to join a chat room" typeString="info"
             showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
             titleTemplate="${requesterName} asks to join ${roomName}${note ? ': ' + note : ''}" linkTemplate=""/>
+    <!-- A room's text member whose texts stopped for a reason of the moderator who added them (plans/Comms-Messaging.md
+        §18.3 phase 18, SmsRoom.js noteAdderProblem): to the room's moderators, once a day for the member. -->
+    <moqui.security.user.NotificationTopic topic="ChatTextMember" inboxEnumId="NinNotifications" description="A chat room's text member gets no texts" typeString="warning"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${memberName} in ${roomName} gets no texts: ${reason}" linkTemplate=""/>
     <moqui.security.user.NotificationTopic topic="ChatJoinDecision" inboxEnumId="NinNotifications" description="A chat room join request decided" typeString="info"
             showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" titleTemplate="${roomName}" linkTemplate=""/>
     <!-- System, Push Health: every user's push devices with their counts (org.moqui.ui.NotificationServices.find#PushHealth) -->

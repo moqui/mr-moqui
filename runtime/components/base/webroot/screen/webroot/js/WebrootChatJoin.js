@@ -86,9 +86,15 @@
             return fill(tr("Each message in this room is sent as a text to each text member. With {count} text members, one message is {count} texts, and a long message or a photo costs more."),
                 { count: Math.max(1, Number(count || 0)) });
         },
-        /** Why a number of ours cannot take this person: the room they are already a text member of on it. */
-        takenText(roomName) {
-            return fill(tr("This person is already a text member of {room} on this number; another number is needed."), { room: roomName || tr("a room") });
+        /** Why a number of ours cannot take this person: the room they are already a text member of on it (archived or not). */
+        takenText(roomName, archived) {
+            return archived
+                ? fill(tr("This person is still a text member of {room}, which is archived, on this number; another number is needed, or take them out of it."), { room: roomName || tr("a room") })
+                : fill(tr("This person is already a text member of {room} on this number; another number is needed."), { room: roomName || tr("a room") });
+        },
+        /** The add dialog's warning for a number whose conversation with the person was active: what adding them does to it. */
+        pairWarning() {
+            return tr("You or a colleague text with this person from this number. While they are in this room by text, every text they send to this number comes to this room instead of that conversation, and texts from that conversation to them are not sent.");
         },
         /** A text member's state as words: opted out, texts off, the welcome or the last text not sent; empty when fine. */
         stateText(member) {
@@ -301,7 +307,8 @@
         methods: {
             t: tr,
             stateText(member) { return texts.stateText(member); },
-            takenText(choice) { return texts.takenText(choice.takenRoomName); },
+            takenText(choice) { return texts.takenText(choice.takenRoomName, choice.takenArchived); },
+            pairWarningText() { return texts.pairWarning(); },
             load() {
                 if (!this.roomId) return;
                 get(this.base, "textMembers", { chatRoomId: this.roomId }).then((json) => {
@@ -372,7 +379,7 @@
                     '<q-input v-model="form.memberName" dense outlined stack-label maxlength="60" class="q-mt-sm" :label="t(\'Their name in this room\')" name="textMemberName"></q-input>' +
                     '<q-select v-if="numberOptions.length > 1" v-model="form.ourNumber" :options="numberOptions" emit-value map-options dense outlined stack-label class="q-mt-sm" :label="t(\'Text from\')" name="textMemberFrom"></q-select>' +
                     '<div v-for="choice in takenChoices" :key="choice.phoneNumber" class="text-caption text-warning q-mt-xs m-chat-text-taken">{{choice.phoneNumber}}: {{takenText(choice)}}</div>' +
-                    '<div v-if="pairWarning" class="text-caption text-warning q-mt-xs">{{t(\'You text with this person from this number: while they are in this room by text, their replies come here, and texts from your conversation with them are not sent.\')}}</div>' +
+                    '<div v-if="pairWarning" class="text-caption text-warning q-mt-xs m-chat-text-pair-warning">{{pairWarningText()}}</div>' +
                     '<q-checkbox v-model="form.consent" class="q-mt-sm" :label="t(\'This person agreed to get the room\\\'s texts\')" name="textMemberConsent"></q-checkbox>' +
                     '<div class="text-caption m-muted q-mt-sm">{{costNote}}</div>' +
                     '<div class="row justify-end q-mt-md"><q-btn unelevated no-caps color="primary" :label="t(\'Add\')" :disable="!canSubmit" :loading="busy" class="m-chat-text-submit" @click="add"></q-btn></div>' +

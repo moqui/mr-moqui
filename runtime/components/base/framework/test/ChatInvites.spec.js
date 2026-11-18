@@ -296,3 +296,68 @@ feature("a link stops when revoked, used up or its maker is no longer a moderato
         made[made.length - 1].reasonCode == "tooManyLinks"
     }
 })
+
+feature("the join page and a join refuse alike: a person the maker blocked, an expired link, an archived room, a disabled maker", {
+    when() {
+        shared.more = as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Invites more"}).chatRoomId
+        const made = as(A, INVITES + "create#InviteLink", {chatRoomId: shared.more})
+        const token = tokenOf(made.path)
+        const checkAs = (userId) => sys(() => { ec.user.internalLoginUser(username(userId)); return ec.service.sync().name(INVITES + "check#InviteToken").parameter("token", token).call() })
+        const setLink = (fields) => sys(() => ec.entity.find("moqui.chat.ChatInviteLink").condition("chatInviteLinkId", made.chatInviteLinkId).updateAll(fields))
+        as(A, BLOCKS + "block#ChatUser", {blockedUserId: E})
+        const blockedPage = checkAs(E)
+        const blockedJoin = as(E, INVITES + "join#ByInvite", {token})
+        const otherPage = checkAs(D)
+        as(A, BLOCKS + "unblock#ChatUser", {blockedUserId: E})
+        ec.user.logoutUser()
+        setLink({expiryDate: new Date(Date.now() - 60000)})
+        const expired = check(token).valid
+        const expiredJoin = as(D, INVITES + "join#ByInvite", {token})
+        setLink({expiryDate: new Date(Date.now() + 86400000)})
+        ec.user.logoutUser()
+        sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", shared.more).updateAll({archivedDate: ec.user.nowTimestamp}))
+        const archived = check(token).valid
+        sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", shared.more).updateAll({archivedDate: null}))
+        sys(() => ec.entity.find("moqui.security.UserAccount").condition("userId", A).updateAll({disabled: "Y"}))
+        const disabled = check(token).valid
+        sys(() => ec.entity.find("moqui.security.UserAccount").condition("userId", A).updateAll({disabled: "N"}))
+        const again = check(token).valid
+        shared.moreToken = token
+        return {blockedPage, blockedJoin, otherPage, expired, expiredJoin, archived, disabled, again}
+    },
+    then({blockedPage, blockedJoin, otherPage, expired, expiredJoin, archived, disabled, again}) {
+        blockedPage.valid == false
+        blockedPage.routeContext == null
+        blockedJoin.reasonCode == "notFound"
+        otherPage.valid == true
+        expired == false
+        expiredJoin.reasonCode == "notFound"
+        archived == false
+        disabled == false
+        again == true
+    }
+})
+
+feature("a request's limits: 10 waiting a person, 100 a room, 30 joins and requests an hour", {
+    when() {
+        const approval = tokenOf(as(A, INVITES + "create#InviteLink", {chatRoomId: shared.more, approvalRequired: "Y"}).path)
+        const others = []
+        for (let i = 0; i < 10; i++) others.push(as(A, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Invites queue " + i}).chatRoomId)
+        const pend = (chatRoomId, userId) => make("moqui.chat.ChatJoinRequest", {chatJoinRequestId: "CJR_" + chatRoomId + "_" + userId, chatRoomId,
+            userId, statusEnumId: "CjrPending", requestedDate: ec.user.nowTimestamp})
+        sys(() => others.forEach((chatRoomId) => pend(chatRoomId, D)))
+        const tooMany = as(D, INVITES + "join#ByInvite", {token: approval})
+        sys(() => { for (let i = 0; i < 100; i++) pend(shared.more, "CHAT_INVITES_Q" + i) })
+        const full = as(E, INVITES + "join#ByInvite", {token: approval})
+        sys(() => ec.entity.find("moqui.chat.ChatJoinRequest").condition("chatJoinRequestId", "like", "CJR_%").deleteAll())
+        sys(() => ec.cache.getCache("moqui.chat.invite.joins").put(C + ":" + Math.floor(Date.now() / 3600000), 30))
+        const limited = as(C, INVITES + "join#ByInvite", {token: shared.moreToken})
+        sys(() => ec.cache.getCache("moqui.chat.invite.joins").clear())
+        return {tooMany, full, limited}
+    },
+    then({tooMany, full, limited}) {
+        tooMany.reasonCode == "tooManyRequests"
+        full.reasonCode == "queueFull"
+        limited.reasonCode == "rateLimited"
+    }
+})

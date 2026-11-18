@@ -2271,10 +2271,10 @@ fn a_text_member_gets_the_rooms_messages_with_the_senders_name_and_its_reply_com
             .clone()
     };
     assert_eq!(room_count(&bed), "2", "the welcome and the message");
-    // no user's day: the room sends
+    // the adder's day counts them too: the room's texts go on alice, who added the member
     assert_eq!(
-        bed.count("moqui.call.SmsSendCount", &[("counterKey", text("user:alice"))]),
-        0
+        bed.one("moqui.call.SmsSendCount", &[("counterKey", text("user:alice"))])["sentCount"],
+        "2"
     );
 
     // the member's reply: in the room as the member, and nothing back to them
@@ -2295,6 +2295,35 @@ fn a_text_member_gets_the_rooms_messages_with_the_senders_name_and_its_reply_com
     assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "roomTextsOff"));
     assert_eq!(bed.fake.sends().len(), 2);
     assert_eq!(room_count(&bed), "2");
+
+    // a group text with the member goes as ever (inRoomByText is a pair room's), and the pair room's text is refused
+    room_texts(&bed, true);
+    let group = out_text(
+        &ok(
+            "org.moqui.call.SmsServices.open#PairRoom",
+            &[
+                ("fromNumber", text(OURS)),
+                ("toNumber", text(&format!("{THEIRS},+15557778899"))),
+            ],
+        ),
+        "chatRoomId",
+    );
+    let grouped = bed.send(&group, "Both of you", &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&group, grouped).0, "CdsAccepted");
+    assert_eq!(bed.fake.sends().len(), 3);
+    let pair = out_text(
+        &ok(
+            "org.moqui.call.SmsServices.open#PairRoom",
+            &[("fromNumber", text(OURS)), ("toNumber", text(THEIRS))],
+        ),
+        "chatRoomId",
+    );
+    let paired = bed.send(&pair, "Just you", &[]);
+    bed.round(0);
+    let (state, reason, ..) = bed.delivery(&pair, paired);
+    assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "inRoomByText"));
+    assert_eq!(bed.fake.sends().len(), 3);
 }
 
 #[test]

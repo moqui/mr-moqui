@@ -105,8 +105,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="toNumber" required="true"/>
             <parameter name="userId"/>
             <parameter name="chatRoomId"><description>Room mode (plans/Comms-Messaging.md §18.3 phase 18): a room's text to its
-                text member. No user's grant; the number must carry room texts (roomTextsOff); counted in the room's day
-                (room:chatRoomId, smsRoomMaxPerDay) and all users'</description></parameter>
+                text member, on the moderator who added them: their account, their grant of the number and their destination
+                permissions (adderNotAllowed, internationalNotEnabled, premiumNotEnabled; the room's moderators are told), the
+                number must carry room texts (roomTextsOff); counted in the adder's day, the room's (room:chatRoomId,
+                smsRoomMaxPerDay) and all users'</description></parameter>
             <parameter name="inRoom" type="Boolean" default="false"><description>A user's text in a pair room: refused
                 inRoomByText while the number is a text member of a room on ours</description></parameter>
             <parameter name="isPromotional" type="Boolean" default="false"/>
@@ -117,6 +119,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="allowed" type="Boolean"/>
             <parameter name="counterDay"><description>With reserve, the day it was counted on (for release#SmsSend)</description></parameter>
+            <parameter name="counterUserId"><description>The user whose day it counts on (room mode: the text member's adder), for
+                release#SmsSend</description></parameter>
             <parameter name="reasonCode"/>
             <parameter name="message"/>
             <parameter name="ourNumber"><description>fromNumber in E.164</description></parameter>
