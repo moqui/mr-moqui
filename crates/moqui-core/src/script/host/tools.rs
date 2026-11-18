@@ -333,8 +333,8 @@ macro_rules! tools_js {
         const l = {};
         for (const name of ["xmlText", "csvText", "jsonText", "dummyFks", "useTryInsert", "onlyCreate",
                 "disableEntityEca", "disableAuditLog", "disableFkCreate", "disableDataFeed", "transactionTimeout",
-                "messageNoActionFiles", "restrictSensitiveEntities", "csvEntityName", "csvDelimiter", "csvCommentStart",
-                "csvQuoteChar"])
+                "messageNoActionFiles", "restrictSensitiveEntities", "refusePasswordFields", "csvEntityName",
+                "csvDelimiter", "csvCommentStart", "csvQuoteChar"])
             l[name] = (value) => { options[name] = value; return l; };
         // Java adds each location to a list; defaultValues adds to the map.
         options.locations = [];
@@ -1079,7 +1079,7 @@ macro_rules! tools_js {
     // Entities the generic tools (auto screens, data edit, data import) do not take from a request entity name
     wu.isRestrictedGenericEntity = host.isRestrictedGenericEntity;
     // ... and the entities their writes refuse besides: those only their own services write; with a field name, also a
-    // password field of the entity
+    // password field of the entity and an identity field of UserAccount
     wu.isGenericWriteRefused = host.isGenericWriteRefused;
 })"#
     };
@@ -1866,7 +1866,8 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .ok()
             .map(std::time::Duration::from_secs),
         restrict_sensitive_entities: flag("restrictSensitiveEntities"),
-        refuse_password_fields: false,
+        // Tools' Data Load sets it: a load from a request does not set an account's password (SEC-TLS-81)
+        refuse_password_fields: flag("refusePasswordFields"),
         refused_packages: Vec::new(),
         csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
         csv_field_names: list("csvFieldNames"),
@@ -3223,20 +3224,31 @@ fn is_restricted_generic_entity(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `isRestrictedGenericEntity`, or an entity only its own services write (the entity audit log, Monitor's recovery and
-/// ingest rows): what a generic tool's write refuses. With a field name, also a password field of the entity (by name,
-/// or by origin through a view), which no generic write takes (Data Load's `storeSelected`, plans/Security-Review.md
+/// ingest rows): what a generic tool's write refuses. With a field name, also a field no generic write takes: a
+/// password field of the entity (by name, or by origin through a view), and on `UserAccount` an identity field (its
+/// username, email address, external id, disabled flag and the rest), which REST strips too; the account screens
+/// change those with their own rules (Data Load's `storeSelected` and `load`, Browse and Record, plans/Security-Review.md
 /// SEC-TLS-81).
 fn is_generic_write_refused(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let name = text_of(call.value(0).cloned().as_ref());
+    use crate::entity::sensitive;
+    let name = text_of(call.value(0));
     let field = text_of(call.value(1));
+    let identity = |full_name: &str| {
+        sensitive::is_user_account_entity(full_name)
+            && sensitive::USER_ACCOUNT_IDENTITY_FIELDS.contains(&field.as_str())
+    };
     Ok(Ret::from(match with_ec(|ec| ec.factory().entity())? {
         Some(facade) => {
-            let access = crate::entity::sensitive::generic_access(&facade, &name);
-            !access.write || (!field.is_empty() && access.is_secret(&field))
+            let access = sensitive::generic_access(&facade, &name);
+            let full_name = facade
+                .with_entity(&name, |entity, _, _| Ok(entity.full_name.clone()))
+                .unwrap_or_else(|_| name.clone());
+            !access.write || (!field.is_empty() && (access.is_secret(&field) || identity(&full_name)))
         }
         None => {
-            crate::entity::sensitive::is_generic_write_refused(&name)
-                || crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field.as_str())
+            sensitive::is_generic_write_refused(&name)
+                || sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field.as_str())
+                || identity(&name)
         }
     }))
 }

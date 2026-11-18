@@ -24,7 +24,19 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="update">
         <actions>
             <set field="entityName" from="selectedEntity"/><if condition="WebUtilities.isGenericWriteRefused(selectedEntity)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
-            <service-call name="update#${selectedEntity}" in-map="true"/></actions>
+            <script><![CDATA[
+                // the entity's fields from the request but those no generic write takes (UserAccount's password and identity
+                // fields), which keep their stored values and are named in a warning (plans/Security-Review.md SEC-TLS-81)
+                writeMap = {}
+                const leftFields = []
+                for (const name of ec.entity.getEntityDefinition(selectedEntity).getAllFieldNames()) {
+                    if (!context.containsKey(name)) continue
+                    if (!WebUtilities.isGenericWriteRefused(selectedEntity, name)) writeMap[name] = context[name]
+                    else if (context[name] != null && String(context[name]) !== '') leftFields.push(name)
+                }
+                if (leftFields.length) ec.message.addMessage(`Fields ${leftFields.join(', ')} of ${selectedEntity} are not available through this tool and were not written`, 'warning')
+            ]]></script>
+            <service-call name="update#${selectedEntity}" in-map="writeMap"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(selectedEntity).getPrimaryKeys(context)"/>
     </transition>
 

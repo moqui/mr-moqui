@@ -1803,7 +1803,7 @@ interface MoquiWebUtilities {
     reportSaveLocationProblem(location: string): string | null;
     isRestrictedGenericEntity(entityName: string): boolean;
     /** isRestrictedGenericEntity, or an entity only its own services write: a generic tool's write refuses it. With a
-     * field name, also a password field of the entity, which no generic write takes. */
+     * field name, also a field no generic write takes: a password field, or an identity field of UserAccount. */
     isGenericWriteRefused(entityName: string, fieldName?: string): boolean;
     /** The response text of a POST of the body, or of a GET with none. */
     simpleHttpStringRequest(location: string, requestBody?: string | null, contentType?: string | null): string | null;
