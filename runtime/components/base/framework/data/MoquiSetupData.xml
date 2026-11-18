@@ -192,8 +192,8 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="EmailMailboxFull" inboxEnumId="NinNotifications" description="Mail account full"
             typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"/>
     <!-- What clients that keep data offline rely on (plans/Mobile-Desktop.md MD5): the mail change logs past
-         mail_change_keep_days, the clientRefs past client_request_keep_days, and the chunked uploads left past
-         client_upload_expire_hours. Each user or upload is on its own. -->
+         client-sync@mail-change-keep-days, the clientRefs past client-sync@request-keep-days, and the chunked uploads left past
+         client-sync@upload-expire-hours. Each user or upload is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_MailChanges_daily" description="Remove old mail change logs"
             serviceName="org.moqui.mail.EmailClientServices.clean#MailChanges" cronExpression="0 10 4 * * ?" paused="N"/>
     <moqui.service.job.ServiceJob jobName="clean_ClientRequests_daily" description="Remove old client request references"

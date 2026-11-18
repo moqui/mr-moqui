@@ -26,6 +26,14 @@
     <acme directory-url="https://acme-v02.api.letsencrypt.org/directory" directory-ca="" account-key="CHANGEME"
             challenge-port="443"/>
 
+    <!-- A client that keeps data offline (plans/Mobile-Desktop.md MD5, docs/ui/Desktop-Client.md): mail-change-keep-days,
+        how long a user's mail change log is kept (an older cursor, or one not read for that long, reads its folders again);
+        request-keep-days, how long a request made by its clientRef is answered as a duplicate when sent again;
+        upload-expire-hours, how long a file sent in chunks waits for its next chunk or to be taken; upload-min-chunk-bytes,
+        the smallest chunk but the last; upload-max-count and upload-max-mb, the uploads a user may have open at once. -->
+    <client-sync mail-change-keep-days="30" request-keep-days="30" upload-expire-hours="24" upload-min-chunk-bytes="262144"
+            upload-max-count="20" upload-max-mb="100"/>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
     <!--
@@ -40,18 +48,6 @@
     <default-property name="load_runner_max_runs" value="1"/>
     <default-property name="load_runner_max_users" value="1000"/>
 
-    <!-- A client that keeps data offline (plans/Mobile-Desktop.md MD5, docs/ui/Desktop-Client.md): mail_change_keep_days, how
-        long a user's mail change log is kept (an older cursor, or one not read for that long, reads its folders again);
-        client_request_keep_days, how long a request made by its clientRef is answered as a duplicate when sent again;
-        client_upload_expire_hours, how long a file sent in chunks waits for its next chunk or to be taken;
-        client_upload_min_chunk_bytes, the smallest chunk but the last; client_upload_max_count and client_upload_max_mb, the
-        uploads a user may have open at once. -->
-    <default-property name="mail_change_keep_days" value="30"/>
-    <default-property name="client_request_keep_days" value="30"/>
-    <default-property name="client_upload_expire_hours" value="24"/>
-    <default-property name="client_upload_min_chunk_bytes" value="262144"/>
-    <default-property name="client_upload_max_count" value="20"/>
-    <default-property name="client_upload_max_mb" value="100"/>
 
     <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
         user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device

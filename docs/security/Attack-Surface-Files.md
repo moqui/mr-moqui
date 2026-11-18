@@ -80,7 +80,7 @@ Each service calls `get#DriveAccess`. The owner is level 3. A current `ResourceD
 
 ### Chunked uploads
 
-`org.moqui.edge.ClientSyncServices.upload#Chunk` (the `uploadChunk` transition that Compose and Chat include) takes one chunk of a file of the signed-in user. `uploadId` must match `^[A-Za-z0-9_.:-]{1,64}$`. A file is at most 25 MB. A chunk other than the last is at least `client_upload_min_chunk_bytes` (262144). A user holds at most `client_upload_max_count` (20) unfinished uploads and `client_upload_max_mb` (100) MB in all. Chunks are stored under `dbresource://upload/<userId>/<token>` and rows are found by `userId` and `uploadId`.
+`org.moqui.edge.ClientSyncServices.upload#Chunk` (the `uploadChunk` transition that Compose and Chat include) takes one chunk of a file of the signed-in user. `uploadId` must match `^[A-Za-z0-9_.:-]{1,64}$`. A file is at most 25 MB. A chunk other than the last is at least `client-sync@upload-min-chunk-bytes` (262144). A user holds at most `client-sync@upload-max-count` (20) unfinished uploads and `client-sync@upload-max-mb` (100) MB in all. Chunks are stored under `dbresource://upload/<userId>/<token>` and rows are found by `userId` and `uploadId`.
 
 ### The drive picker
 

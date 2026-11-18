@@ -21,6 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element minOccurs="0" ref="instance"/>
                 <xs:element minOccurs="0" ref="acme"/>
+                <xs:element minOccurs="0" ref="client-sync"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2060,6 +2061,18 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="directory-ca" type="xs:string"><xs:annotation><xs:documentation>A root (a PEM file, absolute or under the runtime) the authority's HTTPS is checked against in place of the system's.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="account-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env: the seed of the account's P-256 key.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="challenge-port" type="non-neg-int-expandable" default="443"><xs:annotation><xs:documentation>The port the set-up check connects to on the name, as the authority does.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="client-sync">
+        <xs:annotation><xs:documentation>A client that keeps data offline (plans/Mobile-Desktop.md MD5): how long its
+            change logs, request refs and chunked uploads are kept, and the uploads a user may have open.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="mail-change-keep-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="request-keep-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="upload-expire-hours" type="non-neg-int-expandable" default="24"/>
+            <xs:attribute name="upload-min-chunk-bytes" type="non-neg-int-expandable" default="262144"/>
+            <xs:attribute name="upload-max-count" type="non-neg-int-expandable" default="20"/>
+            <xs:attribute name="upload-max-mb" type="non-neg-int-expandable" default="100"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

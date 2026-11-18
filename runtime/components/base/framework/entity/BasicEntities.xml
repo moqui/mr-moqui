@@ -1113,7 +1113,7 @@ along with this software (see the LICENSE.md file). If not, see
             before it was purged, or the user's accounts changed (a member added or removed), so its reader starts again
             (reset)</description></field>
         <field name="lastReadDate" type="date-time"><description>The user's last read of the cursor, within an hour: a
-            state not read for longer than mail_change_keep_days goes dormant, its log removed</description></field>
+            state not read for longer than client-sync@mail-change-keep-days goes dormant, its log removed</description></field>
         <field name="dormantDate" type="date-time"><description>When the state went dormant (clean#UserMailChanges): no
             change is noted for it until its next read, which answers reset. The row stays, so its numbers never start
             again</description></field>
@@ -1413,7 +1413,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A request a client made with its own reference (clientRef), with what it answered, so the same
             request sent again after a lost answer is answered the same way and does nothing (ClientSyncServices
             claim#ClientRequest and store#ClientRequest). The row is written in the transaction of the request, so a request
-            that fails leaves none and may be tried again. Rows go after client_request_keep_days (clean#ClientRequests).</description>
+            that fails leaves none and may be tried again. Rows go after client-sync@request-keep-days (clean#ClientRequests).</description>
         <field name="userId" type="id" is-pk="true"/>
         <field name="serviceName" type="text-medium" is-pk="true"><description>The service or operation the reference is
             of: one reference is the user's own per service</description></field>
@@ -1428,7 +1428,7 @@ along with this software (see the LICENSE.md file). If not, see
             so an upload cut off goes on from the bytes the server holds (get#UploadStatus). Each chunk is kept under
             storeLocation (dbresource://upload/(userId)/(token)/) by its offset; the last one joins them into the file, which the attachment
             services take by uploadId (ComposeServices.upload#ComposeAttachment, ChatServices.upload#Attachment). Only its
-            user reaches it. One not finished, or not taken, within client_upload_expire_hours goes, with its files
+            user reaches it. One not finished, or not taken, within client-sync@upload-expire-hours goes, with its files
             (clean#ClientUploads).</description>
         <field name="userId" type="id" is-pk="true"/>
         <field name="uploadId" type="text-medium" is-pk="true"><description>^[A-Za-z0-9_.:-]{1,64}$</description></field>

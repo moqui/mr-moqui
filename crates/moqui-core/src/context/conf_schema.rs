@@ -347,6 +347,7 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("the purpose, role and time zone are read at boot"),
     ),
     single("acme", Class::Live).secrets(&[("account-key", Secret::Generated)]),
+    single("client-sync", Class::Live),
     single("email-client", Class::Live)
         .attrs(&[("idle-enabled", LISTENER)])
         .children(&[keyed("oauth-provider", &["id"], Class::Live).secrets(&[("client-secret", Secret::Kept)])]),

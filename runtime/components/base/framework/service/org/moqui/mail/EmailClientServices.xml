@@ -2945,7 +2945,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             lastSeq is the cursor to read from next. reset true, with no changes, means the cursor cannot be used: there is
             none yet (afterSeq empty, or the user's first read, which starts the log), it is older than the log kept
-            (mail_change_keep_days, 30 by default), the log started again (the user's accounts changed, a member added or
+            (client-sync@mail-change-keep-days, 30 by default), the log started again (the user's accounts changed, a member added or
             removed, or it was not read for that long), or it is past the last change (another server's). The client then
             reads its folders again and goes on from lastSeq; take lastSeq before reading them. Only the user's own log is
             read, and only messages of accounts the user reaches now are answered.
@@ -3068,7 +3068,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="clean" noun="MailChanges" authenticate="anonymous-all" transaction="ignore">
         <description>The daily job of the mail change cursors: a cursor not read for days (the property
-            mail_change_keep_days, 30 by default) goes dormant: its log goes and no change is noted for it until it is read
+            client-sync@mail-change-keep-days, 30 by default) goes dormant: its log goes and no change is noted for it until it is read
             again, which answers reset (its numbers go on; a sequence never starts again). Of the others, the changes
             older than that go, and a cursor before them answers reset (purgedThruSeq). Each user is on its own, in its own
             transaction: one that fails is logged and the rest go on.</description>
@@ -3079,7 +3079,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             userCount = 0; removedCount = 0
-            const keep = Math.max(1, Number(days || System.getProperty('mail_change_keep_days') || 30))
+            const keep = Math.max(1, Number(days || ec.factory.getConfValue('client-sync@mail-change-keep-days') || 30))
             const before = Number(ec.user.nowTimestamp) - keep * 86400000
             const states = Array.from(ec.entity.find('moqui.basic.email.EmailUserState').selectField('userId').disableAuthz().list())
             for (const state of states) {

@@ -224,20 +224,20 @@ cover, as `uncoveredStores`). IronStone answers both.
   `delete`) is a hint.
 - `more` says to read again from `lastSeq` at once. `reset` true, with no changes, says to read the folders again and
   go on from `lastSeq`: no `afterSeq`, the user's first read (which starts the log), a cursor older than the log kept
-  (`mail_change_keep_days`, 30), past the last change, or after the user's accounts changed (a member added or removed).
+  (`client-sync@mail-change-keep-days`, 30), past the last change, or after the user's accounts changed (a member added or removed).
 - Rules on `EmailMessage` and `EmailMessageLabel` (`framework/entity/Email.eecas.xml`) note every change, wherever it
   comes from (sync arrivals, flag scans, moves and expunges, delivery, sends, drafts, the Inbox's actions), for each
   user of the account who has a cursor (`EmailUserState`); a user with none keeps no log. The changes are numbered at
   the user's next read under the lock of that row, so the numbers follow the order they committed, one row per thread.
   A note never fails the write it comes from (it logs and leaves no error).
 - A sequence never starts again: a reset (accounts changed) uses up a number, so even a caught-up cursor answers
-  `reset`; a cursor not read for `mail_change_keep_days` goes dormant (its log removed, nothing noted) and its next read
+  `reset`; a cursor not read for `client-sync@mail-change-keep-days` goes dormant (its log removed, nothing noted) and its next read
   answers `reset` and goes on from its last number. For ten minutes after a cursor starts or resets, each read also
   notes the threads of messages changed since then, for a writer whose transaction began before. A page ends before a
   thread that would take it past about 20000 messages (`more`), so no thread is cut.
 
 **A request once by its `clientRef`** (`^[A-Za-z0-9_.:-]{1,64}$`, the user's own per request kind; `ClientRequestRef`,
-kept `client_request_keep_days`, 30). The first request runs and its answer is kept in the same transaction; one sent
+kept `client-sync@request-keep-days`, 30). The first request runs and its answer is kept in the same transaction; one sent
 again answers it with `duplicate: true` and does nothing. Chat's `edit`, `redact`, `react`, `votePoll` and `markRead`
 (`ClientSyncServices.call#ClientRequest`), and the Inbox's `state` and `viewAction` (`run#Operation`, so an app's inbox
 source is covered too). An app's own mutation uses `claim#ClientRequest` and `store#ClientRequest`. A ref is keyed by
@@ -265,9 +265,9 @@ other parameters answers the first request's result. Sent again after 30 days, t
 or past a gap, answers `accepted: false` with `received`, where to go on. `uploadStatus?uploadId=` answers
 `{found, received, total, complete}` after a restart (`found: false`: start again). The chunk that ends at `total` joins
 the file; then Compose's `upload` and Chat's `upload` take it by `uploadId` in place of the file. An upload is its user's
-only, and goes `client_upload_expire_hours` (24) after its last chunk. A chunk but the last is at least
-`client_upload_min_chunk_bytes` (256 KB); a user has at most `client_upload_max_count` (20) unfinished uploads of
-`client_upload_max_mb` (100) MB in all.
+only, and goes `client-sync@upload-expire-hours` (24) after its last chunk. A chunk but the last is at least
+`client-sync@upload-min-chunk-bytes` (256 KB); a user has at most `client-sync@upload-max-count` (20) unfinished uploads of
+`client-sync@upload-max-mb` (100) MB in all.
 
 The jobs `clean_MailChanges_daily`, `clean_ClientRequests_daily` and `clean_ClientUploads_hourly` clean them up, each user
 or upload on its own.

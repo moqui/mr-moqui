@@ -337,6 +337,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "instance",
         // certificates by ACME (plans/Edge-Node2.md §4.8)
         "acme",
+        // the offline clients' logs and uploads (plans/Mobile-Desktop.md MD5)
+        "client-sync",
         "ssh-server",
         "terminal",
         "git-server",
