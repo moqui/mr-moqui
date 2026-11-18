@@ -179,6 +179,8 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
   `component_deploy_attestation_key` is treated as a secret by its name.
 - The audit log holds ciphertext of an encrypted field; cluster cache invalidation carries keys only; the Tools grid
   masks encrypted fields.
+- The router and the servlet match use the raw request path with no dot-segment or `//` handling on either side, and a servlet and its filters are chosen from the same string, so no path was found that reaches a host route's handler past its gate or a script servlet without its filter. A rule with `host` never exempts a connection or a ban, a shared ban never bans a trusted proxy, and `/health`, `/metrics`, `X-Forwarded-Proto` and `X-Moqui-Test-Peer` are believed only as the map states (SEC-WEB-11 and SEC-RTE-10 hold). The parent frame (`screen/frame.rs`) and `reauthenticate#User` hold as the map states.
+- SSO sign-in: the callback needs the session's pending state and removes it first; `state` is compared in constant time, PKCE S256 is sent unless the provider lists only `plain`, and the ID token's issuer, audience, expiry, `sub` and nonce are required (huskarl 0.11.10; its JWS verifier and JWKS fetch were not read). An account is linked only by a verified email, never a privileged one, and the app sign-in code is single use, hashed and good a minute. The fixes of SEC-ADM-09 and SEC-ADM-11 hold.
 
 ## What is left
 
@@ -275,6 +277,12 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 | SEC-WEB-12 | `crates/moqui-core/src/user/totp.rs:89-106` | Second factor details: a TOTP code works more than once; code sends are not limited in the login flow | Low | fixed |
 | SEC-WEB-13 | `crates/moqui-core/src/user/session.rs:3057-3065` | A `session_cookie_key` set by the operator is not checked | Low | fixed |
 | SEC-WEB-14 | `crates/moqui-core/src/user/authz.rs:703-704`, `:753-758` | An anonymous tarpit lock is everyone's | Low | fixed |
+| SEC-WEB-81 | `crates/moqui-host/src/guard.rs:338-344`, `:1015-1019`, `:1034-1035`; `crates/moqui-core/src/screen/url.rs:272-275`, `:301-307`, `:548`, `:567-585`; `crates/moqui-core/src/screen/mod.rs:585-598`, `:739` | A path-scoped rate limit or path rule is passed by another path to the same transition or screen (SEC-WEB-07's fix does not cover these) | Low | reported (confirmed in code) |
+| SEC-WEB-82 | `crates/moqui-host/src/guard.rs:162-173`; `crates/moqui-core/src/web/mod.rs:2532-2537` | A per-host web protection rule is passed by a `Host` header with a port that is not a number | Low | reported (likely) |
+| SEC-WEB-83 | `crates/moqui-host/src/guard.rs:863-872`, `:935-944`, `:1054-1056`, `:1336-1345` | Once 100,000 clients are tracked, a new client is not rate limited, banned or connection-capped | Low | reported (confirmed in code) |
+| SEC-WEB-84 | `runtime/components/base/webroot/screen/webroot/sso.xml:19-27`; `crates/moqui-core/src/service/sso.rs:309-318`, `:522-530` | With an OAuth 2 provider the recent sign-in check is met by a cross-site `GET /sso/login?...&reauth=true` | Low | reported (confirmed in code) |
+| SEC-WEB-85 | `crates/moqui-core/src/user/login.rs:158-163`, `:307-336`, `:359-364`, `:486-498`; `Security.eecas.xml:154-155` | The new-device notice is not sent for a sign-in that passes a second factor, or one made within a minute of another login attempt on the account | Low | reported (confirmed in code) |
+| SEC-WEB-86 | `crates/moqui-host/src/sso.rs:557-565` | User info claims are merged into the profile without comparing the user info `sub` with the ID token's | Low | reported (confirmed in code) |
 
 ### Routes, screens and REST
 
@@ -865,4 +873,3 @@ High; reported (likely); fixed.
 - **Evidence:** `.title("The deployment of " + where + " " + text(deployment.commitId).slice(0, 12) + " to " + environmentName + " waits for approval")` and `self.title_text = Some(expand_template(title_template.as_deref().unwrap_or(""), &message)?);`
 - **Not confirmed:** Whether the environment name, repository path and mirror URL are validated to a character set without `$` or `{` where they are stored; who may create a `GitCiEnvironment`.
 - **Suggested fix:** Pass a fixed template with `${names}` and put the values in the message map in these three callers; consider a separate `titleText()` that is never expanded.
-
