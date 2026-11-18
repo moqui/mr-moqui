@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One person across networks (plans/Comms-Messaging.md §11.1, §18.3 phase 22; docs/tools/Comms.md "People across
+    networks"): a user's people, each the addresses they reach someone by (a user of this server, an outside number, a mail
+    address, a person on a bridge), with the person's rooms and the ways to reach them, the best first. The logic is
+    ChatPeople.js beside this file; find#ContactPeople is the contacts hook (crates/moqui-core/src/service/contacts.rs).
+    Each service is the signed-in user's own: no service reads or changes another user's people. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="find" noun="ChatPeople">
+        <description>The signed-in user's people: from their rooms (a direct room of two, a pair room of one outside number,
+            a GroupMe direct conversation; the 200 newest in sight), their own merges, splits and names, and the app's
+            contacts they can see (find#ContactPeople, asked only about the addresses of their rooms that they have not
+            grouped themselves, at most 60 times an hour: then contactsSkipped). personList, each {personKey (p:id for a
+            person the user changed, else a:its first address), name, nameFrom (mine, user, contact or empty), edited,
+            userId, contactUrl, addresses [{addressKey, kind (user, tel, email, ext), label}], rooms [{chatRoomId, network
+            (moqui, sms, rcs, groupme), encrypted, fromNumber, lastMessageDate, lastInboundDate, notConnected}], ways (kind
+            room, direct, text or mail; network; chatRoomId, userId, number, fromNumber, address, url; blocked; reasonCode
+            optedOut or notConnected), best (the first way, or null), blocked (a user the signed-in user blocked: no way)}.
+            A person who is a user of this server shows only the numbers and addresses of the user's own rooms and rows,
+            never the contacts' or the account's. roomPersonMap: chatRoomId to personKey.</description>
+        <out-parameters>
+            <parameter name="personList" type="List"><parameter name="person" type="Map"/></parameter>
+            <parameter name="roomPersonMap" type="Map"/>
+            <parameter name="hookFailed" type="Boolean"/>
+            <parameter name="contactsSkipped" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatPeople.js').execute('findPeople', context))</script></actions>
+    </service>
+
+    <service verb="merge" noun="ChatPeople">
+        <description>Put people together for the signed-in user: one person with every address the persons named
+            (personKeyList) show and the addresses given (addressKeyList: user:userId, tel:number, email:address,
+            ext:chatExternalUserId; an address already in a person brings that person). Each must be one the user may name:
+            a user they may reach, a number, a mail address, a bridge person of one of their own conversations. Changes only
+            the user's own rows. reasonCode: badAddress, userNotFound, notYourRoom, personNotFound, nothingToMerge, twoUsers,
+            tooManyAddresses (20 a person), tooManyPeople (2,000 rows a user).</description>
+        <in-parameters>
+            <parameter name="personKeyList" type="List"/>
+            <parameter name="addressKeyList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="personKey"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatPeople.js').execute('mergePeople', context))</script></actions>
+    </service>
+
+    <service verb="separate" noun="ChatPersonAddress">
+        <description>Take an address (addressKey) out of its person for the signed-in user: it becomes a person of its own,
+            which the app's contacts do not join back. reasonCode: badAddress, personNotFound, tooManyPeople.</description>
+        <in-parameters><parameter name="addressKey" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="personKey"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatPeople.js').execute('separateAddress', context))</script></actions>
+    </service>
+
+    <service verb="rename" noun="ChatPerson">
+        <description>The signed-in user's own name for a person (displayName, at most 100 characters; empty clears it). A
+            person grouped automatically keeps its addresses as they are now. reasonCode: personNotFound,
+            tooManyPeople.</description>
+        <in-parameters>
+            <parameter name="personKey" required="true"/>
+            <parameter name="displayName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="personKey"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatPeople.js').execute('renamePerson', context))</script></actions>
+    </service>
+
+    <service verb="reset" noun="ChatPerson">
+        <description>Undo the signed-in user's changes to a person (personKey p:id): its rows go, and its addresses are
+            grouped automatically again. reasonCode personNotFound.</description>
+        <in-parameters><parameter name="personKey" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatPeople.js').execute('resetPerson', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="ContactPeople" type="rust" location="moqui_core::service::contacts::find_contact_people"
+            transaction="ignore" allow-remote="false">
+        <description>Internal: the contacts hook of chat's people. The framework keeps no contacts (they are the app's, such
+            as Mantle's parties), so it asks the service the chat_contact_service property names, else the theme value
+            STRT_CHAT_CONTACT_SERVICE of the user's qapps theme. The hook is called with authorization disabled, in a
+            transaction of its own, with userId and addressList (tel:+E.164, email:address, user:userId; at most 300) and
+            answers contactList: the contacts the user can see that have one of the addresses, each {contactRef, name, url
+            (a path on this server), addressList (its own tel:, email: and user: addresses)}. It enforces the app's
+            visibility itself. Kept: valid keys, at most 100 contacts and 10 addresses each. contactList is null when no
+            hook is configured; a hook that fails or answers no list is logged once by name, hookFailed is true and the list
+            is empty. The current user's; another user's only with authorization disabled.</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="addressList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contactList" type="List"/>
+            <parameter name="hookService"/>
+            <parameter name="hookFailed" type="Boolean"/>
+        </out-parameters>
+    </service>
+</services>

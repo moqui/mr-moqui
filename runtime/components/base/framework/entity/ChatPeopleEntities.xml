@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One person across networks (plans/Comms-Messaging.md §11.1, phase 22; docs/tools/Comms.md "People across networks"):
+    a user's own grouping of the addresses they reach a person by. The people are built from the user's rooms, these rows
+    and the app's contacts (the contacts hook, ChatPeopleServices.find#ContactPeople); these rows hold only what the user
+    changed: a merge, a split, a name. They are the owner's alone: no service reads another user's rows, and nothing in
+    them reaches the person. The services are org.moqui.chat.ChatPeopleServices (ChatPeople.js). -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="ChatPerson" package="moqui.chat" use="transactional" cache="never">
+        <description>One person in a user's own list (ownerUserId), made by a merge, a split or a rename. displayName is the
+            user's own name for them; empty: the name comes from the user account, the app's contact, the phone's contacts
+            or the address. At most 20 addresses a person.</description>
+        <field name="chatPersonId" type="id" is-pk="true"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="displayName" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <index name="CHAT_PERSON_OWNER"><index-field name="ownerUserId"/></index>
+    </entity>
+
+    <entity entity-name="ChatPersonAddress" package="moqui.chat" use="transactional" cache="never">
+        <description>An address a user put in one of their people. The key makes each address belong to at most one person
+            of that user, whatever the app's contacts say. addressKey: user:userId (a user of this server), tel:+E.164 (an
+            outside number: its SMS and RCS rooms), email:address in lower case, ext:chatExternalUserId (a person on a
+            bridge's network, GroupMe). At most 2,000 rows a user.</description>
+        <field name="ownerUserId" type="id" is-pk="true"/>
+        <field name="addressKey" type="text-medium" is-pk="true"/>
+        <field name="chatPersonId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatPerson" short-alias="person"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <index name="CHAT_PERSON_ADDRESS_PERSON"><index-field name="chatPersonId"/></index>
+    </entity>
+</entities>

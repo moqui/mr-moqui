@@ -31,6 +31,10 @@ with a `ChatExternalUser`). Exactly one identity is set, unique within its kind.
   read by user is one find. An external actor's rows have no userId.
 - An external actor has no login and no `UserAccount`. A verified puppet link (`ChatExternalUser.linkedUserId`) is
   provenance only: it gives no right to act as that user.
+- In a user's people across networks ([Comms](../tools/Comms.md#people-across-networks)) a bridge's person is the
+  address `ext:<chatExternalUserId>`: the person of a bridge's direct conversation (GroupMe's `dm:` mapping), whom the
+  user may put together with their other rooms. A bridge for another network's direct conversations gets it the same
+  way; nothing on the bridge changes.
 - Agents stay local service-user actors. An external actor's message reaches a room's agents only when the room's
   `agentsReadExternal` is Y. The framework's own agents (`AgentServices.handle#ChatMessage`) never run for one: a run is
   always its local sender's, and they do not act in a room an external actor is in.

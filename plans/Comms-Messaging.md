@@ -2923,7 +2923,26 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
 
 Designed 2026-11-17 (§11.1). Chat groups one user's conversations with a person across networks into one person, with
 a person card to merge and split and a network button in the composer, best path first. The rooms stay separate, each
-with its own label. Mail stays in the Inbox, as a line on the person's rooms.
+with its own label. Mail stays in the Inbox, as a line on the person's rooms. The user's answers of the same day are in
+§19.1: one row per room, the app's contacts may link a number to a user, no finding a user by number.
+
+Status (2026-11-18): built, as designed, with these changes:
+- the hook's url is kept only when it is a path on this server;
+- Mantle answers no url, because the page that shows a contact is an app's;
+- the person card's Add lists the user's other people and takes a typed number or address; a user of this server is
+  added by their conversation;
+- merging two users of this server is refused (`twoUsers`).
+
+Mantle's visibility rule moved to `filter#VisibleContacts`, which `filter#ContactAddresses` and
+`find#ContactPeople` share (mr-mantle branch `d4-contact-people`); IronStone's theme row is on mr-boss's branch of the same
+name.
+
+Measured: basic-comms server 0.3 s for `BasicCommsPeople`; webroot client 0.2 s for the whole of `WebrootChat`; the
+basic-comms client suite unchanged, though its served run measured 12.4 s of 12 s on a loaded machine (see the
+report).
+
+Left: the checks on a real phone of the network sheet and the card; a GroupMe direct conversation's person (`ext:`)
+has no server spec of its own.
 
 **What exists** (read 2026-11-17):
 - `crates/moqui-core/src/service/contacts.rs`: `EmailClientServices.filter#ContactAddresses`. It answers only which mail
@@ -3120,7 +3139,7 @@ taken from the first of:
 6. the number.
 
 `moqui.chat.applyPeople(rooms, people)` sets these names after `nameRooms`. Folding a person's rooms into one row is
-left out (a choice for the user, below).
+left out (decided, §19.1).
 
 **Mail lines.** `find#DirectChatMail` gets its people from `find#ChatPeople` (an internal call):
 - for a user of this server: their account's address and the addresses the viewer linked;
@@ -3271,6 +3290,9 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-16 | One-to-one calls go peer to peer first, between two users of this server in a direct room, with "Always relay my calls" and the media server as fallback; a third person moves the call to the media server (§8.3 item 15, phase 5) |
 | 2026-11-16 | UnifiedPush is in the first release, in phase 2 beside FCM (§7.4, step 2h) |
 | 2026-11-16 | Mail stays in the Inbox. A person's latest mail thread shows as a line on their direct chat's row and opens in the Inbox; no mail-only rows (§3, phase 8). If mail ever joins as rooms, the rules of §18.2 "Mail stays working" come with it |
+| 2026-11-17 | Unified contacts keep one row per room: a person's rooms on each network are rows of their own, each with the person's name and its network's label; they are not folded into one row (§11.1, phase 22) |
+| 2026-11-17 | An app's contacts may link a phone number to a user of this server, only through a contact the viewer can already see in the app (Mantle's books and directory). Chat never links a number to a user from its own or voice's data (§11.1, §14.4, phase 22) |
+| 2026-11-17 | No finding a user of this server by their phone number: a user's numbers stay out of chat (§11.1, phase 22) |
 | 2026-11-16 | During Do not disturb a call rings from a person on the user's allowed list (Chat settings, beside the hours), or as the same person's second call within 3 minutes (§7.2 rule 4) |
 
 ### 19.2 Open: the app

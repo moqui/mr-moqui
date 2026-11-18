@@ -334,6 +334,9 @@ and the libraries they load (tiptap, the crypto library) are in `libs.txt`; a go
   first with no `#` (Comms-Messaging §3): two letters and Enter open a room, and a person with no direct chat gets a
   message, the chat made when it is sent. Ctrl+Enter opens the row in an app window (the root's `openNewTab`); offline,
   the palette says once that searching needs the server and still finds screens and actions.
+- **People across networks** ([Comms](../tools/Comms.md#people-across-networks)): the bundled Chat has the composer's
+  network button (a menu above the composer) and the person card in the People tab, as on the web; offline neither
+  shows, and the rooms work as before.
   Root listens for the keys of `moqui.keymap` as the web's root does, so Chat's own keys work in the shell too; the
   `KEYMAP` preference is not read here yet.
 - **In app windows:** every other screen, the server's own `/qapps`: Calls' History, Voicemail and Recordings; Settings,

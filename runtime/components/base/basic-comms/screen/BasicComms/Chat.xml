@@ -518,6 +518,46 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- my people across networks (org.moqui.chat.ChatPeopleServices, plans/Comms-Messaging.md §11.1): each with its rooms
+        and ways, the best first; merge, separate, rename and reset change my own list only -->
+    <transition name="people" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.find#ChatPeople').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {personList: out.personList || [], roomPersonMap: out.roomPersonMap || {}})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="mergePeople">
+        <actions><script><![CDATA[
+            const list = (text) => String(text || '').split(',').map((part) => part.trim()).filter((part) => part)
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.merge#ChatPeople').parameters({personKeyList: list(personKeys),
+                addressKeyList: list(addressKeys)}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {personKey: out.personKey})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="separatePerson">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.separate#ChatPersonAddress').parameter('addressKey', addressKey || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {personKey: out.personKey})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="renamePerson">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.rename#ChatPerson').parameters({personKey: personKey || '',
+                displayName: displayName || null}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {personKey: out.personKey})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="resetPerson">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.chat.ChatPeopleServices.reset#ChatPerson').parameter('personKey', personKey || '').call()
+            ec.web.sendJsonResponse({})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the room of a record, made on first use -->
     <transition name="recordRoom">
         <actions><script><![CDATA[
