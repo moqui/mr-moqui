@@ -52,8 +52,8 @@ message Hello {
   // from them, so its phone calls are routed to the edge node's engine.
   string sip_address = 11;
   string sip_tls_address = 12;
-  // The edge node's SIP engine's realm (its sip_domain, else sip_public_address, else moqui), which its registrar
-  // challenges phones with, and whether its registrar is on (sip_registrar_enabled): the local node makes its phones'
+  // The edge node's SIP engine's realm (its sip-server@domain, else sip-server@public-address, else moqui), which its registrar
+  // challenges phones with, and whether its registrar is on (sip-server/registrar@enabled): the local node makes its phones'
   // verifiers for that realm and rings them only with it on (E8).
   string sip_domain = 13;
   bool sip_registrar = 14;
@@ -408,7 +408,7 @@ message SipOffer {
   // Its SIP address for UDP and TCP, and for TLS (host:port), empty when that listener is off: as its Hello's.
   string sip_address = 2;
   string tls_address = 3;
-  // The realm its registrar challenges phones with (sip_domain), and whether the registrar is on.
+  // The realm its registrar challenges phones with (sip-server@domain), and whether the registrar is on.
   string domain = 4;
   bool registrar = 5;
   // The trunks its engine has loaded now, with their state.
@@ -467,7 +467,7 @@ message ConfigureRequest {
   bool set_hosts = 5;
   // XMPP clients through the edge node's tunnel ports; unset when not chosen.
   XmppSetup xmpp = 6;
-  // The local node's SIP device domain (its sip_domain), lower case; empty when it has none. An all-in-one node's
+  // The local node's SIP device domain (its sip-server@domain), lower case; empty when it has none. An all-in-one node's
   // registrar takes that domain's phones for it, apart from the server's own realm (E12).
   string sip_domain = 7;
 }

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Phone calls when this build has no `sip` feature: nothing starts, and a set `sip_port` or `sip_tls_port` is an error
+//! Phone calls when this build has no `sip` feature: nothing starts, and a set `sip-server@port` or `sip-server@tls-port` is an error
 //! in the log. The voice services report the feature missing (`get#VoiceCapabilities` supported false).
 
 use std::sync::Arc;
@@ -29,8 +29,8 @@ pub(crate) fn install_crypto() {}
 pub(crate) fn pairings_changed() {}
 
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
-    for name in ["sip_port", "sip_tls_port"] {
-        if !moqui_lib::env::get_prop_or_env(name).trim().is_empty() {
+    for name in ["sip-server@port", "sip-server@tls-port"] {
+        if !moqui_core::context::conf_env::setting(name).is_empty() {
             tracing::error!("{name} is set but this build has no phone calls (the sip feature)");
         }
     }

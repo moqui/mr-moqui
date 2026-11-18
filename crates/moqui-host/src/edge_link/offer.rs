@@ -730,14 +730,16 @@ pub(crate) fn request_of(setup: &EdgeSetup) -> ConfigureRequest {
     }
 }
 
-/// E12: the domain this node's phones register to through an all-in-one node (`sip_domain`), as a Configure sends it;
+/// E12: the domain this node's phones register to through an all-in-one node (`sip-server@domain`), as a Configure sends it;
 /// empty when unset or not a host name with a domain (logged), as the edge node would refuse it.
 fn own_sip_domain() -> String {
-    let domain = moqui_lib::env::get_prop_or_env("sip_domain");
+    let domain = moqui_core::context::conf_env::setting("sip-server@domain");
     match domain.trim() {
         "" => String::new(),
         domain => setup::check_host_name(domain).unwrap_or_else(|why| {
-            tracing::warn!("Edge link: sip_domain {domain} is not a domain ({why}), so a Configure does not send it");
+            tracing::warn!(
+                "Edge link: sip-server@domain {domain} is not a domain ({why}), so a Configure does not send it"
+            );
             String::new()
         }),
     }

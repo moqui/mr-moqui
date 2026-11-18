@@ -185,7 +185,11 @@ fn a_front_node_has_the_front_set_only() {
     let port_text = port.to_string();
     let mut properties = front_properties(&port_text, &new_key().unwrap());
     // the edge set's services, set up as if this were an edge node: none starts on a front
-    for name in ["rtc_media_port", "sip_port", "moqui_conf__smtp_server__listen_port"] {
+    for name in [
+        "rtc_media_port",
+        "moqui_conf__sip_server__port",
+        "moqui_conf__smtp_server__listen_port",
+    ] {
         properties.push((name, crate::common::free_port().to_string()));
     }
     let front = crate::common::start_with_files(

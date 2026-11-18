@@ -59,13 +59,13 @@
     <default-property name="call_recording_segment_mb" value="16"/>
 
     <!-- SIP (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", §10): one SIP engine for both sides, routed by the dialled number
-        and by the device domain: the server's own PhoneNumbers and sip_domain here, the paired node's numbers and
+        and by the device domain: the server's own PhoneNumbers and sip-server@domain here, the paired node's numbers and
         domain delegated to it. Set in .env to take them (each listener is off until its port is set):
-                                     <default-property name="sip_port" value="5060"/>
-                                     <default-property name="sip_tls_port" value="5061"/>
-                                     <default-property name="sip_host" value="0.0.0.0"/>
-                                     <default-property name="sip_public_address" value="(this node's address)"/>
-        Open sip_port (UDP, TCP), sip_tls_port (TCP) and sip_rtp_ports (UDP, 20000-20999). -->
+                                     <default-property name="sip-server@port" value="5060"/>
+                                     <default-property name="sip-server@tls-port" value="5061"/>
+                                     <default-property name="sip-server@host" value="0.0.0.0"/>
+                                     <default-property name="sip-server@public-address" value="(this node's address)"/>
+        Open sip-server@port (UDP, TCP), sip-server@tls-port (TCP) and sip-server@rtp-ports (UDP, 20000-20999). -->
 
     <!-- Backups: the server's own data and the link's queue (the paired node's items until delivered) are both here.
         The nightly backup_EmbeddedDatabase_daily job is paused in the seed data; this sets it running at each boot (false

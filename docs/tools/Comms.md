@@ -345,7 +345,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   tabs, and whichever answers first takes it; declining on one declines on all (a phone busy on another call only stops
   ringing itself), and a call nobody answers goes to your voicemail after your rings. The phone calls out as you, to a number (with your caller ID and your
   limits) or to a colleague by username. New password makes new credentials and stops the old ones at once; Remove
-  ends the phone. Phones register only when the administrator has turned the registrar on (`sip_registrar_enabled`);
+  ends the phone. Phones register only when the administrator has turned the registrar on (`sip-server/registrar@enabled`);
   until then the page says so. A phone that has no SHA-256 sign-in takes the legacy profile (MD5). See
   [SIP, Registrar](../interfaces/SIP.md#registrar).
 - <a id="my-devices"></a>**My devices.** Settings, My devices lists the browsers that hold your encryption keys, for

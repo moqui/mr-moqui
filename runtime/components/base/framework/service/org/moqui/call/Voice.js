@@ -979,14 +979,14 @@ function authFailure(p) {
 
 function capabilities() {
   const supported = !!ec.factory.hasFeature('sip')
-  const property = (name) => String(System.getProperty(name) || '').trim() !== ''
+  const property = (name) => String((name.includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)) || '').trim() !== ''
   const trunks = enabledTrunks()
-  const configured = supported && (property('sip_port') || property('sip_tls_port')) && trunks.length > 0
+  const configured = supported && (property('sip-server@port') || property('sip-server@tls-port')) && trunks.length > 0
   const nodes = voiceNodes()
   const working = trunks.filter((t) => t.statusId !== 'VtsFailed')
   const active = nodes.length > 0 && working.length > 0
   const reasonCode = active ? null : !supported && !nodes.length ? 'notBuilt' : !trunks.length ? 'noTrunk'
-    : !nodes.length ? (supported && !property('sip_port') && !property('sip_tls_port') ? 'notConfigured' : 'noSipServer') : 'trunkFailed'
+    : !nodes.length ? (supported && !property('sip-server@port') && !property('sip-server@tls-port') ? 'notConfigured' : 'noSipServer') : 'trunkFailed'
   const ready = readiness(ec.user.userId)
   return { supported, configured, active, reasonCode, emergencyReady: active && ready.ready,
     emergencyReasonCode: ready.missing[0] || (active ? null : 'voiceUnavailable'), emergencyMissing: ready.missing }

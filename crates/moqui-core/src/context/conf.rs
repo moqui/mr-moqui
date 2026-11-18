@@ -340,6 +340,17 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
             None => base.append_node(over_push.deep_copy()),
         }
     }
+    // SIP, its limits and registrar each merged as one element
+    if let Some(over_sip) = over.first_named("sip-server") {
+        match base.first_named("sip-server") {
+            Some(base_sip) => {
+                base_sip.copy_attributes_from(&over_sip);
+                base_sip.merge_single_child(&over_sip, "limits");
+                base_sip.merge_single_child(&over_sip, "registrar");
+            }
+            None => base.append_node(over_sip.deep_copy()),
+        }
+    }
     // XMPP, with its upload settings merged as one element
     base.merge_child_with_child_key(over, "xmpp-server", "upload", &[], None);
     // texts and chat bridges, with the edge node's limits merged as one element

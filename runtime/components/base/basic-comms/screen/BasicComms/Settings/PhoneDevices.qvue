@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
         {{t('Calls nobody answers go to your voicemail.')}}
         <q-btn flat dense no-caps color="primary" icon="sym_o_voicemail" :label="t('Phone and voicemail settings')" @click="$root.setUrl(sibling('Phone'))"></q-btn></div>
     <q-banner v-if="loaded && !server.registrarEnabled" dense rounded class="bg-warning text-black">
-        {{t('The registrar is off on this server: phones cannot register until an administrator turns it on (sip_registrar_enabled).')}}
+        {{t('The registrar is off on this server: phones cannot register until an administrator turns it on (sip-server/registrar@enabled).')}}
     </q-banner>
     <div v-if="loaded && !devices.length" class="m-muted">{{t('No phones yet.')}}</div>
     <q-list bordered separator class="rounded-borders" v-if="devices.length">

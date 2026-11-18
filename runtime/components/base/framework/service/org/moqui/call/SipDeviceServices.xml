@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     framework/entity/VoiceEntities.xml (SipDevice, SipDeviceVerifier, SipRegistration); the logic is SipDevices.js beside
     this file, and a device's leg (CltSipDevice) is the CallServices state machine's (Calls.js deviceEvent). The registrar
     is the host's SIP engine (crates/moqui-host/src/sip/phones.rs, moqui-sip ua_phones.rs), on only with
-    sip_registrar_enabled. No Java counterpart.
+    sip-server/registrar@enabled. No Java counterpart.
 
     Access. create#SipDevice, rotate#SipDeviceCredential, revoke#SipDevice and find#SipDevices are the current user's for
     their own phones; a voice admin (VoiceAdmin) may act on anyone's, and another user is refused as "not found" with the

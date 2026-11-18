@@ -14,7 +14,7 @@
 
 //! The user agent's registrar for desk and soft phones (plans/archive/Comms-Framework.md §5.2 "Registrar for phones (V4)").
 //!
-//! On only when the host gives [`UaConfig::registrar`] (`sip_registrar_enabled`); without it a REGISTER is refused
+//! On only when the host gives [`UaConfig::registrar`] (`sip-server/registrar@enabled`); without it a REGISTER is refused
 //! (403) without a challenge. With it:
 //!
 //! - **REGISTER** is challenged ([`crate::digest::NonceBook`]: SHA-256 first, then MD5, RFC 8760 §2.4), and the

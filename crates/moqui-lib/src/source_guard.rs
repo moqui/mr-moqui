@@ -188,8 +188,8 @@ impl SourceGuard {
     }
 }
 
-/// The caps of [`RequestGate`], from the host's properties (`sip_request_rate`, `sip_request_burst`,
-/// `sip_max_transactions`, `sip_max_connections`, `sip_max_connections_per_source`). 0 turns one off.
+/// The caps of [`RequestGate`], from the host's properties (`sip-server/limits@request-rate`, `sip-server/limits@request-burst`,
+/// `sip-server/limits@max-transactions`, `sip-server/limits@max-connections`, `sip-server/limits@max-connections-per-source`). 0 turns one off.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RequestLimits {
     /// New requests a second from one source, refilled continuously.

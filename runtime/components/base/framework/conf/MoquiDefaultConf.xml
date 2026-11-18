@@ -142,6 +142,28 @@
                 secret="CHANGEME"/>
     </xmpp-server>
 
+    <!-- Phone calls over SIP trunks (the sip feature, V1; plans/archive/Comms-Framework.md §5.2, §6.5, docs/interfaces/SIP.md), on a
+        server with call media: sip-server@port (UDP and TCP, 5060 by convention) and sip-server@tls-port (TLS, 5061, the certificate from
+        runtime/cert), off while both are empty; sip-server@host and sip-server@tls-host the addresses they bind (loopback by default),
+        sip-server@rtp-ports the UDP range of the phone legs' RTP (one port a leg) on sip-server@rtp-host (sip-server@host by default);
+        sip-server@public-address the address in Contact headers and SDP when the bound one is not what trunks reach (required when
+        a host binds every address); sip-server@tls-ca-file the CA certificates for TLS to trunks (the system bundle by default).
+        Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
+        (0 turns one off): sip-server/limits@request-rate new requests a second from one source, sip-server/limits@request-burst of them at once;
+        sip-server/limits@max-transactions, past which new requests are dropped; sip-server/limits@max-connections, TCP and TLS connections at once,
+        and sip-server/limits@max-connections-per-source of them from one source. -->
+    <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip-server/registrar@enabled is
+        true, even with the SIP listeners on. sip-server@domain is the realm of the digest challenges and the domain phones register
+        to (sip-server@public-address, else moqui, when empty; changing it needs each phone's password made again). A binding's
+        expiry is held between sip-server/registrar@min-expires and sip-server/registrar@max-expires seconds (sip-server/registrar@default-expires
+        when the phone asks none), and to sip-server/registrar@nat-expires for a phone behind a NAT without Outbound (RFC 5626). -->
+    <sip-server port="" host="127.0.0.1" tls-port="" tls-host="" tls-ca-file="" rtp-ports="20000-20999" rtp-host=""
+            public-address="" domain="">
+        <limits request-rate="20" request-burst="100" max-transactions="2000" max-connections="500"
+                max-connections-per-source="100"/>
+        <registrar enabled="false" min-expires="60" max-expires="3600" default-expires="600" nat-expires="60"/>
+    </sip-server>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
 
@@ -214,40 +236,6 @@
     <default-property name="call_recording_segment_minutes" value="30"/>
     <default-property name="call_recording_max_mb" value="2048"/>
     <default-property name="call_recording_prompt_audio" value=""/>
-    <!-- Phone calls over SIP trunks (the sip feature, V1; plans/archive/Comms-Framework.md §5.2, §6.5, docs/interfaces/SIP.md), on a
-        server with call media: sip_port (UDP and TCP, 5060 by convention) and sip_tls_port (TLS, 5061, the certificate from
-        runtime/cert), off while both are empty; sip_host and sip_tls_host the addresses they bind (loopback by default),
-        sip_rtp_ports the UDP range of the phone legs' RTP (one port a leg) on sip_rtp_host (sip_host by default);
-        sip_public_address the address in Contact headers and SDP when the bound one is not what trunks reach (required when
-        a host binds every address); sip_tls_ca_file the CA certificates for TLS to trunks (the system bundle by default).
-        Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
-        (0 turns one off): sip_request_rate new requests a second from one source, sip_request_burst of them at once;
-        sip_max_transactions, past which new requests are dropped; sip_max_connections, TCP and TLS connections at once,
-        and sip_max_connections_per_source of them from one source. -->
-    <default-property name="sip_port" value=""/>
-    <default-property name="sip_host" value="127.0.0.1"/>
-    <default-property name="sip_tls_port" value=""/>
-    <default-property name="sip_tls_host" value=""/>
-    <default-property name="sip_rtp_ports" value="20000-20999"/>
-    <default-property name="sip_rtp_host" value=""/>
-    <default-property name="sip_public_address" value=""/>
-    <default-property name="sip_tls_ca_file" value=""/>
-    <default-property name="sip_request_rate" value="20"/>
-    <default-property name="sip_request_burst" value="100"/>
-    <default-property name="sip_max_transactions" value="2000"/>
-    <default-property name="sip_max_connections" value="500"/>
-    <default-property name="sip_max_connections_per_source" value="100"/>
-    <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
-        true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
-        to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's
-        expiry is held between sip_registrar_min_expires and sip_registrar_max_expires seconds (sip_registrar_default_expires
-        when the phone asks none), and to sip_registrar_nat_expires for a phone behind a NAT without Outbound (RFC 5626). -->
-    <default-property name="sip_registrar_enabled" value="false"/>
-    <default-property name="sip_domain" value=""/>
-    <default-property name="sip_registrar_min_expires" value="60"/>
-    <default-property name="sip_registrar_max_expires" value="3600"/>
-    <default-property name="sip_registrar_default_expires" value="600"/>
-    <default-property name="sip_registrar_nat_expires" value="60"/>
 
     <!-- Voicemail (V2; plans/archive/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.

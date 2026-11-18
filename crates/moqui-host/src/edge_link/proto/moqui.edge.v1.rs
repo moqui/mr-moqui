@@ -41,8 +41,8 @@ pub struct Hello {
     pub sip_address: ::prost::alloc::string::String,
     #[prost(string, tag = "12")]
     pub sip_tls_address: ::prost::alloc::string::String,
-    /// The edge node's SIP engine's realm (its sip_domain, else sip_public_address, else moqui), which its registrar
-    /// challenges phones with, and whether its registrar is on (sip_registrar_enabled): the local node makes its phones'
+    /// The edge node's SIP engine's realm (its sip-server@domain, else sip-server@public-address, else moqui), which its registrar
+    /// challenges phones with, and whether its registrar is on (sip-server/registrar@enabled): the local node makes its phones'
     /// verifiers for that realm and rings them only with it on (E8).
     #[prost(string, tag = "13")]
     pub sip_domain: ::prost::alloc::string::String,
@@ -552,7 +552,7 @@ pub struct SipOffer {
     pub sip_address: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub tls_address: ::prost::alloc::string::String,
-    /// The realm its registrar challenges phones with (sip_domain), and whether the registrar is on.
+    /// The realm its registrar challenges phones with (sip-server@domain), and whether the registrar is on.
     #[prost(string, tag = "4")]
     pub domain: ::prost::alloc::string::String,
     #[prost(bool, tag = "5")]
@@ -636,7 +636,7 @@ pub struct ConfigureRequest {
     /// XMPP clients through the edge node's tunnel ports; unset when not chosen.
     #[prost(message, optional, tag = "6")]
     pub xmpp: ::core::option::Option<XmppSetup>,
-    /// The local node's SIP device domain (its sip_domain), lower case; empty when it has none. An all-in-one node's
+    /// The local node's SIP device domain (its sip-server@domain), lower case; empty when it has none. An all-in-one node's
     /// registrar takes that domain's phones for it, apart from the server's own realm (E12).
     #[prost(string, tag = "7")]
     pub sip_domain: ::prost::alloc::string::String,

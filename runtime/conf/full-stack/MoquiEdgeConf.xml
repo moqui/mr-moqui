@@ -94,7 +94,7 @@
     <channels webhooks-enabled="true"/>
 
     <!-- Calls and SIP, as in conf/edge-cluster, never through the front: rtc_public_address, turn_public_host and
-        sip_public_address per member in .env, each at the member's own public address (turn_public_host a name with its
+        sip-server@public-address per member in .env, each at the member's own public address (turn_public_host a name with its
         own address record, not the front's), with UDP 10000, UDP and TCP 3478 and the relay range, and the SIP ports,
         open on each member. SRV records for SIP name every member.
         XMPP and SSH (.env, as in conf/edge-cluster): front_edge members listen on the tunnel ports at their own

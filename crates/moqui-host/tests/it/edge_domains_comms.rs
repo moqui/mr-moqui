@@ -146,7 +146,7 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
             ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
             // narrow media ranges, so a free port is not one of them (a port row may not take this node's own)
             ("turn_relay_ports", "51310-51320"),
-            ("sip_rtp_ports", "42690-42699"),
+            ("moqui_conf__sip_server__rtp_ports", "42690-42699"),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );

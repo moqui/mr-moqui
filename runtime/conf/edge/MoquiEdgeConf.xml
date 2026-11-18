@@ -84,14 +84,14 @@
 
     <!-- SIP (docs/interfaces/SIP.md, Behind an edge node): trunks and outside phones reach this node's SIP engine, whose
         media is the call media above. Set in .env to take them (each listener is off until its port is set):
-                                     <default-property name="sip_port" value="5060"/>
-                                     <default-property name="sip_tls_port" value="5061"/>
-                                     <default-property name="sip_host" value="0.0.0.0"/>
-                                     <default-property name="sip_public_address" value="(this node's address)"/>
-        and sip_registrar_enabled=true for desk and soft phones outside the office (they sign in only while the local
+                                     <default-property name="sip-server@port" value="5060"/>
+                                     <default-property name="sip-server@tls-port" value="5061"/>
+                                     <default-property name="sip-server@host" value="0.0.0.0"/>
+                                     <default-property name="sip-server@public-address" value="(this node's address)"/>
+        and moqui_conf__sip_server__registrar__enabled=true for desk and soft phones outside the office (they sign in only while the local
         node, which checks their passwords, is reachable). The trunks are the local node's, replicated here, so they
         register and take calls while it is away; a call then gets its number's replicated fallback, else 480, so set the
-        trunk provider's failover number too. Open sip_port (UDP, TCP), sip_tls_port (TCP) and sip_rtp_ports (UDP,
+        trunk provider's failover number too. Open sip-server@port (UDP, TCP), sip-server@tls-port (TCP) and sip-server@rtp-ports (UDP,
         20000-20999), to the trunk provider's addresses where it publishes them. -->
 
     <!-- Backups: the link's queue (what waits for a local node that is away) is the only data here that matters. The

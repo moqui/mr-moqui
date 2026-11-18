@@ -480,7 +480,7 @@ pub fn apply(
         lines.push(SetupLine::new(
             "sip",
             true,
-            "The edge node's registrar is off (sip_registrar_enabled there), so outside phones do not register to it",
+            "The edge node's registrar is off (sip-server/registrar@enabled there), so outside phones do not register to it",
         ));
     }
     lines.push(match coverage(facade) {
@@ -561,7 +561,7 @@ pub fn pairing_domains(facade: &EntityFacade) -> Result<Vec<(String, String)>, E
 
 /// The realm the phones of the pairing `node` register in on this edge node, and whether its registrar takes them,
 /// as its Hello and offer tell that pairing (E16): the `sipDomain` of its last Configure when it named one; else, on
-/// a dedicated edge node, the registrar's own realm (`sip_domain`), and on an all-in-one node none, as the server's
+/// a dedicated edge node, the registrar's own realm (`sip-server@domain`), and on an all-in-one node none, as the server's
 /// own realm is the server's. The domain is the one the SIP engine's registrar takes now
 /// ([`super::media::applied_sip_domain`]), or with `kept` the one kept from the last Configure, which the engine
 /// takes within seconds. `None` while this node runs no SIP engine. A read that fails is logged and taken as no
@@ -623,7 +623,7 @@ pub fn linked_sip_node(status: &super::LinkStatus) -> Result<&EdgeInfo, String> 
     if status.peer.instance_id.is_empty()
         || (status.peer.sip_address.is_empty() && status.peer.sip_tls_address.is_empty())
     {
-        return Err("The edge node runs no SIP engine (sip_port, sip_tls_port)".to_string());
+        return Err("The edge node runs no SIP engine (sip-server@port, sip-server@tls-port)".to_string());
     }
     Ok(&status.peer)
 }

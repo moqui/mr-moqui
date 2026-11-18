@@ -89,7 +89,7 @@
         taken over within seconds when it stops), and each places and takes calls. A phone's binding names the member it
         registered with, and the phone rings only for calls whose media is on that member. The registrar's nonces are
         per member: a phone that reaches another member is challenged again. Per member in .env:
-        sip_public_address, its own; the same on each: sip_port, sip_tls_port, sip_host and sip_registrar_enabled. SRV
+        sip-server@public-address, its own; the same on each: sip-server@port, sip-server@tls-port, sip-server@host and sip-server/registrar@enabled. SRV
         records for the SIP domain name every member, and the trunk provider's failover number is still worth setting. -->
 
     <entity-facade query-stats="true">

@@ -106,7 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="VoiceCapabilities">
         <description>Whether phone calls can be made here (plans/archive/Comms-Framework.md §3.1):
-            supported (the binary has the sip feature), configured (this server's sip_port or sip_tls_port is set and a trunk is
+            supported (the binary has the sip feature), configured (this server's sip-server@port or sip-server@tls-port is set and a trunk is
             set up) and active (a SIP server is up in the cluster and a trunk has not failed), each on its own; reasonCode
             notBuilt, notConfigured, noTrunk, noSipServer or trunkFailed when not active. emergencyReady says whether the current
             user can call emergency services from here, and emergencyReasonCode and emergencyMissing what is missing

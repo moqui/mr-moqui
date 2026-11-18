@@ -29,23 +29,23 @@ Every listener is off until its setting is set.
 
 | Property | Default | |
 | --- | --- | --- |
-| `sip_port` | empty (off) | SIP over UDP and TCP; 5060 by convention |
-| `sip_host` | `127.0.0.1` | The address `sip_port` binds |
-| `sip_tls_port` | empty (off) | SIP over TLS; 5061 by convention. The certificate comes from `runtime/cert` (for `sip_public_address`, else `default`), as the HTTPS listener's and TURN's do. A client must finish its TLS handshake within 10 seconds; at most 128 handshakes run at once, 8 from one source |
-| `sip_tls_host` | `sip_host` | The address `sip_tls_port` binds |
-| `sip_rtp_ports` | `20000-20999` | The UDP range of the phone legs' RTP, one port a leg |
-| `sip_rtp_host` | `sip_host` | The address the RTP sockets bind |
-| `sip_public_address` | the bound address | The address in Contact headers and SDP, for a server behind 1:1 NAT. A host bound to every address does not start without it |
-| `sip_tls_ca_file` | the system bundle (`/etc/ssl/certs/ca-certificates.crt`) | The CA certificates that verify a trunk's TLS certificate |
-| `sip_request_rate`, `sip_request_burst` | `20`, `100` | New requests (outside a dialog: INVITE, REGISTER, OPTIONS and the rest) a second from one source, and how many it may send at once; past them its requests are dropped unanswered. `0` turns it off |
-| `sip_max_transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
-| `sip_max_connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
-| `sip_max_connections_per_source` | `100` | TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every connection phones keep open; one past it is closed. `0` turns it off |
-| `sip_registrar_enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on. Read when the engine starts, as the listeners' settings are: a change takes a restart |
-| `sip_domain` | `sip_public_address`, else `moqui` | The realm of the digest challenges and the domain phones register to. The phones' verifiers are for it: after a change, each phone needs a new password |
-| `sip_registrar_min_expires`, `sip_registrar_max_expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
-| `sip_registrar_default_expires` | `600` | The expiry of a binding whose phone asks none |
-| `sip_registrar_nat_expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
+| `sip-server@port` | empty (off) | SIP over UDP and TCP; 5060 by convention |
+| `sip-server@host` | `127.0.0.1` | The address `sip-server@port` binds |
+| `sip-server@tls-port` | empty (off) | SIP over TLS; 5061 by convention. The certificate comes from `runtime/cert` (for `sip-server@public-address`, else `default`), as the HTTPS listener's and TURN's do. A client must finish its TLS handshake within 10 seconds; at most 128 handshakes run at once, 8 from one source |
+| `sip-server@tls-host` | `sip-server@host` | The address `sip-server@tls-port` binds |
+| `sip-server@rtp-ports` | `20000-20999` | The UDP range of the phone legs' RTP, one port a leg |
+| `sip-server@rtp-host` | `sip-server@host` | The address the RTP sockets bind |
+| `sip-server@public-address` | the bound address | The address in Contact headers and SDP, for a server behind 1:1 NAT. A host bound to every address does not start without it |
+| `sip-server@tls-ca-file` | the system bundle (`/etc/ssl/certs/ca-certificates.crt`) | The CA certificates that verify a trunk's TLS certificate |
+| `sip-server/limits@request-rate`, `sip-server/limits@request-burst` | `20`, `100` | New requests (outside a dialog: INVITE, REGISTER, OPTIONS and the rest) a second from one source, and how many it may send at once; past them its requests are dropped unanswered. `0` turns it off |
+| `sip-server/limits@max-transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
+| `sip-server/limits@max-connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
+| `sip-server/limits@max-connections-per-source` | `100` | TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every connection phones keep open; one past it is closed. `0` turns it off |
+| `sip-server/registrar@enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on. Read when the engine starts, as the listeners' settings are: a change takes a restart |
+| `sip-server@domain` | `sip-server@public-address`, else `moqui` | The realm of the digest challenges and the domain phones register to. The phones' verifiers are for it: after a change, each phone needs a new password |
+| `sip-server/registrar@min-expires`, `sip-server/registrar@max-expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
+| `sip-server/registrar@default-expires` | `600` | The expiry of a binding whose phone asks none |
+| `sip-server/registrar@nat-expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
 | `call_forward_max_hops` | `5` | The most forwards one call takes ([Call handling](#call-handling)): a user's to another user or group, a group's fallback group; past it the forward is skipped. 1 to 10 |
 | `call_forward_ring_seconds` | `30` | How long a forward to an outside number rings before the call goes on (to voicemail, or the next step). 10 to 120 |
 | `call_queue_tick_seconds` | `5` | How often the engine asks about each call waiting in a queue ([Queues](#queues)): offers that rang out, the next offer, the wait limit, the caller's place. 1 to 30 |
@@ -62,9 +62,9 @@ Trunks, numbers, caller-ID grants, fraud limits and emergency locations are reco
 
 Open these ports on the firewall, to the provider's signaling and media addresses only where it publishes them:
 
-- `sip_port`, UDP and TCP;
-- `sip_tls_port`, TCP;
-- the `sip_rtp_ports` range, UDP.
+- `sip-server@port`, UDP and TCP;
+- `sip-server@tls-port`, TCP;
+- the `sip-server@rtp-ports` range, UDP.
 
 **DNS.** Desk and soft phones ([Registrar](#registrar)) find a server through its SRV record:
 
@@ -476,13 +476,13 @@ notice that comes while another plays waits for it.
 
 Desk phones (Yealink, Polycom, Grandstream) and soft phones (Linphone, Zoiper, Groundwire, on a computer or a mobile, the
 native-calls path of §7.2) register with the SIP engine, which is their registrar (plans/archive/Comms-Framework.md §5.2
-"Registrar for phones", V4). It is off unless `sip_registrar_enabled` is true, even with the listeners on; until then a
+"Registrar for phones", V4). It is off unless `sip-server/registrar@enabled` is true, even with the listeners on; until then a
 REGISTER is refused (403) without a challenge, so a phone pointed here is not blocked for failed digests, and phones may be added but cannot register or ring.
 
 **Phones and their credentials.** A user adds a phone in Comms, Settings, Desk and soft phones
 (`SipDeviceServices.create#SipDevice`). Its credentials are generated: a ten-digit username and a 22-character random
 password. They show once, with the domain, the port and the transport, each with a copy button; the password is never
-stored. What is kept (`SipDeviceVerifier`, encrypted) is a digest verifier per algorithm for `sip_domain`: HA1 =
+stored. What is kept (`SipDeviceVerifier`, encrypted) is a digest verifier per algorithm for `sip-server@domain`: HA1 =
 H(username:realm:password), as RFC 7616 and RFC 8760 define it.
 
 - **Profiles.** A standard phone has a SHA-256 verifier only. The registrar challenges with SHA-256 first and MD5 second
@@ -496,9 +496,9 @@ H(username:realm:password), as RFC 7616 and RFC 8760 define it.
 
 **Setting up a phone.** In the phone or the app, add a SIP account:
 
-- username and password as shown; the domain (also the registrar, or server, or proxy) is `sip_domain`;
-- transport TLS on `sip_tls_port` (5061) with SRTP media (SDES) for a phone outside the office network. UDP or TCP on
-  `sip_port` is for a phone on the same network, with plain RTP;
+- username and password as shown; the domain (also the registrar, or server, or proxy) is `sip-server@domain`;
+- transport TLS on `sip-server@tls-port` (5061) with SRTP media (SDES) for a phone outside the office network. UDP or TCP on
+  `sip-server@port` is for a phone on the same network, with plain RTP;
 - with an SRV record (`_sips._tcp`, [Settings](#settings)) a phone given only the domain finds the server;
 - behind a home router, turn on the phone's "outbound" (RFC 5626) or keepalive option where it has one;
 - leave the registration expiry at its default; the registrar holds it to its limits.
@@ -508,8 +508,8 @@ came over (transport, and the source address and port as `rport` gives them, RFC
 Outbound instance and reg-id, when it expires and was last refreshed, and the phone's user agent. Settings shows them.
 
 - A phone may have several bindings (at most 10), say a soft phone on two computers.
-- Expiry is the contact's, else the request's, else `sip_registrar_default_expires`, held between
-  `sip_registrar_min_expires` and `sip_registrar_max_expires` (one under the minimum is refused with 423 and
+- Expiry is the contact's, else the request's, else `sip-server/registrar@default-expires`, held between
+  `sip-server/registrar@min-expires` and `sip-server/registrar@max-expires` (one under the minimum is refused with 423 and
   `Min-Expires`).
 - `Expires: 0` on a contact removes it; `Contact: *` with `Expires: 0` removes them all.
 - A REGISTER with the same Call-ID must have a higher CSeq; one out of order is refused (500) and changes nothing.
@@ -527,7 +527,7 @@ Outbound instance and reg-id, when it expires and was last refreshed, and the ph
   request on the SIP socket instead (RFC 5626 §4.4.2): it is answered there with the address it came from
   (XOR-MAPPED-ADDRESS, no authentication, `moqui-sip` `stun.rs`), before the SIP stack sees it.
 - **Short expiry.** A phone behind a NAT (its Via does not name where it sends from) without Outbound gets at most
-  `sip_registrar_nat_expires` (60 seconds), so its own REGISTER keeps the mapping open.
+  `sip-server/registrar@nat-expires` (60 seconds), so its own REGISTER keeps the mapping open.
 - **RTP latching.** A phone's RTP is answered where it comes from. With SRTP, only an authenticated packet moves it.
   With plain RTP, packets are taken from the SDP's address or from the address the phone signals from (its NAT's,
   when its SDP names its private address), on any port until the first one latches; then only from that source.
@@ -570,9 +570,9 @@ sleeping app is the app's own service; the registrar does not send pushes.
 Scanners probe SIP listeners for weak credentials, then place international calls (§5.2). Each of these is a release
 gate.
 
-- **Floods are held.** New requests from one source are held to `sip_request_rate` (`sip_request_burst` at once), and
-  dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections`, or past
-  `sip_max_connections_per_source` from one source, are closed
+- **Floods are held.** New requests from one source are held to `sip-server/limits@request-rate` (`sip-server/limits@request-burst` at once), and
+  dropped while the engine runs `sip-server/limits@max-transactions`; TCP and TLS connections past `sip-server/limits@max-connections`, or past
+  `sip-server/limits@max-connections-per-source` from one source, are closed
   ([Settings](#settings); moqui-lib `source_guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
 - **Failed digests block the source address, not the account.**
   - A request from an address that is not a trunk's is challenged: expiring nonces, and nonce counts that cannot be
@@ -649,8 +649,8 @@ A local node behind NAT takes its trunks and outside phones through its edge nod
 (SIP)", E8; [Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node)). The edge node runs the SIP listeners,
 the RTP and the call media; the local node keeps the numbers, the users, the call state and the boxes.
 
-- **Setup.** The SIP properties above go in the edge node's `.env` (`sip_port`, `sip_tls_port`, `sip_host`,
-  `sip_public_address`, `sip_registrar_enabled`); the local node needs none. Trunks, numbers and phones are set up on
+- **Setup.** The SIP properties above go in the edge node's `.env` (`sip-server@port`, `sip-server@tls-port`, `sip-server@host`,
+  `sip-server@public-address`, `sip-server/registrar@enabled`); the local node needs none. Trunks, numbers and phones are set up on
   the local node. The edge node gets the trunks and the policy by replication (set `voiceTrunks`, `authJson` encrypted
   at rest there), registers them and keeps them registered while the local node is away; it loads them again when a
   change arrives.
@@ -662,7 +662,7 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   through a binding there (Apply removes them), and its registrar
   signs no phone in. Test checks the row, that the edge node's engine loaded every enabled trunk (its offer lists them
   with their state) and that its copy holds every fallback. The DNS step checks the SRV records of the edge node's
-  `sip_domain` (`_sips._tcp` for its TLS port, `_sip._udp` and `_sip._tcp` for the other) against its names and
+  `sip-server@domain` (`_sips._tcp` for its TLS port, `_sip._udp` and `_sip._tcp` for the other) against its names and
   ports.
 - **Its node.** The edge node registers no `SipNode`: its link's Hello names its SIP addresses, its registrar's realm
   and switch, and the local node keeps the row (`edgeLinked`, `sipDomain`, `registrarEnabled`), beside its media
@@ -675,7 +675,7 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   leaves no ringing session or dial; the engine hangs up, and dials nothing into, a call whose phone it refused as
   decided too late.
 - **Phones outside.** The registrar is the edge node's, without the verifiers: phones are made on the local node with
-  verifiers for the edge node's realm (its `sip_domain`, which the local node reads from its `SipNode` row, as it does
+  verifiers for the edge node's realm (its `sip-server@domain`, which the local node reads from its `SipNode` row, as it does
   its registrar switch), and each digest answer is checked on the local node (`check#SipDeviceDigest`), which holds the
   HA1, while the edge node keeps the nonces and their counts. The local node takes an answer from the edge node only
   for that realm, with a nonce at most 330 seconds old, and each nonce count once, so an answer the edge node kept
@@ -693,22 +693,22 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
 - **On an all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), plans/archive/Edge-Node.md §10): one engine
   for both sides. Trunks come from the server's own config and the local node's copy. An inbound call goes by the
   number dialled: the server's own `PhoneNumber`, else the local node's copies, else the trunk's owner. Phones go by
-  realm: the server's `sip_domain` is checked on the server, the local node's domain is delegated to it. The local
+  realm: the server's `sip-server@domain` is checked on the server, the local node's domain is delegated to it. The local
   node's ids are keyed by node, and the fallback applies only to its numbers.
 - **Several local nodes** ([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16). One engine takes every pairing's
   trunks, each pairing's keyed by its node. An inbound call goes by the number dialled to the pairing whose copies
   have it: a number of its trunks (`PhoneNumber` replicates in `voiceTrunks`, its trunk alone), so a number with no
   fallback row is found too, or one with a fallback; else by the trunk it came on. A number two pairings' copies have
-  is refused (404) and logged with both. Phones go by realm: a local node's `sip_domain` goes with its Configure, and
+  is refused (404) and logged with both. Phones go by realm: a local node's `sip-server@domain` goes with its Configure, and
   the edge node's registrar takes that pairing's phones in it, so its Hello and offer name it as the realm the local
   node makes verifiers for; the same username in two domains rings each its own phone. A domain two pairings name is
-  refused. A local node that names no domain registers in the edge node's own `sip_domain`, which works while it is
+  refused. A local node that names no domain registers in the edge node's own `sip-server@domain`, which works while it is
   the only one paired. A number's fallback is read from its owner's copy, and a message the engine recorded is queued
   to the pairing whose call it was, also after a restart (its spool sidecar names the pairing). Each offer lists only
   that pairing's trunks.
 - **Not through a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19): a front node runs no SIP engine and
   takes no call signaling. Before an edge cluster ([Run-Deploy, Full stack](../Run-Deploy.md#full-stack)) the SRV
-  records and each member's `sip_public_address` are at the edge members' own addresses, with their SIP and RTP ports
+  records and each member's `sip-server@public-address` are at the edge members' own addresses, with their SIP and RTP ports
   open there; a front pairing carries no `SipNode` row.
 - **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18). Every member runs an engine and loads every
   trunk, so each places calls out and takes those a trunk sends it. Only one registers the trunks: the holder of the

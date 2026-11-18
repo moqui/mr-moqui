@@ -779,7 +779,7 @@ along with this software (see the LICENSE.md file). If not, see
                 go through it</description></parameter>
             <parameter name="mediaAddress"><description>The edge node's media address (ip:port), which its TURN host
                 names by default</description></parameter>
-            <parameter name="sipDomain"><description>The edge node's SIP realm (its sip_domain) when phones go
+            <parameter name="sipDomain"><description>The edge node's SIP realm (its sip-server@domain) when phones go
                 through it; empty for no SIP records</description></parameter>
             <parameter name="sipHosts" type="List"/>
             <parameter name="sipPort" type="Integer"><description>The port of its SIP address for UDP and TCP; 0 when off</description></parameter>

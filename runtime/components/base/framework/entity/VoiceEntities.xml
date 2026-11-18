@@ -214,7 +214,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sipDomain" type="text-medium"><description>The edge node's (E8): the realm its registrar
             challenges phones with, from its Hello, which this node makes its phones' verifiers for</description></field>
         <field name="registrarEnabled" type="text-indicator"><description>The edge node's (E8): Y when its registrar is on
-            (its sip_registrar_enabled)</description></field>
+            (its sip-server/registrar@enabled)</description></field>
         <field name="edgeLinked" type="text-indicator"><description>Y: the SIP engine of this node's edge node
             (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the edge link keeps from its Hello and liveness, as
             its CallMediaNode row; the engine registers none itself</description></field>

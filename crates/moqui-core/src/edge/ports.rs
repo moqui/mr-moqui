@@ -51,8 +51,8 @@ const FRONT_NEVER: [&str; 10] = [
     "mail-delivery@relay-port",
     "xmpp-server@port",
     "xmpp-server@tls-port",
-    "sip_port",
-    "sip_tls_port",
+    "sip-server@port",
+    "sip-server@tls-port",
     "turn_port",
     "turn_tls_port",
     "rtc_media_port",
@@ -72,8 +72,8 @@ const OWN_PORTS: [(&str, u16); 18] = [
     ("ssh-server@port", 22),
     ("xmpp-server@port", 5222),
     ("xmpp-server@tls-port", 5223),
-    ("sip_port", 5060),
-    ("sip_tls_port", 5061),
+    ("sip-server@port", 5060),
+    ("sip-server@tls-port", 5061),
     ("turn_port", 3478),
     ("turn_tls_port", 5349),
     ("rtc_media_port", 10000),
@@ -87,7 +87,10 @@ const OWN_PORTS: [(&str, u16); 18] = [
 const WELL_KNOWN: [(u16, &str); 3] = [(465, "SMTPS"), (587, "mail submission"), (5269, "XMPP federation")];
 
 /// The port ranges of this node's own sockets, with their defaults: the SIP engine's RTP and the TURN relays.
-const OWN_RANGES: [(&str, &str); 2] = [("sip_rtp_ports", "20000-20999"), ("turn_relay_ports", "49152-65535")];
+const OWN_RANGES: [(&str, &str); 2] = [
+    ("sip-server@rtp-ports", "20000-20999"),
+    ("turn_relay_ports", "49152-65535"),
+];
 
 /// A port row: connections to `port` go down the link of the pairing `paired_node_id` as a tunnel of `tunnel_kind`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

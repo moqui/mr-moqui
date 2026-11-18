@@ -318,28 +318,28 @@ along with this software (see the LICENSE.md file). If not, see
             operatorNote="Set call_captions_enabled in the environment or the runtime conf and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.port" title="SIP port" settingGroup="Protocols: phone"
             description="The UDP and TCP port for trunks and phones; empty with the TLS port keeps phone calls off" valueTypeEnumId="IsvText"
-            propertyName="sip_port" restartRequired="Y" sequenceNum="3280"
-            operatorNote="Set sip_port in the environment or the runtime conf and restart"/>
+            propertyName="sip-server@port" restartRequired="Y" sequenceNum="3280"
+            operatorNote="Set moqui_conf__sip_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.host" title="SIP address" settingGroup="Protocols: phone"
             description="The address the SIP ports bind" valueTypeEnumId="IsvText"
-            propertyName="sip_host" restartRequired="Y" sequenceNum="3290"
-            operatorNote="Set sip_host in the environment or the runtime conf and restart"/>
+            propertyName="sip-server@host" restartRequired="Y" sequenceNum="3290"
+            operatorNote="Set moqui_conf__sip_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.tlsPort" title="SIP TLS port" settingGroup="Protocols: phone"
             description="The TLS port for trunks and phones" valueTypeEnumId="IsvText"
-            propertyName="sip_tls_port" restartRequired="Y" sequenceNum="3300"
-            operatorNote="Set sip_tls_port in the environment or the runtime conf and restart"/>
+            propertyName="sip-server@tls-port" restartRequired="Y" sequenceNum="3300"
+            operatorNote="Set moqui_conf__sip_server__tls_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.publicAddress" title="SIP public address" settingGroup="Protocols: phone"
             description="The address trunks reach, when it is not the bound one" valueTypeEnumId="IsvText"
-            propertyName="sip_public_address" restartRequired="Y" sequenceNum="3310"
-            operatorNote="Set sip_public_address in the environment or the runtime conf and restart"/>
+            propertyName="sip-server@public-address" restartRequired="Y" sequenceNum="3310"
+            operatorNote="Set moqui_conf__sip_server__public_address in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.registrarEnabled" title="Phone registrar" settingGroup="Protocols: phone"
             description="Whether desk and soft phones may register" valueTypeEnumId="IsvText"
-            propertyName="sip_registrar_enabled" restartRequired="Y" sequenceNum="3320"
-            operatorNote="Set sip_registrar_enabled in the environment or the runtime conf and restart"/>
+            propertyName="sip-server/registrar@enabled" restartRequired="Y" sequenceNum="3320"
+            operatorNote="Set moqui_conf__sip_server__registrar__enabled in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.domain" title="SIP domain" settingGroup="Protocols: phone"
             description="The domain phones register to" valueTypeEnumId="IsvText"
-            propertyName="sip_domain" restartRequired="Y" sequenceNum="3330"
-            operatorNote="Set sip_domain in the environment or the runtime conf and restart"/>
+            propertyName="sip-server@domain" restartRequired="Y" sequenceNum="3330"
+            operatorNote="Set moqui_conf__sip_server__domain in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
 
     <!-- System messages, recovery and message types (impl-admin P13), named service by service. find#Messages, get#Message
         and preview#Recovery check ADMIN_OPERATION_VIEW, execute#Recovery ADMIN_OPERATION_MANAGE (and the owner's

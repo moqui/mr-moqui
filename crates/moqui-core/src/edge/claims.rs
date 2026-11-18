@@ -26,7 +26,7 @@
 //! between two pairings; each address has one holder.
 //!
 //! The server's host names ([`own_host_names`]) are what a dedicated edge node already reserves (§5.7); an all-in-one
-//! node adds its `xmpp-server@domain` and `sip_domain`.
+//! node adds its `xmpp-server@domain` and `sip-server@domain`.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -49,7 +49,7 @@ pub enum ClaimKind {
     XmppDomain,
     /// A phone number in E.164: the server's `PhoneNumber`, a paired node's replicated `PhoneNumberFallback`.
     PhoneNumber,
-    /// A SIP device domain (registrar realm): the server's `sip_domain`, a paired node's Configure `sipDomain`.
+    /// A SIP device domain (registrar realm): the server's `sip-server@domain`, a paired node's Configure `sipDomain`.
     SipDomain,
     /// An mr-pass site whose authority is a paired node: a paired node's Configure `passSites` (E16).
     PassSite,
@@ -340,7 +340,7 @@ fn domain_property(name: &str) -> String {
 
 /// The server's own host names, which no paired node may claim, nor their subdomains (§5.7): its web host, its SMTP
 /// (MX) host, its bounce domain, the host of its chat address and its mr-pass sites' hosts; on an all-in-one node
-/// also its `xmpp-server@domain` and `sip_domain`, and the domains of its own receiving accounts ([`own_mail_domains`]), so
+/// also its `xmpp-server@domain` and `sip-server@domain`, and the domains of its own receiving accounts ([`own_mail_domains`]), so
 /// a paired node cannot take a mail domain's apex or its `mta-sts.` and `autoconfig.` hosts. The edge link adds the
 /// names its Hello gives. A mail domain split by address stays allowed in a setup's `mailDomains`.
 pub fn own_host_names(factory: &ExecutionContextFactory) -> Vec<String> {
@@ -356,7 +356,7 @@ pub fn own_host_names(factory: &ExecutionContextFactory) -> Vec<String> {
     names.extend(crate::screen::public_site_hosts(factory));
     if super::settings(factory).all_in_one() {
         names.push(domain_property("xmpp-server@domain"));
-        names.push(domain_property("sip_domain"));
+        names.push(domain_property("sip-server@domain"));
         match factory.entity() {
             Some(facade) => match own_mail_domains(&facade) {
                 Ok(domains) => names.extend(domains),
@@ -473,7 +473,7 @@ pub fn own_claim(
             .one()?
             .map(|_| format!("the server's PhoneNumber {key}"))),
         ClaimKind::SipDomain => {
-            let own = domain_property("sip_domain");
+            let own = domain_property("sip-server@domain");
             let name = key.trim_end_matches('.').to_ascii_lowercase();
             Ok((!own.is_empty() && name == own).then(|| format!("the server's SIP domain {own}")))
         }

@@ -79,9 +79,9 @@
 
     <!-- SIP (docs/interfaces/SIP.md, Behind an edge node): every pairing's trunks register here, each keyed by its
         pairing; an inbound call goes to the pairing whose copies have the number, and a number two pairings have is
-        refused (404, logged). Phones register in their pairing's realm (its sip_domain, named in its Configure); a
-        realm another pairing named first is refused. Set sip_port, sip_tls_port, sip_host and sip_public_address in .env
-        as for one local node, and sip_registrar_enabled=true for outside phones. -->
+        refused (404, logged). Phones register in their pairing's realm (its sip-server@domain, named in its Configure); a
+        realm another pairing named first is refused. Set sip-server@port, sip-server@tls-port, sip-server@host and sip-server@public-address in .env
+        as for one local node, and moqui_conf__sip_server__registrar__enabled=true for outside phones. -->
 
     <!-- Backups: the link's queue (what waits for each pairing while it is away) is the only data here that matters.
         This sets the paused seed job backup_EmbeddedDatabase_daily running at each boot (docs/Run-Deploy.md, Backups). -->

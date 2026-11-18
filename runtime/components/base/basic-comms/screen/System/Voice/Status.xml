@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice, Status: whether phone calls are supported (the binary has the sip feature), configured (sip_port or sip_tls_port and
+<!-- Voice, Status: whether phone calls are supported (the binary has the sip feature), configured (sip-server@port or sip-server@tls-port and
     a trunk) and active (a SIP server up and a trunk working), each on its own with why not (plans/archive/Comms-Framework.md §3.1);
     whether emergency calls are ready for the signed-in admin; the servers whose SIP engine is up and the media servers. From
     org.moqui.call.VoiceServices.get#VoiceStatus. -->
@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
         const out = ec.service.sync().name('org.moqui.call.VoiceServices.get#VoiceStatus').requireNewTransaction(true).disableAuthz().call() || {}
         const caps = out.capabilities || {}
         const REASONS = {notBuilt: L('This server is not built with SIP (the sip feature).'),
-            notConfigured: L('No SIP listener is set: set sip_port or sip_tls_port.'), noTrunk: L('No trunk is set up: add one under Trunks.'),
+            notConfigured: L('No SIP listener is set: set sip-server@port or sip-server@tls-port.'), noTrunk: L('No trunk is set up: add one under Trunks.'),
             noSipServer: L('No SIP server is running in the cluster.'), trunkFailed: L('Every trunk failed: see Trunks for the last error.')}
         const yesNo = (value) => (value ? L('Yes') : L('No'))
         capabilityList = [
@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
         </box-body-nopad></container-box>
         <container-box><box-header title="SIP servers"/><box-body-nopad>
             <section name="NoSipNodes" condition="!sipNodeList.length"><widgets>
-                <label type="p" style="m-muted q-pa-sm q-mb-none" text="No SIP server has started. A server starts one when sip_port or sip_tls_port is set and it has the sip feature."/>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="No SIP server has started. A server starts one when sip-server@port or sip-server@tls-port is set and it has the sip feature."/>
             </widgets></section>
             <form-list name="SipNodes" list="sipNodeList" skip-form="true" paginate="false">
                 <field name="instanceId"><default-field title="Server"><display/></default-field></field>

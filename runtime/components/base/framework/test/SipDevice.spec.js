@@ -42,7 +42,7 @@ function as(userId, name, parameters) {
     return Object.assign({errors}, out)
 }
 const internal = (name, parameters) => as(null, name, parameters)
-const on = (run) => withProperty("sip_registrar_enabled", "true", run)
+const on = (run) => withConf("sip-server/registrar@enabled", "true", run)
 function makeUser(userId, groupId) {
     sys(() => {
         if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() === 0) {

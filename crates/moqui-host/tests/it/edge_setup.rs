@@ -78,7 +78,7 @@ const OTHER: &str = "other-node";
 const BRIDGE: &str = "SETUP_BRIDGE";
 /// The address the edge node's media node advertises (documentation range, so Apply finds it public).
 const MEDIA_IP: &str = "203.0.113.5";
-/// The edge node's SIP realm (its sip_domain).
+/// The edge node's SIP realm (its sip-server@domain).
 const SIP_DOMAIN: &str = "sip.edge.example.test";
 const SIP_NUMBER: &str = "+15551230100";
 const SIP_PLAIN_NUMBER: &str = "+15551230101";
@@ -1075,10 +1075,10 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("turn_relay_ports", "51310-51400"),
             ("turn_auth_secret", "edge-setup-turn-secret"),
             // its SIP engine, on loopback (the local node, started first, runs none)
-            ("sip_port", "0"),
-            ("sip_rtp_ports", "42700-42799"),
-            ("sip_registrar_enabled", "true"),
-            ("sip_domain", SIP_DOMAIN),
+            ("moqui_conf__sip_server__port", "0"),
+            ("moqui_conf__sip_server__rtp_ports", "42700-42799"),
+            ("moqui_conf__sip_server__registrar__enabled", "true"),
+            ("moqui_conf__sip_server__domain", SIP_DOMAIN),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );

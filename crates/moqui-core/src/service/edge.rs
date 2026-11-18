@@ -1696,7 +1696,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         lines.push(SetupLine::new(
             "sip",
             false,
-            "The edge node runs no SIP engine (sip_port, sip_tls_port), so this node's trunks do not go through it",
+            "The edge node runs no SIP engine (sip-server@port, sip-server@tls-port), so this node's trunks do not go through it",
         ));
     }
     let sets = match crate::edge::replica::replica(facade) {

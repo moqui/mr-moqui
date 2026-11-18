@@ -410,7 +410,7 @@ feature("a person is added; a number is not added to an encrypted call; calls on
 feature("a desk phone's REFER is checked before the phone is answered: refused with an error (the engine answers 403), the same REFER to a domestic number taken (202)", {
     when() {
         endAll()
-        return withProperty("sip_registrar_enabled", "true", () => {
+        return withConf("sip-server/registrar@enabled", "true", () => {
             const made = as(A, "org.moqui.call.SipDeviceServices.create#SipDevice", {name: "Xfer desk"})
             const device = sys(() => ec.entity.find("moqui.call.SipDevice").condition("sipDeviceId", made.sipDeviceId).one())
             engine("org.moqui.call.SipDeviceServices.store#SipRegistration", {change: "added", sipRegistrationId: "xfer-refer-1",

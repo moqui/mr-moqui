@@ -183,7 +183,7 @@ along with this software (see the LICENSE.md file). If not, see
             const onTrunks = numbers.filter((number) => trunks.some((trunk) => trunk.voiceTrunkId === number.voiceTrunkId))
             sipSummary = {
                 registrarText: sip.registrar ? ec.resource.expand('On, realm ${realm}: phones made here get verifiers for it', '', {realm: sip.domain || ''})
-                    : L('Off: outside phones cannot register to the edge node (sip_registrar_enabled there)'),
+                    : L('Off: outside phones cannot register to the edge node (sip-server/registrar@enabled there)'),
                 fallbackSummaryText: ec.resource.expand('${n} of ${m} numbers have a fallback (their voicemail box, or an outside number)', '',
                     {n: onTrunks.filter((number) => covered.has(number.phoneNumber)).length, m: onTrunks.length})}
         }
@@ -340,7 +340,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="callsOffered"><default-field><hidden/></default-field></field>
                     <field name="sipOn"><conditional-field condition="sipAvailable" title="Phones" tooltip="This node's trunks register from the edge node's SIP engine, which takes their calls and asks this node how to route each; phones outside the office register to its registrar. Off, the trunks and fallbacks are not sent to it">
                             <check><option key="Y" text="This node's trunks and phones go through the edge node's SIP engine at ${sipAddressText}"/></check></conditional-field>
-                        <default-field title="Phones"><display text="The edge node runs no SIP engine (sip_port, sip_tls_port)"/></default-field></field>
+                        <default-field title="Phones"><display text="The edge node runs no SIP engine (sip-server@port, sip-server@tls-port)"/></default-field></field>
                     <field name="sipOffered"><default-field><hidden/></default-field></field>
                     <field-layout>
                         <field-group title="Web access"><field-ref name="webOn"/><field-ref name="passthroughNames"/><field-ref name="terminateNames"/></field-group>

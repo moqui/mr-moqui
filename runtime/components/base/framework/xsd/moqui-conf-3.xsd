@@ -28,6 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="load-runner"/>
                 <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" ref="xmpp-server"/>
+                <xs:element minOccurs="0" ref="sip-server"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2189,6 +2190,36 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="turn-enabled" type="xs:string" default="false"/>
             <xs:attribute name="turn-per-hour" type="xs:string" default="30"/>
             <xs:attribute name="scram-decoy-key" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="sip-server">
+        <xs:annotation><xs:documentation>SIP: the trunks' and phones' engine (docs/interfaces/SIP.md), with its request limits and the registrar.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="limits"><xs:complexType>
+                    <xs:attribute name="request-rate" type="xs:string" default="20"/>
+                    <xs:attribute name="request-burst" type="xs:string" default="100"/>
+                    <xs:attribute name="max-transactions" type="xs:string" default="2000"/>
+                    <xs:attribute name="max-connections" type="xs:string" default="500"/>
+                    <xs:attribute name="max-connections-per-source" type="xs:string" default="100"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="registrar"><xs:complexType>
+                    <xs:attribute name="enabled" type="xs:string" default="false"/>
+                    <xs:attribute name="min-expires" type="xs:string" default="60"/>
+                    <xs:attribute name="max-expires" type="xs:string" default="3600"/>
+                    <xs:attribute name="default-expires" type="xs:string" default="600"/>
+                    <xs:attribute name="nat-expires" type="xs:string" default="60"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="host" type="xs:string" default="127.0.0.1"/>
+            <xs:attribute name="tls-port" type="xs:string"/>
+            <xs:attribute name="tls-host" type="xs:string"/>
+            <xs:attribute name="tls-ca-file" type="xs:string"/>
+            <xs:attribute name="rtp-ports" type="xs:string" default="20000-20999"/>
+            <xs:attribute name="rtp-host" type="xs:string"/>
+            <xs:attribute name="public-address" type="xs:string"/>
+            <xs:attribute name="domain" type="xs:string"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

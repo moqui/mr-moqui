@@ -94,7 +94,7 @@ rtc = ["axum", "dep:moqui-rtc", "dep:turn-client-proto"]
 # package; src/speech_local.rs answers notBuiltIn. Captions go through the moqui-llm endpoint meanwhile.
 speech-local = []
 # Phone calls (crates/moqui-sip, plans/archive/Comms-Framework.md §5.2, docs/interfaces/SIP.md): the SIP engine (src/sip/), its
-# trunks and the RTP of phone legs, joined to the call media. It starts only when sip_port or sip_tls_port is set. In
+# trunks and the RTP of phone legs, joined to the call media. It starts only when sip-server@port or sip-server@tls-port is set. In
 # Maximal, Enterprise and Debug; not Lite.
 sip = ["rtc", "dep:moqui-sip"]
 # Business messaging channels (crates/moqui-channels, plans/archive/Comms-Framework.md §4.3, docs/interfaces/SMS.md): the SMS chat

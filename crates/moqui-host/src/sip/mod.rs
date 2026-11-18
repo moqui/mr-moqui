@@ -13,11 +13,11 @@
  */
 
 //! Phone calls over SIP trunks (plans/archive/Comms-Framework.md §5.1, §5.2, §6.5; docs/interfaces/SIP.md): the SIP engine of
-//! this node. Off while `sip_port` and `sip_tls_port` are empty, like the other listeners, and only beside this node's
+//! this node. Off while `sip-server@port` and `sip-server@tls-port` are empty, like the other listeners, and only beside this node's
 //! call media (`rtc_media_port`), since a phone leg's audio joins the call's SFU room here.
 //!
-//! - **Listeners.** `sip_port` (UDP and TCP) on `sip_host`, `sip_tls_port` (TLS, the certificate from `runtime/cert`
-//!   as TURN's) on `sip_tls_host`; each leg's RTP on a port of `sip_rtp_ports` on `sip_rtp_host`. `sip_public_address`
+//! - **Listeners.** `sip-server@port` (UDP and TCP) on `sip-server@host`, `sip-server@tls-port` (TLS, the certificate from `runtime/cert`
+//!   as TURN's) on `sip-server@tls-host`; each leg's RTP on a port of `sip-server@rtp-ports` on `sip-server@rtp-host`. `sip-server@public-address`
 //!   is the address in Contact headers and SDP when the bound one is not what the trunk reaches.
 //! - **The user agent** is [`moqui_sip::ua::Ua`] on a small Tokio runtime of its own: signaling only, no business logic.
 //!   What a call may do is the voice services' (`org.moqui.call.VoiceServices`), called on a request worker: the engine
@@ -108,7 +108,7 @@ const ABANDONED_FOR: Duration = Duration::from_secs(300);
 const PAIRED_EVERY: u32 = 5;
 /// How long an outbound call rings before it is canceled.
 const RING_TIMEOUT: Duration = Duration::from_secs(60);
-/// The usual CA bundle, for TLS to trunks when `sip_tls_ca_file` is empty.
+/// The usual CA bundle, for TLS to trunks when `sip-server@tls-ca-file` is empty.
 const SYSTEM_CA: &str = "/etc/ssl/certs/ca-certificates.crt";
 
 /// The SIP settings from the properties.
@@ -121,13 +121,13 @@ pub(crate) struct SipSettings {
     pub rtp_ports: String,
     pub public: Option<IpAddr>,
     pub ca_file: Option<PathBuf>,
-    /// The flood caps: `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`,
-    /// `sip_max_connections_per_source`.
+    /// The flood caps: `sip-server/limits@request-rate`, `sip-server/limits@request-burst`, `sip-server/limits@max-transactions`, `sip-server/limits@max-connections`,
+    /// `sip-server/limits@max-connections-per-source`.
     pub limits: RequestLimits,
-    /// The realm of the digest challenges and the domain phones register to: `sip_domain`, else the public address,
+    /// The realm of the digest challenges and the domain phones register to: `sip-server@domain`, else the public address,
     /// else `moqui`.
     pub domain: String,
-    /// The registrar for desk and soft phones (V4), `None` unless `sip_registrar_enabled`.
+    /// The registrar for desk and soft phones (V4), `None` unless `sip-server/registrar@enabled`.
     pub registrar: Option<moqui_sip::registrar::RegistrarLimits>,
 }
 
@@ -146,13 +146,17 @@ fn limits_from(property: &dyn Fn(&str) -> String) -> RequestLimits {
     }
     let defaults = RequestLimits::default();
     RequestLimits {
-        rate: read(property, "sip_request_rate", defaults.rate).max(0.0),
-        burst: read(property, "sip_request_burst", defaults.burst),
-        max_transactions: read(property, "sip_max_transactions", defaults.max_transactions),
-        max_connections: read(property, "sip_max_connections", defaults.max_connections),
+        rate: read(property, "sip-server/limits@request-rate", defaults.rate).max(0.0),
+        burst: read(property, "sip-server/limits@request-burst", defaults.burst),
+        max_transactions: read(
+            property,
+            "sip-server/limits@max-transactions",
+            defaults.max_transactions,
+        ),
+        max_connections: read(property, "sip-server/limits@max-connections", defaults.max_connections),
         max_connections_per_source: read(
             property,
-            "sip_max_connections_per_source",
+            "sip-server/limits@max-connections-per-source",
             defaults.max_connections_per_source,
         ),
     }
@@ -177,10 +181,10 @@ fn port_of(property: &dyn Fn(&str) -> String, name: &str) -> Result<Option<u16>,
         .map_err(|_| format!("{name} {text} is not a port"))
 }
 
-/// `None` while both `sip_port` and `sip_tls_port` are empty.
+/// `None` while both `sip-server@port` and `sip-server@tls-port` are empty.
 pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<SipSettings>, String> {
-    let port = port_of(property, "sip_port")?;
-    let tls_port = port_of(property, "sip_tls_port")?;
+    let port = port_of(property, "sip-server@port")?;
+    let tls_port = port_of(property, "sip-server@tls-port")?;
     if port.is_none() && tls_port.is_none() {
         return Ok(None);
     }
@@ -192,13 +196,13 @@ pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<
             value.trim().to_string()
         }
     };
-    let host = or("sip_host", "127.0.0.1");
-    let listen = port.map(|p| bind_address(&host, p, "sip_host")).transpose()?;
+    let host = or("sip-server@host", "127.0.0.1");
+    let listen = port.map(|p| bind_address(&host, p, "sip-server@host")).transpose()?;
     let tls = tls_port
-        .map(|p| bind_address(&or("sip_tls_host", &host), p, "sip_tls_host"))
+        .map(|p| bind_address(&or("sip-server@tls-host", &host), p, "sip-server@tls-host"))
         .transpose()?;
-    let rtp_host = bind_address(&or("sip_rtp_host", &host), 0, "sip_rtp_host")?.ip();
-    let public = property("sip_public_address");
+    let rtp_host = bind_address(&or("sip-server@rtp-host", &host), 0, "sip-server@rtp-host")?.ip();
+    let public = property("sip-server@public-address");
     let public = public.trim();
     let public = if public.is_empty() {
         None
@@ -206,24 +210,24 @@ pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<
         Some(
             public
                 .parse::<IpAddr>()
-                .map_err(|_| format!("sip_public_address {public} is not an address"))?,
+                .map_err(|_| format!("sip-server@public-address {public} is not an address"))?,
         )
     };
-    let ca = property("sip_tls_ca_file");
+    let ca = property("sip-server@tls-ca-file");
     let ca_file = if ca.trim().is_empty() {
         Some(PathBuf::from(SYSTEM_CA)).filter(|p| p.exists())
     } else {
         Some(PathBuf::from(ca.trim()))
     };
     let domain = or(
-        "sip_domain",
+        "sip-server@domain",
         &public.map(|p| p.to_string()).unwrap_or_else(|| "moqui".to_string()),
     );
     Ok(Some(SipSettings {
         listen,
         tls,
         rtp_host,
-        rtp_ports: or("sip_rtp_ports", "20000-20999"),
+        rtp_ports: or("sip-server@rtp-ports", "20000-20999"),
         public,
         ca_file,
         limits: limits_from(property),
@@ -385,25 +389,25 @@ fn tls_pair(runtime_dir: &Path, name: Option<&str>) -> Option<(Vec<u8>, Vec<u8>)
 /// The startup report's name for the SIP listeners.
 pub(crate) const LISTENER: &str = "SIP";
 
-/// The ports SIP will bind, for the port check before the framework is built: `sip_port` over UDP and TCP, and
-/// `sip_tls_port`. None while both are empty or a setting does not parse ([`start`] reports that).
+/// The ports SIP will bind, for the port check before the framework is built: `sip-server@port` over UDP and TCP, and
+/// `sip-server@tls-port`. None while both are empty or a setting does not parse ([`start`] reports that).
 pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     use crate::port_check::{Proto, Target};
-    let Ok(Some(settings)) = settings_from(&moqui_lib::env::get_prop_or_env) else {
+    let Ok(Some(settings)) = settings_from(&moqui_core::context::conf_env::setting_or_property) else {
         return Vec::new();
     };
     let mut targets = Vec::new();
     if let Some(listen) = settings.listen {
         targets.push(Target::optional(
             LISTENER,
-            "sip_port",
+            "sip-server@port",
             listen.ip(),
             listen.port(),
             Proto::Udp,
         ));
         targets.push(Target::optional(
             LISTENER,
-            "sip_port",
+            "sip-server@port",
             listen.ip(),
             listen.port(),
             Proto::Tcp,
@@ -412,7 +416,7 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     if let Some(tls) = settings.tls {
         targets.push(Target::optional(
             LISTENER,
-            "sip_tls_port",
+            "sip-server@tls-port",
             tls.ip(),
             tls.port(),
             Proto::Tcp,
@@ -421,7 +425,7 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     targets
 }
 
-/// Starts the SIP engine when `sip_port` or `sip_tls_port` is set, and records it in the startup report. One that
+/// Starts the SIP engine when `sip-server@port` or `sip-server@tls-port` is set, and records it in the startup report. One that
 /// cannot start is logged; the server starts without phone calls.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     let node = start_node(factory);
@@ -436,14 +440,18 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
 
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     use moqui_core::startup::{listener, State};
-    let settings = match settings_from(&moqui_lib::env::get_prop_or_env) {
-        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "sip_port", true) => {
+    let settings = match settings_from(&moqui_core::context::conf_env::setting_or_property) {
+        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "sip-server@port", true) => {
             listener(factory, LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
             return None;
         }
         Ok(Some(settings)) => settings,
         Ok(None) => {
-            listener(factory, LISTENER, State::off("sip_port and sip_tls_port are not set"));
+            listener(
+                factory,
+                LISTENER,
+                State::off("sip-server@port and sip-server@tls-port are not set"),
+            );
             return None;
         }
         Err(err) => {
@@ -463,7 +471,9 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     if settings.public.is_none()
         && (bind_any(settings.listen) || bind_any(settings.tls) || settings.rtp_host.is_unspecified())
     {
-        tracing::error!("SIP did not start: it binds every address; set sip_public_address to the one trunks reach");
+        tracing::error!(
+            "SIP did not start: it binds every address; set sip-server@public-address to the one trunks reach"
+        );
         return None;
     }
     let ports = match PortRange::parse(&settings.rtp_ports, settings.rtp_host) {
@@ -855,7 +865,7 @@ struct Engine {
     dedicated: bool,
     /// Each pairing and its SIP device domain, shared with the registrar's directory (E12, E16).
     paired: phones::Paired,
-    /// The registrar is on (`sip_registrar_enabled`).
+    /// The registrar is on (`sip-server/registrar@enabled`).
     registrar: bool,
     ports: Arc<PortRange>,
     public: Option<IpAddr>,
@@ -1394,7 +1404,7 @@ impl Engine {
 
     /// A leg's RTP socket and its SDP for this side.
     fn local_media(&self, srtp: bool) -> Result<(std::net::UdpSocket, LocalMedia), String> {
-        let socket = self.ports.take().ok_or("no free port in sip_rtp_ports")?;
+        let socket = self.ports.take().ok_or("no free port in sip-server@rtp-ports")?;
         let addr = leg::sdp_address(self.public, &socket).ok_or("the RTP socket has no address")?;
         let local = LocalMedia::new(addr.ip(), addr.port(), srtp.then(MasterKey::random));
         Ok((socket, local))

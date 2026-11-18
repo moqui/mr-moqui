@@ -335,8 +335,8 @@ impl Server {
         }
     }
 
-    /// The SIP listener's address (UDP and TCP, else TLS), when this build has the `sip` feature and `sip_port` or
-    /// `sip_tls_port` is set.
+    /// The SIP listener's address (UDP and TCP, else TLS), when this build has the `sip` feature and `sip-server@port` or
+    /// `sip-server@tls-port` is set.
     #[must_use]
     pub fn sip_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "sip")]
@@ -1925,7 +1925,7 @@ fn boot_server_factory(
     ipp::install();
     // call media (rtc_media_port), after the cluster so the node registers under its instance id
     let rtc = rtc::start(&factory);
-    // phone calls (sip_port, sip_tls_port), beside the call media they join
+    // phone calls (sip-server@port, sip-server@tls-port), beside the call media they join
     let sip = sip::start(&factory);
     // XMPP for local users (xmpp-server@domain): its listeners, and the chat pushes to its sessions
     let xmpp = xmpp::start(&factory);

@@ -128,8 +128,8 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "sip.listener",
         external: false,
-        hosts: &["sip_host"],
-        ports: &["sip_port"],
+        hosts: &["sip-server@host"],
+        ports: &["sip-server@port"],
         default_port: "",
     },
     Target {

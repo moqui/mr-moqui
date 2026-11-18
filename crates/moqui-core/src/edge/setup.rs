@@ -127,7 +127,7 @@ pub struct SipOffer {
     /// For UDP and TCP, and for TLS, `host:port`; empty when that listener is off.
     pub sip_address: String,
     pub tls_address: String,
-    /// The realm its registrar challenges phones with (`sip_domain`), and whether the registrar is on.
+    /// The realm its registrar challenges phones with (`sip-server@domain`), and whether the registrar is on.
     pub domain: String,
     pub registrar: bool,
     /// The trunks its engine has loaded now, with their state.

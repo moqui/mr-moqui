@@ -61,7 +61,7 @@ pub struct Expected {
     pub sip: SipExpected,
 }
 
-/// The SIP records: the edge node's SIP domain (its `sip_domain`, the realm phones register to), whose SRV records
+/// The SIP records: the edge node's SIP domain (its `sip-server@domain`, the realm phones register to), whose SRV records
 /// (RFC 3263) name the edge node and its SIP ports (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8). None when `domain`
 /// is empty; a port of 0 is off, and its records are not listed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -344,7 +344,7 @@ pub fn check(domains: &[String], host_names: &[String], expected: &Expected, loo
 }
 
 /// The SRV records of the SIP domain: `_sips._tcp` with the TLS port, `_sip._udp` and `_sip._tcp` with the other, each
-/// port that is on. A domain that is no DNS name (an address, or `moqui`, the realm when `sip_domain` is not set) has
+/// port that is on. A domain that is no DNS name (an address, or `moqui`, the realm when `sip-server@domain` is not set) has
 /// none to check; a row says so.
 fn sip_rows(domain: &str, sip: &SipExpected, lookup: &dyn Lookup) -> Vec<DnsRow> {
     if domain.parse::<IpAddr>().is_ok() || !domain.contains('.') {
@@ -353,7 +353,7 @@ fn sip_rows(domain: &str, sip: &SipExpected, lookup: &dyn Lookup) -> Vec<DnsRow>
             name: domain.to_string(),
             ok: true,
             note: "The edge node's SIP domain is no DNS name, so phones and trunks reach it by its address: set \
-                   sip_domain there for SRV records"
+                   sip-server@domain there for SRV records"
                 .to_string(),
             later: true,
             ..DnsRow::default()

@@ -41,7 +41,7 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
         entry(
             Section::Listener,
             "SIP",
-            State::off("sip_port and sip_tls_port are not set"),
+            State::off("sip-server@port and sip-server@tls-port are not set"),
         ),
         entry(Section::Integration, "IPP printing", State::NotBuilt),
         entry(Section::Integration, "SSO", State::on("")),
@@ -54,7 +54,7 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
   Listeners
     HTTP    tcp 0.0.0.0:8080
     SSH     tcp 127.0.0.1:2222
-    SIP     off: sip_port and sip_tls_port are not set
+    SIP     off: sip-server@port and sip-server@tls-port are not set
   Integrations
     Search  on: Postgres
     SSO     on

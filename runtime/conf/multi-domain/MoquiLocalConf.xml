@@ -16,7 +16,7 @@
 
     <!-- Names of its own (.env), one per local node:
         xmpp-server@domain, this node's XMPP domain (branch-a.example.com), which the edge node's XMPP ports route by;
-        sip_domain, its phones' realm (sip.branch-a.example.com), which its Configure names;
+        sip-server@domain, its phones' realm (sip.branch-a.example.com), which its Configure names;
         the PASS sites in pass_client_edge_sites, which the wizard sends: an mr-pass site has one authority;
         mail: its domains' addresses, which reach it by its replicated accounts (a domain two nodes share is split by
         address, and an address both have is held back until one lets it go), and smtp-server@authserv-id, the edge node's

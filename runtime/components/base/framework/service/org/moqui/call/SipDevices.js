@@ -8,7 +8,7 @@
 // challenge, keeps each binding as a SipRegistration row (store#SipRegistration), rings a user's devices when the call
 // services ring the user (ring#SipDevices, from Calls.js ring), and hands a phone's own call to receive#DeviceCall, which
 // places it as the phone's user: to another user (by username), or to a number through place#PhoneCall's policy. The
-// registrar is off unless sip_registrar_enabled is true; then nothing rings and no call is taken, though phones may be added.
+// registrar is off unless sip-server/registrar@enabled is true; then nothing rings and no call is taken, though phones may be added.
 
 const CALLS = 'component://framework/service/org/moqui/call/Calls.js'
 const VOICE = 'component://framework/service/org/moqui/call/Voice.js'
@@ -36,7 +36,7 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const yes = (value) => value === true || value === 'Y' || value === 'true' || value === 'y' || value === '1'
 const blank = (value) => value == null || String(value).trim() === ''
-const property = (name) => String(System.getProperty(name) || '').trim()
+const property = (name) => String((name.includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)) || '').trim()
 
 function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
@@ -64,13 +64,13 @@ function edgeSipNode() {
 }
 
 /**
- * Whether the registrar is on: sip_registrar_enabled (off by default, even with the SIP listeners on); behind an edge
+ * Whether the registrar is on: sip-server/registrar@enabled (off by default, even with the SIP listeners on); behind an edge
  * node, the edge node's (its row), whose registrar the phones use.
  */
 function registrarOn() {
   const edge = edgeSipNode()
   if (edge) return edge.registrarEnabled === 'Y'
-  return yes(property('sip_registrar_enabled').toLowerCase())
+  return yes(property('sip-server/registrar@enabled').toLowerCase())
 }
 
 /**
@@ -80,7 +80,7 @@ function registrarOn() {
 function domain() {
   const edge = edgeSipNode()
   if (edge && !blank(edge.sipDomain)) return edge.sipDomain
-  return property('sip_domain') || property('sip_public_address') || 'moqui'
+  return property('sip-server@domain') || property('sip-server@public-address') || 'moqui'
 }
 
 /** The live SIP nodes; the edge node's link-kept row only while phones go through it (edge/node@sip-enabled, E10 phones). */
@@ -105,8 +105,8 @@ function serverSetup() {
     return fromNode || (property(name) ? Number(property(name)) : null)
   }
   const node = liveSipNodes()[0]
-  const sipPort = port(node?.sipAddress, 'sip_port')
-  const tlsPort = port(node?.tlsAddress, 'sip_tls_port')
+  const sipPort = port(node?.sipAddress, 'sip-server@port')
+  const tlsPort = port(node?.tlsAddress, 'sip-server@tls-port')
   return { domain: domain(), sipPort, tlsPort, transport: tlsPort ? 'TLS' : sipPort ? 'UDP' : null, registrarEnabled: registrarOn() }
 }
 

@@ -38,12 +38,12 @@ with the front as well, for its names, XMPP domain and ports.
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
   with `edge@link-key`, `turn_auth_secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
-  `sip_port`, `sip_tls_port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
+  `sip-server@port`, `sip-server@tls-port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
   `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
   `edge/front-node@url`, `edge/front-node@key`, `edge/front-node@pin` and `edge/front-node@id`.
 - **Each edge member, its own**: `cluster-member@base-url`, `moqui_conf__edge__link_url=https://edge1.example.com` (its link name, at the
   front), `smtp-server@hostname` (its own address's reverse DNS name), `rtc_public_address`, `turn_public_host` and
-  `sip_public_address` (its own address). Never copy `runtime/db`.
+  `sip-server@public-address` (its own address). Never copy `runtime/db`.
 - **Every local member, the same**: the database and secrets (for git hosting `ssh-server@host-key` and
   `git-server@lfs-token-key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge/node@url`,
   `edge/node@key`, `edge/node@pin`, `edge/node@id`, `edge/node@pairing`; with `edge` members also `front_node_*`; the

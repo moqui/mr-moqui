@@ -298,8 +298,8 @@ const protocols = [
         settingGroup: "Protocols: phone",
         ownerKey: "voice",
         on: facts => ({
-            on: set(facts, "sip_port") || set(facts, "sip_tls_port"),
-            reason: "sip_port and sip_tls_port are not set"
+            on: set(facts, "sip-server@port") || set(facts, "sip-server@tls-port"),
+            reason: "sip-server@port and sip-server@tls-port are not set"
         }),
         checks: ["configuration", "listener"],
         listenerTarget: "sip.listener"

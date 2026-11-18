@@ -1727,13 +1727,17 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
         CONF,
         &[
             ("rtc_media_port", "0"),
-            ("sip_port", "0"),
-            ("sip_rtp_ports", "42700-42799"),
-            ("sip_registrar_enabled", "true"),
-            ("sip_domain", SERVER_DOMAIN),
+            ("moqui_conf__sip_server__port", "0"),
+            ("moqui_conf__sip_server__rtp_ports", "42700-42799"),
+            ("moqui_conf__sip_server__registrar__enabled", "true"),
+            ("moqui_conf__sip_server__domain", SERVER_DOMAIN),
         ],
     );
-    let local = crate::common::start_with_properties("aio-sip-local", None, &[("sip_domain", LOCAL_DOMAIN)]);
+    let local = crate::common::start_with_properties(
+        "aio-sip-local",
+        None,
+        &[("moqui_conf__sip_server__domain", LOCAL_DOMAIN)],
+    );
     let server = starting.ready();
     let sip_at = server.address("sip");
     assert!(local.server.sip_address().is_none(), "the local node has no SIP engine");

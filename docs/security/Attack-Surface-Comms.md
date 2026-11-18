@@ -215,9 +215,9 @@ peer rule.
 ## SIP
 
 The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a media node, only in a binary with the
-`sip` feature (Maximal, Enterprise, Debug). Each listener is off unless set: `sip_port` (UDP and TCP on `sip_host`),
-`sip_tls_port` (TLS on `sip_tls_host`, the `runtime/cert` certificates). Each phone leg has a UDP RTP socket in
-`sip_rtp_ports` on `sip_rtp_host`. An exposed SIP listener is scanned within hours, so its rules are release gates
+`sip` feature (Maximal, Enterprise, Debug). Each listener is off unless set: `sip-server@port` (UDP and TCP on `sip-server@host`),
+`sip-server@tls-port` (TLS on `sip-server@tls-host`, the `runtime/cert` certificates). Each phone leg has a UDP RTP socket in
+`sip-server@rtp-ports` on `sip-server@rtp-host`. An exposed SIP listener is scanned within hours, so its rules are release gates
 ([SIP](../interfaces/SIP.md) "Fraud controls"):
 
 - **Who is answered.** An INVITE from a trunk's host (each address of its SRV targets, for a trunk set up by name
@@ -233,8 +233,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   A digest answer whose `uri` is not the Request-URI (`uri_matches`) is refused with 403 and not counted. The UDP socket also answers a STUN
   Binding request (the RFC 5626 keepalive) from any source with a Binding success that carries the source's address (32
   bytes for IPv4, 44 for IPv6). That answer is sent before the SIP stack sees the datagram, so it is given with the
-  registrar off, to a blocked source, and outside `sip_request_rate`. No other STUN message is answered.
-- **The registrar (V4).** Off unless `sip_registrar_enabled` is true, even with the listeners on. With it, a REGISTER
+  registrar off, to a blocked source, and outside `sip-server/limits@request-rate`. No other STUN message is answered.
+- **The registrar (V4).** Off unless `sip-server/registrar@enabled` is true, even with the listeners on. With it, a REGISTER
   and a phone's INVITE answer the same challenge with a desk or soft phone's credentials: a generated username and a
   22-character random password that is shown to its user once and never stored. Only its digest verifiers are kept
   (`SipDeviceVerifier.ha1`, encrypted, per algorithm and realm): SHA-256, and MD5 only for a device of the legacy
@@ -244,7 +244,7 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   and either ends its bindings and its calls on every engine. A binding is the flow the phone opened (its transport
   and source address and port); calls to the phone go back over it only, never to the address its Contact names, and
   a stream connection that closes ends its bindings. A device has at most 10 bindings, and expiry is held to
-  `sip_registrar_min_expires`..`sip_registrar_max_expires`. A phone's own call is placed as its user through the same
+  `sip-server/registrar@min-expires`..`sip-server/registrar@max-expires`. A phone's own call is placed as its user through the same
   checks as the browser's (`place#PhoneCall`: outbound permission, caller ID, international and premium, limits,
   emergency first), so a phone's credentials give no more than its user has. Plain RTP from a phone is taken from its
   SDP's address or the address it signals from (its NAT's), on any port until the first packet latches.
@@ -311,7 +311,7 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   queue's fallback to a number is set by a voice admin and checked against the deployment's policy when it is saved
   and when a call uses it; a menu loop ends after 20 menus, and a queue's fallback chain after 10.
 - **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
-  allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default),
+  allowed algorithms. TLS to a trunk verifies its certificate against `sip-server@tls-ca-file` (the system bundle by default),
   for the trunk's host as set up, never an SRV target's name, so a changed SRV record cannot point a trunk at a server
   that does not hold the provider's certificate.
   `VoiceServices.get#EngineConfig` returns each enabled trunk's decrypted `password`, and
@@ -334,9 +334,9 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   allowed (a phone behind NAT names one); the first refusal per target is logged.
   rsipstack logs whole SIP messages (SDES keys, digest answers) at INFO, so the host keeps only its warnings.
 - **Floods.** rsipstack has no caps of its own, so the engine's transport inspector holds new requests (outside a
-  dialog) to `sip_request_rate` a second per source (`sip_request_burst` at once; 20 and 100 by default, an IPv6
-  source as its /64), drops them while `sip_max_transactions` (2,000) run, and closes TCP and TLS connections past
-  `sip_max_connections` (500), or past `sip_max_connections_per_source` (100) from one source, so one source cannot
+  dialog) to `sip-server/limits@request-rate` a second per source (`sip-server/limits@request-burst` at once; 20 and 100 by default, an IPv6
+  source as its /64), drops them while `sip-server/limits@max-transactions` (2,000) run, and closes TCP and TLS connections past
+  `sip-server/limits@max-connections` (500), or past `sip-server/limits@max-connections-per-source` (100) from one source, so one source cannot
   hold the connections the registrar's phones keep open. What is over is dropped unanswered; requests in a dialog and responses pass, so calls
   going on are not cut. Answers sent before an incoming call's decision expire after 30 seconds (1,000 at most).
   A TLS client has 10 seconds to finish its handshake; at most 128 handshakes run at once and 8 from one source (an IPv6
@@ -345,8 +345,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   valid request. A SIP message over a stream is at most 65,535 bytes.
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. The engine registers its node (`SipNode`) every 20 seconds.
-- **Settings that name addresses and audio.** `sip_public_address` is the address put in Contact headers and SDP, and
-  is required when a SIP host binds every address. `sip_domain` is the digest realm (`sip_public_address`, else `moqui`,
+- **Settings that name addresses and audio.** `sip-server@public-address` is the address put in Contact headers and SDP, and
+  is required when a SIP host binds every address. `sip-server@domain` is the digest realm (`sip-server@public-address`, else `moqui`,
   when empty). `voicemail_prompt_location`, `call_hold_music_location`, `call_recording_prompt_audio` and
   `call_captions_prompt_audio` name resource locations (any scheme) whose files the engine reads and plays to callers.
   They are empty by default.
