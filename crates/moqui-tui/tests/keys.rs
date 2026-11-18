@@ -1341,14 +1341,26 @@ fn a_needed_answer_turns_the_login_dialog_to_setup_and_its_fields_cycle() {
         ("admin", 1),
         "the username kept, the password next"
     );
-    assert_eq!(login.labels().len(), 5);
-    for at in [2, 3, 4, 0, 1] {
+    assert_eq!(login.labels().len(), 6);
+    assert!(
+        login.is_toggle(5) && !login.masked(5),
+        "the last field is the ADMIN_ADV toggle"
+    );
+    for at in [2, 3, 4, 5, 0, 1] {
         press(&mut session, &link, Key::Tab);
         assert_eq!(setup_login(&session).at, at);
     }
     press(&mut session, &link, Key::BackTab);
     press(&mut session, &link, Key::Up);
-    assert_eq!(setup_login(&session).at, 4, "Shift+Tab and Up go back, around the end");
+    assert_eq!(setup_login(&session).at, 5, "Shift+Tab and Up go back, around the end");
+    // the toggle: off by default, Space flips it, typing is not text, Esc still closes
+    assert!(!setup_login(&session).join_advanced);
+    press(&mut session, &link, Key::Char(' '));
+    assert!(setup_login(&session).join_advanced);
+    press(&mut session, &link, Key::Char('q'));
+    press(&mut session, &link, Key::Char('n'));
+    assert!(!setup_login(&session).join_advanced);
+    assert_eq!(setup_login(&session).field(5), "no");
     press(&mut session, &link, Key::Down);
     assert_eq!(setup_login(&session).at, 0);
     // Enter before the last field is the next field: nothing is sent
@@ -1397,8 +1409,9 @@ fn setup_from_another_machine_asks_for_the_setup_secret() {
     session.set_login_name(Some("admin".to_string()));
     session.run_now(&link);
     let login = setup_login(&session);
-    assert_eq!(login.labels().len(), 6);
+    assert_eq!(login.labels().len(), 7);
     assert!(login.masked(5));
+    assert!(login.is_toggle(6) && !login.masked(6) && !login.is_toggle(5));
     fill_setup(
         &mut session,
         &link,
@@ -1422,8 +1435,9 @@ fn setup_creates_the_administrator_then_logs_in_with_it() {
         &link,
         ["Secret-pass-1", "Secret-pass-1", "Ada Admin", "ada@example.com"],
     );
-    // Tab after the email went around to the username; Enter in the last field sends
-    session.set_login_field(4, "ada@example.com");
+    // Tab after the email went to the ADMIN_ADV toggle; Space checks it, and Enter in the last field sends
+    assert_eq!(setup_login(&session).at, 5);
+    press(&mut session, &link, Key::Char(' '));
     press(&mut session, &link, Key::Enter);
     assert!(session.top_overlay().is_none(), "logged in");
     assert_eq!(session.path(), GALLERY_LIST_PATH);
@@ -1433,7 +1447,7 @@ fn setup_creates_the_administrator_then_logs_in_with_it() {
         .position(|call| {
             matches!(call, LinkCall::CreateInitialAdmin(account)
                 if account.username == "admin" && account.full_name == "Ada Admin"
-                    && account.email == "ada@example.com")
+                    && account.email == "ada@example.com" && account.join_advanced)
         })
         .expect("the account is sent");
     let logged = calls

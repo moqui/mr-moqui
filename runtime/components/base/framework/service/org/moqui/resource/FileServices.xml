@@ -2878,7 +2878,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A file drop through a link with RspUpload or RspEdit permission on a folder: the files (fileList or
             file) go into the shared folder (path below it) as one change set, a name already there gets a free name, and
             the version note names the uploader (uploaderName). The token is checked first, then the grant when the link
-            has a password; the drive's quota applies.</description>
+            has a password; the drive's quota applies. Each file is named by the last segment of its own name, so it lands
+            in the shared folder and never in a folder it names. Limits of a link's own, the drive's quota or not
+            (SEC-FIL-06): 20 files and 100 MiB in one call; 1000 files and 2 GiB through the link in all (uploadCount and
+            uploadBytes of its ResourceShare); and 30 calls an hour through the link, 60 from one requester.</description>
         <in-parameters>
             <parameter name="token" required="true"/>
             <parameter name="grant"/>
@@ -2904,10 +2907,43 @@ along with this software (see the LICENSE.md file). If not, see
             const sharePath = String(row.path || '')
             if (!sharePath && relative.split('/')[0] === '.trash') { ec.message.addError(ec.l10n.localize('Not found')); return }
             const folder = [sharePath, relative].filter((part) => part).join('/')
+            // a link's own limits: files and bytes in one call, then calls an hour by link and by requester, then what the
+            // link has taken in all
+            const MAX_FILES = 20, MAX_BYTES = 100 * 1024 * 1024, LINK_FILES = 1000, LINK_BYTES = 2 * 1024 * 1024 * 1024
+            const files = fileList ? Array.from(fileList) : (file ? [file] : [])
+            if (!files.length) { ec.message.addError(ec.l10n.localize('No files to upload')); return }
+            const sizeOf = (item) => item == null ? 0 : (typeof item === 'string' || item instanceof Uint8Array ? item.length : (Number(item.size) || 0))
+            const bytes = files.reduce((sum, item) => sum + sizeOf(item), 0)
+            if (files.length > MAX_FILES || bytes > MAX_BYTES) {
+                ec.message.addError(ec.l10n.localize('Too much for one upload through a link') + ` (${MAX_FILES} files, ${MAX_BYTES / 1048576} MB)`); return
+            }
+            const attempt = (key, limit) => ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
+                    .parameters({input: {key, limit, windowMillis: 3600000}}).requireNewTransaction(true).disableAuthz().call().result.allowed
+            const requester = ec.resource.script('component://framework/service/org/moqui/public/Account.js').requesterKey()
+            if (!attempt('share-upload:share:' + row.shareId, 30) || !attempt('share-upload:ip:' + requester, 60)) {
+                ec.message.addError(ec.l10n.localize('Too many uploads through this link; try again later')); return
+            }
+            if (Number(row.uploadCount || 0) + files.length > LINK_FILES || Number(row.uploadBytes || 0) + bytes > LINK_BYTES) {
+                ec.message.addError(ec.l10n.localize('This link has taken all the files it may')); return
+            }
+            // only the last segment of a file's own name: an anonymous name makes no folders, and none is the trash
+            const names = files.map((item) => {
+                const given = item == null ? '' : String(item.fileName || item.name || '')
+                const last = given.split(/[\\/]/).filter((part) => part && part !== '.' && part !== '..').pop() || ''
+                return last && last !== '.trash' ? last : 'upload'
+            })
             const who = String(uploaderName || '').trim().slice(0, 100)
             const out = ec.service.sync().name('org.moqui.resource.FileServices.upload#Resource').parameters({driveId: row.driveId, path: folder,
-                fileList: fileList ?? null, file: file ?? null, conflictPolicy: 'keepBoth', asInternal: true,
+                fileList: files, relativePathList: names, conflictPolicy: 'keepBoth', asInternal: true,
                 versionNote: who ? `Uploaded by ${who} through a link` : 'Uploaded through a link'}).disableAuthz().call()
+            // upload#Resource answers one item for each file, in order
+            const taken = (out.uploadedList || []).map((item, index) => ({item, index})).filter(({item}) => item.outcome !== 'failed' && item.outcome !== 'skipped')
+            if (taken.length) {
+                const counted = ec.entity.find('moqui.resource.ResourceShare').condition('shareId', row.shareId).disableAuthz().one()
+                counted.set('uploadCount', Number(counted.uploadCount || 0) + taken.length)
+                counted.set('uploadBytes', Number(counted.uploadBytes || 0) + taken.reduce((sum, {index}) => sum + sizeOf(files[index]), 0))
+                counted.update()
+            }
             uploadedList = (out.uploadedList || []).map((item) => ({name: item.name, outcome: item.outcome, error: item.error ?? null,
                 path: item.path && sharePath && String(item.path).startsWith(sharePath + '/') ? String(item.path).slice(sharePath.length + 1) : (sharePath ? null : item.path)}))
         ]]></script></actions>

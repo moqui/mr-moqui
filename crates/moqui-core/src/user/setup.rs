@@ -15,7 +15,8 @@
 //! Who may create the first administrator while no account exists (`create#InitialAdminAccount`, SEC-WEB-08,
 //! SEC-CLI-01): a request from this machine (a loopback peer, straight to the listener, through no proxy), or one that
 //! gives the one-time setup secret this server printed in its startup log. The secret is made once per server and
-//! held in memory only, so a restart makes a new one.
+//! held in memory only, so a restart makes a new one. None of it is offered unless `initial_admin_enabled` is true
+//! (`get#InitialAdminNeeded`; false in the default conf, true in the dev conf).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -82,20 +83,30 @@ pub fn initial_admin_allowed(given: &str) -> bool {
 }
 
 /// At startup, while no account exists, write the setup secret to the log with where it is used, so the operator (who
-/// reads the log) can create the first administrator from another machine. Nothing is written once an account exists.
+/// reads the log) can create the first administrator from another machine. With `initial_admin_enabled` off it writes
+/// how to turn it on instead, and no secret. Nothing is written once an account exists.
 pub fn log_initial_admin_setup(factory: &Arc<ExecutionContextFactory>) {
     let ctx = factory.new_context();
     let _entered = ctx.enter();
-    let needed = match crate::service::call::sync(INITIAL_ADMIN_NEEDED, &BTreeMap::new()) {
-        Ok(out) => out
-            .get("needed")
-            .is_some_and(|needed| moqui_lib::object::to_plain_string(needed) == "true"),
+    let out = match crate::service::call::sync(INITIAL_ADMIN_NEEDED, &BTreeMap::new()) {
+        Ok(out) => out,
         Err(err) => {
             tracing::error!("Could not tell whether the first administrator is needed: {err}");
             return;
         }
     };
-    if !needed {
+    let flag = |name: &str| {
+        out.get(name)
+            .is_some_and(|value| moqui_lib::object::to_plain_string(value) == "true")
+    };
+    if flag("disabled") {
+        tracing::warn!(
+            "No user account exists yet. To create the first administrator at /Login, set initial_admin_enabled=true \
+             (in .env or the environment) and restart; take it out again once the administrator is made."
+        );
+        return;
+    }
+    if !flag("needed") {
         return;
     }
     let secret = secret(factory);

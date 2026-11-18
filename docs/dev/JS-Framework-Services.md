@@ -151,7 +151,8 @@ Accounts, passwords, second factors and the current user's keys.
 | `get#UserDeviceKeys`, `revoke#UserDeviceKey`, `renew#UserDeviceKey` | The devices signed in by key (the desktop and mobile clients) |
 
 The rest are the login steps (`login#UserAccount`, `validate#ExternalUserAuthcCode`, `send#ExternalAuthcCode`, `send#AuthcCodeEmail`, `send#AuthcCodeSms`), `get#InitialAdminNeeded` (→ `needed`, and while it is true the password
-rules `minLength`, `minDigits`, `minOthers`) and `create#InitialAdminAccount`, which refuses unless it is needed.
+rules `minLength`, `minDigits`, `minOthers`; `disabled` when no account exists but `initial_admin_enabled` is off) and
+`create#InitialAdminAccount`, which refuses unless it is needed; its `joinAdvanced` puts the account in `ADMIN_ADV` too.
 
 ### SystemMessageServices
 
