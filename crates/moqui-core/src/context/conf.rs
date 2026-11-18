@@ -329,6 +329,17 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         keys(&["email-client", "oauth-provider"]),
         None,
     );
+    // push, its web and fcm children each merged as one element
+    if let Some(over_push) = over.first_named("push") {
+        match base.first_named("push") {
+            Some(base_push) => {
+                base_push.copy_attributes_from(&over_push);
+                base_push.merge_single_child(&over_push, "web");
+                base_push.merge_single_child(&over_push, "fcm");
+            }
+            None => base.append_node(over_push.deep_copy()),
+        }
+    }
     // texts and chat bridges, with the edge node's limits merged as one element
     base.merge_child_with_child_key(over, "channels", "edge-limits", &[], None);
     // mail delivery, with its one dkim element merged the same way (an attribute of the override replaces the base one)

@@ -260,28 +260,28 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
 
 /// Web push and FCM: on when their keys are set.
 fn record_push(report: &moqui_core::startup::StartupReport) {
-    let set = |name: &str| {
-        let value = moqui_lib::env::get_prop_or_env(name);
-        !value.trim().is_empty() && !value.ends_with("CHANGEME")
+    let set = |selector: &str| {
+        let value = moqui_core::context::conf_env::setting(selector);
+        !value.is_empty() && !value.ends_with("CHANGEME")
     };
     report.record_default(
         Section::Integration,
         "Web push",
         if !moqui_core::build_info::has_feature("web-push") {
             State::NotBuilt
-        } else if set("web_push_vapid_key") {
+        } else if set("push/web@vapid-key") {
             State::on("VAPID key set")
         } else {
-            State::off("web_push_vapid_key is not set")
+            State::off("push/web@vapid-key is not set")
         },
     );
     report.record_default(
         Section::Integration,
         "Mobile push (FCM)",
-        if set("fcm_service_account") {
+        if set("push/fcm@service-account") {
             State::on("")
         } else {
-            State::off("fcm_service_account is not set")
+            State::off("push/fcm@service-account is not set")
         },
     );
 }

@@ -50,12 +50,15 @@ const sourceTexts = {
     default: "Default"
 }
 const secretName = name => /pass|pw|key|secret|token|credential/i.test(String(name || ""))
-// also a property the shipped conf marks is-secret, whatever its name (shippedConf below)
+// also a property the shipped conf marks is-secret, or a conf attribute its schema marks, whatever its name
 const isSecret = setting =>
     setting.isSecret === "Y" ||
     secretName(setting.propertyName) ||
     secretName(setting.settingKey) ||
-    (!!setting.propertyName && shippedConf().secrets.has(setting.propertyName))
+    (!!setting.propertyName &&
+        (setting.propertyName.includes("@")
+            ? ec.factory.isConfSecret(setting.propertyName)
+            : shippedConf().secrets.has(setting.propertyName)))
 const allowedList = setting =>
     text(setting.allowedValues)
         .split(",")

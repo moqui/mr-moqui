@@ -61,8 +61,8 @@ const PROVIDER_UNIFIED: &str = "PushUnified";
 const MAX_TOKEN: usize = 4096;
 const MAX_APP_ID: usize = 255;
 const SEND_SERVICE: &str = "org.moqui.ui.NotificationServices.send#WebPush";
-const KEY_PROPERTY: &str = "web_push_vapid_key";
-const SUBJECT_PROPERTY: &str = "web_push_subject";
+const KEY_PROPERTY: &str = "push/web@vapid-key";
+const SUBJECT_PROPERTY: &str = "push/web@subject";
 /// A subscription is disabled after this many failed pushes in a row.
 pub(crate) const MAX_FAILURES: i64 = 5;
 /// How long a push service keeps an undelivered message, at most (a call's ring asks for less).
@@ -130,9 +130,9 @@ pub(crate) fn endpoint_hash(endpoint: &str) -> String {
 }
 
 fn vapid() -> Result<push_crypto::Vapid, String> {
-    let seed = moqui_lib::env::get_prop_or_env(KEY_PROPERTY);
+    let seed = crate::context::conf_env::setting(KEY_PROPERTY);
     if seed.is_empty() || seed.ends_with("CHANGEME") {
-        return Err(format!("the {KEY_PROPERTY} property is not set"));
+        return Err(format!("{KEY_PROPERTY} is not set"));
     }
     push_crypto::Vapid::from_seed(&seed)
 }
@@ -892,7 +892,7 @@ fn send_browsers<'a>(rows: &[&'a EntityValue], push: &Push, tally: &mut Tally, r
             return;
         }
     };
-    let subject = Some(moqui_lib::env::get_prop_or_env(SUBJECT_PROPERTY))
+    let subject = Some(crate::context::conf_env::setting(SUBJECT_PROPERTY))
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "mailto:admin@localhost".to_string());
     let now_secs = u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0);
@@ -921,7 +921,7 @@ fn send_browsers<'a>(rows: &[&'a EntityValue], push: &Push, tally: &mut Tally, r
 }
 
 /// FCM to each native app whose device key is still good; a registration whose key has ended (revoked, expired, or
-/// deleted) is deleted instead. Without `fcm_service_account` nothing is sent, with one info line in the log.
+/// deleted) is deleted instead. Without `push/fcm@service-account` nothing is sent, with one info line in the log.
 fn send_native<'a>(
     facade: &EntityFacade,
     rows: &[&'a EntityValue],
@@ -1164,10 +1164,10 @@ pub(crate) fn post(
     Err("Web Push is not built into this host".to_string())
 }
 
-/// The server's VAPID key and subject, for a push to a Web Push endpoint: None while `web_push_vapid_key` is not set.
+/// The server's VAPID key and subject, for a push to a Web Push endpoint: None while `push/web@vapid-key` is not set.
 pub(crate) fn vapid_signer() -> Option<(push_crypto::Vapid, String)> {
     let key = vapid().ok()?;
-    let subject = Some(moqui_lib::env::get_prop_or_env(SUBJECT_PROPERTY))
+    let subject = Some(crate::context::conf_env::setting(SUBJECT_PROPERTY))
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "mailto:admin@localhost".to_string());
     Some((key, subject))

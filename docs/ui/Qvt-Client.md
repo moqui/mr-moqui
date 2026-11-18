@@ -1239,8 +1239,8 @@ as a notification.
 | Safari on iOS and iPadOS 16.4+ | Only for the web app added to the Home Screen; a Safari tab has none, and the toggle says so |
 | Any browser without the Push API, or a server built without `web-push` | Desktop notifications only while a page is open |
 
-The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
-names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
+The server keeps its key in `push/web@vapid-key` (generated, an `is-secret` default-property shared by the cluster) and
+names itself to the push services with `push/web@subject` (a `mailto:` or `https:` URL; set it in production).
 
 **Native apps (FCM, UnifiedPush).** The mobile app is not a browser and gets no Web Push. Signed in with its device key,
 it registers its Firebase Cloud Messaging token (`POST /qapps/registerClientPush` with `provider=fcm`, `token`, `appId`,
@@ -1274,11 +1274,11 @@ Push carries, never a message's body, and its data is cut to 3 KB. FCM answering
 leaves it. 429 and 5xx are tried twice more with a growing wait, never past a ring's end; after that, as with no access
 token, the rest of that send is not tried and no device is counted against, so an outage disables nothing.
 
-The server signs in to FCM as a Firebase project's service account: `fcm_service_account` is its JSON key file's path
+The server signs in to FCM as a Firebase project's service account: `push/fcm@service-account` is its JSON key file's path
 or the JSON itself (an `is-secret` default-property, from the environment or `runtime/.env`, not generated), and
-`fcm_project_id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
+`push/fcm@project-id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
 an access token, kept until five minutes before it expires. Unset, nothing goes to FCM and the log says so once.
-`fcm_base_url` replaces `https://fcm.googleapis.com`, for a test stand-in.
+`push/fcm@base-url` replaces `https://fcm.googleapis.com`, for a test stand-in.
 
 A call's ring and its end are sent once the call's transaction commits, and on do not disturb (the apps and the desk
 and soft phones alike) only to a user whose allowed list (Chat settings, `CHAT_DND_ALLOWED`) has the caller, or whom

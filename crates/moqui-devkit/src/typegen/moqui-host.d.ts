@@ -1436,6 +1436,8 @@ interface MoquiServerEc {
         getConfValue(selector: string): string | null;
         /** Whether the running conf's attribute at a selector, a secret one too, has a value other than empty or `CHANGEME`; the value is not returned. */
         isConfValueSet(selector: string): boolean;
+        /** Whether the attribute at a selector holds a secret (a password, a key) by the conf schema or its name. */
+        isConfSecret(selector: string): boolean;
         /** The tool factory a conf `tool-factory` element selected, or null when there is none of that name. */
         getToolFactory<K extends keyof MoquiToolMap>(name: K): MoquiToolFactory<MoquiToolMap[K]> | null;
         getToolFactory(name: string): MoquiToolFactory | null;

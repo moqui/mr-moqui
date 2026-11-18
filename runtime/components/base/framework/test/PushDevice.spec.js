@@ -224,8 +224,8 @@ feature("revoking the device key deletes its registration, and renewing the key 
 
 feature("a ring goes to FCM as a high-priority data message, and a token FCM answers UNREGISTERED is disabled", {
     when() {
-        setProperty("fcm_service_account", ACCOUNT)
-        setProperty("fcm_base_url", FCM_BASE)
+        setConf("push/fcm@service-account", ACCOUNT)
+        setConf("push/fcm@base-url", FCM_BASE)
         const phone = deviceKey("Push spec phone")
         register(TOKEN_PREFIX + "ring", phone.key)
         http.enable()
@@ -294,8 +294,8 @@ const UA_PUBLIC = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4b
 const AUTH = "BTBZMqHH6r4Tts7J_aSIgg"
 feature("an app's push keys seal its notifications, and a UnifiedPush endpoint registers only with keys and https", {
     when() {
-        setProperty("fcm_service_account", ACCOUNT)
-        setProperty("fcm_base_url", FCM_BASE)
+        setConf("push/fcm@service-account", ACCOUNT)
+        setConf("push/fcm@base-url", FCM_BASE)
         const phone = deviceKey("Push spec keyed phone")
         const keyed = post("registerClientPush", {provider: "fcm", token: TOKEN_PREFIX + "keyed", p256dhKey: UA_PUBLIC, authSecret: AUTH}, phone.key)
         const badKey = post("registerClientPush", {provider: "fcm", token: TOKEN_PREFIX + "badkey", p256dhKey: "BAAA", authSecret: AUTH}, phone.key)
@@ -328,7 +328,7 @@ feature("an app's push keys seal its notifications, and a UnifiedPush endpoint r
 feature("a registration whose device key has ended is deleted at the next push, and nothing goes to FCM unconfigured", {
     when() {
         // the ring's feature set it for the rest of the spec
-        setProperty("fcm_service_account", null)
+        setConf("push/fcm@service-account", null)
         const phone = deviceKey("Push spec phone")
         register(TOKEN_PREFIX + "ended", phone.key)
         const tablet = deviceKey("Push spec tablet")
@@ -345,7 +345,7 @@ feature("a registration whose device key has ended is deleted at the next push, 
     },
     then({out, ended, unset, requests}) {
         ended == null
-        // fcm_service_account is not set in this feature: the device is left as it was, and nothing is sent
+        // push/fcm@service-account is not set in this feature: the device is left as it was, and nothing is sent
         unset != null
         unset.disabledDate == null
         unset.failureCount == 0
@@ -356,8 +356,8 @@ feature("a registration whose device key has ended is deleted at the next push, 
 
 feature("a ring's end goes to the apps only; a message FCM refuses, or an FCM outage, leaves every device as it is", {
     when() {
-        setProperty("fcm_service_account", ACCOUNT)
-        setProperty("fcm_base_url", FCM_BASE)
+        setConf("push/fcm@service-account", ACCOUNT)
+        setConf("push/fcm@base-url", FCM_BASE)
         register(TOKEN_PREFIX + "a", deviceKey("Push spec phone").key)
         register(TOKEN_PREFIX + "b", deviceKey("Push spec tablet").key)
         http.enable()

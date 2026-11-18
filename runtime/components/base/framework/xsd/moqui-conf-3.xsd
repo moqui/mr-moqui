@@ -24,6 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="client-sync"/>
                 <xs:element minOccurs="0" ref="chat"/>
                 <xs:element minOccurs="0" ref="channels"/>
+                <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2117,6 +2118,22 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="public-url" type="xs:string"/>
             <xs:attribute name="media-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="media-minutes" type="non-neg-int-expandable" default="60"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="push">
+        <xs:annotation><xs:documentation>Web Push to browsers and FCM to the mobile apps.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="web"><xs:complexType>
+                    <xs:attribute name="vapid-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="subject" type="xs:string" default="mailto:admin@localhost"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="fcm"><xs:complexType>
+                    <xs:attribute name="service-account" type="xs:string"><xs:annotation><xs:documentation>A secret: the service account key's JSON file path, or the JSON.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="project-id" type="xs:string"/>
+                    <xs:attribute name="base-url" type="xs:string"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

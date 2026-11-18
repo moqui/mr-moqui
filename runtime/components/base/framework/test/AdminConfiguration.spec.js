@@ -118,7 +118,7 @@ spec({
                 settingKey: flaggedKey,
                 title: "Spec flagged",
                 valueTypeEnumId: "IsvText",
-                propertyName: "fcm_service_account"
+                propertyName: "push/fcm@service-account"
             },
             {
                 settingKey: confKey,

@@ -149,11 +149,11 @@ fn cut_chars(text: &str, max: usize) -> String {
     out
 }
 
-/// The key of the collapse keys: the server's VAPID key (`web_push_vapid_key`, generated and shared by the cluster),
+/// The key of the collapse keys: the server's VAPID key (`push/web@vapid-key`, generated and shared by the cluster),
 /// else one made for this process (no VAPID key: a test, or a server that pushes to no browser).
 fn collapse_secret() -> Vec<u8> {
     static PROCESS: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
-    let seed = moqui_lib::env::get_prop_or_env("web_push_vapid_key");
+    let seed = crate::context::conf_env::setting("push/web@vapid-key");
     if !seed.trim().is_empty() && !seed.ends_with("CHANGEME") {
         return seed.into_bytes();
     }

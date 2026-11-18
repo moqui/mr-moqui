@@ -99,6 +99,7 @@ const GLOBALS_JS: &str = concat!(
     factory.hasFeature = hidden.hasFeature;
     factory.getConfValue = hidden.getConfValue;
     factory.isConfValueSet = hidden.isConfValueSet;
+    factory.isConfSecret = hidden.isConfSecret;
     // Java's TransactionFacade (`transaction.rs`)
     // body() in a transaction begun by `begin`: committed when it returns, rolled back (or, joined, marked
     // rollback-only) when it throws, and what it threw is thrown on
@@ -297,6 +298,7 @@ pub(crate) static SHIM: Shim = Shim {
         method!("ec.factory", "hasFeature", [Text], None, leaf, has_feature),
         method!("ec.factory", "getConfValue", [Text], None, leaf, get_conf_value),
         method!("ec.factory", "isConfValueSet", [Text], None, leaf, is_conf_value_set),
+        method!("ec.factory", "isConfSecret", [Text], None, leaf, is_conf_secret),
         method!("ec.transaction", "isTransactionInPlace", [], None, leaf, in_transaction),
         method!(
             "ec.transaction",
@@ -931,6 +933,16 @@ fn is_conf_value_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
             !value.is_empty() && !value.ends_with("CHANGEME")
         })
         .into())
+}
+
+/// `ec.factory.isConfSecret(selector)`: whether the attribute at `selector` holds a secret by the conf schema or its name
+/// (a password, a key), whatever it is set to. A selector that does not parse is an error.
+fn is_conf_secret(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let selector = call.text_or_empty(0);
+    match moqui_lib::node::path::AttrPath::parse(&selector) {
+        Ok(path) => Ok(crate::context::conf_env::attribute_secret(&path).into()),
+        Err(err) => Err(HostError::message(format!("isConfSecret({selector}): {err}"))),
+    }
 }
 
 /// `ec.factory.hasFeature(name)`: whether this binary has a build feature.
