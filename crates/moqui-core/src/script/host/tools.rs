@@ -333,7 +333,7 @@ macro_rules! tools_js {
         const l = {};
         for (const name of ["xmlText", "csvText", "jsonText", "dummyFks", "useTryInsert", "onlyCreate",
                 "disableEntityEca", "disableAuditLog", "disableFkCreate", "disableDataFeed", "transactionTimeout",
-                "messageNoActionFiles", "restrictSensitiveEntities", "refusePasswordFields", "csvEntityName",
+                "messageNoActionFiles", "restrictSensitiveEntities", "protectUserAccounts", "csvEntityName",
                 "csvDelimiter", "csvCommentStart", "csvQuoteChar"])
             l[name] = (value) => { options[name] = value; return l; };
         // Java adds each location to a list; defaultValues adds to the map.
@@ -1866,8 +1866,10 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .ok()
             .map(std::time::Duration::from_secs),
         restrict_sensitive_entities: flag("restrictSensitiveEntities"),
-        // Tools' Data Load sets it: a load from a request does not set an account's password (SEC-TLS-81)
-        refuse_password_fields: flag("refusePasswordFields"),
+        // Tools' Data Load sets protectUserAccounts: a load from a request does not set an account's password, nor change
+        // an existing account's identity fields (SEC-TLS-81)
+        refuse_password_fields: flag("protectUserAccounts"),
+        refuse_account_identity: flag("protectUserAccounts"),
         refused_packages: Vec::new(),
         csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
         csv_field_names: list("csvFieldNames"),

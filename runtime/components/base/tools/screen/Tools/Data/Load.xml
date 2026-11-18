@@ -48,9 +48,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (dummyFks) edl.dummyFks(true)
             if (useTryInsert) edl.useTryInsert(true)
             if (hideNoActionFiles) edl.messageNoActionFiles(false)
-            // the entities no generic write takes, and no account's password from a request (SEC-TLS-81)
+            // the entities no generic write takes, no account's password and no existing account's identity fields
+            // from a request (SEC-TLS-81)
             edl.restrictSensitiveEntities(true)
-            edl.refusePasswordFields(true)
+            edl.protectUserAccounts(true)
 
             // with wrapForeignKeys the load runs on a worker between the jobs of plan#LoadWrap: the foreign keys of the tables
             // in the data are dropped, the data loaded, and the keys made again whatever the load did (the DatabaseLoadWrap

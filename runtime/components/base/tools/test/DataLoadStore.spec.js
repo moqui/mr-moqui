@@ -2,10 +2,12 @@
 // the rows a check found, each posted as base64url JSON the holder chooses, so a row is written only where a generic
 // write may be: not an entity WebUtilities.isGenericWriteRefused names (a hosted-instance row, a SqlRunToken), nor a
 // UserAccount password or identity field, as a value or in the primary key map; the other rows are stored. It needs
-// all actions on Tools, as load does. Load's load refuses a record that sets an account's password, and Browse's
-// update leaves the password and identity fields as they are.
+// all actions on Tools, as load does. Load's load refuses a record that sets an account's password or changes an
+// existing account's identity field (a new account may set them), and Browse's update leaves the password and
+// identity fields as they are.
 // Run: ./moq test tools --spec DataLoadStore
 const TARGET = "SPEC_DLS_TARGET"
+const LOADED = "SPEC_DLS_LOADED"
 const UPDATER = "SPEC_DLS_UPDATER"
 const rowOp = (row) => StringUtilities.base64UrlEncode(JSON.stringify(row))
 const account = () => ec.entity.find("moqui.security.UserAccount").condition("userId", TARGET).disableAuthz().one()
@@ -50,7 +52,7 @@ spec({
     setup() { resetTarget() },
     cleanupSpec() {
         ec.artifactExecution.disableAuthz()
-        ec.entity.find("moqui.security.UserAccount").condition("userId", TARGET).deleteAll()
+        for (const userId of [TARGET, LOADED]) ec.entity.find("moqui.security.UserAccount").condition("userId", userId).deleteAll()
         ec.artifactExecution.enableAuthz()
     },
 })
@@ -120,19 +122,33 @@ feature("Browse's update writes the other fields of an account but not its passw
     },
 })
 
-feature("Load's load refuses a record that sets an account's password", {
+const loadXml = (attributes) => post("john.doe", "Data/Load/load",
+    { xmlText: `<entity-facade-xml><moqui.security.UserAccount ${attributes}/></entity-facade-xml>` })
+
+feature("Load's load refuses a record that sets an account's password or changes an existing account's identity", {
     when() {
-        const forged = post("john.doe", "Data/Load/load", { xmlText:
-            `<entity-facade-xml><moqui.security.UserAccount userId="${TARGET}" currentPassword="spec-forged-hash"/></entity-facade-xml>` })
+        const forged = loadXml(`userId="${TARGET}" currentPassword="spec-forged-hash"`)
         const forgedPassword = account().currentPassword
-        const named = post("john.doe", "Data/Load/load", { xmlText:
-            `<entity-facade-xml><moqui.security.UserAccount userId="${TARGET}" userFullName="Spec Loaded"/></entity-facade-xml>` })
-        return { forgedText: forged.errors + " " + forged.messages, forgedPassword, named, userFullName: account().userFullName }
+        // an ADMIN would point another account's email at their own mailbox and take it by a reset
+        const email = loadXml(`userId="${TARGET}" emailAddress="taken@spec.invalid"`)
+        const emailAddress = account().emailAddress
+        // the same username again changes nothing, and other fields load
+        const named = loadXml(`userId="${TARGET}" username="spec.dls.target" userFullName="Spec Loaded"`)
+        const userFullName = account().userFullName
+        // a new account may be loaded with its identity fields
+        const created = loadXml(`userId="${LOADED}" username="spec.dls.loaded" emailAddress="loaded@spec.invalid"`)
+        const loaded = ec.entity.find("moqui.security.UserAccount").condition("userId", LOADED).disableAuthz().one()
+        return { forgedText: forged.errors + " " + forged.messages, forgedPassword, emailText: email.errors + " " + email.messages,
+            emailAddress, named, userFullName, created, loadedEmail: loaded?.emailAddress }
     },
-    then({ forgedText, forgedPassword, named, userFullName }) {
+    then({ forgedText, forgedPassword, emailText, emailAddress, named, userFullName, created, loadedEmail }) {
         forgedPassword == "spec-original-hash"
         forgedText.includes("password fields")
+        emailAddress == "target@spec.invalid"
+        emailText.includes("The emailAddress of an existing moqui.security.UserAccount is not allowed")
         named.errors == ""
         userFullName == "Spec Loaded"
+        created.errors == ""
+        loadedEmail == "loaded@spec.invalid"
     },
 })
