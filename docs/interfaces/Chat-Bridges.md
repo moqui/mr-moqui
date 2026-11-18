@@ -43,7 +43,8 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | --- | --- |
 | `name` | The name a `ChatBridge` row selects it by: its `adapterName`, else its network's enumeration code (`sms`, `whatsapp`, `xmpp` and so on). |
 | `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit), `encryption` (below), `group_max` (the most outside numbers of a group text: Telnyx 8, Twilio 9; 0 for none, and a group room then refuses to send, `groupTextsNotSupported`). Each implementation narrows these to the API version it verified. |
-| `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. An adapter that keeps a connection of its own (GroupMe's push channel) starts a thread here, which reads its bridge again between its waits (`chat_bridge::bridge_row`), keeps its status (`chat_bridge::note_status`), and holds a lease so one node of a cluster connects (`moqui.edge.EdgeSenderLock`, through `moqui_core::edge::replica::sender::claim`). |
+| `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. An adapter that keeps a connection of its own (GroupMe's push channel) starts its node's coordinator here, which holds a lease per bridge so one node of a cluster connects (`moqui.edge.EdgeSenderLock`), and keeps the bridge's status itself (`chat_bridge::note_status`). |
+| `keeps_status` | True for an adapter whose own connection's outcome is the bridge's status (GroupMe): a `start` that succeeds then does not mark the bridge connected. The default is false. |
 | `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room and the network's own conversation of it when the adapter stored one (`external_thread_id`, `store#MappingThread`), the kind, the text and HTML, the sender's name and local user, the message's files (`attachments`, its `ChatAttachment` rows in order), the network id of the message an edit, reaction or delete is about, the reaction key, the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. A request with no room is a direct send (`send#BridgeDirect`, below). |
 | `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers as an unsigned request (`WebhookResponse::not_signed`). |
 | `verify_webhook` | The signature step alone, for a disabled bridge and behind an edge node: whether the request is the network's. It keeps no replay state. The default refuses every request. |
@@ -107,14 +108,16 @@ screens leave the action out (`get#Room` `bridgeCapabilities`). An inbound edit 
 with the same reason; it is never shown as synchronized.
 
 `encryption` is how far the network keeps a message from others: `None` (the network and its providers read it: SMS and
-MMS, every SMS adapter, and GroupMe), `Transport` (TLS in transit only), `BridgeDecrypted` (end to end on the network, decrypted by
+MMS, every SMS adapter), `NoneByNetwork` (the same, and the adapter says so of its network: it has no end-to-end
+encryption at all; GroupMe), `Transport` (TLS in transit only), `BridgeDecrypted` (end to end on the network, decrypted by
 the bridge here: WhatsApp through a bridge) or `EndToEnd` (end to end through the bridge; none yet). An adapter that says
 nothing says `None`, and so does a bridge with no adapter in the build. `get#BridgeCapabilities` returns it, each bridge
 of `get#RoomBridges` (and so `get#Room`'s `bridges`) has it, and `find#Rooms` gives each room's `bridgeNetworks`
 (`{network, networkName, encryption, outbound}`). A bridged room is never end-to-end encrypted on this server, whatever
 the network does: its label (`moqui.chat.e2eeLabel`, [Comms-Messaging §6.2](../../plans/Comms-Messaging.md#62-labels))
-is the SMS one for a text; for a room whose bridges' networks all have `None` (GroupMe), "{network} has no end-to-end
-encryption, and the bridge reads messages to pass them on"; else "the bridge reads messages to pass them on". The room
+is the SMS one for a text; for a room whose bridges all say `NoneByNetwork` (GroupMe), "{network} has no end-to-end
+encryption, and the bridge reads messages to pass them on"; else "the bridge reads messages to pass them on" (`None`
+alone may be an adapter that said nothing). The room
 settings name each bridge's encryption.
 
 ## Input

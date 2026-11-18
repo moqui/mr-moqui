@@ -138,9 +138,9 @@ along with this software (see the LICENSE.md file). If not, see
             groupMeConnected = !!(groupMe.hasBridge && groupMe.statusId !== 'CbsDisabled')
             groupMeText = !groupMe.hasBridge ? L('Not connected. Paste your GroupMe access token to bring your groups, Topics and direct messages here.')
                 : groupMe.statusId === 'CbsDisabled' ? L('Disconnected. Your GroupMe rooms keep their history and no longer sync.')
-                : groupMe.connected ? ec.resource.expand('Connected, ${count} rooms.', '', {count: groupMe.roomCount || 0})
+                : groupMe.connected ? groupMe.statusText
                 : L('Not connected yet.')
-            groupMeError = groupMe.hasBridge && groupMe.statusId !== 'CbsConnected' ? (groupMe.lastErrorText || '') : ''
+            groupMeError = groupMe.hasBridge ? (groupMe.errorText || '') : ''
             groupMeForm = {accessToken: ''}
             groupMeButton = groupMe.hasBridge ? L('Connect again') : L('Connect')
         ]]></script>

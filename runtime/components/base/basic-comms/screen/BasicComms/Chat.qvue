@@ -2186,6 +2186,7 @@ const chatRoom = {
             if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
             if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
             if (encryption === 'Transport') return t('Encrypted in transit only: the network can read it');
+            if (encryption === 'NoneByNetwork') return t('Not encrypted: that network has no end-to-end encryption, and its servers can read it');
             return t('Not encrypted: the network and its providers can read it');
         },
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again

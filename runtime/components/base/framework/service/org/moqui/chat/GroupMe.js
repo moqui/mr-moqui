@@ -4,13 +4,18 @@
 // docs/interfaces/GroupMe.md). The adapter is crates/moqui-channels/src/groupme: it holds the push connection to
 // GroupMe and calls these internal operations with authorization off. A GroupMe bridge (ChatBridge typeEnumId
 // CbtGroupMe, adapter groupme) is one person's GroupMe account: its configJson (encrypted) holds the access token and
-// ownerUserId, the local user whose account it is.
+// ownerUserId, the local user whose account it is, which the row keeps plain too (ChatBridge.ownerUserId).
 //
-// - ensureRoom: the room of one group, Topic or direct conversation (a private room the owner owns), with its mapping.
+// - ensureRoom: the room of one group, Topic or direct conversation (a private room the owner owns), with its mapping
+//   and its catch-up mark (syncCursor).
 // - receiveLikes: the likes of one message as a state, turned into heart reactions and their removal through
 //   ingest#Event.
 // - getMine, connectMine, disconnectMine: the current user's own GroupMe bridge (Settings, Chat, GroupMe), unless the
 //   property chat_groupme_self_service is false. A user has at most one GroupMe bridge; the token is write-only.
+// - checkBridge: store#Bridge's checks of an administrator's GroupMe bridge.
+//
+// The adapter keeps a bridge's lastErrorText as "code: text" (tokenRefused, connectFailed, noToken, roomLimit,
+// disconnected); getMine gives the text of the code in the user's language.
 
 const BRIDGE = 'moqui.chat.ChatBridge'
 const ROOM = 'moqui.chat.ChatRoom'
@@ -23,12 +28,16 @@ const EXTERNAL_USER = 'moqui.chat.ChatExternalUser'
 const HEART = '❤️'
 const HEARTS = ['❤️', '❤', '♥️', '♥']
 const DEFAULT_MAX_ROOMS = 200
+const DEFAULT_MAX_DIRECT_ROOMS = 50
 
 const find = (entity) => ec.entity.find(entity).disableAuthz()
 const one = (entity, fields) => find(entity).condition(fields).one()
-const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const blank = (value) => value == null || String(value).trim() === ''
 const L = (text) => ec.l10n.localize(text)
+const nowMs = () => {
+  const at = Number(ec.user.nowTimestamp)
+  return Number.isNaN(at) ? new Date(String(ec.user.nowTimestamp)).getTime() : at
+}
 
 function configOf(bridge) {
   try {
@@ -49,18 +58,20 @@ function selfService() {
   return String(System.getProperty('chat_groupme_self_service') || '').trim().toLowerCase() !== 'false'
 }
 
-/** The GroupMe bridges whose owner is userId (their configJson read), oldest first. */
+/** The GroupMe bridges whose owner is userId (by the row's plain ownerUserId), oldest first. */
 function bridgesOf(userId) {
-  return Array.from(find(BRIDGE).condition('typeEnumId', 'CbtGroupMe').orderBy('createdDate').list())
-    .filter((bridge) => configOf(bridge).ownerUserId === userId)
+  if (blank(userId)) return []
+  return Array.from(find(BRIDGE).condition('typeEnumId', 'CbtGroupMe').condition('ownerUserId', userId).orderBy('createdDate').list())
 }
 
 /**
  * Internal (the adapter): the room of a group, Topic or direct conversation of a GroupMe bridge, found or made under the
- * bridge's row lock, with its mapping (externalRoomId g:<id> or dm:<user id>). The bridge's owner (its configJson's
- * ownerUserId) owns a new room and is its one local member; one who left stays out. A new name from GroupMe renames the
- * room while it still has GroupMe's last name. conversationId (a direct conversation's chat id) is the mapping's
- * externalThreadId. Refused past the bridge's maxRooms (tooManyRooms).
+ * bridge's row lock, with its mapping (externalRoomId g:<id> or dm:<user id>). The bridge's owner owns a new room and is
+ * its one local member; one who left stays out. A new name from GroupMe renames the room while it still has GroupMe's
+ * last name. conversationId (a direct conversation's chat id, a Topic's group) is the mapping's externalThreadId. A new
+ * mapping's catch-up mark is startCursor (GroupMe's newest message then). Past the bridge's maxRooms (200), or for a
+ * direct conversation its maxDirectRooms (50, inside maxRooms, so the groups the owner joins come first), nothing is
+ * made: reasonCode roomLimit, with no error. Out: chatRoomId, chatRoomBridgeId, syncCursor, created.
  */
 function ensureRoom(p) {
   const chatBridgeId = p.chatBridgeId
@@ -69,12 +80,14 @@ function ensureRoom(p) {
   const bridge = find(BRIDGE).condition('chatBridgeId', chatBridgeId).forUpdate(true).one()
   if (!bridge || bridge.typeEnumId !== 'CbtGroupMe') return refuse('unknownBridge', 'Not a GroupMe bridge')
   const config = configOf(bridge)
-  const owner = config.ownerUserId ? one('moqui.security.UserAccount', { userId: config.ownerUserId }) : null
+  const ownerId = bridge.ownerUserId || config.ownerUserId
+  const owner = ownerId ? one('moqui.security.UserAccount', { userId: ownerId }) : null
   if (!owner) return refuse('noOwner', 'The GroupMe bridge has no owner')
   const kind = ['group', 'topic', 'direct'].includes(p.kind) ? p.kind : 'group'
   const name = String(p.name || '').trim().slice(0, 200) || (kind === 'direct' ? L('GroupMe person') : L('GroupMe group'))
   const parentName = String(p.parentName || '').trim().slice(0, 200)
   const roomName = (kind === 'topic' && parentName ? parentName + ' › ' + name : name).slice(0, 255)
+  const conversation = blank(p.conversationId) ? null : String(p.conversationId).slice(0, 128)
   const now = ec.user.nowTimestamp
   let mapping = Array.from(find(MAPPING).condition('chatBridgeId', chatBridgeId).condition('externalRoomId', externalRoomId)
     .condition('thruDate', null).list())[0]
@@ -88,19 +101,26 @@ function ensureRoom(p) {
     }
     const fields = {}
     if (roomName !== mapping.externalRoomName) fields.externalRoomName = roomName
-    if (!blank(p.conversationId) && p.conversationId !== mapping.externalThreadId) fields.externalThreadId = String(p.conversationId).slice(0, 128)
+    if (conversation && conversation !== mapping.externalThreadId) fields.externalThreadId = conversation
+    if (blank(mapping.syncCursor) && !blank(p.startCursor)) fields.syncCursor = String(p.startCursor).slice(0, 128)
     if (Object.keys(fields).length) {
       mapping.setFields(fields, true, null, null)
       mapping.update()
     }
   } else {
     const maxRooms = Number(config.maxRooms) > 0 ? Math.floor(Number(config.maxRooms)) : DEFAULT_MAX_ROOMS
+    const maxDirect = Math.min(maxRooms, Number(config.maxDirectRooms) > 0 ? Math.floor(Number(config.maxDirectRooms)) : DEFAULT_MAX_DIRECT_ROOMS)
     const count = find(MAPPING).condition('chatBridgeId', chatBridgeId).condition('thruDate', null).count()
-    if (count >= maxRooms) return refuse('tooManyRooms', 'The GroupMe bridge has as many rooms as it may')
+    if (count >= maxRooms) return { reasonCode: 'roomLimit' }
+    if (kind === 'direct') {
+      const direct = find(MAPPING).condition('chatBridgeId', chatBridgeId).condition('thruDate', null)
+        .condition('externalRoomId', 'like', 'dm:%').count()
+      if (direct >= maxDirect) return { reasonCode: 'roomLimit' }
+    }
     room = ec.entity.makeValue(ROOM)
     room.setSequencedIdPrimary()
     const topic = kind === 'direct' ? L('GroupMe direct messages')
-      : kind === 'topic' ? ec.resource.expand('GroupMe Topic in ${group}', '', { group: parentName || name }) : L('GroupMe group')
+      : kind === 'topic' ? ec.resource.expand(L('GroupMe Topic in ${group}'), '', { group: parentName || name }) : L('GroupMe group')
     room.setFields({ roomTypeEnumId: 'CrtPrivate', roomName, topic, visibilityEnumId: 'CrvMembers', createdByUserId: owner.userId,
       createdDate: now, lastEventSeq: 0, lastEventDate: now }, true, null, null)
     room.create()
@@ -111,9 +131,8 @@ function ensureRoom(p) {
     }
     mapping = ec.entity.makeValue(MAPPING)
     mapping.setSequencedIdPrimary()
-    mapping.setFields({ chatRoomId: room.chatRoomId, chatBridgeId, externalRoomId, externalRoomName: roomName,
-      externalThreadId: blank(p.conversationId) ? null : String(p.conversationId).slice(0, 128), directionEnumId: 'CrbBoth', fromDate: now },
-    true, null, null)
+    mapping.setFields({ chatRoomId: room.chatRoomId, chatBridgeId, externalRoomId, externalRoomName: roomName, externalThreadId: conversation,
+      syncCursor: blank(p.startCursor) ? null : String(p.startCursor).slice(0, 128), directionEnumId: 'CrbBoth', fromDate: now }, true, null, null)
     mapping.create()
     created = true
   }
@@ -129,7 +148,7 @@ function ensureRoom(p) {
       changeKind: 'membership', chatRoomId: room.chatRoomId, change: { member: true, roleEnumId: 'CmrOwner', action: 'joined' },
       pushMessage: { kind: 'room', action: 'joined', chatRoomId: room.chatRoomId } }]).disableAuthz().call()
   }
-  return { chatRoomId: room.chatRoomId, chatRoomBridgeId: mapping.chatRoomBridgeId, created }
+  return { chatRoomId: room.chatRoomId, chatRoomBridgeId: mapping.chatRoomBridgeId, syncCursor: mapping.syncCursor || null, created }
 }
 
 /** A short hash of a text (FNV-1a, 32 bits, hex): a transaction id's part. */
@@ -146,9 +165,10 @@ function hashOf(text) {
  * Internal (the adapter, inside its transport mark): the likes of GroupMe message messageId in externalRoomId as a
  * state, likedByList its likers' GroupMe ids. The heart reactions of the room's GroupMe people on the message are made
  * to match: a reaction for each new liker, a redaction of the latest like of each liker who took it back, through
- * ingest#Event, one transaction per state (so a repeat, or another node's, is a duplicate). ownGroupMeId (the token's
- * user) counts as liked while the owner has a local heart on it, so the owner's own like does not come back as a second
- * heart. nameMap: GroupMe id to name. Out: outcome (unchanged, unknownMessage, sent), added, removed.
+ * ingest#Event. Each change is a transaction of its own (the state and the time), so a like after an unlike after a like
+ * is applied again; a state that changes nothing sends nothing. ownGroupMeId (the token's user) counts as liked while the
+ * owner has a local heart on it, so the owner's own like does not come back as a second heart. nameMap: GroupMe id to
+ * name. Out: outcome (unchanged, unknownMessage, sent), added, removed.
  */
 function receiveLikes(p) {
   const chatBridgeId = p.chatBridgeId
@@ -158,7 +178,7 @@ function receiveLikes(p) {
   const target = one(EXTERNAL, { chatBridgeId, externalRoomId, externalEventId: messageId })
   if (!target || target.eventSeq == null) return { outcome: 'unknownMessage', added: 0, removed: 0 }
   const bridge = one(BRIDGE, { chatBridgeId })
-  const owner = configOf(bridge).ownerUserId
+  const owner = (bridge && bridge.ownerUserId) || configOf(bridge).ownerUserId
   const wanted = new Set(Array.from(p.likedByList || []).map((id) => String(id)).filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id)))
   const names = p.nameMap && typeof p.nameMap === 'object' ? p.nameMap : {}
   const own = blank(p.ownGroupMeId) ? null : String(p.ownGroupMeId)
@@ -176,8 +196,7 @@ function receiveLikes(p) {
     current.set(person.externalUserId, row)
   }
   const items = []
-  const at = Number(ec.user.nowTimestamp)
-  const stamp = String(Number.isNaN(at) ? new Date(String(ec.user.nowTimestamp)).getTime() : at)
+  const stamp = String(nowMs())
   for (const id of wanted) {
     if (current.has(id) || (id === own && ownerHeart)) continue
     items.push({ itemId: 'like-' + id, type: 'reaction', externalRoomId, externalEventId: `like:${messageId}:${id}:${stamp}`, externalUserId: id,
@@ -192,10 +211,25 @@ function receiveLikes(p) {
       relatesToExternalEventId: mapped.externalEventId })
   }
   if (!items.length) return { outcome: 'unchanged', added: 0, removed: 0 }
-  const transactionId = ('gml:' + messageId + ':' + hashOf(Array.from(wanted).sort().join(','))).slice(0, 128)
+  // the state and the time: a state seen again later (a like after an unlike) is a change of its own
+  const transactionId = ('gml:' + messageId + ':' + hashOf(Array.from(wanted).sort().join(',')) + ':' + stamp).slice(0, 128)
   ec.service.sync().name('org.moqui.chat.ChatBridgeServices.ingest#Event').parameters({ chatBridgeId, transactionId, transportVerified: true,
     itemList: items }).disableAuthz().call()
   return { outcome: 'sent', added: items.filter((item) => item.type === 'reaction').length, removed: items.filter((item) => item.type === 'redaction').length }
+}
+
+/** The words of a GroupMe bridge's status code (its lastErrorText "code: text"), in the user's language; null for none. */
+function errorTextOf(lastErrorText) {
+  if (blank(lastErrorText)) return null
+  const code = String(lastErrorText).split(':')[0].trim()
+  const texts = {
+    tokenRefused: 'GroupMe refused the access token: paste a new one.',
+    connectFailed: 'GroupMe could not be reached. The bridge tries again on its own.',
+    noToken: 'Paste your GroupMe access token to connect.',
+    roomLimit: 'The room limit is reached: new groups and conversations are not brought in.',
+    disconnected: 'Disconnected by you. Your GroupMe rooms keep their history and no longer sync.',
+  }
+  return texts[code] ? L(texts[code]) : String(lastErrorText)
 }
 
 /** What the current user's own GroupMe bridge shows (Settings, Chat): the bridge's status, never its token. */
@@ -207,16 +241,19 @@ function getMine() {
   if (!bridge) return { enabled, connected: false, hasBridge: false }
   const config = configOf(bridge)
   const roomCount = find(MAPPING).condition('chatBridgeId', bridge.chatBridgeId).condition('thruDate', null).count()
-  const statusText = bridge.statusId === 'CbsConnected' ? L('Connected')
+  const connected = bridge.statusId === 'CbsConnected'
+  const statusText = connected ? ec.resource.expand(L('Connected, ${count} rooms.'), '', { count: roomCount })
     : bridge.statusId === 'CbsDisabled' ? L('Disconnected') : L('Not connected')
-  return { enabled, hasBridge: true, chatBridgeId: bridge.chatBridgeId, statusId: bridge.statusId, statusText,
-    connected: bridge.statusId === 'CbsConnected', hasToken: !blank(config.accessToken), roomCount,
-    lastErrorText: bridge.lastErrorText || null, lastStatusDate: bridge.lastStatusDate || null }
+  const code = blank(bridge.lastErrorText) ? null : String(bridge.lastErrorText).split(':')[0].trim()
+  // a connected bridge shows only the room limit; another shows its last error
+  const errorText = connected ? (code === 'roomLimit' ? errorTextOf(bridge.lastErrorText) : null) : errorTextOf(bridge.lastErrorText)
+  return { enabled, hasBridge: true, chatBridgeId: bridge.chatBridgeId, statusId: bridge.statusId, statusText, connected,
+    hasToken: !blank(config.accessToken), roomCount, errorCode: code, errorText, lastStatusDate: bridge.lastStatusDate || null }
 }
 
 /**
  * Connect the current user's own GroupMe (Settings, Chat, GroupMe): their access token makes their GroupMe bridge, or
- * replaces its token and connects it again. An empty token keeps the one kept (to connect again after a disconnect).
+ * replaces its token and connects it again. An empty token keeps the one kept (to connect again after a failure).
  * Refused when the property chat_groupme_self_service is false (selfServiceOff).
  */
 function connectMine(p) {
@@ -234,16 +271,18 @@ function connectMine(p) {
     const account = one('moqui.security.UserAccount', { userId: me })
     bridge = ec.entity.makeValue(BRIDGE)
     bridge.setSequencedIdPrimary()
-    bridge.setFields({ typeEnumId: 'CbtGroupMe', adapterName: 'groupme', name: ec.resource.expand('GroupMe of ${name}', '',
-      { name: (account && (account.userFullName || account.username)) || me }), configJson: JSON.stringify({ accessToken: token, ownerUserId: me }),
-    statusId: 'CbsNotConnected', lastStatusDate: now, createdDate: now }, true, null, null)
+    bridge.setFields({ typeEnumId: 'CbtGroupMe', adapterName: 'groupme', ownerUserId: me,
+      name: ec.resource.expand(L('GroupMe of ${name}'), '', { name: (account && (account.userFullName || account.username)) || me }),
+      configJson: JSON.stringify({ accessToken: token, ownerUserId: me }), statusId: 'CbsNotConnected', lastStatusDate: now, createdDate: now },
+    true, null, null)
     bridge.create()
   } else {
     const config = configOf(bridge)
     if (!token && blank(config.accessToken)) return refuse('tokenRequired', 'Paste your GroupMe access token')
     if (token) config.accessToken = token
     config.ownerUserId = me
-    bridge.setFields({ configJson: JSON.stringify(config), statusId: 'CbsNotConnected', lastStatusDate: now, lastErrorText: null }, true, null, null)
+    bridge.setFields({ configJson: JSON.stringify(config), ownerUserId: me, statusId: 'CbsNotConnected', lastStatusDate: now,
+      lastErrorText: null, retryDate: null }, true, null, null)
     bridge.update()
   }
   ec.service.sync().name('org.moqui.chat.ChatServices.wake#BridgeDelivery').disableAuthz().call()
@@ -261,8 +300,8 @@ function disconnectMine() {
   if (!bridge) return { chatBridgeId: null }
   const config = configOf(bridge)
   delete config.accessToken
-  bridge.setFields({ configJson: JSON.stringify(config), statusId: 'CbsDisabled', lastStatusDate: ec.user.nowTimestamp,
-    lastErrorText: L('Disconnected by its owner: the rooms keep their history and no longer sync with GroupMe') }, true, null, null)
+  bridge.setFields({ configJson: JSON.stringify(config), statusId: 'CbsDisabled', lastStatusDate: ec.user.nowTimestamp, retryDate: null,
+    lastErrorText: 'disconnected: Disconnected by its owner: the rooms keep their history and no longer sync with GroupMe' }, true, null, null)
   bridge.update()
   ec.service.sync().name('org.moqui.chat.ChatServices.wake#BridgeDelivery').disableAuthz().call()
   return { chatBridgeId: bridge.chatBridgeId }
@@ -270,8 +309,9 @@ function disconnectMine() {
 
 /**
  * Internal (store#Bridge, an administrator's change of a GroupMe bridge): refusal text for a configuration that is not
- * a GroupMe bridge's, else null: the adapter groupme, an access token and an owner who is a user, the owner unchanged
- * while the bridge has rooms (ownerFixed), and no other GroupMe bridge of that owner (oneBridge).
+ * a GroupMe bridge's, else no reasonCode: the adapter groupme, an access token and an owner who is a user, the owner
+ * unchanged while the bridge has rooms (ownerFixed), and no other GroupMe bridge of that owner (oneBridge). Out also
+ * ownerUserId, which store#Bridge keeps plain on the row.
  */
 function checkBridge(p) {
   if (p.adapterName && p.adapterName !== 'groupme') return { reasonCode: 'badAdapter', message: L('A GroupMe bridge\'s adapter is groupme') }
@@ -281,14 +321,15 @@ function checkBridge(p) {
   if (blank(config.ownerUserId) || !one('moqui.security.UserAccount', { userId: config.ownerUserId }))
     return { reasonCode: 'noOwner', message: L('A GroupMe bridge needs ownerUserId, the user whose account it is') }
   if (!blank(p.chatBridgeId)) {
-    const before = configOf(one(BRIDGE, { chatBridgeId: p.chatBridgeId }))
+    const before = one(BRIDGE, { chatBridgeId: p.chatBridgeId })
+    const beforeOwner = before ? before.ownerUserId || configOf(before).ownerUserId : null
     const rooms = find(MAPPING).condition('chatBridgeId', p.chatBridgeId).count()
-    if (rooms && before.ownerUserId && before.ownerUserId !== config.ownerUserId)
+    if (rooms && beforeOwner && beforeOwner !== config.ownerUserId)
       return { reasonCode: 'ownerFixed', message: L('A GroupMe bridge with rooms keeps its owner') }
   }
   if (bridgesOf(config.ownerUserId).some((bridge) => bridge.chatBridgeId !== p.chatBridgeId))
     return { reasonCode: 'oneBridge', message: L('That user has a GroupMe bridge already') }
-  return { reasonCode: null, message: null }
+  return { reasonCode: null, message: null, ownerUserId: config.ownerUserId }
 }
 
 const operations = { ensureRoom, receiveLikes, getMine, connectMine, disconnectMine, checkBridge }

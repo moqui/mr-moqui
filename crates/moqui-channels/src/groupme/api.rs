@@ -57,6 +57,20 @@ impl ApiError {
         }
     }
 
+    /// The outcome of a failure before the message was posted (a picture's upload, the account's id): nothing reached
+    /// the conversation, so anything but a refusal is tried again, never uncertain.
+    pub fn before_post(&self, what: &str) -> DeliveryOutcome {
+        match self {
+            ApiError::Status { status, .. } if (400..500).contains(status) && !self.rate_limited() => {
+                self.outcome(what)
+            }
+            _ => DeliveryOutcome::Retry {
+                error: format!("{what}: {}", self.text()),
+                not_connected: false,
+            },
+        }
+    }
+
     /// A send's outcome for this failure, `what` naming what did not go.
     pub fn outcome(&self, what: &str) -> DeliveryOutcome {
         let error = format!("{what}: {}", self.text());
@@ -66,7 +80,7 @@ impl ApiError {
         };
         match self {
             ApiError::Status { status: 401, .. } => DeliveryOutcome::Retry {
-                error: format!("GroupMe refused the access token: get a new one (docs/interfaces/GroupMe.md). {error}"),
+                error: format!("{}. {error}", super::push::REFUSED),
                 not_connected: true,
             },
             ApiError::Status {

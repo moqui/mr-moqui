@@ -2606,6 +2606,36 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   - After a refused token the thread asks for the bridge every 10 s during its wait, so a new token connects within
     seconds, not at once.
   - Settings, Chat is an XML screen that renders in both modes, so the terminal has the GroupMe section too.
+- Review fixes (2026-11-17):
+  - **Re-likes.** A likes state's transaction id has the time too, so a like after an unlike after a like applies.
+  - **The catch-up mark.** `ChatRoomBridge.syncCursor` replaces "the room's newest mapped event". It moves past a page
+    taken whole; a failed page or message, or the page cap (`catchUpPageSize`, `catchUpPages`), stops it there, and the
+    next run (within a minute) resumes. A pushed message moves it only in a caught-up room.
+  - **Redirects.** The token's calls follow none; a file follows at most three, each to the file hosts only.
+  - **The label.** `Encryption::NoneByNetwork`, which only the GroupMe adapter says, is what the label names a network
+    by; `None` alone stays the plain bridged label.
+  - **One coordinator a node**, not a thread per bridge on every node.
+    - It lists the GroupMe bridges in one query and claims or renews all their leases in one pass (`claim_all`), up to
+      `chat_groupme_node_max` (50), and runs a session thread only for each bridge it holds.
+    - The leases are renewed apart from the sessions, so no step outlasts them; a long poll is at most 60 + 15 s.
+    - Each coordinator claims under its own token, so an old one never frees a new one's lease.
+    - A bridge's configuration is read again only when its `lastUpdatedStamp` moved.
+    - A long wait is kept as `ChatBridge.retryDate`, so a hand-over waits it out.
+    - A panic in a pass is caught, and the next pass runs; a coordinator that ended starts again at the next `start`.
+  - **The status.** The adapter says `keeps_status`, so the worker's `start` no longer marks it connected; only the
+    holder's session writes it, only when the row says otherwise. The last error is a code and a text (`tokenRefused`,
+    `connectFailed`, `noToken`, `roomLimit`, `disconnected`), which Settings, Chat says in the user's language.
+  - **Outcomes.** A picture's or the account's failure before the post is `Retry`. A 500, 502, 503 or lost answer looks
+    the message up; not found, it is tried again within the first three attempts (GroupMe's minute of dedupe), then
+    uncertain.
+  - **Direct messages.** The answer's `message` (the community's docs), else `direct_message`; its chat id is kept when
+    new.
+  - **`@room` in a Topic** mentions its group's members (the Topic mapping's `externalThreadId` is its group). With the
+    members unread, or more than 100 others, `@all` goes as text alone.
+  - **Room limits.** `maxDirectRooms` (50) inside `maxRooms`, so groups come before strangers' messages; a refusal is
+    kept an hour per conversation; the status says "room limit reached".
+  - **Owner.** `ChatBridge.ownerUserId`, kept plain, finds a user's own bridge without reading every configuration.
+  - `Config`'s `Debug` hides the token; the screen and service texts go through `ec.l10n.localize`.
 - Left:
   - the live test with GroupMe, and the facts not confirmed (`docs/interfaces/GroupMe.md`, "Not confirmed");
   - what "Left out" names.

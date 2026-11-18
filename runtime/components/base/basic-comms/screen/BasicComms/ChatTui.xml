@@ -152,8 +152,8 @@ along with this software (see the LICENSE.md file). If not, see
                     const roomBridges = Array.from(room.bridges || [])
                     const sms = room.roomTypeEnumId === 'CrtExternal' || roomBridges.some((bridge) => bridge.network === 'sms')
                     const otherBridge = roomBridges.some((bridge) => bridge.network !== 'sms')
-                    // a network with no E2EE of its own (GroupMe) says so
-                    const plainNetworks = roomBridges.length && roomBridges.every((bridge) => bridge.encryption === 'None')
+                    // a network its adapter says has no E2EE at all (GroupMe, NoneByNetwork) says so
+                    const plainNetworks = roomBridges.length && roomBridges.every((bridge) => bridge.encryption === 'NoneByNetwork')
                         ? Array.from(new Set(roomBridges.map((bridge) => bridge.networkName || bridge.name).filter((name) => name))).join(', ') : ''
                     // a record's room kept to its members is a plain private room
                     const open = room.roomTypeEnumId === 'CrtPublic' || ['CrvUsers', 'CrvRecord'].includes(room.visibilityEnumId)

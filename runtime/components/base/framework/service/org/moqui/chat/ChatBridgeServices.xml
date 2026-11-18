@@ -1095,6 +1095,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const check = ec.service.sync().name('org.moqui.chat.GroupMeServices.check#Bridge').parameters({chatBridgeId: created ? null : row.chatBridgeId,
                     adapterName: adapter, configJson: row.configJson}).disableAuthz().call() || {}
                 if (check.reasonCode) { ec.message.addError(check.message || check.reasonCode); return }
+                // the owner kept plain, so their own bridge is found without reading every configuration
+                row.set('ownerUserId', check.ownerUserId)
             }
             // an RCS bridge (plans/Comms-Messaging.md §16, phase 10): one number, its home number, never the system's
             if (row.typeEnumId === 'CbtRcs' && !created) {

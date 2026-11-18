@@ -1609,8 +1609,9 @@
                     : tr("Not end-to-end encrypted. Texts go through the phone network and the SMS provider.");
                 return label("sms", false, banner, { hint: hints.join(" · ") });
             }
-            // a network with no E2EE of its own (GroupMe): it says so
-            if (bridges.length && bridges.every((bridge) => bridge.encryption === "None") && namesOf(bridges)) {
+            // a network its adapter says has no E2EE at all (GroupMe: NoneByNetwork; None alone may be an adapter that said
+            // nothing): it says so
+            if (bridges.length && bridges.every((bridge) => bridge.encryption === "NoneByNetwork") && namesOf(bridges)) {
                 return label("bridged", false, fillIn(tr("Not end-to-end encrypted. {network} has no end-to-end encryption, and the bridge reads messages to pass them on."),
                     { network: namesOf(bridges) }), { hint: hints.join(" · ") });
             }

@@ -152,6 +152,9 @@ pub enum Encryption {
     /// None: the network and its providers read every message (SMS and MMS). An adapter that says nothing says this.
     #[default]
     None,
+    /// None, and the adapter says so of its network: it has no end-to-end encryption at all (GroupMe). The room's label
+    /// names the network; [`Encryption::None`] alone may be an adapter that said nothing.
+    NoneByNetwork,
     /// In transit only (TLS to and between servers): the provider and the network's servers read it.
     Transport,
     /// End to end on the network, decrypted by the bridge on this server and encrypted again (WhatsApp through a bridge).
@@ -165,6 +168,7 @@ impl Encryption {
     pub fn as_str(self) -> &'static str {
         match self {
             Encryption::None => "None",
+            Encryption::NoneByNetwork => "NoneByNetwork",
             Encryption::Transport => "Transport",
             Encryption::BridgeDecrypted => "BridgeDecrypted",
             Encryption::EndToEnd => "EndToEnd",
@@ -257,6 +261,12 @@ pub trait ChatBridgeAdapter: Send + Sync {
     fn start(&self, bridge: &BridgeInfo) -> Result<(), String> {
         let _ = bridge;
         Ok(())
+    }
+    /// Whether the adapter keeps the bridge's status itself (a connection of its own, which only the node holding it
+    /// knows the outcome of): then a [`Self::start`] that succeeds does not mark the bridge connected. The default is
+    /// false.
+    fn keeps_status(&self) -> bool {
+        false
     }
     /// Disconnect it (disabled, or the server stopping).
     fn stop(&self, chat_bridge_id: &str) {
@@ -1032,6 +1042,7 @@ fn lifecycle(
     if started {
         return;
     }
+    let keeps_status = adapter.as_ref().is_some_and(|adapter| adapter.keeps_status());
     let outcome = match adapter {
         None => Err(format!(
             "No chat bridge adapter {} in this build",
@@ -1049,7 +1060,10 @@ fn lifecycle(
     match outcome {
         Ok(()) => {
             lock(&worker.state).started_bridges.insert(info.chat_bridge_id.clone());
-            set_status(facade, &info.chat_bridge_id, "CbsConnected", None, now);
+            // an adapter that keeps the status itself writes the real outcome of its connection
+            if !keeps_status {
+                set_status(facade, &info.chat_bridge_id, "CbsConnected", None, now);
+            }
         }
         // the same failure again (each round tries) is not logged or written again
         Err(error) if status == "CbsNotConnected" && last_error == Some(error.as_str()) => {}

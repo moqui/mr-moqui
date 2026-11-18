@@ -14,27 +14,32 @@
 
 //! The GroupMe adapter, `groupme` (plans/Comms-Messaging.md §18.3 phase 14, docs/interfaces/GroupMe.md): one person's
 //! GroupMe account, on GroupMe's public API v3 with their access token, as a bridge of type `CbtGroupMe`. Not yet
-//! tested with GroupMe: it is built against a fake GroupMe (`tests/groupme.rs`).
+//! tested with GroupMe: it is built against a fake GroupMe (`groupme/tests.rs`).
 //!
-//! - **The rooms.** Each group (`g:<group id>`), each Topic (`g:<topic id>`, "Group › Topic") and each direct
-//!   conversation (`dm:<their id>`, its chat id the mapping's `externalThreadId`) is a private room the bridge's owner
-//!   (`configJson.ownerUserId`) owns, made by `org.moqui.chat.GroupMeServices.ensure#Room`.
-//! - **In** ([`push`], [`events`]): GroupMe's push channel (Faye long-polling over HTTPS, `push.groupme.com/faye`), one
-//!   thread a bridge that [`ChatBridgeAdapter::start`] spawns and that holds the bridge's lease
-//!   (`moqui.edge.EdgeSenderLock` `groupme:<bridge>`), so one node of a cluster connects and another takes over when it
+//! - **The rooms.** Each group (`g:<group id>`), each Topic (`g:<topic id>`, "Group › Topic", its group the mapping's
+//!   `externalThreadId`) and each direct conversation (`dm:<their id>`, its chat id the mapping's `externalThreadId`) is
+//!   a private room the bridge's owner (`ChatBridge.ownerUserId`) owns, made by `GroupMeServices.ensure#Room`.
+//! - **In** ([`push`], [`events`]): GroupMe's push channel (Faye long-polling over HTTPS, `push.groupme.com/faye`). One
+//!   coordinator thread a node ([`push::Coordinator`]) claims the leases of all GroupMe bridges in one pass and runs a
+//!   session only for the bridges it holds, so one node of a cluster connects each and another takes over when it
 //!   stops. After each subscription, and every `syncMinutes`, a catch-up through the messages API (the polling
-//!   fallback). Each message is one `ingest#Event` batch (`gm:<message id>`) under the bridge's transport mark: the
-//!   adapter's own TLS connection, signed in with the token, is the transport check. No webhook.
+//!   fallback), from each room's mark (`ChatRoomBridge.syncCursor`). Each message is one `ingest#Event` batch
+//!   (`gm:<message id>`) under the bridge's transport mark: the adapter's own TLS connection, signed in with the token,
+//!   is the transport check. No webhook. The adapter keeps the bridge's status itself ([`ChatBridgeAdapter::keeps_status`]):
+//!   only the session that holds the connection writes it.
 //! - **Out** ([`ChatBridgeAdapter::deliver`]): only the owner's events (`notBridgeOwner`). A message with the
 //!   delivery's idempotency key as `source_guid`, pictures through the image service, `@room` as `@all` with every
-//!   member mentioned; a heart reaction as a like, its removal as an unlike; nothing else (`reactionNotCarried`,
-//!   `fileNotCarried`, `bridgeUnsupported`).
+//!   member mentioned (up to [`MAX_MENTIONS`]); a heart reaction as a like, its removal as an unlike; nothing else
+//!   (`reactionNotCarried`, `fileNotCarried`, `bridgeUnsupported`).
+//! - **Redirects.** A call that carries the token follows none; a file fetched from GroupMe follows at most three, each
+//!   hop to GroupMe's file hosts only.
 //!
 //! The settings, from the bridge's `configJson` ([`Config`]): `accessToken` and `ownerUserId` (both required),
-//! `groupIds` (empty: every group), `skipGroupIds`, `topics` and `directMessages` (both true), `maxRooms` (200; read by
-//! `ensure#Room`), `syncMinutes` (60), `sendsPerMinute` (20), `maxImageBytes` (10 MB), `maxInboundMediaBytes` (20 MiB at
-//! most), `apiBaseUrl`, `imageBaseUrl`, `pushUrl`, and for a test's fake `allowInternalAddresses` (never on
-//! production), `mediaBaseUrl` (where its files are) and `push` (false: no thread; a test drives [`push::Session`]).
+//! `groupIds` (empty: every group), `skipGroupIds`, `topics` and `directMessages` (both true), `maxRooms` (200) and
+//! `maxDirectRooms` (50; both read by `ensure#Room`), `syncMinutes` (60), `sendsPerMinute` (20), `maxImageBytes` (10 MB),
+//! `maxInboundMediaBytes` (20 MiB at most), `catchUpPageSize` (100) and `catchUpPages` (5), `apiBaseUrl`,
+//! `imageBaseUrl`, `pushUrl`, and for a test's fake `allowInternalAddresses` (never on production), `mediaBaseUrl`
+//! (where its files are) and `push` (false: no session; a test drives [`push::Session`]).
 
 pub mod api;
 pub mod events;
@@ -43,7 +48,6 @@ pub mod push;
 mod tests;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -66,6 +70,8 @@ pub const ADAPTER: &str = "groupme";
 pub const MEDIA_CAP: u64 = 20 * 1024 * 1024;
 /// GroupMe's longest message (dev.groupme.com, messages create).
 pub const MAX_TEXT: usize = 1000;
+/// The most people an `@all` mentions; a larger group gets the text `@all` alone.
+pub const MAX_MENTIONS: usize = 100;
 /// The prefix of every `source_guid` this server sends (the delivery's idempotency key): a message of the owner's that
 /// comes back with it is the echo of a send.
 pub const OUR_GUID: &str = "moqui-chat:";
@@ -73,12 +79,17 @@ pub const OUR_GUID: &str = "moqui-chat:";
 pub const HEARTS: [&str; 4] = ["❤️", "❤", "♥️", "♥"];
 /// GroupMe's two file hosts, the only ones a message's files are fetched from.
 pub const MEDIA_HOSTS: [&str; 2] = ["https://i.groupme.com/", "https://v.groupme.com/"];
+/// The most redirects a file fetch follows, each to a file host.
+const MEDIA_REDIRECTS: usize = 3;
+/// A send's attempts within GroupMe's one minute of `source_guid` dedupe (the delivery worker's waits: 5 s, then
+/// 30 s): a send not found after a 502 or 503 is tried again only that long, then it is uncertain.
+const RETRY_ATTEMPTS: i64 = 3;
 const MEMBERS_KEPT: Duration = Duration::from_secs(600);
 
 // ---- the settings ----
 
-/// A GroupMe bridge's settings (see the module notes).
-#[derive(Clone, Debug)]
+/// A GroupMe bridge's settings (see the module notes). Its `Debug` never shows the token.
+#[derive(Clone)]
 pub struct Config {
     pub token: Option<String>,
     pub owner: Option<String>,
@@ -89,7 +100,7 @@ pub struct Config {
     /// A test's fake: its files' base, else none.
     pub media_base: Option<String>,
     pub allow_internal: bool,
-    /// Whether [`ChatBridgeAdapter::start`] spawns the push thread.
+    /// Whether the node's coordinator runs a session for the bridge.
     pub push: bool,
     pub group_ids: Vec<String>,
     pub skip_group_ids: Vec<String>,
@@ -99,6 +110,29 @@ pub struct Config {
     pub sends_per_minute: u32,
     pub max_image_bytes: i64,
     pub max_inbound_media_bytes: u64,
+    pub page_size: usize,
+    pub pages: usize,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("token", &self.token.as_ref().map(|_| "[redacted]"))
+            .field("owner", &self.owner)
+            .field("api_base", &self.api_base)
+            .field("image_base", &self.image_base)
+            .field("push_url", &self.push_url)
+            .field("media_base", &self.media_base)
+            .field("allow_internal", &self.allow_internal)
+            .field("push", &self.push)
+            .field("group_ids", &self.group_ids)
+            .field("skip_group_ids", &self.skip_group_ids)
+            .field("topics", &self.topics)
+            .field("direct_messages", &self.direct_messages)
+            .field("sync_minutes", &self.sync_minutes)
+            .field("sends_per_minute", &self.sends_per_minute)
+            .finish_non_exhaustive()
+    }
 }
 
 fn list_of(config: &Json, key: &str) -> Vec<String> {
@@ -138,6 +172,13 @@ impl Config {
                 .to_string()
         };
         let allow_internal = !moqui_core::web::is_production() && flag_of(config, "allowInternalAddresses");
+        let count = |key: &str, default: usize, max: usize| {
+            number_of(config, key)
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(default)
+                .min(max)
+        };
         Self {
             token: text_of(config, "accessToken"),
             owner: text_of(config, "ownerUserId"),
@@ -169,25 +210,27 @@ impl Config {
                 .filter(|n| *n > 0)
                 .unwrap_or(MEDIA_CAP)
                 .min(MEDIA_CAP),
+            page_size: count("catchUpPageSize", 100, 100),
+            pages: count("catchUpPages", 5, 50),
         }
     }
 
-    /// What is missing or unsafe for the bridge to connect.
+    /// What is missing or unsafe for the bridge to connect, as `code: text` (the bridge's last error).
     ///
     /// # Errors
     ///
-    /// The first problem, in words.
+    /// The first problem.
     pub fn check(&self) -> Result<(), String> {
         if self.token.is_none() {
-            return Err("The GroupMe bridge has no accessToken".to_string());
+            return Err("noToken: The GroupMe bridge has no accessToken".to_string());
         }
         if self.owner.is_none() {
-            return Err("The GroupMe bridge has no ownerUserId".to_string());
+            return Err("noOwner: The GroupMe bridge has no ownerUserId".to_string());
         }
         // the token goes with every request, so never in clear text, except to a test's fake (allowInternalAddresses)
         for base in [&self.api_base, &self.image_base, &self.push_url] {
             if !(base.starts_with("https://") || (self.allow_internal && base.starts_with("http://"))) {
-                return Err(format!("The GroupMe bridge's {base} is not an https address"));
+                return Err(format!("notHttps: The GroupMe bridge's {base} is not an https address"));
             }
         }
         Ok(())
@@ -205,6 +248,15 @@ impl Config {
             Some(token) if !token.is_empty() => text.replace(token, "[token]"),
             _ => text.to_string(),
         }
+    }
+
+    /// Whether `url` is on GroupMe's file hosts (or under a test's fake's file base).
+    pub fn media_url(&self, url: &str) -> bool {
+        MEDIA_HOSTS.iter().any(|host| url.starts_with(host))
+            || self
+                .media_base
+                .as_deref()
+                .is_some_and(|base| url.starts_with(&format!("{base}/")))
     }
 
     /// What a connection depends on: a change starts a new handshake.
@@ -271,39 +323,62 @@ pub fn chat_id(own: &str, other: &str) -> String {
 
 // ---- the adapter ----
 
-/// What the adapter keeps between calls, shared with its push threads.
+/// What the adapter keeps between calls, shared with its node's coordinator.
 #[derive(Default)]
 pub struct Inner {
-    public: OnceLock<RestClient>,
-    internal: OnceLock<RestClient>,
-    /// Each bridge's push thread's stop flag.
-    threads: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// For calls that carry the token: no redirects, public addresses only (but a test's fake).
+    api_public: OnceLock<RestClient>,
+    api_internal: OnceLock<RestClient>,
+    /// For GroupMe's files: no redirects of its own; [`Inner::fetch`] follows each to a file host only.
+    media_public: OnceLock<RestClient>,
+    media_internal: OnceLock<RestClient>,
     /// Each bridge's token user (by its config's fingerprint): `/users/me`'s id.
     own: Mutex<HashMap<String, (String, String)>>,
     /// Each group's members' ids, for `@all`, for a while.
     members: Mutex<HashMap<String, (Instant, Vec<String>)>>,
+    /// This node's coordinator, once a bridge started.
+    coordinator: Mutex<Option<Arc<push::Coordinator>>>,
+    /// The coordinator's timing (a test's own, else the defaults).
+    timing: Mutex<Option<push::Timing>>,
+}
+
+fn client(cell: &OnceLock<RestClient>, deny_internal: bool) -> &RestClient {
+    cell.get_or_init(|| {
+        RestClient::new()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .max_response_bytes(MEDIA_CAP)
+            // the token never follows a redirect, and a file's redirects are followed by hand, each checked
+            .redirects(0, false)
+            .deny_internal_addresses(deny_internal)
+    })
 }
 
 impl Inner {
-    /// The guarded client: public addresses only, but a test's fake.
-    pub fn client(&self, allow_internal: bool) -> &RestClient {
-        let make = |deny: bool| {
-            RestClient::new()
-                .timeout(Duration::from_secs(30))
-                .connect_timeout(Duration::from_secs(10))
-                .max_response_bytes(MEDIA_CAP)
-                .redirects(3, true)
-                .deny_internal_addresses(deny)
-        };
+    /// The client of calls that carry the token: it follows no redirect.
+    pub fn api_client(&self, allow_internal: bool) -> &RestClient {
         if allow_internal {
-            self.internal.get_or_init(|| make(false))
+            client(&self.api_internal, false)
         } else {
-            self.public.get_or_init(|| make(true))
+            client(&self.api_public, true)
+        }
+    }
+
+    fn media_client(&self, allow_internal: bool) -> &RestClient {
+        if allow_internal {
+            client(&self.media_internal, false)
+        } else {
+            client(&self.media_public, true)
         }
     }
 
     pub fn api<'a>(&'a self, config: &'a Config) -> Api<'a> {
-        Api::new(self.client(config.allow_internal), config)
+        Api::new(self.api_client(config.allow_internal), config)
+    }
+
+    /// The coordinator's timing.
+    pub fn timing(&self) -> push::Timing {
+        lock(&self.timing).clone().unwrap_or_default()
     }
 
     /// The token's GroupMe user id, asked once a configuration.
@@ -348,6 +423,57 @@ impl Inner {
         lock(&self.members).insert(group_id.to_string(), (Instant::now(), ids.clone()));
         Ok(ids)
     }
+
+    /// A file from GroupMe's file hosts, within `max` bytes: each redirect followed only to a file host.
+    fn fetch(&self, config: &Config, url: &str, max: u64) -> Result<FetchedMedia, String> {
+        let mut at = url.to_string();
+        for _ in 0..=MEDIA_REDIRECTS {
+            if !config.media_url(&at) {
+                return Err("a file not on GroupMe's file hosts is not fetched".to_string());
+            }
+            let response = self
+                .media_client(config.allow_internal)
+                .get(at.clone())
+                .timeout(Duration::from_secs(20))
+                .max_response_bytes(max)
+                .send(false)
+                .map_err(|error| {
+                    if error.message().contains("larger than the limit") {
+                        format!("the file is over {max} bytes")
+                    } else {
+                        config.scrub(error.message())
+                    }
+                })?;
+            let header = |name: &str| {
+                response
+                    .response_headers()
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, value)| value.clone())
+            };
+            if (300..400).contains(&response.status()) {
+                let Some(next) = header("location") else {
+                    return Err(format!(
+                        "the file's address answered {} with nowhere",
+                        response.status()
+                    ));
+                };
+                at = next;
+                continue;
+            }
+            if response.status() != 200 {
+                return Err(format!("the file's address answered {}", response.status()));
+            }
+            if u64::try_from(response.bytes().len()).unwrap_or(u64::MAX) > max {
+                return Err(format!("the file is over {max} bytes"));
+            }
+            return Ok(FetchedMedia {
+                bytes: response.bytes().to_vec(),
+                content_type: header("content-type"),
+            });
+        }
+        Err("the file's address redirected too often".to_string())
+    }
 }
 
 /// The GroupMe adapter. See the module notes.
@@ -359,6 +485,18 @@ pub struct GroupMeAdapter {
 impl GroupMeAdapter {
     pub fn inner(&self) -> &Arc<Inner> {
         &self.inner
+    }
+
+    /// An adapter whose coordinator runs on `timing` (a test's quicker one).
+    pub fn with_timing(timing: push::Timing) -> Self {
+        let adapter = Self::default();
+        *lock(&adapter.inner.timing) = Some(timing);
+        adapter
+    }
+
+    /// This node's coordinator, when one runs.
+    pub fn coordinator(&self) -> Option<Arc<push::Coordinator>> {
+        lock(&self.inner.coordinator).clone()
     }
 }
 
@@ -382,10 +520,14 @@ impl ChatBridgeAdapter for GroupMeAdapter {
             // GroupMe dedupes a source_guid for a minute only, shorter than a delivery's lease
             idempotent: false,
             sends_per_minute: Config::of(&bridge.config).sends_per_minute,
-            // GroupMe has no end-to-end encryption, and the bridge reads every message
-            encryption: Encryption::None,
+            // GroupMe has no end-to-end encryption at all, and the bridge reads every message
+            encryption: Encryption::NoneByNetwork,
             group_max: 0,
         }
+    }
+
+    fn keeps_status(&self) -> bool {
+        true
     }
 
     fn start(&self, bridge: &BridgeInfo) -> Result<(), String> {
@@ -395,24 +537,15 @@ impl ChatBridgeAdapter for GroupMeAdapter {
             return Ok(());
         }
         let Some(factory) = ExecutionContext::with_current(|ec| Arc::downgrade(ec.factory())) else {
-            return Err("The GroupMe bridge started outside a context".to_string());
+            return Err("noContext: The GroupMe bridge started outside a context".to_string());
         };
-        let mut threads = lock(&self.inner.threads);
-        if threads
-            .get(&bridge.chat_bridge_id)
-            .is_some_and(|stop| !stop.load(Ordering::SeqCst))
-        {
-            return Ok(());
-        }
-        let stop = Arc::new(AtomicBool::new(false));
-        threads.insert(bridge.chat_bridge_id.clone(), Arc::clone(&stop));
-        drop(threads);
-        push::spawn(Arc::clone(&self.inner), factory, bridge.chat_bridge_id.clone(), stop)
+        push::Coordinator::ensure(&self.inner, &factory)?.wake();
+        Ok(())
     }
 
     fn stop(&self, chat_bridge_id: &str) {
-        if let Some(stop) = lock(&self.inner.threads).remove(chat_bridge_id) {
-            stop.store(true, Ordering::SeqCst);
+        if let Some(coordinator) = self.coordinator() {
+            coordinator.stop_bridge(chat_bridge_id);
         }
     }
 
@@ -450,44 +583,8 @@ impl ChatBridgeAdapter for GroupMeAdapter {
 
     fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
         let config = Config::of(&bridge.config);
-        let allowed = MEDIA_HOSTS.iter().any(|host| url.starts_with(host))
-            || config
-                .media_base
-                .as_deref()
-                .is_some_and(|base| url.starts_with(&format!("{base}/")));
-        if !allowed {
-            return Err("a file not on GroupMe's file hosts is not fetched".to_string());
-        }
-        let max = max_bytes.min(config.max_inbound_media_bytes);
-        let response = self
-            .inner
-            .client(config.allow_internal)
-            .get(url)
-            .timeout(Duration::from_secs(20))
-            .max_response_bytes(max)
-            .send(false)
-            .map_err(|error| {
-                if error.message().contains("larger than the limit") {
-                    format!("the file is over {max} bytes")
-                } else {
-                    config.scrub(error.message())
-                }
-            })?;
-        if response.status() != 200 {
-            return Err(format!("the file's address answered {}", response.status()));
-        }
-        if u64::try_from(response.bytes().len()).unwrap_or(u64::MAX) > max {
-            return Err(format!("the file is over {max} bytes"));
-        }
-        let content_type = response
-            .response_headers()
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-            .map(|(_, value)| value.clone());
-        Ok(FetchedMedia {
-            bytes: response.bytes().to_vec(),
-            content_type,
-        })
+        self.inner
+            .fetch(&config, url, max_bytes.min(config.max_inbound_media_bytes))
     }
 }
 
@@ -562,68 +659,97 @@ impl GroupMeAdapter {
                 };
                 match api.upload_image(media.bytes, &media.content_type) {
                     Ok(url) => attachments.push(json!({"type": "image", "url": url})),
-                    Err(error) => return error.outcome("The picture was not taken by GroupMe's image service"),
+                    // nothing was posted yet: tried again
+                    Err(error) => return error.before_post("The picture was not taken by GroupMe's image service"),
                 }
             }
         }
         if let (Some((at, length)), Room::Group(group)) = (all, room) {
-            match self.inner.members_of(config, group) {
+            // a Topic's members are its group's (the mapping's externalThreadId)
+            let members_of = request.external_thread_id.as_deref().unwrap_or(group);
+            match self.inner.members_of(config, members_of) {
                 Ok(members) => {
                     let own = self.inner.own_id(&bridge.chat_bridge_id, config).ok();
                     let ids: Vec<String> = members.into_iter().filter(|id| Some(id) != own.as_ref()).collect();
-                    if !ids.is_empty() {
+                    // a large group gets the text @all alone
+                    if !ids.is_empty() && ids.len() <= MAX_MENTIONS {
                         let loci: Vec<Json> = ids.iter().map(|_| json!([at, length])).collect();
                         attachments.push(json!({"type": "mentions", "user_ids": ids, "loci": loci}));
                     }
                 }
-                Err(error) => return error.outcome("The group's members could not be read for @all"),
+                // the text @all still goes, with no one mentioned by id
+                Err(error) => tracing::warn!(
+                    "GroupMe bridge {}: the members of {members_of} were not read for @all: {}",
+                    bridge.chat_bridge_id,
+                    error.text()
+                ),
             }
         }
         let guid = &request.idempotency_key;
-        let (path, body, key) = match room {
+        let (path, body) = match room {
             Room::Group(group) => (
                 format!("/groups/{group}/messages"),
                 json!({"message": {"source_guid": guid, "text": text, "attachments": attachments}}),
-                "message",
             ),
             Room::Direct(other) => (
                 "/direct_messages".to_string(),
                 json!({"direct_message": {"source_guid": guid, "recipient_id": other, "text": text,
                     "attachments": attachments}}),
-                "direct_message",
             ),
         };
-        let found = || match self.find_sent(config, room, guid) {
+        // the message may be there: found by its source_guid, else tried again within GroupMe's minute of dedupe, else
+        // uncertain (another try could post it twice)
+        let look = |conflict: bool| match self.find_sent(config, room, guid) {
             Some(id) => DeliveryOutcome::Accepted { remote_event_id: id },
+            None if !conflict && request.attempt <= RETRY_ATTEMPTS => DeliveryOutcome::Retry {
+                error: "GroupMe did not answer the send, and the message was not found".to_string(),
+                not_connected: false,
+            },
             None => DeliveryOutcome::Uncertain {
                 error: "GroupMe's answer was lost, and the message was not found".to_string(),
             },
         };
         match api.post(&path, &body) {
             Ok(answer) => {
-                let sent = answer.get(key).unwrap_or(&answer);
+                // the community's docs answer a direct message as `message`; the group's create does too
+                let sent = answer
+                    .get("message")
+                    .or_else(|| answer.get("direct_message"))
+                    .unwrap_or(&answer);
                 match api::id_of(sent, "id") {
                     Some(id) => {
-                        if let (Room::Direct(_), None, Some(chat)) = (
-                            room,
-                            request.external_thread_id.as_deref(),
-                            api::id_of(sent, "conversation_id").or_else(|| api::id_of(sent, "chat_id")),
-                        ) {
-                            if let Err(error) = crate::sms::store_thread(bridge, &request.external_room_id, &chat) {
-                                tracing::warn!(
-                                    "GroupMe bridge {}: the conversation's chat id was not kept: {error}",
-                                    bridge.chat_bridge_id
-                                );
-                            }
+                        if let Room::Direct(_) = room {
+                            self.keep_chat_id(bridge, request, sent);
                         }
                         DeliveryOutcome::Accepted { remote_event_id: id }
                     }
-                    None => found(),
+                    None => look(false),
                 }
             }
-            // a copy within the minute (409), GroupMe's own error (500) or a lost answer: it may be there
-            Err(ApiError::Status { status: 409 | 500, .. }) | Err(ApiError::Lost(_)) => found(),
+            // the same source_guid within the minute: it is there
+            Err(ApiError::Status { status: 409, .. }) => look(true),
+            Err(ApiError::Status {
+                status: 500 | 502 | 503,
+                ..
+            })
+            | Err(ApiError::Lost(_)) => look(false),
             Err(error) => error.outcome("GroupMe did not take the message"),
+        }
+    }
+
+    /// A direct message's chat id from GroupMe's answer, kept on the mapping when it is new.
+    fn keep_chat_id(&self, bridge: &BridgeInfo, request: &DeliveryRequest, sent: &Json) {
+        let Some(chat) = api::id_of(sent, "conversation_id").or_else(|| api::id_of(sent, "chat_id")) else {
+            return;
+        };
+        if request.external_thread_id.as_deref() == Some(chat.as_str()) {
+            return;
+        }
+        if let Err(error) = crate::sms::store_thread(bridge, &request.external_room_id, &chat) {
+            tracing::warn!(
+                "GroupMe bridge {}: the conversation's chat id was not kept: {error}",
+                bridge.chat_bridge_id
+            );
         }
     }
 
@@ -663,7 +789,7 @@ impl GroupMeAdapter {
                     Some(chat) => chat.to_string(),
                     None => match self.inner.own_id(&bridge.chat_bridge_id, config) {
                         Ok(own) => chat_id(&own, other),
-                        Err(error) => return error.outcome("GroupMe's account could not be read"),
+                        Err(error) => return error.before_post("GroupMe's account could not be read"),
                     },
                 },
             };
@@ -693,7 +819,7 @@ impl GroupMeAdapter {
             Ok(_) => DeliveryOutcome::Accepted {
                 remote_event_id: format!("{verb}:{conversation}:{message}"),
             },
-            // a like twice changes nothing, so a lost answer is sent again
+            // a like twice changes nothing, so one whose answer was lost is sent again
             Err(ApiError::Lost(error)) => DeliveryOutcome::Retry {
                 error,
                 not_connected: false,
@@ -706,7 +832,7 @@ impl GroupMeAdapter {
 /// The parameters of a framework service call from JSON.
 pub(crate) fn parameters(value: &Json) -> BTreeMap<String, Value> {
     match moqui_lib::json::from_json(value) {
-        Value::Map(map) => map.into_iter().map(|(key, value)| (key.to_string(), value)).collect(),
+        Value::Map(map) => map.into_iter().collect(),
         _ => BTreeMap::new(),
     }
 }

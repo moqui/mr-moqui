@@ -29,7 +29,7 @@ use moqui_core::service::chat_bridge::{BridgeInfo, ChatBridgeAdapter as _, Encry
 use moqui_lib::object::{to_plain_string, Value};
 use serde_json::{json, Value as Json};
 
-use super::push::{Session, Step, REFUSED};
+use super::push::{slot_of, Session, Slot, Step, Timing, REFUSED};
 use super::GroupMeAdapter;
 
 const BRIDGE: &str = "GM1";
@@ -71,6 +71,8 @@ impl Seen {
 #[derive(Clone, Debug)]
 enum Reply {
     Status(u16, String),
+    /// A redirect to this address.
+    Redirect(String),
     /// Keep the message, then close the connection with no answer.
     Drop,
 }
@@ -87,6 +89,8 @@ struct State {
     messages: HashMap<String, Vec<Json>>,
     files: HashMap<String, (String, Vec<u8>)>,
     next: u64,
+    /// More members of the group than Alice, Bob and Carol.
+    extra_members: usize,
 }
 
 struct Fake {
@@ -157,10 +161,14 @@ impl Fake {
     }
 }
 
-fn group_json() -> Json {
-    json!({"id": GROUP, "name": "Family", "messages": {"last_message_id": null},
-        "members": [{"user_id": OWN, "nickname": "Alice"}, {"user_id": BOB_GM, "nickname": "Bob"},
-            {"user_id": CAROL_GM, "nickname": "Carol"}]})
+fn group_json(extra: usize) -> Json {
+    let mut members = vec![
+        json!({"user_id": OWN, "nickname": "Alice"}),
+        json!({"user_id": BOB_GM, "nickname": "Bob"}),
+        json!({"user_id": CAROL_GM, "nickname": "Carol"}),
+    ];
+    members.extend((0..extra).map(|n| json!({"user_id": format!("9{n:04}"), "nickname": format!("Member {n}")})));
+    json!({"id": GROUP, "name": "Family", "messages": {"last_message_id": null}, "members": members})
 }
 
 /// The fake's answer to one request.
@@ -178,11 +186,12 @@ fn answer(state: &Mutex<State>, seen: &Seen) -> Option<(u16, String, Vec<u8>)> {
     if let Some(at) = state
         .script
         .iter()
-        .position(|(prefix, _)| key.starts_with(prefix.as_str()))
+        .position(|(prefix, _)| key == *prefix || key.starts_with(&format!("{prefix}?")))
     {
         let (_, reply) = state.script.remove(at).unwrap();
         match reply {
             Reply::Status(status, body) => return Some((status, "application/json".to_string(), body.into_bytes())),
+            Reply::Redirect(to) => return Some((302, format!("location:{to}"), Vec::new())),
             Reply::Drop => {
                 // kept, as GroupMe would have, then no answer
                 if let Some(group) = seen
@@ -272,21 +281,23 @@ fn answer(state: &Mutex<State>, seen: &Seen) -> Option<(u16, String, Vec<u8>)> {
                 .into_bytes(),
         ));
     }
+    let limit: usize = param("limit").and_then(|limit| limit.parse().ok()).unwrap_or(20);
     let after = |list: &[Json], after: Option<String>| -> Vec<Json> {
         match after {
             Some(after) => list
                 .iter()
                 .skip_while(|message| message["id"].as_str() != Some(after.as_str()))
                 .skip(1)
+                .take(limit)
                 .cloned()
                 .collect(),
-            None => list.iter().rev().take(20).cloned().collect(),
+            None => list.iter().rev().take(limit).cloned().collect(),
         }
     };
     match (seen.method.as_str(), path) {
         ("GET", "/users/me") => ok(json!({"id": OWN, "name": "Alice"})),
         ("GET", "/groups") => {
-            let mut group = group_json();
+            let mut group = group_json(0);
             group["members"] = Json::Null;
             group["messages"]["last_message_id"] = state
                 .messages
@@ -300,7 +311,7 @@ fn answer(state: &Mutex<State>, seen: &Seen) -> Option<(u16, String, Vec<u8>)> {
             })
         }
         ("GET", "/chats") => ok(json!([])),
-        ("GET", path) if path == format!("/groups/{GROUP}") => ok(group_json()),
+        ("GET", path) if path == format!("/groups/{GROUP}") => ok(group_json(state.extra_members)),
         ("GET", path) if path == format!("/groups/{GROUP}/subgroups") => {
             ok(json!([{"id": TOPIC, "topic": "Trips", "parent_id": GROUP, "messages": {"last_message_id": null}}]))
         }
@@ -338,12 +349,11 @@ fn answer(state: &Mutex<State>, seen: &Seen) -> Option<(u16, String, Vec<u8>)> {
             message["id"] = json!(format!("d{}", state.next));
             message["conversation_id"] = json!(format!("{OWN}+{other}"));
             state.messages.entry(other).or_default().push(message.clone());
+            // the community's docs: a direct message's create answers `message`
             Some((
                 201,
                 "application/json".to_string(),
-                json!({"response": {"direct_message": message}})
-                    .to_string()
-                    .into_bytes(),
+                json!({"response": {"message": message}}).to_string().into_bytes(),
             ))
         }
         ("POST", path) if path.starts_with("/messages/") => ok(Json::Null),
@@ -397,12 +407,23 @@ fn serve(mut stream: TcpStream, state: &Mutex<State>) {
         headers,
         body: buffer[head_end..].to_vec(),
     };
+    let connect = seen.path == "/faye" && String::from_utf8_lossy(&seen.body).contains("/meta/connect");
     match answer(state, &seen) {
         Some((status, content_type, body)) => {
-            let head = format!(
-                "HTTP/1.1 {status} X\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                body.len()
-            );
+            // a long poll with nothing to say holds a moment, as the push server does for its timeout
+            if connect && !String::from_utf8_lossy(&body).contains("/user/") {
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            let head = match content_type.strip_prefix("location:") {
+                Some(to) => format!(
+                    "HTTP/1.1 {status} X\r\nlocation: {to}\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                ),
+                None => format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                ),
+            };
             let _ = stream.write_all(head.as_bytes());
             let _ = stream.write_all(&body);
             let _ = stream.flush();
@@ -513,6 +534,7 @@ fn bed() -> Bed {
                 ("typeEnumId", text("CbtGroupMe")),
                 ("adapterName", text("groupme")),
                 ("name", text("GroupMe of Alice")),
+                ("ownerUserId", text("alice")),
                 ("statusId", text("CbsNotConnected")),
                 ("configJson", text(&config(&fake.base).to_string())),
                 ("createdDate", Value::I64(now())),
@@ -530,19 +552,51 @@ fn bed() -> Bed {
 
 impl Bed {
     fn info(&self) -> BridgeInfo {
-        let (info, _) = moqui_core::service::chat_bridge::bridge_row(&self.facade, BRIDGE)
-            .unwrap()
-            .unwrap();
-        info
+        self.slot().info
     }
 
-    /// One push step, as the bridge's thread takes it.
-    fn step(&self) -> Step {
+    /// The bridge as the coordinator reads it.
+    fn slot(&self) -> Slot {
         let _authz = self.ctx.disable_authz();
-        let info = self.info();
+        slot_of(&self.facade, BRIDGE).unwrap().unwrap()
+    }
+
+    /// One push step, as the bridge's session takes it.
+    fn step(&self) -> Step {
+        let slot = self.slot();
+        let _authz = self.ctx.disable_authz();
         self.session
             .borrow_mut()
-            .step(self.adapter.inner(), &self.facade, &info)
+            .step(self.adapter.inner(), &self.facade, &slot)
+    }
+
+    /// Change the bridge's configuration.
+    fn configure(&self, change: impl FnOnce(&mut Json)) {
+        let mut config = self.slot().info.config;
+        change(&mut config);
+        let _authz = self.ctx.disable_authz();
+        let mut row = self
+            .facade
+            .find("moqui.chat.ChatBridge")
+            .unwrap()
+            .eq("chatBridgeId", text(BRIDGE))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("configJson", text(&config.to_string()));
+        row.update(&self.facade).unwrap();
+    }
+
+    /// The catch-up mark of room `external`.
+    fn cursor(&self, external: &str) -> String {
+        self.one(
+            "moqui.chat.ChatRoomBridge",
+            &[("chatBridgeId", text(BRIDGE)), ("externalRoomId", text(external))],
+        )
+        .unwrap()
+        .get("syncCursor")
+        .cloned()
+        .unwrap_or_default()
     }
 
     /// Subscribe (the first step), with the catch-up that makes the group's room.
@@ -679,10 +733,15 @@ impl Bed {
     }
 
     fn round(&self) {
+        self.round_at(0);
+    }
+
+    /// A delivery round `offset` milliseconds from now (a later try).
+    fn round_at(&self, offset: i64) {
         let _authz = self.ctx.disable_authz();
         ok(
             "org.moqui.chat.ChatBridgeServices.run#BridgeDeliveries",
-            &[("nowMillis", Value::I64(now()))],
+            &[("nowMillis", Value::I64(now() + offset))],
         );
     }
 
@@ -754,7 +813,7 @@ fn the_push_channel_brings_a_message_into_the_groups_room_once() {
     let bed = bed();
     let _entered = bed.ctx.enter();
     let caps = bed.adapter.capabilities(&bed.info());
-    assert_eq!(caps.encryption, Encryption::None);
+    assert_eq!(caps.encryption, Encryption::NoneByNetwork);
     assert!(caps.reaction && !caps.edit && !caps.delete && !caps.idempotent);
 
     bed.subscribe();
@@ -1313,13 +1372,407 @@ fn a_user_connects_their_own_groupme_and_an_administrator_sets_one_up() {
     assert!(error.contains("has a GroupMe bridge already"), "{error}");
 }
 
-/// One node holds a bridge's push connection: another asks and is refused while the lease lasts.
+/// Leases in one pass: a node claims a bridge's connection and renews it; another is refused while the lease lasts,
+/// and takes it once let go; at most a node's maximum is taken.
 #[test]
-fn one_node_holds_the_connection() {
+fn a_nodes_leases_are_claimed_in_one_pass() {
     let bed = bed();
     let _entered = bed.ctx.enter();
     let _authz = bed.ctx.disable_authz();
-    assert_eq!(super::push::claim(&bed.facade, BRIDGE, "node-a"), Some(true));
-    assert_eq!(super::push::claim(&bed.facade, BRIDGE, "node-b"), Some(false));
-    assert_eq!(super::push::claim(&bed.facade, BRIDGE, "node-a"), Some(true), "renewed");
+    let ids = vec![BRIDGE.to_string(), "GM2".to_string(), "GM3".to_string()];
+    let lease = Duration::from_secs(60);
+    let a = super::push::claim_all(&bed.facade, &ids, "node-a#1", 2, lease).unwrap();
+    assert_eq!(a.len(), 2, "at most the node's maximum: {a:?}");
+    let b = super::push::claim_all(&bed.facade, &ids, "node-b#1", 10, lease).unwrap();
+    assert_eq!(b.len(), 1, "only the one node a left: {b:?}");
+    assert!(a.is_disjoint(&b));
+    assert_eq!(
+        super::push::claim_all(&bed.facade, &ids, "node-a#1", 2, lease).unwrap(),
+        a,
+        "renewed"
+    );
+    // an older coordinator of node a (another token) frees nothing of this one's
+    super::push::release_all(&bed.facade, "node-a#0").unwrap();
+    assert_eq!(
+        super::push::claim_all(&bed.facade, &ids, "node-b#1", 10, lease).unwrap(),
+        b
+    );
+    super::push::release_all(&bed.facade, "node-a#1").unwrap();
+    assert_eq!(
+        super::push::claim_all(&bed.facade, &ids, "node-b#1", 10, lease)
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+/// The run loop: one node's coordinator holds the connection and subscribes; another waits, and takes it over when the
+/// first stops; a disabled bridge's session stops.
+#[test]
+fn a_coordinator_holds_the_connection_hands_it_over_and_stops() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.configure(|config| config["push"] = json!(true));
+    let quick = || Timing {
+        pass: Duration::from_millis(50),
+        lease: Duration::from_secs(2),
+        node_max: 10,
+    };
+    let wait_until = |what: &str, done: &dyn Fn() -> bool| {
+        let until = std::time::Instant::now() + Duration::from_secs(8);
+        while !done() {
+            assert!(std::time::Instant::now() < until, "{what}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let subscribes = || {
+        bed.fake
+            .seen("POST", "/faye")
+            .iter()
+            .filter(|seen| seen.json()[0]["channel"] == "/meta/subscribe")
+            .count()
+    };
+    let a = GroupMeAdapter::with_timing(quick());
+    a.start(&bed.info()).unwrap();
+    let held = |adapter: &GroupMeAdapter| adapter.coordinator().is_some_and(|c| c.held().contains(BRIDGE));
+    wait_until("node a holds and subscribes", &|| held(&a) && subscribes() == 1);
+    wait_until("the session's status", &|| bed.status().0 == "CbsConnected");
+    let b = GroupMeAdapter::with_timing(quick());
+    b.start(&bed.info()).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!held(&b), "node b waits while node a holds it");
+    assert_eq!(subscribes(), 1);
+    // node a stops: its lease goes, and node b takes the connection over
+    a.coordinator().unwrap().stop_all();
+    wait_until("node b takes over", &|| held(&b) && subscribes() == 2);
+    // disabled: node b's session stops
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut row = bed
+            .facade
+            .find("moqui.chat.ChatBridge")
+            .unwrap()
+            .eq("chatBridgeId", text(BRIDGE))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("statusId", text("CbsDisabled"));
+        row.update(&bed.facade).unwrap();
+    }
+    wait_until("node b lets it go", &|| !held(&b));
+    std::thread::sleep(Duration::from_millis(150));
+    let before = bed.fake.seen("POST", "/faye").len();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        bed.fake.seen("POST", "/faye").len() <= before + 1,
+        "no session polls on"
+    );
+    b.coordinator().unwrap().stop_all();
+}
+
+/// A like, an unlike and a like again: each is applied, as a change of its own.
+#[test]
+fn a_like_again_after_an_unlike_is_applied() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.subscribe();
+    let room = bed.room(&format!("g:{GROUP}"));
+    bed.fake.push(line("g1", GROUP, BOB_GM, "Bob", "Photos are up"));
+    bed.step();
+    let seq = bed.seq_of(&format!("g:{GROUP}"), "g1");
+    let mut liked = line("g1", GROUP, BOB_GM, "Bob", "Photos are up");
+    for (likers, hearts) in [(json!([CAROL_GM]), 1), (json!([]), 0), (json!([CAROL_GM]), 1)] {
+        liked["subject"]["favorited_by"] = likers;
+        bed.fake
+            .push(json!({"type": "favorite", "alert": "", "subject": {"line": liked["subject"], "user_id": CAROL_GM}}));
+        bed.step();
+        assert_eq!(bed.hearts(&room, seq).len(), hearts);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// The catch-up pages on from the room's mark: past one page, all of them.
+#[test]
+fn the_catch_up_pages_past_one_page_from_the_rooms_mark() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.subscribe();
+    let external = format!("g:{GROUP}");
+    let first = line("g1", GROUP, BOB_GM, "Bob", "One");
+    bed.fake.message(GROUP, first["subject"].clone());
+    bed.fake.push(first);
+    bed.step();
+    assert_eq!(
+        bed.cursor(&external),
+        "g1",
+        "a pushed message in a caught-up room moves its mark"
+    );
+    for (id, words) in [("g2", "Two"), ("g3", "Three"), ("g4", "Four")] {
+        bed.fake
+            .message(GROUP, line(id, GROUP, CAROL_GM, "Carol", words)["subject"].clone());
+    }
+    bed.configure(|config| config["catchUpPageSize"] = json!(2));
+    bed.session.borrow_mut().reset();
+    assert_eq!(bed.step(), Step::Subscribed(3));
+    assert_eq!(bed.cursor(&external), "g4");
+    assert_eq!(bed.messages(&bed.room(&external)).len(), 4);
+    assert_eq!(
+        bed.fake
+            .seen("GET", &format!("/groups/{GROUP}/messages?after_id=g3"))
+            .len(),
+        1
+    );
+}
+
+/// The page cap stops the catch-up at its mark, and the next run goes on from there; more than 20 likes mapped in the
+/// room do not hide its mark.
+#[test]
+fn a_capped_catch_up_resumes_from_its_mark() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.subscribe();
+    let external = format!("g:{GROUP}");
+    let room = bed.room(&external);
+    let first = line("g1", GROUP, BOB_GM, "Bob", "One");
+    bed.fake.message(GROUP, first["subject"].clone());
+    bed.fake.push(first);
+    bed.step();
+    // 25 likes mapped after the message
+    for n in 0..25 {
+        row(
+            &bed.facade,
+            "moqui.chat.ChatEventExternal",
+            &[
+                ("chatEventExternalId", text(&format!("LIKE{n}"))),
+                ("chatRoomId", text(&room)),
+                ("chatBridgeId", text(BRIDGE)),
+                ("externalRoomId", text(&external)),
+                ("externalEventId", text(&format!("like:g1:{CAROL_GM}:{n}"))),
+                ("originEnumId", text("CeoInbound")),
+                ("createdDate", Value::I64(now() + 1000 + n)),
+            ],
+        );
+    }
+    for (id, words) in [("g2", "Two"), ("g3", "Three"), ("g4", "Four")] {
+        bed.fake
+            .message(GROUP, line(id, GROUP, CAROL_GM, "Carol", words)["subject"].clone());
+    }
+    bed.configure(|config| {
+        config["catchUpPageSize"] = json!(2);
+        config["catchUpPages"] = json!(1);
+    });
+    bed.session.borrow_mut().reset();
+    assert_eq!(bed.step(), Step::Subscribed(2));
+    assert_eq!(bed.cursor(&external), "g3", "stopped at the cap");
+    bed.session.borrow_mut().reset();
+    assert_eq!(bed.step(), Step::Subscribed(1));
+    assert_eq!(bed.cursor(&external), "g4");
+    assert_eq!(bed.messages(&room).len(), 4);
+}
+
+/// A page that fails leaves the mark; a message pushed meanwhile is taken but does not move the mark past the gap, and
+/// the next catch-up fills it.
+#[test]
+fn a_failed_page_then_a_push_keeps_the_gap_for_the_next_catch_up() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.subscribe();
+    let external = format!("g:{GROUP}");
+    let first = line("g1", GROUP, BOB_GM, "Bob", "One");
+    bed.fake.message(GROUP, first["subject"].clone());
+    bed.fake.push(first);
+    bed.step();
+    for (id, words) in [("g2", "Two"), ("g3", "Three")] {
+        bed.fake
+            .message(GROUP, line(id, GROUP, CAROL_GM, "Carol", words)["subject"].clone());
+    }
+    bed.fake.script(
+        &format!("GET /groups/{GROUP}/messages"),
+        Reply::Status(500, String::new()),
+    );
+    bed.session.borrow_mut().reset();
+    assert_eq!(bed.step(), Step::Subscribed(0));
+    assert_eq!(bed.cursor(&external), "g1");
+    let fourth = line("g4", GROUP, BOB_GM, "Bob", "Four");
+    bed.fake.message(GROUP, fourth["subject"].clone());
+    bed.fake.push(fourth);
+    assert_eq!(bed.step(), Step::Polled(1));
+    assert_eq!(bed.cursor(&external), "g1", "not past the gap");
+    bed.session.borrow_mut().reset();
+    assert!(matches!(bed.step(), Step::Subscribed(_)));
+    assert_eq!(bed.cursor(&external), "g4");
+    assert_eq!(bed.messages(&bed.room(&external)).len(), 4);
+}
+
+/// A call that carries the token follows no redirect; a file follows one only to GroupMe's file hosts.
+#[test]
+fn the_token_never_follows_a_redirect_and_files_only_to_the_file_hosts() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    let elsewhere = Fake::start();
+    bed.fake
+        .script("GET /users/me", Reply::Redirect(format!("{}/users/me", elsewhere.base)));
+    assert!(matches!(bed.step(), Step::Wait(_)));
+    assert!(
+        elsewhere.seen("GET", "/users/me").is_empty(),
+        "the token went nowhere else"
+    );
+    let outside = elsewhere.file("x.png", "image/png", b"x");
+    bed.fake.script("GET /media/hop", Reply::Redirect(outside));
+    let info = bed.info();
+    assert!(bed
+        .adapter
+        .fetch_media(&info, &format!("{}/media/hop", bed.fake.base), 1000)
+        .is_err());
+    assert!(elsewhere.seen("GET", "/media").is_empty());
+    let inside = bed.fake.file("in.png", "image/png", b"\x89PNG-in");
+    bed.fake.script("GET /media/hop2", Reply::Redirect(inside));
+    let fetched = bed
+        .adapter
+        .fetch_media(&info, &format!("{}/media/hop2", bed.fake.base), 1000)
+        .unwrap();
+    assert_eq!(fetched.bytes, b"\x89PNG-in");
+}
+
+/// A picture the image service does not take is tried again (nothing was posted); a 502 on the post is looked for,
+/// tried again within GroupMe's minute of dedupe, and then uncertain.
+#[test]
+fn failures_before_and_at_the_post_are_retried_then_uncertain() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.subscribe();
+    let room = bed.room(&format!("g:{GROUP}"));
+    bed.fake.script("POST /pictures", Reply::Status(503, String::new()));
+    let picture = bed.upload(&room, "cake.png", "image/png", b"\x89PNG-cake");
+    let seq = bed.send("alice", &room, "<p>Cake</p>", &[picture]);
+    bed.round();
+    let (state, _, _, error) = bed.delivery(&room, seq);
+    assert_eq!(state, "CdsPending", "{error}");
+    assert!(error.contains("image service"), "{error}");
+    bed.round_at(6_000);
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+
+    let path = format!("POST /groups/{GROUP}/messages");
+    for _ in 0..4 {
+        bed.fake.script(&path, Reply::Status(502, String::new()));
+    }
+    let seq = bed.send("alice", &room, "<p>Anyone?</p>", &[]);
+    for (offset, state) in [
+        (0, "CdsPending"),
+        (16_000, "CdsPending"),
+        (60_000, "CdsPending"),
+        (300_000, "CdsUncertain"),
+    ] {
+        bed.round_at(offset);
+        assert_eq!(bed.delivery(&room, seq).0, state, "at +{offset} ms");
+    }
+}
+
+/// `@room` in a Topic mentions its group's members; with the members not read, `@all` goes alone.
+#[test]
+fn room_in_a_topic_mentions_its_groups_members() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.subscribe();
+    let room = bed.room(&format!("g:{TOPIC}"));
+    bed.fake
+        .script(&format!("GET /groups/{GROUP}"), Reply::Status(503, String::new()));
+    let alone = bed.send(
+        "alice",
+        &room,
+        "<p><span data-mention-id=\"@room\">@room</span> first</p>",
+        &[],
+    );
+    bed.round();
+    assert_eq!(bed.delivery(&room, alone).0, "CdsAccepted");
+    let sent = bed.fake.seen("POST", &format!("/groups/{TOPIC}/messages"));
+    assert_eq!(sent[0].json()["message"]["text"], "@all first");
+    assert_eq!(sent[0].json()["message"]["attachments"], json!([]));
+    let seq = bed.send(
+        "alice",
+        &room,
+        "<p><span data-mention-id=\"@room\">@room</span> again</p>",
+        &[],
+    );
+    bed.round();
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    let message = bed.fake.seen("POST", &format!("/groups/{TOPIC}/messages"))[1].json()["message"].clone();
+    assert_eq!(message["attachments"][0]["user_ids"], json!([BOB_GM, CAROL_GM]));
+    assert!(bed
+        .fake
+        .seen("GET", &format!("/groups/{TOPIC}"))
+        .iter()
+        .all(|seen| seen.path != format!("/groups/{TOPIC}")));
+}
+
+/// A group of more than 100 others gets `@all` with no one mentioned by id.
+#[test]
+fn room_in_a_large_group_is_all_alone() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.fake.state.lock().unwrap().extra_members = 150;
+    bed.subscribe();
+    let room = bed.room(&format!("g:{GROUP}"));
+    let seq = bed.send(
+        "alice",
+        &room,
+        "<p><span data-mention-id=\"@room\">@room</span> news</p>",
+        &[],
+    );
+    bed.round();
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    let message = bed.fake.seen("POST", &format!("/groups/{GROUP}/messages"))[0].json()["message"].clone();
+    assert_eq!(message["text"], "@all news");
+    assert_eq!(message["attachments"], json!([]));
+}
+
+/// Strangers' direct messages have a cap of their own inside the room limit, so the groups the owner joins still get
+/// rooms; the bridge's status says the limit is reached.
+#[test]
+fn direct_messages_have_a_cap_of_their_own_and_the_status_says_so() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.configure(|config| {
+        config["maxRooms"] = json!(4);
+        config["maxDirectRooms"] = json!(1);
+    });
+    bed.subscribe();
+    let direct = |id: &str, from: &str, name: &str| {
+        json!({"type": "direct_message.create", "subject": {"id": id, "chat_id": format!("{OWN}+{from}"), "sender_id": from,
+            "user_id": from, "recipient_id": OWN, "name": name, "text": "hi", "created_at": 1_700_000_000, "attachments": []}})
+    };
+    bed.fake.push(direct("d1", BOB_GM, "Bob"));
+    bed.fake.push(direct("d2", CAROL_GM, "Carol"));
+    bed.step();
+    bed.room(&format!("dm:{BOB_GM}"));
+    assert!(bed
+        .one(
+            "moqui.chat.ChatRoomBridge",
+            &[("externalRoomId", text(&format!("dm:{CAROL_GM}")))]
+        )
+        .is_none());
+    let (status, error) = bed.status();
+    assert_eq!(status, "CbsConnected");
+    assert!(error.starts_with("roomLimit"), "{error}");
+    bed.fake
+        .push(json!({"type": "membership.create", "subject": {"id": "600", "name": "Book club"}}));
+    bed.step();
+    bed.room("g:600");
+    login("alice");
+    let mine = ok("org.moqui.chat.GroupMeServices.get#MyGroupMe", &[]);
+    assert_eq!(out_text(&mine, "errorCode"), "roomLimit");
+}
+
+/// A GroupMe direct message's create answers `message` (the community's docs): its id and chat id are kept. The
+/// bridge's settings never show the token in a log, and the delivery worker's start leaves the status to the session.
+#[test]
+fn the_status_is_the_sessions_and_the_settings_hide_the_token() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    let shown = format!("{:?}", super::Config::of(&bed.info().config));
+    assert!(!shown.contains(&token()) && shown.contains("[redacted]"), "{shown}");
+    bed.round();
+    assert_eq!(bed.status().0, "CbsNotConnected", "a start is not a connection");
+    bed.subscribe();
+    assert_eq!(bed.status().0, "CbsConnected");
 }

@@ -531,7 +531,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastErrorText" type="text-long"/>
         <field name="lastErrorDate" type="date-time"/>
         <field name="sendsPerMinute" type="number-integer"/>
+        <field name="ownerUserId" type="id"><description>A bridge that is one person's account (GroupMe): that local user,
+            the same as its configJson's ownerUserId, kept plain so their own bridge is found without reading every
+            bridge's configuration</description></field>
+        <field name="retryDate" type="date-time"><description>An adapter's own connection (GroupMe's push channel) tries
+            again from then: a refused token, or failures in a row. Whichever node holds the connection reads it, so a
+            hand-over keeps the wait</description></field>
         <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one" title="ChatBridgeType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="typeEnumId"/></relationship>
         <relationship type="one" title="ChatBridge" related="moqui.basic.StatusItem" short-alias="status">
@@ -578,6 +586,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
         <field name="filedDate" type="date-time"/>
+        <field name="syncCursor" type="text-medium"><description>An adapter's catch-up (GroupMe): the network's id of the
+            message up to which every message of the room was taken, advanced only past a page taken whole, so a stopped
+            catch-up resumes there</description></field>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
         <relationship type="one" title="ChatBridgeDirection" related="moqui.basic.Enumeration" short-alias="direction">
