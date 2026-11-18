@@ -42,7 +42,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.get#ChatData').parameter('limit', limit ? Number(limit) : 200).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {me: out.me, prefs: out.prefs, roomList: out.roomList, unreadTotal: out.unreadTotal,
-                mentionTotal: out.mentionTotal})
+                mentionTotal: out.mentionTotal, filteredCount: out.filteredCount || 0})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -506,6 +506,62 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.comms.ChatScreenServices.join#ChatRoom').parameter('chatRoomId', chatRoomId || '').call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Joined')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Block and spam (plans/Comms-Messaging.md §18.3 phase 11): a room's banner and menu, its Block and Unblock (a number, a
+        person or the conversation), Not spam and Report spam, and a person's Block and Unblock -->
+    <transition name="roomBlock" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatBlockServices.get#RoomBlock').parameter('chatRoomId', chatRoomId || '').call() || {}
+            if (ec.message.hasError()) { ec.web.sendJsonResponse({}); return }
+            const spam = out.filtered === 'spam' ? ec.service.sync().name('org.moqui.call.SmsSpamServices.get#SpamInfo').parameter('chatRoomId', chatRoomId).call() || {} : {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({filtered: out.filtered || null, blockKind: out.blockKind || null, phoneNumber: out.phoneNumber || null, phoneNumberList: out.phoneNumberList || [],
+                blockedUserId: out.blockedUserId || null, blockedName: out.blockedName || null, personBlocked: !!out.personBlocked, reasons: spam.reasons || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="blockRoom">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatBlockServices.block#Room').parameter('chatRoomId', chatRoomId || '').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {blocked: out.blocked, messageInfos: [{type: 'success', message: ec.l10n.localize('Blocked')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="unblockRoom">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.chat.ChatBlockServices.unblock#Room').parameter('chatRoomId', chatRoomId || '').call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Unblocked')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="notSpam">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.call.SmsSpamServices.mark#NotSpam').parameter('chatRoomId', chatRoomId || '').call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Moved out of Spam')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="reportSpam">
+        <actions><script><![CDATA[
+            const numbers = phoneNumbers ? String(phoneNumbers).split(',').map((number) => number.trim()).filter((number) => number) : []
+            ec.service.sync().name('org.moqui.call.SmsSpamServices.report#Spam').parameters({chatRoomId: chatRoomId || '', phoneNumberList: numbers}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Reported as spam and blocked')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="blockUser">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.chat.ChatBlockServices.block#ChatUser').parameter('blockedUserId', userId || '').call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Blocked')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="unblockUser">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.chat.ChatBlockServices.unblock#ChatUser').parameter('blockedUserId', userId || '').call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Unblocked')}]})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

@@ -52,6 +52,7 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | `edge_answer` | An edge node's answer to the network for a request it queued (2xx) or refused for its rate (429), in the network's shape (Twilio's TwiML); never an unsigned request's. |
 | `webhook_event_id`, `apply_webhook` | For an edge node's queue: the event's id (a repeat is dropped) and what orders it, and the work of `webhook` after its checks, on the local node. |
 | `fetch_media` | The bytes of a file a network's message names, within a bound (`store#BridgeMedia`). The default fetches nothing. An adapter that uploads a message's files to its network (GroupMe's image service) reads them with `chat_bridge::delivery_file`, only for a message with a delivery to its bridge. |
+| `lookup_number` | What the network's provider knows of an outside number (`NumberLookup`: line type, carrier, caller name), for the spam filter (`lookup#BridgeNumber`, [SMS, Blocked numbers and spam](SMS.md#blocked-numbers-and-spam)); a paid request, asked only when its answer can change a verdict. The default has none (`notSupported`); the SMS adapter asks its provider's `lookup_request` (Twilio Lookup v2). |
 
 The web side is `chat_bridge_web.rs`: `chat_bridge::webhook` (the host's route; an unknown bridge, one with no adapter
 and a disabled one to anyone but its network answer as an unsigned request does, 401, so bridge ids cannot be probed; a

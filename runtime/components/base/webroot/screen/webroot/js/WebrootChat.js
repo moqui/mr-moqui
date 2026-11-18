@@ -346,8 +346,10 @@
                     if (message.action === "left") delete state.unread[message.chatRoomId];
                     // the user's own settings of the room changed (here or on another device): its notifications follow
                     if (message.action === "settings" && message.chatRoomId && state.levels) {
-                        state.levels[message.chatRoomId] = chat.levelOf(message.notificationLevelEnumId, !!message.isMuted);
+                        state.levels[message.chatRoomId] = chat.levelOf(message.notificationLevelEnumId, !!message.isMuted, message.filtered);
                     }
+                    // a room gone to Spam & blocked counts nothing
+                    if (message.action === "settings" && message.chatRoomId && message.filtered) state.unread[message.chatRoomId] = { unread: 0, mentions: 0 };
                     return { kind: "room", chatRoomId: message.chatRoomId, action: message.action };
                 }
             }
@@ -357,6 +359,21 @@
         typingUsers(state, roomId, now) {
             const typing = state.typing[roomId] || {};
             return Object.keys(typing).filter((userId) => typing[userId] > now);
+        },
+        // The server's counts (get#UnreadCounts roomCounts) in the store: each room it names, and a room it no longer names
+        // (read elsewhere, or out of sight in Spam & blocked) at nothing.
+        applyCounts(state, roomCounts) {
+            const counts = moqui.isPlainObject(roomCounts) ? roomCounts : {};
+            Object.keys(state.unread).forEach((roomId) => { if (!counts[roomId]) state.unread[roomId] = { unread: 0, mentions: 0 }; });
+            Object.keys(counts).forEach((roomId) => { state.unread[roomId] = { unread: counts[roomId].unread || 0, mentions: counts[roomId].mentions || 0 }; });
+        },
+        // A timeline row of a message of someone the user blocked (event.hidden): one quiet line for a run of them, added to
+        // out unless the last row is that line. False for any other event.
+        hiddenLine(out, event) {
+            if (!event || !event.hidden) return false;
+            const last = out[out.length - 1];
+            if (!last || last.kind !== "hidden") out.push({ kind: "hidden", key: "h" + event.eventSeq, eventSeq: event.eventSeq });
+            return true;
         },
         // the room's unread counts and the total of every room
         unreadOf(state, roomId) { return state.unread[roomId] || { unread: 0, mentions: 0 }; },
@@ -393,7 +410,7 @@
             const meLoaded = chat.request("/userStatus").then((json) => { if (json && json.myStatus) chat.setMe(json.myStatus); });
             const readCounts = () => Promise.all([chat.request("/chatUnread"), meLoaded]).then(([json]) => {
                 const counts = json && moqui.isPlainObject(json.roomCounts) ? json.roomCounts : {};
-                Object.keys(counts).forEach((roomId) => { chat.state.unread[roomId] = { unread: counts[roomId].unread || 0, mentions: counts[roomId].mentions || 0 }; });
+                if (json) chat.applyCounts(chat.state, counts);
                 if (json && moqui.isPlainObject(json.levelMap)) chat.state.levels = Object.assign({}, json.levelMap);
                 if (json && moqui.isPlainObject(json.roomNameMap)) chat.state.roomNames = Object.assign({}, json.roomNameMap);
                 // in an app: what was missed while it was closed or offline (§7.5)
@@ -602,8 +619,10 @@
         // ---- the app's own notifications (plans/Comms-Messaging.md §7.5) ----
 
         // A room's notification level as the server keeps it (CnlAll, CnlMentions, CnlNone, or their codes), muted: all,
-        // mentions (a muted room) or none.
-        levelOf(level, muted) {
+        // mentions (a muted room) or none; none for a room out of the user's sight (filtered: spam or blocked,
+        // plans/Comms-Messaging.md §18.3 phase 11).
+        levelOf(level, muted, filtered) {
+            if (filtered) return "none";
             const code = { CnlAll: "all", CnlMentions: "mentions", CnlNone: "none" }[level] || level || "all";
             if (code === "none") return "none";
             return muted ? "mentions" : (code === "mentions" ? "mentions" : "all");

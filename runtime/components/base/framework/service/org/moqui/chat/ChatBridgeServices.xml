@@ -552,6 +552,26 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="lookup" noun="BridgeNumber" type="rust" location="moqui_core::service::chat_bridge::lookup_bridge_number"
+            allow-remote="false" transaction="ignore">
+        <description>Internal (SmsSpamServices judge#SmsText, plans/Comms-Messaging.md §18.3 phase 11): what the provider of
+            bridge chatBridgeId knows of phoneNumber, through its adapter's number lookup (Twilio Lookup v2's line type; a
+            paid request, asked only when the spam filter's lookup is on): lineType (the provider's name: mobile, landline,
+            nonFixedVoip, ...), carrierName, callerName; or reasonCode notSupported (no adapter, or one with no lookup) or
+            failed with error. Never an error of the call, so the text it judges goes on without it.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="phoneNumber" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="lineType"/>
+            <parameter name="carrierName"/>
+            <parameter name="callerName"/>
+            <parameter name="reasonCode"/>
+            <parameter name="error"/>
+        </out-parameters>
+    </service>
+
     <service verb="store" noun="BridgeMedia" type="rust" location="moqui_core::service::chat_bridge::web::store_bridge_media"
             allow-remote="false">
         <description>Internal (process#InboundItem): fetch a file a network's message names through the bridge's adapter, at

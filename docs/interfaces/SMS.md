@@ -222,6 +222,61 @@ messaging profile answers STOP and HELP itself (its opt-out management), and blo
 provider). A provider that tells of an opt-out or opt-in itself (an event, not a text) is kept the same way, once per
 event (`note#SmsOptSignal`). The opt-out also gates the system's texts.
 
+## Blocked numbers and spam
+
+A text from an outside number is judged before its room takes it (`SmsSpamServices.judge#SmsText`, `SmsSpam.js`, in a
+transaction of its own; plans/Comms-Messaging.md §18.3 phase 11). Nothing is dropped: a number of ours may reach several
+users, so a block or a spam verdict takes the room out of one user's sight (`ChatRoomMember.filterEnumId`) and leaves
+it for the others. A room out of sight is listed only under the rail's **Spam & blocked**, counts nothing, and pushes
+and notifies nothing (no socket event, no device push, no `joined` push for a new member). STOP, START and HELP are
+applied first, as above, so an opt-out of a spammer still holds.
+
+- **Blocked numbers.** A user's one Blocked list (`CallerList` of type `CltBlocked`, made on the first block; Settings,
+  Call handling, or Block in a phone room's menu: `block#PhoneNumber`, `unblock#PhoneNumber`) holds numbers and
+  prefixes (`+1900*`). A call from one to the user is refused before every rule, 603 Decline with no voicemail (SIP,
+  Call handling). A ring group's member who blocked the caller is left out before any leg is made: none of their tabs,
+  phones or mobile rings and they get no missed call; taken in turns (in order, round robin), their turn is skipped and
+  the next member rings. The user's pair rooms with the number are blocked (`CmfBlocked`). A group text is not filtered
+  by one number's block: the room is its other numbers' too, so its texts still show (as on iOS). Block in a group
+  text's menu blocks that conversation alone.
+- **The spam filter.** On unless VoicePolicy `smsSpamFilter` is N, and for each user unless they turned off Filter spam
+  texts (`CallHandlingSetting.spamFilter`; off brings their rooms in Spam back). A text is judged only while the room was
+  never marked Not spam and has no message from a local sender. A number trusted for everyone, or known, is judged by the
+  admin's number rules (`SsrNumber`) alone: trusted is an admin's Not spam, or three distinct users' that outnumber the
+  reports; known is on a member's own caller list that no reject rule uses (a reject list never vouches for a number), a
+  user's mobile number, or named by an app's `call-context` provider for a new conversation (asked as the room's first
+  member; a provider that fails counts as knowing it). A user who said Not spam to a number never gets it in Spam (but
+  for the admin's number rules). Its score is the sum of the weights of the rules it matches (`SmsSpamRule`, System, Voice, Spam), spam at
+  `smsSpamThreshold` (100). The seeded rules: the first text of a new conversation 40, any link 30, a shortened link's
+  host (bit.ly, tinyurl.com, ...) 40, words spam often has (gift card, verify your account, unpaid toll, ...) 40, each
+  distinct person here who reported the number 50 (less one for each Not spam; an admin's report reaches the threshold
+  alone), the provider's line type `nonFixedVoip` 40. So a first text with a shortened link is spam, one
+  with a link alone is not. Patterns are plain text (words on word boundaries, a host or `*.host`, a number or a prefix),
+  never regular expressions, and only the first 2,000 characters of a text are read. A spam room's links do not open
+  until Not spam, and it is not filed on a record by the apps until then.
+- **Not spam** (the room's banner; `mark#NotSpam`) brings the room back for every member it was Spam for, marks it never
+  to be judged again (`ChatRoomBridge.notSpamDate`; a block still applies), votes the number not spam for the user (their
+  own rooms trust it) and counts the rules of its last verdict (`notSpamCount`).
+- **Report spam** (`report#Spam`) acts on the reporter. In a pair room it puts the number on their Blocked list (its
+  calls refused too) with their spam vote; the teammates whose filter is on get the room in Spam only when nobody here
+  ever replied in it, and the reporter's Unblock withdraws the vote and brings those rooms back. In a group text it hides
+  the room for the reporter alone and votes only against the numbers they pick (none by default). One report is not
+  spam for anyone else: it takes two people's (or an admin's). No provider's report API is used. The rule counts
+  (`spamCount`) and the votes (System, Voice, Spam: an admin trusts, reports or clears a number for everyone there) show
+  what misfires; the weights are the admin's to set.
+- **The provider's number lookup** (optional, off by default: VoicePolicy `smsSpamLookup`). A paid lookup of the line type
+  (`ChatBridgeServices.lookup#BridgeNumber`, the adapter's `lookup_number`; Twilio Lookup v2, below), asked only for a
+  first text from an unknown number in E.164 whose local score is within the Line type rules' weight of the threshold, so
+  the answer can change the verdict. An answer is kept `smsSpamLookupDays` (30) on the number (`SmsSpamNumber`), at most
+  `smsSpamLookupMaxPerDay` (100) are asked a day (`SmsSendCount` `lookup`, reserved in a transaction of its own so no
+  lock is held through the provider's answer, and given back when the lookup fails), and a failure or a timeout (3 s)
+  adds nothing. Telnyx's number lookup is not built.
+- **The purge.** With the property `chat_spam_purge_days` (MoquiDefaultConf.xml) above 0 (0, the default, keeps everything), the daily
+  `clean#ChatRetention` deletes the texts older than that in each phone room that every current member has in Spam
+  (`purge#SpamRooms`), each room on its own: one that fails is logged and the rest go on.
+- **Failure tolerance.** A judge that fails is logged and the text goes in unfiltered: an error never hides or loses a
+  text.
+
 ## The system's texts
 
 `org.moqui.SmsServices.send#SmsMessage` keeps the interface of the Java stub (`countryCode`, `areaCode`, `contactNumber`,
@@ -283,6 +338,7 @@ the limits); this section is what differs.
    | `webhookUrl` | The URL Twilio posts to, when it is not `channels_public_url` and the route's path |
    | `apiBaseUrl` | `https://api.twilio.com` |
    | `conversationsBaseUrl`, `mediaContentBaseUrl` | `https://conversations.twilio.com`, `https://mcs.us1.twilio.com`; https, as `apiBaseUrl` (http only for a test's fake, with `allowInternalAddresses` off production) |
+   | `lookupsBaseUrl` | `https://lookups.twilio.com`: Lookup v2's line type for the spam filter (`GET /v2/PhoneNumbers/{number}?Fields=line_type_intelligence`, the API's Basic auth, paid per number; asked only with VoicePolicy `smsSpamLookup` on, above). Not yet tested with Twilio |
    | `maxTextLength` | 1600 characters |
    | `maxMediaCount`, `maxMediaBytes` | 10 files and 5 MB in all for an MMS that goes out |
    | `maxInboundMediaBytes`, `sendsPerMinute`, `allowInternalAddresses` | As for Telnyx |
@@ -424,6 +480,13 @@ documentation of the Conversation API ([API reference](https://developers.sinch.
   inside the queue's transaction.
 
 ## Tests
+
+- `framework/test/SmsSpam.spec.js` (blocked numbers and the spam filter: the rules and the threshold; a spam text out of
+  every member's sight, counting nothing, its STOP applied; a known, a trusted and a replied number not judged; Not spam
+  and Report spam; a blocked number out of the blocker's sight only; a group text; the lookup's gate, cache and day's
+  limit; the purge) and `framework/test/CallHandling.spec.js` (the Blocked list refusing a call before every rule);
+  `basic-comms/test/BasicCommsTexts.spec.js` (Chat's Block, Unblock, Report spam and Spam & blocked); moqui-channels
+  `tests/twilio.rs` (the lookup on the fake).
 
 - `crates/moqui-channels/src/tests.rs`, against a fake Telnyx on loopback (each well under a second): a signed text in,
   the pair room and its members; a replayed, tampered, wrongly keyed, unsigned and stale webhook refused, each with the

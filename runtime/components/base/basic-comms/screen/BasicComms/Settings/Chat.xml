@@ -21,7 +21,8 @@ along with this software (see the LICENSE.md file). If not, see
     framework fetches none); when the user shows as away
     (CHAT_AUTO_AWAY_MINUTES, which the framework's presence reads); the do not disturb hours (apply#DndHours puts an online user
     on do not disturb in them) and the people whose calls still ring then (CHAT_DND_ALLOWED, store#DndAllowed, read by the
-    framework's filter#RingUsers, plans/Comms-Messaging.md §7.2 rule 4); and the status presets (CHAT_STATUS_PRESETS) the Chat rail's status menu and the account menu's
+    framework's filter#RingUsers, plans/Comms-Messaging.md §7.2 rule 4); the people the user blocked in chat, with Unblock and
+    Block someone (org.moqui.chat.ChatBlockServices, plans/Comms-Messaging.md §18.3 phase 11); and the status presets (CHAT_STATUS_PRESETS) the Chat rail's status menu and the account menu's
     status dialog offer (Use sets one now). The Chat screens read these when they open. GroupMe: the user's own GroupMe
     account as a bridge (org.moqui.chat.GroupMeServices get#MyGroupMe, connect#MyGroupMe, disconnect#MyGroupMe;
     docs/interfaces/GroupMe.md): its status, the token (write-only) and Disconnect, unless the property
@@ -55,6 +56,17 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="removeDndAllowed">
         <service-call name="org.moqui.comms.ChatScreenServices.store#DndAllowed" in-map="{action:'remove', userId:userId}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="blockPerson">
+        <service-call name="org.moqui.chat.ChatBlockServices.block#ChatUser" in-map="{blockedUserId:blockUserId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Blocked</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="unblockPerson">
+        <service-call name="org.moqui.chat.ChatBlockServices.unblock#ChatUser" in-map="{blockedUserId:userId}"/>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
@@ -99,6 +111,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <service-call name="org.moqui.comms.ChatScreenServices.get#ChatPrefs" out-map="prefsOut"/>
+        <service-call name="org.moqui.chat.ChatBlockServices.find#BlockedUsers" out-map="blockedOut"/>
         <service-call name="org.moqui.chat.GroupMeServices.get#MyGroupMe" out-map="groupMe"/>
         <script><![CDATA[
             const L = (text) => ec.l10n.localize(text)
@@ -110,6 +123,9 @@ along with this software (see the LICENSE.md file). If not, see
             hasDnd = !!(prefs.dndFrom && prefs.dndTo)
             allowedList = Array.from(prefs.dndAllowed || [])
             addAllowed = {allowedUserId: ''}
+            blockedList = Array.from(blockedOut.blockedList || []).map((row) => ({userId: row.userId, name: row.name,
+                sinceText: row.blockedDate ? ec.l10n.format(row.blockedDate, 'yyyy-MM-dd') : ''}))
+            addBlocked = {blockUserId: ''}
             dndText = hasDnd ? ec.resource.expand('Every day from ${from} to ${to}, in your time zone (${zone}).', '', {from: prefs.dndFrom, to: prefs.dndTo,
                 zone: ec.user.timeZone || 'UTC'}) : L('None set')
             const clears = {'0': "Don't clear", '30': 'After 30 minutes', '60': 'After an hour', '240': 'After 4 hours', today: 'At the end of today', week: 'At the end of the week'}
@@ -218,6 +234,29 @@ along with this software (see the LICENSE.md file). If not, see
                         </default-field></field>
                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                         <field-layout><field-row><field-ref name="allowedUserId"/><field-ref name="submitButton"/></field-row></field-layout>
+                    </form-single>
+                </box-body></container-box>
+                <container-box><box-header title="Blocked people"/><box-body>
+                    <label type="p" text="Their messages are hidden from you in shared rooms and do not notify you, their calls do not ring you, and they cannot start a chat with you or add you to a room. They are not told."
+                            style="text-caption m-muted q-mt-none"/>
+                    <section name="NoBlocked" condition="!blockedList.length"><widgets>
+                        <label type="p" text="Nobody blocked" style="text-body2"/>
+                    </widgets></section>
+                    <section name="BlockedSection" condition="blockedList.length"><widgets>
+                        <form-list name="BlockedList" list="blockedList" paginate="false" skip-form="true">
+                            <field name="name"><default-field title="Person"><display/></default-field></field>
+                            <field name="sinceText"><default-field title="Since"><display/></default-field></field>
+                            <field name="unblockLink"><default-field title="">
+                                <link url="unblockPerson" link-type="hidden-form-link" icon="sym_o_lock_open" text="Unblock" style="m-btn-flat"
+                                        parameter-map="{userId:userId}" confirmation="Unblock ${name}?"/></default-field></field>
+                        </form-list>
+                    </widgets></section>
+                    <form-single name="AddBlocked" transition="blockPerson" map="addBlocked">
+                        <field name="blockUserId"><default-field title="Person">
+                            <drop-down allow-empty="true"><dynamic-options transition="searchUsers" server-search="true" min-length="1"/></drop-down>
+                        </default-field></field>
+                        <field name="submitButton"><default-field title="Block"><submit confirmation="Block this person?"/></default-field></field>
+                        <field-layout><field-row><field-ref name="blockUserId"/><field-ref name="submitButton"/></field-row></field-layout>
                     </form-single>
                 </box-body></container-box>
                 <container-box><box-header title="Status presets"/><box-body-nopad>

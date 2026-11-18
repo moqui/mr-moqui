@@ -101,11 +101,13 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The signed-in user's call handling: their rules in order (ruleList: kind, target and its
             name, caller list, schedule and whether it applies while open or closed), their caller lists with their entries,
             the schedules they may use (their own and the deployment's), the ring groups they may forward to, settings
-            (callWaiting, mobileNumber, ringMobile, mobileScheduleId, hideCallerId, dnd, and forwardEnabled: whether an
-            administrator lets their calls go to outside numbers), and the kinds and targets with their labels.</description>
+            (callWaiting, mobileNumber, ringMobile, mobileScheduleId, hideCallerId, dnd, spamFilter, and forwardEnabled: whether an
+            administrator lets their calls go to outside numbers), and the kinds and targets with their labels. The Blocked
+            list is not one of callerListList: blockedList has its entries [{phoneNumber, name}].</description>
         <out-parameters>
             <parameter name="ruleList" type="List"/>
             <parameter name="callerListList" type="List"/>
+            <parameter name="blockedList" type="List"/>
             <parameter name="scheduleList" type="List"/>
             <parameter name="groupList" type="List"/>
             <parameter name="settings" type="Map"/>
@@ -119,9 +121,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="CallHandlingSetting">
         <description>The signed-in user's phone settings: callWaiting (a call while they are in one rings
             them too), mobileNumber and ringMobile (rung with them, under mobileScheduleId when set), hideCallerId (their
-            outbound calls withhold their number), dnd (do not disturb, their UserStatus: calls go to voicemail). A parameter
-            not given stays. warning when the mobile cannot ring for want of the forward permission.</description>
+            outbound calls withhold their number), dnd (do not disturb, their UserStatus: calls go to voicemail), spamFilter
+            (false: the spam filter never puts their phone rooms in Spam, and those in it come back). A parameter not given
+            stays. warning when the mobile cannot ring for want of the forward permission.</description>
         <in-parameters>
+            <parameter name="spamFilter"/>
             <parameter name="callWaiting"/>
             <parameter name="mobileNumber"/>
             <parameter name="ringMobile"/>
@@ -170,6 +174,30 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallHandling.js').execute('deleteRule', context))</script></actions>
+    </service>
+
+    <service verb="block" noun="PhoneNumber">
+        <description>Put a number (made E.164) or a prefix (+ and digits ending in *) on the signed-in user's Blocked list
+            (plans/Comms-Messaging.md §18.3 phase 11; made now when they have none): its calls are refused before every
+            rule, and its texts and pair rooms are kept out of the user's sight (Spam &amp; blocked). At most 500.</description>
+        <in-parameters>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="name"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="phoneNumber"/>
+            <parameter name="callerListId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallHandling.js').execute('blockNumber', context))</script></actions>
+    </service>
+
+    <service verb="unblock" noun="PhoneNumber">
+        <description>Take a number or a prefix off the signed-in user's Blocked list: its pair rooms come back unless another
+            entry still holds them.</description>
+        <in-parameters><parameter name="phoneNumber" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallHandling.js').execute('unblockNumber', context))</script></actions>
     </service>
 
     <service verb="store" noun="CallerList">

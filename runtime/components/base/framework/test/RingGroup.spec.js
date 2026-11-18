@@ -443,3 +443,61 @@ feature("outside its schedule a group goes straight to its fallback: its box, an
         inUse.reasonCode == "inUse"
     }
 })
+
+// plans/Comms-Messaging.md §18.3 phase 11: a user who blocked the caller is left out before any leg is made
+feature("a member who blocked the caller is not rung: no leg, no mobile, no missed call; in order their turn is skipped", {
+    when() {
+        upsert("moqui.call.VoiceUserSetting", {userId: M2}, {outboundEnabled: "Y", forwardEnabled: "Y"})
+        as(M2, "update#CallHandlingSetting", {mobileNumber: "+15558880202", ringMobile: "Y"})
+        const blocked = as(M2, "block#PhoneNumber", {phoneNumber: CALLER})
+        const call = receive()
+        const rung = offered(call.callSessionId)
+        const m2Legs = legsOfUser(call.callSessionId, M2)
+        const m2Log = log(call.callSessionId, M2)
+        endCall(call.callSessionId)
+        as(ADMIN, "store#RingGroup", {ringGroupId: groupId, strategyEnumId: "RgsInOrder"})
+        const inOrder = receive()
+        const first = offered(inOrder.callSessionId)
+        begin(inOrder)
+        const next = offered(inOrder.callSessionId)
+        endCall(inOrder.callSessionId)
+        as(ADMIN, "store#RingGroup", {ringGroupId: groupId, strategyEnumId: "RgsSimultaneous"})
+        as(M2, "unblock#PhoneNumber", {phoneNumber: CALLER})
+        as(M2, "update#CallHandlingSetting", {ringMobile: "N"})
+        return {blocked, rung, m2Legs, m2Log, first, next}
+    },
+    then({blocked, rung, m2Legs, m2Log, first, next}) {
+        blocked.errors == ""
+        rung.join(",") == [M1, M3].join(",")
+        m2Legs.length == 0
+        m2Log == null
+        first.join(",") == M1
+        next.join(",") == M3
+    }
+})
+
+feature("a chat call from someone a member blocked: a direct call is refused as no such callee, a room's call leaves the blocker out", {
+    when() {
+        const blocked = as(M1, "org.moqui.chat.ChatBlockServices.block#ChatUser", {blockedUserId: M3})
+        const direct = as(M3, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [M1]})
+        const room = as(M3, "org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "RG spec room", memberUserIdList: [M1, M2]})
+        const started = as(M3, "org.moqui.call.CallServices.start#Call", {chatRoomId: room.chatRoomId})
+        const m1Legs = legsOfUser(started.callSessionId, M1)
+        const m1Log = log(started.callSessionId, M1)
+        const m2Log = log(started.callSessionId, M2)
+        sys(() => {
+            const s = ec.entity.find("moqui.call.CallSession").condition("callSessionId", started.callSessionId).one()
+            if (s) { s.set("statusId", "CssEnded"); s.update() }
+        })
+        as(M1, "org.moqui.chat.ChatBlockServices.unblock#ChatUser", {blockedUserId: M3})
+        return {blocked, direct, started, m1Legs, m1Log, m2Log}
+    },
+    then({blocked, direct, started, m1Legs, m1Log, m2Log}) {
+        blocked.errors == ""
+        direct.reasonCode == "noCallee"
+        started.callSessionId != null
+        m1Legs.length == 0
+        m1Log == null
+        m2Log.roleEnumId == "CurCallee"
+    }
+})

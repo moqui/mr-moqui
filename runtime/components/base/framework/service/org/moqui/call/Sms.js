@@ -20,6 +20,7 @@
 // (smsMaxPromotionalPerNumber, promo:<number>), and a campaign's, sent with no user, not against the system's budget.
 
 const VOICE = 'component://framework/service/org/moqui/call/Voice.js'
+const CHAT_BLOCKS = 'component://framework/service/org/moqui/chat/ChatBlocks.js'
 const NUMBER = 'moqui.call.PhoneNumber'
 const GRANT = 'moqui.call.PhoneNumberUser'
 const OPT_OUT = 'moqui.call.SmsOptOut'
@@ -203,20 +204,29 @@ function ensurePairRoom(p) {
   const users = usersOf(number)
   const present = new Set(rows(MEMBER, { chatRoomId: room.chatRoomId }).map((m) => m.userId).filter((u) => u))
   const missing = users.filter((userId) => !present.has(userId))
+  // the filters of a text that comes in (SmsSpam.js judge: CmfBlocked, CmfSpam): a new member is out of sight from the
+  // start, with no joined push (plans/Comms-Messaging.md §18.3 phase 11)
+  const filters = p.memberFilterMap && typeof p.memberFilterMap === 'object' ? p.memberFilterMap : {}
   if (missing.length) {
     const actorOf = ec.service.sync().name('org.moqui.chat.ChatServices.get#LocalActors').parameter('userIdList', missing)
       .disableAuthz().call()?.actorMap || {}
     for (const userId of missing) {
       const member = ec.entity.makeValue(MEMBER)
       member.setFields({ chatRoomId: room.chatRoomId, chatActorId: actorOf[userId], userId, roleEnumId: 'CmrMember', joinedDate: now,
-        lastReadEventSeq: Number(room.lastEventSeq || 0), notificationLevelEnumId: 'CnlAll', isPinned: 'N', isMuted: 'N' }, true, null, null)
+        lastReadEventSeq: Number(room.lastEventSeq || 0), notificationLevelEnumId: 'CnlAll', isPinned: 'N', isMuted: 'N',
+        filterEnumId: filters[userId] || null, filterDate: filters[userId] ? now : null }, true, null, null)
       member.create()
     }
     // the users' changes feeds in one call: the new members are in, the others' room has new members
     const changes = missing.map((userId) => ({ userIdList: [userId], changeKind: 'membership', chatRoomId: room.chatRoomId,
-      change: { member: true, roleEnumId: 'CmrMember', action: 'joined' }, pushMessage: { kind: 'room', action: 'joined', chatRoomId: room.chatRoomId } }))
+      change: { member: true, roleEnumId: 'CmrMember', action: 'joined' },
+      pushMessage: filters[userId] ? null : { kind: 'room', action: 'joined', chatRoomId: room.chatRoomId } }))
     if (present.size) changes.push({ userIdList: Array.from(present), changeKind: 'room', chatRoomId: room.chatRoomId, change: { reason: 'members' } })
     ec.service.sync().name('org.moqui.chat.ChatServices.record#UserChange').parameter('changeList', changes).disableAuthz().call()
+  }
+  // a current member a new filter applies to goes out of sight now (never one already filtered)
+  for (const userId of present) {
+    if (filters[userId]) ec.resource.script(CHAT_BLOCKS).execute('setFilters', { userId, chatRoomIdList: [room.chatRoomId], filterEnumId: filters[userId] })
   }
   return { chatRoomId: room.chatRoomId, chatBridgeId, chatRoomBridgeId: mapping.chatRoomBridgeId, externalRoomId, created, isGroup }
 }
@@ -634,8 +644,18 @@ function receive(p) {
   if (keyword === 'HELP') sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
   else if (keyword) sub('org.moqui.call.SmsServices.note#SmsOptSignal', { chatBridgeId: p.chatBridgeId,
     eventId: 'text:' + String(p.messageId), ourNumber: ours, theirNumber: theirs, keyword })
-  const pair = sub('org.moqui.call.SmsServices.ensure#PairRoom', groupNumbers ? { ourNumber: ours, theirNumberList: groupNumbers }
-    : { ourNumber: ours, theirNumber: pairTheirs })
+  // the blocks and the spam filter (SmsSpam.js judge, in a transaction of its own): what each user's room is (in sight,
+  // blocked, spam); one that fails lets the text in unfiltered
+  let verdict = { memberFilterMap: {}, spam: false, judged: false }
+  try {
+    verdict = sub('org.moqui.call.SmsSpamServices.judge#SmsText', { chatBridgeId: p.chatBridgeId, ourNumber: ours, theirNumber: theirs,
+      pairNumber: pairTheirs, groupNumbers, text: p.text })
+  } catch (err) {
+    ec.logger.error(`SMS ${p.messageId}: not judged for spam or blocks, taken in: ${err && err.message ? err.message : err}`)
+    ec.message.clearErrors()
+  }
+  const pair = sub('org.moqui.call.SmsServices.ensure#PairRoom', groupNumbers ? { ourNumber: ours, theirNumberList: groupNumbers,
+    memberFilterMap: verdict.memberFilterMap } : { ourNumber: ours, theirNumber: pairTheirs, memberFilterMap: verdict.memberFilterMap })
   if (!pair.chatRoomId) return { outcome: 'ignored', reasonCode: pair.reasonCode || 'noMessaging' }
   const item = { itemId: String(p.messageId), type: 'message', externalRoomId: pair.externalRoomId, externalEventId: String(p.messageId),
     externalUserId: theirs, displayName: theirs, text: note ? note + (p.text ? '\n' + p.text : '') : p.text || null, originDate: p.originMillis != null ? Number(p.originMillis) : null,
@@ -650,8 +670,18 @@ function receive(p) {
   if (ec.message.hasError()) return { outcome: 'failed', reasonCode: out.reasonCode || 'failed' }
   const first = Array.from(out.outcomeList || [])[0] || {}
   if (first.outcome === 'rejected') ec.logger.warn(`SMS ${p.messageId} on ${p.chatBridgeId} was rejected: ${first.reasonCode} ${first.message || ''}`)
-  // the conversation of a new outside party filed on a record by the apps (external-conversation), until one did it
-  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && pair.chatRoomBridgeId) {
+  // the rules a spam text matched count it, and its number keeps the verdict; a failure is logged
+  if (verdict.spam && first.outcome === 'accepted' && out.duplicate !== true) {
+    try {
+      sub('org.moqui.call.SmsSpamServices.note#SmsJudged', { theirNumber: theirs, score: verdict.score, reasons: verdict.reasons })
+    } catch (err) {
+      ec.logger.error(`SMS ${p.messageId}: its spam verdict was not kept: ${err && err.message ? err.message : err}`)
+      ec.message.clearErrors()
+    }
+  }
+  // the conversation of a new outside party filed on a record by the apps (external-conversation), until one did it; not
+  // while it is spam (Not spam and the next text file it)
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && pair.chatRoomBridgeId && !verdict.spam) {
     const mapping = one(MAPPING, { chatRoomBridgeId: pair.chatRoomBridgeId })
     if (mapping && !mapping.filedDate) {
       try {
@@ -764,6 +794,11 @@ function phoneNames(p) {
 }
 
 const operations = {
+  // the users a number of ours reaches (SmsSpam.js)
+  usersOf: (p) => {
+    const number = blank(p.phoneNumber) ? null : one(NUMBER, { phoneNumber: p.phoneNumber })
+    return { userIdList: number ? usersOf(number) : [] }
+  },
   ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, releaseSend, noteKeyword, noteOptSignal, receive, sendMessage, myTextNumbers,
   syncNumberRooms, phoneNames,
   keyword: (p) => ({ keyword: keywordOf(p.text) }),

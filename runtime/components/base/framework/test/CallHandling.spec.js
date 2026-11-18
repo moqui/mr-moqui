@@ -201,6 +201,51 @@ feature("selective reject, accept and forward read the caller's number against t
     }
 })
 
+// plans/Comms-Messaging.md §18.3 phase 11: the one Blocked list, made on the first block
+feature("the Blocked list refuses a caller before every rule, and stays the one Blocked list", {
+    when() {
+        const blocked = as(A, "block#PhoneNumber", {phoneNumber: "(555) 777-0191"})
+        const again = as(A, "block#PhoneNumber", {phoneNumber: OTHER_CALLER})
+        const prefix = as(A, "block#PhoneNumber", {phoneNumber: "+1777*"})
+        const badPrefix = as(A, "block#PhoneNumber", {phoneNumber: "1777*"})
+        // an always-forward rule is not read for a blocked caller
+        rule(A, {kindEnumId: "ChrAlways", targetTypeEnumId: "ChtUser", targetId: B})
+        const refused = evaluate(A, OTHER_CALLER)
+        const byPrefix = evaluate(A, "+17775550000")
+        const others = evaluate(A, CALLER)
+        clearRules(A)
+        const settings = as(A, "get#CallHandling")
+        const rename = as(A, "store#CallerList", {callerListId: blocked.callerListId, name: "Mine"})
+        const remove = as(A, "delete#CallerList", {callerListId: blocked.callerListId})
+        const ruleOn = rule(A, {kindEnumId: "ChrSelectiveReject", callerListId: blocked.callerListId})
+        const notHis = as(B, "add#CallerListEntry", {callerListId: blocked.callerListId, phoneNumber: CALLER})
+        const unblocked = as(A, "unblock#PhoneNumber", {phoneNumber: OTHER_CALLER})
+        as(A, "unblock#PhoneNumber", {phoneNumber: "+1777*"})
+        const after = evaluate(A, OTHER_CALLER)
+        return {blocked, again, prefix, badPrefix, refused, byPrefix, others, settings, rename, remove, ruleOn, notHis, unblocked, after}
+    },
+    then({blocked, again, prefix, badPrefix, refused, byPrefix, others, settings, rename, remove, ruleOn, notHis, unblocked, after}) {
+        blocked.phoneNumber == OTHER_CALLER
+        again.callerListId == blocked.callerListId
+        prefix.phoneNumber == "+1777*"
+        badPrefix.reasonCode == "badNumber"
+        types(refused) == "reject"
+        refused.stepList[0].reasonCode == "declined"
+        refused.traceList.join(" ").includes("Blocked list")
+        types(byPrefix) == "reject"
+        ringUsers(others)[0] == B
+        settings.blockedList.length == 2
+        !settings.callerListList.some((list) => list.callerListId == blocked.callerListId)
+        settings.settings.spamFilter == true
+        rename.reasonCode == "blockedList"
+        remove.reasonCode == "blockedList"
+        ruleOn.reasonCode == "badRule"
+        notHis.reasonCode == "notFound"
+        unblocked.errors == ""
+        types(after).split(",")[0] == "ring"
+    }
+})
+
 // business hours in America/Chicago (UTC-6 in November): Monday to Friday 09:00 to 17:00, closed on December 25 every year
 const UTC = (text) => new Date(text).getTime()
 feature("business hours and holidays are read in the schedule's time zone at the call's time", {

@@ -53,8 +53,8 @@ use std::time::Duration;
 
 use moqui_core::service::chat_bridge::{
     media_urls, replay_finish, replay_take, webhook_public_url, BridgeInfo, Capabilities, ChatBridgeAdapter,
-    DeliveryKind, DeliveryOutcome, DeliveryRequest, Encryption, FetchedMedia, MediaUrls, Replay, WebhookEventKey,
-    WebhookRequest, WebhookResponse, WebhookVerification, MEDIA_RETRY_MILLIS, WEBHOOK_MARK,
+    DeliveryKind, DeliveryOutcome, DeliveryRequest, Encryption, FetchedMedia, MediaUrls, NumberLookup, Replay,
+    WebhookEventKey, WebhookRequest, WebhookResponse, WebhookVerification, MEDIA_RETRY_MILLIS, WEBHOOK_MARK,
 };
 use moqui_lib::http::{Method, RestClient, RestResponse};
 use moqui_lib::object::{to_plain_string, Value};
@@ -552,6 +552,18 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
         let _ = config;
         None
     }
+
+    /// The request of the provider's paid number lookup of `number`, for the spam filter (plans/Comms-Messaging.md
+    /// §18.3 phase 11); None, the default, when it has none.
+    fn lookup_request(&self, config: &Self::Config, settings: &Settings, number: &str) -> Option<ApiRequest> {
+        let _ = (config, settings, number);
+        None
+    }
+    /// What the lookup's answer says of the number; None when it says nothing this filter reads.
+    fn lookup_of(&self, body: &str) -> Option<NumberLookup> {
+        let _ = body;
+        None
+    }
 }
 
 // ---- the adapter ----
@@ -964,6 +976,40 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
 
     fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
         self.fetch(bridge, url, max_bytes)
+    }
+
+    fn lookup_number(&self, bridge: &BridgeInfo, number: &str) -> Result<Option<NumberLookup>, String> {
+        self.lookup(bridge, number)
+    }
+}
+
+/// How long a number lookup may take: the text it judges waits for it.
+const LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
+
+impl<P: SmsProvider> SmsAdapter<P> {
+    /// The provider's number lookup ([`SmsProvider::lookup_request`]) through the guarded client, in
+    /// [`LOOKUP_TIMEOUT`]: None when the provider has none; an error for no answer or one that is not a 2xx.
+    fn lookup(&self, bridge: &BridgeInfo, number: &str) -> Result<Option<NumberLookup>, String> {
+        let config = self.provider.config(&bridge.config);
+        let settings = self.settings(bridge);
+        let Some(request) = self.provider.lookup_request(&config, &settings, number) else {
+            return Ok(None);
+        };
+        let name = self.provider.name();
+        let mut call = self
+            .client(settings.allow_internal)
+            .request(request.method, request.url.clone())
+            .timeout(LOOKUP_TIMEOUT);
+        for (header, value) in &request.headers {
+            call = call.header(header.clone(), value.clone());
+        }
+        let response = call
+            .send(false)
+            .map_err(|error| format!("{name}'s number lookup: {}", error.message()))?;
+        if !(200..300).contains(&response.status()) {
+            return Err(format!("{name}'s number lookup answered {}", response.status()));
+        }
+        Ok(self.provider.lookup_of(response.body()))
     }
 }
 

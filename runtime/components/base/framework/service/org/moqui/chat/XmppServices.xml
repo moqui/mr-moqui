@@ -293,9 +293,13 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (!rooms.length) return
             const size = Math.min(Math.max(Number(limit) || 50, 0), 250)
+            // a sender the user blocked in chat (ChatBlocks.js) is left out, as in get#Timeline
+            const hidden = Array.from(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || [])
             const base = () => {
                 let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', 'in', rooms).condition('eventTypeEnumId', 'CetMessage')
                         .condition('redactedDate', null).disableAuthz()
+                if (hidden.length) find = find.condition(ec.entity.conditionFactory.makeCondition([ec.entity.conditionFactory.makeCondition('senderUserId', 'is-null', null),
+                    ec.entity.conditionFactory.makeCondition('senderUserId', 'not-in', hidden)], 'or'))
                 if (startDate != null) find = find.condition('sentDate', '>=', new Date(Number(startDate)))
                 if (endDate != null) find = find.condition('sentDate', '<=', new Date(Number(endDate)))
                 return find
