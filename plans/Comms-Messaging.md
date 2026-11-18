@@ -914,7 +914,7 @@ that adds it. "New" means this plan adds it (§17).
 | RCS chat | Business RCS; personal RCS by bridge (§13.4) | §16 |
 | Default SMS app | `sim-sms` build | §10 |
 | Scheduled send | Scheduled send: a send time on a message the server holds and sends, as mail's due drafts are (`send#DueDrafts`). A chat event has no send time today, and the only outbox is the client's | New |
-| Spam protection, block, report | Block a number: the caller lists that call handling has (`CallerList`, Settings, Call handling), used for texts too. Block a person in chat: new. Spam filter for outside numbers (the provider's number lookup where it has one, and a local list) | New; the caller lists are built |
+| Spam protection, block, report | Block a number: its calls and texts, on the user's Blocked list (a `CallerList`, Settings, Call handling); its texts kept out of sight in "Spam & blocked". Block a person in chat: their messages hidden in shared rooms, their direct rooms and invites refused. Spam filter for outside numbers: local rules (first contact, links, keywords, numbers, reports here), on by default; the provider's number lookup optional and off. Not spam and Report spam | Designed: phase 11 (§18.3); the caller lists are built |
 | One-time codes: copy, delete after 24 h | Detect codes in SMS; Copy button in the notification; optional delete | New |
 | Message reminders | "Remind me" on a message: a notification later | New |
 | Smart replies, writing help | Suggested replies from `moqui-llm`, plain rooms only (never encrypted rooms) | New |
@@ -996,7 +996,7 @@ the SIM's carrier calls and the server's calls (Moqui calls and the user's numbe
 | Incoming carrier calls | Ring screen over the lock screen (exists for Moqui calls), with the caller's contact name | Ring built; carrier calls new |
 | Call log | One history: SIM calls (Android `CallLog`), the provider number's calls and Moqui calls (server call history), merged and by person | New |
 | Voicemail | Server voicemail in the number's room (built). The carrier's voicemail: dial-in only (visual voicemail of carriers is closed) | Server voicemail built |
-| Spam and unknown callers | Android `CallScreeningService`: block numbers on the user's caller lists (§14.2; the server already rejects by them), silence unknown callers as an option | New |
+| Spam and unknown callers | Android `CallScreeningService`: block the numbers on the user's Blocked list (§14.2, phase 11; the server already refuses their calls), silence unknown callers as an option | New |
 | Hold, mute, speaker, Bluetooth, merge, swap | Android Telecom for SIM calls; the server for the provider number's calls and Moqui calls | Partly built |
 | Emergency calls | Always on the SIM and the carrier, through Android, never through the server. The app must not block or delay them | Required |
 | Calls from the Contacts app and the car | A managed Android `PhoneAccount` for the provider's number and Moqui calls, so other apps and cars can call through them | §9 |
@@ -1189,7 +1189,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | # | Work | Section |
 |---|---|---|
 | 1 | Unified contacts: one person with many networks; pick the network per message | §11 |
-| 2 | Block and report; spam filter for outside numbers | §14.2 |
+| 2 | Block and report; spam filter for outside numbers | §14.2; designed as phase 11 (§18.3) |
 | 3 | Scheduled send, message reminders | §14.2, §14.3 |
 | 4 | Disappearing messages (exact timer) and view-once media | §14.4 |
 | 5 | Invite links and QR, with approval; join requests | §14.4, §14.5 |
@@ -1629,6 +1629,283 @@ Planned:
     is not read (Telecom asks `READ_PHONE_NUMBERS`, which the app does not ask), so the check says "on" only once a
     number came through it.
 
+#### Phase 11: block and spam
+
+Designed 2026-11-17 (§14.2, §17 #2); not built. A user blocks an outside number (its calls and texts) or a person in
+chat, and a spam filter keeps texts from outside numbers that look like spam in one place, "Spam & blocked", with no
+notification.
+
+**A blocked number's texts are kept out of sight, not dropped.** Why:
+- A number of ours may reach several users (a ring group, caller-ID grants), and a block is one user's. The others still
+  get the text, so it is kept, and only the blocking user's place in the room is out of sight.
+- Spam needs the same thing: a text the filter took must come back on "Not spam". One mechanism serves both.
+- STOP, START and HELP are applied as now (a carrier's rule), and the apps' filing and opt-outs see every text.
+- An unblock brings back what came in meanwhile, so a block made by mistake loses nothing. A call from a blocked number
+  is still refused, as a reject rule refuses one today; nothing is kept of a refused call.
+
+**Out of sight.** A member's `filterEnumId` (`CmfSpam` or `CmfBlocked`) takes the room out of their sight:
+- `find#Rooms` leaves it out, unless its filter is `spam`, which lists only those rooms. It answers `filteredCount`, so the
+  rail can show the folder. This covers every client: the rail, the Comms home, the palette and the XMPP room list.
+- It counts nothing (`get#UnreadCounts`), and its level is `none` in `levelMap`.
+- `append#Event` leaves the member out of the socket push. The push worker (`chat_push.rs` `recipients`) skips them.
+- A new member who is filtered from the start gets no `joined` push; the change is still in their feed.
+- The member opens it from the folder: everything shows, with a banner in place of the composer. Spam: "Not spam" and
+  "Report spam". Blocked: "Unblock". A spam room's links are shown as text, not links.
+
+**Data model**
+
+| Entity, field | What |
+|---|---|
+| `ChatRoomMember.filterEnumId`, `filterDate` | `ChatMemberFilter`: `CmfSpam`, `CmfBlocked`; empty: in sight (`ChatEntities.xml`) |
+| `moqui.chat.ChatUserBlock` (`userId`, `blockedUserId` pk; `blockedDate`; index on `blockedUserId`) | A person a user blocked in chat; at most 500 a user |
+| `ChatMemberUnread` alias `senderUserId` (filter only) | The unread count less the blocked senders' messages |
+| `CallerList.listTypeEnumId` | `CallerListType`: `CltBlocked`; empty: a list of the user's own. One Blocked list a user, made on the first block, named by its type, never renamed or deleted, not offered to a rule (`VoiceEntities.xml`) |
+| `CallHandlingSetting.spamFilter` | N: the user's phone rooms are never put in Spam; on when empty |
+| `VoicePolicy`: `smsSpamFilter`, `smsSpamThreshold`, `smsSpamLookup`, `smsSpamLookupDays`, `smsSpamLookupMaxPerDay` | The filter (on when empty; N turns it off for everyone); its threshold (100); the provider's lookup (off unless Y); its cache (30 days) and its limit a day (100, counted in `SmsSendCount` as `lookup`) |
+| `moqui.call.SmsSpamRule` (`smsSpamRuleId`, `ruleTypeEnumId`, `pattern`, `weight`, `description`, `disabled`, `hitCount`, `notSpamCount`, `spamCount`, `lastHitDate`) | The deployment's rules, seeded in `VoiceSetupData.xml`, kept in System, Voice, Spam. `SmsSpamRuleType`: `SsrFirstContact`, `SsrLink`, `SsrLinkHost`, `SsrKeyword`, `SsrNumber`, `SsrReported`, `SsrLineType`. The counts show the admin which rules misfire |
+| `moqui.call.SmsSpamNumber` (`phoneNumber` pk; `lastScore`, `lastReasonsJson`, `lastJudgedDate`; `lookupJson`, `lookupDate`, `lookupBridgeId`) | What this deployment knows of an outside number: the last verdict's rules (the banner's reasons), the provider's answer `{lineType, carrierName, callerName}` |
+| `moqui.call.SmsSpamVote` (`phoneNumber`, `userId` pk; `voteEnumId` `SsvSpam` or `SsvNotSpam`; `voteDate`) | One vote of a user for a number. A number is reported when it has more spam votes than not-spam votes, and trusted the other way |
+
+**The filter.** A text is judged when all of these hold:
+- the filter is on (`smsSpamFilter`);
+- the room has no message from a local sender (once we replied, it is a conversation);
+- the number is not trusted;
+- the number is not known.
+
+A number is known when:
+- it is on a member's caller list (not the Blocked list);
+- it is a user's mobile number (`CallHandlingSetting`);
+- or an app's `call-context` provider names it, for a new conversation only, asked as the room's first member (as
+  `file#ExternalConversation` is).
+
+The score is the sum of the weights of the rules that match. The text is spam at the threshold or above. The seeded
+rules:
+
+| Type | Pattern | Weight |
+|---|---|---|
+| First contact | The first text of a new conversation | 40 |
+| Link | Any `http(s)://` or bare-domain link | 30 |
+| Link host | `bit.ly`, `tinyurl.com`, `t.co`, `goo.gl`, `is.gd`, `ow.ly`, `cutt.ly`, `rb.gy`, `tiny.cc`, `shorturl.at` | 40 each |
+| Keyword | gift card; you have won; claim your prize; verify your account; account suspended; unusual activity; confirm your identity; final notice; unpaid toll; delivery attempt failed; package could not be delivered; loan approved | 40 each |
+| Number | None seeded; an admin adds a number or a prefix (`+1900*`) | — |
+| Reported | The number is reported here | 100 |
+| Line type | `nonFixedVoip`, only with the lookup on | 40 |
+
+So:
+- a first text from an unknown number with a shortened link is spam (110);
+- a first text with a link alone is not (70);
+- a number reported by a user here is spam for everyone else's new texts from it.
+
+Patterns are plain text. A keyword matches on word boundaries, ignoring case; a host matches exactly or with a leading
+`*.`. There are no regular expressions, so a text from outside cannot make the match slow. Only the first 2,000
+characters of a text are read.
+
+**Not spam and Report spam** (`SmsSpam.js`, a current member of the external room):
+- Not spam:
+  - clears `CmfSpam` for every member of the room;
+  - votes not-spam for the number, which makes it trusted when it outvotes the spam votes;
+  - counts `notSpamCount` on the rules of the last verdict.
+  The room is not judged again, and its next text is filed by the apps as usual.
+- Report spam in a pair room:
+  - puts the number on the user's Blocked list, so its calls are refused too;
+  - votes spam, and counts `spamCount` on the rules;
+  - puts the room in Spam for the other members whose filter is on (it is reported now).
+- Report spam in a group text: the room is blocked for the user (a room-level `CmfBlocked`), and each of its numbers gets
+  a spam vote, with no caller-list entries.
+- No provider's report API is used; the votes stay on this server.
+
+**Block a number** (`CallHandling.js` `blockNumber`, `unblockNumber`; the room menu's Block; Settings, Call handling):
+- Block adds the number, or a prefix ending in `*`, to the user's Blocked list.
+- The user's pair rooms with a number that matches get `CmfBlocked`. Each room is changed on its own, with one feed
+  change (`settings`, `filtered`).
+- Unblock removes it, and clears `CmfBlocked` on the pair rooms that no other entry still matches.
+- Calls: `planUser` refuses a caller on the Blocked list before every rule (reason `declined`, no voicemail).
+  `Calls.js` `ring` leaves out each user who blocked the caller (a number on their Blocked list, or a user they blocked
+  in chat). So a member of a ring group who blocked a number is not rung, and the others are.
+- A spam verdict does not touch calls. A call from a spam room's number rings; its call events in the room notify
+  nobody who has the room filtered.
+
+**Group texts.** A group text room is judged as a pair room, by its sender. A block of one number does not filter the
+group, because the room belongs to its other numbers too; as on iOS, a blocked number's group texts still show. Block or
+Report spam from a group room's menu filters that room for the user, until Unblock in it.
+
+**Block a person in chat** (`ChatBlocks.js`, `ChatBlockServices.xml`; local users only):
+- Refused. `get#RefusedUsers` adds the users who blocked the current user, answered as users that do not exist. Through
+  it, nothing else changes in `create#Room` or `add#Member`:
+  - they cannot start a direct room with me, the existing one included;
+  - they cannot add me to a room (the invite);
+  - the people search leaves me out for them;
+  - a public room's mention of me from them counts nothing.
+- Hidden from me:
+  - `get#Timeline` marks their events `hidden: 'blocked'`, with no body, files, ciphertext, reactions or previews.
+    Paging is unchanged.
+  - `search#ChatEvents`, `find#RoomFiles`, `find#RoomLinks` and `find#RoomThreads` leave out their items after the query.
+    The paging rule (§5.2) allows this: the cursor, not the count of rows, says whether there is more.
+  - `find#Rooms` blanks a last message of theirs.
+  - The client shows one quiet line for a run of hidden messages: "Hidden: a message from someone you blocked".
+- Silent for me:
+  - `append#Event` leaves me out of the socket push of their events (not membership events);
+  - `chat_push.rs` skips me for a local sender I blocked;
+  - `record#UserActivity` writes no activity row for me;
+  - `send#Message` and `edit#Message` count no mention of me;
+  - `signal#Typing` leaves me out;
+  - the unread counts of `find#Rooms` and `get#UnreadCounts` subtract their messages, with one grouped query, only for a
+    user with blocks;
+  - their calls do not ring me (`ring`).
+- My one-to-one direct rooms with them (the plain one and the encrypted one) get `CmfBlocked`. Opened from the folder,
+  they show everything, with Unblock.
+- They notice nothing: their messages are sent as usual, and nothing says they are blocked (SEC-COM-01).
+- Unblock: in Settings, Chat (Blocked people), from the folder's banner, or from the person's menu.
+
+**The provider's number lookup** (optional, off by default):
+- `ChatBridgeAdapter::lookup_number(&self, bridge, number) -> Result<Option<NumberLookup>, String>`, defaulting to
+  `Ok(None)`. `NumberLookup {line_type, carrier_name, caller_name}` is in `chat_bridge.rs`.
+- The Rust service `ChatBridgeServices.lookup#BridgeNumber` (`chatBridgeId`, `phoneNumber`; out `lineType`,
+  `carrierName`, `callerName`, or `reasonCode` `notSupported` or `failed`) calls it.
+- `SmsProvider::lookup_request(config, settings, number) -> Option<ApiRequest>` and `lookup_of(body) ->
+  Option<NumberLookup>` both default to `None`. `SmsAdapter` implements `lookup_number` with them, through its guarded
+  client with a 3 s timeout.
+- Twilio is built: Lookup v2, `GET {lookupBaseUrl}/v2/PhoneNumbers/{number}?Fields=line_type_intelligence`, with Basic
+  auth. `lookupBaseUrl` defaults to `https://lookups.twilio.com`. The line type keeps Twilio's names (`mobile`,
+  `landline`, `fixedVoip`, `nonFixedVoip`, `tollFree`, …). It is in `providers/twilio/lookup.rs`, with one delegating
+  method in `twilio.rs`. Not yet tested with the provider.
+- Telnyx is designed and not built: `GET /v2/number_lookup/{number}?type=carrier`, with `carrier.type`.
+- `Sms.js` asks for a lookup only when all of these hold:
+  - the lookup is on;
+  - the text is a first contact from an unknown number in E.164 (never a short code);
+  - the local score is within the Line type rule's weight of the threshold, so the answer can change the verdict;
+  - no cached answer is younger than `smsSpamLookupDays`;
+  - the day is under `smsSpamLookupMaxPerDay`.
+- A failure or a timeout adds nothing and is not cached. The property `sms_spam_lookup_service` names a service that is
+  asked in its place (tests).
+
+**`receive#Sms`** (`Sms.js`; small changes beside R1's):
+1. The keyword (STOP, START, HELP) is applied first, as now.
+2. `judge#SmsText` runs in its own transaction and answers `memberFilterMap` (userId to `CmfBlocked` or `CmfSpam`),
+   `spam`, `score` and `reasons`:
+   - each user of our number with the sender on their Blocked list gets `CmfBlocked`, in a pair room;
+   - if the text is spam, each other user with the filter on gets `CmfSpam`.
+3. `ensure#PairRoom` takes `memberFilterMap`. It sets the filter on new members and on current members with none, and
+   never clears one.
+4. `ingest#Event`, as now.
+5. When the text is accepted and not a duplicate:
+   - `note#SmsJudged` records the rules' hit counts and the number's last verdict;
+   - `file#ExternalConversation` is skipped while the text is spam.
+
+**Services**
+
+| Service | What |
+|---|---|
+| `org.moqui.call.SmsSpamServices` (`SmsSpam.js`): `judge#SmsText`, `note#SmsJudged` (internal); `mark#NotSpam`, `report#Spam`, `get#SpamInfo` (the banner's reasons); `get#SpamFilter`, `update#SpamFilter`, `store#SmsSpamRule`, `delete#SmsSpamRule` (VoiceAdmin) | The filter |
+| `org.moqui.chat.ChatBlockServices` (`ChatBlocks.js`): `block#ChatUser`, `unblock#ChatUser`, `find#BlockedUsers`; `block#Room`, `unblock#Room` (by the room's kind: a pair room's number, a one-to-one direct room's person, a group text's room); `set#MemberFilters` (internal: rooms and a filter for a user, one feed change); the script's `blockedBy` and `blockersOf` for `ChatServices` | Blocks in chat, and the room menu's Block |
+| `CallHandlingServices`: `block#PhoneNumber`, `unblock#PhoneNumber`; `get#CallHandling` with `blockedList` and `spamFilter` | Numbers |
+| `ChatBridgeServices.lookup#BridgeNumber` (Rust) | The lookup hook |
+
+**Screens**
+
+| Work | Files |
+|---|---|
+| The rail's chip "Spam & blocked" (its count; shown when `filteredCount` is above 0 or the chip is chosen): the filtered rooms from `rooms?filter=spam`, each labelled Spam or Blocked. A filtered room's banner in place of the composer (the reasons, Not spam, Report spam; or Unblock), and a spam room's links as text. The room menu: Block or Unblock (a number, a person or the conversation), Report spam in a phone room. Block in the member list's menu of each person, beside the moderator's items. The hidden-message line | `Chat.qvue` |
+| Transitions `blockRoom`, `unblockRoom`, `notSpam`, `reportSpam`, `blockUser`, `unblockUser`, `spamInfo`; `rooms` with `filter=spam`; `filteredCount` in `chatData` | `Chat.xml`, `ChatScreenServices.xml` |
+| Blocked numbers (add a number or a prefix, remove) and "Filter spam texts", above the Caller lists; the Blocked list left out of the caller lists and of a rule's choice | `Settings/CallHandling.qvue`, `CallHandling.xml`, `CallHandlingTui.xml` |
+| Blocked people (name, since when, Unblock; Block someone, through the user search) | `Settings/Chat.xml` |
+| System, Voice, Spam (VoiceAdmin): the switch, the threshold, the lookup with its days and its limit a day; the rules (type, pattern, weight, on, hits, Not spam, Reported), with add, edit and remove | `System/Voice/Spam.xml` (new), `System/Voice.xml` |
+| The terminal: the hidden-message line. Filtered rooms are not listed (`find#Rooms`). There is no Spam view and no banner actions: those are the browser's | `ChatTui.xml`, `Chat.tui.json` |
+| Bundled screens regenerated | `bundled-screens.js` |
+
+**On a phone and on a desktop.** The same screens:
+- At 390 px the chip row scrolls as it does now, and the banner takes the composer's place.
+- Block is in the room's menu, which is the phone's top-right menu.
+- The desktop shell's bundled Chat is the same. Offline, its rail keeps the last list it had online, with the filtered
+  rooms already left out.
+- Neither the Android app's pushes nor the desktop's notifications come from a filtered room or a blocked sender: the
+  server sends neither the push nor the socket event.
+
+**Bridges and encryption.**
+- SMS is not end-to-end encrypted, and the server already reads texts, so judging them adds no reader. A lookup sends
+  only the number, to the provider of our number.
+- In an encrypted room, a blocked person's ciphertext is left out of my timeline like any other content. Room keys are
+  shared as before: a block changes what I see, not who is in the room.
+- A blocked person's messages still go out on the room's bridges.
+
+**Mail and the apps.**
+- Mail's own block (Inbox: a sender's address to Spam) stays separate. A chat block blocks no mail, and a mail block
+  blocks no chat (§18.2, Mail stays working).
+- mr-mantle and mr-boss:
+  - `send#SmsMessage`, `check#SmsSend` and the campaigns' sends are unchanged. A user's block never stops the system's
+    texts or a campaign's.
+  - STOP is applied before the judge, so the `SmsOptOut` EECA (the PcpSms withdrawal) runs for every number.
+  - Filing waits while a room is spam.
+  - The TextFiling spec's numbers (a known party, and an unknown number with no link) are not spam.
+
+**Failure tolerance.**
+- If `judge#SmsText` fails, it is logged and the text goes in unfiltered: an error never hides or loses a text.
+- If a `call-context` provider fails, the number counts as known, so the first contact adds nothing.
+- If the lookup fails, it adds nothing.
+- The rooms a block or an unblock changes are changed each on its own, and one that fails is logged.
+- The rule counts and the number's verdict are written after the text is taken, in a transaction of their own, and a
+  failure is logged.
+- If `blockersOf` fails inside `append#Event` or `ring`, it is logged and everyone gets the push or the ring: the blocks
+  are a preference, not a security boundary.
+
+**Security and abuse.**
+- Every user service acts on the user's own rows. The spam admin services need `VoiceAdmin`. Not spam and Report spam
+  need a current member of an external room.
+- A block tells the blocked person nothing: they are refused as "not found", as the other reach refusals are.
+- A user has one vote a number. One user's report puts the number in the other users' Spam for new texts only: it is
+  never dropped, and their Not spam outvotes it.
+- The patterns are plain text, and a text is read up to 2,000 characters.
+- The lookup costs money: it is off by default, and has a limit a day, a cache, and a gate (only when the answer can
+  change the verdict).
+- A spam text's files are fetched as any text's are, with the same bounds. Its links are not linked.
+- A user keeps at most 500 entries on the Blocked list and 500 blocked people.
+
+**Left out.**
+- Deleting old spam: a spam room keeps its texts as any room does, under the room's own retention.
+- A provider's report API; Telnyx's lookup; weights that learn by themselves. The admin sees the counts and sets the
+  weights.
+- Hiding a blocked number's texts in a group text.
+- A blocked person's room messages on the user's XMPP clients. A blocked person's reactions and poll votes still count
+  in the totals.
+- Judging calls as spam (§14.7 `CallScreeningService`); the SIM's texts (§10).
+- The phone's own contacts as known numbers: they stay on the phone, and Not spam fixes one at a time.
+
+**Tests (regression).**
+- `framework/test/CallHandling.spec.js`: the Blocked list is made on the first block; it cannot be renamed, deleted or
+  named by a rule; a blocked number's call is refused before every rule; a prefix; unblock.
+- `framework/test/SmsSpam.spec.js` (new):
+  - each rule type and the threshold;
+  - a known number, a trusted number, and a room we replied in are not judged;
+  - a spam text: not in `find#Rooms`, under `filter=spam`, level `none`, no `joined` push for a new member;
+  - STOP from a spam or a blocked number is still applied;
+  - a blocked number's text with a teammate who sees it;
+  - Not spam and Report spam, with their votes and counts;
+  - a group text;
+  - a user with the filter off;
+  - the lookup off by default, and through `sms_spam_lookup_service`: the gate, the cache and the limit a day;
+  - a judge that fails lets the text in.
+- `framework/test/ChatBlocks.spec.js` (new):
+  - a direct room, an add and a mention refused as not found;
+  - hidden in the timeline, search and the lists;
+  - the unread counts;
+  - no activity row and no mention count;
+  - the direct room in Spam & blocked;
+  - unblock;
+  - a stranger cannot read another user's blocks.
+- `basic-comms/test/BasicCommsTexts.spec.js`: the transitions `blockRoom`, `notSpam`, `reportSpam` and `unblockRoom`;
+  `rooms?filter=spam` and `filteredCount`; System, Voice, Spam rendered once (qvt).
+- moqui-core: `chat_push` (a filtered member and a member who blocked the sender get no push); `chat_bridge`
+  (`lookup#BridgeNumber` for an adapter with no lookup answers `notSupported`).
+- moqui-channels `tests/twilio.rs`: the lookup's request and its answer on the fake server, and a failure.
+- No client spec (the client budget is at 10.3 of 12 s) and no acceptance spec.
+
+**Docs.**
+- [SMS](../docs/interfaces/SMS.md): Blocked numbers and spam, and the lookup.
+- [SIP, Call handling](../docs/interfaces/SIP.md#call-handling): the Blocked list.
+- [Comms](../docs/tools/Comms.md): Block a person; Spam & blocked.
+- [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): `lookup_number`.
+- The BasicComms README: System, Voice, Spam.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -1641,7 +1918,7 @@ Each of these needs its design first:
 | Unified contacts and the per-message network choice | §11; mail stays in the Inbox, with a line on a person's row (§3, §19.1) |
 
 Then the other networks and the rest of §17, in this order:
-1. The number on the SMS and SIP provider, block and spam, contacts sync (the user stops using Google Messages and Cheogram).
+1. The number on the SMS and SIP provider, block and spam (phase 11, designed), contacts sync (the user stops using Google Messages and Cheogram).
 2. Default phone app and the merged call log (the user stops using the Phone app).
 3. GroupMe adapter (official API, low risk).
 4. Signal adapter.
