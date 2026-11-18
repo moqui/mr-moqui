@@ -32,7 +32,7 @@ Each component is its own git repository. Commit in each repository that a chang
 
 | Path | Contents |
 | --- | --- |
-| `component.xml`, `MoquiConf.xml` | The component and its conf: screen mounts (`screen-facade`), tool factories, properties. |
+| `component.xml`, `MoquiConf.xml` | The component and its conf: screen mounts (`screen-facade`), tool factories, its own settings element ([Conf settings](#conf-settings)). |
 | `entity/*.xml` | Entity definitions, view entities and extensions (`extend-entity`). In BOSS these are rare; the data model is Mantle's. |
 | `data/*.xml` | Seed, setup and demo data (`type="seed"`, `"seed-initial"`, `"demo"`): enumerations, status flows, security (`ArtifactGroup`, `ArtifactAuthz`, `UserGroupPermission`), demo records the walks use. |
 | `service/<package path>/*.xml` | Service definitions: verb and noun, parameters, `<description>`, and the implementation, inline XML Actions in `<actions>` (§4). SECAs in `*.secas.xml`, EECAs in `entity/*.eecas.xml`. |
@@ -258,6 +258,26 @@ to Rust:
   does not clear the transaction's rollback mark.
 - Check concurrency: pass `lastUpdatedStamp` or the service's `expectedRevision` back on update so a stale write is
   refused.
+
+### Conf settings
+
+A setting an operator sets per deployment is an attribute of a conf element, with its default written literally there;
+there is no `default-property` and no `${name}` in a conf attribute (the boot refuses both). Its name everywhere else is
+its selector, `chat@view-once-days` or `chat/stickers@max-bytes`, and the environment sets it by the name built from the
+same path, `moqui_conf__chat__view_once_days` ([Run-Deploy](../Run-Deploy.md#settings-and-the-environment)).
+
+- **A component's setting** goes on the component's own top-level element in its `MoquiConf.xml`, named for the
+  component and holding every setting of it, with the defaults and a comment saying what each does: mr-pass's `pass`,
+  mr-mantle's `mantle`, basic-comms' `comms`. Another component that reads it gets null when that one is absent. Group a
+  set of related settings as a child element (`chat/stickers`), not as prefixes on one element's attributes.
+- **A framework setting** goes on the framework element it belongs to in `MoquiDefaultConf.xml` (a new element when no
+  existing one fits), with its attribute in `moqui-conf-3.xsd` and its element in the conf schema
+  (`crates/moqui-core/src/context/conf_schema.rs`: its reload class, its key when it repeats, a secret's mark), and a
+  merge rule in `conf.rs` for a new top-level element or a new child.
+- **Reading it:** a script reads `ec.factory.getConfValue('chat@view-once-days')` (null for a secret; a secret is named
+  to a host function such as `RestClient.addPropertyHeader`); Rust reads `conf_env::setting("...")` or the factory's
+  `conf_setting`. A spec sets one with `setConf` or `withConf`, never `setProperty`. `System.getProperty` is for process
+  properties that are not configuration: a test run's switch, the state the server sets as it runs.
 
 ### Readiness, refresh and settings registrations
 
