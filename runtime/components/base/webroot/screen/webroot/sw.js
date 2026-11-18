@@ -98,6 +98,28 @@ function ack(ackId) {
     }).catch(() => null)
 }
 
+// The notification of a push's payload: {title, options}. A text's one-time code (plans/Comms-Messaging.md §18.3 phase 21)
+// adds a Copy action where the browser shows actions; a worker cannot write the clipboard, so the action opens the
+// message with copyCode=1, whose page copies it.
+function notificationOf(data) {
+    const chat = data.kind === "message"
+    const title = chat ? chatTitle(data) : data.title || "New notification"
+    const options = {
+        body: chat ? data.snippet || (data.encrypted ? "New message" : "") : data.body || "",
+        tag: data.tag || undefined,
+        icon: "/images/pwa-icon-192.png",
+        badge: "/images/pwa-icon-192.png",
+        data: {link: data.link || "/qapps", topic: data.topic || ""}
+    }
+    const code = chat && data.otp && /^\d{4,8}$/.test(String(data.otp.code || "")) ? String(data.otp.code) : null
+    if (code) {
+        options.actions = [{action: "copy", title: "Copy " + code}]
+        const link = data.link || "/qapps"
+        options.data.copyLink = link + (link.includes("?") ? "&" : "?") + "eventSeq=" + encodeURIComponent(data.eventSeq || "") + "&copyCode=1"
+    }
+    return {title, options}
+}
+
 self.addEventListener("push", event => {
     let data = {}
     try {
@@ -114,15 +136,7 @@ self.addEventListener("push", event => {
         )
         return
     }
-    const chat = data.kind === "message"
-    const title = chat ? chatTitle(data) : data.title || "New notification"
-    const options = {
-        body: chat ? data.snippet || (data.encrypted ? "New message" : "") : data.body || "",
-        tag: data.tag || undefined,
-        icon: "/images/pwa-icon-192.png",
-        badge: "/images/pwa-icon-192.png",
-        data: {link: data.link || "/qapps", topic: data.topic || ""}
-    }
+    const {title, options} = notificationOf(data)
     event.waitUntil(
         self.registration
             .showNotification(title, options)
@@ -147,7 +161,9 @@ function sameOriginLink(link) {
 
 self.addEventListener("notificationclick", event => {
     event.notification.close()
-    const target = sameOriginLink(event.notification.data && event.notification.data.link)
+    const data = event.notification.data || {}
+    // Copy (a code, phase 21): the message, opened to copy its code
+    const target = sameOriginLink(event.action === "copy" && data.copyLink ? data.copyLink : data.link)
     event.waitUntil(
         self.clients.matchAll({type: "window", includeUncontrolled: true}).then(windows => {
             const open = windows.find(client => new URL(client.url).pathname.startsWith("/qapps")) || windows[0]

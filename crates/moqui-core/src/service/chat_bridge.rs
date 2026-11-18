@@ -127,6 +127,9 @@ pub struct Capabilities {
     /// The most outside numbers a group text has (an SMS provider's group MMS: Telnyx 8); 0 when the network carries no
     /// group texts, and a group room on it then refuses to send (`Sms.js`, the adapter).
     pub group_max: u32,
+    /// The most bytes of files one message carries on the network (an SMS provider's MMS limit, `maxMediaBytes`); 0 for
+    /// no limit the adapter knows. The composer fits a compressed photo under it (plans/Comms-Messaging.md §18.3 phase 21).
+    pub media_max_bytes: i64,
 }
 
 /// Where a bridge's webhook signature is checked when an edge node takes the network's requests (plans/archive/Edge-Node.md
@@ -696,6 +699,7 @@ fn get_bridge_capabilities(
             ("encryption", Value::string(caps.encryption.as_str())),
             ("groupTexts", Value::Bool(caps.group_max > 0)),
             ("groupMax", Value::I64(i64::from(caps.group_max))),
+            ("mediaMaxBytes", Value::I64(caps.media_max_bytes)),
             ("adapter", Value::Bool(adapter.is_some())),
         ]
         .into_iter()

@@ -443,6 +443,9 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="updateCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
     <transition-include name="cancelCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
     <transition-include name="calEventIcs" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <!-- one-time codes and screen security (plans/Comms-Messaging.md §18.3 phase 21) -->
+    <transition-include name="keepCode" location="component://basic-comms/template/ChatPrivacyTransitions.xml"/>
+    <transition-include name="roomScreenSecure" location="component://basic-comms/template/ChatPrivacyTransitions.xml"/>
     <!-- stickers and locations (plans/Comms-Messaging.md §18.3 phase 20) -->
     <transition-include name="stickerPacks" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>

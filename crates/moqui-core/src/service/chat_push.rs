@@ -581,6 +581,9 @@ struct Content {
     external: bool,
     /// A disappearing message's time (`expireDate`, phase 16): no snippet, and no push after it.
     expires: Option<i64>,
+    /// An incoming text's one-time code (`content.otp.code`, plans/Comms-Messaging.md §18.3 phase 21), for the
+    /// notification's Copy: in the payload only where the push may carry the message's words (rule 5).
+    otp: Option<String>,
 }
 
 /// What a call's event (CetCall) pushes as (§7.2 rule 6): a missed call to the users it names, a voicemail to the
@@ -632,6 +635,15 @@ impl Content {
             text_of(room, "encrypted").as_deref() == Some("Y") || text_of(event, "encrypted").as_deref() == Some("Y");
         let call = call_kind(event);
         let expires = millis_of(event, "expireDate");
+        // a code (phase 21): its digits only, never from an encrypted room or a call's event
+        let otp = if encrypted || call.is_some() {
+            None
+        } else {
+            text_of(event, "contentJson")
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                .and_then(|content| content["otp"]["code"].as_str().map(str::to_string))
+                .filter(|code| (4..=8).contains(&code.len()) && code.chars().all(|c| c.is_ascii_digit()))
+        };
         let snippet = if encrypted || call.is_some() || expires.is_some() {
             None
         } else {
@@ -689,6 +701,7 @@ impl Content {
             call,
             external: text_of(event, "senderUserId").is_none() && text_of(event, "senderActorId").is_some(),
             expires,
+            otp,
             room_id,
         })
     }
@@ -717,6 +730,10 @@ impl Content {
             "tag": room_tag(&self.room_id),
             "topic": "ChatMessage",
         });
+        // a one-time code for the notification's Copy (phase 21), where the push may carry the message's words
+        if let Some(code) = self.otp.as_ref().filter(|_| preview) {
+            payload["otp"] = json!({"code": code});
+        }
         payload["title"] = title_of(&payload).into();
         payload
     }

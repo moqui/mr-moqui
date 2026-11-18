@@ -90,6 +90,7 @@ impl TestAdapter {
                 sends_per_minute: 0,
                 encryption: Encryption::BridgeDecrypted,
                 group_max: 0,
+                media_max_bytes: 0,
             },
             network: Mutex::new(Network::default()),
         })

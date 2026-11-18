@@ -754,6 +754,20 @@ function receive(p) {
       ec.message.clearErrors()
     }
   }
+  // a one-time code (Comms-Messaging §18.3 phase 21): kept on the message for its Copy, and its delete after a day when
+  // everyone in the room asks; the text stays when it fails
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && item.text) {
+    try {
+      ec.service.sync().name('org.moqui.chat.ChatPrivacyServices.mark#OneTimeCode').parameters({ chatRoomId: pair.chatRoomId,
+        eventSeq: first.eventSeq, text: item.text }).disableAuthz().call()
+    } catch (err) {
+      ec.logger.error(`SMS ${p.messageId}: its code was not kept: ${err && err.message ? err.message : err}`)
+    }
+    if (ec.message.hasError()) {
+      ec.logger.error(`SMS ${p.messageId}: its code was not kept: ${ec.message.errorsString}`)
+      ec.message.clearErrors()
+    }
+  }
   // an RCS reply to a suggestion (Comms-Messaging §18.3 phase 13): its postback on the message, for the app that sent
   // the buttons (a SECA on note#SuggestionReply); the text stays when it fails
   if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && extra && extra.postback) {

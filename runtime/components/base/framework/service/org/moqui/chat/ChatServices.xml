@@ -1159,6 +1159,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const room = capabilityMap[row.chatRoomId] = capabilityMap[row.chatRoomId] || {edit: true, delete: true, reaction: true}
                 if (outbound) { room.edit = room.edit && cap.edit === true; room.delete = room.delete && cap.delete === true
                     room.reaction = room.reaction && cap.reaction === true }
+                // the smallest file limit of the room's networks, which the composer fits a photo under (phase 21)
+                if (outbound && Number(cap.mediaMaxBytes) > 0) room.mediaMaxBytes = room.mediaMaxBytes ? Math.min(room.mediaMaxBytes, Number(cap.mediaMaxBytes)) : Number(cap.mediaMaxBytes)
             }
         ]]></script></actions>
     </service>
@@ -2301,6 +2303,7 @@ along with this software (see the LICENSE.md file). If not, see
                     forwardOf: redacted || !isMessage ? null : content.forwardOf || null, poll: redacted ? null : polls[seq] || null,
                     calEvent: redacted ? null : calEvents[seq] || null, calChange: redacted || !isMessage ? null : content.calChange || null,
                     sticker: redacted || !isMessage ? null : content.sticker || null, location: redacted || !isMessage ? null : content.location || null,
+                    otp: redacted || !isMessage ? null : content.otp || null,
                     assist: redacted || !isMessage ? null : content.assist || null,
                     rich: redacted || !isMessage ? null : content.rich || null, postback: redacted || !isMessage ? null : content.postback || null,
                     linkPreviews: redacted || !isMessage ? [] : previewsOf(row),

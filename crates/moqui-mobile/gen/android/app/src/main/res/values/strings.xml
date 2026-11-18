@@ -25,6 +25,9 @@
     <string name="chat_reply_hint">Message</string>
     <string name="chat_mark_read">Mark read</string>
     <string name="chat_mute_hour">Mute 1 hour</string>
+    <string name="chat_copy_code">Copy code</string>
+    <string name="chat_code_copied">Code copied</string>
+    <string name="chat_code_received">A code from %1$s</string>
     <string name="chat_reply_failed">Your reply was not sent: tap to open the room</string>
     <string name="call_in_app">MR Moqui call</string>
     <string name="pip_hang_up">Hang up</string>

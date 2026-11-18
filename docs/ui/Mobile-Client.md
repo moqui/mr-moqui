@@ -439,7 +439,19 @@ opens at the place.
 `moquiDesktop.secureScreen(reason, on)` (the `secure_screen` command, `ScreenSecurity.kt`) turns Android's `FLAG_SECURE`
 on for a reason, and off once no reason holds it: no screenshot, no screen recording and a blank recent-apps thumbnail.
 Chat's view-once viewer holds `viewOnce` while it is open (plans/Comms-Messaging.md §18.3 phase 16); the reasons are a
-set, so a screen-security setting of the app or of a room can hold its own. It answers whether the flag is on; the
+set, so a screen-security setting of the app or of a room can hold its own. Phase 21's are `room:<chatRoomId>`, held by
+Chat while an encrypted room is shown with Settings, Chat, Privacy on "in encrypted rooms" or the room's own Block
+screenshots here, and `app`, from "everywhere in the app" (WebrootChat.js applies it when the shell loads). `app` is
+remembered on the phone (`ScreenSecurity.kt`, its SharedPreferences), so from the next start the flag is on before the
+first frame, the splash and the account list included; turning the setting off in any account on the phone clears it.
+
+### One-time codes
+
+A chat push of a text with a one-time code carries `otp {code}` (plans/Comms-Messaging.md §18.3 phase 21, §7.2 rule
+10). `ChatNotifications.showRoom` then adds Copy code: a `COPY` broadcast to `ChatActionReceiver` with the code in the
+action's data, which puts it on the clipboard (`ClipDescription.EXTRA_IS_SENSITIVE` on Android 13 and later, a "Code
+copied" toast before it). The notification is `VISIBILITY_PRIVATE`, its public version "A code from …", so the lock screen
+shows no code. An APK before this change shows the message without the button. It answers whether the flag is on; the
 desktop app has no such member, and the viewer says a screenshot cannot be stopped there. The app's store deletes
 disappearing messages at their time as the desktop's does ([Desktop-Client](Desktop-Client.md)).
 

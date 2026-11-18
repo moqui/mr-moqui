@@ -1797,3 +1797,50 @@ test("stickers found by emoji or words across packs, and the ones sent last kept
     assert.deepEqual(chat.stickers.recent("ann").slice(0, 2), ["S2", "S1"]);
     assert.equal(chat.stickers.clean({ chatStickerId: "S1", width: 9000, emoji: "👍" }).width, 512);
 });
+
+test("screen security: the whole app, an encrypted room by the setting, any room by the member's own switch; a code's line", () => {
+    const screen = chat.screen;
+    assert.equal(screen.wanted("app", { encrypted: false }, null), true);
+    assert.equal(screen.wanted("encrypted", { encrypted: true }, null), true);
+    assert.equal(screen.wanted("encrypted", { encrypted: false }, null), false);
+    assert.equal(screen.wanted("off", { encrypted: true }, null), false);
+    assert.equal(screen.wanted("off", { encrypted: true }, { screenSecure: "Y" }), true);
+    assert.equal(chat.otp.line({ otp: { code: "482913" } }), "Code 482913");
+    assert.equal(chat.otp.line({}), "");
+});
+
+test("a photo goes smaller: 2048 px as a JPEG from 4000 x 3000, stepped under a limit; a small PNG, a GIF and a video as they are", async () => {
+    const photos = chat.photos;
+    const canvas = document.createElement("canvas");
+    canvas.width = 4000;
+    canvas.height = 3000;
+    const context = canvas.getContext("2d");
+    // noise, so the JPEG has something to make smaller
+    const image = context.createImageData(4000, 3000);
+    for (let i = 0; i < image.data.length; i += 4) {
+        image.data[i] = (i * 7919) % 256; image.data[i + 1] = (i * 104729) % 256; image.data[i + 2] = (i * 31) % 256; image.data[i + 3] = 255;
+    }
+    context.putImageData(image, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
+    const photo = new File([blob], "IMG_0001.JPG", { type: "image/jpeg" });
+    const small = await photos.compress(photo, {});
+    assert.equal(small.type, "image/jpeg");
+    assert.equal(small.name, "IMG_0001.jpg");
+    assert.ok(small.size < photo.size, small.size + " < " + photo.size);
+    const bitmap = await createImageBitmap(small);
+    assert.equal(Math.max(bitmap.width, bitmap.height), 2048);
+    const limit = Math.floor(small.size / 2);
+    const fitted = await photos.compress(photo, { maxBytes: limit });
+    assert.ok(fitted.size <= limit || fitted.size < small.size, fitted.size + " under " + limit);
+    // a small PNG stays as it is (a screenshot keeps its sharp text)
+    const tiny = document.createElement("canvas");
+    tiny.width = 40; tiny.height = 30;
+    const png = new File([await new Promise((resolve) => tiny.toBlob(resolve, "image/png"))], "shot.png", { type: "image/png" });
+    assert.equal(await photos.compress(png, {}), png);
+    assert.equal(photos.compressible(new File(["x"], "a.gif", { type: "image/gif" })), false);
+    assert.equal(photos.compressible(new File(["x"], "a.mp4", { type: "video/mp4" })), false);
+    // a file the browser cannot read goes as it is
+    const broken = new File(["not a picture"], "x.jpg", { type: "image/jpeg" });
+    assert.equal(await photos.compress(broken, {}), broken);
+    assert.deepEqual(photos.steps(0).length, 1);
+});

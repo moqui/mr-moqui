@@ -3330,6 +3330,16 @@ const messageTemplate = `
             <chat-cal-card v-if="item.event.calEvent" :item="item" :room="room"></chat-cal-card>
             <chat-sticker v-if="item.event.sticker" :item="item" :room="room"></chat-sticker>
             <chat-location-card v-if="item.event.location" :item="item" :room="room"></chat-location-card>
+            <!-- a text's one-time code (Comms-Messaging §18.3 phase 21): Copy, and its delete after a day with Keep -->
+            <div v-if="item.event.otp && item.event.otp.code" class="row items-center q-mt-xs m-chat-otp" style="gap:6px">
+                <q-chip dense outline color="primary" icon="sym_o_password" class="q-ma-none">{{room.otpLine(item)}}</q-chip>
+                <q-btn :flat="room.copyWantedSeq !== item.eventSeq" :unelevated="room.copyWantedSeq === item.eventSeq" dense no-caps size="sm" color="primary"
+                        icon="sym_o_content_copy" class="m-chat-otp-copy" :label="room.t('Copy')" @click.stop="room.copyCode(item)"></q-btn>
+                <template v-if="item.expireDate && !room.timerSeconds">
+                    <span class="text-caption m-muted">{{room.otpDeleteLine(item)}}</span>
+                    <q-btn flat dense no-caps size="sm" color="primary" class="m-chat-otp-keep" :label="room.t('Keep')" @click.stop="room.keepCode(item)"></q-btn>
+                </template>
+            </div>
             <div v-if="item.event.calChange" class="row items-center no-wrap q-mt-xs m-chat-cal-changed">
                 <q-chip dense clickable outline color="primary" :icon="item.event.calChange.cancelled ? 'sym_o_event_busy' : 'sym_o_edit_calendar'" class="q-ma-none"
                         @click.stop="room.jumpToEvent(item.event.calChange.eventSeq)">{{item.event.calChange.cancelled ? room.t('Event cancelled') : room.t('Event changed')}}</q-chip></div>
@@ -4045,7 +4055,12 @@ const composerTemplate = `
     <div v-if="files.length" class="row q-mb-xs">
         <q-chip v-for="file in files" :key="file.key" dense square removable class="m-tonal q-ml-none q-mr-xs" :icon="file.uploading ? undefined : room.fileIcon(file)"
                 @remove="removeFile(file)"><q-spinner v-if="file.uploading" size="14px" class="q-mr-xs"></q-spinner>
-            <span class="ellipsis" style="max-width:180px">{{file.fileName}}</span></q-chip>
+            <span class="ellipsis" style="max-width:180px">{{file.fileName}}</span>
+            <!-- a photo goes compressed (Comms-Messaging §18.3 phase 21); Original sends it as it was -->
+            <q-btn v-if="file.compressed && !file.uploading" flat dense no-caps size="xs" color="primary" class="q-ml-xs m-chat-photo-original"
+                    :label="room.t('Original')" :disable="!!originalOff(file)" @click.stop="sendOriginal(file)">
+                <q-tooltip>{{originalOff(file) || room.t('Send the photo as it is: larger, with its details, its location among them')}}</q-tooltip></q-btn>
+            <span v-else-if="file.originalSent" class="text-caption m-muted q-ml-xs">{{room.t('Original')}}</span></q-chip>
         <!-- one photo or video may go view-once (phase 16): opened once by each person, then gone -->
         <q-toggle v-if="canViewOnce" v-model="viewOnce" dense size="sm" icon="sym_o_looks_one" class="q-ml-xs m-chat-view-once-toggle" :label="room.t('View once')"></q-toggle>
         <span v-if="viewOnce && canViewOnce && !isEmptyHtml(body)" class="text-caption text-warning q-ml-xs self-center">{{room.t('A view-once photo has no text')}}</span>
@@ -4360,13 +4375,37 @@ const chatComposer = {
         },
         // each file goes up at once (upload#ChatFiles); the message names them when it is sent. Not offline: a file waits
         // for no one, and the outbox keeps only text. Resolves when all are up (or failed)
-        upload(list) {
+        // the original of a photo sent compressed: refused over the room's texts' file limit (phase 21)
+        originalOff(file) {
+            const most = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+            if (most > 0 && file.original && file.original.size > most) {
+                return fill(t('Too large for a text (over {size}): it goes compressed'), { size: Math.round(most / 104857.6) / 10 + ' MB' });
+            }
+            return '';
+        },
+        sendOriginal(file) {
+            const original = file.original;
+            if (!original || this.originalOff(file)) return;
+            this.removeFile(file);
+            this.upload([original], true);
+        },
+        upload(list, original) {
             if (this.room.offline) { moqui.notifyMessages([{ type: 'info', message: t('Files go up when you are back online') }]); return Promise.resolve(); }
-            return Promise.all(list.map((file) => {
-                const entry = { key: 'f' + Date.now() + Math.random(), fileName: file.name, contentType: file.type, fileSize: file.size, uploading: true, chatAttachmentId: null };
+            return Promise.all(list.map((picked) => {
+                const entry = { key: 'f' + Date.now() + Math.random(), fileName: picked.name, contentType: picked.type, fileSize: picked.size, uploading: true, chatAttachmentId: null };
                 this.files.push(entry);
+                // a photo goes compressed unless Original was asked (phase 21): 2048 px, its metadata gone, under the room's texts' limit
+                const most = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+                const preparing = !original && moqui.chat.photos && moqui.chat.photos.compressible(picked)
+                    ? moqui.chat.photos.compress(picked, { maxBytes: most }) : Promise.resolve(picked);
+                let file = picked;
                 // an encrypted room's file goes up encrypted, named encrypted; its name, type and key go in the message (C7)
-                const sealing = this.room.sealed ? moqui.chat.sealFile(file) : Promise.resolve(null);
+                const sealing = preparing.then((ready) => {
+                    file = ready;
+                    if (ready !== picked) Object.assign(entry, { fileName: ready.name, contentType: ready.type, fileSize: ready.size, compressed: true, original: picked });
+                    else if (original) entry.originalSent = true;
+                    return this.room.sealed ? moqui.chat.sealFile(ready) : null;
+                });
                 return sealing.then((sealed) => {
                     if (sealed) entry.info = sealed.info;
                     const form = new FormData();
@@ -4600,6 +4639,11 @@ const roomTemplate = `
                         <q-item-section avatar><q-icon :name="room.record.icon || 'sym_o_description'"></q-icon></q-item-section><q-item-section>{{t('The record')}}</q-item-section></q-item>
                     <q-item v-if="canModerate" clickable v-close-popup @click="openSettings">
                         <q-item-section avatar><q-icon name="sym_o_settings"></q-icon></q-item-section><q-item-section>{{t('Room settings')}}</q-item-section></q-item>
+                    <q-item v-if="isMember && sealed" clickable v-close-popup class="m-chat-screen-item" @click="toggleRoomScreen">
+                        <q-item-section avatar><q-icon name="sym_o_screenshot_monitor"></q-icon></q-item-section>
+                        <q-item-section><q-item-label>{{t('Block screenshots here')}}</q-item-label>
+                            <q-item-label v-if="!screenAvailable" caption>{{t('Only the Android app can stop screenshots')}}</q-item-label></q-item-section>
+                        <q-item-section side><q-icon :name="member && member.screenSecure === 'Y' ? 'sym_o_toggle_on' : 'sym_o_toggle_off'" :color="member && member.screenSecure === 'Y' ? 'primary' : undefined"></q-icon></q-item-section></q-item>
                     <q-item v-if="isMember" clickable v-close-popup class="m-chat-timer-item" @click="openTimer">
                         <q-item-section avatar><q-icon name="sym_o_timer"></q-icon></q-item-section><q-item-section>{{t('Disappearing messages')}}</q-item-section>
                         <q-item-section side class="text-caption">{{timerLabel}}</q-item-section></q-item>
@@ -5387,6 +5431,7 @@ const chatRoom = {
             cardBox: { open: false, threadRoot: null },
             calBox: { open: false, threadRoot: null, item: null }, calZone: null, calZones: [], calProvider: false, calFieldsLoaded: false,
             locationBox: { open: false, threadRoot: null }, stickerPacks: [], stickerPacksFailed: false, stickerPacksLoaded: false,
+            copyWantedSeq: null, screenHeld: null,
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0, secured: null },
@@ -5435,6 +5480,9 @@ const chatRoom = {
         timerSeconds() { return (this.room && Number(this.room.messageTimerSeconds)) || 0; },
         timerLabel() { return moqui.chat.expiry.label(this.timerSeconds, t); },
         // an event's box in a room with a timer (phase 19): its card goes with the message
+        // Android's FLAG_SECURE while this room is shown (phase 21): the setting, or the member's own switch here
+        screenWanted() { return this.state === 'ready' && moqui.chat.screen.wanted((this.prefs || {}).screenSecurity || 'off', this.room, this.member); },
+        screenAvailable() { return moqui.chat.screen.available(); },
         stickerManageUrl() { return String(this.base || '').replace(/\/Chat(\/.*)?$/, '') + '/Settings/Stickers'; },
         timerNote() { return this.timerSeconds ? fill(t('This room\'s messages disappear after {time}: the event\'s card goes too'), { time: this.timerLabel }) : ''; },
         timerShort() { return moqui.chat.expiry.short(this.timerSeconds, t); },
@@ -5645,6 +5693,11 @@ const chatRoom = {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
         // the room's timer, for the encrypted room's key rotation (WebrootCrypto.js)
         timerSeconds(value) { moqui.chat.expiry.timers[this.roomId] = value || 0; },
+        // this room's screen security reason, on while it is shown and wanted, off when it goes (phase 21)
+        screenWanted: { immediate: true, handler(on) { this.holdScreen(on); } },
+        roomId() { this.holdScreen(false); this.$nextTick(() => this.holdScreen(this.screenWanted)); },
+        // a code's Copy asked from its notification (copyCode=1): once its message is here
+        events() { if (this.copyWantedSeq != null) this.copyFromLink(); },
         cryptoReady(value) { if (value) this.loadTrust(); },
         // the room shown: its first message (a dm link's) sent through the room's own send, sealed in an encrypted room
         state(value) {
@@ -7529,6 +7582,41 @@ const chatRoom = {
             this.downloadCalEvent(item);
         },
         jumpToEvent(seq) { if (seq != null) this.scrollToSeq(Number(seq), true); },
+        // ---- screen security and one-time codes (Comms-Messaging §18.3 phase 21) ----
+        holdScreen(on) {
+            const reason = this.screenHeld || ('room:' + this.roomId);
+            if (on) { this.screenHeld = 'room:' + this.roomId; moqui.chat.screen.set(this.screenHeld, true); }
+            else if (this.screenHeld) { moqui.chat.screen.set(reason, false); this.screenHeld = null; }
+        },
+        toggleRoomScreen() {
+            if (needsConnection()) return;
+            const on = !(this.member && this.member.screenSecure === 'Y');
+            this.post('roomScreenSecure', { chatRoomId: this.roomId, on: on ? 'true' : 'false' }).then((json) => {
+                if (this.member) this.member = Object.assign({}, this.member, { screenSecure: json.screenSecure ? 'Y' : null });
+            }, () => {});
+        },
+        otpLine(item) { return moqui.chat.otp.line(item.event); },
+        otpDeleteLine(item) { return fill(t('Deletes {when}'), { when: fullTime(item.expireDate) }); },
+        copyCode(item) {
+            const code = item.event.otp && item.event.otp.code;
+            moqui.chat.otp.copy(code).then((copied) => {
+                if (copied) { this.copyWantedSeq = null; moqui.notifyMessages([{ type: 'success', message: t('Code copied') }]); }
+                else this.copyWantedSeq = item.eventSeq;
+            });
+        },
+        // opened from a code's notification (copyCode=1): copied when the browser lets the page, else its Copy is lit
+        copyFromLink() {
+            const item = this.events.find((one) => Number(one.eventSeq) === Number(this.copyWantedSeq));
+            if (!item || !(item.otp || (item.content && item.content.otp))) return;
+            const code = (item.otp || item.content.otp).code;
+            moqui.chat.otp.copy(code).then((copied) => {
+                if (copied) { this.copyWantedSeq = null; moqui.notifyMessages([{ type: 'success', message: t('Code copied') }]); }
+            });
+        },
+        keepCode(item) {
+            if (needsConnection()) return;
+            this.post('keepCode', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then(() => this.applyFields(item.eventSeq, { expireDate: null }), () => {});
+        },
         // ---- stickers and locations (Comms-Messaging §18.3 phase 20) ----
         stickerUrl(chatStickerId, thumb) { return this.url('stickerImage') + '?chatStickerId=' + encodeURIComponent(chatStickerId) + (thumb ? '&thumb=true' : ''); },
         loadStickers() {
@@ -7901,6 +7989,11 @@ const chatRoom = {
     mounted() {
         this.composers = {};
         this.unsubscribe = [];
+        // a code's notification opens its message with copyCode=1 (Comms-Messaging §18.3 phase 21)
+        try {
+            const query = new URLSearchParams(window.location.search);
+            if (query.get('copyCode') === '1' && this.seq) this.copyWantedSeq = Number(this.seq);
+        } catch (err) { this.copyWantedSeq = null; }
         // what Back closes (moqui.back): the message sheet, an edit, the side pane or thread
         if (moqui.back) {
             this.unsubscribe.push(moqui.back.track(this, () => this.side, () => this.closeSide()));
@@ -7940,6 +8033,7 @@ const chatRoom = {
     },
     beforeUnmount() {
         this.holdCancel();
+        this.holdScreen(false);
         (this.unsubscribe || []).forEach((off) => off());
         document.removeEventListener('visibilitychange', this.onVisibleBound);
         clearInterval(this.ticker);
@@ -11040,9 +11134,60 @@ module.exports = {
                                               [_directive_close_popup]
                                             ])
                                           : _createCommentVNode("", true),
-                                        (_ctx.isMember)
+                                        (_ctx.isMember && _ctx.sealed)
                                           ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                               key: 9,
+                                              clickable: "",
+                                              class: "m-chat-screen-item",
+                                              onClick: _ctx.toggleRoomScreen
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_screenshot_monitor" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_item_label, null, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(_ctx.t('Block screenshots here')), 1)
+                                                      ]),
+                                                      _: 1
+                                                    }),
+                                                    (!_ctx.screenAvailable)
+                                                      ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                          key: 0,
+                                                          caption: ""
+                                                        }, {
+                                                          default: _withCtx(() => [
+                                                            _createTextVNode(_toDisplayString(_ctx.t('Only the Android app can stop screenshots')), 1)
+                                                          ]),
+                                                          _: 1
+                                                        }))
+                                                      : _createCommentVNode("", true)
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, { side: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, {
+                                                      name: _ctx.member && _ctx.member.screenSecure === 'Y' ? 'sym_o_toggle_on' : 'sym_o_toggle_off',
+                                                      color: _ctx.member && _ctx.member.screenSecure === 'Y' ? 'primary' : undefined
+                                                    }, null, 8, ["name", "color"])
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"])), [
+                                              [_directive_close_popup]
+                                            ])
+                                          : _createCommentVNode("", true),
+                                        (_ctx.isMember)
+                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                              key: 10,
                                               clickable: "",
                                               class: "m-chat-timer-item",
                                               onClick: _ctx.openTimer
@@ -11077,7 +11222,7 @@ module.exports = {
                                           : _createCommentVNode("", true),
                                         (_ctx.inviteOffered)
                                           ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                              key: 10,
+                                              key: 11,
                                               clickable: "",
                                               class: "m-chat-invites-item",
                                               onClick: _ctx.openInvites
@@ -11103,7 +11248,7 @@ module.exports = {
                                           : _createCommentVNode("", true),
                                         (_ctx.canModerate && _ctx.joinUi.count > 0)
                                           ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                              key: 11,
+                                              key: 12,
                                               clickable: "",
                                               onClick: $event => (_ctx.joinUi.requests = true)
                                             }, {
@@ -11128,7 +11273,7 @@ module.exports = {
                                           : _createCommentVNode("", true),
                                         (_ctx.encryptOffered)
                                           ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                              key: 12,
+                                              key: 13,
                                               clickable: "",
                                               class: "m-chat-start-encrypted-item",
                                               onClick: _ctx.startEncrypted
@@ -11153,7 +11298,7 @@ module.exports = {
                                             ])
                                           : _createCommentVNode("", true),
                                         (_ctx.isMember)
-                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 13 }, [
+                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 14 }, [
                                               _createVNode(_component_q_separator),
                                               _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 clickable: "",
@@ -14801,17 +14946,17 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-composer"];
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, withKeys: _withKeys, createTextVNode: _createTextVNode, renderList: _renderList, Fragment: _Fragment, createBlock: _createBlock, withCtx: _withCtx, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, withKeys: _withKeys, createTextVNode: _createTextVNode, renderList: _renderList, Fragment: _Fragment, createBlock: _createBlock, withCtx: _withCtx, withModifiers: _withModifiers, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_icon = _resolveComponent("q-icon")
                   const _component_q_btn = _resolveComponent("q-btn")
                   const _component_q_spinner = _resolveComponent("q-spinner")
+                  const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_chip = _resolveComponent("q-chip")
                   const _component_q_toggle = _resolveComponent("q-toggle")
                   const _component_m_rich_text = _resolveComponent("m-rich-text")
                   const _component_m_chat_networks = _resolveComponent("m-chat-networks")
-                  const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_item_section = _resolveComponent("q-item-section")
                   const _component_q_item = _resolveComponent("q-item")
                   const _component_q_list = _resolveComponent("q-list")
@@ -14909,7 +15054,36 @@ module.exports = {
                                 _createElementVNode("span", {
                                   class: "ellipsis",
                                   style: {"max-width":"180px"}
-                                }, _toDisplayString(file.fileName), 1)
+                                }, _toDisplayString(file.fileName), 1),
+                                (file.compressed && !file.uploading)
+                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 1,
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      size: "xs",
+                                      color: "primary",
+                                      class: "q-ml-xs m-chat-photo-original",
+                                      label: _ctx.room.t('Original'),
+                                      disable: !!_ctx.originalOff(file),
+                                      onClick: _withModifiers($event => (_ctx.sendOriginal(file)), ["stop"])
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_tooltip, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.originalOff(file) || _ctx.room.t('Send the photo as it is: larger, with its details, its location among them')), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1032, ["label", "disable", "onClick"]))
+                                  : (file.originalSent)
+                                    ? (_openBlock(), _createElementBlock("span", {
+                                        key: 2,
+                                        class: "text-caption m-muted q-ml-xs"
+                                      }, _toDisplayString(_ctx.room.t('Original')), 1))
+                                    : _createCommentVNode("", true)
                               ]),
                               _: 2
                             }, 1032, ["icon", "onRemove"]))
@@ -15816,7 +15990,7 @@ module.exports = {
         {
             const target = component.components["chat-room"].components["chat-message"];
             target.render = (function () {
-                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, withKeys: _withKeys, normalizeStyle: _normalizeStyle } = Vue
+                const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, Fragment: _Fragment, renderList: _renderList, withKeys: _withKeys, normalizeStyle: _normalizeStyle } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_m_avatar = _resolveComponent("m-avatar")
@@ -16140,9 +16314,56 @@ module.exports = {
                                     room: _ctx.room
                                   }, null, 8, ["item", "room"]))
                                 : _createCommentVNode("", true),
-                              (_ctx.item.event.calChange)
+                              (_ctx.item.event.otp && _ctx.item.event.otp.code)
                                 ? (_openBlock(), _createElementBlock("div", {
                                     key: 9,
+                                    class: "row items-center q-mt-xs m-chat-otp",
+                                    style: {"gap":"6px"}
+                                  }, [
+                                    _createVNode(_component_q_chip, {
+                                      dense: "",
+                                      outline: "",
+                                      color: "primary",
+                                      icon: "sym_o_password",
+                                      class: "q-ma-none"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.room.otpLine(_ctx.item)), 1)
+                                      ]),
+                                      _: 1
+                                    }),
+                                    _createVNode(_component_q_btn, {
+                                      flat: _ctx.room.copyWantedSeq !== _ctx.item.eventSeq,
+                                      unelevated: _ctx.room.copyWantedSeq === _ctx.item.eventSeq,
+                                      dense: "",
+                                      "no-caps": "",
+                                      size: "sm",
+                                      color: "primary",
+                                      icon: "sym_o_content_copy",
+                                      class: "m-chat-otp-copy",
+                                      label: _ctx.room.t('Copy'),
+                                      onClick: _withModifiers($event => (_ctx.room.copyCode(_ctx.item)), ["stop"])
+                                    }, null, 8, ["flat", "unelevated", "label", "onClick"]),
+                                    (_ctx.item.expireDate && !_ctx.room.timerSeconds)
+                                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                          _createElementVNode("span", { class: "text-caption m-muted" }, _toDisplayString(_ctx.room.otpDeleteLine(_ctx.item)), 1),
+                                          _createVNode(_component_q_btn, {
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            size: "sm",
+                                            color: "primary",
+                                            class: "m-chat-otp-keep",
+                                            label: _ctx.room.t('Keep'),
+                                            onClick: _withModifiers($event => (_ctx.room.keepCode(_ctx.item)), ["stop"])
+                                          }, null, 8, ["label", "onClick"])
+                                        ], 64))
+                                      : _createCommentVNode("", true)
+                                  ]))
+                                : _createCommentVNode("", true),
+                              (_ctx.item.event.calChange)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 10,
                                     class: "row items-center no-wrap q-mt-xs m-chat-cal-changed"
                                   }, [
                                     _createVNode(_component_q_chip, {
@@ -16163,7 +16384,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.poll)
                                 ? (_openBlock(), _createBlock(_component_q_card, {
-                                    key: 10,
+                                    key: 11,
                                     flat: "",
                                     bordered: "",
                                     class: "q-mt-xs q-pa-sm m-chat-poll",
@@ -16270,7 +16491,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.viewOnce)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 11,
+                                    key: 12,
                                     class: "row items-center no-wrap q-mt-xs q-pa-sm rounded-borders m-tonal m-chat-view-once",
                                     "data-view-once": _ctx.room.viewOnceState(_ctx.item),
                                     style: {"max-width":"280px"}
@@ -16298,7 +16519,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.attachments.length && !_ctx.item.event.rich && !_ctx.item.event.sticker)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 12,
+                                    key: 13,
                                     class: "row q-gutter-xs q-mt-none"
                                   }, [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.item.attachments, (file) => {
@@ -16372,7 +16593,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.linkPreviews.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 13,
+                                    key: 14,
                                     class: "q-mt-xs",
                                     style: {"max-width":"440px"}
                                   }, [
@@ -16443,7 +16664,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.records.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 14,
+                                    key: 15,
                                     class: "q-mt-xs",
                                     style: {"max-width":"440px"}
                                   }, [
@@ -16461,7 +16682,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.reactions.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 15,
+                                    key: 16,
                                     class: "row items-center q-mt-xs"
                                   }, [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.item.reactions, (reaction) => {
@@ -16503,7 +16724,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (!_ctx.inThread && _ctx.item.threadReplyCount)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 16,
+                                    key: 17,
                                     class: "q-mt-xs"
                                   }, [
                                     _createElementVNode("a", {
@@ -16516,7 +16737,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.mine && _ctx.room.leftOutBySeq[_ctx.item.eventSeq])
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 17,
+                                    key: 18,
                                     class: "row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out"
                                   }, [
                                     _createVNode(_component_q_icon, {
@@ -16539,7 +16760,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.event.delivery)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 18,
+                                    key: 19,
                                     class: _normalizeClass(["row items-center no-wrap q-mt-xs text-caption m-chat-delivery", _ctx.room.deliveryClass(_ctx.item)]),
                                     "data-delivery": _ctx.item.event.delivery.state
                                   }, [

@@ -1376,6 +1376,39 @@ fn sinch_rcs_rich_messages_go_as_choice_card_and_carousel_messages_with_our_fall
     assert_eq!(bed.delivery(&room, seq).4, "read");
 }
 
+/// An incoming text's one-time code (plans/Comms-Messaging.md §18.3 phase 21) is kept on its message (`content.otp`), by
+/// Sms.js after the text is taken in; a text with no code keeps none.
+#[test]
+fn an_incoming_texts_one_time_code_is_kept_on_its_message() {
+    let bed = sinch_bed();
+    let _entered = bed.ctx.enter();
+    bed.sinch_event(&sinch_rcs_in(
+        "01CODE1",
+        json!({"text_message": {"text": "Your verification code is 482913"}}),
+    ));
+    bed.sinch_event(&sinch_rcs_in(
+        "01CODE2",
+        json!({"text_message": {"text": "Thanks, see you at 9"}}),
+    ));
+    let room = bed.room(THEIRS).unwrap();
+    let _authz = bed.ctx.disable_authz();
+    let contents: Vec<String> = bed
+        .facade
+        .find("moqui.chat.ChatEvent")
+        .unwrap()
+        .eq("chatRoomId", text(&room))
+        .eq("eventTypeEnumId", text("CetMessage"))
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .filter_map(|row| row.get("contentJson").map(to_plain_string))
+        .collect();
+    assert_eq!(contents.len(), 2, "{contents:?}");
+    assert!(contents[0].contains("\"otp\":{\"code\":\"482913\"}"), "{contents:?}");
+    assert!(!contents[1].contains("otp"), "{contents:?}");
+}
+
 /// alice sends a place (ChatLocationServices.send#Location, plans/Comms-Messaging.md §18.3 phase 20): its eventSeq.
 fn send_place(room: &str, place: Json) -> i64 {
     login("alice");

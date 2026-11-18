@@ -40,7 +40,8 @@ along with this software (see the LICENSE.md file). If not, see
             mentioned the user where, read by the framework's notify#Mention), autoAwayMinutes (CHAT_AUTO_AWAY_MINUTES,
             10, which the framework's presence reads), dndFrom and dndTo (CHAT_DND_FROM and CHAT_DND_TO, HH:mm in the
             user's time zone, apply#DndHours), dndAllowed (CHAT_DND_ALLOWED: the people whose calls still ring on do not
-            disturb, [{userId, name}], store#DndAllowed), and statusPresets (CHAT_STATUS_PRESETS, a JSON list of {emoji, text,
+            disturb, [{userId, name}], store#DndAllowed), screenSecurity (CHAT_SCREEN_SECURITY: off, encrypted or app) and
+            otpDelete (CHAT_OTP_DELETE, N; ChatPrivacyServices store#ChatPrivacyPrefs), and statusPresets (CHAT_STATUS_PRESETS, a JSON list of {emoji, text,
             clearAfter}: minutes, today, week or 0 for never; five presets until the user changes them; the account menu's
             status dialog, WebrootChat.js, reads the same preference).</description>
         <out-parameters><parameter name="prefs" type="Map"/></out-parameters>
@@ -63,6 +64,9 @@ along with this software (see the LICENSE.md file). If not, see
             prefs = {enterSends: flag('CHAT_ENTER_SENDS', true), sounds: flag('CHAT_SOUNDS', true), readReceipts: flag('CHAT_READ_RECEIPTS', true),
                 typing: flag('CHAT_TYPING', true), linkPreviews: flag('CHAT_LINK_PREVIEWS', true), notifyDefault: ['all', 'mentions', 'none'].includes(level) ? level : '', notifyPreview: flag('CHAT_NOTIFY_PREVIEW', true),
                 autoAwayMinutes: minutes > 0 ? minutes : 10, dndFrom: pref('CHAT_DND_FROM'), dndTo: pref('CHAT_DND_TO'), dndAllowed: dndAllowed,
+                // screen security and one-time codes (plans/Comms-Messaging.md §18.3 phase 21; ChatPrivacyServices)
+                screenSecurity: ['encrypted', 'app'].includes(pref('CHAT_SCREEN_SECURITY')) ? pref('CHAT_SCREEN_SECURITY') : 'off',
+                otpDelete: flag('CHAT_OTP_DELETE', false),
                 statusPresets: presets.filter((item) => item && (item.text || item.emoji)).slice(0, 12).map((item) => ({emoji: String(item.emoji || ''),
                     text: String(item.text || ''), clearAfter: String(item.clearAfter ?? '0')}))}
         ]]></script></actions>

@@ -1040,10 +1040,10 @@ that adds it. "New" means this plan adds it (§17).
 | Default SMS app | `sim-sms` build | §10 |
 | Scheduled send | Send later on the composer's Send (a long press on a phone, an arrow on a desktop): the server holds the message (`ChatScheduledMessage`) and sends it at its time as the sender, through the normal path, so bridges and their send checks apply then, as mail's due drafts are sent (`send#DueDrafts`). The room lists its scheduled messages: edit, send now, cancel. In an encrypted room, which the server cannot encrypt for, the sender's own device holds it and sends it, the server keeping a placeholder with no text | Designed: phase 15 (§18.3) |
 | Spam protection, block, report | Block a number: its calls and texts, on the user's Blocked list (a `CallerList`, Settings, Call handling); its texts kept out of sight in "Spam & blocked". Block a person in chat: their messages hidden in shared rooms, their direct rooms and invites refused. Spam filter for outside numbers: local rules (first contact, links, keywords, numbers, reports here), on by default; the provider's number lookup optional and off. Not spam and Report spam | Designed: phase 11 (§18.3); the caller lists are built |
-| One-time codes: copy, delete after 24 h | Codes found in incoming texts (a keyword near 4 to 8 digits, with care for numbers, prices and dates); a Copy chip on the message and a Copy button in the notification (web push where the browser shows actions; Android in its next APK); an optional delete after 24 h through the disappearing-message timer, with Keep | Designed: phase 21 (§18.3) |
+| One-time codes: copy, delete after 24 h | Codes found in incoming texts (a keyword near 4 to 8 digits, with care for numbers, prices and dates); a Copy chip on the message and a Copy button in the notification (web push where the browser shows actions; Android in its next APK); an optional delete after 24 h through the disappearing-message timer, with Keep | Built: phase 21 (§18.3) |
 | Message reminders | "Remind me" on a message (in 20 minutes, in 1 hour, tomorrow, a time picked): a push through the chat push worker and an Activity row then; pending reminders listed at the top of Activity and cancelled there. A reminder keeps the room and the message's number only, never its text | Designed: phase 15 (§18.3) |
 | Smart replies, writing help | Suggested replies from `moqui-llm`, plain rooms only (never encrypted rooms) | New |
-| Photo quality choice | Compressed (2048 px JPEG, metadata dropped) by default, or Original, per send; a room that goes out by text fits the photo under its MMS limit. Today every photo goes at full size | Designed: phase 21 (§18.3) |
+| Photo quality choice | Compressed (2048 px JPEG, metadata dropped) by default, or Original, per send; a room that goes out by text fits the photo under its MMS limit. Today every photo goes at full size | Built: phase 21 (§18.3) |
 | Messages for web | The web client and the desktop app | Built |
 
 ### 14.3 iMessage and FaceTime
@@ -1054,8 +1054,8 @@ that adds it. "New" means this plan adds it (§17).
 | Tapbacks | Reactions | Built |
 | Edit and unsend within minutes | Edit, redact | Built |
 | Send later | Scheduled send (§14.2); in an encrypted room by the sender's own device | Designed: phase 15 (§18.3) |
-| Message effects, stickers, GIFs | Sticker packs, local: the server's (an administrator's) and each user's own; PNG, WebP or GIF, animated too; a picker beside the emoji picker; a sticker shows large, and goes to bridges as its picture or as text. GIF search waits for a provider; effects: no | Stickers designed: phase 20 (§18.3); GIFs later |
-| Share location, live location | A location message with no map: coordinates or an address, a label, "Open in maps" (`geo:` in the Android app, OpenStreetMap on the web) and Copy; the device's position or a typed place, no geocoding. Bridges get the text with the link; Sinch RCS its location message. Live location waits for the Maps app ([Maps](Maps.md)) | Location designed: phase 20 (§18.3); live location after Maps |
+| Message effects, stickers, GIFs | Sticker packs, local: the server's (an administrator's) and each user's own; PNG, WebP or GIF, animated too; a picker beside the emoji picker; a sticker shows large, and goes to bridges as its picture or as text. GIF search waits for a provider; effects: no | Stickers built: phase 20 (§18.3); GIFs later |
+| Share location, live location | A location message with no map: coordinates or an address, a label, "Open in maps" (`geo:` in the Android app, OpenStreetMap on the web) and Copy; the device's position or a typed place, no geocoding. Bridges get the text with the link; Sinch RCS its location message. Live location waits for the Maps app ([Maps](Maps.md)) | Location built: phase 20 (§18.3); live location after Maps |
 | Check In (tell a contact you arrived) | Later, on live location | Later |
 | FaceTime audio and video, group FaceTime | WebRTC calls | Built; §8 |
 | Handoff of a call between devices | "Move to this device" | §8 |
@@ -1074,7 +1074,7 @@ that adds it. "New" means this plan adds it (§17).
 | Usernames, phone number hidden | Usernames; a user's phone number is not in chat's data and is never shown to other MR Moqui users. An outside number shows to the members of its own room. Unified contacts keep it: a person who is a user shows only the numbers of the viewer's own rooms, and chat never links a number to a user from its own or voice's data (phase 22) | Built |
 | Linked devices list | Apps and devices | Built |
 | Registration lock, PIN | Device keys, password, recovery key for key backup | Built |
-| Screen security (no screenshots) | Android `FLAG_SECURE`: a user setting (off, in encrypted rooms, the whole app) and a per-room switch in an encrypted room, through phase 16's reasons (`app:`, `room:`) | Designed: phase 21 (§18.3) |
+| Screen security (no screenshots) | Android `FLAG_SECURE`: a user setting (off, in encrypted rooms, the whole app) and a per-room switch in an encrypted room, through phase 16's reasons (`app:`, `room:`) | Built: phase 21 (§18.3) |
 | Group links with admin approval | Room invite links and QR codes (`/join/<token>`) in private and public rooms, made by a room's moderators (any member of a public room), with an expiry, a use limit and optional approval; revoked at once. Join requests in the moderators' queue | Designed: phase 17 (§18.3) |
 | Stories | Later, if wanted | Later |
 | Sealed sender | Not possible: the server sees who sends. The UI says so (§6) | Not planned |
@@ -1089,7 +1089,7 @@ that adds it. "New" means this plan adds it (§17).
 | Group invite links and QR | Invite links and their QR codes; a deep link into the Android app (`org.moqui.mobile:/join`) | Designed: phase 17 (§18.3) |
 | Likes | Heart reaction; across the GroupMe bridge a like is a heart both ways | Built; the bridge in phase 14 |
 | Topics (subgroups) | Threads, or linked sub-rooms. A bridged Topic is a room of its own, "Group › Topic" | Built (threads); the bridge in phase 14 |
-| Events with RSVP | An event message (title, start and end in a time zone, place, details) with Going / Maybe / No, the counts and who answered, a reminder before it, a calendar entry through an app's `chat-calendar` provider or an `.ics` file (the phone's calendar app on Android); changes and a cancellation post to the room; bridges get the text. Not in encrypted rooms, as polls | Designed: phase 19 (§18.3) |
+| Events with RSVP | An event message (title, start and end in a time zone, place, details) with Going / Maybe / No, the counts and who answered, a reminder before it, a calendar entry through an app's `chat-calendar` provider or an `.ics` file (the phone's calendar app on Android); changes and a cancellation post to the room; bridges get the text. Not in encrypted rooms, as polls | Built: phase 19 (§18.3) |
 | Polls | Polls | Built |
 | Gallery | Media tab | §5 |
 | Mute, @all | Mute, `@room`; across the GroupMe bridge `@all` and `@room` map both ways | Built; the bridge in phase 14 |
@@ -1105,7 +1105,7 @@ that adds it. "New" means this plan adds it (§17).
 | Contacts on other XMPP servers | C3b federation | Not built |
 | Group chats (MUC) | Rooms are MUC rooms | Built |
 | Ad-hoc commands (XEP-0050) | Not needed after the number moves | Not planned |
-| Stickers, reactions, replies, threads | Stickers designed (phase 20); the rest built | Partly |
+| Stickers, reactions, replies, threads | Built (stickers: phase 20) | Built |
 | Push without Google (UnifiedPush) | UnifiedPush option | §7.4 |
 
 ### 14.7 Android Phone app
@@ -1329,9 +1329,9 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 4 | Disappearing messages (exact timer) and view-once media: designed, phase 16 (§18.3) | §14.4 |
 | 5 | Invite links and QR, with approval; join requests: designed, phase 17 (§18.3) | §14.4, §14.5 |
 | 6 | SMS members of a room (GroupMe's SMS join): designed, phase 18 (§18.3) | §14.5 |
-| 7 | Stickers, GIF search, location and live location: sticker packs and location designed, phase 20 (§18.3); GIF search and live location later | §14.3 |
-| 8 | Event messages with RSVP: designed, phase 19 (§18.3) | §14.5 |
-| 9 | Screen security option; one-time code helper; send original photo: designed, phase 21 (§18.3) | §14.2, §14.4 |
+| 7 | Stickers, GIF search, location and live location: sticker packs and location built, phase 20 (§18.3); GIF search and live location later | §14.3 |
+| 8 | Event messages with RSVP: built, phase 19 (§18.3) | §14.5 |
+| 9 | Screen security option; one-time code helper; send original photo: built, phase 21 (§18.3) | §14.2, §14.4 |
 | 10 | GroupMe adapter (`groupme`): designed, phase 14 (§18.3) | §13.3 |
 | 11 | Signal adapter on `signal-cli` (`signal.rs`), optional build feature | §13.3 |
 | 12 | iMessage adapter on BlueBubbles (`bluebubbles.rs`), optional build feature | §13.3 |
@@ -1340,6 +1340,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 15 | History imports | §15 |
 | 16 | Default phone app (`sim-dialer`): SIM calls, line choice, one call log, call screening | §14.7 |
 | 17 | Contacts: Contacts screen, Android sync adapter on CardDAV, phone import, caller names | §14.8 |
+| 18 | Encrypted polls and events together: answers as encrypted messages, counted on the devices (needs its design) | §14.1, §14.5 |
 
 ## 18. Implementation phases
 
@@ -4242,6 +4243,19 @@ terminal; GroupMe's native events; floating times with no zone.
 
 **Done when.** The regression specs above pass within their budgets; on a real phone, the row of §18.4.
 
+**Status (2026-11-18): built.** What the build changed from the entry above:
+- *The writes are committed before the providers.* A `chat-calendar` provider runs in a transaction of its own and reads
+  only committed rows, so `answer#`, `update#` and `cancel#CalEvent` make their writes in a transaction of their own
+  (`ChatCal.js` `committed`, which a screen's transition needs, as it has one in place) and call the providers after.
+- *The own answer is one object*: `calEvent.mine {answer, remindMinutes, calendarDate}`, so a pushed update (which has
+  none) keeps it (`moqui.chat.applyUpdate`).
+- *The UID's domain* is the property `chat_cal_uid_domain` (`chat.moqui` by default).
+- *mr-boss's provider is built*: `ironstone.comms.ChatServices.sync#ChatCalendarEntry` on mr-boss branch
+  `d2e-chat-calendar` (`856b8737`), with `test/Comms/ChatCalendar` (2 features). One Mantle event per chat event, its
+  `universalId` the UID; a cancel also when the message is gone.
+- Regression: framework `ChatCal` (6 features), webroot `WebrootChat` (one feature); the bundled screens golden
+  regenerated. Left: §18.4's row, and Android's `calendar_insert` (`CalendarIntent.kt`) is checked on a phone only.
+
 #### Phase 20: sticker packs and location messages
 
 Designed 2026-11-17 (D2f; §14.3, §17 #7, as decided in the batch: packs local with no outside service, GIF search
@@ -4452,6 +4466,19 @@ location attachment outbound (its text goes).
 
 **Done when.** The regression specs above pass within their budgets; on a real phone, the row of §18.4.
 
+**Status (2026-11-18): built.** What the build changed from the entry above:
+- *An inbound place* is kept by `ChatLocationServices.mark#Location`, which `Sms.js` calls after the text is taken in
+  (as the postback is), in place of a hook in `ingest#Event`.
+- *A sticker's words are its body* ("Sticker 👍"), so the room list, search and the push show them with no hook in
+  `snippetOf` or `chat_push.rs`. `chat_bridge.rs` `request_of` leaves the text out when the sticker's picture goes.
+- *A sticker's checks* are its type (PNG, WebP or GIF), its bytes (512 KB) and that it decodes; there is no rule on its
+  sides. `width` and `height` are its 128 px thumbnail's, its shape for the layout.
+- *Android*: `geo:` is one of the links `openExternal` hands to the system.
+- *The test kit*: `uploadedFile(name, text, type, binary)` takes a binary file, each character a byte, for the specs'
+  pictures ([JS-Testkit](../docs/dev/JS-Testkit.md)).
+- Regression: framework `ChatSticker` (3 features) and `ChatLocation` (1), moqui-channels (a Sinch location message
+  and Twilio's words; the inbound place a location message), webroot `WebrootChat` (two features). Left: §18.4's row.
+
 #### Phase 21: screen security, one-time codes, send original
 
 Designed 2026-11-17 (D2g; §14.2, §14.4, §17 #9). Builds on phase 16's `ScreenSecurity` and `secure_screen`, and on its
@@ -4641,6 +4668,21 @@ entity: a code is in the message's content, and its deletion is phase 16's `expi
 - §7.2 (the `otp` field).
 
 **Done when.** The regression specs above pass within their budgets; on a real phone, the row of §18.4.
+
+**Status (2026-11-18): built.** What the build changed from the entry above:
+- *A code is found after the text is taken in* (`ChatPrivacyServices.mark#OneTimeCode`, from `Sms.js`, which reads the
+  message's text), in place of a detection before `ingest#Event`.
+- *The settings* are saved by `ChatPrivacyServices.store#ChatPrivacyPrefs` (Settings, Chat, Privacy, its own form);
+  `get#ChatPrefs` answers `screenSecurity` and `otpDelete`.
+- *The push* carries `otp {code}` only; the web's action reads "Copy 482913" and Android's "Copy code" (its string
+  resource). `sw.js` builds a notification in `notificationOf`, which its page spec checks.
+- *The MMS limit* reaches the composer as the room's `bridgeCapabilities.mediaMaxBytes` (`Capabilities.media_max_bytes`,
+  the smallest of the room's outbound bridges), not a `textMediaMaxBytes` of `get#Room`.
+- *The app reason* is `app`, one for the phone, remembered by `ScreenSecurity.kt`.
+- Regression: framework `ChatOtp` (3 features), moqui-core `chat_push_tests` (the code only with previews), moqui-channels
+  (an inbound text's code kept), webroot `WebrootChat` (two features) and `WebrootServiceWorker` (one). The Kotlin
+  (`ChatNotifications.kt`, `ChatActionReceiver.kt`, `ScreenSecurity.kt`) is not built here: it is checked with the next
+  APK on a phone (§18.4). Left: §18.4's row.
 
 #### Phase 22: unified contacts and the network per message (D4, §11, §17 #1)
 
@@ -4980,6 +5022,7 @@ Each of these needs its design first:
 |---|---|
 | `sim-sms` | §10: MMS, a synced SIM room and its sends, SIM threads beside server rooms |
 | `sim-dialer` and the contacts sync | §14.7, §14.8; what a server without mr-mantle offers |
+| Encrypted polls and events together | Answers as encrypted messages, counted on the devices; until then an encrypted room has neither (phases 19, §19.1) |
 
 Then the other networks and the rest of §17, in this order:
 1. The number on the SMS and SIP provider, block and spam (phase 11, designed), contacts sync (the user stops using Google Messages and Cheogram).
@@ -5028,6 +5071,9 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-17 | Business RCS goes through the same provider modules, Twilio and Sinch first; Telnyx RCS is optional (§16.4, §19.4 Q9) |
 | 2026-11-17 | A reply to an RCS fallback text goes to the RCS room when the fallback number is that RCS bridge's own, and to the number's SMS room otherwise (§16.4 step 11, phase 10) |
 | 2026-11-17 | Scheduled send in an encrypted room is held by the sender's own device: it keeps the draft sealed under its store key and encrypts and sends it at the time, claiming the server's placeholder (no text) so one device sends it; if no device is open then, it goes when that device next opens, marked sent late; a device that is gone leaves it "can't be sent". Plain, phone and bridged rooms use the server-held send. Reminders are held during do not disturb (phase 15) |
+| 2026-11-18 | A photo goes compressed by default (2048 px JPEG, its metadata and GPS removed), and Original is a per-send choice; this changes the earlier behaviour, when every photo went at full size (phase 21) |
+| 2026-11-18 | An encrypted room has no events for now, as it has no polls; encrypted polls and events together are a later design (answers as encrypted messages, counted on the devices) |
+| 2026-11-18 | The `chat-calendar` provider of mr-boss is built with phase 19 (mr-boss branch `d2e-chat-calendar`) |
 | 2026-11-17 | Sticker packs now, local only: the server's and each user's, stored as content; GIF search waits until a provider is chosen (phase 20) |
 | 2026-11-17 | A location message has no map: coordinates or an address, a label and "Open in maps" (`geo:`, OpenStreetMap on the web), from the device's position or typed in, with no geocoding service; live location waits for the Maps app (phase 20) |
 | 2026-11-16 | The layout thresholds stay as built: 1024 px for the stacked layout, 640 px for bubbles, 900 px for a pane over the timeline (§1) |

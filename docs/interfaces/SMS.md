@@ -226,6 +226,14 @@ post to the room as it.
    the delivery (`deliveryFailed`, with the carrier's reason), which its sender may send again. A receipt never takes a
    delivered text back to sent. A receipt of a text Moqui did not send is answered and left.
 5. A failure of the server's own is 500, so the provider tries again; the batch was stored before (§4.1).
+6. A one-time code in a text that came in (plans/Comms-Messaging.md §18.3 phase 21; `ChatPrivacyServices
+   mark#OneTimeCode`, after the text is taken in): 4 to 8 digits within 40 characters of a keyword (`chat_otp_keywords`,
+   comma separated; English by default: code, verification, OTP, passcode, PIN, login, 2FA and the like), never part of a
+   phone number, price, date, time, year or link, and none when two are as near. The message keeps it (`content.otp`)
+   for its Copy, in the room and in the notification. When the code is the text's only candidate and every local member
+   of the room has "Delete a text's one-time code a day after it came" (`CHAT_OTP_DELETE`), the message disappears a day
+   after it came (phase 16's `expireDate`); Keep on it takes that back. The provider and the phone network keep their
+   own copies.
 
 ## Texts that go out
 
@@ -344,7 +352,7 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
 
 | Operation | SMS |
 | --- | --- |
-| Text, MMS files | yes, within the limits above |
+| Text, MMS files | yes, within the limits above; the bridge's `maxMediaBytes` is its `mediaMaxBytes` capability, which Chat's composer fits a compressed photo under (phase 21) |
 | Delivery receipts | yes (`receiptStatus`; a failed one fails the delivery) |
 | Edit, delete, reaction | no (refused before the change: `bridgeUnsupported`) |
 | Idempotent sends | no: a lost answer is uncertain |

@@ -375,6 +375,24 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   (the phone's maps app in the Android app, OpenStreetMap elsewhere) and Copy. Everyone else gets "Location: …" and an
   OpenStreetMap link; Sinch RCS its location message. A location someone shares with you over RCS shows the same way.
   In an encrypted room the place is only in the ciphertext. Live location waits for the Maps app.
+- **Photos: compressed or original** (phase 21). A photo you attach (JPEG, PNG or WebP) now goes compressed: at most
+  2048 px on its long side as a JPEG, its metadata (its GPS location among it) removed. **This changes how Chat worked
+  before, when every photo went at full size.** The file's chip in the composer has Original, which sends that photo as
+  it is, details and location included. A PNG is made smaller only when it is larger than 2048 px, so a screenshot
+  keeps its sharp text; a GIF, a video, and a photo the browser cannot read (HEIC on most) go as they are. In a room that
+  goes out by text, the photo is fitted under the text's file limit (Telnyx 1 MiB, Twilio 5 MB, Sinch 1 MiB, or the
+  bridge's `maxMediaBytes`), and Original is offered only when the original fits.
+- **One-time codes** (phase 21; `org.moqui.chat.ChatPrivacyServices`). A code in a text that came in (SMS, MMS, RCS)
+  shows a "Code 482913" chip with Copy. Its notification has Copy too: on the web where the browser shows notification
+  actions (it opens the message and copies the code there, or lights Copy for one tap where the browser asks for one),
+  and in the Android app (its next APK) a Copy code button that puts it on the clipboard marked sensitive, with the lock
+  screen saying only "A code from …". The code goes in a notification only where the message's words may (message
+  previews on, a plain room). Settings, Chat, Privacy can delete a text's code a day after it came, when everyone in its
+  room asks the same; the chip then says when, with Keep. Codes in chat between people are never looked for.
+- **Screen security** (phase 21). Settings, Chat, Privacy: Off, Block screenshots in encrypted rooms, or everywhere in the
+  app; an encrypted room's menu also has Block screenshots here, your own choice for that room. It is Android's
+  `FLAG_SECURE`: no screenshot, no screen recording and a blank recent-apps thumbnail while it holds. Only the Android app
+  can do this; the web and the desktop app cannot stop a screenshot, and no app can stop a camera.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its

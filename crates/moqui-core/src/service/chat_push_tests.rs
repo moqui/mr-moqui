@@ -1002,6 +1002,64 @@ fn a_disappearing_message_pushes_no_text_and_ends_with_it() {
     assert!(ends <= expires, "{ends} past {expires}");
 }
 
+/// A text's one-time code (plans/Comms-Messaging.md §18.3 phase 21, §7.2 rule 10) is in its push for the
+/// notification's Copy, only where the push carries the message's words: none with previews off.
+#[test]
+fn a_one_time_code_is_in_the_push_only_with_previews() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("alice");
+    let seq = send(&bed.room, "<p>Your code is 482913</p>", &[]);
+    {
+        let _authz = bed.ctx.disable_authz();
+        let event = rows(&bed.facade, "moqui.chat.ChatEvent", &[("chatRoomId", &bed.room)])
+            .into_iter()
+            .find(|row| count_of(row, "eventSeq") == seq)
+            .unwrap();
+        let mut content: serde_json::Value = serde_json::from_str(&field(&event, "contentJson")).unwrap();
+        content["otp"] = serde_json::json!({"code": "482913"});
+        update(
+            &bed.facade,
+            "moqui.chat.ChatEvent",
+            &[("chatRoomId", &bed.room), ("eventSeq", &seq.to_string())],
+            &[("contentJson", text(&content.to_string()))],
+        );
+    }
+    run(bed.now);
+    let posts = bed.net.take();
+    let said = payload(posts.iter().find(|post| post.device == "BOB-PHONE").unwrap());
+    assert_eq!(said["otp"]["code"], "482913", "{said}");
+
+    // with previews off, no code
+    row(
+        &bed.facade,
+        "moqui.security.UserPreference",
+        &[
+            ("userId", text("bob")),
+            ("preferenceKey", text("CHAT_NOTIFY_PREVIEW")),
+            ("preferenceValue", text("N")),
+        ],
+    );
+    login("alice");
+    let again = send(&bed.room, "<p>Your code is 551177</p>", &[]);
+    {
+        let _authz = bed.ctx.disable_authz();
+        update(
+            &bed.facade,
+            "moqui.chat.ChatEvent",
+            &[("chatRoomId", &bed.room), ("eventSeq", &again.to_string())],
+            &[(
+                "contentJson",
+                text(r#"{"body":"<p>Your code is 551177</p>","otp":{"code":"551177"}}"#),
+            )],
+        );
+    }
+    run(bed.now + 1000);
+    let posts = bed.net.take();
+    let said = payload(posts.iter().find(|post| post.device == "BOB-PHONE").unwrap());
+    assert!(said.get("otp").is_none(), "{said}");
+}
+
 /// Rule 4: on do not disturb a call rings from a person on the user's allowed list, or as the same person's second
 /// call within 3 minutes.
 #[test]

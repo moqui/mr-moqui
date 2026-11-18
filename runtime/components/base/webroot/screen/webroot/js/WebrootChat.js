@@ -2370,6 +2370,85 @@
         }
     };
 
+    // ---- screen security, one-time codes and photos (plans/Comms-Messaging.md phase 21; org.moqui.chat.ChatPrivacyServices) ----
+    chat.screen = {
+        // whether a room asks for Android's FLAG_SECURE: the whole app's setting, an encrypted room with "in encrypted
+        // rooms", or the member's own switch for the room
+        wanted(setting, room, member) {
+            if (setting === "app") return true;
+            if (!room || !room.encrypted) return !!(member && member.screenSecure === "Y");
+            return setting === "encrypted" || !!(member && member.screenSecure === "Y");
+        },
+        // a reason on or off through the app host (phase 16's ScreenSecurity); whether the flag holds (false on the web)
+        set(reason, on) {
+            const host = root.moquiDesktop;
+            if (!host || typeof host.secureScreen !== "function") return Promise.resolve(false);
+            return Promise.resolve(host.secureScreen(reason, on === true)).then((held) => held === true, () => false);
+        },
+        available() { return !!(root.moquiDesktop && typeof root.moquiDesktop.secureScreen === "function"); },
+        // the whole app's reason, from the account's preference, once the shell has its config
+        applyApp(setting) { return chat.screen.set("app", setting === "app"); }
+    };
+    chat.otp = {
+        // a message's code chip: "Code 482913", and when it is to disappear "Deletes tomorrow at 15:40"
+        line(event) { return event && event.otp && event.otp.code ? fillIn(tr("Code {code}"), { code: event.otp.code }) : ""; },
+        copy(code) {
+            if (!code || !root.navigator || !root.navigator.clipboard) return Promise.resolve(false);
+            return root.navigator.clipboard.writeText(String(code)).then(() => true, () => false);
+        }
+    };
+    chat.photos = {
+        // a still photo the composer may make smaller: JPEG, PNG or WebP (a GIF may move; a video is no photo)
+        compressible(file) { return !!file && /^image\/(jpeg|png|webp)$/i.test(file.type || "") && Number(file.size || 0) > 0; },
+        // the sizes and qualities tried, the long side first: 2048 px at 0.85, then smaller and lower until it fits maxBytes
+        steps(maxBytes) {
+            const all = [[2048, 0.85], [2048, 0.7], [1600, 0.7], [1600, 0.55], [1280, 0.55], [1024, 0.5]];
+            return maxBytes > 0 ? all : all.slice(0, 1);
+        },
+        // The photo made smaller in the browser (createImageBitmap with its orientation, a canvas, toBlob): a JPEG of at most
+        // 2048 px a side, its metadata (its GPS among it) gone; a PNG stays a PNG and is made smaller only when it is larger
+        // than that (a screenshot's text stays sharp); with maxBytes it steps down until it fits. The file as it was when it
+        // is no still photo, the browser cannot read it (HEIC on most), or it comes out larger.
+        compress(file, options) {
+            const opts = options || {};
+            if (!chat.photos.compressible(file) || typeof root.createImageBitmap !== "function") return Promise.resolve(file);
+            const maxBytes = Number(opts.maxBytes || 0);
+            const png = /png$/i.test(file.type);
+            return root.createImageBitmap(file, { imageOrientation: "from-image" }).then((bitmap) => {
+                const encode = (side, quality) => {
+                    const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+                    const width = Math.max(1, Math.round(bitmap.width * scale)), height = Math.max(1, Math.round(bitmap.height * scale));
+                    const canvas = typeof root.OffscreenCanvas === "function" ? new root.OffscreenCanvas(width, height)
+                        : Object.assign(root.document.createElement("canvas"), { width, height });
+                    const context = canvas.getContext("2d");
+                    if (!png) { context.fillStyle = "#fff"; context.fillRect(0, 0, width, height); }
+                    context.drawImage(bitmap, 0, 0, width, height);
+                    const type = png ? "image/png" : "image/jpeg";
+                    if (canvas.convertToBlob) return canvas.convertToBlob({ type, quality });
+                    return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+                };
+                const big = Math.max(bitmap.width, bitmap.height) > 2048;
+                if (png && !big && !(maxBytes > 0 && file.size > maxBytes)) return file;
+                const steps = chat.photos.steps(maxBytes);
+                const tryStep = (index) => encode(steps[index][0], steps[index][1]).then((blob) => {
+                    if (blob && maxBytes > 0 && blob.size > maxBytes && index + 1 < steps.length) return tryStep(index + 1);
+                    return blob;
+                });
+                return tryStep(0).then((blob) => {
+                    if (bitmap.close) bitmap.close();
+                    if (!blob || (blob.size >= file.size && !(maxBytes > 0 && file.size > maxBytes))) return file;
+                    const name = String(file.name || "photo").replace(/\.[^.]*$/, "") + (png ? ".png" : ".jpg");
+                    return new root.File([blob], name, { type: blob.type || (png ? "image/png" : "image/jpeg") });
+                });
+            }, () => file);
+        }
+    };
+    // the account's whole-app screen security, once the shell has its preferences (phase 21)
+    try {
+        const prefs = (moqui.config && moqui.config.preferences) || {};
+        if (prefs.CHAT_SCREEN_SECURITY === "app") chat.screen.applyApp("app");
+    } catch (err) { /* no config yet: Chat applies it when it opens */ }
+
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----
 
     const labelsOf = (vm) => Object.assign({}, chat.labels, vm.$root && vm.$root.labels);
