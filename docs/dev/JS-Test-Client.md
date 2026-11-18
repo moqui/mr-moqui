@@ -116,7 +116,7 @@ suite(["SecurityAccess", "SecurityHeaders", "SecurityCors", "SecurityAuthn", "Se
 `components` are what the server loads (the suite's own component when empty), `specs` the server specs that run first
 as fixtures (with their `dependsOn`, looked up across the named components), `conf` the runtime conf, relative to
 the runtime as `MOQUI_CONF` is, and `properties` conf properties set in the server's environment (mr-boss's walks
-send invoices and reminders, so its suite has `properties: { mail_capture_sends: "true" }`). The file is read as
+send invoices and reminders, so its suite has `properties: { moqui_conf__email_client__capture_sends: "true" }`). The file is read as
 literals, not run.
 
 `moqui test-client --serve` groups the selected components by their declaration: components with the same one, or

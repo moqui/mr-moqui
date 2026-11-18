@@ -386,13 +386,13 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("smtp_listen_port", "0"),
-            ("smtp_allowed_addresses", "127.0.0.1"),
-            ("smtp_hostname", "edge.example.com"),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+            ("moqui_conf__smtp_server__hostname", "edge.example.com"),
             // not reached at first: a port nothing listens on
-            ("edge_mail_relay_port", &closed_port),
+            ("moqui_conf__mail_delivery__relay_port", &closed_port),
             ("edge_mail_bounce_domain", "bounce.test"),
-            ("edge_mail_mta", "postfix"),
+            ("moqui_conf__mail_delivery__mta", "postfix"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -602,7 +602,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
     assert!(between > 0, "read between attempts");
     assert!(rows(&edge, "moqui.edge.EdgeQueueItem", &[("kind", "mailStatus")]).is_empty());
     // the relay back: it takes it, from the VERP sender of the item
-    moqui_lib::env::set_property("edge_mail_relay_port", relay_port.clone());
+    moqui_lib::env::set_property("moqui_conf__mail_delivery__relay_port", relay_port.clone());
     let item_1 = out_item("EDGE_OUT_1")["queueItemId"].clone();
     wait_until(Duration::from_secs(10), "the relay took the first", || {
         relay
@@ -664,7 +664,7 @@ const EDGE_MTA_CONF: &str = r#"<edge queue-retry-seconds="0.1"/>
 /// E5a's cases with the MTA in moqui, no Postfix: mail from the internet to port 25 checked (SPF, DKIM, DMARC) with the
 /// edge node's own Authentication-Results, a forged one dropped, a DMARC reject policy refused with 550, and the rest
 /// queued for the local node; mail out DKIM-signed and delivered to the recipient domain's MX (a fake one through
-/// `mail_mx_override`), a 4xx tried again, a 5xx back in the Outbox. DNS is offline: the records are fixed.
+/// `mail-delivery@mx-override`), a 4xx tried again, a 5xx back in the Outbox. DNS is offline: the records are fixed.
 #[test]
 fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
     if !crate::common::own_process() {
@@ -672,8 +672,13 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
     }
     let (root, cert, key) = certs();
     let mx = relay();
-    let local =
-        crate::common::start_with_conf_files("edge-mta-local", None, LOCAL_CONF, &[("mail_dns_offline", "true")], &[]);
+    let local = crate::common::start_with_conf_files(
+        "edge-mta-local",
+        None,
+        LOCAL_CONF,
+        &[("moqui_conf__mail_delivery__dns_offline", "true")],
+        &[],
+    );
     let sales = to_plain_string(
         &call(
             &local,
@@ -696,13 +701,13 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("smtp_listen_port", "0"),
-            ("smtp_hostname", "edge.example.com"),
-            ("edge_mail_mta", "moqui"),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__hostname", "edge.example.com"),
+            ("moqui_conf__mail_delivery__mta", "moqui"),
             ("edge_mail_bounce_domain", "bounce.test"),
-            ("mail_mx_override", &mx_override),
-            ("mail_delivery_retry_seconds", "0.2"),
-            ("mail_dns_offline", "true"),
+            ("moqui_conf__mail_delivery__mx_override", &mx_override),
+            ("moqui_conf__mail_delivery__retry_seconds", "0.2"),
+            ("moqui_conf__mail_delivery__dns_offline", "true"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );

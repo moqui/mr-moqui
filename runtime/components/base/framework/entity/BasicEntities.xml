@@ -801,12 +801,14 @@ along with this software (see the LICENSE.md file). If not, see
             EmailClientServices.start#OAuthSignIn, XOAUTH2 for IMAP and SMTP): its endpoints, the scopes it asks for and
             those that must be granted, how the ID token names the address, how discover#EmailServer knows its addresses,
             and the servers of an account made with it. The deployment's own OAuth client, registered at the provider,
-            comes from the properties (or environment variables) {propertyPrefix}_client_id and
-            {propertyPrefix}_client_secret, else from clientId and clientSecret here; with neither, or disabled, the
-            provider is not configured and the wizard does not offer it. {tenant} in the URLs and the issuer is
-            {propertyPrefix}_tenant, else tenant, else common; {tenantid} in the issuer is any tenant.</description>
+            comes from the conf's email-client/oauth-provider[confProviderId] client-id and client-secret (set by their
+            environment names, moqui_conf__email_client__oauth_provider__GOOGLE__client_id and so on), else from clientId
+            and clientSecret here; with neither, or disabled, the provider is not configured and the wizard does not
+            offer it. {tenant} in the URLs and the issuer is that element's tenant, else tenant here, else common;
+            {tenantid} in the issuer is any tenant.</description>
         <field name="oauthProviderEnumId" type="id" is-pk="true"/>
-        <field name="propertyPrefix" type="text-medium"/>
+        <field name="confProviderId" type="text-short"><description>The id of the conf's email-client oauth-provider
+            element with this deployment's client</description></field>
         <field name="clientId" type="text-medium"/>
         <field name="clientSecret" type="text-medium" encrypt="true"/>
         <field name="tenant" type="text-short"/>
@@ -847,7 +849,7 @@ along with this software (see the LICENSE.md file). If not, see
         <seed-data>
             <!-- Google: Gmail and Google Workspace. https://mail.google.com/ is the only scope IMAP and SMTP take; it is a
                 restricted scope (docs/interfaces/Mail-OAuth.md). prompt=consent so every sign-in gives a refresh token. -->
-            <moqui.basic.email.EmailOAuthProvider oauthProviderEnumId="EopGoogle" propertyPrefix="email_oauth_google"
+            <moqui.basic.email.EmailOAuthProvider oauthProviderEnumId="EopGoogle" confProviderId="google"
                     authorizeUrl="https://accounts.google.com/o/oauth2/v2/auth" tokenUrl="https://oauth2.googleapis.com/token"
                     revokeUrl="https://oauth2.googleapis.com/revoke" userInfoUrl="https://openidconnect.googleapis.com/v1/userinfo"
                     scope="https://mail.google.com/ openid email" mailScope="https://mail.google.com/"
@@ -859,7 +861,7 @@ along with this software (see the LICENSE.md file). If not, see
                     smtpHost="smtp.gmail.com" smtpPort="465" smtpSsl="Y" smtpStartTls="N"/>
             <!-- Microsoft: Microsoft 365 (work and school) and Outlook.com (personal) through the common tenant; the app
                 registration must allow both kinds of account. Microsoft has no endpoint that revokes one refresh token. -->
-            <moqui.basic.email.EmailOAuthProvider oauthProviderEnumId="EopMicrosoft" propertyPrefix="email_oauth_microsoft"
+            <moqui.basic.email.EmailOAuthProvider oauthProviderEnumId="EopMicrosoft" confProviderId="microsoft"
                     tenant="common" authorizeUrl="https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
                     tokenUrl="https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
                     scope="openid email profile offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send"

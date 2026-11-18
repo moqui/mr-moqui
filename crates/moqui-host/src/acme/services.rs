@@ -116,7 +116,7 @@ fn answered_names(factory: &ExecutionContextFactory, set_up: &[NameRow]) -> BTre
     for host in moqui_core::screen::public_site_hosts(factory) {
         add(normal_name(&host), "A site's host".to_string());
     }
-    add(property("smtp_hostname"), "The SMTP host".to_string());
+    add(property("smtp-server@hostname"), "The SMTP host".to_string());
     add(property("xmpp_domain"), "The XMPP domain".to_string());
     match terminate_hosts(factory) {
         Ok(hosts) => {

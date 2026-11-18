@@ -30,19 +30,17 @@
         edge_xmpp_tls_port, other than the server's) are an option, as is a pair of ports per node (EdgePort rows). -->
 
     <!-- Mail (plans/archive/Edge-Node.md §5.4, §10): the MTA in moqui (E5b). The SMTP listener takes port 25 from the internet
-        itself (internet mode; smtp_listen_port 25 and smtp_listen_host 0.0.0.0, or :: for IPv6 too, in .env), with
-        STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked (authserv-id smtp_hostname). Mail to the server's
+        itself (internet mode; smtp-server@listen-port 25 and smtp-server@listen-host 0.0.0.0, or :: for IPv6 too, in .env), with
+        STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked (authserv-id smtp-server@hostname). Mail to the server's
         own accounts is delivered here; mail to the paired node's replicated recipients is queued for it, and a message
         with recipients on both sides is delivered once to each. The paired node's mail out (an EmailServer with smtpHost
         edge: there) is DKIM-signed here and delivered to each domain's MX, from bounce+(item)@ the domain
         edge_mail_bounce_domain names. A mail domain may be split between the sides by address, since its MX is this
         host. The settings and DNS to publish: docs/interfaces/Mail-Inbound.md, The edge node as the gateway. -->
-    <default-property name="edge_mail_mta" value="moqui"/>
-    <default-property name="smtp_internet" value="true"/>
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
-        trusts on that mail: smtp_authserv_id, else smtp_hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"
-            authserv-id="${smtp_authserv_id ?: smtp_hostname}"/>
+        trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS (plans/archive/Edge-Node.md §5.4, §10): a network's webhook URL is this node's,
         /channels/{chatBridgeId}/webhook, for the server's own bridges and the paired node's alike. The server's own

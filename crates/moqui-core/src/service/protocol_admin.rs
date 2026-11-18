@@ -107,15 +107,15 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "smtp.listener",
         external: false,
-        hosts: &["smtp_listen_host"],
-        ports: &["smtp_listen_port"],
+        hosts: &["smtp-server@listen-host"],
+        ports: &["smtp-server@listen-port"],
         default_port: "",
     },
     Target {
         key: "ssh.listener",
         external: false,
-        hosts: &["ssh_host"],
-        ports: &["ssh_port"],
+        hosts: &["ssh-server@host"],
+        ports: &["ssh-server@port"],
         default_port: "",
     },
     Target {
@@ -149,8 +149,8 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "ssh.public",
         external: true,
-        hosts: &["ssh_public_host", "webapp-list/webapp[webroot]@http-host"],
-        ports: &["ssh_public_port", "ssh_port"],
+        hosts: &["ssh-server@public-host", "webapp-list/webapp[webroot]@http-host"],
+        ports: &["ssh-server@public-port", "ssh-server@port"],
         default_port: "",
     },
     Target {
@@ -442,8 +442,8 @@ mod tests {
     fn a_listener_that_is_off_failed_or_not_built_reads_apart() {
         assert_eq!(state_parts(&State::On("tcp 127.0.0.1:2525".into())).0, "on");
         assert_eq!(
-            state_parts(&State::off("smtp_listen_port is not set")),
-            ("off", "smtp_listen_port is not set")
+            state_parts(&State::off("smtp-server@listen-port is not set")),
+            ("off", "smtp-server@listen-port is not set")
         );
         assert_eq!(state_parts(&State::failed("bind")).0, "failed");
         assert_eq!(state_parts(&State::Skipped("busy".into())).0, "skipped");

@@ -25,7 +25,7 @@
 
     <!-- The shared database and the shared .env, as in conf/edge-cluster: the transactional datasource's settings the same on every member, and the
         secrets the first member's first start makes (webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert, cluster_tls_key,
-        moqui_conf__entity_facade__crypt_pass, edge_link_key, turn_auth_secret, mail_dkim_key, acme_account_key), with the front
+        moqui_conf__entity_facade__crypt_pass, edge_link_key, turn_auth_secret, mail-delivery/dkim@key, acme_account_key), with the front
         pairing's lines once it is made. Back the database up with its own tools. -->
     <default-property name="cluster_transport" value=""/>
     <default-property name="cluster_protocol" value=""/>
@@ -81,17 +81,14 @@
         per address, STARTTLS with the member's web certificate, SPF, DKIM, DMARC and ARC, and RCPT TO
         from the shared copies. The PROXY header is read only on that path, because it came over the member's own
         link; the listener's own port reads none unless proxy-protocol is on. The listener must run to take them:
-        smtp_listen_port in .env, open as port 25 for a second MX record at the members, or on loopback
-        (smtp_listen_host=127.0.0.1) when nothing else is to reach it. Mail out leaves from each member's own address,
-        DKIM-signed: smtp_hostname per member, the name its address's reverse DNS gives, and the SPF of each domain lists
+        smtp-server@listen-port in .env, open as port 25 for a second MX record at the members, or on loopback
+        (moqui_conf__smtp_server__listen_host=127.0.0.1) when nothing else is to reach it. Mail out leaves from each member's own address,
+        DKIM-signed: smtp-server@hostname per member, the name its address's reverse DNS gives, and the SPF of each domain lists
         every member's address (ip4:, not the wizard's v=spf1 mx, which would name the front). MX records name the
         front, and STARTTLS ends on the member, so the MX name's certificate goes on every member. The front relays the
         bytes: MTA-STS for the domains keeps senders on TLS. -->
-    <default-property name="edge_mail_mta" value="moqui"/>
-    <default-property name="smtp_internet" value="true"/>
-    <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
-    <default-property name="edge_mail_relay_port" value="10025"/>
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS: a network's webhook URL is a name through the front, as /channels/{chatBridgeId}/webhook on
         the member's chat address (channels_public_url on the local node), which the member gives the front as a

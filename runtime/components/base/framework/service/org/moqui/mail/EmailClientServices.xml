@@ -2118,7 +2118,7 @@ along with this software (see the LICENSE.md file). If not, see
             its status and window (one whose sign-in failed is active again). oauthProviderEnumId defaults to the account
             server's, else the address's domain. The state, the PKCE verifier (S256) and a nonce stay in the user's
             session for ten minutes, bound to the user and the account or address; the redirect URI is the deployment's
-            (email_oauth_redirect_uri), never the request's. The signed-in address must be the account's, unless
+            (email-client@oauth-redirect-uri), never the request's. The signed-in address must be the account's, unless
             allowAddressChange (the user confirmed it), which then changes the account's address. Refused when this
             server is not set up for the provider (get#OAuthProviders). authUrl is what the popup opens; signInId is for
             get#OAuthStatus.</description>

@@ -156,7 +156,7 @@ fn stop_idle(factory: &ExecutionContextFactory) {
 #[cfg(not(feature = "imap"))]
 fn stop_idle(_factory: &ExecutionContextFactory) {}
 
-/// At boot, on a node that receives mail without a listener of its own, warn when `smtp_authserv_id` is empty
+/// At boot, on a node that receives mail without a listener of its own, warn when `smtp-server@authserv-id` is empty
 /// ([`delivery::authserv_warning`]). A node with the listener warns as it starts it (the host's `smtp.rs`).
 #[cfg(feature = "imap")]
 fn warn_authserv(factory: &ExecutionContextFactory) {

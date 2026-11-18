@@ -357,12 +357,12 @@ pub(crate) fn copy_objects(
     result.map(|_| planned.objects.len())
 }
 
-/// The base URL git clients reach the web server at: the conf's `git-server` `public-url` (`git_public_url`), else
+/// The base URL git clients reach the web server at: the conf's `git-server` `public-url` (`git-server@public-url`), else
 /// from the webapp host and port properties.
 pub(crate) fn public_base_url() -> String {
     let mut configured = crate::setting("public-url");
     if configured.is_empty() {
-        configured = property("git_public_url");
+        configured = property("git-server@public-url");
     }
     if !configured.is_empty() {
         return configured.trim_end_matches('/').to_string();

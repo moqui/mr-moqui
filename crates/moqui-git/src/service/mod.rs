@@ -788,19 +788,9 @@ fn get_clone_urls(
 /// The host and port SSH clone URLs name, from the `ssh-server` settings and an edge node's tunnel; none while the SSH
 /// server is off ([`get_clone_urls`], the hosting offer).
 pub(crate) fn ssh_host_port() -> Option<(String, String)> {
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
-    // an `ssh-server` attribute, else its property
-    let ssh_setting = |name: &str, property_name: &str| {
-        let configured =
-            ExecutionContext::with_current(|ec| ec.factory().conf_setting("ssh-server", name)).unwrap_or_default();
-        if configured.is_empty() {
-            property(property_name)
-        } else {
-            configured
-        }
-    };
-    let public_host = ssh_setting("public-host", "ssh_public_host");
-    let public_port = ssh_setting("public-port", "ssh_public_port");
+    let ssh_setting = |name: &str| moqui_core::context::conf_env::setting(&format!("ssh-server@{name}"));
+    let public_host = ssh_setting("public-host");
+    let public_port = ssh_setting("public-port");
     // behind an edge node, with neither public setting: the edge node's SSH tunnel, as its offer named it
     let edge = (public_host.is_empty() && public_port.is_empty())
         .then(|| ExecutionContext::with_current(|ec| moqui_core::edge::setup::ssh_address(ec.factory())).flatten())
@@ -811,9 +801,9 @@ pub(crate) fn ssh_host_port() -> Option<(String, String)> {
         public_host,
         public_port,
         edge,
-        http_host: property("webapp-list/webapp[webroot]@http-host"),
-        host: ssh_setting("host", "ssh_host"),
-        port: ssh_setting("port", "ssh_port"),
+        http_host: moqui_core::context::conf_env::webroot_setting("http-host"),
+        host: ssh_setting("host"),
+        port: ssh_setting("port"),
     }
     .host_and_port()
 }

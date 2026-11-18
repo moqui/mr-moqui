@@ -42,7 +42,7 @@ for name in ("install", "chromium"):
 (review / "component").mkdir()
 env = dict(os.environ, MOQUI_RUNTIME=str(review),
     MOQUI_FRAMEWORK=str(review / "components/base/framework"),
-    MOQUI_CONF="conf/MoquiLoadTestConf.xml", instance_purpose="dev", mail_capture_sends="true")
+    MOQUI_CONF="conf/MoquiLoadTestConf.xml", instance_purpose="dev", moqui_conf__email_client__capture_sends="true")
 subprocess.run([str(repo / "target/release/moqui"), "test", "framework", "--spec", "ClientFixtures",
     "--db", "fresh", "--serve", "127.0.0.1:8090", "--log-level", "warn"], env=env, check=True)
 ```

@@ -11,12 +11,10 @@
 
     <!-- Git hosting (docs/interfaces/Git-Hosting.md). HTTPS clones work as soon as HTTPS does:
         https://team.example.com/git/(repositoryId).git, with an access token as the password. Git over SSH: the SSH
-        server on every address, on a port other than the system's sshd (22); ssh_public_port is the port clone URLs
-        show, when clients reach it on another (a port redirect). Grant SSH_GIT to the developers' group: the seed data
+        server on every address, on a port other than the system's sshd (22); public-port is the port clone URLs show,
+        when clients reach it on another (a port redirect). Grant SSH_GIT to the developers' group: the seed data
         grants it to ADMIN only. Commit trailers such as Task: PROJ-12 and branch names link commits to work items. -->
-    <default-property name="ssh_port" value="2222"/>
-    <default-property name="ssh_host" value="0.0.0.0"/>
-    <default-property name="ssh_public_port" value=""/>
+    <ssh-server port="2222" host="0.0.0.0" public-port=""/>
 
     <!-- The LLM gateway (docs/ai/Gateway.md) at /llm/v1: grant LlmGatewayUse to the developers' group, and for each
         developer's key add an LlmApiClient row with the gateway scope (System › LLM › Gateway), whose allowedAliases,

@@ -321,9 +321,18 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         keys(&["instance-hosting", "token-command"]),
         None,
     );
+    // the mail client, with this deployment's OAuth client at each provider by its id
+    base.merge_child_with_child_key(
+        over,
+        "email-client",
+        "oauth-provider",
+        keys(&["email-client", "oauth-provider"]),
+        None,
+    );
+    // mail delivery, with its one dkim element merged the same way (an attribute of the override replaces the base one)
+    base.merge_child_with_child_key(over, "mail-delivery", "dkim", &[], None);
     // elements of settings only: an attribute of the override replaces the base one
     for name in [
-        "email-client",
         "ssh-server",
         "terminal",
         "git-server",

@@ -21,8 +21,8 @@
         edge_node_url, edge_node_key (the pairing's key), edge_node_pin, edge_node_id and edge_node_pairing (the id the
         edge node knows the cluster by, which keys the outbox and its receipts) to that member's .env. Copy that whole
         .env to every other member (the secrets above, the pairing's lines, and the rest that must match, such as
-        acme_account_key, ssh_host_key and git_lfs_token_key), then add the member's own cluster_base_url; each links at
-        its next start. ssh_host_key and git_lfs_token_key must be the same on every member: the edge node sends an
+        acme_account_key, ssh-server@host-key and git-server@lfs-token-key), then add the member's own cluster_base_url; each links at
+        its next start. ssh-server@host-key and git-server@lfs-token-key must be the same on every member: the edge node sends an
         SSH connection or an LFS request to any member, and after a failover to another one, so with its own host key a
         member is a changed host to git clients, and with its own LFS key it refuses the others' LFS tokens. A member
         whose SSH host key differs from a live member's warns at startup.
@@ -41,7 +41,7 @@
 
     <!-- How peers reach this member, as in MoquiLocalConf.xml: empty for its cluster port (TLS with the cluster
         certificate, client certificate required), notify for Postgres LISTEN/NOTIFY on the shared database when members
-        cannot connect to each other (Postgres only), ssh through its SSH server (ssh_port; a build with the ssh
+        cannot connect to each other (Postgres only), ssh through its SSH server (ssh-server@port; a build with the ssh
         feature). cluster_protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1 only; members on different
         settings or builds still reach each other. -->
     <default-property name="cluster_transport" value=""/>

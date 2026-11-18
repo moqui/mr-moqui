@@ -341,7 +341,9 @@ pub static CATALOG: &[Unit] = &[
         keyed("queue-kind", &["name"], EDGE),
         keyed("replicate", &["set"], EDGE).children(&[keyed("entity", &["name"], EDGE)]),
     ]),
-    single("email-client", Class::Live).attrs(&[("idle-enabled", LISTENER)]),
+    single("email-client", Class::Live)
+        .attrs(&[("idle-enabled", LISTENER)])
+        .children(&[keyed("oauth-provider", &["id"], Class::Live).secrets(&[("client-secret", Secret::Kept)])]),
     single("ssh-server", LISTENER).secrets(&[("host-key", Secret::Generated)]),
     single("terminal", Class::Live).children(&[keyed("host-profile", &["name"], Class::Live)]),
     single("git-server", Class::Live)
@@ -353,6 +355,10 @@ pub static CATALOG: &[Unit] = &[
     single("git-ci", Class::Live),
     single("dav-server", Class::Live).attrs(&[("sftp-drives", LISTENER)]),
     single("smtp-server", LISTENER),
+    // the MTA's loop starts at boot; the rest is read at each delivery, the DKIM key at each signature
+    single("mail-delivery", Class::Live)
+        .attrs(&[("mta", LISTENER)])
+        .children(&[single("dkim", Class::Live).secrets(&[("key", Secret::Kept)])]),
     single(
         "logging",
         Class::Restart("the log writer starts at boot; Monitor › Settings changes its levels for a while"),

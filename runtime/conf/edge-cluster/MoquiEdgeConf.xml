@@ -28,7 +28,7 @@
     <!-- The same .env on every member, made by the first member's first start and copied to each other one before its
         first start: webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert, cluster_tls_key, moqui_conf__entity_facade__crypt_pass and the link key,
         edge_link_key, so every member presents the one key a local node pinned at pairing (a member that generated a
-        key of its own is refused by every local node); also turn_auth_secret, mail_dkim_key and acme_account_key, and
+        key of its own is refused by every local node); also turn_auth_secret, mail-delivery/dkim@key and acme_account_key, and
         the public settings below that name the cluster as a whole.
         Each member's own in .env: cluster_base_url, https://(this member's private address):8444, which the other
         members reach (open 8444 between the members only); and edge_link_url, https://(this member's own public
@@ -64,17 +64,13 @@
 
     <!-- Mail (docs/interfaces/Mail-Inbound.md, The edge node as the gateway): each member takes port 25, answering RCPT
         TO from the recipients it builds from the shared copies (again when any member applies a change, told on the
-        cluster topic edge-state), and claims delivery rows for mail out. Per member in .env: smtp_hostname, its own MX name (an MX record for each member,
-        with the same preference, and reverse DNS for each address naming it); the same on each: smtp_listen_port=25,
-        smtp_listen_host, edge_mail_bounce_domain and mail_dkim_key. -->
-    <default-property name="edge_mail_mta" value="moqui"/>
-    <default-property name="smtp_internet" value="true"/>
-    <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
-    <default-property name="edge_mail_relay_port" value="10025"/>
+        cluster topic edge-state), and claims delivery rows for mail out. Per member in .env: smtp-server@hostname, its own MX name (an MX record for each member,
+        with the same preference, and reverse DNS for each address naming it); the same on each: moqui_conf__smtp_server__listen_port=25,
+        smtp-server@listen-host, edge_mail_bounce_domain and mail-delivery/dkim@key. -->
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
-        trusts on that mail: smtp_authserv_id, else smtp_hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"
-            authserv-id="${smtp_authserv_id ?: smtp_hostname}"/>
+        trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS: a network's webhook URL is the cluster's name, /channels/{chatBridgeId}/webhook; any member
         takes it and queues it once by its idempotency key. MMS files are rows, served by any member. -->

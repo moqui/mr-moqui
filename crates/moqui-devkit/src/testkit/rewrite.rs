@@ -260,7 +260,7 @@ pub struct SuiteServer {
     pub specs: Vec<String>,
     /// The conf the server runs under (`MOQUI_CONF`), relative to the runtime directory.
     pub conf: Option<String>,
-    /// Conf properties the server runs with, set in its environment, such as `mail_capture_sends`.
+    /// Conf properties the server runs with, set in its environment, such as `email-client@capture-sends`.
     pub properties: Vec<(String, String)>,
 }
 
@@ -361,7 +361,8 @@ fn string_array(value: &Expression<'_>, name: &str) -> Result<Vec<String>, Error
 fn string_object(value: &Expression<'_>) -> Result<Vec<(String, String)>, Error> {
     let not_strings = || {
         Error::new(
-            "suite() server properties is an object of names to strings, such as { mail_capture_sends: \"true\" }",
+            "suite() server properties is an object of names to strings, such as \
+             { moqui_conf__email_client__capture_sends: \"true\" }",
         )
     };
     let Expression::ObjectExpression(object) = value else {

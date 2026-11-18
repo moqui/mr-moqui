@@ -68,7 +68,7 @@ feature("the merged conf names each value's file and class, with the default con
         const webapp = child(child(view.root, "webapp-list"), "webapp", "webroot")
         const apps = child(child(view.root, "screen-facade"), "screen", "component://webroot/screen/webroot/apps.xml")
         const system = child(apps, "subscreens-item", "system")
-        const hostKey = child(view.root, "default-property", "ssh_host_key")
+        const ssh = child(view.root, "ssh-server")
         return {
             errors,
             canEdit: out.canEdit,
@@ -79,7 +79,7 @@ feature("the merged conf names each value's file and class, with the default con
             portClass: attr(webapp, "http-port")?.class,
             webappClass: webapp?.class,
             systemFrom: view.files[system?.sources?.[0]?.file]?.component,
-            hostKey: attr(hostKey, "value")?.value
+            hostKey: attr(ssh, "host-key")?.value
         }
     },
     then(found) {

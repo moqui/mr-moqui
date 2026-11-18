@@ -209,7 +209,11 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
         "ssh",
         Some(&data(&user_key)),
         r#"<ssh-server sftp-root="dbresource://sftp"/>"#,
-        &[("ssh_port", "0"), ("ssh_host_key", &seed), ("cluster_transport", "ssh")],
+        &[
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
+            ("cluster_transport", "ssh"),
+        ],
     );
     let address = gate.server.ssh_address().expect("the SSH server listens");
     let host = format!("127.0.0.1:{}", address.port());
@@ -946,7 +950,10 @@ fn apps_runs_the_terminal_client_over_ssh() {
         "ssh_apps",
         Some(APPS_DATA),
         r#"<terminal max-sessions-per-user="1"/>"#,
-        &[("ssh_port", "0"), ("ssh_host_key", &seed)],
+        &[
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
+        ],
     );
     let address = gate.server.ssh_address().expect("the SSH server listens");
     moqui_host::edge::block_on(async move {
@@ -1072,7 +1079,10 @@ fn agent_apps_answers_one_command_per_exec() {
         "ssh_agent",
         Some(APPS_DATA),
         r#"<terminal max-sessions-per-user="1"/>"#,
-        &[("ssh_port", "0"), ("ssh_host_key", &seed)],
+        &[
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
+        ],
     );
     let address = gate.server.ssh_address().expect("the SSH server listens");
     let run = |user: &str, command: &str| exec_with_input(address, user, command, b"");
@@ -1170,7 +1180,10 @@ fn the_login_dialog_lets_in_a_client_with_no_key() {
     let gate = crate::common::start_with_properties(
         "ssh_dialog",
         Some(APPS_DATA),
-        &[("ssh_port", "0"), ("ssh_host_key", &seed)],
+        &[
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
+        ],
     );
     let address = gate.server.ssh_address().expect("the SSH server listens");
     moqui_host::edge::block_on(async move {
@@ -1276,8 +1289,8 @@ fn sh_at_the_ssh_prompt_runs_a_host_program() {
         Some(APPS_DATA),
         r#"<terminal><host-profile name="plain" command="sh"/></terminal>"#,
         &[
-            ("ssh_port", "0"),
-            ("ssh_host_key", &seed),
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
             ("instance_purpose", "dev"),
             (helper.0, &helper.1),
         ],
@@ -1332,8 +1345,8 @@ fn attach_at_the_ssh_prompt_takes_a_kept_session() {
         Some(APPS_DATA),
         r#"<terminal><host-profile name="plain" command="sh"/></terminal>"#,
         &[
-            ("ssh_port", "0"),
-            ("ssh_host_key", &seed),
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
             ("instance_purpose", "dev"),
             (helper.0, &helper.1),
         ],

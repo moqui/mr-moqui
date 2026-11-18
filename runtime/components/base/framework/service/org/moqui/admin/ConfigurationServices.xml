@@ -504,8 +504,8 @@ along with this software (see the LICENSE.md file). If not, see
             (Build, Startup or Configuration), the settings group get#EffectiveSettings shows its configuration under,
             the owner its links open (ownerKey) and its checks with their last results (checkList, also flat as
             checkList of the answer). SMTP reception answers its trust: trusted only while it listens,
-            smtp_allowed_addresses names addresses that are no range of every address and can reach the address it is
-            bound to, and smtp_authserv_id is set; a mismatch is never ready (untrusted, trustProblems in words), and a
+            smtp-server@allowed-addresses names addresses that are no range of every address and can reach the address it is
+            bound to, and smtp-server@authserv-id is set; a mismatch is never ready (untrusted, trustProblems in words), and a
             listener that takes mail from the internet trusts no gateway (direct). Narrowed to one protocolKey. No
             secret, key or key file is read. Needs ADMIN_CONNECTION_VIEW, ADMIN_SETTINGS_VIEW or
             ADMIN_OPERATION_VIEW.</description>

@@ -37,15 +37,15 @@ with the front as well, for its names, XMPP domain and ports.
   of its first start (`edge_link_key` among them). A certificate in `cert/` for its own name and the sites' hosts, or
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
-  with `edge_link_key`, `turn_auth_secret`, `mail_dkim_key` and `acme_account_key`, `edge_mail_bounce_domain`,
+  with `edge_link_key`, `turn_auth_secret`, `mail-delivery/dkim@key` and `acme_account_key`, `edge_mail_bounce_domain`,
   `sip_port`, `sip_tls_port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
-  `smtp_listen_port` (`smtp_listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
+  `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
   `front_node_url`, `front_node_key`, `front_node_pin` and `front_node_id`.
 - **Each edge member, its own**: `cluster_base_url`, `edge_link_url=https://edge1.example.com` (its link name, at the
-  front), `smtp_hostname` (its own address's reverse DNS name), `rtc_public_address`, `turn_public_host` and
+  front), `smtp-server@hostname` (its own address's reverse DNS name), `rtc_public_address`, `turn_public_host` and
   `sip_public_address` (its own address). Never copy `runtime/db`.
-- **Every local member, the same**: the database and secrets (for git hosting `ssh_host_key` and
-  `git_lfs_token_key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge_node_url`,
+- **Every local member, the same**: the database and secrets (for git hosting `ssh-server@host-key` and
+  `git-server@lfs-token-key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge_node_url`,
   `edge_node_key`, `edge_node_pin`, `edge_node_id`, `edge_node_pairing`; with `edge` members also `front_node_*`; the
   PASS client lines the wizard writes (`pass_edge_client`, `pass_client_edge_sites`, `pass_client_edge_callback`).
 - **Each local member, its own**: `cluster_base_url`. Never copy `runtime/db`.
@@ -56,12 +56,12 @@ with the front as well, for its names, XMPP domain and ports.
   cluster's own names (`erp.example.com`); each edge member's link name (`edge1.example.com`, `edge2.example.com`),
   which the front passes through to that member alone; the MX of each mail domain.
 - **At each edge member's own address**: the edge cluster's own name (`edge.example.com`, its `webapp-list/webapp[webroot]@http-host`, an
-  address record per member), its `turn_public_host`, its `smtp_hostname` (with reverse DNS for the address), and the
+  address record per member), its `turn_public_host`, its `smtp-server@hostname` (with reverse DNS for the address), and the
   SIP SRV records (`_sip._udp`, `_sip._tcp`, `_sips._tcp`) naming every member; with `front_edge` members the XMPP SRV
   records too (with `edge` members they name the front, whose ports take each local node's domain).
 - **Mail.** SPF for each mail domain lists every edge member's address (`ip4:`): mail out leaves from them, and the
   wizard's `v=spf1 mx` would name the front. The MX name's certificate goes on every edge member, where STARTTLS ends.
-  The wizard checks MX against the member's `smtp_hostname`, so set these records by hand. MTA-STS for the domains
+  The wizard checks MX against the member's `smtp-server@hostname`, so set these records by hand. MTA-STS for the domains
   keeps senders on TLS through the front.
 
 ## Commands

@@ -42,6 +42,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="git-ci"/>
                 <xs:element minOccurs="0" ref="dav-server"/>
                 <xs:element minOccurs="0" ref="smtp-server"/>
+                <xs:element minOccurs="0" ref="mail-delivery"/>
                 <xs:element minOccurs="0" ref="edge"/>
                 <xs:element minOccurs="0" ref="logging"/>
                 <xs:element minOccurs="0" ref="client-conf"/>
@@ -1771,6 +1772,7 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="email-client">
         <xs:annotation><xs:documentation>The mail client (org.moqui.mail.EmailClientServices).</xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="oauth-provider"/></xs:sequence>
             <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>Comma separated hostnames and IPs poll#EmailServer and send#Email may connect
                 to; empty allows any host. smtp.example.com matches example.com; notexample.com does not.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="idle-enabled" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>IMAP IDLE on the Inbox of each active account, so new mail shows at once; false relies on the sync job only.</xs:documentation></xs:annotation></xs:attribute>
@@ -1786,6 +1788,18 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="tls-ca-file" type="xs:string"><xs:annotation><xs:documentation>A PEM file of more certificate authorities to trust, for a mail server with its own.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="oauth-redirect-uri" type="xs:string"><xs:annotation><xs:documentation>The callback the OAuth provider sends the browser back to, exactly as
                 registered there; empty for the webroot webapp's URL and /emailOAuth/callback.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="capture-sends" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Keep each send in memory instead of connecting, for specs (the MailCapture tool); ignored outside a moqui test run.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="oauth-provider">
+        <xs:annotation><xs:documentation>This deployment's OAuth client at a provider mail accounts sign in with
+            (docs/interfaces/Mail-OAuth.md), by the id an EmailOAuthProvider's confProviderId names; a provider without
+            both client-id and client-secret is not offered.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="id" type="xs:string" use="required"/>
+            <xs:attribute name="client-id" type="xs:string"/>
+            <xs:attribute name="client-secret" type="xs:string"><xs:annotation><xs:documentation>A secret: never written to a log or answered by a service.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tenant" type="xs:string"><xs:annotation><xs:documentation>Microsoft: common (work, school and personal accounts), organizations, consumers or a tenant id; empty for the provider row's tenant, else common.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2034,12 +2048,36 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="tls-key-file" type="xs:string"><xs:annotation><xs:documentation>The private key PEM file that goes with tls-cert-file.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="chunking" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>CHUNKING (RFC 3030): BDAT.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dsn" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>DSN (RFC 3461): RET, ENVID, NOTIFY and ORCPT are taken and kept, and NOTIFY=SUCCESS gets a "delivered" report when the sender is authenticated (authserv-id set, and spf=pass or dmarc=pass with header.from aligned with the envelope sender).</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="internet" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Take mail from the internet (port 25, the MTA in moqui; property smtp_internet): no allowed-addresses needed, STARTTLS on by default, per-address limits, and after the data SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own (forged ones removed), the Rspamd verdict when mail_rspamd_url is set, a DMARC reject policy refused with 550 and quarantine to Junk (RFC 9989: t=y lowers the policy, no pct; a passing ARC seal of mail_arc_trusted_sealers overrides it). Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="internet" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Take mail from the internet (port 25, the MTA in moqui): no allowed-addresses needed, STARTTLS on by default, per-address limits, and after the data SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own (forged ones removed), the Rspamd verdict when rspamd-url is set, a DMARC reject policy refused with 550 and quarantine to Junk (RFC 9989: t=y lowers the policy, no pct; a passing ARC seal of arc-trusted-sealers overrides it). Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-connections-per-ip" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>In internet mode, the most connections at once from one address.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="connections-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>In internet mode, the most new connections a minute from one address.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="internet-messages-per-hour" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>In internet mode, the most messages stored in an hour from one client address (IPv6 by its /64) and from one envelope sender, whichever is reached first; a MAIL past it is answered 451 4.7.1. A message counts once, whatever its recipients.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="internet-bytes-per-hour" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>In internet mode, the most bytes of messages stored in an hour from one client address and from one envelope sender, with a MAIL's SIZE counted; past it a MAIL is answered 451 4.7.1.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="rspamd-url" type="xs:string"><xs:annotation><xs:documentation>In internet mode, Rspamd's HTTP API (http://127.0.0.1:11333); the property mail_rspamd_url when empty, and no spam check when both are. Rspamd not reached fails open: the mail is taken as not spam, logged.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="rspamd-url" type="xs:string"><xs:annotation><xs:documentation>In internet mode, Rspamd's HTTP API (http://127.0.0.1:11333); no spam check when empty. Rspamd not reached fails open: the mail is taken as not spam, logged.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="arc-trusted-sealers" type="xs:string"><xs:annotation><xs:documentation>In internet mode, the domains whose passing ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), comma separated; empty for no ARC exception.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="mail-delivery">
+        <xs:annotation><xs:documentation>Mail delivery and DKIM (plans/archive/Edge-Node.md §5.4).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" ref="dkim"/></xs:sequence>
+            <xs:attribute name="mta" type="xs:string"><xs:annotation><xs:documentation>On an edge node: moqui for the MTA in moqui, empty or postfix for the relay to Postfix at relay-host and relay-port.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="relay-host" type="xs:string" default="127.0.0.1"><xs:annotation><xs:documentation>The Postfix beside an edge node.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="relay-port" type="non-neg-int-expandable" default="10025"/>
+            <xs:attribute name="retry-seconds" type="non-neg-int-expandable" default="300"><xs:annotation><xs:documentation>The MTA's first retry wait, doubled each time to 4 hours.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="days" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>When a message not delivered goes back as a bounce.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="mx-require-tls" type="xs:string"><xs:annotation><xs:documentation>The recipient domains whose MX gets mail only over STARTTLS with a certificate valid for the host, comma separated, * for every domain; empty: STARTTLS when offered, any certificate, else clear text.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="mx-override" type="xs:string"><xs:annotation><xs:documentation>Testing and staging only: domain=host:port pairs, * for any, in place of the MX.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="dns-offline" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Testing only: make no DNS query.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="dkim">
+        <xs:annotation><xs:documentation>The node's DKIM signing.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="key" type="xs:string"><xs:annotation><xs:documentation>A secret: the private key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="selector" type="xs:string" default="moqui"/>
+            <xs:attribute name="domains" type="xs:string"><xs:annotation><xs:documentation>The domains signed for, comma separated; empty for the hosted and shared accounts' domains.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

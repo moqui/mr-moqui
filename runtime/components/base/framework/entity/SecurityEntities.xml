@@ -551,7 +551,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="DEVICE_CRED_OPKEY"><index-field name="operationKey"/></index>
     </entity>
     <entity entity-name="UserSshKey" package="moqui.security" use="configuration" cache="never">
-        <description>A public key a user logs in with on the built-in SSH server (ssh_port). The key is matched by its
+        <description>A public key a user logs in with on the built-in SSH server (ssh-server@port). The key is matched by its
             SHA-256 fingerprint, filled from publicKey when the record is created.</description>
         <field name="sshKeyId" type="id" is-pk="true"/>
         <field name="userId" type="id" not-null="true"/>

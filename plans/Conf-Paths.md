@@ -1,10 +1,10 @@
 # Conf Paths: settings by XML path, overridden from the environment
 
 Status 2026-11-18: phases 0 to 2 built (the path module, the conf schema, the overrides with `getConfValue`, `setConf`,
-the conf view's names and `moqui conf env`), 3a (entity facade, datasources, database list) and 3b (web, logging,
-caches, telemetry, reports, PDF, component deploy); the rest of 3 to 8 to do ([§7](#7-phases)). Until phase 7 a name
-table may hold both kinds of name: `conf_env::setting_or_property` reads a selector (it has an `@`) from the conf and
-anything else as a property.
+the conf view's names and `moqui conf env`), 3a (entity facade, datasources, database list), 3b (web, logging, caches,
+telemetry, reports, PDF, component deploy) and 3c (SSH, terminal, git, git CI, SMTP, mail delivery, the mail client);
+the rest of 3 to 8 to do ([§7](#7-phases)). Until phase 7 a name table may hold both kinds of name:
+`conf_env::setting_or_property` reads a selector (it has an `@`) from the conf and anything else as a property.
 
 The conf was configured through about 330 flat `default-property` entries (279 in `MoquiDefaultConf.xml`, the rest in
 `runtime/conf/**` and component `MoquiConf.xml` files). Attributes referred to them by `${name}` and `${a ?: b}`,
@@ -110,7 +110,7 @@ own, [§6.27](#627-component-elements)) merges as a settings element: its attrib
 - Rust reads attributes through the factory's helpers (`conf_setting`, `conf_flag`, `conf_number`, `webapp_setting`)
   or once into a settings struct at start; no reader expands `${}`.
 - Scripts: `ec.factory.getConfValue(selector)` answers the attribute's value, or null when it is not set or is a
-  secret. `System.getProperty` refuses every `moqui_conf__` name; process properties and the environment are as before.
+  secret; `ec.factory.isConfValueSet(selector)` says whether one is set, a secret too, without its value. `System.getProperty` refuses every `moqui_conf__` name; process properties and the environment are as before.
   `RestClient.addPropertyHeader` takes a conf selector for a credential (`pass@client-secret`).
 - The testkit: `setConf(selector, value)` and `withConf(selector, value, fn)`, beside `setProperty` and `withProperty`.
 - System › Conf shows each attribute's environment name, and for an overridden one the name and source that set it;
@@ -275,7 +275,7 @@ the `database-list` entries keep their dialect settings but lose their `${entity
 
 | Old | Selector |
 |---|---|
-| `smtp_listen_port`, `smtp_listen_host`, `smtp_allowed_addresses`, `smtp_hostname`, `smtp_authserv_id` | `smtp-server@listen-port`, `@listen-host`, `@allowed-addresses`, `@hostname`, `@authserv-id` (empty takes `@hostname`) |
+| `smtp_listen_port`, `smtp_listen_host`, `smtp_allowed_addresses`, `smtp_hostname`, `smtp_authserv_id` | `smtp-server@listen-port`, `@listen-host`, `@allowed-addresses`, `@hostname`, `@authserv-id` (empty on an edge node or in internet mode takes `@hostname`) |
 | `smtp_tls_cert_file`, `smtp_tls_key_file` | `smtp-server@tls-cert-file`, `@tls-key-file` |
 | `smtp_internet`, `mail_rspamd_url`, `mail_arc_trusted_sealers` | `smtp-server@internet`, `@rspamd-url`, `@arc-trusted-sealers` |
 | `edge_mail_mta`, `edge_mail_relay_host`, `edge_mail_relay_port` | new `mail-delivery@mta`, `@relay-host`, `@relay-port` |
@@ -292,7 +292,7 @@ the `database-list` entries keep their dialect settings but lose their `${entity
 | `email_oauth_google_client_id`, `_client_secret` (secret) | `email-client/oauth-provider[google]@client-id`, `@client-secret` |
 | `email_oauth_microsoft_client_id`, `_client_secret` (secret), `_tenant` | `email-client/oauth-provider[microsoft]@client-id`, `@client-secret`, `@tenant` |
 
-`EmailOAuthProvider.propertyPrefix` becomes the provider's conf id.
+`EmailOAuthProvider.propertyPrefix` becomes `confProviderId`, the provider's conf id (`google`, `microsoft`).
 
 ### 6.13 Offline clients
 

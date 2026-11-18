@@ -13,12 +13,12 @@
  */
 
 //! The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (the `inbound-smtp` feature;
-//! docs/interfaces/Mail-Inbound.md). Off unless `smtp_listen_port` is set; it listens on `smtp_listen_host` (default `127.0.0.1`).
+//! docs/interfaces/Mail-Inbound.md). Off unless `smtp-server@listen-port` is set; it listens on `smtp-server@listen-host` (default `127.0.0.1`).
 //!
 //! It is the last hop of a gateway (Postfix with Rspamd, or another MTA) that does the internet side: SPF, DKIM, DMARC,
 //! spam and virus filtering, queueing and retries. So it is a small RFC 5321 server for that one client: EHLO or HELO,
 //! MAIL FROM (SIZE, BODY=8BITMIME, SMTPUTF8), RCPT TO, DATA, RSET, NOOP, QUIT, VRFY (252), HELP, with PIPELINING and
-//! ENHANCEDSTATUSCODES; no AUTH, no relay. A connection from an address outside `smtp_allowed_addresses` (IPs and
+//! ENHANCEDSTATUSCODES; no AUTH, no relay. A connection from an address outside `smtp-server@allowed-addresses` (IPs and
 //! CIDRs) gets 554 at connect and is closed; with `smtp-server` `proxy-protocol` each connection starts with a PROXY v1
 //! or v2 header and the address it names must be allowed too. An empty allow-list does not start the listener.
 //!
@@ -44,12 +44,12 @@
 //! takes the client from that header, as it came over the member's own authenticated link. A connection to the
 //! listener's own port never has a PROXY header read unless `proxy-protocol` is on.
 //!
-//! Internet mode (`internet`, `smtp_internet`; the MTA in moqui on port 25, plans/archive/Edge-Node.md §5.4 E5b) takes mail from
+//! Internet mode (`internet`, `smtp-server@internet`; the MTA in moqui on port 25, plans/archive/Edge-Node.md §5.4 E5b) takes mail from
 //! any address, with STARTTLS on by default and per-address limits (`max-connections-per-ip`,
 //! `connections-per-minute`, 421 past them), and hourly limits (`internet-messages-per-hour`,
 //! `internet-bytes-per-hour`) on the messages stored from each client address (IPv6 by its /64) and from each envelope
 //! sender, whichever is reached first: a `MAIL` that would go past one is answered 451 4.7.1 (SEC-MAIL-07). After the data and before the answer it checks SPF, DKIM, DMARC and ARC
-//! (`moqui_mail::auth`) and asks Rspamd (`rspamd-url`, `mail_rspamd_url`) for its verdict: its own
+//! (`moqui_mail::auth`) and asks Rspamd (`rspamd-url`, `smtp-server@rspamd-url`) for its verdict: its own
 //! `Authentication-Results` and spam fields go on top, any that came claiming its authserv-id, and any spam fields,
 //! are removed; a DMARC failure under a reject policy and Rspamd's reject are 550, quarantine and Rspamd's "add
 //! header" are spam (Junk). Rspamd not reached fails open (logged, the mail taken as not spam); checks that do not
@@ -163,7 +163,7 @@ impl AllowedNet {
     }
 }
 
-/// The listener's settings, from the `smtp_*` properties.
+/// The listener's settings, from the conf's `smtp-server`.
 #[derive(Clone, Debug)]
 pub struct SmtpConfig {
     pub host: String,
@@ -194,7 +194,7 @@ pub struct SmtpConfig {
     pub chunking: bool,
     /// DSN (RFC 3461).
     pub dsn: bool,
-    /// Mail from the internet (`internet`, `smtp_internet`): the MTA in moqui's port 25. None behind a gateway.
+    /// Mail from the internet (`internet`, `smtp-server@internet`): the MTA in moqui's port 25. None behind a gateway.
     pub internet: Option<Internet>,
 }
 
@@ -238,36 +238,25 @@ impl std::fmt::Debug for Internet {
     }
 }
 
-fn property(name: &str) -> String {
-    moqui_core::context::conf_env::setting_or_property(name)
-        .trim()
-        .to_string()
-}
-
 /// The startup report's name for the listener.
 pub(crate) const LISTENER: &str = "SMTP";
 
-/// The host and port the listener binds, from the conf's `smtp-server` `listen-host` and `listen-port` (their
-/// properties when the conf leaves them out), by `setting` (an attribute of `smtp-server`, expanded): read the same way
-/// by [`SmtpConfig::from_conf`] and by the port check before the framework is built. None when the port is empty.
+/// The host and port the listener binds, from the conf's `smtp-server` `listen-host` and `listen-port`, by `setting`
+/// (an attribute of `smtp-server`, expanded): read the same way by [`SmtpConfig::from_conf`] and by the port check
+/// before the framework is built. None when the port is empty.
 ///
 /// # Errors
 ///
 /// Returns an error when the port does not parse.
 pub(crate) fn listen_target_by(setting: &dyn Fn(&str) -> String) -> Result<Option<(String, u16)>, Error> {
-    let setting_or_property = |name: &str, property_name: &str| {
-        Some(setting(name))
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| property(property_name))
-    };
-    let port_text = setting_or_property("listen-port", "smtp_listen_port");
+    let port_text = setting("listen-port");
     if port_text.is_empty() {
         return Ok(None);
     }
     let port: u16 = port_text
         .parse()
-        .map_err(|_| Error::new(format!("smtp_listen_port {port_text} is not a port number")))?;
-    let host = match setting_or_property("listen-host", "smtp_listen_host") {
+        .map_err(|_| Error::new(format!("smtp-server@listen-port {port_text} is not a port number")))?;
+    let host = match setting("listen-host") {
         host if !host.is_empty() => host,
         _ => "127.0.0.1".to_string(),
     };
@@ -275,8 +264,7 @@ pub(crate) fn listen_target_by(setting: &dyn Fn(&str) -> String) -> Result<Optio
 }
 
 impl SmtpConfig {
-    /// The settings of the conf's `smtp-server` when its `listen-port` (`smtp_listen_port`) is set, else none. An
-    /// attribute the conf leaves out, or that expands to nothing, is its property when it has one.
+    /// The settings of the conf's `smtp-server` when its `listen-port` is set, else none.
     ///
     /// # Errors
     ///
@@ -284,11 +272,6 @@ impl SmtpConfig {
     /// parse, a protocol other than smtp or lmtp, `require-tls` without `starttls`.
     pub fn from_conf(factory: &ExecutionContextFactory) -> Result<Option<Self>, Error> {
         let setting = |name: &str| factory.conf_setting("smtp-server", name);
-        let setting_or_property = |name: &str, property_name: &str| {
-            Some(setting(name))
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| property(property_name))
-        };
         let number = |name: &str, default: u64| {
             setting(name)
                 .parse::<u64>()
@@ -305,29 +288,23 @@ impl SmtpConfig {
         let Some((host, port)) = listen_target_by(&setting)? else {
             return Ok(None);
         };
-        let allowed_text = setting_or_property("allowed-addresses", "smtp_allowed_addresses");
+        let allowed_text = setting("allowed-addresses");
         let allowed = allowed_text
             .split([',', ' '])
             .filter(|entry| !entry.trim().is_empty())
             .map(AllowedNet::parse)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|text| Error::new(format!("smtp_allowed_addresses: {text}")))?;
-        let internet = match setting("internet").trim().to_ascii_lowercase().as_str() {
-            "true" | "y" | "yes" | "1" => true,
-            "false" | "n" | "no" | "0" => false,
-            _ => matches!(
-                property("smtp_internet").to_ascii_lowercase().as_str(),
-                "true" | "y" | "yes" | "1"
-            ),
-        };
+            .map_err(|text| Error::new(format!("smtp-server@allowed-addresses: {text}")))?;
+        let internet = flag("internet", false);
         if allowed.is_empty() && !internet {
             return Err(Error::new(
-                "smtp_allowed_addresses is empty: name the edge gateway's addresses (127.0.0.1 for a gateway on this host)",
+                "smtp-server@allowed-addresses is empty: name the edge gateway's addresses (127.0.0.1 for a gateway on \
+                 this host)",
             ));
         }
-        let hostname = match setting_or_property("hostname", "smtp_hostname") {
+        let hostname = match setting("hostname") {
             name if !name.is_empty() => name,
-            _ => match property("webapp-list/webapp[webroot]@http-host") {
+            _ => match moqui_core::context::conf_env::webroot_setting("http-host") {
                 name if !name.is_empty() => name,
                 _ => "localhost".to_string(),
             },
@@ -353,19 +330,20 @@ impl SmtpConfig {
                 .collect()
         };
         let mut spam_headers = list("spam-headers");
-        let mut authserv_id = setting_or_property("authserv-id", "smtp_authserv_id");
+        // empty on an edge node or in internet mode: the hostname, as delivery reads it (moqui_mail::delivery)
+        let mut authserv_id = setting("authserv-id");
+        if authserv_id.is_empty() && (internet || moqui_core::edge::settings(factory).edge_node()) {
+            authserv_id.clone_from(&hostname);
+        }
         let internet = internet.then(|| {
             // the verdict fields are this listener's own: it writes them, and reads them as the gateway's were read
             if spam_headers.is_empty() {
                 spam_headers = vec!["X-Spam-Flag".to_string(), "X-Spam-Status".to_string()];
             }
-            if authserv_id.is_empty() {
-                authserv_id.clone_from(&hostname);
-            }
             Internet {
                 max_per_ip: count("max-connections-per-ip", 5),
                 per_minute: count("connections-per-minute", 30),
-                rspamd_url: setting_or_property("rspamd-url", "mail_rspamd_url"),
+                rspamd_url: setting("rspamd-url"),
                 spam_fields: spam_headers.clone(),
                 records: None,
                 max_messages: MAX_INTERNET_MESSAGES,
@@ -391,8 +369,8 @@ impl SmtpConfig {
             lmtp,
             starttls,
             require_tls,
-            tls_cert_file: setting_or_property("tls-cert-file", "smtp_tls_cert_file"),
-            tls_key_file: setting_or_property("tls-key-file", "smtp_tls_key_file"),
+            tls_cert_file: setting("tls-cert-file"),
+            tls_key_file: setting("tls-key-file"),
             chunking: flag("chunking", true),
             dsn: flag("dsn", false),
             internet,
@@ -425,7 +403,7 @@ impl Drop for SmtpServer {
     }
 }
 
-/// Start the listener when `smtp_listen_port` is set (`0` binds an ephemeral port).
+/// Start the listener when `smtp-server` `listen-port` is set (`0` binds an ephemeral port).
 ///
 /// # Errors
 ///
@@ -462,7 +440,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
     let all_in_one = moqui_core::edge::settings(factory).all_in_one();
     if config.authserv_id.is_empty() && !edge_mode {
         tracing::warn!(
-            "smtp_authserv_id is empty: Authentication-Results fields are kept as they came, the gateway's not told \
+            "smtp-server@authserv-id is empty: Authentication-Results fields are kept as they came, the gateway's not told \
              from a forged one"
         );
     }
@@ -1013,7 +991,7 @@ async fn connection<B: Backend>(
     // from a front link, the client is the one its PROXY header names, checked once it is read (Session::session)
     let proxied = config.proxy_protocol || via == Via::FrontLink;
     if via == Via::Listener && !config.allows(peer_ip) {
-        tracing::warn!("SMTP connection {id} from {peer_ip} refused: not in smtp_allowed_addresses");
+        tracing::warn!("SMTP connection {id} from {peer_ip} refused: not in smtp-server@allowed-addresses");
         let _ = reply_now(
             &mut stream,
             config.command_timeout,
@@ -1292,7 +1270,7 @@ impl<B: Backend> Session<'_, B> {
                             self.config().hostname
                         ))
                         .await;
-                    return Err(End::Proxy(format!("{source} is not in smtp_allowed_addresses")));
+                    return Err(End::Proxy(format!("{source} is not in smtp-server@allowed-addresses")));
                 }
                 self.client_ip = source;
             } else if !self.config().allows(self.client_ip) {
@@ -1304,7 +1282,7 @@ impl<B: Backend> Session<'_, B> {
                     ))
                     .await;
                 return Err(End::Proxy(format!(
-                    "{} is not in smtp_allowed_addresses",
+                    "{} is not in smtp-server@allowed-addresses",
                     self.client_ip
                 )));
             }

@@ -136,7 +136,7 @@ fn the_record_and_the_signing_domain() {
         Some("sub.example.com")
     );
     assert_eq!(from_domain(b"Subject: x\r\n\r\nx"), None);
-    // with no mail_dkim_domains, a hosted account's domain
+    // with no mail-delivery/dkim@domains, a hosted account's domain
     assert_eq!(
         signing_domain(MESSAGE.as_bytes(), |domain| domain == "example.com").as_deref(),
         Some("example.com")

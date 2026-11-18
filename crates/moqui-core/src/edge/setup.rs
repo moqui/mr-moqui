@@ -163,8 +163,8 @@ pub fn remember_ssh(factory: &ExecutionContextFactory, ssh: &SshOffer) {
 }
 
 /// The host and port git clients reach this node's SSH server at through its edge node, as last offered, while this
-/// node is paired (`edge_node_url` or `front_node_url` set): what clone URLs name when `ssh_public_host` and
-/// `ssh_public_port` are not set (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
+/// node is paired (`edge_node_url` or `front_node_url` set): what clone URLs name when `ssh-server@public-host` and
+/// `ssh-server@public-port` are not set (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
 pub fn ssh_address(factory: &ExecutionContextFactory) -> Option<(String, u16)> {
     let paired = |name: &str| !moqui_lib::env::get_prop_or_env(name).trim().is_empty();
     if !paired(super::NODE_URL) && !paired(super::FRONT_URL) {
@@ -968,13 +968,14 @@ fn echo_allowed(node: &str) -> bool {
 /// Whether this edge node can send its local nodes' mail: with the MTA in moqui its DKIM key is there; with Postfix
 /// beside it the relay port answers.
 fn mta_ready() -> (bool, String) {
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
-    if property("edge_mail_mta") == "moqui" {
-        let key = property("mail_dkim_key");
+    let setting = crate::context::conf_env::setting;
+    if setting("mail-delivery@mta") == "moqui" {
+        let key = setting("mail-delivery/dkim@key");
         if key.is_empty() || key == "CHANGEME" {
             return (
                 false,
-                "The edge node has no DKIM key yet (mail_dkim_key): read its offer again, which makes one".to_string(),
+                "The edge node has no DKIM key yet (mail-delivery/dkim@key): read its offer again, which makes one"
+                    .to_string(),
             );
         }
         return (
@@ -982,11 +983,11 @@ fn mta_ready() -> (bool, String) {
             "The edge node takes this node's mail and sends it, DKIM-signed, to each domain's MX".to_string(),
         );
     }
-    let host = match property("edge_mail_relay_host") {
+    let host = match setting("mail-delivery@relay-host") {
         host if host.is_empty() => "127.0.0.1".to_string(),
         host => host,
     };
-    let port = property("edge_mail_relay_port").parse::<u16>().unwrap_or(10025);
+    let port = setting("mail-delivery@relay-port").parse::<u16>().unwrap_or(10025);
     let reached = format!("{host}:{port}")
         .parse::<std::net::SocketAddr>()
         .ok()
@@ -1020,10 +1021,13 @@ fn edge_check(facade: &EntityFacade, node: &str, check: &EchoCheck) -> Result<Ec
     match check.check.as_str() {
         "link" => answer(true, "The edge node took the item and answered".to_string()),
         "mailIn" => {
-            if moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty() {
+            if crate::context::conf_env::setting("smtp-server@listen-port")
+                .trim()
+                .is_empty()
+            {
                 return answer(
                     false,
-                    "The edge node's SMTP listener is off: set smtp_listen_port there".to_string(),
+                    "The edge node's SMTP listener is off: set smtp-server@listen-port there".to_string(),
                 );
             }
             let address = check.address.trim().to_ascii_lowercase();

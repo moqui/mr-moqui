@@ -422,7 +422,7 @@ fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     assert!(secret("smtp_pw", None));
     assert!(secret("fcm_service_account", Some("true")));
     assert!(!secret("moqui_conf__webapp_list__webapp__WEBROOT__http_port", None));
-    assert!(!secret("ssh_host_key", Some("false")));
+    assert!(!secret("moqui_conf__ssh_server__host_key", Some("false")));
 
     // the request log's rule: a PASS payment result's returnKey reads the attempt's outcome (SEC-PSA-09)
     let parameter = super::secret_parameter;

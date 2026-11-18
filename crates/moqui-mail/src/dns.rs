@@ -19,7 +19,7 @@
 //! The resolver is hickory's, built from the system's resolver configuration (Cloudflare when there is none), with its
 //! answers kept in a [`Records`] cache until their TTL. It runs on a small Tokio runtime of this crate's own, so the
 //! blocking callers here ([`run`]) and the host's async ones ([`on_runtime`]) share it. A [`Records`] can also hold
-//! fixed records, which win over DNS: a test's, and the node's own DKIM key for internal mail. `mail_dns_offline`
+//! fixed records, which win over DNS: a test's, and the node's own DKIM key for internal mail. `mail-delivery@dns-offline`
 //! (testing only) makes the resolver's cache answer every other name "not found" without a query.
 
 use std::borrow::Borrow;
@@ -336,13 +336,13 @@ pub fn authenticator() -> Result<&'static MessageAuthenticator, String> {
         .map_err(Clone::clone)
 }
 
-/// `mail_dns_offline` (testing only): no DNS query is made; a name not fixed in [`records`] does not exist.
+/// `mail-delivery@dns-offline` (testing only): no DNS query is made; a name not fixed in [`records`] does not exist.
 fn offline() -> bool {
-    moqui_lib::env::get_prop_or_env("mail_dns_offline").trim() == "true"
+    moqui_core::context::conf_env::setting("mail-delivery@dns-offline").trim() == "true"
 }
 
 /// The answers of the resolver, kept until their TTL, with the fixed ones (a test's). Offline when
-/// `mail_dns_offline` is `true` at the first use.
+/// `mail-delivery@dns-offline` is `true` at the first use.
 #[must_use]
 pub fn records() -> &'static Records {
     static RECORDS: OnceLock<Records> = OnceLock::new();

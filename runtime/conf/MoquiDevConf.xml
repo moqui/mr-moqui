@@ -15,9 +15,9 @@
     <!-- the first administrator's form on an empty database (off by default, MoquiDefaultConf.xml) -->
     <default-property name="initial_admin_enabled" value="true"/>
     <transaction-facade use-lock-track="true"/>
-    <!-- The built-in SSH server on localhost (ssh_host defaults to 127.0.0.1): the apps in the terminal over SSH for
+    <!-- The built-in SSH server on localhost (its host defaults to 127.0.0.1): the apps in the terminal over SSH for
         every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/ui/TUI.md "Over SSH" -->
-    <default-property name="ssh_port" value="2222"/>
+    <ssh-server port="2222"/>
 
     <!-- A local model server (OpenAI-compatible, LM Studio's port) for the default llm-facade endpoint; set the model -->
     <default-property name="llm_openai_url" value="http://127.0.0.1:1234"/>

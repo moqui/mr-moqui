@@ -229,14 +229,14 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="EdgeMailDelivery" package="moqui.edge" use="transactional" cache="never">
-        <description>On an edge node with the MTA in moqui (edge_mail_mta=moqui, plans/archive/Edge-Node.md §5.4 E5b), the
+        <description>On an edge node with the MTA in moqui (moqui_conf__mail_delivery__mta=moqui, plans/archive/Edge-Node.md §5.4 E5b), the
             delivery of one message a local node sent (its mailOut queueItemId) to the recipients of one domain, by that
             domain's MX; the domain "(local node)" is the recipients queued back to the local node itself. Written in
             the transaction that applies the mailOut item, so the item is delivered once these rows are there.
             recipientsJson is the addresses still to deliver; mailFrom the envelope sender (the VERP address when
             edge_mail_bounce_domain is set); contentLocation the signed message, shared by the rows of one message and
             removed with its last report. statusEnumId: EmdPending (nextAttemptDate is the next try), EmdSent, EmdBounced
-            (bouncedCount refused for good, or not delivered within mail_delivery_days). sentCount and refusedText (each
+            (bouncedCount refused for good, or not delivered within mail-delivery@days). sentCount and refusedText (each
             refused address with the answer) are what the report says; reportPending is Y while the report (the
             mailStatus back) is not queued yet, which each round tries again without delivering again. lastReplyText is
             the last answer of the MX, or why it was not reached.</description>

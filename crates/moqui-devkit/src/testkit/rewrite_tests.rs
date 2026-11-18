@@ -116,7 +116,7 @@ fn suite_order_reads_the_names() {
 
 #[test]
 fn suite_server_reads_the_declaration() {
-    let source = "suite([\"A\", \"B\"], {\n    server: { components: [\"mr-mantle\", 'mr-marble'], specs: [\"Render\"], conf: \"conf/MoquiProductionConf.xml\",\n        properties: { mail_capture_sends: \"true\", 'b.c': 'd' } },\n})\n";
+    let source = "suite([\"A\", \"B\"], {\n    server: { components: [\"mr-mantle\", 'mr-marble'], specs: [\"Render\"], conf: \"conf/MoquiProductionConf.xml\",\n        properties: { moqui_conf__email_client__capture_sends: \"true\", 'b.c': 'd' } },\n})\n";
     assert_eq!(suite_order(source).unwrap(), vec!["A".to_string(), "B".to_string()]);
     assert_eq!(
         suite_server(source).unwrap(),
@@ -125,7 +125,10 @@ fn suite_server_reads_the_declaration() {
             specs: vec!["Render".to_string()],
             conf: Some("conf/MoquiProductionConf.xml".to_string()),
             properties: vec![
-                ("mail_capture_sends".to_string(), "true".to_string()),
+                (
+                    "moqui_conf__email_client__capture_sends".to_string(),
+                    "true".to_string()
+                ),
                 ("b.c".to_string(), "d".to_string()),
             ],
         })

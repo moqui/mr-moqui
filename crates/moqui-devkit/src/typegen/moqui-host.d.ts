@@ -1434,6 +1434,8 @@ interface MoquiServerEc {
         getTool(name: string, ...parameters: unknown[]): MoquiTool;
         /** The running conf's attribute at a selector (`webapp-list/webapp[webroot]@dev-marker-color`), or null when there is none or it is a secret. */
         getConfValue(selector: string): string | null;
+        /** Whether the running conf's attribute at a selector, a secret one too, has a value other than empty or `CHANGEME`; the value is not returned. */
+        isConfValueSet(selector: string): boolean;
         /** The tool factory a conf `tool-factory` element selected, or null when there is none of that name. */
         getToolFactory<K extends keyof MoquiToolMap>(name: K): MoquiToolFactory<MoquiToolMap[K]> | null;
         getToolFactory(name: string): MoquiToolFactory | null;

@@ -1112,20 +1112,20 @@ pub(crate) fn http(
 }
 
 /// The LFS token key for one test at a time. The tests that sign and check LFS tokens run in one process: one that set
-/// its own key, or cleared it, while another ran broke the other's tokens ("git_lfs_token_key is not set"). The guard
+/// its own key, or cleared it, while another ran broke the other's tokens ("git-server@lfs-token-key is not set"). The guard
 /// holds the lock while the test runs and clears the key when it is dropped.
 pub(crate) struct LfsKey(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
 
 pub(crate) fn lfs_key(value: &str) -> LfsKey {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let guard = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    moqui_lib::env::set_property("git_lfs_token_key", value.to_string());
+    moqui_lib::env::set_property("moqui_conf__git_server__lfs_token_key", value.to_string());
     LfsKey(guard)
 }
 
 impl Drop for LfsKey {
     fn drop(&mut self) {
-        moqui_lib::env::clear_property("git_lfs_token_key");
+        moqui_lib::env::clear_property("moqui_conf__git_server__lfs_token_key");
     }
 }
 
@@ -2058,7 +2058,7 @@ fn mirror_fetches_and_opted_in_writes_raise_events() {
         .all(|row| row.get("value").and_then(Value::as_str) == Some("fetch")));
 }
 
-/// The clone URLs' base follows the listener's webapp settings and the request's origin, and `git_public_url` overrides
+/// The clone URLs' base follows the listener's webapp settings and the request's origin, and `git-server@public-url` overrides
 /// both, as `crate::dav::public_base_url` does for DAV (moqui-core's web tests).
 #[test]
 fn the_public_base_url_follows_the_listener_and_the_request() {
@@ -2068,7 +2068,7 @@ fn the_public_base_url_follows_the_listener_and_the_request() {
         "moqui_conf__webapp_list__webapp__WEBROOT__http_host",
         "moqui_conf__webapp_list__webapp__WEBROOT__https_enabled",
         "moqui_conf__webapp_list__webapp__WEBROOT__https_port",
-        "git_public_url",
+        "moqui_conf__git_server__public_url",
     ];
     struct Restore(Vec<(&'static str, String)>);
     impl Drop for Restore {
@@ -2106,6 +2106,6 @@ fn the_public_base_url_follows_the_listener_and_the_request() {
     request.set_header("host", "public.example:10443");
     moqui_core::web::set_request_info(&request);
     assert_eq!(super::public_base_url(), "https://public.example:10443");
-    moqui_lib::env::set_property("git_public_url", "https://git.example/base/");
+    moqui_lib::env::set_property("moqui_conf__git_server__public_url", "https://git.example/base/");
     assert_eq!(super::public_base_url(), "https://git.example/base");
 }

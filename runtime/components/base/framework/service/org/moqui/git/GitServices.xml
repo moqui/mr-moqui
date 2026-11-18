@@ -297,9 +297,9 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="get" noun="GitCloneUrls" type="rust" location="moqui_git::service::get_clone_urls">
-        <description>The URLs to clone a repository with: HTTPS from the git_public_url property (else the webapp
+        <description>The URLs to clone a repository with: HTTPS from the git-server@public-url property (else the webapp
             host and port properties) and, when the SSH server is on, SSH with the current user's username, from
-            ssh_public_host and ssh_public_port (else the webapp host and ssh_port). They carry the repository's
+            ssh-server@public-host and ssh-server@public-port (else the webapp host and ssh-server@port). They carry the repository's
             repositoryPath, else its id.</description>
         <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
         <out-parameters>

@@ -23,12 +23,12 @@
 //! - **Out** (kind `mailOut`): a message sent through an `EmailServer` whose `smtpHost` is `edge:` is queued for the
 //!   edge node instead ([`enqueue_outbound`]), so a send does not wait on or fail with the link; it is Sent once
 //!   queued. The edge node's `deliver#EdgeOutboundMail` relays it to the MTA beside it (Postfix at
-//!   `edge_mail_relay_host` and `edge_mail_relay_port`, which signs it with DKIM through Rspamd and delivers it to the
+//!   `mail-delivery@relay-host` and `mail-delivery@relay-port`, which signs it with DKIM through Rspamd and delivers it to the
 //!   MX), with the envelope sender `bounce+<item id>@<edge_mail_bounce_domain>` (VERP) when that is set. A relay that
 //!   cannot be reached, answers 4xx or drops the connection answers `retryLater`: the item waits, not counted, to the
 //!   end of the retention period. An answer, accepted or refused with 5xx, goes back as kind `mailStatus` for the
 //!   `mailOut` item, queued in a transaction of its own right after the relay, so a later failure never relays twice.
-//!   With the MTA in moqui (E5b, `edge_mail_mta` `moqui`, the default) the message is DKIM-signed and recorded for MX
+//!   With the MTA in moqui (E5b, `mail-delivery@mta` `moqui`, the default) the message is DKIM-signed and recorded for MX
 //!   delivery in the item's transaction instead ([`super::mx`]), which sends the `mailStatus` answers.
 //! - **Bounces after the relay**: a delivery status notification (RFC 3464) to the VERP address comes back to the edge
 //!   node's listener, which takes it only for a `mailOut` item it received from a paired node, reads it
@@ -251,7 +251,7 @@ pub fn inbound_item(
 
 /// [`inbound_item`] with what the edge node's listener trusts (`trusted`): its authserv-id and spam verdict fields, which
 /// the local node then trusts for this message, so the edge node's own `Authentication-Results` (the MTA in moqui) is
-/// kept whatever the local node's `smtp_authserv_id` is.
+/// kept whatever the local node's `smtp-server@authserv-id` is.
 #[cfg(feature = "imap")]
 #[must_use]
 pub fn inbound_item_trusting(
@@ -499,14 +499,14 @@ enum Relayed {
     NotNow(String),
 }
 
-/// The MTA beside the edge node: `edge_mail_relay_host` (default 127.0.0.1) and `edge_mail_relay_port` (default 10025).
+/// The MTA beside the edge node: `mail-delivery@relay-host` (default 127.0.0.1) and `mail-delivery@relay-port` (default 10025).
 fn relay_address() -> (String, u16) {
-    let host = moqui_lib::env::get_prop_or_env("edge_mail_relay_host");
+    let host = moqui_core::context::conf_env::setting("mail-delivery@relay-host");
     let host = match host.trim() {
         "" => "127.0.0.1".to_string(),
         host => host.to_string(),
     };
-    let port = moqui_lib::env::get_prop_or_env("edge_mail_relay_port")
+    let port = moqui_core::context::conf_env::setting("mail-delivery@relay-port")
         .trim()
         .parse()
         .unwrap_or(10025);

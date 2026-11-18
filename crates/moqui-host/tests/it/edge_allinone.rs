@@ -779,18 +779,23 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
         "aio-mail-server",
         CONF,
         &[
-            ("smtp_listen_port", "0"),
-            ("smtp_allowed_addresses", "127.0.0.1"),
-            ("smtp_hostname", "mx.server.example"),
-            ("edge_mail_mta", "moqui"),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+            ("moqui_conf__smtp_server__hostname", "mx.server.example"),
+            ("moqui_conf__mail_delivery__mta", "moqui"),
             ("edge_mail_bounce_domain", "bounce.server.example"),
-            ("mail_mx_override", &mx_override),
-            ("mail_delivery_retry_seconds", "0.2"),
-            ("mail_dns_offline", "true"),
+            ("moqui_conf__mail_delivery__mx_override", &mx_override),
+            ("moqui_conf__mail_delivery__retry_seconds", "0.2"),
+            ("moqui_conf__mail_delivery__dns_offline", "true"),
         ],
     );
-    let local =
-        crate::common::start_with_conf_files("aio-mail-local", None, CONF, &[("mail_dns_offline", "true")], &[]);
+    let local = crate::common::start_with_conf_files(
+        "aio-mail-local",
+        None,
+        CONF,
+        &[("moqui_conf__mail_delivery__dns_offline", "true")],
+        &[],
+    );
     let server = starting.ready();
     let smtp_at = server.address("smtp");
     let account = |kind: &str, address: &str| {
@@ -1083,7 +1088,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
         &[
             ("channels_webhooks_enabled", "true"),
             ("channels_media_key", "an-all-in-one-test-key"),
-            ("smtp_hostname", "mx.server.example"),
+            ("moqui_conf__smtp_server__hostname", "mx.server.example"),
             ("edge_mail_bounce_domain", "bounce.server.example"),
             ("xmpp_domain", XMPP_DOMAIN),
             ("xmpp_port", "0"),

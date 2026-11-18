@@ -24,7 +24,7 @@ is a few properties.
 ## `.env`
 
 - **Group server**: `webapp-list/webapp[webroot]@http-host` and HTTPS as for one production server; the model endpoints' keys (such as
-  `llm_openai_api_key`); `ssh_public_port` when clients reach SSH on another port.
+  `llm_openai_api_key`); `ssh-server@public-port` when clients reach SSH on another port.
 - **Dev instance**:
 
   ```sh

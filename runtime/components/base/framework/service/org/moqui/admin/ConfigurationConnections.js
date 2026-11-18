@@ -1056,9 +1056,11 @@ function sendTestMessage(server) {
     return {check: "Message", ok: true, text: "A test message was sent to your own address"}
 }
 
+// the deployment's client in the conf (email-client/oauth-provider[confProviderId]); the secret only said to be set
 const oauthConfigured = provider => {
-    const prefix = text(provider.propertyPrefix)
-    return !!prefix && !!text(System.getProperty(prefix + "_client_id")) && System.isPropertySet(prefix + "_client_secret")
+    const id = text(provider.confProviderId)
+    const at = "email-client/oauth-provider[" + id + "]@"
+    return !!id && !!text(ec.factory.getConfValue(at + "client-id")) && ec.factory.isConfValueSet(at + "client-secret")
 }
 const mailOAuthDefinition = {
     adapterKey: "mailOAuth",

@@ -98,6 +98,7 @@ const GLOBALS_JS: &str = concat!(
     factory.moquiVersion = hidden.moquiVersion();
     factory.hasFeature = hidden.hasFeature;
     factory.getConfValue = hidden.getConfValue;
+    factory.isConfValueSet = hidden.isConfValueSet;
     // Java's TransactionFacade (`transaction.rs`)
     // body() in a transaction begun by `begin`: committed when it returns, rolled back (or, joined, marked
     // rollback-only) when it throws, and what it threw is thrown on
@@ -295,6 +296,7 @@ pub(crate) static SHIM: Shim = Shim {
         method!("ec.factory", "moquiVersion", [], None, leaf, moqui_version),
         method!("ec.factory", "hasFeature", [Text], None, leaf, has_feature),
         method!("ec.factory", "getConfValue", [Text], None, leaf, get_conf_value),
+        method!("ec.factory", "isConfValueSet", [Text], None, leaf, is_conf_value_set),
         method!("ec.transaction", "isTransactionInPlace", [], None, leaf, in_transaction),
         method!(
             "ec.transaction",
@@ -905,6 +907,23 @@ fn get_conf_value(call: &mut Call<'_>) -> Result<Ret, HostError> {
     }
     let found = crate::context::ExecutionContext::with_current(|ec| ec.factory().conf_value(&selector)).flatten();
     Ok(found.filter(|found| !found.secret).map(|found| found.value).into())
+}
+
+/// `ec.factory.isConfValueSet(selector)`: whether the running conf's attribute at `selector`, a secret one too, has a
+/// value other than empty or the `CHANGEME` placeholder; the value is not returned. A selector that does not parse is
+/// an error.
+fn is_conf_value_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let selector = call.text_or_empty(0);
+    if let Err(err) = moqui_lib::node::path::AttrPath::parse(&selector) {
+        return Err(HostError::message(format!("isConfValueSet({selector}): {err}")));
+    }
+    let found = crate::context::ExecutionContext::with_current(|ec| ec.factory().conf_value(&selector)).flatten();
+    Ok(found
+        .is_some_and(|found| {
+            let value = found.value.trim();
+            !value.is_empty() && !value.ends_with("CHANGEME")
+        })
+        .into())
 }
 
 /// `ec.factory.hasFeature(name)`: whether this binary has a build feature.

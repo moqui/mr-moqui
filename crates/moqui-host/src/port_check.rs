@@ -162,7 +162,7 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
     }
     #[cfg(feature = "ssh")]
     if let Some((host, port)) = crate::ssh::server::listen_target(conf)? {
-        targets.push(required("SSH", "ssh_port", host, port));
+        targets.push(required("SSH", "ssh-server@port", host, port));
     }
     // the optional listeners: a setting that does not parse is left to the listener's own start to report
     #[cfg(feature = "grpc")]
@@ -182,7 +182,7 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
     if let Ok(Some((host, port))) = crate::smtp::listen_target_by(&|name| conf_setting(conf, "smtp-server", name)) {
         targets.push(Target::optional(
             crate::smtp::LISTENER,
-            "smtp_listen_port",
+            "smtp-server@listen-port",
             host,
             port,
             Proto::Tcp,

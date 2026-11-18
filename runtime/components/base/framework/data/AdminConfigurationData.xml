@@ -206,56 +206,56 @@ along with this software (see the LICENSE.md file). If not, see
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 
     <!-- The configuration each protocol runs with (design-admin §9 EffectiveProtocolSettings), shown read only: nonsecret
-        default-properties of the conf, in the groups named "Protocols: ..." that the integration administrator and the
+        settings of the conf, in the groups named "Protocols: ..." that the integration administrator and the
         operations operator read too. No key, host key, key file or shared secret is registered. -->
     <moqui.server.InstanceSetting settingKey="protocol.smtp.listenPort" title="SMTP listener port" settingGroup="Protocols: mail reception"
             description="The port the listener for hosted and shared mail accounts binds; empty keeps it off" valueTypeEnumId="IsvText"
-            propertyName="smtp_listen_port" restartRequired="Y" sequenceNum="3010"
-            operatorNote="Set smtp_listen_port in the environment or the runtime conf and restart"/>
+            propertyName="smtp-server@listen-port" restartRequired="Y" sequenceNum="3010"
+            operatorNote="Set moqui_conf__smtp_server__listen_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.listenHost" title="SMTP listener address" settingGroup="Protocols: mail reception"
             description="The address the listener binds; this machine only by default" valueTypeEnumId="IsvText"
-            propertyName="smtp_listen_host" restartRequired="Y" sequenceNum="3020"
-            operatorNote="Set smtp_listen_host in the environment or the runtime conf and restart"/>
+            propertyName="smtp-server@listen-host" restartRequired="Y" sequenceNum="3020"
+            operatorNote="Set moqui_conf__smtp_server__listen_host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.allowedAddresses" title="Gateway addresses allowed" settingGroup="Protocols: mail reception"
             description="The addresses and ranges of the edge gateway, the only ones that may deliver; empty never starts the listener" valueTypeEnumId="IsvText"
-            propertyName="smtp_allowed_addresses" restartRequired="Y" sequenceNum="3030"
-            operatorNote="Set smtp_allowed_addresses in the environment or the runtime conf and restart"/>
+            propertyName="smtp-server@allowed-addresses" restartRequired="Y" sequenceNum="3030"
+            operatorNote="Set moqui_conf__smtp_server__allowed_addresses in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.authservId" title="Gateway authentication name" settingGroup="Protocols: mail reception"
             description="The authserv-id of the gateway's Authentication-Results, the only ones kept; empty keeps them all as they came" valueTypeEnumId="IsvText"
-            propertyName="smtp_authserv_id" restartRequired="Y" sequenceNum="3040"
-            operatorNote="Set smtp_authserv_id in the environment or the runtime conf and restart"/>
+            propertyName="smtp-server@authserv-id" restartRequired="Y" sequenceNum="3040"
+            operatorNote="Set moqui_conf__smtp_server__authserv_id in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.hostname" title="SMTP greeting name" settingGroup="Protocols: mail reception"
             description="The name in the greeting and the Received field; the public host name when empty" valueTypeEnumId="IsvText"
-            propertyName="smtp_hostname" restartRequired="Y" sequenceNum="3050"
-            operatorNote="Set smtp_hostname in the environment or the runtime conf and restart"/>
+            propertyName="smtp-server@hostname" restartRequired="Y" sequenceNum="3050"
+            operatorNote="Set moqui_conf__smtp_server__hostname in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.internet" title="Mail taken from the internet" settingGroup="Protocols: mail reception"
             description="Whether the listener takes mail from any sender and checks it itself, with no gateway in front" valueTypeEnumId="IsvText"
-            propertyName="smtp_internet" restartRequired="Y" sequenceNum="3060"
-            operatorNote="Set smtp_internet in the environment or the runtime conf and restart"/>
+            propertyName="smtp-server@internet" restartRequired="Y" sequenceNum="3060"
+            operatorNote="Set moqui_conf__smtp_server__internet in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.tlsCertFile" title="SMTP certificate file" settingGroup="Protocols: mail reception"
             description="The certificate the listener offers for STARTTLS" valueTypeEnumId="IsvText"
-            propertyName="smtp_tls_cert_file" restartRequired="Y" sequenceNum="3070"
-            operatorNote="Set smtp_tls_cert_file in the environment or the runtime conf and restart"/>
+            propertyName="smtp-server@tls-cert-file" restartRequired="Y" sequenceNum="3070"
+            operatorNote="Set moqui_conf__smtp_server__tls_cert_file in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.port" title="SSH port" settingGroup="Protocols: SSH and Git"
             description="The port of the built-in SSH server (SFTP, the terminal client, git over SSH); empty keeps it off" valueTypeEnumId="IsvText"
-            propertyName="ssh_port" restartRequired="Y" sequenceNum="3080"
-            operatorNote="Set ssh_port in the environment or the runtime conf and restart"/>
+            propertyName="ssh-server@port" restartRequired="Y" sequenceNum="3080"
+            operatorNote="Set moqui_conf__ssh_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.host" title="SSH address" settingGroup="Protocols: SSH and Git"
             description="The address the SSH server binds" valueTypeEnumId="IsvText"
-            propertyName="ssh_host" restartRequired="Y" sequenceNum="3090"
-            operatorNote="Set ssh_host in the environment or the runtime conf and restart"/>
+            propertyName="ssh-server@host" restartRequired="Y" sequenceNum="3090"
+            operatorNote="Set moqui_conf__ssh_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.publicHost" title="SSH public host" settingGroup="Protocols: SSH and Git"
             description="The host clone URLs show; the public host name when empty" valueTypeEnumId="IsvText"
-            propertyName="ssh_public_host" restartRequired="Y" sequenceNum="3100"
-            operatorNote="Set ssh_public_host in the environment or the runtime conf and restart"/>
+            propertyName="ssh-server@public-host" restartRequired="Y" sequenceNum="3100"
+            operatorNote="Set moqui_conf__ssh_server__public_host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.publicPort" title="SSH public port" settingGroup="Protocols: SSH and Git"
             description="The port clone URLs show; the SSH port when empty" valueTypeEnumId="IsvText"
-            propertyName="ssh_public_port" restartRequired="Y" sequenceNum="3110"
-            operatorNote="Set ssh_public_port in the environment or the runtime conf and restart"/>
+            propertyName="ssh-server@public-port" restartRequired="Y" sequenceNum="3110"
+            operatorNote="Set moqui_conf__ssh_server__public_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.git.publicUrl" title="Git public URL" settingGroup="Protocols: SSH and Git"
             description="The base of the clone URLs shown; made from the public host name when empty" valueTypeEnumId="IsvText"
-            propertyName="git_public_url" restartRequired="Y" sequenceNum="3120"
-            operatorNote="Set git_public_url in the environment or the runtime conf and restart"/>
+            propertyName="git-server@public-url" restartRequired="Y" sequenceNum="3120"
+            operatorNote="Set moqui_conf__git_server__public_url in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.domain" title="XMPP domain" settingGroup="Protocols: chat"
             description="The domain of the users' chat addresses; empty keeps XMPP off" valueTypeEnumId="IsvText"
             propertyName="xmpp_domain" restartRequired="Y" sequenceNum="3130"

@@ -913,7 +913,7 @@ fn cluster_base_url() -> Result<String, Error> {
         let address = env::get_prop_or_env(SSH_ADDRESS_PROPERTY);
         if address.is_empty() {
             return Err(Error::new(
-                "cluster_transport is ssh but the SSH server is not listening; set ssh_port",
+                "cluster_transport is ssh but the SSH server is not listening; set ssh-server@port",
             ));
         }
         format!("ssh://{address}")
@@ -973,7 +973,7 @@ fn reject_peer_mismatch(
 
 /// Warn when a live member's SSH host key is another than this member's. Behind one name (a load balancer, an edge
 /// node's pool and its SSH tunnel) a client may reach any member, and after a failover another one, so the members
-/// share `ssh_host_key`, as they share `git_lfs_token_key` (which no member row shows): with another key a client is
+/// share `ssh-server@host-key`, as they share `git-server@lfs-token-key` (which no member row shows): with another key a client is
 /// told the host key changed. Only a warning: a cluster whose members are reached each by its own name may keep its own.
 fn warn_ssh_key_mismatch(facade: &EntityFacade, factory: &ExecutionContextFactory, instance_id: &str) {
     let ours = env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY);
@@ -983,9 +983,9 @@ fn warn_ssh_key_mismatch(facade: &EntityFacade, factory: &ExecutionContextFactor
     let others = ssh_key_differs(&members, instance_id, &ours, db_now(facade), window_millis(factory));
     if !others.is_empty() {
         tracing::warn!(
-            "ssh_host_key differs from the live cluster members {}: behind a load balancer or an edge node's pool a git \
-             client reaching another member is told the host key changed; give every member the same ssh_host_key \
-             (and git_lfs_token_key)",
+            "ssh-server@host-key differs from the live cluster members {}: behind a load balancer or an edge node's pool \
+             a git client reaching another member is told the host key changed; give every member the same \
+             ssh-server@host-key (and git-server@lfs-token-key)",
             others.join(", ")
         );
     }

@@ -80,7 +80,7 @@ fn needs_shared_storage(repository_id: &str) -> Error {
     Error::new(format!(
         "GitNeedsSharedStorage: git repository {repository_id} would be kept on this node's disk (kind local or \
          remote), and this node is a cluster member whose other members could not reach it: put runtime/git on \
-         storage every member mounts and set git-server shared-storage=\"true\" (git_shared_storage), or use kind db"
+         storage every member mounts and set git-server shared-storage=\"true\", or use kind db"
     ))
 }
 

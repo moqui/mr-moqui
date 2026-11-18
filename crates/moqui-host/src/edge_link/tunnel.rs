@@ -38,7 +38,7 @@
 //! Each tunnel goes to one member of the pairing's pool, by the client's address (an IPv6 one by its /64,
 //! plans/Edge-Node2.md §4.4): a client's connections stay on one member, whose XMPP sessions are its own. Any member
 //! may still take a client's next connection after a failover, so the members of a pool share one SSH host key
-//! (`ssh_host_key`, runtime/conf/local-cluster). A tunnel that is not opened counts toward setting its member aside,
+//! (`ssh-server@host-key`, runtime/conf/local-cluster). A tunnel that is not opened counts toward setting its member aside,
 //! and a client the pairing banned (shared bans, §4.3) is refused as its requests to the pairing's hosts are. A
 //! passthrough tunnel for an edge member's link name on a front goes to that member alone ([`super::accept`]).
 

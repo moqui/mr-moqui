@@ -29,12 +29,12 @@ queue, the pairings and the host names are rows the members share. A clustered a
   and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first
   start generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`, `cluster_tls_key`, `moqui_conf__entity_facade__crypt_pass`,
   `edge_link_key` (the one link key local nodes pin), `turn_auth_secret`, `acme_account_key` and, once made,
-  `mail_dkim_key`; `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
-  `smtp_listen_port=25`, `smtp_listen_host`, `sip_port`, `sip_tls_port`, `sip_host`, `sip_registrar_enabled`,
+  `mail-delivery/dkim@key`; `webapp-list/webapp[webroot]@http-host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
+  `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`, `sip_port`, `sip_tls_port`, `sip_host`, `sip_registrar_enabled`,
   `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host`, `edge_ssh_tunnel_port`, `pass_backend_web_url`. A WebPKI
   certificate in `cert/` for the names local nodes pair at; the links present the pinned link key, not it.
 - **Each edge member, its own**: `cluster_base_url=https://<private address>:8444`, `edge_link_url=https://<its own
-  public name>`, `smtp_hostname` (its MX name), `rtc_public_address`, `turn_public_host`, `sip_public_address`. Never
+  public name>`, `smtp-server@hostname` (its MX name), `rtc_public_address`, `turn_public_host`, `sip_public_address`. Never
   copy `runtime/db`: each member keeps its own instance id there.
 - **A local node**: as with one edge node. Pairing writes `edge_node_url`, `edge_node_key`, `edge_node_pin`,
   `edge_node_id` and `edge_node_pairing`; the list of edge members is kept in `runtime/db/edge_members`.
@@ -43,7 +43,7 @@ queue, the pairings and the host names are rows the members share. A clustered a
 
 With no front node before the cluster, for each member: an A (and AAAA) record under each public name a local node
 uses (the cluster's `webapp-list/webapp[webroot]@http-host` and each host name), an A record for its own `edge_link_url` name, an MX record
-for each mail domain (the same preference on each) with reverse DNS naming its `smtp_hostname`, and SRV records for
+for each mail domain (the same preference on each) with reverse DNS naming its `smtp-server@hostname`, and SRV records for
 SIP (`_sip._udp`, `_sip._tcp`, `_sips._tcp`) and XMPP (`_xmpp-client._tcp`, `_xmpps-client._tcp`).
 
 ## Commands

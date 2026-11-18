@@ -73,7 +73,14 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     let gate = {
         use base64::Engine as _;
         let seed = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
-        crate::common::start_with_properties("test-client", None, &[("ssh_port", "0"), ("ssh_host_key", &seed)])
+        crate::common::start_with_properties(
+            "test-client",
+            None,
+            &[
+                ("moqui_conf__ssh_server__port", "0"),
+                ("moqui_conf__ssh_server__host_key", &seed),
+            ],
+        )
     };
     #[cfg(not(all(feature = "ssh", feature = "tui")))]
     let gate = crate::common::start("test-client");

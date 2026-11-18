@@ -1563,7 +1563,7 @@ fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue, email_m
 }
 
 /// A message built whole (the SMTP listener's delivered notice, `delivery.rs`), sent from the null reverse path to
-/// `to` through the SMTP of server `server_id`, within half a minute. A test sink or `mail_capture_sends` keeps it as
+/// `to` through the SMTP of server `server_id`, within half a minute. A test sink or `email-client@capture-sends` keeps it as
 /// a letter with the message as its text.
 #[cfg(feature = "imap")]
 pub(super) fn send_built(
@@ -1619,19 +1619,19 @@ pub(super) fn send_built(
     )
 }
 
-/// Whether `mail_capture_sends` keeps a send now ([`captured`]), so a server with no SMTP host does not skip it. A Rust
+/// Whether `email-client@capture-sends` keeps a send now ([`captured`]), so a server with no SMTP host does not skip it. A Rust
 /// test's sink stands for the SMTP server instead: a send it would not reach is still skipped.
 fn capturing() -> bool {
     moqui_core::service::mail_capture::enabled()
 }
 
-/// Whether a test sink or `mail_capture_sends` kept `letter` instead of sending it.
+/// Whether a test sink or `email-client@capture-sends` kept `letter` instead of sending it.
 fn captured(letter: &Letter) -> bool {
     #[cfg(test)]
     if push_sink(letter) {
         return true;
     }
-    // mail_capture_sends (moqui test): kept for the spec instead of sent (service/mail_capture.rs)
+    // email-client@capture-sends (moqui test): kept for the spec instead of sent (service/mail_capture.rs)
     if moqui_core::service::mail_capture::enabled() {
         moqui_core::service::mail_capture::record(moqui_core::service::mail_capture::CapturedMail {
             subject: letter.subject.clone(),
@@ -1656,7 +1656,7 @@ fn captured(letter: &Letter) -> bool {
 }
 
 /// Send `letter` by SMTP through `server`, DKIM-signed with the node's key when its From domain is a hosted account's
-/// (or one of `mail_dkim_domains`: `auth.rs`), so mail between the hosted accounts carries the same signature as mail
+/// (or one of `mail-delivery/dkim@domains`: `auth.rs`), so mail between the hosted accounts carries the same signature as mail
 /// out (plans/archive/Edge-Node.md §5.4, "the same standards inside"). Only when the key is configured (so its record can be
 /// published), or when the server is this node's own SMTP listener, where the node verifies its own key: a node that
 /// sends through another provider's server sends no signature of a key nobody published.

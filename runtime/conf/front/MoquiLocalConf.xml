@@ -39,8 +39,8 @@
 
     <!-- What stays the cluster's own, since the front has none of the edge set:
         mail out: an EmailServer with an outside relay or the provider's SMTP, as on one server;
-        mail in: an IMAP sync, or the SMTP listener on every member in internet mode (smtp_listen_port, smtp_internet=true,
-            smtp_hostname; docs/interfaces/Mail-Inbound.md) with port 25 on the front as an EdgePort row of kind smtp
+        mail in: an IMAP sync, or the SMTP listener on every member in internet mode (smtp-server@listen-port, moqui_conf__smtp_server__internet=true,
+            smtp-server@hostname; docs/interfaces/Mail-Inbound.md) with port 25 on the front as an EdgePort row of kind smtp
             for this pairing, which passes each connection to a live member with a PROXY header naming the client (the
             code takes it as for an edge cluster's members, but this path to a local cluster has no test yet);
         chat bridges and SMS: channels_webhooks_enabled=true and channels_public_url, one of the cluster's host names

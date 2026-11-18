@@ -1018,7 +1018,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         "edge-setup-local",
         None,
         LOCAL_CONF,
-        &[("mail_dns_offline", "true")],
+        &[("moqui_conf__mail_delivery__dns_offline", "true")],
         &[],
     );
     let sales = to_plain_string(
@@ -1057,9 +1057,9 @@ fn a_local_node_is_attached_from_the_wizard() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("smtp_listen_port", "0"),
-            ("smtp_hostname", "edge.example.net"),
-            ("edge_mail_mta", "moqui"),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__hostname", "edge.example.net"),
+            ("moqui_conf__mail_delivery__mta", "moqui"),
             ("edge_mail_bounce_domain", "bounce.example.net"),
             ("channels_webhooks_enabled", "true"),
             ("edge_public_addresses", "203.0.113.5, not-an-address"),

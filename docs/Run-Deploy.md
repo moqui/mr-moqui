@@ -371,9 +371,9 @@ stripped, and `$` is not expanded. It is read after the conf merge, so it cannot
 with `--no-data` leaves it out, so it is the place for per-host settings that should survive an upgrade.
 
 When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
-covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
+covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `ssh-server@host-key`, `git-server@lfs-token-key`, `cluster_tls_cert`,
 `cluster_tls_key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
-`mail_dkim_key` (empty by default) is made there too, the first time a server needs it.
+`mail-delivery/dkim@key` (empty by default) is made there too, the first time a server needs it.
 
 The properties most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
@@ -392,11 +392,11 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `webapp-list/webapp[webroot]@client-ip-header` | empty | The header those proxies put the client address in |
 | `webapp-list/webapp[webroot]@status-ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
 | `service-facade@scheduled-job-check-time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
-| `terminal_command_line`, `terminal_host_sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `true` on for any purpose, `false` off; any other value, empty included, is off with an error in the log ([Terminal](ui/Terminal.md#conf)) |
-| `terminal_remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `terminal_remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
+| `terminal@command-line`, `terminal@host-sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `true` on for any purpose, `false` off; any other value, empty included, is off with an error in the log ([Terminal](ui/Terminal.md#conf)) |
+| `terminal@remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `moqui_conf__terminal__remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
 | `screen-facade/pdf@chromium-path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `load_runner_targets`, `load_runner_max_runs`, `load_runner_max_users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
-| `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
+| `ssh-server@port`, `ssh-server@host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh-server@port` is empty (`2222` in the dev conf) |
 | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `rtc_media_port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `call_ring_seconds` | `45` | How long a call rings before it is missed |
 | `call_guest_joins_per_minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
@@ -445,15 +445,15 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `edge_call_legs_per_pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
 | `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
-| `edge_mail_mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
-| `edge_mail_relay_host`, `edge_mail_relay_port` | `127.0.0.1`, `10025` | On an edge node with `edge_mail_mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
+| `mail-delivery@mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
+| `mail-delivery@relay-host`, `mail-delivery@relay-port` | `127.0.0.1`, `10025` | On an edge node with `moqui_conf__mail_delivery__mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
 | `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
-| `smtp_internet`, `mail_rspamd_url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in `conf/edge/MoquiEdgeConf.xml`), with Rspamd's HTTP API for its spam verdict when the URL is set; its hourly limits per client address and per sender are `smtp-server` `internet-messages-per-hour` and `internet-bytes-per-hour` (1000, 1 GiB) ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-in)) |
-| `mail_dkim_key`, `mail_dkim_selector`, `mail_dkim_domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
-| `mail_arc_trusted_sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
-| `mail_delivery_retry_seconds`, `mail_delivery_days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
-| `mail_mx_require_tls` | empty | On an edge node with the MTA in moqui, the recipient domains (comma-separated, `*` for every one) whose MX gets mail only over STARTTLS with a certificate valid for the host, as under an MTA-STS `enforce` policy whatever the domain publishes: an MX with no STARTTLS or a failed handshake or certificate is tried again later and the message bounces after `mail_delivery_days`, never sent in clear text. Empty: STARTTLS when offered, with any certificate, else clear text ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-out)) |
-| `mail_mx_override`, `mail_dns_offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
+| `smtp-server@internet`, `smtp-server@rspamd-url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in `conf/edge/MoquiEdgeConf.xml`), with Rspamd's HTTP API for its spam verdict when the URL is set; its hourly limits per client address and per sender are `smtp-server` `internet-messages-per-hour` and `internet-bytes-per-hour` (1000, 1 GiB) ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-in)) |
+| `mail-delivery/dkim@key`, `mail-delivery/dkim@selector`, `mail-delivery/dkim@domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
+| `smtp-server@arc-trusted-sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
+| `mail-delivery@retry-seconds`, `mail-delivery@days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
+| `mail-delivery@mx-require-tls` | empty | On an edge node with the MTA in moqui, the recipient domains (comma-separated, `*` for every one) whose MX gets mail only over STARTTLS with a certificate valid for the host, as under an MTA-STS `enforce` policy whatever the domain publishes: an MX with no STARTTLS or a failed handshake or certificate is tried again later and the message bounces after `mail-delivery@days`, never sent in clear text. Empty: STARTTLS when offered, with any certificate, else clear text ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-out)) |
+| `mail-delivery@mx-override`, `mail-delivery@dns-offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
 | `logging@level`, `logging@dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -783,8 +783,8 @@ a backup asked for now with the job's own parameters ([Attack-Surface](security/
 | 8080 | HTTP | On, every address | `webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind` |
 | 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-port` (`off`), `webapp-list/webapp[webroot]@http2` |
 | 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address`, `cluster_protocol` |
-| `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
-| `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
+| `ssh-server@port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh-server@port`, `ssh-server@host` |
+| `smtp-server@listen-port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp-server@listen-port`, `smtp-server@listen-host` |
 | `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `rtc_cascade_enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address`, `rtc_cascade_enabled` |
 | `rtc_media_tcp_port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off | `rtc_media_tcp_port` |
 | `turn_port` (UDP and TCP), `turn_tls_port`, 443 on `turn_tls443_host`; `turn_relay_ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off | `turn_port`, `turn_tls_port`, `turn_tls443_host`, `turn_host`, `turn_relay_ports` |
@@ -992,7 +992,7 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 | OpenSearch | [Search](#search) |
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
-| SSH | `ssh_port`, with `ssh_host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
+| SSH | `ssh-server@port`, with `moqui_conf__ssh_server__host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
 
 ## Several sites by host name
 
@@ -1086,7 +1086,7 @@ certificates end to end. If a proxy is in front of it, name it in `webapp-list/w
 client-IP header with no trusted proxies is ignored.
 
 The browser terminal goes through too, in both web access modes: a client of the edge node is another machine to the
-local node, so a dev local node's command line and shells need `terminal_remote=true` and a recent sign-in there, and a
+local node, so a dev local node's command line and shells need `moqui_conf__terminal__remote=true` and a recent sign-in there, and a
 dropped link resumes each terminal by the count of what it drew ([Terminal](ui/Terminal.md#the-desktop-and-mobile-apps-and-phones)).
 
 **Attach a local node in one sitting.**
@@ -1541,7 +1541,7 @@ node](#a-local-cluster-with-an-edge-node).
 - **The same secrets on every member**: `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`, `cluster_tls_key` and
   `moqui_conf__entity_facade__crypt_pass`. Startup fails when a live member has a different session key or certificate, with
   "webapp-list/webapp[webroot]/session-config@cookie-key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
-  For git hosting, `ssh_host_key` and `git_lfs_token_key` too: behind a load balancer or an edge node's pool a client's
+  For git hosting, `ssh-server@host-key` and `git-server@lfs-token-key` too: behind a load balancer or an edge node's pool a client's
   SSH connections and LFS requests reach any member, and another one after a failover, so a member with its own host
   key is a changed host to git clients and one with its own LFS key refuses the others' tokens. A member whose SSH
   host key differs from a live member's warns at startup; no member row shows the LFS key. Copying the first member's

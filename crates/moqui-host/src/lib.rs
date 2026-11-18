@@ -295,7 +295,7 @@ impl Server {
         self.address
     }
 
-    /// The SSH server's address, when `ssh_port` is set and this build has the `ssh` feature.
+    /// The SSH server's address, when `ssh-server@port` is set and this build has the `ssh` feature.
     #[must_use]
     pub fn ssh_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "ssh")]
@@ -307,7 +307,7 @@ impl Server {
         None
     }
 
-    /// The inbound SMTP listener's address, when this build has the `inbound-smtp` feature and `smtp_listen_port` is set.
+    /// The inbound SMTP listener's address, when this build has the `inbound-smtp` feature and `smtp-server@listen-port` is set.
     #[must_use]
     pub fn smtp_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "inbound-smtp")]
@@ -1859,7 +1859,7 @@ fn boot_server_factory(
         None => moqui_core::startup::listener(
             &factory,
             "SSH",
-            moqui_core::startup::State::off("ssh_port is not set, or ssh-server enabled is false"),
+            moqui_core::startup::State::off("ssh-server@port is not set, or ssh-server@enabled is false"),
         ),
     }
     // One sender for every transport: a peer's base URL picks HTTPS, SSH, or Postgres NOTIFY.
@@ -2031,8 +2031,8 @@ type SmtpSlot = NoSmtp;
 #[cfg(not(feature = "inbound-smtp"))]
 struct NoSmtp;
 
-/// The inbound SMTP listener when `smtp_listen_port` is set. A listener that cannot start is logged and the server
-/// starts without it; an empty or bad `smtp_allowed_addresses` never starts one.
+/// The inbound SMTP listener when `smtp-server@listen-port` is set. A listener that cannot start is logged and the server
+/// starts without it; an empty or bad `smtp-server@allowed-addresses` never starts one.
 #[cfg(feature = "inbound-smtp")]
 fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> SmtpSlot {
     use moqui_core::startup::{listener, State};
@@ -2041,8 +2041,10 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
         return None;
     }
     // a front node's port 25 is a TCP port to its pool, never this listener (plans/Edge-Node2.md §4.7)
-    let configured = !moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty();
-    if moqui_core::edge::front_refuses(factory, "smtp_listen_port", configured) {
+    let configured = !moqui_core::context::conf_env::setting("smtp-server@listen-port")
+        .trim()
+        .is_empty();
+    if moqui_core::edge::front_refuses(factory, "smtp-server@listen-port", configured) {
         listener(factory, smtp::LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
         return None;
     }
@@ -2052,7 +2054,11 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
             Some(server)
         }
         Ok(None) => {
-            listener(factory, smtp::LISTENER, State::off("smtp_listen_port is not set"));
+            listener(
+                factory,
+                smtp::LISTENER,
+                State::off("smtp-server@listen-port is not set"),
+            );
             None
         }
         Err(err) => {
@@ -2065,8 +2071,13 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
 
 #[cfg(not(feature = "inbound-smtp"))]
 fn start_smtp(_factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> SmtpSlot {
-    if !moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty() {
-        tracing::error!("smtp_listen_port is set but this build has no SMTP listener (the inbound-smtp feature)");
+    if !moqui_core::context::conf_env::setting("smtp-server@listen-port")
+        .trim()
+        .is_empty()
+    {
+        tracing::error!(
+            "smtp-server@listen-port is set but this build has no SMTP listener (the inbound-smtp feature)"
+        );
     }
     NoSmtp
 }

@@ -14,13 +14,13 @@ packs. The CI engine that runs a repository's pipelines for its pushes and merge
 |---|---|
 | HTTPS | `https://<host>/git/<path>.git` (`.git` is optional) |
 | HTTPS, on a public-site host | `https://<host>/<path>` or `https://<host>/<path>.git`: the page's URL |
-| SSH | `ssh://<username>@<host>:<ssh_port>/<path>.git`, or `<username>@<host>:<path>.git` on port 22 |
+| SSH | `ssh://<username>@<host>:<ssh-server@port>/<path>.git`, or `<username>@<host>:<path>.git` on port 22 |
 
 `<path>` is the repository's `repositoryPath` (`moqui/mr-moqui`), or its `repositoryId`, which always works too and is
 the only address of a repository with no path. `org.moqui.git.GitServices.get#GitCloneUrls` gives the HTTPS and SSH
-URLs with the path (and the path itself, `repositoryPath`), from `git_public_url` (else the webapp host and port
-properties), and `ssh_public_host` and `ssh_public_port` (else, on a node paired with an edge node, the host and port
-of the edge node's SSH tunnel to it; else the webapp host and `ssh_port`). The SSH username is the Moqui username.
+URLs with the path (and the path itself, `repositoryPath`), from `git-server@public-url` (else the webapp host and port
+properties), and `ssh-server@public-host` and `ssh-server@public-port` (else, on a node paired with an edge node, the host and port
+of the edge node's SSH tunnel to it; else the webapp host and `ssh-server@port`). The SSH username is the Moqui username.
 Behind a front or edge node: [Behind a front or edge node, and in a pool](#behind-a-front-or-edge-node-and-in-a-pool).
 
 ### Repository paths
@@ -1202,7 +1202,7 @@ A `db` repository is rows of the database every cluster member shares, so it nee
 front or edge node that balances requests over the members of a pool (git over HTTP carries no session cookie and goes
 round robin; SSH goes by the client's address). A `local` or `remote` repository is a directory, of one node unless
 `runtime/git` (and every `localPath`) is on storage every member mounts, which the conf says with `git-server`
-`shared-storage="true"` (`git_shared_storage`).
+`shared-storage="true"` (`git-server@shared-storage`).
 
 A node is a cluster member when another member's heartbeat is live in `moqui.server.ClusterMember`, or it is set up to
 be one (`cluster_base_url`, `cluster_transport`); once seen to be one it stays one until it restarts, though every
@@ -1342,8 +1342,8 @@ repository has an object (`moqui.resource.GitLfsObject`) only once it was upload
 another repository's file. Uploads need the push rights of the repository, downloads view (with no credentials, on a
 repository anyone may view: [No credentials](#no-credentials)); a lock needs push rights (and listing locks a
 login),
-and force unlocking another user's lock `delete`. The batch's actions carry a token signed with `git_lfs_token_key`
-(generated into `runtime/.env`; `git_lfs_token_key_previous` still reads while it is changed) that says who the user
+and force unlocking another user's lock `delete`. The batch's actions carry a token signed with `git-server@lfs-token-key`
+(generated into `runtime/.env`; `git-server@lfs-token-key-previous` still reads while it is changed) that says who the user
 is, for 15 minutes, and each request is authorized again. Objects are at most `git-server` `lfs-max-object-size` (5 GiB).
 
 **A quota for uploads.** An LFS upload is not a push, so no pre-receive rule sees it. `git-server`
@@ -1397,9 +1397,9 @@ cluster members an edge node balances, and an edge cluster.
   the local node believes only there (a client's own is removed), or a PROXY v2 header on a passthrough or SSH
   tunnel. The local node's web protection, its anonymous limits, the push log and the access checks see the client,
   not the edge node. Credentials are taken as over HTTPS when the edge node took the request over TLS.
-- **The URLs.** `git-server` `public-url` (`git_public_url`) names the public URL clients use, the host on the edge
+- **The URLs.** `git-server` `public-url` (`git-server@public-url`) names the public URL clients use, the host on the edge
   node (`https://code.example.com`), not the local node's own address; with it empty, the request's own host is used,
-  which is the same behind a terminate host. Leave `ssh_public_host` and `ssh_public_port` empty behind an edge node:
+  which is the same behind a terminate host. Leave `ssh-server@public-host` and `ssh-server@public-port` empty behind an edge node:
   the clone URLs then name the edge node's SSH tunnel to this node, as its offer says (its public name, and the
   pairing's own SSH port, an `EdgePort` row, else `edge_ssh_tunnel_port` while it is the one active pairing). With a
   front pairing and an edge pairing (edge members behind a front, which bind no tunnel ports) they name the front's.
@@ -1409,7 +1409,7 @@ cluster members an edge node balances, and an edge cluster.
   behind its own authentication and the web protection's checks; every other route of the host is Not Found there
   (`moqui_core::web::reserved`, which scripts read as `ec.web.reservedPaths`).
 - **The SSH tunnel.** The edge node pipes each connection to its SSH tunnel port down the link to the local node's
-  SSH server (`ssh_port`), which needs no open port of its own: `edge_ssh_tunnel_port` to the one active pairing, or
+  SSH server (`ssh-server@port`), which needs no open port of its own: `edge_ssh_tunnel_port` to the one active pairing, or
   a pairing's own port (System › Edge Clients › Ports). At most `<edge ssh-tunnels>` (256) connections per port at
   once. A client that a pairing's shared ban names is refused on that pairing's tunnel ports as on its hosts.
 - **Web protection.** The edge node applies its own rules before a request goes down, and the local node applies its
@@ -1417,8 +1417,8 @@ cluster members an edge node balances, and an edge cluster.
   edge node, which refuses that client for that pairing's hosts and tunnel ports. CI runner requests, and a job's
   fetch, with a token found good are counted per token ([Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool)).
 - **In a pool or a cluster** (a load balancer, or an edge node's pool, which sends an LFS request or an SSH
-  connection to any member and after a failover to another): every member has the same `ssh_host_key`, or clients
-  are told the host key changed, and the same `git_lfs_token_key`, or a member refuses the tokens another issued
+  connection to any member and after a failover to another): every member has the same `ssh-server@host-key`, or clients
+  are told the host key changed, and the same `git-server@lfs-token-key`, or a member refuses the tokens another issued
   ([Run-Deploy](../Run-Deploy.md#requirements)). A member whose SSH host key differs from a live member's warns at
   startup. `db` repositories are in the shared database. `local` and `remote` repositories are allowed in a cluster
   only with the conf setting that says `runtime/git` is on storage every member mounts; without it they are refused.

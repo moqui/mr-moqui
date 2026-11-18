@@ -38,7 +38,9 @@ use super::proto::{
 use super::{hosts, store, EdgeConfig};
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    moqui_core::context::conf_env::setting_or_property(name)
+        .trim()
+        .to_string()
 }
 
 fn on(name: &str) -> bool {
@@ -65,8 +67,8 @@ fn dkim() -> (String, String) {
 
 /// What this edge node offers, without a node's host names (those are [`offer`]'s).
 fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
-    let listener = cfg!(feature = "inbound-smtp") && !property("smtp_listen_port").is_empty();
-    let mta = if property("edge_mail_mta") == "moqui" {
+    let listener = cfg!(feature = "inbound-smtp") && !property("smtp-server@listen-port").is_empty();
+    let mta = if property("mail-delivery@mta") == "moqui" {
         "moqui"
     } else {
         "postfix"
@@ -76,7 +78,7 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
     } else {
         (String::new(), String::new())
     };
-    let mx_host = match property("smtp_hostname") {
+    let mx_host = match property("smtp-server@hostname") {
         name if !name.is_empty() => name,
         _ => config.public_names.first().cloned().unwrap_or_default(),
     };

@@ -177,7 +177,10 @@ fn any_account_uses_git_over_ssh_by_key_when_the_conf_says_so() {
         Some(&data(&user_key)),
         // sftp-drives off: with it (the default) every account's SFTP is the drives it may open, whatever this says
         r#"<ssh-server git-any-account="true"/><dav-server sftp-drives="false"/>"#,
-        &[("ssh_port", "0"), ("ssh_host_key", &seed)],
+        &[
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
+        ],
     );
     let work = gate.runtime.join("tmp/git-any-account");
     let home = work.join("home");
@@ -243,7 +246,10 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         r#"<webapp-list><webapp name="webroot"><public-site host="code.test" site-id="CODE"
             screen-location="component://example/screen/PublicLink.xml"><mount path="/" screen="Code"/></public-site>
         </webapp></webapp-list>"#,
-        &[("ssh_port", "0"), ("ssh_host_key", &seed)],
+        &[
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
+        ],
     );
     let http = gate.server.address();
     let work = gate.runtime.join("tmp/git-hosting");

@@ -47,8 +47,8 @@ pub const SMTP: &str = "smtp";
 /// The listeners of the edge set, which a front node never starts (`super::front_refuses`): on a front their usual
 /// ports are free for a row, so its port 25 can go to an edge cluster.
 const FRONT_NEVER: [&str; 10] = [
-    "smtp_listen_port",
-    "edge_mail_relay_port",
+    "smtp-server@listen-port",
+    "mail-delivery@relay-port",
     "xmpp_port",
     "xmpp_tls_port",
     "sip_port",
@@ -67,9 +67,9 @@ const OWN_PORTS: [(&str, u16); 18] = [
     ("webapp-list/webapp[webroot]@https-port", 443),
     ("webapp-list/webapp[webroot]@https-listen-port", 443),
     ("cluster_https_port", 0),
-    ("smtp_listen_port", 25),
-    ("edge_mail_relay_port", 10025),
-    ("ssh_port", 22),
+    ("smtp-server@listen-port", 25),
+    ("mail-delivery@relay-port", 10025),
+    ("ssh-server@port", 22),
     ("xmpp_port", 5222),
     ("xmpp_tls_port", 5223),
     ("sip_port", 5060),

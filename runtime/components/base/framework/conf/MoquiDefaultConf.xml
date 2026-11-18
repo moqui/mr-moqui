@@ -9,11 +9,6 @@
 
     <!-- recommended values: production, dev, test; any code may look at these Java System properties to vary behavior (System.getProperty("instance_purpose")) -->
     <default-property name="instance_purpose" value="production"/>
-    <!-- The browser terminal's command line and host sessions (the terminal element): dev for a dev instance only, false off,
-        empty on; and from anywhere but this machine, terminal_remote=true (plans/Terminal-Fancy.md D6, D7). -->
-    <default-property name="terminal_command_line" value="dev"/>
-    <default-property name="terminal_host_sessions" value="dev"/>
-    <default-property name="terminal_remote" value="false"/>
     <!-- The Login page's Create Initial Admin Account form, and create#InitialAdminAccount, while no account exists but
         the seed ones: off unless true. Set initial_admin_enabled=true in runtime/.env (or the environment) to set up a
         new system, and take it out once the first administrator is made (docs/Run-Deploy.md). -->
@@ -41,24 +36,6 @@
     <default-property name="acme_account_key" value="CHANGEME" is-secret="true"/>
     <default-property name="acme_challenge_port" value="443"/>
     <!--
-        Sign-in with Google or Microsoft for mail accounts (OAuth 2.0 with PKCE, XOAUTH2 for IMAP and SMTP;
-        docs/interfaces/Mail-OAuth.md). Each provider (moqui.basic.email.EmailOAuthProvider) needs the deployment's own OAuth client,
-        registered at the provider with the redirect URI below: its client id and secret here or in the environment
-        (EMAIL_OAUTH_GOOGLE_CLIENT_ID and so on); a provider without both is not offered. The secret is never written to
-        a log or answered by a service. email_oauth_microsoft_tenant: common (the default; work, school and personal
-        accounts), organizations, consumers or a tenant id.
-        email_oauth_redirect_uri (email-client oauth-redirect-uri): the callback the provider sends the browser back to,
-        exactly as registered there; empty for the webroot webapp's URL from this conf (the webroot webapp's
-        http-host, https-enabled and ports) and /emailOAuth/callback. It is never taken from a request.
-    -->
-    <default-property name="email_oauth_redirect_uri" value=""/>
-    <default-property name="email_oauth_google_client_id" value=""/>
-    <default-property name="email_oauth_google_client_secret" value="" is-secret="true"/>
-    <default-property name="email_oauth_microsoft_client_id" value=""/>
-    <default-property name="email_oauth_microsoft_client_secret" value="" is-secret="true"/>
-    <default-property name="email_oauth_microsoft_tenant" value=""/>
-
-    <!--
         Load runs from Tools (org.moqui.dev.LoadServices, plans/archive/LoadRunner.md §10). A run may reach this server (its https
         URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),
         and the URL prefixes in load_runner_targets (comma-separated, each with its scheme: https://staging.example.com
@@ -69,82 +46,6 @@
     <default-property name="load_runner_targets" value=""/>
     <default-property name="load_runner_max_runs" value="1"/>
     <default-property name="load_runner_max_users" value="1000"/>
-
-    <!--
-        The built-in SSH server (ssh-server below). Off while ssh_port is empty or ssh-server enabled is false; 0 binds an
-        ephemeral port.
-        ssh_host_key is the base64 of a 32-byte Ed25519 seed (generated into runtime/.env) or an OpenSSH private key.
-        ssh_public_host and ssh_public_port are the SSH host and port git clone URLs show; the webroot webapp's http-host and ssh_port
-        when empty.
-    -->
-    <default-property name="ssh_port" value=""/>
-    <default-property name="ssh_host" value="127.0.0.1"/>
-    <default-property name="ssh_host_key" value="CHANGEME" is-secret="true"/>
-    <default-property name="ssh_public_host" value=""/>
-    <default-property name="ssh_public_port" value=""/>
-
-    <!--
-        The git server (git-server below): git_public_url is the base URL clone URLs show; from the webapp host and port
-        when empty. The tokens of Git LFS actions (and of git-lfs-authenticate over SSH) are signed with
-        git_lfs_token_key (generated into runtime/.env), and git_lfs_token_key_previous still reads while a key is
-        changed.
-    -->
-    <default-property name="git_public_url" value=""/>
-    <default-property name="git_lfs_token_key" value="CHANGEME" is-secret="true"/>
-    <default-property name="git_lfs_token_key_previous" value="" is-secret="true"/>
-    <!-- true when runtime/git (and every localPath) is on storage every cluster member mounts (git-server shared-storage). -->
-    <default-property name="git_shared_storage" value="false"/>
-
-    <!--
-        The inbound SMTP listener for hosted and shared mail accounts (smtp-server below). Off while smtp_listen_port is
-        empty; 0 binds an ephemeral port. smtp_allowed_addresses: the gateway's IPs and CIDRs, comma-separated
-        (127.0.0.1 for a gateway on this host); every other address is refused at connect, and an empty list does not
-        start the listener. smtp_hostname: the name in the greeting and the Received field; empty for the webroot webapp's http-host.
-        smtp_authserv_id: the authserv-id of the gateway's Authentication-Results; only those are kept (the verdict is
-        trusted, not verified again). smtp_tls_cert_file and smtp_tls_key_file: the certificate (with its chain) and key
-        PEM files of STARTTLS (smtp-server starttls), absolute or under the runtime directory; empty for runtime/cert.
-    -->
-    <default-property name="smtp_listen_port" value=""/>
-    <default-property name="smtp_listen_host" value="127.0.0.1"/>
-    <default-property name="smtp_allowed_addresses" value=""/>
-    <default-property name="smtp_hostname" value=""/>
-    <default-property name="smtp_authserv_id" value=""/>
-    <default-property name="smtp_tls_cert_file" value=""/>
-    <default-property name="smtp_tls_key_file" value=""/>
-    <!--
-        Mail authentication and the MTA in moqui (plans/archive/Edge-Node.md §5.4, E5b). smtp_internet: true takes mail from the
-        internet (smtp-server internet; port 25 on an edge node): any address, STARTTLS, per-address limits, SPF, DKIM,
-        DMARC and ARC checked with an Authentication-Results of its own (DMARC is RFC 9989's: t=y lowers the policy, and
-        there is no pct). mail_arc_trusted_sealers: the domains whose passing ARC seal overrides a DMARC reject or
-        quarantine (forwarders and lists this node trusts); empty for no ARC exception. mail_rspamd_url: Rspamd's HTTP
-        API for the spam verdict in that mode (http://127.0.0.1:11333); empty for none. Rspamd not reached fails open
-        (logged, not spam); checks that do not finish in 45 seconds answer 451. mail_dkim_key: the node's DKIM private
-        key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it; an edge node
-        signs what it delivers with it, and a send by SMTP is signed only when it is set or goes to this node's own
-        listener. mail_dkim_selector: its selector (the TXT record to publish at selector._domainkey.domain is
-        org.moqui.mail.EmailServices.get#DkimRecord's). mail_dkim_domains: the domains signed for, comma-separated; empty
-        for the hosted and shared accounts' domains. On an edge node: edge_mail_mta (moqui for the MTA in moqui, set in
-        conf/edge/MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
-        time to 4 hours) and mail_delivery_days (when a message not delivered goes back as a bounce).
-        mail_mx_require_tls: the recipient domains whose MX gets mail only over STARTTLS with a certificate valid for the
-        host, comma-separated, * for every domain (as an MTA-STS enforce policy, whatever the domain publishes); an MX with
-        no STARTTLS, or a failed handshake or certificate, is tried again later and the message bounces after
-        mail_delivery_days, never sent in clear text. Empty: STARTTLS when offered, any certificate, else clear text.
-        mail_mx_override (testing and staging only): domain=host:port pairs, * for any, in place of the MX.
-        mail_dns_offline (testing only): true makes no DNS query.
-    -->
-    <default-property name="smtp_internet" value=""/>
-    <default-property name="mail_rspamd_url" value=""/>
-    <default-property name="mail_dkim_key" value="" is-secret="true"/>
-    <default-property name="mail_dkim_selector" value="moqui"/>
-    <default-property name="mail_dkim_domains" value=""/>
-    <default-property name="edge_mail_mta" value=""/>
-    <default-property name="mail_arc_trusted_sealers" value=""/>
-    <default-property name="mail_delivery_retry_seconds" value="300"/>
-    <default-property name="mail_delivery_days" value="5"/>
-    <default-property name="mail_mx_require_tls" value=""/>
-    <default-property name="mail_mx_override" value=""/>
-    <default-property name="mail_dns_offline" value=""/>
 
     <!-- A client that keeps data offline (plans/Mobile-Desktop.md MD5, docs/ui/Desktop-Client.md): mail_change_keep_days, how
         long a user's mail change log is kept (an older cursor, or one not read for that long, reads its folders again);
@@ -393,7 +294,7 @@
     <default-property name="cluster_https_port" value=""/>
     <default-property name="cluster_base_url" value=""/>
     <!-- How peers reach this member: empty is its cluster port at cluster_base_url (TLS with the cluster certificate),
-        "ssh" its SSH server (ssh_port), "notify" Postgres NOTIFY on the shared entity database, for members that cannot
+        "ssh" its SSH server (ssh-server port), "notify" Postgres NOTIFY on the shared entity database, for members that cannot
         open a connection to each other. -->
     <default-property name="cluster_transport" value=""/>
     <!-- What this member speaks on its cluster port, as listener and as sender: empty or "grpc" for gRPC on HTTP/2 where
@@ -492,8 +393,8 @@
         <!-- The framework's own: vCard parse and write, iCalendar parse, write and RRULE expansion (moqui_core::pim) -->
         <tool-factory class="moqui_core::pim::VCardToolFactory" init-priority="5"/>
         <tool-factory class="moqui_core::pim::ICalendarToolFactory" init-priority="5"/>
-        <!-- The mail capture for specs: with mail_capture_sends=true, or ec.factory.getTool('MailCapture').enable() in a
-             spec, send#EmailMessage keeps the message in memory instead of connecting (docs/Build-Test.md) -->
+        <!-- The mail capture for specs: with email-client capture-sends true, or ec.factory.getTool('MailCapture').enable() in
+             a spec, send#EmailMessage keeps the message in memory instead of connecting (docs/Build-Test.md) -->
         <tool-factory class="moqui_core::service::mail_capture::MailCaptureToolFactory" init-priority="5"/>
         <!-- The HTTP fixtures for specs: while ec.factory.getTool('HttpFixtures') is enabled, outbound HTTP is answered by
              the spec's fixtures and recorded, and nothing goes to the network (docs/dev/JS-Testkit.md) -->
@@ -1182,16 +1083,32 @@
         {email}; empty for autoconfig.{domain}, the domain's .well-known URL and the Thunderbird ISPDB. dns-server: the
         DNS server (host:port) for its SRV lookups; empty for the first in /etc/resolv.conf. tls-ca-file: a PEM file of
         more certificate authorities to trust, for a mail server with its own.
-        oauth-redirect-uri: see email_oauth_redirect_uri.
+        oauth-redirect-uri: the callback a sign-in provider sends the browser back to, exactly as registered there; empty
+        for the webroot webapp's URL from this conf (its http-host, https-enabled and ports) and /emailOAuth/callback.
+        It is never taken from a request.
+        capture-sends: true makes send#EmailMessage keep the message in memory instead of connecting, for specs (the
+        MailCapture tool; docs/Build-Test.md); refused on a server that is not a test run.
+        oauth-provider: sign-in with Google or Microsoft for mail accounts (OAuth 2.0 with PKCE, XOAUTH2 for IMAP and
+        SMTP; docs/interfaces/Mail-OAuth.md). Each provider (moqui.basic.email.EmailOAuthProvider, by its confProviderId)
+        needs the deployment's own OAuth client, registered at the provider with the redirect URI: its client-id and
+        client-secret here or by their environment names
+        (moqui_conf__email_client__oauth_provider__GOOGLE__client_secret and so on); a provider without both is not
+        offered. The secret is never written to a log or answered by a service. tenant (Microsoft): common (the default;
+        work, school and personal accounts), organizations, consumers or a tenant id.
     -->
     <email-client allowed-hosts="" idle-enabled="true" idle-max="8" sync-interval="5" sync-batch="500" flag-scan="15"
             sync-push-now="true" mailbox-quota="10737418240" autoconfig-urls="" dns-server="" tls-ca-file=""
-            oauth-redirect-uri="${email_oauth_redirect_uri}"/>
+            oauth-redirect-uri="" capture-sends="false">
+        <oauth-provider id="google" client-id="" client-secret=""/>
+        <oauth-provider id="microsoft" client-id="" client-secret="" tenant=""/>
+    </email-client>
 
     <!--
         The built-in SSH server: the terminal client for every user, SFTP, git and the admin shell. enabled: false keeps
-        it off whatever the port (the demo component sets it). port, host, host-key, public-host and public-port: see the
-        ssh_ properties. sftp-root: the resource location SFTP serves
+        it off whatever the port (the demo component sets it). port: off while empty; 0 binds an ephemeral port. host: the
+        address to bind. host-key: the base64 of a 32-byte Ed25519 seed (generated into runtime/.env as
+        moqui_conf__ssh_server__host_key) or an OpenSSH private key. public-host and public-port: the SSH host and port
+        git clone URLs show; the webroot webapp's http-host and port when empty. sftp-root: the resource location SFTP serves
         (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
         most connections at once, max-sessions-per-user of them for one user logged in by key or password and
         max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. A server that takes git from
@@ -1203,21 +1120,21 @@
         terminal client's login dialog (keyboard-interactive with no questions); when false, such a client logs in by
         password at the SSH level or not at all.
     -->
-    <ssh-server enabled="true" port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
-            public-port="${ssh_public_port}" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
+    <ssh-server enabled="true" port="" host="127.0.0.1" host-key="CHANGEME" public-host=""
+            public-port="" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             max-sessions-per-user="4" max-sessions-per-source="8"
             git-password-auth="false" git-any-account="false" login-dialog="true"/>
     <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
         host-detach-hours; a command or host session keeps replay-kb of its output for a window that comes back.
-        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, true on for any
-        purpose; any other value off, logged) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
+        On a dev instance (command-line and host-sessions: dev by default, false off, true on for any purpose; any other
+        value off, logged) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
         operating system (the host-profile elements, and the shell profile: the server user's own shell) to a user with
-        TERMINAL_HOST. From anywhere but this machine those need terminal_remote=true, HTTPS and a sign-in within
+        TERMINAL_HOST. From anywhere but this machine those need remote="true", HTTPS and a sign-in within
         remote-reauth-minutes (docs/ui/Terminal.md). -->
     <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
-            command-line="${terminal_command_line}" host-sessions="${terminal_host_sessions}" remote="${terminal_remote}"
+            command-line="dev" host-sessions="dev" remote="false"
             remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
             host-directory="">
         <host-profile name="shell" title="Shell" integration="true"/>
@@ -1228,7 +1145,9 @@
     <!--
         The git server: clone, fetch and push of GitRepository repositories at <public-url>/git/<repositoryId>.git
         (smart HTTP) and over the SSH server (SSH_GIT), checked against AT_GIT_REPOSITORY (docs/interfaces/Git-Hosting.md).
-        public-url, lfs-token-key and lfs-token-key-previous: see the git_ properties.
+        public-url: the base URL clone URLs show; from the webapp host and port when empty. The tokens of Git LFS actions
+        (and of git-lfs-authenticate over SSH) are signed with lfs-token-key (generated into runtime/.env as
+        moqui_conf__git_server__lfs_token_key), and lfs-token-key-previous still reads while a key is changed.
         max-concurrent clones and pushes run at once, on threads of their own, with max-queued waiting. max-request
         bytes of an upload-pack request, max-push-size bytes of a push (each as sent and as a gzip body inflates, and
         over SSH for the whole conversation), at most fetch-max-lines lines (wants, haves, capabilities) in
@@ -1287,12 +1206,12 @@
         (handle#GitReviewThread) keeps merge requests' review threads (an application's, such as Mantle's) for the REST.
         None when empty.
         In a cluster (docs/interfaces/Git-Hosting.md, Shared storage in a cluster) a local or remote repository needs
-        runtime/git on storage every member mounts, said by shared-storage (git_shared_storage); without it a cluster
+        runtime/git on storage every member mounts, said by shared-storage; without it a cluster
         member refuses a new one and warns of the ones it has. With it a push or write waits at most
         shared-lock-wait-seconds for another member's write to the same repository.
     -->
-    <git-server public-url="${git_public_url}" lfs-token-key="${git_lfs_token_key}"
-            lfs-token-key-previous="${git_lfs_token_key_previous}"
+    <git-server public-url="" lfs-token-key="CHANGEME"
+            lfs-token-key-previous=""
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
             max-object-size="536870912" max-delta-depth="4095" idle-timeout="120" pack-threads="" allow-http="false"
@@ -1312,7 +1231,7 @@
             merge-request-url="" rest-write-check-service="" offer-service="" agreement-check-service="" review-thread-service=""
             reach-max-commits="1000000" contains-max-commits="200000"
             reserved-status-contexts="" review-ref-retention-days="30" committer-name="" committer-email=""
-            shared-storage="${git_shared_storage}" shared-lock-wait-seconds="120"/>
+            shared-storage="false" shared-lock-wait-seconds="120"/>
 
     <!--
         Pipelines: the CI engine over the hosted repositories (docs/interfaces/Pipelines.md). With enabled empty the
@@ -1324,7 +1243,7 @@
         repository runs without approval. A job never runs on this server: the limits here are what a ci.xml may ask
         for and what a runner may send.
     -->
-    <git-ci enabled="${git_ci_enabled}" server-url="${git_ci_server_url}" server-id="" run-check-service=""
+    <git-ci enabled="" server-url="" server-id="" run-check-service=""
             run-url-service="" run-url=""
             builtin-enabled="true" builtin-image="moqui-build" builtin-pool="" builtin-workers="2"
             max-file-bytes="262144" max-pipelines="20" max-jobs="50" max-matrix="20" max-steps="50"
@@ -1341,13 +1260,25 @@
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
-        inbound-smtp feature; docs/interfaces/Mail-Inbound.md). listen-port, listen-host, allowed-addresses, hostname and
-        authserv-id: see the smtp_ properties. proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
+        inbound-smtp feature; docs/interfaces/Mail-Inbound.md). Off while listen-port is empty; 0 binds an ephemeral port.
+        listen-host: the address to bind. allowed-addresses: the gateway's IPs and CIDRs, comma-separated (127.0.0.1 for a
+        gateway on this host); every other address is refused at connect, and an empty list does not start the listener.
+        hostname: the name in the greeting and the Received field; empty for the webroot webapp's http-host. authserv-id:
+        the authserv-id of the gateway's Authentication-Results; only those are kept (the verdict is trusted, not
+        verified again); empty in internet mode for hostname.
+        internet: true takes mail from the internet (port 25 on an edge node; plans/archive/Edge-Node.md §5.4, E5b): any
+        address, STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own
+        (DMARC is RFC 9989's: t=y lowers the policy, and there is no pct). arc-trusted-sealers: the domains whose passing
+        ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts); empty for no ARC
+        exception. rspamd-url: Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for
+        none. Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.
+        proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
         the address it names must be in allowed-addresses too. spam-headers: the gateway's spam verdict fields; mail one
         of them says yes to goes to Junk. plus-separator: the plus-addressing characters (sales+news@ is sales@); none
         turns it off. max-message-size is bytes; the timeouts are seconds (each command or data chunk, and a whole
         session). protocol: smtp, or lmtp (LHLO, and a reply per recipient after the data). starttls: offer STARTTLS,
-        with the tls-cert-file and tls-key-file pair (see the smtp_tls_ properties) or else runtime/cert by the name the
+        with the tls-cert-file and tls-key-file pair (the certificate, with its chain, and key PEM files, absolute or under
+        the runtime directory) or else runtime/cert by the name the
         gateway asks for or hostname; with no certificate the listener does not start. require-tls: refuse MAIL before
         STARTTLS. chunking: BDAT (RFC 3030). dsn: the DSN parameters (RFC 3461) and "delivered" reports; a delivered
         report goes only when the sender is authenticated: authserv-id is set and its Authentication-Results show
@@ -1357,13 +1288,34 @@
         MAIL that would go past one (with its SIZE) is answered 451 4.7.1. A message counts once, whatever its
         recipients.
     -->
-    <smtp-server listen-port="${smtp_listen_port}" listen-host="${smtp_listen_host}"
-            allowed-addresses="${smtp_allowed_addresses}" hostname="${smtp_hostname}" authserv-id="${smtp_authserv_id}"
+    <smtp-server listen-port="" listen-host="127.0.0.1"
+            allowed-addresses="" hostname="" authserv-id="" internet="false" rspamd-url="" arc-trusted-sealers=""
             proxy-protocol="false" spam-headers="X-Spam-Flag,X-Spam-Status,X-Spam" plus-separator="+"
             max-message-size="26214400" max-recipients="100" max-connections="20" command-timeout="300"
             session-timeout="1800" protocol="smtp" starttls="false" require-tls="false"
-            tls-cert-file="${smtp_tls_cert_file}" tls-key-file="${smtp_tls_key_file}" chunking="true" dsn="false"
+            tls-cert-file="" tls-key-file="" chunking="true" dsn="false"
             internet-messages-per-hour="1000" internet-bytes-per-hour="1073741824"/>
+
+    <!--
+        Mail delivery and DKIM (plans/archive/Edge-Node.md §5.4, E5b). mta: on an edge node, moqui for the MTA in moqui
+        (set in conf/edge/MoquiEdgeConf.xml), empty or postfix for E5a's relay to Postfix at relay-host and relay-port.
+        retry-seconds: the first retry wait, doubled each time to 4 hours; days: when a message not delivered goes back as
+        a bounce. mx-require-tls: the recipient domains whose MX gets mail only over STARTTLS with a certificate valid for
+        the host, comma-separated, * for every domain (as an MTA-STS enforce policy, whatever the domain publishes); an MX
+        with no STARTTLS, or a failed handshake or certificate, is tried again later and the message bounces after days,
+        never sent in clear text. Empty: STARTTLS when offered, any certificate, else clear text. mx-override (testing and
+        staging only): domain=host:port pairs, * for any, in place of the MX. dns-offline (testing only): true makes no
+        DNS query.
+        dkim key: the node's DKIM private key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env
+        (moqui_conf__mail_delivery__dkim__key) the first time a server needs it; an edge node signs what it delivers with
+        it, and a send by SMTP is signed only when it is set or goes to this node's own listener. selector: its selector
+        (the TXT record to publish at selector._domainkey.domain is org.moqui.mail.EmailServices.get#DkimRecord's).
+        domains: the domains signed for, comma-separated; empty for the hosted and shared accounts' domains.
+    -->
+    <mail-delivery mta="" relay-host="127.0.0.1" relay-port="10025" retry-seconds="300" days="5" mx-require-tls=""
+            mx-override="" dns-offline="false">
+        <dkim key="" selector="moqui" domains=""/>
+    </mail-delivery>
 
     <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep

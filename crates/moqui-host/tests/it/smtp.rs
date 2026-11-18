@@ -13,7 +13,7 @@
  */
 
 //! The inbound SMTP listener (`inbound-smtp`) on the seeded embedded Postgres, driven by a scripted SMTP client on
-//! localhost as the edge gateway would: a connection from an address outside `smtp_allowed_addresses` is refused at
+//! localhost as the edge gateway would: a connection from an address outside `smtp-server@allowed-addresses` is refused at
 //! connect; RCPT TO takes a hosted account's address with or without a plus tag, a shared account's address and
 //! identity, and refuses any other with 550; one message to both accounts is stored once in each Inbox with its file as
 //! a DbResource, the account rule and the email ECAs run once on each copy (a failing ECA logged, the other running);
@@ -177,10 +177,10 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
         r#"<smtp-server spam-headers="X-Spam-Flag,X-Spam-Status" plus-separator="+" max-message-size="200000"/>
             <email-client idle-enabled="false"/>"#,
         &[
-            ("smtp_listen_port", "0"),
-            ("smtp_allowed_addresses", "127.0.0.1"),
-            ("smtp_hostname", "mx.gate.test"),
-            ("smtp_authserv_id", "gw.example.com"),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+            ("moqui_conf__smtp_server__hostname", "mx.gate.test"),
+            ("moqui_conf__smtp_server__authserv_id", "gw.example.com"),
         ],
         &[
             ("components/addon/gate-smtp/component.xml", COMPONENT),
@@ -470,7 +470,10 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
         "{headers}"
     );
     let env = std::fs::read_to_string(factory.runtime_dir().join(".env")).unwrap_or_default();
-    assert!(env.contains("mail_dkim_key="), "the key made into runtime/.env");
+    assert!(
+        env.contains("moqui_conf__mail_delivery__dkim__key="),
+        "the key made into runtime/.env"
+    );
 }
 
 #[test]
@@ -484,9 +487,9 @@ fn the_lmtp_listener_answers_each_recipient_by_its_account() {
         r#"<smtp-server protocol="lmtp" dsn="true"/>
             <email-client idle-enabled="false"/>"#,
         &[
-            ("smtp_listen_port", "0"),
-            ("smtp_allowed_addresses", "127.0.0.1"),
-            ("smtp_hostname", "mx.gate.test"),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+            ("moqui_conf__smtp_server__hostname", "mx.gate.test"),
         ],
         &[],
     );

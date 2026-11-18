@@ -346,7 +346,7 @@ fn domain_property(name: &str) -> String {
 pub fn own_host_names(factory: &ExecutionContextFactory) -> Vec<String> {
     let mut names: Vec<String> = [
         "webapp-list/webapp[webroot]@http-host",
-        "smtp_hostname",
+        "smtp-server@hostname",
         "edge_mail_bounce_domain",
     ]
     .iter()

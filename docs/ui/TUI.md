@@ -82,12 +82,12 @@ another user is refused against an existing session. Session cookies are not wri
 
 ## Over SSH
 
-When the built-in SSH server runs (`ssh_port`, see `crates/moqui-host/src/ssh/server.rs`), the same client runs on an
+When the built-in SSH server runs (`ssh-server@port`, see `crates/moqui-host/src/ssh/server.rs`), the same client runs on an
 SSH channel, in the server's process, for any user, as the browser is for any user:
 
 ```
-ssh -p <ssh_port> <user>@<host>             the apps; with SSH_SHELL and a key or password login, the admin shell first
-ssh -t -p <ssh_port> <user>@<host> apps     the apps, for any account
+ssh -p <ssh-server@port> <user>@<host>             the apps; with SSH_SHELL and a key or password login, the admin shell first
+ssh -t -p <ssh-server@port> <user>@<host> apps     the apps, for any account
 moqui> apps                                 from the admin shell; quitting the apps (Ctrl+Q) comes back to the prompt
 moqui> attach <id>                          one of your kept terminal sessions (sessions lists them); Ctrl+\ detaches
 ```

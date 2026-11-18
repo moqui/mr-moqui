@@ -39,7 +39,7 @@
         </screen>
     </screen-facade>
 
-    <!-- The servers a demo visitor does not need, off whatever ssh_port, mcp_enabled, a2a_enabled and
+    <!-- The servers a demo visitor does not need, off whatever ssh-server@port, mcp_enabled, a2a_enabled and
         llm_gateway_enabled say: the MCP server and client, A2A both ways, the LLM gateway, SSH (the admin shell, SFTP,
         git) and WebDAV. The browser terminal (/termws) and /notws stay on: the terminal shows the same screens, checked
         as the user. -->

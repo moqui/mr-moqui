@@ -381,10 +381,10 @@ mod mail {
             let first_url = format!("https://localhost:{first_port}");
             let (first_port_text, cluster_port) = (first_port.to_string(), crate::common::free_port().to_string());
             let mail = [
-                ("smtp_listen_port", "0"),
-                ("smtp_allowed_addresses", "127.0.0.1"),
-                ("smtp_hostname", "edge.example.com"),
-                ("edge_mail_mta", "postfix"),
+                ("moqui_conf__smtp_server__listen_port", "0"),
+                ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+                ("moqui_conf__smtp_server__hostname", "edge.example.com"),
+                ("moqui_conf__mail_delivery__mta", "postfix"),
             ];
             let files = [
                 ("cert/default.crt", cert.0.as_str()),

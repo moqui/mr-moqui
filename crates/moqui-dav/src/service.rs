@@ -109,23 +109,16 @@ fn get_sync_addresses(
         .trim()
         .is_empty();
     let contacts = !factory.conf_setting("dav-server", "contact-services").trim().is_empty();
-    let ssh_setting = |name: &str, property: &str| {
-        let configured = factory.conf_setting("ssh-server", name);
-        if configured.trim().is_empty() {
-            moqui_lib::env::get_prop_or_env(property).trim().to_string()
-        } else {
-            configured.trim().to_string()
-        }
-    };
-    let ssh_port = Some(ssh_setting("public-port", "ssh_public_port"))
+    let ssh_setting = |name: &str| factory.conf_setting("ssh-server", name).trim().to_string();
+    let ssh_port = Some(ssh_setting("public-port"))
         .filter(|port| !port.is_empty())
-        .unwrap_or_else(|| ssh_setting("port", "ssh_port"));
+        .unwrap_or_else(|| ssh_setting("port"));
     let sftp = (factory.conf_flag("ssh-server", "enabled", true)
         && !ssh_port.is_empty()
         && ssh_port != "0"
         && factory.conf_flag("dav-server", "sftp-drives", true))
     .then(|| {
-        let ssh_host = Some(ssh_setting("public-host", "ssh_public_host"))
+        let ssh_host = Some(ssh_setting("public-host"))
             .filter(|host| !host.is_empty())
             .unwrap_or_else(|| host.split(':').next().unwrap_or_default().to_string());
         if ssh_port == "22" {

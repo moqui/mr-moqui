@@ -47,14 +47,12 @@ const facts = ({features = [], entries = {}, properties = {}, serverStarted = tr
     serverStarted,
     packageName: "spec",
     prop: name => String(properties[name] ?? ""),
-    conf: (attribute, propertyName) => String(properties[propertyName] ?? "")
+    conf: attribute => String(properties[attribute] ?? "")
 })
-const gateway = {
-    smtp_listen_port: "2525",
-    smtp_listen_host: "10.8.0.2",
-    smtp_allowed_addresses: "10.8.0.1",
-    smtp_authserv_id: "mx.example.com"
-}
+// the smtp-server attributes of a listener behind a gateway, as get#ProtocolFacts names them
+const PORT = "smtp-server/@listen-port", HOST = "smtp-server/@listen-host", ALLOWED = "smtp-server/@allowed-addresses"
+const AUTHSERV = "smtp-server/@authserv-id", INTERNET = "smtp-server/@internet"
+const gateway = {[PORT]: "2525", [HOST]: "10.8.0.2", [ALLOWED]: "10.8.0.1", [AUTHSERV]: "mx.example.com"}
 const listening = properties =>
     protocols.readinessOf(
         "smtpIn",
@@ -100,7 +98,7 @@ feature("a protocol that is not built, one kept off, one that did not start and 
             features: built,
             entries: {
                 HTTP: {state: "on", detail: "tcp 0.0.0.0:8080"},
-                SMTP: {state: "off", detail: "smtp_listen_port is not set"},
+                SMTP: {state: "off", detail: "smtp-server@listen-port is not set"},
                 SSH: {state: "failed", detail: "could not bind 127.0.0.1:22"},
                 XMPP: {state: "skipped", detail: "port 5222 is in use"}
             }
@@ -115,7 +113,7 @@ feature("a protocol that is not built, one kept off, one that did not start and 
             dav: of("dav"),
             wopi: of("wopi"),
             // turned on, in a process that opened no listeners: not known to run, never ready
-            quiet: protocols.readinessOf("ssh", facts({features: built, properties: {ssh_port: "2222"}, serverStarted: false})),
+            quiet: protocols.readinessOf("ssh", facts({features: built, properties: {"ssh-server/@port": "2222"}, serverStarted: false})),
             read,
             one: as(users.view, () => invoke(C + "get#ProtocolReadiness", {protocolKey: "smtpIn"})),
             none: as(users.none, () => invoke(C + "get#ProtocolReadiness")),
@@ -132,7 +130,7 @@ feature("a protocol that is not built, one kept off, one that did not start and 
         out.smtp.state === "disabled"
         out.smtp.built === true
         out.smtp.enabled === false
-        out.smtp.reason === "smtp_listen_port is not set"
+        out.smtp.reason === "smtp-server@listen-port is not set"
         out.rtc.state === "absent"
         out.rtc.built === false
         out.rtc.checkList.length === 0
@@ -167,7 +165,7 @@ feature("a protocol that is not built, one kept off, one that did not start and 
         out.factsDirect.confMap == null
         out.settings.settingList.length > 0
         out.settings.settingList.every(row => row.settingGroup.startsWith("Protocols: ") && row.editable === false)
-        out.settings.settingList.some(row => row.propertyName === "smtp_allowed_addresses")
+        out.settings.settingList.some(row => row.propertyName === "smtp-server@allowed-addresses")
     }
 })
 
@@ -207,11 +205,11 @@ feature("SMTP reception is trusted only while its allowlist and authserv-id hold
             )
         context.out = {
             trusted: listening(gateway),
-            noAuthserv: listening(Object.assign({}, gateway, {smtp_authserv_id: ""})),
-            everyone: listening(Object.assign({}, gateway, {smtp_allowed_addresses: "10.8.0.1, 0.0.0.0/0"})),
+            noAuthserv: listening(Object.assign({}, gateway, {[AUTHSERV]: ""})),
+            everyone: listening(Object.assign({}, gateway, {[ALLOWED]: "10.8.0.1, 0.0.0.0/0"})),
             // bound to this machine, and no allowed address is on it
-            unreachable: listening(Object.assign({}, gateway, {smtp_listen_host: "127.0.0.1"})),
-            local: listening(Object.assign({}, gateway, {smtp_listen_host: "127.0.0.1", smtp_allowed_addresses: "127.0.0.0/8"})),
+            unreachable: listening(Object.assign({}, gateway, {[HOST]: "127.0.0.1"})),
+            local: listening(Object.assign({}, gateway, {[HOST]: "127.0.0.1", [ALLOWED]: "127.0.0.0/8"})),
             badEntry: trust({allowedAddresses: "10.8.0.1,gateway"}),
             empty: trust({allowedAddresses: ""}),
             v6: trust({allowedAddresses: "fd00::/8", listenHost: "fd00::2"}),
@@ -221,7 +219,7 @@ feature("SMTP reception is trusted only while its allowlist and authserv-id hold
             bracketed: trust({allowedAddresses: "[fd00::1]", listenHost: "fd00::2"}),
             // through a proxy on this machine, the proxy's own address must be allowed too
             proxied: trust({allowedAddresses: "203.0.113.7", listenHost: "127.0.0.1", proxyProtocol: true}),
-            internet: listening(Object.assign({}, gateway, {smtp_internet: "true", smtp_allowed_addresses: ""})),
+            internet: listening(Object.assign({}, gateway, {[INTERNET]: "true", [ALLOWED]: ""})),
             stopped: trust({allowedAddresses: "10.8.0.1", listening: false})
         }
     },
@@ -232,7 +230,7 @@ feature("SMTP reception is trusted only while its allowlist and authserv-id hold
         out.trusted.trustState === "trusted"
         out.noAuthserv.state === "untrusted"
         out.noAuthserv.trusted === false
-        out.noAuthserv.reason.includes("smtp_authserv_id")
+        out.noAuthserv.reason.includes("smtp-server@authserv-id")
         out.everyone.state === "untrusted"
         out.everyone.trusted === false
         out.unreachable.state === "untrusted"
@@ -276,7 +274,7 @@ feature("a check that leaves the server runs only when confirmed, and a protocol
         out.kept = Array.from(ec.entity.find(CHECK).condition("adapterKey", "protocol").disableAuthz().list()).map(row =>
             row.getMap()
         )
-        out.smtpOn = !!System.getProperty("smtp_listen_port")
+        out.smtpOn = !!ec.factory.getConfValue("smtp-server@listen-port")
         context.out = out
     },
     then() {

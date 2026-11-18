@@ -34,7 +34,7 @@
         offline page (503), the page at edge_offline_page when set. -->
 
     <!-- SSH (.env): edge_ssh_tunnel_port (and edge_ssh_tunnel_host, empty for every address) takes SSH connections for
-        the local node's SSH server (its ssh_port), each admitted by web protection first, while one local node is
+        the local node's SSH server (its ssh-server@port), each admitted by web protection first, while one local node is
         linked. With several, each gets a port of its own: a moqui.edge.EdgePort row (System › Edge Clients › Ports). -->
 
     <!-- PASS (plans/archive/Edge-Node.md §5.5): mr-pass here calls its local node as the PASS authority over gRPC down
@@ -52,24 +52,20 @@
 
     <!-- Mail (docs/interfaces/Mail-Inbound.md, The edge node as the gateway: each setting, the DNS to publish and the
         Postfix alternative): the MTA in moqui (E5b). The SMTP listener takes port 25 from the internet itself (internet
-        mode): set smtp_listen_port 25, smtp_listen_host 0.0.0.0 (or :: for IPv6 too) and smtp_hostname (the MX name,
+        mode): set smtp-server@listen-port 25, smtp-server@listen-host 0.0.0.0 (or :: for IPv6 too) and smtp-server@hostname (the MX name,
         also the authserv-id) in .env. STARTTLS with the web certificate, the limits per address below, SPF, DKIM, DMARC
-        and ARC checked, Rspamd's verdict when mail_rspamd_url is set. RCPT TO is answered from the local node's
+        and ARC checked, Rspamd's verdict when smtp-server@rspamd-url is set. RCPT TO is answered from the local node's
         replicated accounts, so an unknown address is refused while it is away too, and each message is queued for it.
-        Mail the local node sends through an EmailServer with smtpHost edge: is DKIM-signed here (mail_dkim_key, made
+        Mail the local node sends through an EmailServer with smtpHost edge: is DKIM-signed here (mail-delivery/dkim@key, made
         into .env on first use) and delivered to each domain's MX, from bounce+(item)@ the domain
         edge_mail_bounce_domain names (set it in .env, with its MX here).
-        Postfix and Rspamd beside it instead (E5a): in .env edge_mail_mta=postfix, smtp_internet=false,
-        smtp_listen_port=10024 and smtp_allowed_addresses=127.0.0.1,::1, and protocol="lmtp" on the smtp-server below;
-        mail out is relayed to Postfix on edge_mail_relay_port. -->
-    <default-property name="edge_mail_mta" value="moqui"/>
-    <default-property name="smtp_internet" value="true"/>
-    <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
-    <default-property name="edge_mail_relay_port" value="10025"/>
+        Postfix and Rspamd beside it instead (E5a): in .env moqui_conf__mail_delivery__mta=postfix, moqui_conf__smtp_server__internet=false,
+        moqui_conf__smtp_server__listen_port=10024 and moqui_conf__smtp_server__allowed_addresses=127.0.0.1,::1, and protocol="lmtp" on the smtp-server below;
+        mail out is relayed to Postfix on mail-delivery@relay-port. -->
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
-        trusts on that mail: smtp_authserv_id, else smtp_hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"
-            authserv-id="${smtp_authserv_id ?: smtp_hostname}"/>
+        trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS (docs/interfaces/SMS.md): a network's webhook URL is this node's,
         /channels/{chatBridgeId}/webhook. The signature is checked with the local node's replicated bridge and the

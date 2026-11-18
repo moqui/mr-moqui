@@ -40,14 +40,14 @@ This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) w
 
 **Defaults** are `runtime/components/base/framework/conf/MoquiDefaultConf.xml`. **On** and **off** mean those defaults. Rows say what untrusted input can reach, and what to keep in mind during a review. Designed admin tools are privileged on purpose.
 
-`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance_purpose` to `dev`, `webapp-list/webapp[webroot]@allow-origins` to `localhost,127.0.0.1` (this machine on any port), and `ssh_port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
+`./moq run` merges `runtime/conf/MoquiDevConf.xml` on top of that file. The dev file sets `instance_purpose` to `dev`, `webapp-list/webapp[webroot]@allow-origins` to `localhost,127.0.0.1` (this machine on any port), and `ssh-server@port` to `2222`, and it sets `tarpit-enabled` false for screens, screen transitions, and services. It does not declare an H2 console. The Jackrabbit repository element in it is commented out. The tables below stay on the default conf unless a row says otherwise.
 
 ## Heavy lock-down
 
 A production install keeps the default conf's closed switches and does not publish the listeners that are on.
 
 - Do not publish the HTTP port. Empty `webapp-list/webapp[webroot]@http-bind` is every address, and empty `webapp-list/webapp[webroot]@http-port` is 8080.
-- Do not leave `moqui_conf__entity_facade__crypt_pass` or `webapp-list/webapp[webroot]/session-config@cookie-key` as `CHANGEME`. Startup writes generated values into `runtime/.env` when they still end in `CHANGEME`. Keep that file private (mode `0600`). The same generator fills `ssh_host_key`, the cluster certificate and key, and `git_lfs_token_key`. `entity-facade@crypt-pass-old` stays the sentinel on purpose.
+- Do not leave `moqui_conf__entity_facade__crypt_pass` or `webapp-list/webapp[webroot]/session-config@cookie-key` as `CHANGEME`. Startup writes generated values into `runtime/.env` when they still end in `CHANGEME`. Keep that file private (mode `0600`). The same generator fills `ssh-server@host-key`, the cluster certificate and key, and `git-server@lfs-token-key`. `entity-facade@crypt-pass-old` stays the sentinel on purpose.
 - Do not load demo users.
 - Leave tarpits on. The dev conf turns them off for screens, transitions, and services.
 - Leave `webapp-list/webapp[webroot]@allow-origins` empty. The dev conf names localhost and 127.0.0.1. A foreign origin is then refused. Own origin stays allowed.
@@ -97,7 +97,7 @@ This file maps the surface. It does not prove the controls. The proof catalog is
 | Jetty, and a `web.xml` session store | `http.rs` binds a `TcpListener` and axum. A search for a file named `web.xml` under this tree found none. The name survives as a comment in `MoquiDefaultConf.xml` and as an exclusion in `plans/Parity-Mapping.md`. The conf comment still says "Embedded Jetty". | hyper, axum, and rustls. Sessions are `moqui.server.HttpSession` rows. Servlets and filters are conf elements read by `web/servlet.rs`. |
 | H2 TCP server and the H2 console | No `/h2` route. No `H2Console` in `runtime/conf`. a `database-conf-name` of `h2` is the embedded database name. Parity notes say the H2 console was removed and `H2ServerToolFactory` is not ported. Port 9092 is not a bind. | Embedded Postgres, Unix socket, no TCP. On Windows, TCP to `127.0.0.1` on an ephemeral port. |
 | Jackrabbit on 8081 | The repository element is commented XML in the dev conf. `JackrabbitRunToolFactory` is not ported. | No process listens on 8081 for it. (`8081` elsewhere is an example HTTP port.) |
-| SubEtha SMTP | No SubEtha code. The entity comment still names `SubEthaSmtpToolFactory`. Parity mapping says that factory is not ported. | Inbound SMTP, off until `smtp_listen_port` and a non-empty allow-list are set. Mail from anywhere but the gateway is refused. |
+| SubEtha SMTP | No SubEtha code. The entity comment still names `SubEthaSmtpToolFactory`. Parity mapping says that factory is not ported. | Inbound SMTP, off until `smtp-server@listen-port` and a non-empty allow-list are set. Mail from anywhere but the gateway is refused. |
 | `/groovysh`, `Tools/GroovyShell` | No conf endpoint or host route for `/groovysh`; the obsolete `Tools/GroovyShell.xml` screen was removed. | These paths are 404. The browser Terminal UI, its command line and host sessions (dev only), and the SSH admin shell are described above. |
 | `/rpc/json` | No host route. No `rpc.xml` under webroot. No file named `rpc.xml` in the tree. | The path is 404. |
 | `/elastic`, `/kibana` | No routes and no servlet patterns with those paths. | `/search` (`SearchRemote`) and `/dashboard` (`DashboardRemote`). |
