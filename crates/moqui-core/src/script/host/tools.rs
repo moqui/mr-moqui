@@ -1078,7 +1078,8 @@ macro_rules! tools_js {
     };
     // Entities the generic tools (auto screens, data edit, data import) do not take from a request entity name
     wu.isRestrictedGenericEntity = host.isRestrictedGenericEntity;
-    // ... and the entities their writes refuse besides: those only their own services write
+    // ... and the entities their writes refuse besides: those only their own services write; with a field name, also a
+    // password field of the entity
     wu.isGenericWriteRefused = host.isGenericWriteRefused;
 })"#
     };
@@ -1219,7 +1220,7 @@ static METHODS: &[Method] = &[
     method!(
         "tools",
         "isGenericWriteRefused",
-        [OptValue],
+        [OptValue, OptValue],
         is_generic_write_refused
     ),
     method!(
@@ -3222,12 +3223,21 @@ fn is_restricted_generic_entity(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `isRestrictedGenericEntity`, or an entity only its own services write (the entity audit log, Monitor's recovery and
-/// ingest rows): what a generic tool's write refuses.
+/// ingest rows): what a generic tool's write refuses. With a field name, also a password field of the entity (by name,
+/// or by origin through a view), which no generic write takes (Data Load's `storeSelected`, plans/Security-Review.md
+/// SEC-TLS-81).
 fn is_generic_write_refused(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = text_of(call.value(0).cloned().as_ref());
+    let field = text_of(call.value(1));
     Ok(Ret::from(match with_ec(|ec| ec.factory().entity())? {
-        Some(facade) => !crate::entity::sensitive::generic_access(&facade, &name).write,
-        None => crate::entity::sensitive::is_generic_write_refused(&name),
+        Some(facade) => {
+            let access = crate::entity::sensitive::generic_access(&facade, &name);
+            !access.write || (!field.is_empty() && access.is_secret(&field))
+        }
+        None => {
+            crate::entity::sensitive::is_generic_write_refused(&name)
+                || crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field.as_str())
+        }
     }))
 }
 
