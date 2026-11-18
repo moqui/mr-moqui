@@ -4822,6 +4822,7 @@ dependencies = [
  "moqui-lib",
  "moqui-report",
  "rust_xlsxwriter",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.11.1",

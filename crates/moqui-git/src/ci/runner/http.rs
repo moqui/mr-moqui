@@ -124,7 +124,8 @@ impl Transport for HttpTransport {
     }
 
     fn upload(&self, path_and_query: &str, file: &Path) -> Result<(u16, serde_json::Value), String> {
-        let opened = std::fs::File::open(file).map_err(|err| format!("{}: {err}", file.display()))?;
+        // a regular file, never through a link of its last name (SEC-GIT-81)
+        let opened = super::open_regular(file)?;
         let length = opened.metadata().map(|meta| meta.len()).ok();
         let request = OpenRequest {
             method: Method::Put,

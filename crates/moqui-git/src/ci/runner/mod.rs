@@ -28,6 +28,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 pub mod archive;
+pub mod collect;
 pub mod http;
 
 /// How the runner reaches the server. `path` is relative to the job's endpoints (`job`, `log`, `steps/1`, ...).
@@ -255,6 +256,12 @@ impl LogSender<'_> {
 /// `${hash:FILE}` in a cache key replaced by the SHA-256 of that file of the workspace (the first 16 hex characters;
 /// empty when it is not there or is outside the workspace).
 pub fn expand_key(key: &str, workspace: &Path) -> String {
+    expand_key_noting(key, workspace, &mut Vec::new())
+}
+
+/// [`expand_key`], with a note for the job's log for each `${hash:FILE}` whose file is there but was not read (a link,
+/// a directory, a file outside the workspace), which hashes to nothing and so leaves that part of the key constant.
+pub fn expand_key_noting(key: &str, workspace: &Path, notes: &mut Vec<String>) -> String {
     let mut out = String::new();
     let mut rest = key;
     while let Some((before, after)) = rest.split_once("${hash:") {
@@ -265,9 +272,18 @@ pub fn expand_key(key: &str, workspace: &Path) -> String {
             continue;
         };
         if crate::ci::file::valid_path(file) {
-            if let Ok(bytes) = std::fs::read(workspace.join(file)) {
-                let digest = moqui_lib::codec::hex_encode(&Sha256::digest(&bytes));
-                out.push_str(digest.get(..16).unwrap_or(&digest));
+            let mut bytes = Vec::new();
+            let path = workspace.join(file);
+            match copy_regular(workspace, &path, &mut bytes) {
+                Ok(()) => {
+                    let digest = moqui_lib::codec::hex_encode(&Sha256::digest(&bytes));
+                    out.push_str(digest.get(..16).unwrap_or(&digest));
+                }
+                Err(_) if path.symlink_metadata().is_err() => {}
+                Err(_) => notes.push(format!(
+                    "Cache key {key}: ${{hash:{file}}} hashes to nothing, as {file} is not a regular file of the \
+                     workspace (a link is not followed)"
+                )),
             }
         }
         rest = tail;
@@ -276,14 +292,122 @@ pub fn expand_key(key: &str, workspace: &Path) -> String {
     out
 }
 
-/// The files and directories `pattern` names in the workspace: a path, or one whose segments have `*` in them, each
-/// `*` any run of characters of one name (`test-results/*/*.xml`). Sorted; nothing outside the workspace, and no
-/// more than a few thousand.
-pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
-    const MAX: usize = 5000;
-    if !crate::ci::file::valid_path(pattern) {
-        return Vec::new();
+/// Whether what `path` names, through every link on the way, is under `root` (a workspace resolved with
+/// `canonicalize`). A path that does not resolve (missing, a dangling link) is not.
+pub(crate) fn resolves_inside(root: &Path, path: &Path) -> bool {
+    path.canonicalize().is_ok_and(|real| real.starts_with(root))
+}
+
+/// Open `path` to read when it is a regular file and not a link: `O_NOFOLLOW` refuses a link as the last name, and
+/// `O_NONBLOCK` keeps a FIFO put in its place from holding the open; what was opened is checked to be a regular file
+/// (plans/Security-Review.md SEC-GIT-81).
+///
+/// # Errors
+///
+/// When it does not open (a link among them) or is not a regular file.
+pub(crate) fn open_regular(path: &Path) -> Result<std::fs::File, String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(
+            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK)
+                .bits()
+                .cast_signed(),
+        );
     }
+    #[cfg(not(unix))]
+    if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(format!("{} is a symbolic link", path.display()));
+    }
+    let file = options.open(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    match file.metadata() {
+        Ok(meta) if meta.is_file() => Ok(file),
+        Ok(_) => Err(format!("{} is not a regular file", path.display())),
+        Err(err) => Err(format!("{}: {err}", path.display())),
+    }
+}
+
+/// Copy the regular file `file`, which is under `workspace` and not a link, to `out`. The directories on its path may
+/// be links, if what they name is in the workspace.
+///
+/// # Errors
+///
+/// When the file is outside the workspace, a link, not a regular file, or does not read.
+pub(crate) fn copy_regular(workspace: &Path, file: &Path, out: &mut dyn std::io::Write) -> Result<(), String> {
+    let root = workspace
+        .canonicalize()
+        .map_err(|err| format!("{}: {err}", workspace.display()))?;
+    if !resolves_inside(&root, file) {
+        return Err(format!("{} is outside the workspace", file.display()));
+    }
+    let mut opened = open_regular(file)?;
+    std::io::copy(&mut opened, out)
+        .map(|_| ())
+        .map_err(|err| format!("{}: {err}", file.display()))
+}
+
+/// The files and directories `pattern` names in the workspace: a path, or one whose segments have `*` in them, each
+/// `*` any run of characters of one name (`test-results/*/*.xml`). Sorted; no more than a few thousand. A link is
+/// followed only while what it names is in the workspace: a path whose target is outside it (a link of the last
+/// name, or of a directory on the way) is left out, and a `*` never lists a directory out of it (SEC-GIT-81).
+pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
+    find(workspace, pattern)
+        .found
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// What a matched path is, by `symlink_metadata`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    File,
+    Link,
+    Dir,
+    Other,
+}
+
+impl Kind {
+    fn of(path: &Path) -> Self {
+        match path.symlink_metadata().map(|meta| meta.file_type()) {
+            Ok(kind) if kind.is_symlink() => Self::Link,
+            Ok(kind) if kind.is_file() => Self::File,
+            Ok(kind) if kind.is_dir() => Self::Dir,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// What a pattern names in the workspace ([`find`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Matches {
+    /// The paths [`matches`] answers, each with what it is.
+    pub found: Vec<(PathBuf, Kind)>,
+    /// The paths left out because they do not resolve inside the workspace (a link out of it, or a dangling one), at
+    /// most a hundred, for the job's log.
+    pub refused: Vec<PathBuf>,
+}
+
+/// [`matches`], with what each path is and the paths refused.
+pub fn find(workspace: &Path, pattern: &str) -> Matches {
+    const MAX: usize = 5000;
+    const MAX_REFUSED: usize = 100;
+    let mut refused = Vec::new();
+    if !crate::ci::file::valid_path(pattern) {
+        return Matches::default();
+    }
+    let Ok(root) = workspace.canonicalize() else {
+        return Matches::default();
+    };
+    let mut keep = |path: PathBuf, next: &mut Vec<PathBuf>| {
+        if resolves_inside(&root, &path) {
+            next.push(path);
+        } else if refused.len() < MAX_REFUSED && path.symlink_metadata().is_ok() {
+            refused.push(path);
+        }
+    };
     let mut found = vec![workspace.to_path_buf()];
     for segment in pattern
         .split('/')
@@ -292,13 +416,10 @@ pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
         let mut next = Vec::new();
         for dir in &found {
             if !segment.contains('*') {
-                let path = dir.join(segment);
-                // a link is not followed out of the workspace
-                if path.symlink_metadata().is_ok() {
-                    next.push(path);
-                }
+                keep(dir.join(segment), &mut next);
                 continue;
             }
+            // every path kept so far resolves inside the workspace, so this lists no directory out of it
             let Ok(entries) = std::fs::read_dir(dir) else { continue };
             let mut named: Vec<PathBuf> = entries
                 .filter_map(Result::ok)
@@ -306,7 +427,9 @@ pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
                 .map(|entry| entry.path())
                 .collect();
             named.sort();
-            next.extend(named);
+            for path in named {
+                keep(path, &mut next);
+            }
             if next.len() > MAX {
                 next.truncate(MAX);
                 break;
@@ -318,7 +441,16 @@ pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
         }
     }
     found.retain(|path| path != workspace);
-    found
+    Matches {
+        found: found
+            .into_iter()
+            .map(|path| {
+                let kind = Kind::of(&path);
+                (path, kind)
+            })
+            .collect(),
+        refused,
+    }
 }
 
 /// End a step's process and what it started: the process group on Unix, the process elsewhere.
@@ -564,12 +696,20 @@ fn query(pairs: &[(&str, &str)]) -> String {
         .join("&")
 }
 
+/// `path` as the job's log names it: by its path in the workspace.
+fn shown_path(workspace: &Path, path: &Path) -> String {
+    path.strip_prefix(workspace).unwrap_or(path).display().to_string()
+}
+
 /// A temporary file beside the workspace, removed when dropped.
 struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(workspace: &Path, name: &str) -> Self {
-        let dir = workspace.parent().unwrap_or(workspace);
+        Self::in_dir(workspace.parent().unwrap_or(workspace), name)
+    }
+
+    fn in_dir(dir: &Path, name: &str) -> Self {
         Self(dir.join(format!(".moqui-ci-{}-{name}", std::process::id())))
     }
 }
@@ -580,7 +720,31 @@ impl Drop for Scratch {
     }
 }
 
+/// Write a line to the job's log for each of `refused`, named by its path in the workspace.
+fn log_refused(
+    log: &mut LogSender<'_>,
+    workspace: &Path,
+    refused: &[PathBuf],
+    said: impl Fn(&str) -> String,
+) -> Result<(), Stop> {
+    for path in refused {
+        log.line(None, &said(&shown_path(workspace, path)))?;
+    }
+    Ok(())
+}
+
 fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
+    // an absolute workspace: the paths of it a collect child is given hold in any directory (`--work` may be relative)
+    let workspace = std::path::absolute(&options.workspace).map_err(|err| {
+        Stop::Error(format!(
+            "the workspace {} has no absolute path: {err}",
+            options.workspace.display()
+        ))
+    })?;
+    let options = &Options {
+        workspace,
+        ..options.clone()
+    };
     let (status, job) = transport.json("GET", "job", None).map_err(Stop::Error)?;
     check(status, "getting the job", &job)?;
     let spec = &job["spec"];
@@ -628,7 +792,11 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
         let (Some(key), Some(path)) = (cache["key"].as_str(), cache["path"].as_str()) else {
             continue;
         };
-        let key = expand_key(key, &options.workspace);
+        let mut notes = Vec::new();
+        let key = expand_key_noting(key, &options.workspace, &mut notes);
+        for note in notes {
+            log.line(None, &note)?;
+        }
         let scratch = Scratch::new(&options.workspace, "cache.tar.gz");
         match transport.download(&format!("caches?{}", query(&[("key", &key)])), &scratch.0) {
             Ok(200) => match archive::unpack(&scratch.0, &options.workspace) {
@@ -708,23 +876,55 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
             succeeded = false;
         }
     }
+    // with a step user, what the steps left running (a process that left its group with setsid) is ended before
+    // anything is read: none of it can stop the child that reads, or change the files under it while it reads
+    if let Some(user) = &options.step_user {
+        for _ in 0..5 {
+            if end_leftovers(started.elapsed().as_secs() + 1, Some(user)) == 0 {
+                break;
+            }
+        }
+    }
+    // reports, artifacts and caches are read within one time limit, as the step user if there is one (collect)
+    let collecting = Instant::now() + collect::COLLECT_LIMIT;
     // reports and artifacts: also of a job that failed
     for pattern in spec["reports"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let Some(pattern) = pattern.as_str() else { continue };
-        for file in matches(&options.workspace, pattern)
-            .into_iter()
-            .filter(|path| path.is_file())
-        {
+        let found = match collect::find_in(options, pattern, collecting) {
+            Ok(found) => found,
+            Err(err) => {
+                log.line(None, &format!("Reports {pattern} were not read: {err}"))?;
+                continue;
+            }
+        };
+        log_refused(&mut log, &options.workspace, &found.refused, |shown| {
+            format!("Report {shown} was not uploaded: it does not resolve inside the workspace")
+        })?;
+        for (file, kind) in found.found {
+            let shown = shown_path(&options.workspace, &file);
+            // a report is a regular file of its own: a link is refused, even to a file in the workspace
+            if kind == Kind::Link {
+                log.line(None, &format!("Report {shown} was not uploaded: it is a symbolic link"))?;
+                continue;
+            }
+            if kind != Kind::File {
+                continue;
+            }
             let name = file
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let scratch = Scratch::new(&options.workspace, "report");
+            if let Err(err) = collect::report(options, &file, &scratch.0, collecting) {
+                log.line(None, &format!("Report {shown} was not uploaded: {err}"))?;
+                continue;
+            }
             let sent = transport.upload(
                 &format!(
                     "artifacts?{}",
                     query(&[("kind", "report"), ("name", &name), ("path", pattern)])
                 ),
-                &file,
+                &scratch.0,
             );
             match sent {
                 Ok((401 | 403 | 410, _)) => return Err(Stop::Gone),
@@ -744,13 +944,23 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
         let (Some(name), Some(pattern)) = (artifact["name"].as_str(), artifact["path"].as_str()) else {
             continue;
         };
-        let files = matches(&options.workspace, pattern);
+        let found = match collect::find_in(options, pattern, collecting) {
+            Ok(found) => found,
+            Err(err) => {
+                log.line(None, &format!("Artifact {name} was not read: {err}"))?;
+                continue;
+            }
+        };
+        log_refused(&mut log, &options.workspace, &found.refused, |shown| {
+            format!("Artifact {name}: {shown} was left out, as it does not resolve inside the workspace")
+        })?;
+        let files: Vec<PathBuf> = found.found.into_iter().map(|(path, _)| path).collect();
         if files.is_empty() {
             log.line(None, &format!("Artifact {name}: nothing at {pattern}"))?;
             continue;
         }
         let scratch = Scratch::new(&options.workspace, "artifact.tar.gz");
-        if let Err(err) = archive::pack(&options.workspace, &files, &scratch.0) {
+        if let Err(err) = collect::pack(options, &files, &scratch.0, collecting) {
             log.line(None, &format!("Artifact {name} was not packed: {err}"))?;
             continue;
         }
@@ -775,12 +985,23 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
     // caches: saved by a trusted job that succeeded, for a key nothing was stored under
     if succeeded && job["trusted"].as_bool() == Some(true) {
         for (key, path) in &missed {
-            let dir = options.workspace.join(path);
-            if !dir.exists() {
+            let found = match collect::find_in(options, path, collecting) {
+                Ok(found) => found,
+                Err(err) => {
+                    log.line(None, &format!("Cache {key} was not read: {err}"))?;
+                    continue;
+                }
+            };
+            log_refused(&mut log, &options.workspace, &found.refused, |shown| {
+                format!("Cache {key}: {shown} was left out, as it does not resolve inside the workspace")
+            })?;
+            let dirs: Vec<PathBuf> = found.found.into_iter().map(|(path, _)| path).collect();
+            if dirs.is_empty() {
+                log.line(None, &format!("Cache {key}: nothing at {path}"))?;
                 continue;
             }
             let scratch = Scratch::new(&options.workspace, "cache-out.tar.gz");
-            if let Err(err) = archive::pack(&options.workspace, &[dir], &scratch.0) {
+            if let Err(err) = collect::pack(options, &dirs, &scratch.0, collecting) {
                 log.line(None, &format!("Cache {key} was not packed: {err}"))?;
                 continue;
             }

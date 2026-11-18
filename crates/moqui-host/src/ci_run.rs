@@ -15,8 +15,9 @@
 //! `moqui ci-run`: the runner of a pipeline job (docs/interfaces/Pipelines.md "moqui ci-run"). With no argument it runs the
 //! one job its environment names (`MOQUI_CI_SERVER_URL`, `MOQUI_CI_TOKEN`, `MOQUI_CI_JOB_RUN_ID`), as the engine
 //! starts it in a job's container. `register` and `poll` are a registered runner's: register once with the pool's
-//! token, then ask for jobs and run each. It opens no runtime, no conf and no database: the work is
-//! `moqui_git::ci::runner`, which needs `git` and a shell.
+//! token, then ask for jobs and run each. `collect` is the child a `--step-user` runner reads a job's files with, as
+//! that user. It opens no runtime, no conf and no database: the work is `moqui_git::ci::runner`, which needs `git` and
+//! a shell.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -210,6 +211,50 @@ fn rotate_when_due(server: &str, answer: &serde_json::Value, token: &mut String,
     }
 }
 
+/// Hold the step user for this runner process alone: an exclusive lock on `moqui-ci-step-user-<uid>.lock` in `/run`
+/// (or `/var/run`), root's, kept while the process runs. Before it reads a job's files a runner kills every process of
+/// its step user that started during the job, so a second runner with the same step user would kill the first's
+/// steps: it is refused. The lock file, opened `O_NOFOLLOW`; `None` (with a warning) where there is no such directory
+/// or no lock can be taken.
+#[cfg(unix)]
+fn hold_step_user(user: &runner::StepUser) -> Result<Option<std::fs::File>, Error> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let Some(dir) = ["/run", "/var/run"].into_iter().map(Path::new).find(|dir| dir.is_dir()) else {
+        eprintln!(
+            "moqui ci-run poll: no /run to hold --step-user {} in: give each runner a step user of its own",
+            user.name
+        );
+        return Ok(None);
+    };
+    let path = dir.join(format!("moqui-ci-step-user-{}.lock", user.uid));
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits().cast_signed())
+        .open(&path)
+        .map_err(|err| Error::new(format!("moqui ci-run poll: {}: {err}", path.display())))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Err(Error::new(format!(
+            "moqui ci-run poll: another runner runs its steps as {} (it holds {}): each runner needs a step user of its \
+             own, as it kills that user's processes of a job before it reads the job's files",
+            user.name,
+            path.display()
+        ))),
+        Err(std::fs::TryLockError::Error(err)) => {
+            eprintln!(
+                "moqui ci-run poll: {} was not locked ({err}): give each runner a step user of its own",
+                path.display()
+            );
+            Ok(None)
+        }
+    }
+}
+
 /// The names `--pass-env NAME,...` lets through to a registered runner's steps (repeatable).
 fn pass_env(args: &[String]) -> Vec<String> {
     args.iter()
@@ -269,6 +314,28 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 .unwrap_or(10)
                 .clamp(2, 3600);
             let work = option(args, "--work").map_or_else(|| std::env::temp_dir().join("moqui-ci"), PathBuf::from);
+            // absolute, as a collect child runs in another directory and is given paths of the workspace (SEC-GIT-81)
+            let work = std::path::absolute(&work)
+                .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
+            // the step user must run this binary, which reads the reports, artifacts and caches as that user: asked
+            // once here, so a runner that could not read them takes no job
+            #[cfg(unix)]
+            let _held = match &step_user {
+                Some(user) => hold_step_user(user)?,
+                None => None,
+            };
+            #[cfg(unix)]
+            if let Some(user) = &step_user {
+                std::fs::create_dir_all(&work)
+                    .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
+                runner::collect::probe(user, &work).map_err(|why| {
+                    Error::new(format!(
+                        "moqui ci-run poll: --step-user {} cannot run this program, which reads each job's reports, \
+                         artifacts and caches as that user: {why}",
+                        user.name
+                    ))
+                })?;
+            }
             let shell = option(args, "--shell");
             let keep_processes = args.iter().any(|arg| arg == "--keep-processes");
             // a pool's untrusted runs go only to a runner that runs its steps as another user (SEC-GIT-19)
@@ -325,6 +392,18 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                     return Ok(0);
                 }
                 std::thread::sleep(Duration::from_secs(interval));
+            }
+        }
+        // the child a --step-user runner reads a job's reports, artifacts and caches with, as the step user
+        // (runner::collect; SEC-GIT-81): not for a person to run
+        Some("collect") => {
+            #[cfg(unix)]
+            {
+                Ok(runner::collect::collect_child(args.get(1).map_or("", String::as_str)))
+            }
+            #[cfg(not(unix))]
+            {
+                Err(Error::new("moqui ci-run collect is for unix"))
             }
         }
         Some(other) if !other.starts_with("--") => Err(crate::usage::command_usage("ci-run")),

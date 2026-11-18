@@ -344,8 +344,14 @@ runner token takes any job of the pool and, through that job's token, its secret
 case. A step that runs as the runner's user can still read the token file. On unix, `--step-user USER` runs the steps as
 another user: the runner runs as root (its token file root's alone, mode 600), the checkout, its caches and the steps'
 `home` beside it are handed to USER (`chown -R`) before the first step, each step runs as USER (`USER` and `LOGNAME`
-are USER's), and after the job the processes of USER that started during it are killed. `poll` says at each claim
-whether it was started with `--step-user` (`stepUser` in the claim's body), and **a pool that takes untrusted runs
+are USER's), and after the last step the processes of USER that started during the job are killed. The reports,
+artifacts and caches are then found and read as USER too, by a child of the same binary (`moqui ci-run collect`, within
+30 minutes for all of them); `poll` checks at its start that USER can run it and refuses to start if not. **One step
+user per runner process**: the kill before reading takes every process of USER that started during the job, so two
+runners with one step user would end each other's steps; `poll` holds an exclusive lock on
+`/run/moqui-ci-step-user-<uid>.lock` while it runs and refuses to start when another runner holds it. In any mode a report or artifact path is kept only while it resolves inside the workspace, a report that is a
+link is refused, and a link under an artifact directory is stored as a link (plans/Security-Review.md SEC-GIT-81).
+`poll` says at each claim whether it was started with `--step-user` (`stepUser` in the claim's body), and **a pool that takes untrusted runs
 (`trusted` N) gives a job only to a runner that was**: one without it is given none, its claim's answer says why
 (`notice`, which `poll` prints once), and the untrusted run waits, queued, for such a runner (plans/Security-Review-Low.md
 SEC-GIT-19); for untrusted runs on machines whose runners cannot run steps as another user, use a pool of containers.
