@@ -1988,7 +1988,8 @@ const chatWhen = {
         },
         // the date and time picked, in this device's zone, when it may be used
         customAt() {
-            const at = this.custom ? new Date(this.custom).getTime() : NaN;
+            // read in the user's zone, as the choices and their labels are
+            const at = this.custom ? moqui.chat.wallTime(this.custom) : NaN;
             return moqui.chat.timeAllowed(at, Date.now()) ? at : null;
         }
     },
@@ -2021,7 +2022,9 @@ const scheduledTemplate = `
                 <div class="row no-wrap">
                     <q-btn v-if="room.canEditScheduled(row)" flat round dense size="sm" icon="sym_o_edit" class="m-chat-scheduled-edit" :aria-label="t('Edit')" @click="edit(row)">
                         <q-tooltip>{{t('Edit')}}</q-tooltip></q-btn>
-                    <q-btn v-if="room.canSendScheduled(row)" flat round dense size="sm" icon="sym_o_send" class="m-chat-scheduled-now" :aria-label="t('Send now')" @click="room.sendScheduledNow(row)">
+                    <q-btn v-if="row.reviewNeeded && room.isHolder(row)" flat dense no-caps size="sm" color="primary" class="m-chat-scheduled-review" :label="t('Review and send')"
+                            @click="room.reviewScheduled(row)"></q-btn>
+                    <q-btn v-else-if="room.canSendScheduled(row)" flat round dense size="sm" icon="sym_o_send" class="m-chat-scheduled-now" :aria-label="t('Send now')" @click="room.sendScheduledNow(row)">
                         <q-tooltip>{{t('Send now')}}</q-tooltip></q-btn>
                     <q-btn v-if="row.status === 'sent'" flat round dense size="sm" icon="sym_o_close" class="m-chat-scheduled-dismiss" :aria-label="t('Dismiss')" @click="room.dismissScheduled(row)">
                         <q-tooltip>{{t('Dismiss')}}</q-tooltip></q-btn>
@@ -4182,17 +4185,22 @@ const chatRoom = {
             }
         },
         isHolder(row) { return !!(row && row.held && moqui.crypto && moqui.crypto.thisDeviceId && moqui.crypto.thisDeviceId() === row.heldByDeviceId); },
-        scheduledFailed(row) { return row.status === 'failed' || (row.status === 'scheduled' && row.deviceGone); },
+        scheduledFailed(row) { return row.status === 'failed' || moqui.chat.heldStuck(row) || (row.status === 'scheduled' && row.reviewNeeded); },
         scheduledIcon(row) { return this.scheduledFailed(row) ? 'sym_o_error' : row.status === 'sent' ? 'sym_o_schedule' : row.held ? 'sym_o_devices' : 'sym_o_schedule_send'; },
         reasonText(code) {
             return t({ notMember: 'You are no longer in the room', archived: 'The room is archived', blocked: 'You blocked this conversation',
-                accountDisabled: 'Your account cannot send now', deviceGone: 'The draft was on a device that is gone',
+                accountDisabled: 'Your account is closed', noAccess: 'You no longer have the app', deviceGone: 'The draft was on a device that is gone',
+                deviceAway: 'The device that keeps it has not been open since it was due',
                 draftLost: 'The draft was lost on the device that held it' }[code] || 'The message could not be sent');
         },
         scheduledWhen(row) {
             if (row.status === 'failed') return fill(t('Not sent: {reason}'), { reason: this.reasonText(row.reasonCode) });
+            if (row.status === 'sent' && row.sentAfterCancel) return fill(t('Sent after you cancelled it, at {time}'), { time: this.whenText(row.sentDate) });
             if (row.status === 'sent') return fill(t('Sent late, at {time}'), { time: this.whenText(row.sentDate) });
             if (row.deviceGone) return fill(t("Can't be sent: the draft was on {device}"), { device: row.heldByDeviceName || t('another device') });
+            // a device not seen for a week: it fails once overdue that long
+            if (row.deviceAway) return fill(t("Can't be sent from {device}: it has not been open for a week"), { device: row.heldByDeviceName || t('another device') });
+            if (row.reviewNeeded) return t('Waiting for you: someone in the room has a new device or identity');
             if (row.held && !this.isHolder(row)) return fill(t('Sends {time}, from {device}'), { time: this.whenText(row.sendDate), device: row.heldByDeviceName || t('another device') });
             return fill(t('Sends {time}'), { time: this.whenText(row.sendDate) });
         },
@@ -4202,7 +4210,15 @@ const chatRoom = {
             return fill(t('Held on {device}'), { device: row.heldByDeviceName || t('another device') });
         },
         canEditScheduled(row) { return row.status === 'scheduled' && !row.deviceGone && (!row.held || this.isHolder(row)); },
-        canSendScheduled(row) { return (row.status === 'scheduled' || row.status === 'failed') && !row.deviceGone && (!row.held || this.isHolder(row)); },
+        // a failed held one is not sent again: its draft went from this device
+        canSendScheduled(row) { return row.held ? row.status === 'scheduled' && !row.deviceGone && this.isHolder(row) : row.status === 'scheduled' || row.status === 'failed'; },
+        // a held message waiting for the sender's decision: the problems asked as the composer asks them, then sent
+        reviewScheduled(row) {
+            return moqui.chat.sendHeld(row, (name) => this.url(name), true).then((out) => {
+                if (out && out.review) this.sealRefused(out.error, () => this.reviewScheduled(row));
+                return this.reloadSchedule();
+            }, (err) => { console.error('A held message was not sent', err); return this.reloadSchedule(); });
+        },
         retimeScheduled(row) {
             this.askWhen('send', t('Change the time'), '', null, (at) => this.post('updateScheduled', { chatScheduledMessageId: row.chatScheduledMessageId, sendDate: at,
                 deviceId: row.held ? moqui.crypto.thisDeviceId() || '' : '' }).then(() => this.reloadSchedule(), () => {}));
@@ -4564,7 +4580,14 @@ module.exports = {
                 reminder: 'sym_o_alarm' }[item.kind] || 'sym_o_chat';
         },
         // ---- scheduled messages and reminders (Comms-Messaging phase 15) ----
-        loadSchedule() { return moqui.chat.loadSchedule((name) => this.url(name)).then(() => this.sendHeldDue()); },
+        // read, then this device's drafts of rows it no longer holds waiting dropped, and its due ones sent
+        loadSchedule() {
+            return moqui.chat.loadSchedule((name) => this.url(name)).then((schedule) => {
+                const deviceId = moqui.crypto && moqui.crypto.thisDeviceId ? moqui.crypto.thisDeviceId() : null;
+                if (schedule && schedule.loaded && deviceId) moqui.chat.pruneHeld(schedule.scheduledList, deviceId);
+                return this.sendHeldDue();
+            });
+        },
         // this device's held messages that are due (an encrypted room's), one at a time; one that fails waits for the next look
         sendHeldDue() {
             const crypto = moqui.crypto;
@@ -4572,8 +4595,10 @@ module.exports = {
             const due = moqui.chat.dueHeld(moqui.chat.state.schedule.scheduledList, crypto.thisDeviceId(), Date.now());
             if (!due.length) return;
             this.heldBusy = true;
-            due.reduce((chain, row) => chain.then(() => moqui.chat.sendHeld(row, (name) => this.url(name), false)
-                .catch((err) => console.error('A held message was not sent; it is tried again', err))), Promise.resolve())
+            due.reduce((chain, row) => chain.then(() => moqui.chat.sendHeld(row, (name) => this.url(name), false).then((out) => {
+                // a verified person's new device or identity: the sender decides, from the room's scheduled list
+                if (out && out.review) moqui.notifyMessages([{ type: 'warning', message: t('A scheduled message waits for you: someone in the room has a new device or identity') }]);
+            }).catch((err) => console.error('A held message was not sent; it is tried again', err))), Promise.resolve())
                 .then(() => { this.heldBusy = false; return moqui.chat.loadSchedule((name) => this.url(name)); });
         },
         // the reminders at the top of Activity: the pending ones, soonest first

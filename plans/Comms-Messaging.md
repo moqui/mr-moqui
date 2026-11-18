@@ -2984,9 +2984,8 @@ someone else is "not found".
 
 **The send at its time** (`deliver#ScheduledMessage`):
 1. Lock the row; go on only if it is still `CsmScheduled` and due (another node or Send now took it otherwise).
-2. Sign in as the sender (`ec.user.internalLoginUser`, as `SmsSpam.js` `asUser` does), so the chat rules take the
-   sender at the send time. The artifact grants are not asked again (a job has no screen to inherit them from; the
-   user's screen checked them when the row was made). A disabled or ended account is `accountDisabled`.
+2. Run as the sender (`run#AsSender`, see the review fixes below), so the chat rules take the sender at the send time
+   and the app's screens are checked again as them.
 3. Refuse when the sender's place in the room is out of their sight (`filterEnumId` `CmfBlocked`: they blocked its
    number or its person since): reason `blocked`.
 4. `send#Message` with the row's body, reply, thread, files and records, `roomUrl` from `comms_app_root`, and
@@ -3167,6 +3166,35 @@ messages.
 
 **Done when.** The regression specs above pass within their budgets, and on a real phone the row of §18.4: a long press
 on Send, and a reminder's notification on the phone.
+
+**Review fixes (2026-11-18).** What the review changed in the entry above:
+- *The due queue.* The server's due query takes only the rows it holds. Held rows have their own bounded queries: a
+  revoked device fails its rows (D3's daily revoke of unused automatic devices among them), and a held row due more than
+  `chat_held_overdue_days` (7) ago fails `deviceAway`. A device not seen for 7 days shows as "can't be sent from" it.
+  At most `chat_schedule_user_per_run` (20) messages of one sender go in a run; the rest wait.
+- *The sender at the send time* is `run#AsSender` (`crates/moqui-core/src/service/chat_schedule.rs`): the user set as
+  `user::as_user` sets it, with none of a sign-in's checks, so a required or expired password change stops nothing. Only
+  an account closed for good or terminated fails (`accountDisabled`). A sign-in lock (`disabledDateTime` within
+  `login/@disable-minutes`) waits and is not counted. The screens of the request that made the row (`screenPathJson`,
+  root first) are pushed again as the user: one who lost the app's grant fails `noAccess`, and a reminder drops. Reminders
+  follow the same rules.
+- *No plain text kept.* `body`, `bodyText` and `recordsJson` are cleared when a row is sent or cancelled. A failed row
+  keeps them 7 days, then the daily cleanup removes it. A new text redoes the record cards.
+- *The held send.* The device sends through `send#HeldMessage` (the `sendHeld` transition), which locks the row and
+  refuses (`notClaimed`) unless it still waits, claimed by that device with its lease live. A message cancelled
+  meanwhile does not go. One that went before a cancel or a revoke is marked sent by the next claim or report, and the
+  list says "sent after you cancelled".
+  - A verified person's new device or identity puts the row in review (`reviewNeeded`), which the list shows with
+    "Review and send" (the composer's problems box).
+  - Any other client failure is one try (`report#HeldFailure`), and the fifth fails it with the notice.
+  - A failed held row is not sent again, and its draft is dropped. On each read of the schedule the device drops the
+    drafts of rows it no longer holds waiting.
+- *Time zones.* The choices and a picked time are in the user's zone (`moqui.l10n.zonedWall`, `wallMillis`), the one the
+  labels use. Monday is Monday there.
+- *Tests added:* the account rules, the app's screens, the five tries, 210 held rows before a server-held one, the
+  per-run cap, the locked held send and a cancel before a stalled send, a message that went before a revoke
+  (`ChatSchedule`, 12 features); `run#AsSender`'s account rule (`chat_schedule` Rust test); the user's zone, the drafts
+  pruned, the real `sealLocal`/`openLocal` round trip and `sendHeld`'s paths (`WebrootChat`).
 
 **Status (2026-11-18): built.**
 - Regression: `ChatSchedule` (8 features, 0.2 s), `chat_push` (26 tests, the reminder's among them), `WebrootChat` (4

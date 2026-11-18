@@ -50,11 +50,13 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="update" noun="ScheduledMessage">
-        <description>A waiting message's new body or sendDate (its files stay). A held one (an encrypted room's): its time
-            only, from its device (deviceId). Refused: notScheduled (sent, or no longer waiting), notHolder, badTime.</description>
+        <description>A waiting message's new body (with its record cards, recordList, looked up again from it) or sendDate
+            (its files stay). A held one (an encrypted room's): its time only, from its device (deviceId). Refused:
+            notScheduled (sent, or no longer waiting), notHolder, badTime.</description>
         <in-parameters>
             <parameter name="chatScheduledMessageId" required="true"/>
             <parameter name="body" allow-html="safe"/>
+            <parameter name="recordList" type="List"/>
             <parameter name="sendDate" type="Timestamp"/>
             <parameter name="deviceId"/>
         </in-parameters>
@@ -93,11 +95,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="deliver" noun="ScheduledMessage" allow-remote="false">
         <description>Internal, in a transaction of its own (send#DueMessages, send#ScheduledMessageNow): the send of one
-            message the server holds that is due (or atOnce), its row locked, as its sender signed in (their rights now): not
-            when they are no longer a member (notMember), the room is archived (archived), they blocked its number or person
-            since (blocked) or their account cannot sign in (accountDisabled); else send#Message with clientRef
-            sched:(id), which a retry answers with the message it made, and CsmSent. A refusal is an error with reasonCode:
-            the send rolls back and the caller fails the row (fail#ScheduledMessage). skipped: not waiting or not due.</description>
+            message the server holds that is due (or atOnce), its row locked, as its sender at this time (run#AsSender): not
+            when their account is closed or terminated (accountDisabled), they lost the app's screens (noAccess), they are no
+            longer a member (notMember), the room is archived (archived) or they blocked its number or person since
+            (blocked); else send#Message with clientRef sched:(id), which a retry answers with the message it made, and
+            CsmSent with its text cleared. A sign-in lock of the account is waiting: nothing is done or counted. A refusal is
+            an error with reasonCode: the send rolls back and the caller fails the row (fail#ScheduledMessage). skipped:
+            not waiting or not due.</description>
         <in-parameters>
             <parameter name="chatScheduledMessageId" required="true"/>
             <parameter name="atOnce" type="Boolean" default="false"/>
@@ -105,6 +109,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
             <parameter name="skipped" type="Boolean"/>
+            <parameter name="waiting" type="Boolean"/>
             <parameter name="reasonCode"/>
             <parameter name="failText"/>
         </out-parameters>
@@ -126,9 +131,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="send" noun="DueMessages" transaction="ignore" authenticate="anonymous-all">
         <description>The ServiceJob send_DueChatMessages_frequent, every minute: the waiting messages the server holds that
-            are due, oldest first, at most limit a run and none started after timeBudgetSeconds, each in a transaction of
-            its own (deliver#ScheduledMessage): one that fails is logged and the rest go on. A held message (an encrypted
-            room's) is its device's to send; one whose device was revoked fails (deviceGone).</description>
+            are due (the held ones never in their way), oldest first, at most limit a run, chat_schedule_user_per_run (20)
+            of one sender, and none started after timeBudgetSeconds, each in a transaction of its own
+            (deliver#ScheduledMessage): one that fails is logged and the rest go on. A held message (an encrypted room's) is
+            its device's to send: one whose device was revoked fails (deviceGone), and one due more than
+            chat_held_overdue_days (7) ago fails (deviceAway: its device was not open since).</description>
         <in-parameters>
             <parameter name="limit" type="Integer" default="200"/>
             <parameter name="timeBudgetSeconds" type="Integer" default="45"/>
@@ -142,10 +149,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="claim" noun="HeldMessage">
         <description>An encrypted room's held message, taken by its device (deviceId, the one that holds it) to send: when
-            due, or with atOnce (Send now), still waiting and with no live lease, a lease of 2 minutes; claimed true, and its
-            clientRef. sent true when the room already has its message (a report that was lost: it is marked sent). A sender
-            who is no longer a member, an archived room or a blocked conversation fails it (reasonCode). Refused:
-            notHolder.</description>
+            due, or with atOnce (Send now, Review and send), still waiting, not waiting for the sender's review (unless
+            atOnce) and with no live lease, a lease of 2 minutes; claimed true, and its clientRef. sent true when the room
+            already has its message, whatever the row's status (a report that was lost, before a revoke or a cancel: it is
+            marked sent). A failed one is not taken again. A sender who is no longer a member, an archived room or a blocked
+            conversation fails it (reasonCode). Refused: notHolder.</description>
         <in-parameters>
             <parameter name="chatScheduledMessageId" required="true"/>
             <parameter name="deviceId" required="true"/>
@@ -160,10 +168,50 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('claimHeld', context))</script></actions>
     </service>
 
+    <service verb="send" noun="HeldMessage">
+        <description>The holding device's encrypted send of a held message it claimed (encrypted, the Megolm ciphertext, and
+            mentionUserIdList), the row locked: refused (notClaimed) unless it still waits, claimed by deviceId with its lease
+            live, so a message cancelled meanwhile does not go; then send#Message with clientRef sched:(id) and CsmSent in the
+            same transaction. Out: eventSeq, event, sentLate.</description>
+        <in-parameters>
+            <parameter name="chatScheduledMessageId" required="true"/>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="encrypted" type="Map" required="true"/>
+            <parameter name="mentionUserIdList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="event" type="Map"/>
+            <parameter name="sentLate" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('sendHeld', context))</script></actions>
+    </service>
+
+    <service verb="report" noun="HeldFailure">
+        <description>The holding device could not send a held message: review true when it waits for the sender's decision
+            (a verified person's new device or identity: listed with Review and send, not sent by itself meanwhile, not
+            counted); else one try more (reasonCode, failText), and after 5 it fails and the sender is told.</description>
+        <in-parameters>
+            <parameter name="chatScheduledMessageId" required="true"/>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="review" type="Boolean" default="false"/>
+            <parameter name="reasonCode"/>
+            <parameter name="failText" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="failed" type="Boolean"/>
+            <parameter name="reviewNeeded" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('reportHeld', context))</script></actions>
+    </service>
+
     <service verb="complete" noun="HeldMessage">
         <description>The holding device's report: eventSeq, the sender's message of the room with clientRef sched:(id),
-            makes it CsmSent (sentLate when more than 5 minutes after its time); draftLost true fails it (draftLost: the
-            device no longer has the draft). Refused for another event, another device.</description>
+            makes it CsmSent whatever its status (sentLate when more than 5 minutes after its time; sentAfterCancel when it
+            was cancelled meanwhile); draftLost true fails it (draftLost: the device no longer has the draft). Refused for
+            another event, another device.</description>
         <in-parameters>
             <parameter name="chatScheduledMessageId" required="true"/>
             <parameter name="deviceId" required="true"/>
@@ -215,14 +263,17 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="fire" noun="Reminder" allow-remote="false">
-        <description>Internal, in a transaction of its own (send#DueReminders): a reminder that is due, as its user: dropped
-            (CrmDropped) when the message is gone (messageGone) or the room can no longer be read (noAccess); else a
+        <description>Internal, in a transaction of its own (send#DueReminders): a reminder that is due, as its user at this
+            time (run#AsSender): waiting on a sign-in lock of the account; dropped (CrmDropped) when the message is gone
+            (messageGone), the account is closed (accountDisabled), or the app's screens or the room can no longer be read
+            (noAccess); else a
             CuaReminder Activity row, its push (queue#ReminderPush) and the ChatReminder notification, each logged when it
             fails, and CrmFired. Out: fired, dropped.</description>
         <in-parameters><parameter name="chatMessageReminderId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="fired" type="Boolean"/>
             <parameter name="dropped" type="Boolean"/>
+            <parameter name="waiting" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('fire', context))</script></actions>
     </service>
@@ -234,6 +285,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="firedCount" type="Integer"/>
             <parameter name="droppedCount" type="Integer"/>
+            <parameter name="waitingCount" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('sendDueReminders', context))</script></actions>
     </service>
@@ -255,9 +307,31 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="queuedCount" type="Integer"/></out-parameters>
     </service>
 
+    <service verb="run" noun="AsSender" type="rust" location="moqui_core::service::chat_schedule::run_as_sender" allow-remote="false">
+        <description>Internal (the jobs): serviceName, ChatServices send#Message or get#RoomAccess, run as userId at this time:
+            accountState ok, closed (closed for good, or terminated) or locked (a sign-in lock in its window: try again
+            later); the screens of screenList (root first, those the row was made through) pushed as the user, else
+            reasonCode noAccess; then the service with authorization off, its out-parameters as result and its errors as
+            errors. A required or expired password change does not stop it: the user is set with none of a sign-in's
+            checks.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="parameters" type="Map"/>
+            <parameter name="screenList" type="List"/>
+            <parameter name="nowMillis"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="accountState"/>
+            <parameter name="reasonCode"/>
+            <parameter name="result" type="Map"/>
+            <parameter name="errors"/>
+        </out-parameters>
+    </service>
+
     <service verb="clean" noun="ScheduledMessages" authenticate="anonymous-all" transaction="ignore">
-        <description>The ServiceJob clean_ChatSchedule_daily: sent and cancelled messages and fired, cancelled and dropped
-            reminders after 7 days, failed messages after 30 with their files; each on its own.</description>
+        <description>The ServiceJob clean_ChatSchedule_daily: sent, cancelled and failed messages (a failed one with its text
+            and files) and fired, cancelled and dropped reminders after 7 days; each on its own.</description>
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatSchedule.js').execute('clean', context))</script></actions>
     </service>

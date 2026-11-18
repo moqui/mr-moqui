@@ -15,6 +15,7 @@
  *   moqui.l10n.localize(original)                 from the catalog of the locale (loadCatalog), else the text itself
  *   moqui.l10n.formatZoned(value, intlOptions)    a time stamp in the user's language and zone (Intl options, not a pattern)
  *   moqui.l10n.dayKey(value), dayNumber(value)    its calendar day in the user's zone: yyyy-MM-dd, and a day count to compare
+ *   moqui.l10n.zonedWall(value), wallMillis(dayKey, hour, minute)   its wall clock there, and a wall clock time's stamp
  */
 (function (root, factory) {
     "use strict";
@@ -445,6 +446,27 @@
     // (not 24 hour periods), so Today, Yesterday and day groups hold across a daylight saving change.
     const dayKey = (value) => formatFields(zonedFields(toInstant(value), displayZone()), "yyyy-MM-dd");
     const dayNumber = (value) => Date.parse(dayKey(value) + "T00:00:00Z") / 86400000;
+    // The wall clock of a time stamp in the display zone ({dayKey, weekday: 0 Sunday to 6, hour, minute}), and the time
+    // stamp of a wall clock time there (yyyy-MM-dd, hour, minute), across a daylight saving change: a time the change
+    // skips is the one after it.
+    const zonedWall = (value) => {
+        const fields = zonedFields(toInstant(value), displayZone());
+        return { dayKey: formatFields(fields, "yyyy-MM-dd"), weekday: fields.weekday, hour: fields.hour, minute: fields.minute };
+    };
+    const wallMillis = (key, hour, minute) => {
+        const match = /^(\d{4})-(\d\d)-(\d\d)$/.exec(String(key));
+        if (!match) return NaN;
+        const zone = displayZone();
+        const target = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), hour || 0, minute || 0);
+        let guess = target;
+        for (let pass = 0; pass < 3; pass++) {
+            const fields = zonedFields(new Date(guess), zone);
+            const wall = Date.UTC(fields.year, fields.month - 1, fields.day, fields.hour, fields.minute, fields.second);
+            if (wall === target) break;
+            guess += target - wall;
+        }
+        return guess;
+    };
 
     const formatDate = (value, pattern) => {
         const match = /^(\d{4})-(\d\d)-(\d\d)/.exec(String(value));
@@ -550,7 +572,7 @@
 
     return {
         format, formatNumber, formatCurrency: formatCurrencyWith(false), formatCurrencyNoSymbol: formatCurrencyWith(true),
-        formatCurrencyAmount, formatTimestamp, formatDate, formatTime, formatZoned, dayKey, dayNumber, isDatePattern, localize, loadCatalog,
+        formatCurrencyAmount, formatTimestamp, formatDate, formatTime, formatZoned, dayKey, dayNumber, zonedWall, wallMillis, isDatePattern, localize, loadCatalog,
         parseDecimal, roundHalfEven,
         setLocale: (locale) => { state.locale = String(locale || "en_US").replace("-", "_"); },
         setTimeZone: (zone) => { state.timeZone = zone || "UTC"; state.zoneSet = !!zone; },

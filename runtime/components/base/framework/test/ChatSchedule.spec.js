@@ -13,6 +13,9 @@ const USERS = [A, B, C]
 const CHAT = "org.moqui.chat.ChatServices."
 const SCHED = "org.moqui.chat.ChatScheduleServices."
 const GROUP = "CHAT_SCHED_SPEC"
+// a screen of the app the rows are made through: the spec's users hold it, D does not
+const APP_GROUP = "CHAT_SCHED_APP"
+const APP_SCREEN = "component://tools/screen/System.xml"
 const MINUTE = 60 * 1000
 const T0 = Date.now()
 
@@ -68,9 +71,13 @@ function makeUsers() {
     make("moqui.security.ArtifactAuthz", {artifactAuthzId: GROUP, userGroupId: GROUP, artifactGroupId: GROUP, authzTypeEnumId: "AUTHZT_ALWAYS",
         authzActionEnumId: "AUTHZA_ALL"})
     for (const userId of USERS) make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId, fromDate: new Date(T0 - 3600000)})
+    make("moqui.security.ArtifactGroup", {artifactGroupId: APP_GROUP, description: "Chat schedule spec app"})
+    make("moqui.security.ArtifactGroupMember", {artifactGroupId: APP_GROUP, artifactName: APP_SCREEN, artifactTypeEnumId: "AT_XML_SCREEN", inheritAuthz: "Y"})
+    make("moqui.security.ArtifactAuthz", {artifactAuthzId: APP_GROUP, userGroupId: GROUP, artifactGroupId: APP_GROUP, authzTypeEnumId: "AUTHZT_ALWAYS",
+        authzActionEnumId: "AUTHZA_ALL"})
     // A's two encryption devices, and a push device: an app's distributor whose device key is good, at an endpoint that
     // takes nothing (the worker's sends fail at once; the rows stay)
-    for (const deviceId of ["DEVA1", "DEVA2"]) make("moqui.chat.ChatDevice", {userId: A, deviceId, displayName: "Browser " + deviceId, createdDate: new Date(T0)})
+    for (const deviceId of ["DEVA1", "DEVA2", "DEVA3"]) make("moqui.chat.ChatDevice", {userId: A, deviceId, displayName: "Browser " + deviceId, createdDate: new Date(T0)})
     make("moqui.security.UserLoginKey", {loginKey: "CHAT_SCHED_DEVICE_KEY", userId: A, fromDate: new Date(T0 - 3600000)})
     make("moqui.security.user.WebPushSubscription", {subscriptionId: "CHAT_SCHED_PUSH", userId: A, pushProviderEnumId: "PushUnified",
         endpoint: "http://127.0.0.1:9/chat-sched", endpointHash: "chat-sched-spec", loginKey: "CHAT_SCHED_DEVICE_KEY", p256dhKey: "x", authSecret: "y"})
@@ -78,7 +85,7 @@ function makeUsers() {
 function cleanUp() {
     sys(() => {
         ec.entity.find("moqui.chat.ChatScheduledMessage").condition("senderUserId", "in", USERS.concat([D])).deleteAll()
-        ec.entity.find("moqui.chat.ChatMessageReminder").condition("userId", "in", USERS).deleteAll()
+        ec.entity.find("moqui.chat.ChatMessageReminder").condition("userId", "in", USERS.concat([D])).deleteAll()
         ec.entity.find("moqui.chat.PushOutbox").condition("userId", "in", USERS).deleteAll()
         ec.entity.find("moqui.chat.ChatUserBlock").condition("userId", "in", USERS).deleteAll()
     })
@@ -145,30 +152,23 @@ feature("a message the server holds goes at its time as its sender, with its fil
         // the daily cleanup of unsent files leaves a scheduled message's
         as(null, CHAT + "clean#PendingAttachments", {})
         const fileKept = row("moqui.chat.ChatAttachment", {chatAttachmentId: file}) != null
-        // one of D's, as the screen made it
-        as(A, CHAT + "add#Member", {chatRoomId: shared.team, userIdList: [D]})
-        make("moqui.chat.ChatScheduledMessage", {chatScheduledMessageId: "CSM_SPEC_D", chatRoomId: shared.team, senderUserId: D, statusEnumId: "CsmScheduled",
-            sendDate: new Date(T0 + 2 * MINUTE + 1000), body: "<p>from D</p>", bodyText: "from D", attemptCount: 0})
         const early = job("send#DueMessages")
         const before = messages(B, shared.team).length
         clock = T0 + 3 * MINUTE
         const due = job("send#DueMessages")
-        const sent = messages(A, shared.team).filter((event) => event.senderUserId !== D)
-        const fromD = messages(B, shared.team).filter((event) => event.senderUserId === D)
+        const sent = messages(A, shared.team)
         const again = job("send#DueMessages")
         const after = scheduled(shared.id)
-        return {made, fileKept, early, before, due, sent, fromD, again, after}
+        return {made, fileKept, early, before, due, sent, again, after}
     },
-    then({made, fileKept, early, before, due, sent, fromD, again, after}) {
-        fromD.length == 1
-        fromD[0].body.includes("from D")
+    then({made, fileKept, early, before, due, sent, again, after}) {
         made.errors == ""
         made.scheduled.status == "scheduled"
         made.scheduled.files.length == 1
         fileKept
         early.sentCount == 0
         before == 1
-        due.sentCount == 2
+        due.sentCount == 1
         sent.length == 2
         sent[1].senderUserId == A
         sent[1].body.includes("see you at 9")
@@ -178,6 +178,8 @@ feature("a message the server holds goes at its time as its sender, with its fil
         again.sentCount == 0
         after.statusEnumId == "CsmSent"
         after.sentEventSeq == sent[1].eventSeq
+        after.body == null
+        after.bodyText == null
     }
 })
 
@@ -193,10 +195,19 @@ feature("edit and time before it goes; refused once sent; cancel removes its fil
             location: "dbresource://chat/spec/b.txt", uploadedDate: new Date(clock)})
         const two = as(A, SCHED + "schedule#Message", {chatRoomId: shared.team, chatAttachmentIdList: ["CHAT_SCHED_FILE2"], sendDate: clock + 30 * MINUTE})
         const cancelled = as(A, SCHED + "cancel#ScheduledMessage", {chatScheduledMessageId: two.chatScheduledMessageId})
-        return {edited, notMine, now, last, late, cancelled, status: scheduled(two.chatScheduledMessageId).statusEnumId,
+        // a new text redoes its record cards
+        const cards = as(A, SCHED + "schedule#Message", {chatRoomId: shared.team, body: "<p>see the order</p>", recordList: [{entity: "mantle.order.OrderHeader", id: "O1"}],
+            sendDate: clock + 30 * MINUTE}).chatScheduledMessageId
+        as(A, SCHED + "update#ScheduledMessage", {chatScheduledMessageId: cards, body: "<p>never mind</p>", recordList: []})
+        const recards = scheduled(cards).recordsJson
+        as(A, SCHED + "cancel#ScheduledMessage", {chatScheduledMessageId: cards})
+        return {edited, notMine, now, last, late, cancelled, recards, cancelledRow: scheduled(cards), status: scheduled(two.chatScheduledMessageId).statusEnumId,
             file: row("moqui.chat.ChatAttachment", {chatAttachmentId: "CHAT_SCHED_FILE2"})}
     },
-    then({edited, notMine, now, last, late, cancelled, status, file}) {
+    then({edited, notMine, now, last, late, cancelled, recards, cancelledRow, status, file}) {
+        recards == null
+        cancelledRow.body == null
+        cancelledRow.bodyText == null
         edited.errors == ""
         edited.scheduled.bodyText == "edited"
         notMine.reasonCode == "notFound"
@@ -270,6 +281,159 @@ feature("in a bridged room it goes out through the bridge's delivery at its time
     }
 })
 
+feature("the account at its time: a sign-in lock waits and is not counted, a password change does not stop it, a closed account fails; reminders the same", {
+    when() {
+        const withC = room(A, {roomName: "Sched account", memberUserIdList: [B]})
+        as(A, CHAT + "send#Message", {chatRoomId: withC, body: "<p>hello B</p>"})
+        const seq = messages(B, withC)[0].eventSeq
+        const first = as(B, SCHED + "schedule#Message", {chatRoomId: withC, body: "<p>after the lock</p>", sendDate: clock + 2 * MINUTE}).chatScheduledMessageId
+        const second = as(B, SCHED + "schedule#Message", {chatRoomId: withC, body: "<p>after closing</p>", sendDate: clock + 30 * MINUTE}).chatScheduledMessageId
+        const m1 = as(B, SCHED + "set#Reminder", {chatRoomId: withC, eventSeq: seq, remindDate: clock + 2 * MINUTE}).chatMessageReminderId
+        const account = (fields) => sys(() => { const a = ec.entity.find("moqui.security.UserAccount").condition("userId", B).one(); a.setFields(fields, true, null, null); a.update() })
+        // a sign-in lock (failed passwords) at the due time
+        account({disabled: "Y", disabledDateTime: new Date(clock + MINUTE)})
+        clock += 3 * MINUTE
+        const lockedRun = job("send#DueMessages")
+        const lockedReminders = job("send#DueReminders")
+        const whileLocked = scheduled(first)
+        const reminderLocked = row("moqui.chat.ChatMessageReminder", {chatMessageReminderId: m1}).statusEnumId
+        // the lock's window past, and a password change required: it goes
+        account({requirePasswordChange: "Y"})
+        clock += 10 * MINUTE
+        job("send#DueMessages")
+        job("send#DueReminders")
+        const afterLock = scheduled(first)
+        const reminderAfter = row("moqui.chat.ChatMessageReminder", {chatMessageReminderId: m1}).statusEnumId
+        // closed for good
+        account({disabled: "Y", disabledDateTime: null, requirePasswordChange: "N"})
+        const m2 = sys(() => { const r = ec.entity.makeValue("moqui.chat.ChatMessageReminder"); r.setFields({chatMessageReminderId: "CMR_SPEC_B", userId: B,
+            chatRoomId: withC, eventSeq: seq, statusEnumId: "CrmPending", remindDate: new Date(clock + 20 * MINUTE)}, true, null, null); r.create(); return "CMR_SPEC_B" })
+        clock += 30 * MINUTE
+        job("send#DueMessages")
+        job("send#DueReminders")
+        const closed = scheduled(second)
+        const reminderClosed = row("moqui.chat.ChatMessageReminder", {chatMessageReminderId: m2})
+        account({disabled: "N"})
+        return {lockedRun, lockedReminders, whileLocked, reminderLocked, afterLock, reminderAfter, closed, reminderClosed}
+    },
+    then({lockedRun, lockedReminders, whileLocked, reminderLocked, afterLock, reminderAfter, closed, reminderClosed}) {
+        lockedRun.sentCount == 0
+        lockedRun.failedCount == 0
+        whileLocked.statusEnumId == "CsmScheduled"
+        whileLocked.attemptCount == 0
+        lockedReminders.waitingCount == 1
+        reminderLocked == "CrmPending"
+        afterLock.statusEnumId == "CsmSent"
+        reminderAfter == "CrmFired"
+        closed.statusEnumId == "CsmFailed"
+        closed.reasonCode == "accountDisabled"
+        reminderClosed.statusEnumId == "CrmDropped"
+        reminderClosed.reasonCode == "accountDisabled"
+    }
+})
+
+feature("the app's screens at its time: a sender who lost the app's grant sends nothing (noAccess) and their reminder drops; one who holds it sends", {
+    when() {
+        as(A, CHAT + "add#Member", {chatRoomId: shared.team, userIdList: [D]})
+        const screens = JSON.stringify([APP_SCREEN])
+        const due = new Date(clock - MINUTE)
+        make("moqui.chat.ChatScheduledMessage", {chatScheduledMessageId: "CSM_SPEC_D", chatRoomId: shared.team, senderUserId: D, statusEnumId: "CsmScheduled",
+            sendDate: due, body: "<p>from D</p>", bodyText: "from D", attemptCount: 0, screenPathJson: screens})
+        make("moqui.chat.ChatScheduledMessage", {chatScheduledMessageId: "CSM_SPEC_A", chatRoomId: shared.team, senderUserId: A, statusEnumId: "CsmScheduled",
+            sendDate: due, body: "<p>from A, through the app</p>", bodyText: "from A, through the app", attemptCount: 0, screenPathJson: screens})
+        make("moqui.chat.ChatMessageReminder", {chatMessageReminderId: "CMR_SPEC_D", userId: D, chatRoomId: shared.team, eventSeq: shared.first,
+            statusEnumId: "CrmPending", remindDate: due, screenPathJson: screens})
+        const run = job("send#DueMessages")
+        job("send#DueReminders")
+        return {run, d: scheduled("CSM_SPEC_D"), a: scheduled("CSM_SPEC_A"), reminder: row("moqui.chat.ChatMessageReminder", {chatMessageReminderId: "CMR_SPEC_D"}),
+            fromD: messages(B, shared.team).filter((event) => event.senderUserId === D).length}
+    },
+    then({run, d, a, reminder, fromD}) {
+        a.statusEnumId == "CsmSent"
+        d.statusEnumId == "CsmFailed"
+        d.reasonCode == "noAccess"
+        fromD == 0
+        reminder.statusEnumId == "CrmDropped"
+        reminder.reasonCode == "noAccess"
+    }
+})
+
+feature("a failure of no reason of its own is tried again, five tries in all; a held message's client failures count the same, a review waits uncounted", {
+    when() {
+        const id = as(A, SCHED + "schedule#Message", {chatRoomId: shared.team, body: "<p>flaky</p>", sendDate: clock + 30 * MINUTE}).chatScheduledMessageId
+        const noticesBefore = notices(A, "ChatScheduleFailed")
+        const tries = []
+        for (let i = 0; i < 4; i++) tries.push(job("fail#ScheduledMessage", {chatScheduledMessageId: id, failText: "deadlock"}).failed)
+        const fourth = scheduled(id)
+        const fifth = job("fail#ScheduledMessage", {chatScheduledMessageId: id, failText: "deadlock"})
+        const held = as(A, SCHED + "schedule#Message", {chatRoomId: shared.sealed, sendDate: clock + 2 * MINUTE, heldByDeviceId: "DEVA1"}).chatScheduledMessageId
+        clock += 3 * MINUTE
+        const review = as(A, SCHED + "report#HeldFailure", {chatScheduledMessageId: held, deviceId: "DEVA1", review: true})
+        const waits = as(A, SCHED + "claim#HeldMessage", {chatScheduledMessageId: held, deviceId: "DEVA1"})
+        const reviewed = as(A, SCHED + "claim#HeldMessage", {chatScheduledMessageId: held, deviceId: "DEVA1", atOnce: true})
+        const heldTries = []
+        for (let i = 0; i < 5; i++) heldTries.push(as(A, SCHED + "report#HeldFailure", {chatScheduledMessageId: held, deviceId: "DEVA1", reasonCode: "encryptFailed",
+            failText: "no session"}).failed)
+        // Send now on a failed held one: not taken again
+        const again = as(A, SCHED + "claim#HeldMessage", {chatScheduledMessageId: held, deviceId: "DEVA1", atOnce: true})
+        return {tries, fourth, fifth, row: scheduled(id), review, waits, reviewed, heldTries, heldRow: scheduled(held), again,
+            told: notices(A, "ChatScheduleFailed") - noticesBefore}
+    },
+    then({tries, fourth, fifth, row, review, waits, reviewed, heldTries, heldRow, again, told}) {
+        tries.every((failed) => failed === false)
+        fourth.statusEnumId == "CsmScheduled"
+        fourth.attemptCount == 4
+        fifth.failed == true
+        row.statusEnumId == "CsmFailed"
+        row.reasonCode == "failed"
+        review.reviewNeeded == true
+        waits.claimed == false
+        waits.reasonCode == "reviewNeeded"
+        reviewed.claimed == true
+        heldTries.slice(0, 4).every((failed) => failed === false)
+        heldTries[4] == true
+        heldRow.statusEnumId == "CsmFailed"
+        heldRow.reasonCode == "encryptFailed"
+        again.claimed == false
+        told == 2
+    }
+})
+
+feature("held messages never hold up the server's: many held rows due first, one overdue a week fails; at most so many of one sender a run", {
+    when() {
+        sys(() => { for (let i = 0; i < 210; i++) ec.entity.makeValue("moqui.chat.ChatScheduledMessage").setFields({chatScheduledMessageId: "CSM_HELD_" + i,
+            chatRoomId: shared.sealed, senderUserId: A, statusEnumId: "CsmScheduled", sendDate: new Date(clock - 60 * MINUTE), heldByDeviceId: "DEVA1",
+            heldByDeviceName: "Browser DEVA1", attemptCount: 0}, true, null, null).create() })
+        make("moqui.chat.ChatScheduledMessage", {chatScheduledMessageId: "CSM_SERVER_B", chatRoomId: shared.team, senderUserId: B, statusEnumId: "CsmScheduled",
+            sendDate: new Date(clock - MINUTE), body: "<p>behind the held</p>", bodyText: "behind the held", attemptCount: 0})
+        make("moqui.chat.ChatScheduledMessage", {chatScheduledMessageId: "CSM_OVERDUE", chatRoomId: shared.sealed, senderUserId: A, statusEnumId: "CsmScheduled",
+            sendDate: new Date(clock - 8 * 86400000), heldByDeviceId: "DEVA1", heldByDeviceName: "Browser DEVA1", attemptCount: 0})
+        const run = job("send#DueMessages")
+        const serverRow = scheduled("CSM_SERVER_B")
+        const overdue = scheduled("CSM_OVERDUE")
+        const heldWaiting = sys(() => ec.entity.find("moqui.chat.ChatScheduledMessage").condition("chatScheduledMessageId", "like", "CSM_HELD_%")
+            .condition("statusEnumId", "CsmScheduled").count())
+        sys(() => ec.entity.find("moqui.chat.ChatScheduledMessage").condition("chatScheduledMessageId", "like", "CSM_HELD_%").deleteAll())
+        // three of one sender a run
+        setProperty("chat_schedule_user_per_run", "3")
+        for (let i = 0; i < 5; i++) make("moqui.chat.ChatScheduledMessage", {chatScheduledMessageId: "CSM_RATE_" + i, chatRoomId: shared.team, senderUserId: B,
+            statusEnumId: "CsmScheduled", sendDate: new Date(clock - MINUTE), body: "<p>rate " + i + "</p>", bodyText: "rate " + i, attemptCount: 0})
+        const firstRun = job("send#DueMessages")
+        const secondRun = job("send#DueMessages")
+        setProperty("chat_schedule_user_per_run", null)
+        return {run, serverRow, overdue, heldWaiting, firstRun, secondRun}
+    },
+    then({run, serverRow, overdue, heldWaiting, firstRun, secondRun}) {
+        serverRow.statusEnumId == "CsmSent"
+        run.sentCount == 1
+        overdue.statusEnumId == "CsmFailed"
+        overdue.reasonCode == "deviceAway"
+        heldWaiting == 210
+        firstRun.sentCount == 3
+        secondRun.sentCount == 2
+    }
+})
+
 feature("an encrypted room's message is held by its device: the job never sends it, only that device claims it, once, and reports it", {
     when() {
         const at = clock + 2 * MINUTE
@@ -298,14 +462,53 @@ feature("an encrypted room's message is held by its device: the job never sends 
         const gone = as(A, SCHED + "schedule#Message", {chatRoomId: shared.sealed, sendDate: clock + 2 * MINUTE, heldByDeviceId: "DEVA2"}).chatScheduledMessageId
         const elsewhere = as(A, SCHED + "schedule#Message", {chatRoomId: shared.sealed, sendDate: clock + 2 * MINUTE, heldByDeviceId: "DEVA1"}).chatScheduledMessageId
         const cancelled = as(A, SCHED + "cancel#ScheduledMessage", {chatScheduledMessageId: elsewhere})
-        sys(() => { const d = ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: "DEVA2"}).one(); d.set("revokedDate", new Date(clock)); d.update() })
+        // the device's send, with the row locked and its claim checked
+        const locked = as(A, SCHED + "schedule#Message", {chatRoomId: shared.sealed, sendDate: clock + 2 * MINUTE, heldByDeviceId: "DEVA1"}).chatScheduledMessageId
+        const stalled = as(A, SCHED + "schedule#Message", {chatRoomId: shared.sealed, sendDate: clock + 2 * MINUTE, heldByDeviceId: "DEVA1"}).chatScheduledMessageId
+        const went = as(A, SCHED + "schedule#Message", {chatRoomId: shared.sealed, sendDate: clock + 2 * MINUTE, heldByDeviceId: "DEVA1"}).chatScheduledMessageId
+        const revoked = as(A, SCHED + "schedule#Message", {chatRoomId: shared.sealed, sendDate: clock + 2 * MINUTE, heldByDeviceId: "DEVA3"}).chatScheduledMessageId
+        clock += 3 * MINUTE
+        const unclaimed = as(A, SCHED + "send#HeldMessage", {chatScheduledMessageId: locked, deviceId: "DEVA1", encrypted: MEGOLM})
+        as(A, SCHED + "claim#HeldMessage", {chatScheduledMessageId: locked, deviceId: "DEVA1"})
+        const heldSend = as(A, SCHED + "send#HeldMessage", {chatScheduledMessageId: locked, deviceId: "DEVA1", encrypted: MEGOLM})
+        as(A, SCHED + "claim#HeldMessage", {chatScheduledMessageId: stalled, deviceId: "DEVA1"})
+        const cancelWhileSending = as(A, SCHED + "cancel#ScheduledMessage", {chatScheduledMessageId: stalled})
+        const wentClaim = as(A, SCHED + "claim#HeldMessage", {chatScheduledMessageId: went, deviceId: "DEVA1"})
+        as(A, CHAT + "send#Message", {chatRoomId: shared.sealed, encrypted: MEGOLM, clientRef: wentClaim.clientRef})
+        const revokedClaim = as(A, SCHED + "claim#HeldMessage", {chatScheduledMessageId: revoked, deviceId: "DEVA3"})
+        const revokedSent = as(A, CHAT + "send#Message", {chatRoomId: shared.sealed, encrypted: MEGOLM, clientRef: revokedClaim.clientRef})
+        clock += 3 * MINUTE
+        // the leases ran out: the stalled send's cancel goes, and its late send is refused; the one that went before its cancel is sent after it
+        const cancelLater = as(A, SCHED + "cancel#ScheduledMessage", {chatScheduledMessageId: stalled})
+        const lateSend = as(A, SCHED + "send#HeldMessage", {chatScheduledMessageId: stalled, deviceId: "DEVA1", encrypted: MEGOLM})
+        as(A, SCHED + "cancel#ScheduledMessage", {chatScheduledMessageId: went})
+        const wentDone = as(A, SCHED + "complete#HeldMessage", {chatScheduledMessageId: went, deviceId: "DEVA1"})
+        for (const deviceId of ["DEVA2", "DEVA3"]) sys(() => { const d = ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId}).one(); d.set("revokedDate", new Date(clock)); d.update() })
         const goneListed = Array.from(as(A, SCHED + "get#ChatSchedule").scheduledList || []).find((item) => item.chatScheduledMessageId === gone)
         clock += 3 * MINUTE
         job("send#DueMessages")
+        // the revoked device's message that went before the revoke: its report marks it sent
+        const revokedFailed = scheduled(revoked).statusEnumId
+        const revokedDone = as(A, SCHED + "complete#HeldMessage", {chatScheduledMessageId: revoked, deviceId: "DEVA3", eventSeq: revokedSent.eventSeq})
+        const afterCancel = Array.from(as(A, SCHED + "get#ChatSchedule").scheduledList || []).find((item) => item.chatScheduledMessageId === went)
         return {made, early, run, other, claim, twice, wrong, done, listed, dismissed, reclaim, cancelled, goneListed, row: scheduled(id),
-            lostRow: scheduled(lost), goneRow: scheduled(gone)}
+            lostRow: scheduled(lost), goneRow: scheduled(gone), unclaimed, heldSend, lockedRow: scheduled(locked), cancelWhileSending, cancelLater, lateSend,
+            wentDone, afterCancel, revokedFailed, revokedDone, revokedRow: scheduled(revoked)}
     },
-    then({made, early, run, other, claim, twice, wrong, done, listed, dismissed, reclaim, cancelled, goneListed, row, lostRow, goneRow}) {
+    then({made, early, run, other, claim, twice, wrong, done, listed, dismissed, reclaim, cancelled, goneListed, row, lostRow, goneRow, unclaimed, heldSend,
+            lockedRow, cancelWhileSending, cancelLater, lateSend, wentDone, afterCancel, revokedFailed, revokedDone, revokedRow}) {
+        unclaimed.reasonCode == "notClaimed"
+        heldSend.errors == ""
+        lockedRow.statusEnumId == "CsmSent"
+        lockedRow.sentEventSeq == heldSend.eventSeq
+        cancelWhileSending.reasonCode == "sending"
+        cancelLater.errors == ""
+        lateSend.reasonCode == "notClaimed"
+        wentDone.sent == true
+        afterCancel.sentAfterCancel == true
+        revokedFailed == "CsmFailed"
+        revokedDone.sent == true
+        revokedRow.statusEnumId == "CsmSent"
         made.errors == ""
         made.scheduled.held
         made.scheduled.body == null
@@ -368,6 +571,10 @@ feature("reminders: refused for a room one cannot read, a past time or too many;
 feature("a reminder at its time: an Activity row, a ChatReminder notification and a push to each device, the text only of a plain room; a message gone drops it; the daily cleanup", {
     when() {
         const outbox = () => sys(() => Array.from(ec.entity.find("moqui.chat.PushOutbox").condition({userId: A, kindEnumId: "PokReminder"}).orderBy("pushOutboxId").list()))
+        // the push device as it was made: the earlier features' pushes to it failed (its keys are not real) and may have
+        // turned it off
+        make("moqui.security.user.WebPushSubscription", {subscriptionId: "CHAT_SCHED_PUSH", userId: A, pushProviderEnumId: "PushUnified", disabledDate: null,
+            endpoint: "http://127.0.0.1:9/chat-sched", endpointHash: "chat-sched-spec", loginKey: "CHAT_SCHED_DEVICE_KEY", p256dhKey: "x", authSecret: "y"})
         const noticesBefore = notices(A, "ChatReminder")
         const early = job("send#DueReminders")
         clock += 21 * MINUTE
