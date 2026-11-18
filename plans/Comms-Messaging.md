@@ -172,7 +172,7 @@ The desktop layout exists (§1). Add:
 | Activity view | A sidebar entry: mentions, reactions to my messages, and replies to my messages and in my threads, newest first. New service `find#ChatActivity` (§5) | Built (phase 8): the Activity entry beside the filters, more as it scrolls, an encrypted room's text decrypted in the page |
 | Threads view | A sidebar entry for all threads I am in. `find#RoomThreads` with Mine works in one room only (`ChatServices.xml:2196`); across rooms the view reads the thread replies of `find#ChatActivity` | Built (phase 8): `find#ChatThreads`, the threads I started or replied in across rooms (mine with only my reply, and those where I wrote last), the latest reply first |
 | Sidebar sections | Fold the groups. Add groups: Phone (rooms of type `CrtExternal`) and Bridged. Today the groups are Pinned and Recent, and a phone room shows only under All | Built (phase 8): Pinned, Recent, Phone, Bridged, each folding (per user, in the browser); a Phone filter, and All and Phone on the phone's home |
-| Mail on a person's row | Where the user has a direct chat with a person, that person's latest mail thread shows on the row as a second line ("Email: subject") and opens in the Inbox, with "Email is not end-to-end encrypted" (§6.1 rule 7). No mail-only rows; mail stays in the Inbox (decided, §19). A user of this server matches by the mail address of their account; an outside person waits for unified contacts (§11). Also on the phone home | Built (phase 8): `find#DirectChatMail`, by the person's user account address only, whole addresses in To and Cc, the last 180 days, one query for the list (the latest 300 matching messages), read once a page for Chat and the panel (`moqui.chat.mailLines`) |
+| Mail on a person's row | Where the user has a direct chat with a person, that person's latest mail thread shows on the row as a second line ("Email: subject") and opens in the Inbox, with "Email is not end-to-end encrypted" (§6.1 rule 7). No mail-only rows; mail stays in the Inbox (decided, §19). A user of this server matches by the mail address of their account; an outside person's line comes with unified contacts (§11.1). Also on the phone home | Built (phase 8): `find#DirectChatMail`, by the person's user account address only, whole addresses in To and Cc, the last 180 days, one query for the list (the latest 300 matching messages), read once a page for Chat and the panel (`moqui.chat.mailLines`). Designed as phase 22: the line on each room of a person (a phone room, a GroupMe direct conversation), by the addresses the user linked and, for an outside person, the contacts hook's |
 
 **Done when:** in Comms, Mod+K, two letters and Enter open a room, on the web and in the desktop app. The Activity
 view lists a mention and a reaction from another user (regression service spec for the feed; the views in an
@@ -878,6 +878,23 @@ Optional: the app becomes the Android default SMS app for the phone's own SIM.
   marked experimental, and runs as a separate process.
 - **No lock-in.** History comes in from the old app (§15), and the user can export it again.
 
+### 11.1 One person across networks
+
+Designed 2026-11-17 as phase 22 (§18.3).
+- **A person** is one user's grouping of addresses: a user of this server (`user:`), an outside number (`tel:`, its SMS
+  and RCS rooms), a mail address (`email:`) and a person on a bridge's network (`ext:`, GroupMe now). Each user's people
+  are their own: made from their own rooms, their own merges and splits, and the app's contacts they may see (the
+  contacts hook, Mantle's contact books and directory when mr-mantle is there). Nothing is shared or shown to anyone else.
+- **Rooms stay separate**, one per network, each with its own E2EE label. There is no merged timeline.
+- **Pick the network per message.** A person's room has a network button in its composer, which lists the person's ways
+  (their rooms and the ones that can be started), the best first. Choosing one opens that room and moves the draft there.
+- **Best path first**: Moqui chat when the person is a user of this server (their encrypted direct room first, as §6.5
+  has it); else the network they last wrote on; else SMS from the user's number; else mail in the Inbox. A blocked
+  person or number (phase 11) is never a way.
+- **Mail stays in the Inbox** (§19.1): a person's latest mail thread is a line on their rooms and opens in the Inbox.
+- **Privacy**: a user's phone number is never learned through chat (§14.4); the hook is asked only about the addresses
+  of the user's own rooms, so it cannot be probed.
+
 ## 12. The protocols MR Moqui keeps
 
 These are built ([Future-Plans, Comms](Future-Plans.md#comms)). The app must keep them working and show them in the one
@@ -1043,7 +1060,7 @@ that adds it. "New" means this plan adds it (§17).
 | Disappearing messages | A per-room timer from 30 s to 4 weeks. The clients delete at the time, the server deletes by an exact job. Today retention is whole days by a daily job | New |
 | View-once media | Media that opens once, then the clients delete it and the server deletes the file | New |
 | Note to self | A room with only the user | New (check if a one-person room works) |
-| Usernames, phone number hidden | Usernames; a user's phone number is not in chat's data and is never shown to other MR Moqui users. An outside number shows to the members of its own room | Built |
+| Usernames, phone number hidden | Usernames; a user's phone number is not in chat's data and is never shown to other MR Moqui users. An outside number shows to the members of its own room. Unified contacts keep it: a person who is a user shows only the numbers of the viewer's own rooms, and chat never links a number to a user from its own or voice's data (phase 22) | Built |
 | Linked devices list | Apps and devices | Built |
 | Registration lock, PIN | Device keys, password, recovery key for key backup | Built |
 | Screen security (no screenshots) | Android `FLAG_SECURE` option, per app or per encrypted room | New |
@@ -1116,7 +1133,7 @@ app's screens and appear in one call log; an emergency number goes to the carrie
 | Caller name and photo | From the synced contacts on the phone, and on the server from the `call-context` provider that an app implements, for SIM, provider and Moqui calls and for texts | New |
 | Favorites, groups | Favorites (starred), contact groups as CardDAV categories | New |
 | Share a contact | A vCard message in chat; save a received vCard | New |
-| Network per person | Link a contact to an MR Moqui user, an XMPP address, a Signal or GroupMe identity, a phone number (§11) | New |
+| Network per person | Link a contact to an MR Moqui user, an XMPP address, a Signal or GroupMe identity, a phone number (§11) | Designed: phase 22 (§11.1), chat's side: users, numbers, mail addresses and GroupMe people, grouped per user, with the app's contacts through a hook. XMPP addresses of other servers and Signal identities come with C3b and their adapter (`ext:`) |
 
 **Build:** the contact sync is in the default APK (`READ_CONTACTS` and `WRITE_CONTACTS`, asked on first use, with a
 reason). It also works today with an outside CardDAV app, such as DAVx5, and an app password.
@@ -1295,7 +1312,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 
 | # | Work | Section |
 |---|---|---|
-| 1 | Unified contacts: one person with many networks; pick the network per message | §11 |
+| 1 | Unified contacts: one person with many networks; pick the network per message: designed, phase 22 (§18.3) | §11, §11.1 |
 | 2 | Block and report; spam filter for outside numbers | §14.2; designed as phase 11 (§18.3) |
 | 3 | Scheduled send, message reminders | §14.2, §14.3 |
 | 4 | Disappearing messages (exact timer) and view-once media | §14.4 |
@@ -2902,6 +2919,295 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   - the live test with GroupMe, and the facts not confirmed (`docs/interfaces/GroupMe.md`, "Not confirmed");
   - what "Left out" names.
 
+#### Phase 22: unified contacts and the network per message (D4, §11, §17 #1)
+
+Designed 2026-11-17 (§11.1). Chat groups one user's conversations with a person across networks into one person, with
+a person card to merge and split and a network button in the composer, best path first. The rooms stay separate, each
+with its own label. Mail stays in the Inbox, as a line on the person's rooms.
+
+**What exists** (read 2026-11-17):
+- `crates/moqui-core/src/service/contacts.rs`: `EmailClientServices.filter#ContactAddresses`. It answers only which mail
+  addresses are a user's contacts, for an automatic reply. Its hook is named by a property (`email_contact_service`) or
+  the user's theme value (`STRT_EMAIL_CONTACT_SERVICE`). The hook runs with authorization disabled for the given user,
+  in its own transaction, and a failure is logged once. No hook: null, and nothing counts as a contact. Phase 22 reuses
+  this machinery (`hook_service`, `call_hook`, `first_time`) for a second service.
+- Phase 9's names: `SmsServices.find#PhoneNames` asks the apps' `call-context` providers, only for the numbers of the
+  user's own phone rooms, 600 an hour. `moqui.chat.nameRooms` puts the phone's contacts first (read on the phone, never
+  sent). These give names only; nothing is grouped.
+- mr-mantle: `Party` (a personal contact has `privateOwnerUserId`), `PartyContactMech` to `ContactMech`
+  (`CmtEmailAddress` in `infoString`; `CmtTelecomNumber` with `TelecomNumber` `countryCode`, `areaCode`,
+  `contactNumber`), the books (`ContactBook`, `ContactBookParty`, `ContactBookShare`) and `UserAccount.partyId` (its
+  extend-entity). Mantle's `filter#ContactAddresses` already defines "a contact the user can see": their own personal
+  contacts, their books and the books shared with them, and the directory of their organizations, but never another
+  user's personal contact. Mantle has no contact mechanism for an XMPP, GroupMe or Signal identity.
+- Chat: `ChatExternalUser` is a person on a bridge (GroupMe's user id). Its `linkedUserId` is a bridge's verified puppet
+  link and is not used here. A GroupMe direct conversation is the bridge owner's private room, mapped as `dm:<user id>`.
+  An SMS or RCS room is a `CrtExternal` pair room `ours/theirs`; one outside number may have a room on each of our
+  numbers.
+- XMPP is not a separate network for a person. It is C3a: users of this server with an XMPP app, in the same rooms. A
+  direct message from an XMPP app goes to the plain direct room (`create#Room`'s default, phase 12), and an encrypted
+  room is not served over XMPP. So Moqui chat covers XMPP, and phase 12's rule already sends to the network a user
+  uses: a user with only an XMPP app has no crypto device, so their new direct room is plain and reaches the app.
+  Outside XMPP addresses wait for C3b.
+- **Without mr-mantle** the framework keeps no contacts. A user still gets:
+  - the users of this server (people search);
+  - their rooms' numbers and GroupMe people;
+  - names from the phone's contacts (Android) and from any app's `call-context`;
+  - their own merges, splits and names;
+  - mail lines from users' account addresses and from addresses the user linked.
+
+  What they do not get is grouping by contact and names of outside people on the web.
+
+**Data model** (`framework/entity/ChatPeopleEntities.xml`, new, listed in `MoquiDefaultConf.xml`):
+
+| Entity, field | What |
+|---|---|
+| `moqui.chat.ChatPerson` (`chatPersonId` pk, sequenced; `ownerUserId`, `displayName`, `createdDate`; index on `ownerUserId`) | One person in a user's own list, made by a merge, a split or a rename |
+| `moqui.chat.ChatPersonAddress` (`ownerUserId`, `addressKey` pk; `chatPersonId`, `createdDate`; index on `chatPersonId`) | An address the user put in one of their persons. The key makes each address belong to at most one person of that user |
+| `addressKey` | `user:<userId>`, `tel:<E.164>`, `email:<address in lower case>`, `ext:<chatExternalUserId>` (GroupMe now; Signal, iMessage and C3b's XMPP later) |
+| Enumeration `STRT_CHAT_CONTACT_SERVICE` | The theme value that names the contacts hook (`ScreenEntities.xml` seed) |
+
+A person holds at most 20 addresses, and a user at most 2,000 rows.
+
+**Grouping** (`ChatPeopleServices.find#ChatPeople`, `ChatPeople.js`, for the current user only, with no `userId`
+parameter):
+1. **The user's rooms.** Rooms where the user is a member who has not left and has no filter (phase 11), the 200 newest:
+   - a direct room of two gives `user:` the other member;
+   - a pair room (one outside number) gives `tel:theirs`, with `fromNumber` ours and the network `sms` or `rcs` from
+     the bridge's type;
+   - a GroupMe direct conversation gives `ext:` its `ChatExternalUser`.
+
+   Group direct rooms, group texts and other rooms belong to no person.
+2. **The user's rows** win. An address with a row is in that row's person, whatever the hook says.
+3. **The contacts hook** is asked once, with the rooms' addresses that have no row (at most 300). Each contact it
+   answers joins those addresses into one person, and brings its other addresses. It never moves an address that has a
+   row.
+4. **What is left.** Each address with no row and no contact is a person of its own.
+
+The person key is `p:<chatPersonId>`, else `a:<its first address>`. Each person in the answer has:
+- `name` and `nameFrom` (`mine`, `user`, `contact` or none);
+- `edited`, `userId` and `contactUrl` (the app's record);
+- `addresses`, the shown ones (below);
+- `rooms`, each `{chatRoomId, network, encrypted, fromNumber, lastMessageDate, lastInboundDate, notConnected}`;
+- `ways` and `best` (below).
+
+`roomPerson` maps each room to its person key.
+
+**The contacts hook** (`contacts.rs`, `ChatPeopleServices.find#ContactPeople`, a Rust service, `allow-remote` false):
+- It is named by the property `chat_contact_service`, else the theme value `STRT_CHAT_CONTACT_SERVICE`. It is called
+  as `filter#ContactAddresses` is: authorization disabled, for the given user, in its own transaction.
+- In: `userId` and `addressList` (`tel:`, `email:` and `user:` keys).
+- Out: `contactList`, each `{contactRef, name, url, addressList}`: the contacts the user may see that have one of the
+  addresses, each with its own `tel:`, `email:` and `user:` addresses.
+- The framework normalizes the answer: valid keys only, at most 100 contacts and 10 addresses each.
+- No hook: `contactList` is null. A hook that fails is logged once by name (`hookFailed`), and the people come from the
+  rooms and rows alone.
+- mr-mantle answers with `mantle.party.ContactBookServices.find#ContactPeople`:
+  - who counts as a contact: the visibility of its `filter#ContactAddresses`, shared as one internal function;
+  - phones: matched in E.164 by their last seven digits and then the whole number, as IronStone's `get#CallContext`
+    does;
+  - mail: any case;
+  - `user:`: the party of `UserAccount.partyId`.
+
+  mr-boss names it with a `STRT_CHAT_CONTACT_SERVICE` row in `BossSetupData.xml`, beside the mail hook's row.
+
+**Who sees which address:**
+- **An outside person.** The card shows the numbers of the user's own rooms, the user's own rows, and the hook's (the
+  app's contact, which the user can already see). Mail addresses show the same way.
+- **A person who is a user of this server.** The card shows only the numbers and addresses of the viewer's own rooms
+  and rows, plus `@username`. It never shows what the hook or the user account gave: chat reveals no user's phone or
+  mail address (§14.4). The account's mail address is used only to find the mail line.
+- **Linking a number to a user.** The hook may do it, through an app contact the viewer can see: IronStone's directory
+  already shows an employee's phone to the people who can see it. Chat never links a number to a user from its own or
+  voice's data: not `CallHandlingSetting`'s mobile, not caller-ID grants, not ring groups.
+- **Refused users.** A `user:` address that `get#RefusedUsers` refuses (an app's `chat-target`, or a user who blocked the
+  viewer) is left out, as a user that does not exist. A room the viewer already has with them still shows as it does
+  today.
+- **Nothing is shared.** No service reads another user's rows. A merge changes only the user's own rows, and the other
+  person sees nothing.
+
+**Merge and split** (`ChatPeople.js`, as the current user, each in one transaction with the user's `UserAccount` row
+locked):
+- `merge#ChatPeople` (`personKeyList` and/or `addressKeyList`): makes one `ChatPerson` holding every address of the
+  persons named, the hook's group included, so the person stays one when the contact changes. Other persons' rows move
+  into it, and persons left empty are deleted. Each address must be the user's to name:
+  - `user:`: a user they may reach (enabled, not an external user, not refused);
+  - `tel:`: a valid number (`normalize#PhoneNumber`);
+  - `email:`: a valid address;
+  - `ext:`: the person of a GroupMe direct conversation the user is in.
+
+  Past the limits it refuses with `tooManyAddresses` or `tooManyPeople`. A typed number or address is never sent to the
+  hook, because an address with a row is not asked about, so typing cannot probe the app's contacts.
+- `separate#ChatPersonAddress` (`addressKey`): the address alone in a person of its own, so the hook does not join it
+  back.
+- `rename#ChatPerson` (`personKey`, `displayName` up to 100 characters; empty clears it): makes the person's rows when it
+  had none.
+- `reset#ChatPerson` (`personKey`): deletes the user's rows of the person, which goes back to automatic.
+
+**The ways and the best path.** `find#ChatPeople` answers each person's `ways` in order. Each way is
+`{kind, network, chatRoomId, userId, number, fromNumber, address, url, encrypted, blocked, reasonCode}`. The kinds:
+- `room`: an existing room;
+- `direct`: Moqui chat with no room yet;
+- `text`: a new text, `open#PairRoom` from `fromNumber`;
+- `mail`: the Inbox (the latest thread, or Compose with `to=` for an outside person's address).
+
+The best way (`best`) is the first of these:
+1. **Moqui chat**, for a person who is a user of this server and whom the viewer has not blocked: their encrypted
+   direct room, else their plain one (phase 12: a plain direct chat that exists keeps opening, and its header offers
+   "Start an encrypted chat"), else a new direct chat (`createDirect` with no `encrypted`, so the server decides; the
+   label comes from `encryptionDefault`, as a dm link's).
+2. **The network they use**: of their rooms on other networks (RCS, GroupMe, SMS), the connected one with their latest
+   message to the user (`lastInboundDate`).
+3. **SMS**: the pair room of their number that the user wrote in last; else a new text from the user's number
+   (`find#MyTextNumbers`: their only number, or the first, with the From choice). RCS is never the default for a
+   new conversation, because it comes from the brand agent's name, not the user's number (§19.4 Q1).
+4. **Mail**: their latest thread, or Compose to their address.
+
+These are listed but never best, each with its reason:
+- a number on the user's Blocked list (phase 11, `CallHandling.js` `blockedUsers`);
+- a number that sent STOP (`check#SmsSend`'s reason);
+- a bridge that is not connected or is disabled.
+
+A person the user blocked in chat (`ChatUserBlock`) has no way: their rooms are filtered and out of the list, and the
+card offers Unblock.
+
+**Separate rooms, with a switcher.** One merged timeline was weighed and left out:
+- it would mix encryption in one view, an end-to-end encrypted message beside one the server and a bridge read;
+- read markers, paging, search, threads, edits and deletes are per room, and each network supports a different set
+  (SMS has no edits);
+- the other person sees separate threads anyway.
+
+So it is neither cheap nor safe. With separate rooms, each label stays true.
+
+**The network button** (`m-chat-networks`, `WebrootChat.js`):
+- **Where.** At the start of the composer of a person's room: a direct room of two, a pair room, a GroupMe direct
+  conversation. It shows the room's network icon.
+- **What it lists.** The person's ways, best first and marked "Best". Each shows its network, the number it texts from
+  or the address, and its label from `moqui.chat.e2eeLabel` (§6.2): Encrypted, Not end-to-end encrypted, Text message,
+  or the bridge's name. A blocked way shows dimmed, with its reason.
+- **Choosing a way** opens that room, or makes it (`createDirect`, `textRoom`), and moves the draft's text there. Files,
+  a reply and a thread stay behind. The new room's banner and composer hint show its label. A move from an encrypted
+  room to one that is not says so once: "Moved to {network}: not end-to-end encrypted".
+- **A nudge.** In a person's SMS, RCS or GroupMe room, when the person is a user of this server, a line above the
+  composer offers "{name} is on MR Moqui: chat end-to-end encrypted", or "Chat in MR Moqui" when `encryptionDefault`
+  is false, with Switch. It can be closed for that room (browser storage).
+- **A message's network.** A room is one network, so its messages carry the room's label: the header, banner and
+  composer hint (§6.2). An RCS room's message shows its path (phases 10 and 13), and Info says where a bridged message
+  came from (built). Nothing per message is added.
+- **Mail** opens the Inbox, never a chat timeline (§19.1).
+
+**The person card** (`m-chat-person`, `WebrootChat.js`) sits at the top of the People tab of a person's room. It shows:
+- the name, with Rename, and the `@username` of a user;
+- a link to the contact's record, when the hook gave one (`contactUrl`);
+- each way as a row, with its label, last activity, and Open or Start;
+- the mail line.
+
+Its actions:
+- **Add** opens the new-chat picker (people, numbers, the phone's contacts, a typed number or address) and merges the
+  choice in. A room that already belongs to another person is merged by picking it.
+- **Not {name}**, on each address, separates it.
+- **Undo my changes** resets the person, when it is edited.
+
+On a phone the card fills the details pane and its actions open as a sheet. On a desktop it is in the 360 px side pane.
+
+**The list.** Rows stay one per room, each with its network's icon and label. A person's room shows the person's name,
+taken from the first of:
+1. the user's own name for the person;
+2. the user's name, for a person who is a user of this server;
+3. the phone's contacts;
+4. the hook's contact;
+5. `call-context`;
+6. the number.
+
+`moqui.chat.applyPeople(rooms, people)` sets these names after `nameRooms`. Folding a person's rooms into one row is
+left out (a choice for the user, below).
+
+**Mail lines.** `find#DirectChatMail` gets its people from `find#ChatPeople` (an internal call):
+- for a user of this server: their account's address and the addresses the viewer linked;
+- for an outside person: the hook's addresses and the viewer's rows.
+
+The line shows on each of the person's rooms. The limits stay: 180 days, 300 messages.
+
+| Work | Files |
+|---|---|
+| `ChatPerson`, `ChatPersonAddress`; the load line | `framework/entity/ChatPeopleEntities.xml` (new), `MoquiDefaultConf.xml` |
+| `find#ContactPeople`: the hook by property or theme value, its answer normalized, a failure logged once; the hook lookup shared with `filter#ContactAddresses` | `crates/moqui-core/src/service/contacts.rs`, `ScreenEntities.xml` (the enumeration) |
+| `find#ChatPeople`, `merge#ChatPeople`, `separate#ChatPersonAddress`, `rename#ChatPerson`, `reset#ChatPerson` | `framework/service/org/moqui/chat/ChatPeopleServices.xml`, `ChatPeople.js` (new) |
+| Mail lines from the people | `basic-comms/service/org/moqui/comms/ChatScreenServices.xml` (`find#DirectChatMail`) |
+| Transitions `people`, `mergePeople`, `separatePerson`, `renamePerson`, `resetPerson` | `Chat.xml` |
+| `moqui.chat.people` (read once a page and shared, as `mailLines`), `applyPeople`, `personOf`, `waysOf` (labels and order), `moveDraft`; `m-chat-networks`, `m-chat-person` | `WebrootChat.js` |
+| Small hooks: the network button in the composer, the card in the People tab, the nudge, `applyPeople` after `nameRooms` | `Chat.qvue`; `Panel/ChatPanel.qvue` (names only); the shell's bundle regenerated (`bundled-screens.js`) |
+| Mantle's hook and IronStone's theme row | mr-mantle `service/mantle/party/ContactBookServices.xml`; mr-boss `data/BossSetupData.xml` |
+
+- **Phone and desktop.** The same components on both:
+  - the network button is a bottom sheet on a phone (as the message actions are) and a menu above the composer on a
+    desktop;
+  - the card fills the details pane on a phone and sits in the side pane on a desktop.
+
+  The Android and desktop apps get them through the bundled Chat.
+- **Terminal.** No change: it lists each room as today.
+- **Bridges and encryption.** No adapter changes. A way's label is its room's. An encrypted room is never bridged
+  (phase 12), so a move to a bridge always leaves end-to-end encryption, and says so.
+- **Failure tolerance.**
+  - The hook failing or timing out: logged once, and the people come from the rooms and rows.
+  - A room whose mapping cannot be read: logged, and that room is a person of its own.
+  - The `people` request failing: no network button or card, and the rooms work as today.
+  - A way that cannot open (a `textRoom` refusal, a refused `createDirect`): its reason shows, and the draft stays where
+    it was.
+  - Mail lines: as today, read separately.
+- **Security and abuse.**
+  - Only the current user's people; no other user's rows are read, and nothing is pushed to anyone.
+  - The hook is asked only about the addresses of the user's own rooms, at most 300 at a time, and at most 60 times an
+    hour per user. Past that the people come without it (`contactsSkipped`).
+  - The hook enforces the app's visibility itself, as the mail hook does.
+  - No user's phone or mail address is shown through chat. A number is linked to a user only by an app contact the
+    viewer can see.
+  - A `user:` address is checked by `get#RefusedUsers`, so a user who blocked the viewer looks like a user that does not
+    exist.
+  - Names are plain text and limited in length; the merge's limits bound the rows.
+- **Left out.**
+  - One merged timeline, and folding a person's rooms into one list row.
+  - Finding a user by their phone number (Signal's "Who can find me by number"): a user's numbers stay out of chat.
+  - Writing a merge into the app's contacts (Mantle's personal contact), which belongs with the Contacts screen and its
+    sync (§14.8, §17 #17).
+  - Grouping numbers by the phone's contact entries, which needs a contact key from `PhoneBook.kt`.
+  - Outside XMPP (C3b), Signal and iMessage identities: `ext:` takes them when their adapters come.
+  - Starting a new GroupMe direct conversation; the palette's outside people; a network the user pins per person.
+- **Tests (regression).**
+  - Rust: `contacts.rs` unit tests for normalizing the answer (key forms, repeats, limits), `cargo test -p moqui-core
+    contacts`.
+  - Server: `basic-comms/test/BasicCommsPeople.spec.js` (new), with a test hook
+    (`test/service/moqui/basiccommstest/PeopleTestServices.xml`, named by `chat_contact_service` in the component's
+    `test/MoquiConf.xml`). It covers:
+    - each kind of room's person;
+    - a merge of a phone room with a user, whose best way is then Moqui chat (the encrypted room first);
+    - separate, rename and reset;
+    - the hook joining a number with an address, whose mail line then shows on the phone room;
+    - a user's person not showing the hook's numbers;
+    - a refused user dropped;
+    - another user's `find#ChatPeople` not seeing the merges;
+    - the network they use (the latest message from them on RCS) and SMS from the room's number;
+    - a blocked number not best;
+    - merge refusing an `ext:` of someone else's room, a bad number and the 21st address;
+    - a typed number never reaching the hook.
+
+    `BasicCommsDesktop.spec.js` gains one `find#DirectChatMail` case: an outside person's linked address gives their
+    phone room a line.
+  - Client, offline: `webroot/test/client/WebrootChat` covers `waysOf` (the order, the labels, a blocked way),
+    `applyPeople`'s order of names, `moveDraft`'s target, and when the nudge shows.
+  - mr-mantle: `test/party/ContactPeople.spec.js` (new) covers the visibility (another user's personal contact never),
+    a number matched in E.164, an address in any case, and `user:` through `UserAccount.partyId`.
+  - No basic-comms client spec, because its budget is at 10.8 of 12 s. The two components' logic is in the helpers
+    above. No acceptance spec.
+- **Docs.**
+  - [Comms](../docs/tools/Comms.md): people across networks, the network button, the card, the hook.
+  - [Chat-Bridges](../docs/interfaces/Chat-Bridges.md): the `ext:` address of a bridge's person.
+  - [Mobile-Client](../docs/ui/Mobile-Client.md) and [Desktop-Client](../docs/ui/Desktop-Client.md): one line each.
+  - The BasicComms README, and mr-mantle's README: the hook.
+- **Done when.** The regression specs above pass within budget. By hand on the web and a phone width: a person with
+  Moqui chat and SMS has one card, the network button moves a draft to SMS and says it is not encrypted, and a start
+  opens the encrypted direct room.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -2910,7 +3216,6 @@ Each of these needs its design first:
 |---|---|
 | `sim-sms` | §10: MMS, a synced SIM room and its sends, SIM threads beside server rooms |
 | `sim-dialer` and the contacts sync | §14.7, §14.8; what a server without mr-mantle offers |
-| Unified contacts and the per-message network choice | §11; mail stays in the Inbox, with a line on a person's row (§3, §19.1) |
 
 Then the other networks and the rest of §17, in this order:
 1. The number on the SMS and SIP provider, block and spam (phase 11, designed), contacts sync (the user stops using Google Messages and Cheogram).
