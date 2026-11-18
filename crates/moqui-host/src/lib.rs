@@ -397,7 +397,7 @@ impl Server {
         self.in_process.as_ref()
     }
 
-    /// The cluster HTTPS listener. Empty `cluster_https_port` binds 8444. `0` is ephemeral, and this
+    /// The cluster HTTPS listener. Empty `cluster-member@https-port` binds 8444. `0` is ephemeral, and this
     /// is the address the kernel chose.
     #[must_use]
     pub fn cluster_address(&self) -> std::net::SocketAddr {
@@ -477,7 +477,7 @@ pub fn start_server(
 }
 
 /// Start the server in the calling program on the runtime at `runtime_dir`, as `moqui` run does: the listeners from
-/// the properties (`webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind`, `cluster_https_port` and the rest, which the caller sets
+/// the properties (`webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind`, `cluster-member@https-port` and the rest, which the caller sets
 /// with [`moqui_lib::env::set_property`] first), the embedded cluster in `db/embedded`, and the framework from
 /// `MOQUI_FRAMEWORK` or beside the runtime. For a program that hosts the node itself, such as the desktop app
 /// (plans/Mobile-Desktop.md, configuration 2). Drop the returned server to stop it and the postmaster.
@@ -1815,7 +1815,7 @@ fn boot_server_factory(
         .start_request_pool()
         .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
     tracing::info!("Request pool started");
-    // Empty cluster_https_port listens on 8444. 0 is ephemeral for tests.
+    // Empty cluster-member@https-port listens on 8444. 0 is ephemeral for tests.
     moqui_core::notify::install();
     // scripts' calls to a PASS authority over gRPC (plans/archive/Edge-Node.md §5.5), with or without listeners
     let pass_sender = install_pass_sender();
@@ -1844,7 +1844,7 @@ fn boot_server_factory(
             db: Some(db),
         });
     }
-    // The SSH server binds before the member row is written: with cluster_transport=ssh the row carries its address
+    // The SSH server binds before the member row is written: with moqui_conf__cluster_member__transport=ssh the row carries its address
     // and host key.
     let cluster_posts = Arc::new(std::sync::Mutex::new(Vec::new()));
     #[cfg(feature = "ssh")]
@@ -1907,7 +1907,7 @@ fn boot_server_factory(
         if notify_listener.is_some() {
             moqui_core::startup::State::on("Postgres LISTEN")
         } else {
-            moqui_core::startup::State::off("cluster_transport is not notify")
+            moqui_core::startup::State::off("cluster-member@transport is not notify")
         },
     );
     let cluster_edge = match &listeners {

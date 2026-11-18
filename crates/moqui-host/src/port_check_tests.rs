@@ -86,9 +86,11 @@ fn a_held_udp_port_is_found() {
 
 #[test]
 fn port_zero_is_not_checked() {
-    assert!(check(&[required("Cluster", "cluster_https_port", 0)])
-        .unwrap()
-        .is_empty());
+    assert!(
+        check(&[required("Cluster", "moqui_conf__cluster_member__https_port", 0)])
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

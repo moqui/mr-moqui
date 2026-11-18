@@ -39,7 +39,7 @@ pub(super) struct Setup {
 /// on 2222), each a property or a conf selector. The server of a test run binds a free port for each instead, so it
 /// starts beside a running server.
 const OTHER_PORTS: [&str; 3] = [
-    "cluster_https_port",
+    "cluster-member@https-port",
     "ssh-server@port",
     "webapp-list/webapp[webroot]@https-listen-port",
 ];
@@ -189,7 +189,7 @@ fn serve_on(
             moqui_lib::env::get_prop_or_env(name)
         };
         // an empty cluster port is 8444; the others are off while empty
-        if !setup.user_ports.contains(&name) && (name == "cluster_https_port" || !set.is_empty()) {
+        if !setup.user_ports.contains(&name) && (name == "cluster-member@https-port" || !set.is_empty()) {
             if !set.is_empty() && set != "0" {
                 tracing::info!("{name} is {set} in the conf; the test server binds a free port instead");
             }

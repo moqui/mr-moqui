@@ -398,7 +398,7 @@ mod mail {
                 ),
                 ("edge_link_url", first_url.as_str()),
                 ("edge_link_key", link_key.as_str()),
-                ("cluster_https_port", cluster_port.as_str()),
+                ("moqui_conf__cluster_member__https_port", cluster_port.as_str()),
             ];
             properties.extend_from_slice(&mail);
             let first = crate::common::start_second_with(&format!("{label}-edge1"), EDGE_CONF, &properties, &files);

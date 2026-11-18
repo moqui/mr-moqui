@@ -4,7 +4,7 @@ Status 2026-11-18: phases 0 to 2 built (the path module, the conf schema, the ov
 the conf view's names and `moqui conf env`), 3a (entity facade, datasources, database list), 3b (web, logging, caches,
 telemetry, reports, PDF, component deploy), 3c (SSH, terminal, git, git CI, SMTP, mail delivery, the mail client) and
 3d (search, LLM, A2A, MCP, gateway): no conf attribute of the default conf refers to a property now. Phase 4 has the
-instance (§6.1), acme (§6.24), client-sync (§6.13), chat (§6.14), channels (§6.15), push (§6.16) and load-runner (§6.17) elements; its other areas and phases 5 to 8 to do ([§7](#7-phases)). Until phase 7 a name table may hold both kinds of name:
+instance (§6.1), acme (§6.24), client-sync (§6.13), chat (§6.14), channels (§6.15), push (§6.16), load-runner (§6.17) and cluster-member (§6.18) elements; its other areas and phases 5 to 8 to do ([§7](#7-phases)). Until phase 7 a name table may hold both kinds of name:
 `conf_env::setting_or_property` reads a selector (it has an `@`) from the conf and anything else as a property.
 
 The conf was configured through about 330 flat `default-property` entries (279 in `MoquiDefaultConf.xml`, the rest in

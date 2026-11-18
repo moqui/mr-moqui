@@ -848,7 +848,7 @@ pub fn start_member_with_files(
         moqui_lib::env::set_property(name, (*value).to_string());
     }
     // the port it advertises to the gate, which an ephemeral `0` would not be
-    moqui_lib::env::set_property("cluster_https_port", free_port().to_string());
+    moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", free_port().to_string());
     let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
     let guard = DirGuard(runtime.clone());
     std::fs::create_dir_all(&runtime).unwrap();
@@ -954,8 +954,11 @@ fn start_seeded_under(
 
     // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free; a gate whose
     // cluster has another member names a port of its own (`free_port`), which it advertises to that member
-    if !properties.iter().any(|(name, _)| *name == "cluster_https_port") {
-        moqui_lib::env::set_property("cluster_https_port", "0");
+    if !properties
+        .iter()
+        .any(|(name, _)| *name == "moqui_conf__cluster_member__https_port")
+    {
+        moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
     }
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();

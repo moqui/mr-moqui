@@ -47,16 +47,16 @@ pub(crate) fn shared_storage_of(factory: Option<&ExecutionContextFactory>) -> bo
 }
 
 /// Whether `factory`'s node is a member of a cluster: another member's heartbeat is live, or the node is set up to be
-/// one (`cluster_base_url`, `cluster_transport`).
+/// one (`cluster-member@base-url`, `cluster-member@transport`).
 pub(crate) fn is_cluster_member(factory: &ExecutionContextFactory) -> bool {
     member_answer(factory).unwrap_or(false)
 }
 
 /// Whether `factory`'s node is a cluster member, or `None` when that could not be read (the members' rows).
 fn member_answer(factory: &ExecutionContextFactory) -> Option<bool> {
-    let configured = ["cluster_base_url", "cluster_transport"]
+    let configured = ["cluster-member@base-url", "cluster-member@transport"]
         .iter()
-        .any(|name| !moqui_lib::env::get_prop_or_env(name).trim().is_empty());
+        .any(|selector| !moqui_core::context::conf_env::setting_on(factory, selector).is_empty());
     if configured {
         return Some(true);
     }

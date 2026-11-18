@@ -38,7 +38,7 @@ fn empty_db_startup_persists_audit_artifact_stack() {
     use moqui_host::db::embedded::StartOptions;
 
     let _serial = crate::common::serial();
-    let _properties = crate::common::PropertyReset::of(&["cluster_https_port"]);
+    let _properties = crate::common::PropertyReset::of(&["moqui_conf__cluster_member__https_port"]);
     let runtime = temp_dir("moqui-audit-rt");
     let cluster_dir = temp_dir("moqui-audit-pg");
     let _runtime_guard = DirGuard(runtime.clone());
@@ -53,7 +53,7 @@ fn empty_db_startup_persists_audit_artifact_stack() {
         std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")).unwrap();
     moqui_core::context::layout::link_base_set(&base, &runtime).unwrap();
     let framework = base.join("framework");
-    moqui_lib::env::set_property("cluster_https_port", "0");
+    moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
 
     // No pre-seeding: startup itself must load the checked-in WebrootSecurityDemoData user.
     let server = start_server(
@@ -147,7 +147,7 @@ fn rest_enum_types_login_and_session_survive_restart() {
     assert!(grant_report.records > 0, "grant records {}", grant_report.records);
 
     // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free.
-    moqui_lib::env::set_property("cluster_https_port", "0");
+    moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
     let address = server.address();

@@ -371,8 +371,8 @@ stripped, and `$` is not expanded. It is read after the conf merge, so it cannot
 with `--no-data` leaves it out, so it is the place for per-host settings that should survive an upgrade.
 
 When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
-covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `ssh-server@host-key`, `git-server@lfs-token-key`, `cluster_tls_cert`,
-`cluster_tls_key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
+covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `ssh-server@host-key`, `git-server@lfs-token-key`, `cluster-member@tls-cert`,
+`cluster-member@tls-key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
 `mail-delivery/dkim@key` (empty by default) is made there too, the first time a server needs it.
 
 The properties most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
@@ -782,7 +782,7 @@ a backup asked for now with the job's own parameters ([Attack-Surface](security/
 |---|---|---|---|
 | 8080 | HTTP | On, every address | `webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind` |
 | 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-port` (`off`), `webapp-list/webapp[webroot]@http2` |
-| 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address`, `cluster_protocol` |
+| 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster-member@https-port`, `cluster-member@bind-address`, `cluster-member@protocol` |
 | `ssh-server@port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh-server@port`, `ssh-server@host` |
 | `smtp-server@listen-port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp-server@listen-port`, `smtp-server@listen-host` |
 | `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `rtc_cascade_enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address`, `rtc_cascade_enabled` |
@@ -1263,7 +1263,7 @@ The cluster itself is as in [Cluster](#cluster): one external database, the same
 
 1. Set up the edge node as for one local node. Start the first member, and pair it and run the wizard (System › Edge
    Node) as for one local node.
-2. Copy its whole `.env`, with what pairing wrote, to each other member, add that member's own `cluster_base_url`,
+2. Copy its whole `.env`, with what pairing wrote, to each other member, add that member's own `cluster-member@base-url`,
    and start it. Never copy `runtime/db`: each member keeps its own instance id and member key there.
 3. Check System › Edge Clients › Clients on the edge node: each member under Members, linked and live.
 
@@ -1370,7 +1370,7 @@ The conf, the `.env` names, the DNS records and the commands are in
 
 1. Start the first member once, so it generates its secrets into `.env`, among them `edge_link_key`, the one link key
    every member presents and every local node pins.
-2. Copy that `.env` to each other member before its first start, and give each member its own `cluster_base_url` and
+2. Copy that `.env` to each other member before its first start, and give each member its own `cluster-member@base-url` and
    `edge_link_url` (its own public `https` address, where local nodes dial it), and its own mail, media and SIP
    addresses.
 3. Check System › Edge Clients › Edge cluster on any member: each member live, with its link address. It warns of a
@@ -1424,7 +1424,7 @@ The confs, the `.env` names, the DNS and the commands are in [runtime/conf/front
 1. Start the front node, with a certificate for its own name. Start the first member of the cluster.
 2. Make a pairing code on the front (System › Edge Clients › Clients) and pair the first member with it (System › Edge
    Node; the Pair screen shows the role, front, before the code is spent). Run the wizard: host names and XMPP.
-3. Copy that member's `.env` to each other member, with its own `cluster_base_url`, and start it.
+3. Copy that member's `.env` to each other member, with its own `cluster-member@base-url`, and start it.
 
 - **The front pairing.** Pairing with a node whose role is `front` writes `front_node_url`, `front_node_key`,
   `front_node_pin` and `front_node_id`, a pairing of its own beside any edge pairing (`edge_node_*`). It carries web
@@ -1538,9 +1538,9 @@ node](#a-local-cluster-with-an-edge-node).
 - **One external database.** Postgres, or MySQL with the default transport. The Enterprise package has no embedded
   Postgres, so a member cannot start on a database of its own by mistake. The content database shares it unless
   the content datasource's `database-conf-name` names another ([Content database](#content-database)).
-- **The same secrets on every member**: `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`, `cluster_tls_key` and
+- **The same secrets on every member**: `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster-member@tls-cert`, `cluster-member@tls-key` and
   `moqui_conf__entity_facade__crypt_pass`. Startup fails when a live member has a different session key or certificate, with
-  "webapp-list/webapp[webroot]/session-config@cookie-key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
+  "webapp-list/webapp[webroot]/session-config@cookie-key does not match a live cluster member" or "cluster-member@tls-cert does not match a live cluster member".
   For git hosting, `ssh-server@host-key` and `git-server@lfs-token-key` too: behind a load balancer or an edge node's pool a client's
   SSH connections and LFS requests reach any member, and another one after a failover, so a member with its own host
   key is a changed host to git clients and one with its own LFS key refuses the others' tokens. A member whose SSH
@@ -1554,19 +1554,19 @@ node](#a-local-cluster-with-an-edge-node).
 1. Start the first member once with `conf/local-cluster/MoquiLocalConf.xml` and the shared database settings in
    `.env`, so it generates its secrets into `.env`.
 2. Copy that `.env` to each other member before its first start.
-3. Set `cluster_base_url=https://<this member's private address>:8444` on each member. Empty is
+3. Set `moqui_conf__cluster_member__base_url=https://<this member's private address>:8444` on each member. Empty is
    `https://127.0.0.1:8444`, which logs an error once other members are live.
 4. Open port 8444 between the members only.
 5. The conf writes each session change before the response (`<session-config flush="guarantee"/>`), for a load
    balancer that does not keep a client on one member. With sticky sessions it can go.
 6. Set `webapp-list/webapp[webroot]@trusted-proxies` and `webapp-list/webapp[webroot]@client-ip-header` for the load balancer, then start the other members.
-7. Check the cluster with `SELECT instance_id, cluster_base_url, heartbeat FROM cluster_member;` on the shared database.
+7. Check the cluster with `SELECT instance_id, cluster-member@base-url, heartbeat FROM cluster_member;` on the shared database.
 
 ### Transports
 
-`cluster_transport` sets how peers reach this member: its cluster port at `cluster_base_url` (the default: TLS with the
+`cluster-member@transport` sets how peers reach this member: its cluster port at `cluster-member@base-url` (the default: TLS with the
 cluster certificate), Postgres `LISTEN`/`NOTIFY` (`notify`, for members that cannot connect to each other), or its SSH
-server (`ssh`). On the cluster port `cluster_protocol` picks gRPC on HTTP/2 (the default) or HTTP/1.1 only (`rest`).
+server (`ssh`). On the cluster port `cluster-member@protocol` picks gRPC on HTTP/2 (the default) or HTTP/1.1 only (`rest`).
 Members on different settings, or of different builds, still reach each other: the HTTP/1.1 POST is always there. The
 values are in the conf's comments.
 

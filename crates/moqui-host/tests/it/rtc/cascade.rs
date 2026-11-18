@@ -43,8 +43,8 @@ const PROPERTIES: [(&str, &str); 2] = [("rtc_media_port", "0"), ("rtc_cascade_en
 /// The generated secrets a second member of the cluster takes from the first.
 const SHARED_SECRETS: [&str; 5] = [
     "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
-    "cluster_tls_cert",
-    "cluster_tls_key",
+    "moqui_conf__cluster_member__tls_cert",
+    "moqui_conf__cluster_member__tls_key",
     "moqui_conf__entity_facade__crypt_pass",
     "turn_auth_secret",
 ];
@@ -141,7 +141,7 @@ impl Drop for LegNode {
 fn start_origin(label: &str) -> crate::common::Gate {
     let port = crate::common::free_port().to_string();
     let mut properties = PROPERTIES.to_vec();
-    properties.push(("cluster_https_port", &port));
+    properties.push(("moqui_conf__cluster_member__https_port", &port));
     crate::common::start_with_properties(label, None, &properties)
 }
 

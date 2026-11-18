@@ -31,10 +31,10 @@ own mail, chat, calls and phones, or has none. The same front node before an edg
   behind it pin) and `acme@account-key`. A WebPKI certificate in `cert/` for its own name and each terminate host, or
   System › Certificates with ACME. Ports: `edge_ssh_tunnel_port`, `edge_xmpp_port` and `edge_xmpp_tls_port` when used.
 - **Every member, the same**: the transactional datasource's `host`, `port`, `database`, `user`
-  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first member generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`,
-  `cluster_tls_key` and `moqui_conf__entity_facade__crypt_pass`; and what pairing writes on the first member: `front_node_url`,
+  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first member generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster-member@tls-cert`,
+  `cluster-member@tls-key` and `moqui_conf__entity_facade__crypt_pass`; and what pairing writes on the first member: `front_node_url`,
   `front_node_key`, `front_node_pin` and `front_node_id`. A certificate in `cert/` for each passthrough name.
-- **Each member, its own**: `cluster_base_url=https://<this member's private address>:8444`. Never copy `runtime/db`:
+- **Each member, its own**: `moqui_conf__cluster_member__base_url=https://<this member's private address>:8444`. Never copy `runtime/db`:
   each member keeps its own instance id, member key and the front's member list there.
 
 ## DNS
@@ -56,7 +56,7 @@ members' own addresses (TURN, SIP SRV), not the front's.
 2. Start the first member once, so it generates its secrets.
 3. On the front, System › Edge Clients › Clients, make a pairing code; on the first member, System › Edge Node, pair
    with the front's address (the Pair screen shows its role, front) and run the wizard: host names, and XMPP if used.
-4. Copy the first member's whole `.env` to each other member, add its own `cluster_base_url`, and start it. Each links
+4. Copy the first member's whole `.env` to each other member, add its own `cluster-member@base-url`, and start it. Each links
    once its cluster lists it as live.
 5. For mail in through the front: on the front, System › Edge Clients › Ports, add port 25 of kind SMTP for the
    cluster's pairing, and run the SMTP listener on every member in internet mode. The front passes it as it does to an

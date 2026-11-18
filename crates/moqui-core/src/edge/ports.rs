@@ -66,7 +66,7 @@ const OWN_PORTS: [(&str, u16); 18] = [
     ("webapp-list/webapp[webroot]@http-port", 80),
     ("webapp-list/webapp[webroot]@https-port", 443),
     ("webapp-list/webapp[webroot]@https-listen-port", 443),
-    ("cluster_https_port", 0),
+    ("cluster-member@https-port", 0),
     ("smtp-server@listen-port", 25),
     ("mail-delivery@relay-port", 10025),
     ("ssh-server@port", 22),

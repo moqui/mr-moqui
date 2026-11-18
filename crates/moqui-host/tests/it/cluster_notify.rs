@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Postgres NOTIFY cluster channel (`cluster_transport=notify`). Members in one process share an origin id and would
+//! The Postgres NOTIFY cluster channel (`moqui_conf__cluster_member__transport=notify`). Members in one process share an origin id and would
 //! skip each other's messages, so the peer is played over raw connections to the same database: its NOTIFYs arrive and
 //! are applied, and this member's fan-out is read by a LISTEN of the test's own.
 
@@ -32,7 +32,8 @@ fn a_notify_member_applies_peer_notifies_and_sends_its_own() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = crate::common::start_with_properties("notify", None, &[("cluster_transport", "notify")]);
+    let gate =
+        crate::common::start_with_properties("notify", None, &[("moqui_conf__cluster_member__transport", "notify")]);
     let factory = Arc::clone(gate.server.factory());
     let facade = factory.entity().unwrap();
 
@@ -108,7 +109,11 @@ fn a_notify_that_arrives_while_the_request_queue_is_full_is_applied_once_there_i
     if !crate::common::own_process() {
         return;
     }
-    let gate = crate::common::start_with_properties("notify-busy", None, &[("cluster_transport", "notify")]);
+    let gate = crate::common::start_with_properties(
+        "notify-busy",
+        None,
+        &[("moqui_conf__cluster_member__transport", "notify")],
+    );
     let factory = Arc::clone(gate.server.factory());
 
     let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));

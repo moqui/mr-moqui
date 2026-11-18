@@ -100,6 +100,18 @@
         instance, max-users the most users a run may have. -->
     <load-runner targets="" max-runs="1" max-users="1000"/>
 
+    <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
+        on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and
+        shared by provisioning, distinct from the session cookie key; set one, set both. https-port: the cluster port
+        (8444 when empty). base-url: how peers reach this member. transport: empty is its cluster port at base-url (TLS
+        with the cluster certificate), "ssh" its SSH server (ssh-server port), "notify" Postgres NOTIFY on the shared
+        entity database, for members that cannot open a connection to each other. protocol: what this member speaks on its
+        cluster port, as listener and as sender: empty or "grpc" for gRPC on HTTP/2 where TLS chooses h2, with the
+        HTTP/1.1 POST /cluster/{topic} for a peer that does not; "rest" for HTTP/1.1 only. bind-address: the address the
+        cluster listener binds; empty for every interface, as a member on another host must reach it. -->
+    <cluster-member tls-cert="CHANGEME" tls-key="CHANGEME" https-port="" base-url="" transport="" protocol=""
+            bind-address=""/>
+
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 
 
@@ -279,20 +291,6 @@
     <default-property name="call_hold_music_location" value=""/>
     <default-property name="call_queue_prompt_location" value=""/>
 
-    <!-- Cluster TLS material is base64 DER on one line, shared by provisioning, distinct from the session cookie key (webapp session-config cookie-key). -->
-    <default-property name="cluster_tls_cert" value="CHANGEME" is-secret="true"/>
-    <default-property name="cluster_tls_key" value="CHANGEME" is-secret="true"/>
-    <default-property name="cluster_https_port" value=""/>
-    <default-property name="cluster_base_url" value=""/>
-    <!-- How peers reach this member: empty is its cluster port at cluster_base_url (TLS with the cluster certificate),
-        "ssh" its SSH server (ssh-server port), "notify" Postgres NOTIFY on the shared entity database, for members that cannot
-        open a connection to each other. -->
-    <default-property name="cluster_transport" value=""/>
-    <!-- What this member speaks on its cluster port, as listener and as sender: empty or "grpc" for gRPC on HTTP/2 where
-        TLS chooses h2, with the HTTP/1.1 POST /cluster/{topic} for a peer that does not; "rest" for HTTP/1.1 only. -->
-    <default-property name="cluster_protocol" value=""/>
-    <!-- The address the cluster listener binds; empty for every interface, as a member on another host must reach it. -->
-    <default-property name="cluster_bind_address" value=""/>
     <!-- The edge link (plans/archive/Edge-Node.md §5.1, §5.6; plans/Edge-Node2.md §4.3). The instance element's node-role
         is empty on a normal node; any other role takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1) and names the
         option sets it has: front_edge for an edge node as built (web access, ports and balancing, and the edge set:
@@ -314,7 +312,7 @@
         runtime/.env; a new one means each local node pairs again. -->
     <default-property name="edge_link_key" value="CHANGEME" is-secret="true"/>
     <!-- On a member of an edge cluster (plans/Edge-Node2.md §4.6), where local nodes dial this member: https://host:port,
-        its own name and HTTPS port. Set per member, as cluster_base_url is; the members share everything else, the link
+        its own name and HTTPS port. Set per member, as cluster-member@base-url is; the members share everything else, the link
         key among it. Each member's Hello answer lists the cluster's live members with this address, and a local node
         dials every one and keeps the list (runtime/db/edge_members). Empty: the member is reached only at the URL a
         local node paired with, which is all a single edge node needs. -->

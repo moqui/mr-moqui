@@ -84,8 +84,9 @@ Environment
   MOQUI_EMBEDDED_SHA256_RUNTIME, _POSTGRES, _OPENSEARCH, _CHROMIUM
                      The checksum each part built in must have, checked at startup (moqui help embedded)
   moqui_conf__webapp_list__webapp__WEBROOT__http_port
-                     HTTP port (default 8080); __https_listen_port the HTTPS one (8443), cluster_https_port
-                     the cluster's (8444); __https_port is the HTTPS port in generated URLs (empty is 443).
+                     HTTP port (default 8080); __https_listen_port the HTTPS one (8443),
+                     moqui_conf__cluster_member__https_port the cluster's (8444); __https_port is the HTTPS port
+                     in generated URLs (empty is 443).
   moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name
                      postgres, mysql, or mysql8 for an external server; otherwise embedded (moqui help conf)
 

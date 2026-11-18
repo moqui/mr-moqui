@@ -356,6 +356,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "chat",
         // load runs from Tools (plans/archive/LoadRunner.md §10)
         "load-runner",
+        // this server as a cluster member (plans/archive/Cluster.md)
+        "cluster-member",
         "ssh-server",
         "terminal",
         "git-server",

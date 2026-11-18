@@ -16,17 +16,16 @@
         database only. -->
 
     <!-- The same .env on every member: the secrets the first member's first start generates (webapp-list/webapp[webroot]/session-config@cookie-key,
-        cluster_tls_cert, cluster_tls_key, moqui_conf__entity_facade__crypt_pass) and what pairing with the front writes on that member:
+        cluster-member@tls-cert, cluster-member@tls-key, moqui_conf__entity_facade__crypt_pass) and what pairing with the front writes on that member:
         front_node_url, front_node_key (the pairing's key), front_node_pin and front_node_id. A front pairing has no
         pairing id: the front knows the cluster by its key and its members' ids, and there is no queue. Copy that whole
-        .env to every other member, then add the member's own cluster_base_url, https://(this member's private
+        .env to every other member, then add the member's own cluster-member@base-url, https://(this member's private
         address):8444; each links at its next start. Each member's own: its instance id (runtime/db/instance_id), its
         member key (runtime/db/edge_member_key) and the front's member list (runtime/db/front_members). Never copy
         runtime/db between members. Open 8444 between the members only.
         Admission is as with an edge node: while a member is linked, a new one is admitted only when a linked member's
         cluster lists it as live, so a copy on another database with the key is refused "join the cluster first". -->
-    <default-property name="cluster_transport" value=""/>
-    <default-property name="cluster_protocol" value=""/>
+    <cluster-member transport="" protocol=""/>
 
     <!-- Web access through the front: the client's address comes over the link, so no webapp-list/webapp[webroot]@trusted-proxies or
         webapp-list/webapp[webroot]@client-ip-header; each member's web protection counts by it, and a ban one member starts is shared with

@@ -155,9 +155,9 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
         }
         targets.push(required(
             "Cluster",
-            "cluster_https_port",
+            "cluster-member@https-port",
             crate::cluster_edge::bind_address()?.to_string(),
-            crate::cluster_edge::listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?,
+            crate::cluster_edge::listen_port(&moqui_core::context::conf_env::setting("cluster-member@https-port"))?,
         ));
     }
     #[cfg(feature = "ssh")]

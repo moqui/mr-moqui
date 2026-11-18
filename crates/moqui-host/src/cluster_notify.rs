@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Postgres `NOTIFY` cluster channel (`cluster_transport=notify`, `plans/archive/Cluster.md`), for members that share the
+//! The Postgres `NOTIFY` cluster channel (`moqui_conf__cluster_member__transport=notify`, `plans/archive/Cluster.md`), for members that share the
 //! entity database and cannot open a connection to each other.
 //!
 //! A notify member advertises `pg-notify:`. The core fan-out posts once to that base URL for all of them, and the
@@ -50,7 +50,7 @@ const BUSY_PATIENCE: Duration = Duration::from_secs(30);
 ///
 /// # Errors
 ///
-/// Returns an error when the cluster material is missing, or `cluster_transport` is `notify` and the entity database is
+/// Returns an error when the cluster material is missing, or `cluster-member@transport` is `notify` and the entity database is
 /// not Postgres.
 pub(crate) fn install_sender(factory: &Arc<ExecutionContextFactory>, entity_is_postgres: bool) -> Result<(), Error> {
     check_transport(notify_transport(), entity_is_postgres)?;
@@ -96,7 +96,7 @@ impl Sender for NoSsh {
 fn check_transport(notify: bool, entity_is_postgres: bool) -> Result<(), Error> {
     if notify && !entity_is_postgres {
         return Err(Error::new(
-            "cluster_transport=notify needs a Postgres entity database; this one is MySQL",
+            "moqui_conf__cluster_member__transport=notify needs a Postgres entity database; this one is MySQL",
         ));
     }
     Ok(())
@@ -104,7 +104,7 @@ fn check_transport(notify: bool, entity_is_postgres: bool) -> Result<(), Error> 
 
 /// True when this member advertises `pg-notify:` and listens.
 pub(crate) fn notify_transport() -> bool {
-    moqui_lib::env::get_prop_or_env("cluster_transport") == "notify"
+    moqui_core::context::conf_env::setting("cluster-member@transport") == "notify"
 }
 
 struct DispatchSender {
@@ -204,7 +204,7 @@ impl Drop for NotifyListener {
     }
 }
 
-/// With `cluster_transport=notify`, connect, `LISTEN`, and start the thread that applies what arrives. `None`
+/// With `moqui_conf__cluster_member__transport=notify`, connect, `LISTEN`, and start the thread that applies what arrives. `None`
 /// otherwise.
 ///
 /// # Errors
@@ -221,7 +221,9 @@ pub(crate) fn listen_if_configured(
         return Ok(None);
     }
     let Some(driver) = db.postgres.clone() else {
-        return Err(Error::new("cluster_transport=notify needs a Postgres entity database"));
+        return Err(Error::new(
+            "moqui_conf__cluster_member__transport=notify needs a Postgres entity database",
+        ));
     };
     let first = connect_listen(&driver)?;
     let stop = Arc::new(AtomicBool::new(false));

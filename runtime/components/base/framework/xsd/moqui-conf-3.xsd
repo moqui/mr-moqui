@@ -26,6 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="channels"/>
                 <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" ref="load-runner"/>
+                <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
@@ -2143,6 +2144,18 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="targets" type="xs:string"><xs:annotation><xs:documentation>URL prefixes (and ssh://host:port entries) a run may reach beside this server and loopback, comma separated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-runs" type="non-neg-int-expandable" default="1"/>
             <xs:attribute name="max-users" type="non-neg-int-expandable" default="1000"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="cluster-member">
+        <xs:annotation><xs:documentation>This server as a cluster member: its TLS pair, cluster port and how peers reach it.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="tls-cert" type="xs:string"><xs:annotation><xs:documentation>A secret, generated with tls-key into runtime/.env; base64 DER.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tls-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated with tls-cert; base64 DER.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="https-port" type="xs:string"><xs:annotation><xs:documentation>The cluster port; 8444 when empty, 0 an ephemeral one.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="base-url" type="xs:string"/>
+            <xs:attribute name="transport" type="xs:string"><xs:annotation><xs:documentation>Empty (the cluster port), ssh or notify.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="protocol" type="xs:string"><xs:annotation><xs:documentation>Empty or grpc, or rest.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="bind-address" type="xs:string"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="smtp-server">

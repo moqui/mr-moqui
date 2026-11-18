@@ -330,7 +330,7 @@ fn an_edge_members_link_name_passes_through_the_front_to_it_alone() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &first_port,
             ),
-            ("cluster_https_port", &cluster_port),
+            ("moqui_conf__cluster_member__https_port", &cluster_port),
             ("edge_link_key", &link_key),
             ("edge_link_url", &link_urls[0]),
         ],
@@ -634,7 +634,7 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         None,
         &[
             ("moqui_conf__instance__node_role", ""),
-            ("cluster_https_port", &local_cluster_port),
+            ("moqui_conf__cluster_member__https_port", &local_cluster_port),
         ],
     );
     let local2 = crate::common::start_member("full-local-2", &local1.cluster_dir, &[]);
@@ -647,7 +647,7 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         EDGE_CONF,
         &[
             ("moqui_conf__instance__node_role", ""),
-            ("cluster_https_port", &edge_cluster_port),
+            ("moqui_conf__cluster_member__https_port", &edge_cluster_port),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "off"),
         ],
         &files(&[]),

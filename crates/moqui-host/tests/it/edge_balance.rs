@@ -417,8 +417,8 @@ const MEMBER_TEST: &str = "edge_balance::balance_member_process";
 /// The generated secrets a second member of the cluster takes from the first: its session cookies are the first's.
 const SHARED_SECRETS: [&str; 4] = [
     "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
-    "cluster_tls_cert",
-    "cluster_tls_key",
+    "moqui_conf__cluster_member__tls_cert",
+    "moqui_conf__cluster_member__tls_key",
     "moqui_conf__entity_facade__crypt_pass",
 ];
 
@@ -530,7 +530,7 @@ impl Pool {
         let local = crate::common::start_with_properties(
             &format!("{label}-local"),
             None,
-            &[("cluster_https_port", &cluster_port)],
+            &[("moqui_conf__cluster_member__https_port", &cluster_port)],
         );
         let (edge, port) = start_edge(&format!("{label}-edge"), &edge_cert);
         let rt = runtime();

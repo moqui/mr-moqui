@@ -41,14 +41,14 @@ with the front as well, for its names, XMPP domain and ports.
   `sip_port`, `sip_tls_port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
   `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
   `front_node_url`, `front_node_key`, `front_node_pin` and `front_node_id`.
-- **Each edge member, its own**: `cluster_base_url`, `edge_link_url=https://edge1.example.com` (its link name, at the
+- **Each edge member, its own**: `cluster-member@base-url`, `edge_link_url=https://edge1.example.com` (its link name, at the
   front), `smtp-server@hostname` (its own address's reverse DNS name), `rtc_public_address`, `turn_public_host` and
   `sip_public_address` (its own address). Never copy `runtime/db`.
 - **Every local member, the same**: the database and secrets (for git hosting `ssh-server@host-key` and
   `git-server@lfs-token-key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge_node_url`,
   `edge_node_key`, `edge_node_pin`, `edge_node_id`, `edge_node_pairing`; with `edge` members also `front_node_*`; the
   PASS client lines the wizard writes (`pass_edge_client`, `pass_client_edge_sites`, `pass_client_edge_callback`).
-- **Each local member, its own**: `cluster_base_url`. Never copy `runtime/db`.
+- **Each local member, its own**: `cluster-member@base-url`. Never copy `runtime/db`.
 
 ## DNS
 
@@ -91,7 +91,7 @@ The order to pair, each tier with the one before it:
    Clients › Clients, make a pairing code; on the first local member, System › Edge Node, pair at the edge cluster's
    own name (`https://edge.example.com`), or at an edge member's link name once it has a certificate, and run the
    wizard: host names, mail, chat, calls, phones, and PASS with the
-   sites the edge members serve. Copy its `.env` to each other local member, add its own `cluster_base_url`, and start
+   sites the edge members serve. Copy its `.env` to each other local member, add its own `cluster-member@base-url`, and start
    it.
 4. **With `edge` members only, the local cluster with the front.** On the front make another pairing code; on the
    first local member pair with the front, copy the `front_node_*` lines to every local member, and run the wizard

@@ -212,7 +212,7 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
         &[
             ("moqui_conf__ssh_server__port", "0"),
             ("moqui_conf__ssh_server__host_key", &seed),
-            ("cluster_transport", "ssh"),
+            ("moqui_conf__cluster_member__transport", "ssh"),
         ],
     );
     let address = gate.server.ssh_address().expect("the SSH server listens");

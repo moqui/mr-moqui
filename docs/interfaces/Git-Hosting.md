@@ -1205,7 +1205,7 @@ round robin; SSH goes by the client's address). A `local` or `remote` repository
 `shared-storage="true"` (`git-server@shared-storage`).
 
 A node is a cluster member when another member's heartbeat is live in `moqui.server.ClusterMember`, or it is set up to
-be one (`cluster_base_url`, `cluster_transport`); once seen to be one it stays one until it restarts, though every
+be one (`cluster-member@base-url`, `cluster-member@transport`); once seen to be one it stays one until it restarts, though every
 peer's heartbeat lapse, and an answer that could not be read is not kept. A thread with no context reads this and the
 conf through the provider's own factory. On a member **without** shared storage:
 

@@ -295,8 +295,8 @@ pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
             "off".to_string(),
         ),
-        ("cluster_bind_address", "127.0.0.1".to_string()),
-        ("cluster_https_port", "0".to_string()),
+        ("moqui_conf__cluster_member__bind_address", "127.0.0.1".to_string()),
+        ("moqui_conf__cluster_member__https_port", "0".to_string()),
         ("moqui_conf__search_facade__cluster__run", "false".to_string()),
     ]
 }

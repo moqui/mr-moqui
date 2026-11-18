@@ -15,13 +15,13 @@
         (moqui_conf__entity_facade__datasource__TRANSACTIONAL__host and the rest). Back it up with its own tools:
         the backup job covers an embedded database only. -->
 
-    <!-- The same secrets on every member, as in MoquiLocalConf.xml: webapp-list/webapp[webroot]/session-config@cookie-key, cluster_tls_cert,
-        cluster_tls_key and moqui_conf__entity_facade__crypt_pass, which the first member's first start generates into its .env.
+    <!-- The same secrets on every member, as in MoquiLocalConf.xml: webapp-list/webapp[webroot]/session-config@cookie-key, cluster-member@tls-cert,
+        cluster-member@tls-key and moqui_conf__entity_facade__crypt_pass, which the first member's first start generates into its .env.
         The pairing is the cluster's, made once on one member (System › Edge Node, Pair with an edge node), which writes
         edge_node_url, edge_node_key (the pairing's key), edge_node_pin, edge_node_id and edge_node_pairing (the id the
         edge node knows the cluster by, which keys the outbox and its receipts) to that member's .env. Copy that whole
         .env to every other member (the secrets above, the pairing's lines, and the rest that must match, such as
-        acme@account-key, ssh-server@host-key and git-server@lfs-token-key), then add the member's own cluster_base_url; each links at
+        acme@account-key, ssh-server@host-key and git-server@lfs-token-key), then add the member's own cluster-member@base-url; each links at
         its next start. ssh-server@host-key and git-server@lfs-token-key must be the same on every member: the edge node sends an
         SSH connection or an LFS request to any member, and after a failover to another one, so with its own host key a
         member is a changed host to git clients, and with its own LFS key it refuses the others' LFS tokens. A member
@@ -30,7 +30,7 @@
         at its first link), which the edge node pins for its id. Never copy runtime/db between members. A member made
         again with a new key is refused as another node until its key is forgotten on the edge node (System › Edge
         Clients › Clients, Forget key).
-        Per member in .env: cluster_base_url, https://(this member's private address):8444, which the other members
+        Per member in .env: cluster-member@base-url, https://(this member's private address):8444, which the other members
         reach. Open 8444 between the members only. -->
 
     <!-- Admission (plans/Edge-Node2.md §4.4): while a member is linked, a new one is admitted only when a linked
@@ -42,10 +42,9 @@
     <!-- How peers reach this member, as in MoquiLocalConf.xml: empty for its cluster port (TLS with the cluster
         certificate, client certificate required), notify for Postgres LISTEN/NOTIFY on the shared database when members
         cannot connect to each other (Postgres only), ssh through its SSH server (ssh-server@port; a build with the ssh
-        feature). cluster_protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1 only; members on different
+        feature). cluster-member@protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1 only; members on different
         settings or builds still reach each other. -->
-    <default-property name="cluster_transport" value=""/>
-    <default-property name="cluster_protocol" value=""/>
+    <cluster-member transport="" protocol=""/>
 
     <!-- Web access through the edge node: the client's address comes over the link, so no webapp-list/webapp[webroot]@trusted-proxies or
         webapp-list/webapp[webroot]@client-ip-header; each member's web protection counts by it. A passthrough name ends its TLS on the

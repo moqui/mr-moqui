@@ -419,6 +419,7 @@ pub fn generate_secrets(conf: &MNode, overrides: &[Override], env_path: &Path) -
         .collect();
     let mut pairs = Vec::new();
     let mut made = Vec::new();
+    generate_cluster_pair(conf, &overridden, &mut pairs, &mut made)?;
     let mut nodes = Vec::new();
     collect_generated(conf, conf_schema::CATALOG, &mut nodes);
     for (node, attribute) in nodes {
@@ -449,6 +450,47 @@ pub fn generate_secrets(conf: &MNode, overrides: &[Override], env_path: &Path) -
         }
     }
     Ok(made)
+}
+
+/// The cluster TLS pair of `conf`'s `cluster-member`: made together (a certificate and its key) when both are at
+/// `CHANGEME` and neither was overridden, its environment names added to `pairs`. Set together or empty together;
+/// one without the other is an error, as a member with half a pair cannot join.
+fn generate_cluster_pair(
+    conf: &MNode,
+    overridden: &[&str],
+    pairs: &mut Vec<(String, String)>,
+    made: &mut Vec<String>,
+) -> Result<(), Error> {
+    const CERT: &str = "cluster-member@tls-cert";
+    const KEY: &str = "cluster-member@tls-key";
+    let Some(node) = conf.first_named("cluster-member") else {
+        return Ok(());
+    };
+    let cert = node.attribute("tls-cert").unwrap_or_default();
+    let key = node.attribute("tls-key").unwrap_or_default();
+    let placeholder = |value: &str| value.trim().ends_with("CHANGEME");
+    if placeholder(&cert) && placeholder(&key) && !overridden.contains(&CERT) && !overridden.contains(&KEY) {
+        #[cfg(feature = "cluster-tls")]
+        {
+            let (cert, key) = crate::cluster::generate_cert_pair()?;
+            node.set_attribute("tls-cert", cert.clone());
+            node.set_attribute("tls-key", key.clone());
+            pairs.push((env_name_of(CERT), cert));
+            pairs.push((env_name_of(KEY), key));
+            made.push(CERT.to_string());
+            made.push(KEY.to_string());
+        }
+        // without cluster-tls (the browser build) the pair stays unset; the cluster's start fails on it, nothing else
+        // reads it
+        #[cfg(not(feature = "cluster-tls"))]
+        let _ = (pairs, made);
+        return Ok(());
+    }
+    let empty = |value: &str| value.trim().is_empty() || placeholder(value);
+    if empty(&cert) != empty(&key) {
+        return Err(Error::new(format!("{CERT} and {KEY} must be set together")));
+    }
+    Ok(())
 }
 
 /// Each element of `node`'s children that a unit of `units` marks with a generated secret attribute, with the

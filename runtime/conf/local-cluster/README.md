@@ -26,13 +26,13 @@ which pools the members of a pairing and balances over them. Requirements, what 
 ## `.env`
 
 - **Every member, the same**: the transactional datasource's `host`, `port`, `database`, `user`
-  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first member generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster_tls_cert`,
-  `cluster_tls_key`, `moqui_conf__entity_facade__crypt_pass`, and for git hosting `ssh-server@host-key` and `git-server@lfs-token-key`: a client's
+  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first member generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster-member@tls-cert`,
+  `cluster-member@tls-key`, `moqui_conf__entity_facade__crypt_pass`, and for git hosting `ssh-server@host-key` and `git-server@lfs-token-key`: a client's
   SSH connections and LFS requests reach any member, and another one after a failover (a member whose SSH host key
   differs warns at startup). Copying the first member's whole `.env` gives each the same. Behind your own load balancer: `webapp-list/webapp[webroot]@trusted-proxies`,
   `webapp-list/webapp[webroot]@client-ip-header`. With an edge node: what pairing writes on the first member, `edge_node_url`,
   `edge_node_key`, `edge_node_pin`, `edge_node_id` and `edge_node_pairing`.
-- **Each member, its own**: `cluster_base_url=https://<this member's private address>:8444`. Never copy `runtime/db`:
+- **Each member, its own**: `moqui_conf__cluster_member__base_url=https://<this member's private address>:8444`. Never copy `runtime/db`:
   each member keeps its own instance id and edge member key there.
 
 ## Commands
@@ -44,8 +44,8 @@ which pools the members of a pairing and balances over them. Requirements, what 
 1. Start the first member once, so it generates its secrets into `.env`.
 2. With an edge node: on the edge node, System › Edge Clients › Clients, make a pairing code; on the first member,
    System › Edge Node, pair and run the wizard.
-3. Copy that `.env` to each other member, add its own `cluster_base_url`, and start it. With an edge node each member
+3. Copy that `.env` to each other member, add its own `cluster-member@base-url`, and start it. With an edge node each member
    links once its cluster lists it as live.
 4. Open 8444 between the members only.
-5. Check: `SELECT instance_id, cluster_base_url, heartbeat FROM cluster_member;` on the shared database. With an edge
+5. Check: `SELECT instance_id, cluster-member@base-url, heartbeat FROM cluster_member;` on the shared database. With an edge
    node, Edge Clients › Clients there lists each member, and System › Edge Node on a member lists its cluster.

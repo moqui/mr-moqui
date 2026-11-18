@@ -15,12 +15,12 @@
 //! The cluster port (plans/archive/Cluster.md): its listener, its senders, and the path a peer's topic message takes on
 //! this member, whichever transport carried it.
 //!
-//! Empty `cluster_https_port` is 8444 on `cluster_bind_address` (default `0.0.0.0`, so other hosts reach it; the
+//! Empty `cluster-member@https-port` is 8444 on `cluster-member@bind-address` (default `0.0.0.0`, so other hosts reach it; the
 //! listener takes only peers that present the cluster certificate). `0` is ephemeral: the listener binds port 0
 //! and [`ClusterEdge::address`] is the address the kernel chose. The public HTTP and HTTPS listeners do not ask
 //! for a client certificate.
 //!
-//! - **Protocols** (`cluster_protocol`, [`Protocol`]). On one port, TLS picks by ALPN: gRPC on HTTP/2
+//! - **Protocols** (`cluster-member@protocol`, [`Protocol`]). On one port, TLS picks by ALPN: gRPC on HTTP/2
 //!   (`moqui.cluster.v1.Cluster`, [`grpc`]) or `POST /cluster/{topic}` on HTTP/1.1, the same messages and statuses.
 //!   gRPC is the default where it is built; `rest` keeps a member to HTTP/1.1, both as listener and as sender. A client
 //!   that offers no ALPN, such as a member built before gRPC, gets HTTP/1.1.
@@ -80,27 +80,27 @@ struct Material {
     digest: [u8; 32],
 }
 
-/// `cluster_bind_address`, else every interface: a member on another host must reach this one.
+/// `cluster-member@bind-address`, else every interface: a member on another host must reach this one.
 pub(crate) fn bind_address() -> Result<IpAddr, HostError> {
-    let raw = moqui_lib::env::get_prop_or_env("cluster_bind_address");
+    let raw = moqui_core::context::conf_env::setting("cluster-member@bind-address");
     if raw.trim().is_empty() {
         return Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     }
     raw.trim()
         .parse()
-        .map_err(|_| HostError::new(format!("cluster_bind_address {raw} is not an IP address")))
+        .map_err(|_| HostError::new(format!("cluster-member@bind-address {raw} is not an IP address")))
 }
 
-/// `cluster_https_port`. Empty is 8444. `0` is ephemeral and is passed through to `bind`.
+/// `cluster-member@https-port`. Empty is 8444. `0` is ephemeral and is passed through to `bind`.
 pub(crate) fn listen_port(raw: &str) -> Result<u16, HostError> {
     if raw.is_empty() {
         return Ok(DEFAULT_PORT);
     }
     raw.parse()
-        .map_err(|_| HostError::new("cluster_https_port is not a port"))
+        .map_err(|_| HostError::new("cluster-member@https-port is not a port"))
 }
 
-/// How this member speaks on the cluster port, from `cluster_protocol`.
+/// How this member speaks on the cluster port, from `cluster-member@protocol`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Protocol {
     /// gRPC on HTTP/2 where TLS chose h2, HTTP/1.1 otherwise: the listener offers both, and the sender posts over
@@ -110,21 +110,23 @@ pub(crate) enum Protocol {
     Rest,
 }
 
-/// `cluster_protocol`: empty is gRPC where this build has it, else HTTP/1.1; `grpc` or `rest` sets it.
+/// `cluster-member@protocol`: empty is gRPC where this build has it, else HTTP/1.1; `grpc` or `rest` sets it.
 ///
 /// # Errors
 ///
 /// When the value is neither, or it is `grpc` in a build without gRPC.
 pub(crate) fn protocol() -> Result<Protocol, HostError> {
-    let raw = moqui_lib::env::get_prop_or_env("cluster_protocol");
+    let raw = moqui_core::context::conf_env::setting("cluster-member@protocol");
     match raw.trim() {
         "" if cfg!(feature = "grpc") => Ok(Protocol::Grpc),
         "" | "rest" => Ok(Protocol::Rest),
         "grpc" if cfg!(feature = "grpc") => Ok(Protocol::Grpc),
         "grpc" => Err(HostError::new(
-            "cluster_protocol is grpc and gRPC is not built into this host",
+            "cluster-member@protocol is grpc and gRPC is not built into this host",
         )),
-        other => Err(HostError::new(format!("cluster_protocol {other} is not grpc or rest"))),
+        other => Err(HostError::new(format!(
+            "cluster-member@protocol {other} is not grpc or rest"
+        ))),
     }
 }
 
@@ -137,7 +139,7 @@ fn alpn_protocols(protocol: Protocol) -> Vec<Vec<u8>> {
 }
 
 /// The HTTPS sender, which the SSH sender also uses for a peer whose base URL is `https://`: over gRPC, with the
-/// HTTP/1.1 POST for a peer that does not choose h2, unless `cluster_protocol` is `rest`.
+/// HTTP/1.1 POST for a peer that does not choose h2, unless `cluster-member@protocol` is `rest`.
 pub(crate) fn https_sender() -> Result<Arc<dyn Sender>, HostError> {
     let material = load_material()?;
     let config = client_config(&material)?;
@@ -208,7 +210,7 @@ pub(crate) fn url_host(url: &str) -> Option<(String, u16)> {
     (!host.is_empty()).then(|| (host.to_string(), port))
 }
 
-/// The shared cluster key `cluster_tls_key`, as DER, for the SSH channel's derived login key.
+/// The shared cluster key `cluster-member@tls-key`, as DER, for the SSH channel's derived login key.
 #[cfg(feature = "ssh")]
 pub(crate) fn cluster_key_der() -> Result<Vec<u8>, HostError> {
     let material = load_material()?;
@@ -568,10 +570,10 @@ fn status_code(start: &str) -> u16 {
 }
 
 fn load_material() -> Result<Material, HostError> {
-    let cert_b64 = require_configured("cluster_tls_cert")?;
-    let key_b64 = require_configured("cluster_tls_key")?;
-    let cert = decode_der("cluster_tls_cert", &cert_b64)?;
-    let key = decode_der("cluster_tls_key", &key_b64)?;
+    let cert_b64 = require_configured("cluster-member@tls-cert")?;
+    let key_b64 = require_configured("cluster-member@tls-key")?;
+    let cert = decode_der("cluster-member@tls-cert", &cert_b64)?;
+    let key = decode_der("cluster-member@tls-key", &key_b64)?;
     let hashed = Sha256::digest(&cert);
     let mut digest = [0_u8; 32];
     digest.copy_from_slice(&hashed);
@@ -579,7 +581,7 @@ fn load_material() -> Result<Material, HostError> {
 }
 
 fn require_configured(name: &str) -> Result<String, HostError> {
-    let value = moqui_lib::env::get_prop_or_env(name);
+    let value = moqui_core::context::conf_env::setting(name);
     if value.is_empty() || value.ends_with("CHANGEME") {
         return Err(HostError::new(format!("{name} is not configured")));
     }
@@ -593,7 +595,7 @@ fn decode_der(name: &str, text: &str) -> Result<Vec<u8>, HostError> {
 }
 
 fn private_key(bytes: &[u8]) -> Result<PrivateKeyDer<'static>, HostError> {
-    PrivateKeyDer::try_from(bytes.to_vec()).map_err(|_| HostError::new("cluster_tls_key is not a private key"))
+    PrivateKeyDer::try_from(bytes.to_vec()).map_err(|_| HostError::new("cluster-member@tls-key is not a private key"))
 }
 
 fn client_config(material: &Material) -> Result<Arc<rustls::ClientConfig>, HostError> {

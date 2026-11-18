@@ -277,7 +277,7 @@ impl EdgeCluster {
                 ),
                 ("edge_link_url", &first_url),
                 ("edge_link_key", &link_key),
-                ("cluster_https_port", &cluster_port),
+                ("moqui_conf__cluster_member__https_port", &cluster_port),
             ],
             &files(&[("cert/default.crt", &cert.0), ("cert/default.key", &cert.1)]),
         );

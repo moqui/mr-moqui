@@ -623,8 +623,11 @@ fn acceptance_a_front_node_balances_a_local_cluster_with_web_protection() {
     }
     let authority = authority();
     let cluster_port = crate::common::free_port().to_string();
-    let first =
-        crate::common::start_with_properties("edge-front-cluster-1", None, &[("cluster_https_port", &cluster_port)]);
+    let first = crate::common::start_with_properties(
+        "edge-front-cluster-1",
+        None,
+        &[("moqui_conf__cluster_member__https_port", &cluster_port)],
+    );
     let second = crate::common::start_member("edge-front-cluster-2", &first.cluster_dir, &[]);
     // the front last: its hook is the one the services reach
     let front_cert = issue(&authority, &["localhost", ERP]);

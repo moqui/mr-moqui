@@ -72,7 +72,7 @@ use crate::user::{now_millis, now_value, value_millis};
 
 const MEMBER: &str = "moqui.server.ClusterMember";
 const MESSAGE: &str = "moqui.server.ClusterMessage";
-/// The base URL every `cluster_transport=notify` member advertises. One post to it reaches all of them.
+/// The base URL every `moqui_conf__cluster_member__transport=notify` member advertises. One post to it reaches all of them.
 pub const NOTIFY_BASE_URL: &str = "pg-notify:";
 /// Maximum serialized topic envelope, shared by every cluster transport.
 pub const MAX_CLUSTER_BODY: usize = 16 * 1024 * 1024;
@@ -831,7 +831,7 @@ struct Member {
     /// The moqui binary's version, which an edge node reports its pool's members with (plans/Edge-Node2.md §4.4).
     version: String,
     /// Where a local node dials this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6), read at
-    /// start as `cluster_base_url` is. Empty on any other node.
+    /// start as `cluster-member@base-url` is. Empty on any other node.
     edge_link_url: String,
 }
 
@@ -871,9 +871,9 @@ fn configured_fingerprints() -> Result<Fingerprints, Error> {
             "the session cookie key (session-config cookie-key) is not configured",
         ));
     }
-    let cert_b64 = require_configured("cluster_tls_cert")?;
-    let _key = require_configured("cluster_tls_key")?;
-    let der = decode_der("cluster_tls_cert", &cert_b64)?;
+    let cert_b64 = require_configured("cluster-member@tls-cert")?;
+    let _key = require_configured("cluster-member@tls-key")?;
+    let der = decode_der("cluster-member@tls-cert", &cert_b64)?;
     Ok(Fingerprints {
         session: sha256_hex(session_key.as_bytes()),
         cert: sha256_hex(&der),
@@ -881,7 +881,7 @@ fn configured_fingerprints() -> Result<Fingerprints, Error> {
 }
 
 fn require_configured(name: &str) -> Result<String, Error> {
-    let value = env::get_prop_or_env(name);
+    let value = crate::context::conf_env::setting(name);
     if value.is_empty() || value.ends_with("CHANGEME") {
         return Err(Error::new(format!("{name} is not configured")));
     }
@@ -904,16 +904,16 @@ pub const SSH_FINGERPRINT_PROPERTY: &str = "cluster_ssh_host_key_fingerprint";
 pub const SSH_ADDRESS_PROPERTY: &str = "cluster_ssh_address";
 
 fn cluster_base_url() -> Result<String, Error> {
-    let configured = env::get_prop_or_env("cluster_base_url");
+    let configured = crate::context::conf_env::setting("cluster-member@base-url");
     let url = if !configured.is_empty() {
         configured
-    } else if env::get_prop_or_env("cluster_transport") == "notify" {
+    } else if crate::context::conf_env::setting("cluster-member@transport") == "notify" {
         NOTIFY_BASE_URL.to_string()
-    } else if env::get_prop_or_env("cluster_transport") == "ssh" {
+    } else if crate::context::conf_env::setting("cluster-member@transport") == "ssh" {
         let address = env::get_prop_or_env(SSH_ADDRESS_PROPERTY);
         if address.is_empty() {
             return Err(Error::new(
-                "cluster_transport is ssh but the SSH server is not listening; set ssh-server@port",
+                "cluster-member@transport is ssh but the SSH server is not listening; set ssh-server@port",
             ));
         }
         format!("ssh://{address}")
@@ -924,11 +924,12 @@ fn cluster_base_url() -> Result<String, Error> {
 }
 
 fn cluster_port() -> Result<u16, Error> {
-    let raw = env::get_prop_or_env("cluster_https_port");
+    let raw = crate::context::conf_env::setting("cluster-member@https-port");
     if raw.is_empty() {
         return Ok(DEFAULT_PORT);
     }
-    raw.parse().map_err(|_| Error::new("cluster_https_port is not a port"))
+    raw.parse()
+        .map_err(|_| Error::new("cluster-member@https-port is not a port"))
 }
 
 fn trim_base(url: &str) -> String {
@@ -965,7 +966,9 @@ fn reject_peer_mismatch(
             ));
         }
         if member.cert_fp != fingerprints.cert {
-            return Err(Error::new("cluster_tls_cert does not match a live cluster member"));
+            return Err(Error::new(
+                "cluster-member@tls-cert does not match a live cluster member",
+            ));
         }
     }
     Ok(())
@@ -1623,7 +1626,7 @@ fn warn_loopback_peers(state: &ClusterState) {
     if loopback(&own) || peers.iter().any(|url| loopback(url)) {
         state.loopback_warned.store(true, Ordering::Relaxed);
         tracing::error!(
-            "a cluster member has a loopback cluster_base_url ({own}, peers {peers:?}); set cluster_base_url on each \
+            "a cluster member has a loopback cluster-member@base-url ({own}, peers {peers:?}); set cluster-member@base-url on each \
              member to an address the others can reach"
         );
     }
