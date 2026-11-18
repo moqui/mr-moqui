@@ -9,3 +9,4 @@ BasicComms/Inbox/Mail runtime/components/base/basic-comms/screen/BasicComms/Inbo
 BasicComms/Inbox/Compose runtime/components/base/basic-comms/screen/BasicComms/Inbox/Compose.qvue
 BasicComms/Calls/Call runtime/components/base/basic-comms/screen/BasicComms/Calls/Call.qvue
 BasicComms/Calls/Dialer runtime/components/base/basic-comms/screen/BasicComms/Calls/Dialer.qvue
+BasicComms/Settings/Devices runtime/components/base/basic-comms/screen/BasicComms/Settings/Devices.qvue

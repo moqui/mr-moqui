@@ -510,34 +510,66 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A new room (org.moqui.chat.ChatServices.create#Room) from the New room and New direct message dialogs:
             roomTypeEnumId direct (one room per set of users: the existing one is answered), private or public (a name),
             with the members of memberUserIdList or the comma list memberUserIds; each member starts at their own default
-            notification level (CHAT_NOTIFY_DEFAULT, which create#Room reads). encrypted makes a direct or private room
-            end-to-end encrypted, for good (C7).</description>
+            notification level (CHAT_NOTIFY_DEFAULT, which create#Room reads). encrypted true makes a direct or private room
+            end-to-end encrypted, for good (C7); false makes it plain. Not given, the default (E2EE by default,
+            plans/Comms-Messaging.md §6.5): a direct room answers the encrypted direct room of exactly these people when
+            there is one, else the plain one when there is one, else a new room, encrypted when the user and every member
+            have a crypto device in use (org.moqui.chat.ChatKeyServices.check#DevicesReady); a private room is encrypted on
+            the same rule; a public room never. encrypted out says what the room is.</description>
         <in-parameters>
             <parameter name="roomTypeEnumId" required="true"/>
             <parameter name="roomName"/>
             <parameter name="topic"/>
             <parameter name="memberUserIdList" type="List"/>
             <parameter name="memberUserIds"/>
-            <parameter name="encrypted" type="Boolean" default="false"/>
+            <parameter name="encrypted" type="Boolean"/>
         </in-parameters>
         <out-parameters>
             <parameter name="chatRoomId"/>
             <parameter name="created" type="Boolean"/>
+            <parameter name="encrypted" type="Boolean"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const TYPES = {direct: 'CrtDirect', private: 'CrtPrivate', public: 'CrtPublic'}
             const type = TYPES[roomTypeEnumId] || roomTypeEnumId
             if (!Object.values(TYPES).includes(type)) { ec.message.addError(ec.l10n.localize('A room is direct, private or public')); return }
-            const ids = Array.from(memberUserIdList || []).concat(memberUserIds ? String(memberUserIds).split(',') : [])
-                    .map((id) => String(id || '').trim()).filter((id) => id)
+            const ids = Array.from(new Set(Array.from(memberUserIdList || []).concat(memberUserIds ? String(memberUserIds).split(',') : [])
+                    .map((id) => String(id || '').trim()).filter((id) => id)))
             if (type === 'CrtDirect' && !ids.length) { ec.message.addError(ec.l10n.localize('Choose who to message')); return }
+            let sealed = encrypted == null ? null : !!encrypted
+            // the default (E2EE by default): a public room is never encrypted
+            if (sealed == null && type === 'CrtPublic') sealed = false
+            const peopleIds = Array.from(new Set([ec.user.userId].concat(ids))).sort()
+            const people = peopleIds.join(',')
+            const directRooms = (key) => Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('roomTypeEnumId', 'CrtDirect').condition('directKey', key)
+                    .orderBy('createdDate').orderBy('chatRoomId').selectField('chatRoomId').disableAuthz().list()).map((row) => row.chatRoomId)
+            if (type === 'CrtDirect') {
+                // two makes of the same people's direct room at once wait for each other: their accounts' rows are locked in
+                // one order, so the second finds the first's room (create#Room answers it) instead of making another
+                for (const id of peopleIds) ec.entity.find('moqui.security.UserAccount').condition('userId', id).selectField('userId')
+                        .forUpdate(true).disableAuthz().one()
+                // the direct room of these people there is: the encrypted one first, then the plain one (create#Room's keys)
+                if (sealed == null) {
+                    if (directRooms('e2ee:' + people).length) sealed = true
+                    else if (directRooms(people).length) sealed = false
+                }
+            }
+            if (sealed == null) sealed = ec.service.sync().name('org.moqui.chat.ChatKeyServices.check#DevicesReady')
+                    .parameter('userIdList', ids).call()?.ready === true
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.create#Room').parameters({roomTypeEnumId: type, roomName: roomName || null,
-                topic: topic || null, memberUserIdList: Array.from(new Set(ids)), encrypted: !!encrypted}).call()
+                topic: topic || null, memberUserIdList: ids, encrypted: sealed}).call()
             reasonCode = out?.reasonCode || null
             if (ec.message.hasError()) return
             chatRoomId = out.chatRoomId
             created = !!out.created
+            encrypted = sealed
+            // a direct room made beside one of the same people anyway (a make that did not wait for the lock, as one of
+            // another server before this): the oldest is the one answered, as the pickers choose it; the newer is left as it is
+            if (type === 'CrtDirect') {
+                const oldest = directRooms((sealed ? 'e2ee:' : '') + people)[0]
+                if (oldest && oldest !== chatRoomId) { chatRoomId = oldest; created = false }
+            }
         ]]></script></actions>
     </service>
 

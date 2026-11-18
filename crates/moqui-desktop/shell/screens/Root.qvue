@@ -66,6 +66,12 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-section avatar><q-icon name="sym_o_devices"></q-icon></q-item-section>
                             <q-item-section>{{t('Apps and devices')}}</q-item-section>
                         </q-item>
+                        <!-- My devices (BasicComms Settings/Devices, bundled): this app's chat crypto device, its key backup and
+                            verification, and Set up this device (plans/Comms-Messaging.md §6.5) -->
+                        <q-item v-if="componentOf('devices')" clickable v-close-popup class="m-shell-crypto-devices" @click="setUrl(commsLink + '/Settings/Devices')">
+                            <q-item-section avatar><q-icon name="sym_o_phonelink_lock"></q-icon></q-item-section>
+                            <q-item-section>{{t('My devices (encryption)')}}</q-item-section>
+                        </q-item>
                         <q-item v-if="pushCheckable" clickable v-close-popup @click="openPushCheck">
                             <q-item-section avatar><q-icon name="sym_o_notifications"></q-icon></q-item-section>
                             <q-item-section>{{t('Notifications on this device')}}</q-item-section>
@@ -219,9 +225,11 @@ const countOf = (counts, key) => {
 // their path under that root, and the screen path each is shown as; the host routes the same paths here
 // (src/client/windows.rs SHELL_SCREENS). Any other path is the server's page, in an app window (Calls' History, its
 // voicemail and recordings among them).
-const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose', 'Calls/Call': 'call', 'Calls/Dialer': 'dialer' };
-const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'] };
-const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer' };
+const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose', 'Calls/Call': 'call', 'Calls/Dialer': 'dialer',
+    'Settings/Devices': 'devices' };
+const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'],
+    devices: ['Settings', 'Devices'] };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices' };
 // what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
 const unsentItems = (found) => {
     const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
