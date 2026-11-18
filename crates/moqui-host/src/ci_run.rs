@@ -15,8 +15,9 @@
 //! `moqui ci-run`: the runner of a pipeline job (docs/interfaces/Pipelines.md "moqui ci-run"). With no argument it runs the
 //! one job its environment names (`MOQUI_CI_SERVER_URL`, `MOQUI_CI_TOKEN`, `MOQUI_CI_JOB_RUN_ID`), as the engine
 //! starts it in a job's container. `register` and `poll` are a registered runner's: register once with the pool's
-//! token, then ask for jobs and run each. It opens no runtime, no conf and no database: the work is
-//! `moqui_git::ci::runner`, which needs `git` and a shell.
+//! token, then ask for jobs and run each. `collect` is the child a `--step-user` runner reads a job's files with, as
+//! that user. It opens no runtime, no conf and no database: the work is `moqui_git::ci::runner`, which needs `git` and
+//! a shell.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -325,6 +326,18 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                     return Ok(0);
                 }
                 std::thread::sleep(Duration::from_secs(interval));
+            }
+        }
+        // the child a --step-user runner reads a job's reports, artifacts and caches with, as the step user
+        // (runner::collect_as; SEC-GIT-81): not for a person to run
+        Some("collect") => {
+            #[cfg(unix)]
+            {
+                Ok(runner::collect_child(args.get(1).map_or("", String::as_str)))
+            }
+            #[cfg(not(unix))]
+            {
+                Err(Error::new("moqui ci-run collect is for unix"))
             }
         }
         Some(other) if !other.starts_with("--") => Err(crate::usage::command_usage("ci-run")),

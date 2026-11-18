@@ -265,7 +265,8 @@ pub fn expand_key(key: &str, workspace: &Path) -> String {
             continue;
         };
         if crate::ci::file::valid_path(file) {
-            if let Ok(bytes) = std::fs::read(workspace.join(file)) {
+            let mut bytes = Vec::new();
+            if copy_regular(workspace, &workspace.join(file), &mut bytes).is_ok() {
                 let digest = moqui_lib::codec::hex_encode(&Sha256::digest(&bytes));
                 out.push_str(digest.get(..16).unwrap_or(&digest));
             }
@@ -276,14 +277,89 @@ pub fn expand_key(key: &str, workspace: &Path) -> String {
     out
 }
 
-/// The files and directories `pattern` names in the workspace: a path, or one whose segments have `*` in them, each
-/// `*` any run of characters of one name (`test-results/*/*.xml`). Sorted; nothing outside the workspace, and no
-/// more than a few thousand.
-pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
-    const MAX: usize = 5000;
-    if !crate::ci::file::valid_path(pattern) {
-        return Vec::new();
+/// Whether what `path` names, through every link on the way, is under `root` (a workspace resolved with
+/// `canonicalize`). A path that does not resolve (missing, a dangling link) is not.
+pub(crate) fn resolves_inside(root: &Path, path: &Path) -> bool {
+    path.canonicalize().is_ok_and(|real| real.starts_with(root))
+}
+
+/// Open `path` to read when it is a regular file and not a link: `O_NOFOLLOW` refuses a link as the last name, and
+/// `O_NONBLOCK` keeps a FIFO put in its place from holding the open; what was opened is checked to be a regular file
+/// (plans/Security-Review.md SEC-GIT-81).
+///
+/// # Errors
+///
+/// When it does not open (a link among them) or is not a regular file.
+pub(crate) fn open_regular(path: &Path) -> Result<std::fs::File, String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(
+            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK)
+                .bits()
+                .cast_signed(),
+        );
     }
+    #[cfg(not(unix))]
+    if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(format!("{} is a symbolic link", path.display()));
+    }
+    let file = options.open(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    match file.metadata() {
+        Ok(meta) if meta.is_file() => Ok(file),
+        Ok(_) => Err(format!("{} is not a regular file", path.display())),
+        Err(err) => Err(format!("{}: {err}", path.display())),
+    }
+}
+
+/// Copy the regular file `file`, which is under `workspace` and not a link, to `out`. The directories on its path may
+/// be links, if what they name is in the workspace.
+///
+/// # Errors
+///
+/// When the file is outside the workspace, a link, not a regular file, or does not read.
+pub(crate) fn copy_regular(workspace: &Path, file: &Path, out: &mut dyn std::io::Write) -> Result<(), String> {
+    let root = workspace
+        .canonicalize()
+        .map_err(|err| format!("{}: {err}", workspace.display()))?;
+    if !resolves_inside(&root, file) {
+        return Err(format!("{} is outside the workspace", file.display()));
+    }
+    let mut opened = open_regular(file)?;
+    std::io::copy(&mut opened, out)
+        .map(|_| ())
+        .map_err(|err| format!("{}: {err}", file.display()))
+}
+
+/// The files and directories `pattern` names in the workspace: a path, or one whose segments have `*` in them, each
+/// `*` any run of characters of one name (`test-results/*/*.xml`). Sorted; no more than a few thousand. A link is
+/// followed only while what it names is in the workspace: a path whose target is outside it (a link of the last
+/// name, or of a directory on the way) is left out, and a `*` never lists a directory out of it (SEC-GIT-81).
+pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
+    matches_and_refused(workspace, pattern).0
+}
+
+/// [`matches`], and the paths left out because they do not resolve inside the workspace (a link out of it, or a
+/// dangling one), at most a hundred, for the job's log.
+pub fn matches_and_refused(workspace: &Path, pattern: &str) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    const MAX: usize = 5000;
+    const MAX_REFUSED: usize = 100;
+    let mut refused = Vec::new();
+    if !crate::ci::file::valid_path(pattern) {
+        return (Vec::new(), refused);
+    }
+    let Ok(root) = workspace.canonicalize() else {
+        return (Vec::new(), refused);
+    };
+    let mut keep = |path: PathBuf, next: &mut Vec<PathBuf>| {
+        if resolves_inside(&root, &path) {
+            next.push(path);
+        } else if refused.len() < MAX_REFUSED && path.symlink_metadata().is_ok() {
+            refused.push(path);
+        }
+    };
     let mut found = vec![workspace.to_path_buf()];
     for segment in pattern
         .split('/')
@@ -292,13 +368,10 @@ pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
         let mut next = Vec::new();
         for dir in &found {
             if !segment.contains('*') {
-                let path = dir.join(segment);
-                // a link is not followed out of the workspace
-                if path.symlink_metadata().is_ok() {
-                    next.push(path);
-                }
+                keep(dir.join(segment), &mut next);
                 continue;
             }
+            // every path kept so far resolves inside the workspace, so this lists no directory out of it
             let Ok(entries) = std::fs::read_dir(dir) else { continue };
             let mut named: Vec<PathBuf> = entries
                 .filter_map(Result::ok)
@@ -306,7 +379,9 @@ pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
                 .map(|entry| entry.path())
                 .collect();
             named.sort();
-            next.extend(named);
+            for path in named {
+                keep(path, &mut next);
+            }
             if next.len() > MAX {
                 next.truncate(MAX);
                 break;
@@ -318,7 +393,7 @@ pub fn matches(workspace: &Path, pattern: &str) -> Vec<PathBuf> {
         }
     }
     found.retain(|path| path != workspace);
-    found
+    (found, refused)
 }
 
 /// End a step's process and what it started: the process group on Unix, the process elsewhere.
@@ -564,6 +639,11 @@ fn query(pairs: &[(&str, &str)]) -> String {
         .join("&")
 }
 
+/// `path` as the job's log names it: by its path in the workspace.
+fn shown_path(workspace: &Path, path: &Path) -> String {
+    path.strip_prefix(workspace).unwrap_or(path).display().to_string()
+}
+
 /// A temporary file beside the workspace, removed when dropped.
 struct Scratch(PathBuf);
 
@@ -577,6 +657,175 @@ impl Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// What the runner reads of the workspace after the steps: one report file as it is, or files and directories packed
+/// as a tar.gz (an artifact, a cache).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Collect {
+    Report,
+    Pack,
+}
+
+impl Collect {
+    #[cfg(unix)]
+    fn word(self) -> &'static str {
+        match self {
+            Self::Report => "report",
+            Self::Pack => "pack",
+        }
+    }
+}
+
+/// The arguments of the child a `--step-user` runner reads the workspace with: `moqui ci-run collect report|pack`.
+pub const COLLECT_ARGS: [&str; 2] = ["ci-run", "collect"];
+
+/// The longest a child reading the workspace runs before it is killed.
+#[cfg(unix)]
+const COLLECT_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// Read `files` of the workspace into the new file `out`, as `kind` says: [`copy_regular`] for a report (one file),
+/// [`archive::pack`] for an artifact or a cache. With a step user the reading is done by a child of this binary
+/// ([`COLLECT_ARGS`]) running as that user, so a link a step made reads only what the step could read itself; the
+/// runner, root in that mode, reads nothing of the workspace (SEC-GIT-81).
+fn collect(options: &Options, kind: Collect, files: &[PathBuf], out: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    if let Some(user) = &options.step_user {
+        return collect_as(user, &options.workspace, kind, files, out);
+    }
+    match kind {
+        Collect::Report => {
+            let [file] = files else {
+                return Err("a report is one file".into());
+            };
+            let mut written = std::fs::File::create(out).map_err(|err| format!("{}: {err}", out.display()))?;
+            copy_regular(&options.workspace, file, &mut written)
+        }
+        Collect::Pack => archive::pack(&options.workspace, files, out),
+    }
+}
+
+/// [`collect`] as `user`: this binary's [`COLLECT_ARGS`] with the step user's uid and gid and no environment, the
+/// workspace and the paths NUL-separated on its standard input, its standard output `out`, and its error text in a
+/// file; each of them a file the runner made, so no pipe can hold the runner. Killed after [`COLLECT_LIMIT`].
+#[cfg(unix)]
+fn collect_as(user: &StepUser, workspace: &Path, kind: Collect, files: &[PathBuf], out: &Path) -> Result<(), String> {
+    use std::io::Write as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::process::CommandExt as _;
+
+    let program = std::env::current_exe().map_err(|err| format!("this program's path is not known: {err}"))?;
+    let list = Scratch::new(workspace, "collect-list");
+    let errors = Scratch::new(workspace, "collect-errors");
+    let mut names = Vec::new();
+    for path in std::iter::once(workspace).chain(files.iter().map(PathBuf::as_path)) {
+        names.extend_from_slice(path.as_os_str().as_bytes());
+        names.push(0);
+    }
+    let open = |path: &Path, write: bool| {
+        std::fs::OpenOptions::new()
+            .read(!write)
+            .write(write)
+            .create(write)
+            .truncate(write)
+            .open(path)
+            .map_err(|err| format!("{}: {err}", path.display()))
+    };
+    open(&list.0, true)?
+        .write_all(&names)
+        .map_err(|err| format!("{}: {err}", list.0.display()))?;
+    let mut child = Command::new(&program)
+        .args(COLLECT_ARGS)
+        .arg(kind.word())
+        .current_dir(workspace)
+        .env_clear()
+        .stdin(open(&list.0, false)?)
+        .stdout(open(out, true)?)
+        .stderr(open(&errors.0, true)?)
+        .uid(user.uid)
+        .gid(user.gid)
+        .spawn()
+        .map_err(|err| format!("{} did not start as {}: {err}", program.display(), user.name))?;
+    let deadline = Instant::now() + COLLECT_LIMIT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(format!(
+                    "reading as {} took over {} minutes",
+                    user.name,
+                    COLLECT_LIMIT.as_secs() / 60
+                ));
+            }
+            Err(err) => break Err(format!("reading as {}: {err}", user.name)),
+        }
+    }?;
+    if status.success() {
+        return Ok(());
+    }
+    let mut said = String::new();
+    if let Ok(file) = std::fs::File::open(&errors.0) {
+        let _ = file.take(2048).read_to_string(&mut said);
+    }
+    Err(said
+        .lines()
+        .next()
+        .filter(|line| !line.trim().is_empty())
+        .map_or_else(|| format!("reading as {} failed: {status}", user.name), str::to_string))
+}
+
+/// `moqui ci-run collect report|pack`, the child of [`collect_as`]: the workspace and then the paths, NUL-separated,
+/// on standard input; the report's bytes or the tar.gz on standard output. The exit code: 0, or [`EXIT_ERROR`] with
+/// why on standard error.
+#[cfg(unix)]
+pub fn collect_child(kind: &str) -> i32 {
+    use std::os::fd::AsFd as _;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let run = || -> Result<(), String> {
+        let kind = match kind {
+            "report" => Collect::Report,
+            "pack" => Collect::Pack,
+            other => return Err(format!("moqui ci-run collect: {other} is not report or pack")),
+        };
+        let mut input = Vec::new();
+        std::io::stdin()
+            .lock()
+            .take(64 * 1024 * 1024)
+            .read_to_end(&mut input)
+            .map_err(|err| format!("the paths did not read: {err}"))?;
+        let mut paths = input
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| PathBuf::from(std::ffi::OsStr::from_bytes(path)));
+        let workspace = paths.next().ok_or("no workspace was given")?;
+        let files: Vec<PathBuf> = paths.collect();
+        let stdout = std::io::stdout()
+            .as_fd()
+            .try_clone_to_owned()
+            .map_err(|err| format!("standard output: {err}"))?;
+        let mut out = std::io::BufWriter::new(std::fs::File::from(stdout));
+        match kind {
+            Collect::Report => {
+                let [file] = files.as_slice() else {
+                    return Err("a report is one file".into());
+                };
+                copy_regular(&workspace, file, &mut out)?;
+            }
+            Collect::Pack => archive::pack_into(&workspace, &files, &mut out)?,
+        }
+        std::io::Write::flush(&mut out).map_err(|err| format!("standard output: {err}"))
+    };
+    match run() {
+        Ok(()) => EXIT_SUCCESS,
+        Err(err) => {
+            eprintln!("{err}");
+            EXIT_ERROR
+        }
     }
 }
 
@@ -708,23 +957,45 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
             succeeded = false;
         }
     }
-    // reports and artifacts: also of a job that failed
+    // reports and artifacts: also of a job that failed; read as the step user, if there is one (collect)
     for pattern in spec["reports"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let Some(pattern) = pattern.as_str() else { continue };
-        for file in matches(&options.workspace, pattern)
-            .into_iter()
-            .filter(|path| path.is_file())
-        {
+        let (files, refused) = matches_and_refused(&options.workspace, pattern);
+        for path in refused {
+            log.line(
+                None,
+                &format!(
+                    "Report {} was not uploaded: it does not resolve inside the workspace",
+                    shown_path(&options.workspace, &path)
+                ),
+            )?;
+        }
+        for file in files {
+            let shown = shown_path(&options.workspace, &file);
+            let Ok(meta) = file.symlink_metadata() else { continue };
+            // a report is a regular file of its own: a link is refused, even to a file in the workspace
+            if meta.file_type().is_symlink() {
+                log.line(None, &format!("Report {shown} was not uploaded: it is a symbolic link"))?;
+                continue;
+            }
+            if !meta.is_file() {
+                continue;
+            }
             let name = file
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let scratch = Scratch::new(&options.workspace, "report");
+            if let Err(err) = collect(options, Collect::Report, std::slice::from_ref(&file), &scratch.0) {
+                log.line(None, &format!("Report {shown} was not uploaded: {err}"))?;
+                continue;
+            }
             let sent = transport.upload(
                 &format!(
                     "artifacts?{}",
                     query(&[("kind", "report"), ("name", &name), ("path", pattern)])
                 ),
-                &file,
+                &scratch.0,
             );
             match sent {
                 Ok((401 | 403 | 410, _)) => return Err(Stop::Gone),
@@ -744,13 +1015,22 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
         let (Some(name), Some(pattern)) = (artifact["name"].as_str(), artifact["path"].as_str()) else {
             continue;
         };
-        let files = matches(&options.workspace, pattern);
+        let (files, refused) = matches_and_refused(&options.workspace, pattern);
+        for path in refused {
+            log.line(
+                None,
+                &format!(
+                    "Artifact {name}: {} was left out, as it does not resolve inside the workspace",
+                    shown_path(&options.workspace, &path)
+                ),
+            )?;
+        }
         if files.is_empty() {
             log.line(None, &format!("Artifact {name}: nothing at {pattern}"))?;
             continue;
         }
         let scratch = Scratch::new(&options.workspace, "artifact.tar.gz");
-        if let Err(err) = archive::pack(&options.workspace, &files, &scratch.0) {
+        if let Err(err) = collect(options, Collect::Pack, &files, &scratch.0) {
             log.line(None, &format!("Artifact {name} was not packed: {err}"))?;
             continue;
         }
@@ -776,11 +1056,11 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
     if succeeded && job["trusted"].as_bool() == Some(true) {
         for (key, path) in &missed {
             let dir = options.workspace.join(path);
-            if !dir.exists() {
+            if dir.symlink_metadata().is_err() {
                 continue;
             }
             let scratch = Scratch::new(&options.workspace, "cache-out.tar.gz");
-            if let Err(err) = archive::pack(&options.workspace, &[dir], &scratch.0) {
+            if let Err(err) = collect(options, Collect::Pack, &[dir], &scratch.0) {
                 log.line(None, &format!("Cache {key} was not packed: {err}"))?;
                 continue;
             }
