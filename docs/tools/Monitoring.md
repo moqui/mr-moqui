@@ -338,11 +338,11 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
 - **Datasets** are what a query may read: a DataDocument (with its time field), an index-wide `index:NAME` dataset
   over every document type of an index, or a telemetry index. A dataset definition can add field defaults (unit,
   decimals, entity lookups, status and enumeration labels) and row filters. A lookup reads its label table (a
-  status, enumeration or unit description) without an entity grant of its own: it only labels ids already in the
-  authorized frame. So it reads only a label table, `moqui.basic.Enumeration`, `StatusItem` and `Uom` and those the
-  conf's `report@lookup-entities` names (a product's name, once listed), never a restricted entity or a view over one,
-  and never keys, shows or conditions on a password or encrypted field: `save#Definition` refuses such a lookup, and a
-  query leaves the field's values unlabelled with a warning (plans/Security-Review.md SEC-TLS-82). `unitField` names the column an amount's unit comes from (mr-mantle's amounts use
+  product's name, a status or unit description) without an entity grant of its own: it only labels ids already in the
+  authorized frame. So its `keyField` is the entity's single primary-key field and its `conditions` are plain
+  equalities, it never reads a restricted entity or a view over one, and it never keys, shows or conditions on a
+  password or encrypted field: `save#Definition` refuses another lookup, and a query leaves the field's values
+  unlabelled, with one warning per dataset field (plans/Security-Review.md SEC-TLS-82). `unitField` names the column an amount's unit comes from (mr-mantle's amounts use
   `currencyUomId`, with `USD` as the fallback `unit`): one currency in the frame is the field's unit, several give each
   row its own, and an aggregation without the column asks the same documents for their currencies, so a sum in one
   currency shows it and a sum across currencies shows a plain number.

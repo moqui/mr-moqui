@@ -395,11 +395,8 @@
     <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day.
         save-roots: where a scheduled report may save its file (a schedule's saveToLocation must be under one, separated by
         commas or spaces), never through .., in a component, the conf or a .env file (plans/Security-Review-Medium.md
-        SEC-TLS-06).
-        lookup-entities: the label tables a dataset field's lookup may read besides moqui.basic.Enumeration, StatusItem
-        and Uom, by full entity name, separated by commas or spaces; a lookup reads with authorization off, so never a
-        restricted entity, nor a password or encrypted field (plans/Security-Review.md SEC-TLS-82). -->
-    <report week-start="1" fiscal-start-month="1" fiscal-start-day="1" save-roots="dbresource://report/" lookup-entities=""/>
+        SEC-TLS-06). -->
+    <report week-start="1" fiscal-start-month="1" fiscal-start-day="1" save-roots="dbresource://report/"/>
     <!-- Resource watch: when a reading of the machine or the process is a warning or critical, in percent (the status
          map's Resources, the System home and its attention list). A filesystem is also critical with less than
          disk-free-critical bytes left to write. memory is the process's share of the memory it may use (a container's

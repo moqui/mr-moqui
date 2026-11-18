@@ -15,11 +15,13 @@
 //! A dataset field's lookup (`fieldDefaults.<field>.lookup`, or its `statusTypeId` and `enumTypeId` forms): the labels
 //! of the ids already in an authorized frame, read with authorization off and answered as the field's `mappings`
 //! (docs/tools/Monitoring.md, Dashboards). The entity, key field, display field and conditions are the dataset author's,
-//! so a lookup reads only a label entity ([`LABEL_ENTITIES`] and the conf's `report@lookup-entities`), never a
-//! restricted entity or a view over one, and never keys, shows or conditions on a password or encrypted field
-//! (plans/Security-Review.md SEC-TLS-82: a lookup on `UserAccount` answered password hashes).
+//! so a lookup labels only the rows the frame's ids name: its key is the entity's single primary-key field, its
+//! conditions are plain equalities, it never reads a restricted entity or a view over one, and it never keys, shows or
+//! conditions on a password or encrypted field (plans/Security-Review.md SEC-TLS-82: a lookup on `UserAccount` keyed
+//! by `disabled` answered password hashes).
 
 use std::collections::BTreeSet;
+use std::sync::{LazyLock, Mutex};
 
 use moqui_core::context::ExecutionContext;
 use moqui_core::entity::sensitive;
@@ -28,13 +30,14 @@ use serde_json::{json, Map, Value as Json};
 
 use super::{fail, text};
 
-/// The label tables every lookup may read; the conf's `report@lookup-entities` adds more.
-const LABEL_ENTITIES: &[&str] = &["moqui.basic.Enumeration", "moqui.basic.StatusItem", "moqui.basic.Uom"];
-
 /// The most distinct keys one lookup resolves; a field with more keeps its raw values.
 const MAX_KEYS: usize = 1000;
-/// [`MAX_KEYS`] as a find limit.
-const MAX_ROWS: i64 = 1000;
+
+/// The dataset fields whose refused lookup was warned about, so a dashboard's queries warn once per field.
+static WARNED: LazyLock<Mutex<BTreeSet<(String, String)>>> = LazyLock::new(Mutex::default);
+
+/// How many dataset fields [`WARNED`] remembers; past that it starts again.
+const MAX_WARNED: usize = 10_000;
 
 /// The lookup a field's config asks for: its `lookup`, else a `statusTypeId` (a `StatusItem` description) or an
 /// `enumTypeId` (an `Enumeration` description).
@@ -56,20 +59,10 @@ fn of_config(config: &Map<String, Json>) -> Option<Json> {
         })
 }
 
-/// Whether `full_name` is a label entity: one of [`LABEL_ENTITIES`] or of the conf's `report@lookup-entities` (full
-/// entity names, separated by commas or white space).
-fn is_label_entity(ec: &ExecutionContext, full_name: &str) -> bool {
-    LABEL_ENTITIES.contains(&full_name)
-        || ec
-            .factory()
-            .conf_setting("report", "lookup-entities")
-            .split(|ch: char| ch == ',' || ch.is_whitespace())
-            .any(|name| name == full_name)
-}
-
-/// Why `lookup` is not resolved, or None when it may be: it names a label entity ([`is_label_entity`]) that is not
-/// restricted to generic access (nor a view over one), and a key field, display field and condition fields none of
-/// which is a password or encrypted field.
+/// Why `lookup` is not resolved, or None when it may be: its entity is defined and is not restricted to generic access
+/// (nor a view over one), its `keyField` is the entity's single primary-key field, so it reads only the rows the frame's
+/// ids name and not every row that shares a value, its `conditions` are a map of plain values (equalities), and none of
+/// its key, display and condition fields is a password or encrypted field.
 pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
     if !lookup.is_object() {
         return Some("a lookup must be a map".into());
@@ -83,23 +76,35 @@ pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
     let Some(facade) = ec.factory().entity() else {
         return Some("the entity facade is unavailable".into());
     };
-    let Ok(full_name) = facade.with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone())) else {
+    let Ok((full_name, pk_fields)) = facade.with_entity(entity_name, |entity, _, _| {
+        let pk_fields: Vec<String> = entity.pk_field_names().into_iter().map(str::to_string).collect();
+        Ok((entity.full_name.clone(), pk_fields))
+    }) else {
         return Some(format!("entity {entity_name} is not defined"));
     };
-    if !is_label_entity(ec, &full_name) {
-        return Some(format!(
-            "entity {full_name} is not a label entity a lookup may read (moqui.basic.Enumeration, StatusItem, Uom, or the conf's report lookup-entities)"
-        ));
-    }
     let access = sensitive::generic_access(&facade, &full_name);
     if !access.read {
         return Some(format!("entity {full_name} is not available to a lookup"));
     }
+    if pk_fields != [key] {
+        return Some(format!(
+            "keyField {key} is not the single primary-key field of {full_name}, so it could read rows the frame does not name"
+        ));
+    }
     let conditions = match lookup.get("conditions") {
         None | Some(Json::Null) => None,
         Some(Json::Object(conditions)) => Some(conditions),
-        Some(_) => return Some("lookup conditions must be a field-name map".into()),
+        Some(_) => return Some("lookup conditions must be a map of field names to values".into()),
     };
+    if let Some((field, _)) = conditions
+        .into_iter()
+        .flatten()
+        .find(|(_, value)| value.is_object() || value.is_array())
+    {
+        return Some(format!(
+            "lookup condition {field} must be a plain value: a lookup's conditions are equalities"
+        ));
+    }
     let condition_fields = conditions.into_iter().flat_map(|map| map.keys().map(String::as_str));
     let fields: Vec<&str> = [key, display].into_iter().chain(condition_fields).collect();
     if let Some(field) = fields.into_iter().find(|field| access.hidden(field)) {
@@ -111,7 +116,7 @@ pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
 }
 
 /// The refusal of the first `fieldDefaults.<field>.lookup` of a dataset body that may not be resolved ([`refusal`]):
-/// what `save#Definition` refuses. The `statusTypeId` and `enumTypeId` forms always read a label entity.
+/// what `save#Definition` refuses. The `statusTypeId` and `enumTypeId` forms always pass.
 pub(crate) fn check_field_defaults(ec: &ExecutionContext, body: &Json) -> Result<(), Error> {
     let Some(fields) = body["fieldDefaults"].as_object() else {
         return Ok(());
@@ -150,7 +155,7 @@ fn resolve(ec: &ExecutionContext, lookup: &Json, keys: &BTreeSet<String>) -> Res
         .find(text(lookup, "entityName", ""))?
         .condition(moqui_core::entity::Condition::is_in(key, values))
         .use_cache(true)
-        .limit(MAX_ROWS);
+        .limit(MAX_KEYS as i64);
     for (name, value) in lookup["conditions"].as_object().into_iter().flat_map(|map| map.iter()) {
         find = find.eq(name, moqui_lib::json::from_json(value));
     }
@@ -188,7 +193,13 @@ pub(crate) fn mappings(
         return None;
     }
     if let Some(reason) = refusal(ec, &lookup) {
-        tracing::warn!(dataset=%dataset_id,field=%field_name,%reason,"report field lookup refused; keeping raw values");
+        let mut warned = moqui_lib::sync::lock(&WARNED);
+        if warned.len() >= MAX_WARNED {
+            warned.clear();
+        }
+        if warned.insert((dataset_id.to_string(), field_name.to_string())) {
+            tracing::warn!(dataset=%dataset_id,field=%field_name,%reason,"report field lookup refused; keeping raw values");
+        }
         return None;
     }
     // The labels of ids already in the authorized frame: the dataset's read permission and row filters decided what the
