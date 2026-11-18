@@ -16,9 +16,11 @@ along with this software (see the LICENSE.md file). If not, see
     number to text for a user with a number that texts), New room, Browse rooms, a find line, the filter chips All, Unread,
     Mentions, Activity, Threads, Direct, Rooms, Records and Phone (with a phone-number room), the groups Pinned, Recent, Phone
     (CrtExternal) and Bridged, each folding (kept per user in this browser), each room by its last message with its avatar or
-    presence dot, last message, draft pen and unread and mention badges, and on a person's direct chat their latest mail
+    presence dot, last message, draft pen and unread and mention badges, and on a person's rooms their latest mail
     thread, which opens in the Inbox and says that email is not end-to-end encrypted (find#DirectChatMail, the mailLines
-    transition; Comms-Messaging §3, §6.1 rule 7); Activity lists my mentions, replies and reactions to my messages across
+    transition; Comms-Messaging §3, §6.1 rule 7); a person's rooms across networks carry one name, and in one of them the
+    composer's network button and the People tab's card offer their other ways, best first (the people transition,
+    ChatPeopleServices; §11.1); Activity lists my mentions, replies and reactions to my messages across
     rooms and Threads the threads I am in (the activity transition, find#ChatActivity, more as it scrolls, an encrypted
     room's text decrypted here), each opening its message) and the room view (chat-room, below in the script, which the tray's Chat
     tab also shows). The room is in the URL (chatRoomId, eventSeq, thread; dm and recordEntity with recordId to start a direct
@@ -885,6 +887,8 @@ const composerTemplate = `
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
     <div class="row items-center no-wrap q-mt-xs m-chat-composer-actions">
+        <!-- a person's room: the network a message goes on, and their other ways (Comms-Messaging §11.1) -->
+        <m-chat-networks v-if="!threadRoot && room.person" :person="room.person" :room-id="room.roomId" :direct-encrypted="room.personEncrypted" @choose="chooseWay"></m-chat-networks>
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" class="m-chat-attach" :aria-label="room.t('Attach files')" :disable="room.offline" @click="attachClick">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip>
             <!-- on a phone (bubbles): the camera, the gallery or a file -->
@@ -1063,6 +1067,16 @@ const chatComposer = {
             sealedDrafts[this.draftKey] = null;
             window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: this.room.roomId } }));
             this.room.typingStop();
+        },
+        // the network button's choice (Comms-Messaging §11.1): the room opens that way with this draft's text added to its
+        // own draft; with files attached nothing moves (they are uploaded to this room), and that is said
+        chooseWay(way) {
+            if (this.files.length) {
+                moqui.notifyMessages([{ type: 'warning', message: this.room.t('Send or remove the attached files first: they belong to this chat') }]);
+                return;
+            }
+            const text = isEmptyHtml(this.body) ? '' : this.body;
+            this.room.chooseWay(way, text).then((moved) => { if (moved) this.clear(); }, () => null);
         },
         pickFiles() {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
@@ -1524,7 +1538,15 @@ const roomTemplate = `
                             </template>
                             <q-btn v-else dense flat no-caps color="primary" class="m-chat-unblock" :label="t('Unblock')" @click="blockAction('unblockRoom')"></q-btn>
                         </template></q-banner>
-                    <chat-composer v-else-if="access.canPost" :room="self" :placeholder="composerPlaceholder"></chat-composer>
+                    <template v-else-if="access.canPost">
+                        <!-- a person who is on MR Moqui, in their text or bridge room: chat there instead (Comms-Messaging §11.1) -->
+                        <div v-if="nudge" class="row items-center no-wrap q-px-sm q-mb-xs text-caption m-chat-nudge" role="note">
+                            <q-icon name="sym_o_chat" size="16px" class="q-mr-xs"></q-icon><span class="col ellipsis">{{nudgeText}}</span>
+                            <q-btn dense flat no-caps size="sm" color="primary" class="m-chat-nudge-switch" :label="t('Switch')" @click="chooseWay(nudge, '')"></q-btn>
+                            <q-btn dense flat round size="sm" icon="sym_o_close" :aria-label="t('Close')" @click="closeNudge"></q-btn>
+                        </div>
+                        <chat-composer :room="self" :placeholder="composerPlaceholder"></chat-composer>
+                    </template>
                 </div>
             </template>
         </div>
@@ -1680,6 +1702,10 @@ const roomTemplate = `
             </div>
 
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0" data-pane="members">
+                <!-- the room's person across networks: their ways, mail line, merge and split (Comms-Messaging §11.1) -->
+                <m-chat-person v-if="person" :person="person" :room-id="roomId" :mail="personMail" :direct-encrypted="personEncrypted" :others="peopleList"
+                        @open="chooseWay($event, '')" @mail="go($event.url)" @merge="mergePerson" @separate="personChange('separatePerson', { addressKey: $event })"
+                        @rename="personChange('renamePerson', { personKey: person.personKey, displayName: $event })" @reset="personChange('resetPerson', { personKey: person.personKey })"></m-chat-person>
                 <!-- the room's E2EE label, for every room (§6.1 rule 1) -->
                 <div class="q-pa-sm text-caption row no-wrap items-start m-chat-room-label" :data-e2ee="label.state">
                     <q-icon :name="label.icon" size="16px" class="q-mr-xs" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon><span class="col">{{label.banner || label.text}}</span></div>
@@ -2156,6 +2182,8 @@ const chatRoom = {
             bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
             verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
+            // the room's person across networks (Comms-Messaging §11.1): their ways, a new direct chat's label, their mail line
+            person: null, personRoom: null, peopleList: [], personEncrypted: null, personMail: null, nudgeTick: 0,
             setup: null, setupOpen: false, setupTick: 0, encryptDefault: null, firstSent: false, encryptBusy: false,
             lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
@@ -2242,6 +2270,16 @@ const chatRoom = {
         // the room's E2EE label (Comms-Messaging §6.2): its state, icon, banner and composer hint, from the room, its bridges
         // and, in an encrypted room, its devices' trust
         label() { return moqui.chat.e2eeLabel(this.room, this.trust); },
+        // a person's text or bridge room when they are a user of this server: the Moqui chat way offered above the composer
+        nudge() {
+            this.nudgeTick;
+            return moqui.chat && moqui.chat.nudgeWay ? moqui.chat.nudgeWay(this.person, { chatRoomId: this.roomId }, moqui.chat.nudgeClosed(this.roomId)) : null;
+        },
+        nudgeText() {
+            const name = (this.person && this.person.name) || t('This person');
+            const sealed = this.nudge && (this.nudge.kind === 'direct' ? this.personEncrypted === true : !!this.nudge.encrypted);
+            return sealed ? fill(t('{name} is on MR Moqui: chat end-to-end encrypted'), { name }) : fill(t('{name} is on MR Moqui: chat there'), { name });
+        },
         bannerHidden() { void this.bannerTick; return !!this.room && moqui.chat.bannerClosed(this.roomId, this.label.state); },
         // who could not read my messages (COM-UI-013), as this browser keeps it for the account: {eventSeq: text}
         leftOutBySeq() { void this.leftOutTick; return this.sealed ? moqui.chat.leftOutOf(this.roomId) : {}; },
@@ -2402,6 +2440,7 @@ const chatRoom = {
                 else this.sendMessage({ body }).catch(keep).then(() => this.$emit('first-sent'));
             }
             this.loadEncryptDefault();
+            this.loadPerson();
         },
         // a verification with someone of this room done: their check, and the room's
         verifications(list) {
@@ -2513,6 +2552,59 @@ const chatRoom = {
                 this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(json.chatRoomId));
             }, () => { this.encryptBusy = false; });
         },
+        // ---- the room's person across networks (Comms-Messaging §11.1): moqui.chat.people, shared by the page ----
+        loadPerson(fresh) {
+            if (!moqui.chat || !moqui.chat.people || this.compact || noConnection()) return;
+            const roomId = this.roomId;
+            if (this.personRoom !== roomId) { this.personRoom = roomId; this.person = null; this.personEncrypted = null; this.personMail = null; }
+            if (fresh) moqui.chat.peopleChanged();
+            moqui.chat.people(this.url('people')).then((state) => {
+                if (roomId !== this.roomId) return;
+                this.peopleList = state.personList || [];
+                this.person = moqui.chat.personOf(roomId, state);
+                // a new direct chat's label: whether the server would encrypt it (one bit, encryptionDefault)
+                const direct = this.person && (this.person.ways || []).find((way) => way.kind === 'direct');
+                if (direct && this.personEncrypted === null) {
+                    this.personEncrypted = false;
+                    this.get('encryptionDefault', { userIds: direct.userId }).then((json) => { this.personEncrypted = json.encrypted === true; }, () => null);
+                }
+                if (this.person) moqui.chat.mailLines(this.url('mailLines')).then((lines) => { if (roomId === this.roomId) this.personMail = lines[roomId] || null; });
+            });
+        },
+        // a way of the person (the network button, the card): its room opened or made, with text as its draft. Resolves
+        // true when the room changed (the composer here then clears), false when nothing moved.
+        chooseWay(way, text) {
+            if (needsConnection() || !way || !moqui.chat) return Promise.resolve(false);
+            return moqui.chat.openWay(way, (name, params) => this.post(name, params)).then((out) => {
+                if (out.url) { this.go(out.url); return false; }
+                if (!out.chatRoomId || out.chatRoomId === this.roomId) return false;
+                const target = out.chatRoomId;
+                const known = (this.person && this.person.rooms || []).find((one) => one.chatRoomId === target);
+                // the room as it is: an existing one's flag, a made one's as the server made it (never the guess)
+                const sealed = known ? !!known.encrypted : out.encrypted === true;
+                if (text) {
+                    // an encrypted room's draft stays in this page (C7); the room's own draft is kept, this one after it
+                    const key = draftPrefix() + target;
+                    if (sealed) sealedDrafts[key] = moqui.chat.joinDrafts(sealedDrafts[key], text);
+                    else storage.set(key, moqui.chat.joinDrafts(storage.get(key), text));
+                    window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: target } }));
+                    const note = moqui.chat.moveNote(this.sealed, sealed, way.network);
+                    if (note) moqui.notifyMessages([{ type: 'info', message: note }]);
+                }
+                if (!known) { moqui.chat.peopleChanged(); this.$emit('changed'); }
+                this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(target));
+                return true;
+            }, () => false);
+        },
+        // the card's changes to my people: merge, separate, rename, reset; then the people again
+        personChange(name, params) {
+            if (needsConnection()) return;
+            moqui.chat.changePeople((n, p) => this.post(n, p), name, params).then(() => { this.$emit('changed'); this.loadPerson(true); }, () => null);
+        },
+        mergePerson(pick) {
+            this.personChange('mergePeople', { personKeys: (pick.personKeys || []).join(','), addressKeys: (pick.addressKeys || []).join(',') });
+        },
+        closeNudge() { moqui.chat.closeNudge(this.roomId); this.nudgeTick += 1; },
         // Verify: My devices, where this user's own devices are verified by emoji or QR code
         openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
         // ---- verifying people (COM-UI-013, §6.1 rule 3) ----
@@ -4829,7 +4921,8 @@ module.exports = {
             if (noConnection()) return;
             moqui.chat.mailLines(this.url('mailLines')).then((lines) => { this.mailLines = lines; });
         },
-        mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
+        // a person's room: a direct chat, a phone room, a bridged direct conversation (Comms-Messaging §11.1)
+        mailOf(room) { return room ? this.mailLines[room.chatRoomId] || null : null; },
         mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },
 
         // ---- the room in the URL ----
@@ -4874,6 +4967,8 @@ module.exports = {
                 if (this.filter === 'spam') this.loadSpam();
                 // a phone room's numbers by their names: the phone's contacts, the apps' call-context (plans/Comms-Messaging.md §9)
                 if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
+                // a person's own name across their rooms (Comms-Messaging §11.1): read once for the page, applied with the names
+                if (moqui.chat && moqui.chat.people && !noConnection()) moqui.chat.people(this.url('people'));
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                     if (room.otherUserId && room.presence && !moqui.chat.state.presence[room.otherUserId]) moqui.chat.state.presence[room.otherUserId] = { presence: room.presence, at: Date.now() };
@@ -4881,7 +4976,7 @@ module.exports = {
                 if (!this.loaded) this.readFolded();
                 this.loaded = true;
                 // the people's mail lines: one request for the page, shared with the panel (moqui.chat.mailLines)
-                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect')) this.loadMail();
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect' || room.roomTypeEnumId === 'CrtExternal' || room.bridged)) this.loadMail();
             }, () => { this.loaded = true; });
         },
         // A dm link: the direct chat of exactly those people when there is one, else an unsaved message to them whose first

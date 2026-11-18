@@ -145,12 +145,14 @@ module.exports = {
                 this.rooms = memo.rooms = json.roomList || [];
                 // a phone room's numbers by their names (plans/Comms-Messaging.md §9)
                 if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
+                // a person's own name across their rooms (Comms-Messaging §11.1): read once for the page, applied with the names
+                if (moqui.chat && moqui.chat.people && !(moqui.connection && moqui.connection.offline)) moqui.chat.people(this.url('people'));
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                 });
                 this.loaded = true;
                 // the people's mail lines: one request for the page, shared with Chat (moqui.chat.mailLines)
-                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect')) this.loadMail();
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect' || room.roomTypeEnumId === 'CrtExternal' || room.bridged)) this.loadMail();
             }, (err) => { this.loaded = true; console.info('Chat panel: the rooms could not be read', err && err.status); });
         },
         // the mail line of a person's direct chat (Comms-Messaging §3): the Chat screen's mailLines (find#DirectChatMail)
@@ -158,7 +160,8 @@ module.exports = {
             if (moqui.connection && moqui.connection.offline) return;
             moqui.chat.mailLines(this.url('mailLines')).then((lines) => { this.mailLines = memo.mailLines = lines; });
         },
-        mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
+        // a person's room: a direct chat, a phone room, a bridged direct conversation (Comms-Messaging §11.1)
+        mailOf(room) { return room ? this.mailLines[room.chatRoomId] || null : null; },
         mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },
         scheduleRooms() { clearTimeout(this.roomsTimer); this.roomsTimer = setTimeout(() => this.refresh(), 400); },
         // the tray's refresh of this tab (m-dynamic-container.shellRefresh): the rooms in place, the open room stays
@@ -3664,6 +3667,8 @@ const composerTemplate = `
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
     <div class="row items-center no-wrap q-mt-xs m-chat-composer-actions">
+        <!-- a person's room: the network a message goes on, and their other ways (Comms-Messaging §11.1) -->
+        <m-chat-networks v-if="!threadRoot && room.person" :person="room.person" :room-id="room.roomId" :direct-encrypted="room.personEncrypted" @choose="chooseWay"></m-chat-networks>
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" class="m-chat-attach" :aria-label="room.t('Attach files')" :disable="room.offline" @click="attachClick">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip>
             <!-- on a phone (bubbles): the camera, the gallery or a file -->
@@ -3842,6 +3847,16 @@ const chatComposer = {
             sealedDrafts[this.draftKey] = null;
             window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: this.room.roomId } }));
             this.room.typingStop();
+        },
+        // the network button's choice (Comms-Messaging §11.1): the room opens that way with this draft's text added to its
+        // own draft; with files attached nothing moves (they are uploaded to this room), and that is said
+        chooseWay(way) {
+            if (this.files.length) {
+                moqui.notifyMessages([{ type: 'warning', message: this.room.t('Send or remove the attached files first: they belong to this chat') }]);
+                return;
+            }
+            const text = isEmptyHtml(this.body) ? '' : this.body;
+            this.room.chooseWay(way, text).then((moved) => { if (moved) this.clear(); }, () => null);
         },
         pickFiles() {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
@@ -4303,7 +4318,15 @@ const roomTemplate = `
                             </template>
                             <q-btn v-else dense flat no-caps color="primary" class="m-chat-unblock" :label="t('Unblock')" @click="blockAction('unblockRoom')"></q-btn>
                         </template></q-banner>
-                    <chat-composer v-else-if="access.canPost" :room="self" :placeholder="composerPlaceholder"></chat-composer>
+                    <template v-else-if="access.canPost">
+                        <!-- a person who is on MR Moqui, in their text or bridge room: chat there instead (Comms-Messaging §11.1) -->
+                        <div v-if="nudge" class="row items-center no-wrap q-px-sm q-mb-xs text-caption m-chat-nudge" role="note">
+                            <q-icon name="sym_o_chat" size="16px" class="q-mr-xs"></q-icon><span class="col ellipsis">{{nudgeText}}</span>
+                            <q-btn dense flat no-caps size="sm" color="primary" class="m-chat-nudge-switch" :label="t('Switch')" @click="chooseWay(nudge, '')"></q-btn>
+                            <q-btn dense flat round size="sm" icon="sym_o_close" :aria-label="t('Close')" @click="closeNudge"></q-btn>
+                        </div>
+                        <chat-composer :room="self" :placeholder="composerPlaceholder"></chat-composer>
+                    </template>
                 </div>
             </template>
         </div>
@@ -4459,6 +4482,10 @@ const roomTemplate = `
             </div>
 
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0" data-pane="members">
+                <!-- the room's person across networks: their ways, mail line, merge and split (Comms-Messaging §11.1) -->
+                <m-chat-person v-if="person" :person="person" :room-id="roomId" :mail="personMail" :direct-encrypted="personEncrypted" :others="peopleList"
+                        @open="chooseWay($event, '')" @mail="go($event.url)" @merge="mergePerson" @separate="personChange('separatePerson', { addressKey: $event })"
+                        @rename="personChange('renamePerson', { personKey: person.personKey, displayName: $event })" @reset="personChange('resetPerson', { personKey: person.personKey })"></m-chat-person>
                 <!-- the room's E2EE label, for every room (§6.1 rule 1) -->
                 <div class="q-pa-sm text-caption row no-wrap items-start m-chat-room-label" :data-e2ee="label.state">
                     <q-icon :name="label.icon" size="16px" class="q-mr-xs" :class="label.lock ? 'text-positive' : 'm-muted'"></q-icon><span class="col">{{label.banner || label.text}}</span></div>
@@ -4935,6 +4962,8 @@ const chatRoom = {
             bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
             verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
+            // the room's person across networks (Comms-Messaging §11.1): their ways, a new direct chat's label, their mail line
+            person: null, personRoom: null, peopleList: [], personEncrypted: null, personMail: null, nudgeTick: 0,
             setup: null, setupOpen: false, setupTick: 0, encryptDefault: null, firstSent: false, encryptBusy: false,
             lingering: {}, seenIncoming: {},
             fileOn: { open: false, item: null, value: null, busy: false },
@@ -5021,6 +5050,16 @@ const chatRoom = {
         // the room's E2EE label (Comms-Messaging §6.2): its state, icon, banner and composer hint, from the room, its bridges
         // and, in an encrypted room, its devices' trust
         label() { return moqui.chat.e2eeLabel(this.room, this.trust); },
+        // a person's text or bridge room when they are a user of this server: the Moqui chat way offered above the composer
+        nudge() {
+            this.nudgeTick;
+            return moqui.chat && moqui.chat.nudgeWay ? moqui.chat.nudgeWay(this.person, { chatRoomId: this.roomId }, moqui.chat.nudgeClosed(this.roomId)) : null;
+        },
+        nudgeText() {
+            const name = (this.person && this.person.name) || t('This person');
+            const sealed = this.nudge && (this.nudge.kind === 'direct' ? this.personEncrypted === true : !!this.nudge.encrypted);
+            return sealed ? fill(t('{name} is on MR Moqui: chat end-to-end encrypted'), { name }) : fill(t('{name} is on MR Moqui: chat there'), { name });
+        },
         bannerHidden() { void this.bannerTick; return !!this.room && moqui.chat.bannerClosed(this.roomId, this.label.state); },
         // who could not read my messages (COM-UI-013), as this browser keeps it for the account: {eventSeq: text}
         leftOutBySeq() { void this.leftOutTick; return this.sealed ? moqui.chat.leftOutOf(this.roomId) : {}; },
@@ -5181,6 +5220,7 @@ const chatRoom = {
                 else this.sendMessage({ body }).catch(keep).then(() => this.$emit('first-sent'));
             }
             this.loadEncryptDefault();
+            this.loadPerson();
         },
         // a verification with someone of this room done: their check, and the room's
         verifications(list) {
@@ -5292,6 +5332,59 @@ const chatRoom = {
                 this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(json.chatRoomId));
             }, () => { this.encryptBusy = false; });
         },
+        // ---- the room's person across networks (Comms-Messaging §11.1): moqui.chat.people, shared by the page ----
+        loadPerson(fresh) {
+            if (!moqui.chat || !moqui.chat.people || this.compact || noConnection()) return;
+            const roomId = this.roomId;
+            if (this.personRoom !== roomId) { this.personRoom = roomId; this.person = null; this.personEncrypted = null; this.personMail = null; }
+            if (fresh) moqui.chat.peopleChanged();
+            moqui.chat.people(this.url('people')).then((state) => {
+                if (roomId !== this.roomId) return;
+                this.peopleList = state.personList || [];
+                this.person = moqui.chat.personOf(roomId, state);
+                // a new direct chat's label: whether the server would encrypt it (one bit, encryptionDefault)
+                const direct = this.person && (this.person.ways || []).find((way) => way.kind === 'direct');
+                if (direct && this.personEncrypted === null) {
+                    this.personEncrypted = false;
+                    this.get('encryptionDefault', { userIds: direct.userId }).then((json) => { this.personEncrypted = json.encrypted === true; }, () => null);
+                }
+                if (this.person) moqui.chat.mailLines(this.url('mailLines')).then((lines) => { if (roomId === this.roomId) this.personMail = lines[roomId] || null; });
+            });
+        },
+        // a way of the person (the network button, the card): its room opened or made, with text as its draft. Resolves
+        // true when the room changed (the composer here then clears), false when nothing moved.
+        chooseWay(way, text) {
+            if (needsConnection() || !way || !moqui.chat) return Promise.resolve(false);
+            return moqui.chat.openWay(way, (name, params) => this.post(name, params)).then((out) => {
+                if (out.url) { this.go(out.url); return false; }
+                if (!out.chatRoomId || out.chatRoomId === this.roomId) return false;
+                const target = out.chatRoomId;
+                const known = (this.person && this.person.rooms || []).find((one) => one.chatRoomId === target);
+                // the room as it is: an existing one's flag, a made one's as the server made it (never the guess)
+                const sealed = known ? !!known.encrypted : out.encrypted === true;
+                if (text) {
+                    // an encrypted room's draft stays in this page (C7); the room's own draft is kept, this one after it
+                    const key = draftPrefix() + target;
+                    if (sealed) sealedDrafts[key] = moqui.chat.joinDrafts(sealedDrafts[key], text);
+                    else storage.set(key, moqui.chat.joinDrafts(storage.get(key), text));
+                    window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: target } }));
+                    const note = moqui.chat.moveNote(this.sealed, sealed, way.network);
+                    if (note) moqui.notifyMessages([{ type: 'info', message: note }]);
+                }
+                if (!known) { moqui.chat.peopleChanged(); this.$emit('changed'); }
+                this.go(this.linkBase + '?chatRoomId=' + encodeURIComponent(target));
+                return true;
+            }, () => false);
+        },
+        // the card's changes to my people: merge, separate, rename, reset; then the people again
+        personChange(name, params) {
+            if (needsConnection()) return;
+            moqui.chat.changePeople((n, p) => this.post(n, p), name, params).then(() => { this.$emit('changed'); this.loadPerson(true); }, () => null);
+        },
+        mergePerson(pick) {
+            this.personChange('mergePeople', { personKeys: (pick.personKeys || []).join(','), addressKeys: (pick.addressKeys || []).join(',') });
+        },
+        closeNudge() { moqui.chat.closeNudge(this.roomId); this.nudgeTick += 1; },
         // Verify: My devices, where this user's own devices are verified by emoji or QR code
         openDevices() { this.go(this.linkBase.replace(/\/Chat$/, '/Settings/Devices')); },
         // ---- verifying people (COM-UI-013, §6.1 rule 3) ----
@@ -7608,7 +7701,8 @@ module.exports = {
             if (noConnection()) return;
             moqui.chat.mailLines(this.url('mailLines')).then((lines) => { this.mailLines = lines; });
         },
-        mailOf(room) { return room && room.roomTypeEnumId === 'CrtDirect' ? this.mailLines[room.chatRoomId] || null : null; },
+        // a person's room: a direct chat, a phone room, a bridged direct conversation (Comms-Messaging §11.1)
+        mailOf(room) { return room ? this.mailLines[room.chatRoomId] || null : null; },
         mailText(mail) { return fill(t('Email: {subject}'), { subject: mail.subject || t('(no subject)') }); },
 
         // ---- the room in the URL ----
@@ -7653,6 +7747,8 @@ module.exports = {
                 if (this.filter === 'spam') this.loadSpam();
                 // a phone room's numbers by their names: the phone's contacts, the apps' call-context (plans/Comms-Messaging.md §9)
                 if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
+                // a person's own name across their rooms (Comms-Messaging §11.1): read once for the page, applied with the names
+                if (moqui.chat && moqui.chat.people && !noConnection()) moqui.chat.people(this.url('people'));
                 if (moqui.chat) this.rooms.forEach((room) => {
                     if (room.isMember && room.chatRoomId !== this.roomId) moqui.chat.state.unread[room.chatRoomId] = { unread: room.unreadCount || 0, mentions: room.mentionCount || 0 };
                     if (room.otherUserId && room.presence && !moqui.chat.state.presence[room.otherUserId]) moqui.chat.state.presence[room.otherUserId] = { presence: room.presence, at: Date.now() };
@@ -7660,7 +7756,7 @@ module.exports = {
                 if (!this.loaded) this.readFolded();
                 this.loaded = true;
                 // the people's mail lines: one request for the page, shared with the panel (moqui.chat.mailLines)
-                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect')) this.loadMail();
+                if (this.rooms.some((room) => room.roomTypeEnumId === 'CrtDirect' || room.roomTypeEnumId === 'CrtExternal' || room.bridged)) this.loadMail();
             }, () => { this.loaded = true; });
         },
         // A dm link: the direct chat of exactly those people when there is one, else an unsaved message to them whose first
@@ -9344,6 +9440,7 @@ module.exports = {
                   const _component_q_tabs = _resolveComponent("q-tabs")
                   const _component_q_linear_progress = _resolveComponent("q-linear-progress")
                   const _component_q_img = _resolveComponent("q-img")
+                  const _component_m_chat_person = _resolveComponent("m-chat-person")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
                   const _component_m_text_line = _resolveComponent("m-text-line")
                   const _component_m_record_card = _resolveComponent("m-record-card")
@@ -10904,11 +11001,45 @@ module.exports = {
                                                 _: 1
                                               }, 8, ["data-filtered"]))
                                             : (_ctx.access.canPost)
-                                              ? (_openBlock(), _createBlock(_component_chat_composer, {
-                                                  key: 4,
-                                                  room: _ctx.self,
-                                                  placeholder: _ctx.composerPlaceholder
-                                                }, null, 8, ["room", "placeholder"]))
+                                              ? (_openBlock(), _createElementBlock(_Fragment, { key: 4 }, [
+                                                  (_ctx.nudge)
+                                                    ? (_openBlock(), _createElementBlock("div", {
+                                                        key: 0,
+                                                        class: "row items-center no-wrap q-px-sm q-mb-xs text-caption m-chat-nudge",
+                                                        role: "note"
+                                                      }, [
+                                                        _createVNode(_component_q_icon, {
+                                                          name: "sym_o_chat",
+                                                          size: "16px",
+                                                          class: "q-mr-xs"
+                                                        }),
+                                                        _createElementVNode("span", { class: "col ellipsis" }, _toDisplayString(_ctx.nudgeText), 1),
+                                                        _createVNode(_component_q_btn, {
+                                                          dense: "",
+                                                          flat: "",
+                                                          "no-caps": "",
+                                                          size: "sm",
+                                                          color: "primary",
+                                                          class: "m-chat-nudge-switch",
+                                                          label: _ctx.t('Switch'),
+                                                          onClick: $event => (_ctx.chooseWay(_ctx.nudge, ''))
+                                                        }, null, 8, ["label", "onClick"]),
+                                                        _createVNode(_component_q_btn, {
+                                                          dense: "",
+                                                          flat: "",
+                                                          round: "",
+                                                          size: "sm",
+                                                          icon: "sym_o_close",
+                                                          "aria-label": _ctx.t('Close'),
+                                                          onClick: _ctx.closeNudge
+                                                        }, null, 8, ["aria-label", "onClick"])
+                                                      ]))
+                                                    : _createCommentVNode("", true),
+                                                  _createVNode(_component_chat_composer, {
+                                                    room: _ctx.self,
+                                                    placeholder: _ctx.composerPlaceholder
+                                                  }, null, 8, ["room", "placeholder"])
+                                                ], 64))
                                               : _createCommentVNode("", true)
                                     ])
                                   ], 64))
@@ -11748,6 +11879,22 @@ module.exports = {
                                               style: {"min-height":"0"},
                                               "data-pane": "members"
                                             }, [
+                                              (_ctx.person)
+                                                ? (_openBlock(), _createBlock(_component_m_chat_person, {
+                                                    key: 0,
+                                                    person: _ctx.person,
+                                                    "room-id": _ctx.roomId,
+                                                    mail: _ctx.personMail,
+                                                    "direct-encrypted": _ctx.personEncrypted,
+                                                    others: _ctx.peopleList,
+                                                    onOpen: $event => (_ctx.chooseWay($event, '')),
+                                                    onMail: $event => (_ctx.go($event.url)),
+                                                    onMerge: _ctx.mergePerson,
+                                                    onSeparate: $event => (_ctx.personChange('separatePerson', { addressKey: $event })),
+                                                    onRename: $event => (_ctx.personChange('renamePerson', { personKey: _ctx.person.personKey, displayName: $event })),
+                                                    onReset: $event => (_ctx.personChange('resetPerson', { personKey: _ctx.person.personKey }))
+                                                  }, null, 8, ["person", "room-id", "mail", "direct-encrypted", "others", "onOpen", "onMail", "onMerge", "onSeparate", "onRename", "onReset"]))
+                                                : _createCommentVNode("", true),
                                               _createElementVNode("div", {
                                                 class: "q-pa-sm text-caption row no-wrap items-start m-chat-room-label",
                                                 "data-e2ee": _ctx.label.state
@@ -11761,7 +11908,7 @@ module.exports = {
                                               ], 8, ["data-e2ee"]),
                                               (_ctx.isMember && !_ctx.isDirect && !_ctx.access.isArchived)
                                                 ? (_openBlock(), _createElementBlock("div", {
-                                                    key: 0,
+                                                    key: 1,
                                                     class: "q-pa-sm row no-wrap items-end q-gutter-x-xs"
                                                   }, [
                                                     _createElementVNode("div", { class: "col" }, [
@@ -13707,6 +13854,7 @@ module.exports = {
                   const _component_q_chip = _resolveComponent("q-chip")
                   const _component_q_toggle = _resolveComponent("q-toggle")
                   const _component_m_rich_text = _resolveComponent("m-rich-text")
+                  const _component_m_chat_networks = _resolveComponent("m-chat-networks")
                   const _component_q_tooltip = _resolveComponent("q-tooltip")
                   const _component_q_item_section = _resolveComponent("q-item-section")
                   const _component_q_item = _resolveComponent("q-item")
@@ -13842,6 +13990,15 @@ module.exports = {
                       onSubmit: _ctx.send
                     }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "enter", "label", "placeholder", "mention-url", "mention-parameters", "onSubmit"]),
                     _createElementVNode("div", { class: "row items-center no-wrap q-mt-xs m-chat-composer-actions" }, [
+                      (!_ctx.threadRoot && _ctx.room.person)
+                        ? (_openBlock(), _createBlock(_component_m_chat_networks, {
+                            key: 0,
+                            person: _ctx.room.person,
+                            "room-id": _ctx.room.roomId,
+                            "direct-encrypted": _ctx.room.personEncrypted,
+                            onChoose: _ctx.chooseWay
+                          }, null, 8, ["person", "room-id", "direct-encrypted", "onChoose"]))
+                        : _createCommentVNode("", true),
                       _createVNode(_component_q_btn, {
                         flat: "",
                         round: "",
@@ -14006,7 +14163,7 @@ module.exports = {
                       }, 8, ["aria-label", "onClick"]),
                       (!_ctx.room.sealed)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 0,
+                            key: 1,
                             flat: "",
                             round: "",
                             dense: "",
@@ -14029,7 +14186,7 @@ module.exports = {
                         : _createCommentVNode("", true),
                       (!_ctx.room.sealed)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 1,
+                            key: 2,
                             flat: "",
                             round: "",
                             dense: "",
@@ -14053,14 +14210,14 @@ module.exports = {
                         : _createCommentVNode("", true),
                       (!_ctx.room.compact && !_ctx.threadRoot)
                         ? (_openBlock(), _createElementBlock("span", {
-                            key: 2,
+                            key: 3,
                             class: "text-caption m-muted q-ml-sm ellipsis gt-xs"
                           }, _toDisplayString(_ctx.hint), 1))
                         : _createCommentVNode("", true),
                       _createVNode(_component_q_space),
                       (_ctx.voice)
                         ? (_openBlock(), _createElementBlock("div", {
-                            key: 3,
+                            key: 4,
                             class: "row items-center no-wrap q-gutter-x-xs m-chat-recording",
                             role: "status"
                           }, [
@@ -14117,7 +14274,7 @@ module.exports = {
                           ]))
                         : (_ctx.showVoice)
                           ? (_openBlock(), _createBlock(_component_q_btn, {
-                              key: 4,
+                              key: 5,
                               dense: "",
                               unelevated: "",
                               round: "",
@@ -14137,7 +14294,7 @@ module.exports = {
                               ]),
                               _: 1
                             }, 8, ["aria-label", "onClick"]))
-                          : (_openBlock(), _createElementBlock(_Fragment, { key: 5 }, [
+                          : (_openBlock(), _createElementBlock(_Fragment, { key: 6 }, [
                               _createVNode(_component_q_btn, {
                                 dense: "",
                                 unelevated: "",

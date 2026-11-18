@@ -1456,10 +1456,14 @@
         nameRooms(rooms) {
             const list = Array.isArray(rooms) ? rooms : [];
             chat.namedRooms = list;
-            const apply = () => list.forEach((room) => {
-                const numbers = chat.roomNumbers(room);
-                if (numbers.length) room.displayName = chat.phoneTitle(numbers, chat.phoneNames);
-            });
+            const apply = () => {
+                list.forEach((room) => {
+                    const numbers = chat.roomNumbers(room);
+                    if (numbers.length) room.displayName = chat.phoneTitle(numbers, chat.phoneNames);
+                });
+                // a person's own name over the phone names (§11.1)
+                chat.applyPeople(list);
+            };
             const merge = () => {
                 const names = {};
                 Object.keys(chat.serverNamesOf).forEach((number) => { if (chat.serverNamesOf[number]) names[number] = chat.serverNamesOf[number]; });
@@ -1504,6 +1508,128 @@
         // the user's numbers that text (Chat's textNumbers), as a picker's From options
         numberOptions(list) {
             return (list || []).map((number) => ({ value: number.phoneNumber, label: number.phoneNumber + (number.description ? " · " + number.description : "") }));
+        },
+        // ---- one person across networks (plans/Comms-Messaging.md §11.1, phase 22) ----
+        // The people of my rooms (Chat's people transition, ChatPeopleServices.find#ChatPeople: {personList, roomPersonMap}),
+        // asked once for the page and shared by Chat and the panel, as mailLines: a request within maxAge (five minutes)
+        // answers what the last one did; peopleChanged() (a merge, a split, a name) asks again. A failure keeps nothing.
+        peopleState: null,
+        people(url, request, maxAge) {
+            const now = Date.now();
+            const kept = chat.peopleCache;
+            if (kept && kept.url === url && now - kept.at < (kept.maxAge || maxAge || 300000)) return kept.promise;
+            const promise = (request || moqui.request)(url).then((result) => {
+                const json = (result && result.json) || {};
+                const state = { personList: Array.isArray(json.personList) ? json.personList : [], roomPersonMap: json.roomPersonMap || {},
+                    contactsAway: !!(json.hookFailed || json.contactsSkipped) };
+                // the contacts were away (the hook failed or its hour was used): asked again soon, not in five minutes
+                if (state.contactsAway && chat.peopleCache && chat.peopleCache.promise === promise) chat.peopleCache.maxAge = 30000;
+                chat.peopleState = state;
+                chat.applyPeople(chat.namedRooms);
+                return state;
+            }, () => { if (chat.peopleCache && chat.peopleCache.promise === promise) chat.peopleCache = null; return { personList: [], roomPersonMap: {} }; });
+            chat.peopleCache = { url, at: now, promise };
+            return promise;
+        },
+        peopleChanged() { chat.peopleCache = null; chat.mailCache = null; },
+        // the person of a room, or null
+        personOf(chatRoomId, state) {
+            const people = state || chat.peopleState;
+            if (!people || !chatRoomId) return null;
+            const key = (people.roomPersonMap || {})[chatRoomId];
+            return key ? (people.personList || []).find((person) => person.personKey === key) || null : null;
+        },
+        // A person's room in a list shows the person's name: the user's own name for them, a user's name, the phone's
+        // contacts, the app's contact, call-context, the number. A phone room's phone names are nameRooms'; this puts the
+        // user's own and a user's name over them, and the app's contact where the phone has none.
+        applyPeople(rooms, state) {
+            const people = state || chat.peopleState;
+            if (!people) return;
+            (Array.isArray(rooms) ? rooms : []).forEach((room) => {
+                const person = chat.personOf(room.chatRoomId, people);
+                if (!person || !person.name) return;
+                const numbers = chat.roomNumbers(room);
+                const phoneKnows = numbers.some((number) => chat.contactNamesOf[number]);
+                if (person.nameFrom === "mine" || (person.nameFrom === "user" && room.roomTypeEnumId !== "CrtDirect")
+                    || (person.nameFrom === "contact" && room.roomTypeEnumId !== "CrtDirect" && !phoneKnows)) room.displayName = person.name;
+            });
+        },
+        NETWORK_ICONS: { moqui: "sym_o_chat", sms: "sym_o_sms", rcs: "sym_o_verified", groupme: "sym_o_groups", mail: "sym_o_mail" },
+        networkName(network) {
+            return { moqui: tr("MR Moqui chat"), sms: tr("SMS"), rcs: tr("RCS"), groupme: "GroupMe", mail: tr("Email") }[network] || network || "";
+        },
+        // A way's E2EE label (§6.2), as the room it opens shows it: a new direct chat's from directEncrypted (the server's
+        // encryptionDefault for the person), unknown until asked.
+        wayLabel(way, directEncrypted) {
+            const it = way || {};
+            if (it.network === "mail") return chat.e2eeLabel({ mail: true });
+            if (it.network === "moqui") {
+                const encrypted = it.kind === "direct" ? directEncrypted === true : !!it.encrypted;
+                return chat.e2eeLabel({ roomTypeEnumId: "CrtDirect", visibilityEnumId: "CrvMembers", encrypted });
+            }
+            if (it.network === "rcs") return chat.e2eeLabel({ roomTypeEnumId: "CrtExternal", bridges: [{ network: "rcs", outbound: true }] });
+            if (it.network === "groupme") return chat.e2eeLabel({ bridges: [{ network: "groupme", networkName: "GroupMe", encryption: "NoneByNetwork" }] });
+            return chat.e2eeLabel({ roomTypeEnumId: "CrtExternal" });
+        },
+        // The ways of a person to show (the network button, the person card), in the server's order, the best first: each the
+        // way with key, icon, name, detail (the number, where a text goes from, the address), label (wayLabel), current (the
+        // room open now), reason (why it cannot be used now) and usable.
+        waysOf(person, currentRoomId, directEncrypted) {
+            const reasons = { optedOut: tr("They replied STOP"), notConnected: tr("Not connected") };
+            return ((person && person.ways) || []).map((way, index) => {
+                const parts = [];
+                if (way.number) parts.push(way.number);
+                if (way.fromNumber) parts.push(fillIn(tr("from {number}"), { number: way.fromNumber }));
+                if (way.address) parts.push(way.address);
+                if (way.kind === "direct") parts.push(tr("New chat"));
+                if (way.kind === "text") parts.push(tr("New text"));
+                const reason = way.blocked ? tr("Blocked") : way.reasonCode ? reasons[way.reasonCode] || way.reasonCode : null;
+                return Object.assign({}, way, { key: index + ":" + (way.chatRoomId || way.kind + ":" + (way.number || way.address || way.userId || "") + ":" + (way.fromNumber || "")),
+                    icon: chat.NETWORK_ICONS[way.network] || "sym_o_chat", name: chat.networkName(way.network), detail: parts.join(" · "),
+                    label: chat.wayLabel(way, directEncrypted), current: !!way.chatRoomId && way.chatRoomId === currentRoomId, reason, usable: !reason });
+            });
+        },
+        // The room a way opens: an existing room, the direct chat made (createDirect, no encrypted: the server decides), the
+        // number's room (textRoom), or none for mail (the Inbox opens). post(name, params) is the screen's. Resolves
+        // {chatRoomId, encrypted} (a made direct chat's as the server made it, never a guess) or {url} (mail); a refused way
+        // rejects, and its reason is the server's message.
+        openWay(way, post) {
+            const it = way || {};
+            if (it.kind === "room" && it.chatRoomId) return Promise.resolve({ chatRoomId: it.chatRoomId, encrypted: !!it.encrypted });
+            if (it.kind === "mail") return Promise.resolve({ url: it.url || null });
+            const made = (json) => (json && json.chatRoomId ? { chatRoomId: json.chatRoomId, encrypted: json.encrypted === true } : Promise.reject({ refused: "notMade" }));
+            if (it.kind === "direct" && it.userId) return post("createDirect", { userIds: it.userId }).then(made);
+            if (it.kind === "text" && it.number) return post("textRoom", { textTo: it.number, textFrom: it.fromNumber || "" }).then((json) => made(Object.assign({}, json, { encrypted: false })));
+            return Promise.reject({ refused: "none" });
+        },
+        // Moving a draft from the room open (fromSealed) to the room opened (toSealed, as openWay answered it): a note when the
+        // move leaves end-to-end encryption, which the user is told once, else null.
+        moveNote(fromSealed, toSealed, network) {
+            if (!fromSealed || toSealed) return null;
+            return fillIn(tr("Moved to {network}: not end-to-end encrypted"), { network: chat.networkName(network) });
+        },
+        // A draft moved into a room that has one: both kept, the room's first, a blank line between (never overwritten).
+        joinDrafts(existing, moved) {
+            const empty = (html) => !html || !String(html).replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+            if (empty(moved)) return existing || "";
+            if (empty(existing)) return moved;
+            return String(existing) + "<p><br></p>" + String(moved);
+        },
+        // The nudge in a person's text or bridge room when they are a user of this server: the Moqui chat way to offer, or
+        // null (it is the room's own network, the person has none, or it was closed for this room).
+        nudgeWay(person, room, closed) {
+            if (!person || !person.userId || person.reachable === false || !room || closed || person.blocked) return null;
+            const own = (person.rooms || []).find((one) => one.chatRoomId === room.chatRoomId);
+            if (!own || own.network === "moqui") return null;
+            return (person.ways || []).find((way) => way.network === "moqui" && !way.blocked && !way.reasonCode) || null;
+        },
+        nudgeKey(chatRoomId) { return "moqui.chat.nudge." + chatRoomId; },
+        nudgeClosed(chatRoomId) { try { return !!(root.localStorage && root.localStorage.getItem(chat.nudgeKey(chatRoomId))); } catch (err) { return false; } },
+        closeNudge(chatRoomId) { try { if (root.localStorage) root.localStorage.setItem(chat.nudgeKey(chatRoomId), "1"); } catch (err) { /* only a convenience */ } },
+        // A change to my people (merge, separate, rename, reset; Chat's transitions): post(name, params) is the screen's.
+        // Resolves the transition's JSON, and the next people() asks the server again.
+        changePeople(post, name, params) {
+            return post(name, params).then((json) => { chat.peopleChanged(); return json || {}; });
         },
         // ---- a message's Info (Comms-Messaging §4, COM-UI-008): only what the server knows ----
         // event: as get#Timeline gives it (eventSeq, sentDate, senderUserId, senderExternal, delivery, threadRootEventSeq);
@@ -2411,6 +2537,158 @@
                     '</q-card-actions>' +
                 '</q-card>' +
             '</q-dialog>'
+    };
+
+    // ---- one person across networks (plans/Comms-Messaging.md §11.1, phase 22) ----
+    // A list of a person's ways (moqui.chat.waysOf): each with its network, where it goes and its E2EE label, the best marked.
+    const waysListTemplate =
+        '<q-list class="m-chat-ways" style="min-width:260px">' +
+            '<q-item v-for="way in ways" :key="way.key" :clickable="way.usable && !way.current" :disable="!way.usable" :active="way.current" ' +
+                    ':data-way="way.network + \':\' + way.kind" v-close-popup="closes" @click="choose(way)">' +
+                '<q-item-section avatar><q-icon :name="way.icon"></q-icon></q-item-section>' +
+                '<q-item-section>' +
+                    '<q-item-label>{{way.name}}<q-badge v-if="way.best" color="primary" class="q-ml-xs m-chat-way-best">{{t(\'Best\')}}</q-badge>' +
+                        '<span v-if="way.current" class="text-caption m-muted q-ml-xs">{{t(\'Here\')}}</span></q-item-label>' +
+                    '<q-item-label v-if="way.detail" caption class="ellipsis">{{way.detail}}</q-item-label>' +
+                    '<q-item-label caption class="row no-wrap items-center m-chat-way-label">' +
+                        '<q-icon v-if="way.label.icon" :name="way.label.icon" size="14px" class="q-mr-xs"></q-icon>' +
+                        '<span class="ellipsis">{{way.label.text || way.label.banner}}</span></q-item-label>' +
+                '</q-item-section>' +
+                '<q-item-section v-if="way.reason" side class="text-caption">{{way.reason}}</q-item-section>' +
+            '</q-item>' +
+        '</q-list>';
+
+    // The network button of a person's room (at the start of its composer): the room's network, and a choice of the
+    // person's ways, best first; choose emits the way, and the room opens or makes it and moves the draft there. A sheet
+    // from the bottom on a phone, a menu above the composer on a desktop.
+    components["m-chat-networks"] = {
+        name: "mChatNetworks",
+        props: { person: Object, roomId: String, directEncrypted: { type: Boolean, default: null } },
+        emits: ["choose"],
+        data() { return { sheet: false, closes: true }; },
+        computed: {
+            phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
+            ways() { return chat.waysOf(this.person, this.roomId, this.directEncrypted); },
+            current() { return this.ways.find((way) => way.current) || null; },
+            icon() { return this.current ? this.current.icon : "sym_o_chat"; },
+            title() { return this.current ? fillIn(tr("Sending with {network}: choose another"), { network: this.current.name }) : tr("Choose how to send"); }
+        },
+        methods: {
+            choose(way) {
+                this.sheet = false;
+                if (way && way.usable && !way.current) this.$emit("choose", way);
+            }
+        },
+        template:
+            '<q-btn v-if="ways.length > 1" flat round dense size="sm" :icon="icon" class="m-chat-networks" :aria-label="title" @click="phone ? (sheet = true) : null">' +
+                '<q-tooltip>{{title}}</q-tooltip>' +
+                '<q-menu v-if="!phone" anchor="top left" self="bottom left">' + waysListTemplate + '</q-menu>' +
+                '<q-dialog v-if="phone" v-model="sheet" position="bottom">' +
+                    '<q-card class="full-width"><q-card-section class="text-subtitle2 q-pb-none">{{t(\'Send with\')}}</q-card-section>' + waysListTemplate + '</q-card>' +
+                '</q-dialog>' +
+            '</q-btn>'
+    };
+
+    // A person's card, at the top of the People tab of their room: their name (Rename), their ways with labels (open or
+    // start one), their mail line, their addresses (Not this person), Add (another conversation of theirs, a number or a
+    // mail address) and Undo my changes. It emits what the room does: open (a way), merge ({personKeys, addressKeys}),
+    // separate (an addressKey), rename (a name), reset. others: the other people of the user's list, to pick one to add.
+    components["m-chat-person"] = {
+        name: "mChatPerson",
+        props: { person: Object, roomId: String, mail: Object, directEncrypted: { type: Boolean, default: null }, others: { type: Array, default: () => [] } },
+        emits: ["open", "merge", "separate", "rename", "reset", "mail"],
+        data() { return { renaming: false, nameText: "", adding: false, addText: "", closes: true }; },
+        computed: {
+            phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
+            ways() { return chat.waysOf(this.person, this.roomId, this.directEncrypted); },
+            title() {
+                const person = this.person || {};
+                const first = (person.addresses || []).find((one) => one.label);
+                return person.name || (first ? first.label : tr("This person"));
+            },
+            username() { const user = ((this.person && this.person.addresses) || []).find((one) => one.kind === "user"); return user ? user.label : null; },
+            // the addresses that can be taken out: all of them when there are two or more
+            addresses() {
+                const list = ((this.person && this.person.addresses) || []).filter((one) => one.label);
+                return list.length > 1 ? list : [];
+            },
+            mailLabel() { return chat.e2eeLabel({ mail: true }); },
+            addTitle() { return fillIn(tr("Add to {name}"), { name: this.title }); },
+            typedLabel() { return fillIn(tr("Add {address}"), { address: String(this.addText || "").trim() }); },
+            picks() {
+                const text = String(this.addText || "").trim().toLowerCase();
+                const mine = this.person ? this.person.personKey : null;
+                return (this.others || []).filter((other) => other && other.personKey !== mine && (!text
+                    || [other.name].concat((other.addresses || []).map((one) => one.label)).join(" ").toLowerCase().indexOf(text) >= 0)).slice(0, 8);
+            },
+            typed() {
+                const text = String(this.addText || "").trim();
+                if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return "email:" + text;
+                if (/^\+?[0-9 ()./-]{5,20}$/.test(text) && text.replace(/\D/g, "").length >= 5) return "tel:" + text;
+                return null;
+            }
+        },
+        methods: {
+            choose(way) { if (way && way.usable && !way.current) this.$emit("open", way); },
+            startRename() { this.nameText = (this.person && this.person.nameFrom === "mine" && this.person.name) || ""; this.renaming = true; },
+            saveName() { this.renaming = false; this.$emit("rename", String(this.nameText || "").trim()); },
+            addPerson(other) { this.adding = false; this.addText = ""; this.$emit("merge", { personKeys: [this.person.personKey, other.personKey], addressKeys: [] }); },
+            addTyped() { if (!this.typed) return; const key = this.typed; this.adding = false; this.addText = ""; this.$emit("merge", { personKeys: [this.person.personKey], addressKeys: [key] }); },
+            otherLabel(other) {
+                const first = (other.addresses || []).find((one) => one.label);
+                return [other.name, first && first.label !== other.name ? first.label : null].filter((part) => part).join(" · ");
+            },
+            notThis(address) { return fillIn(tr("Not {name}"), { name: this.title }) + ": " + address.label; }
+        },
+        template:
+            '<q-card v-if="person" flat bordered class="m-chat-person q-ma-sm">' +
+                '<q-card-section class="row items-center no-wrap q-py-sm">' +
+                    '<div class="col" style="min-width:0">' +
+                        '<div class="text-subtitle2 ellipsis m-chat-person-name">{{title}}</div>' +
+                        '<div v-if="username" class="text-caption m-muted ellipsis">{{username}}</div>' +
+                    '</div>' +
+                    '<q-btn flat round dense icon="sym_o_more_vert" class="m-chat-person-menu" :aria-label="t(\'Person\')">' +
+                        '<q-menu><q-list style="min-width:200px">' +
+                            '<q-item clickable v-close-popup data-person="rename" @click="startRename"><q-item-section>{{t(\'Rename\')}}</q-item-section></q-item>' +
+                            '<q-item clickable v-close-popup data-person="add" @click="adding = true"><q-item-section>{{t(\'Add a conversation, number or address\')}}</q-item-section></q-item>' +
+                            '<q-item v-if="person.contactUrl" clickable v-close-popup tag="a" :href="person.contactUrl" data-person="contact"><q-item-section>{{t(\'Open the contact\')}}</q-item-section></q-item>' +
+                            '<q-item v-if="person.edited" clickable v-close-popup data-person="reset" @click="$emit(\'reset\')"><q-item-section>{{t(\'Undo my changes\')}}</q-item-section></q-item>' +
+                        '</q-list></q-menu></q-btn>' +
+                '</q-card-section>' +
+                '<q-card-section v-if="renaming" class="row items-center no-wrap q-gutter-x-sm q-pt-none">' +
+                    '<q-input v-model="nameText" dense outlined autofocus class="col" maxlength="100" name="personName" :label="t(\'Your name for them\')" @keyup.enter="saveName"></q-input>' +
+                    '<q-btn unelevated no-caps dense color="primary" :label="t(\'Save\')" class="m-chat-person-save" @click="saveName"></q-btn>' +
+                    '<q-btn flat no-caps dense :label="t(\'Cancel\')" @click="renaming = false"></q-btn>' +
+                '</q-card-section>' +
+                '<div v-if="person.blocked" class="q-px-md q-pb-sm text-caption">{{t(\'You blocked this person\')}}</div>' +
+                waysListTemplate +
+                '<q-item v-if="mail" clickable class="m-chat-person-mail" @click="$emit(\'mail\', mail)">' +
+                    '<q-item-section avatar><q-icon name="sym_o_mail"></q-icon></q-item-section>' +
+                    '<q-item-section><q-item-label class="ellipsis">{{t(\'Email\')}}: {{mail.subject || t(\'(no subject)\')}}</q-item-label>' +
+                        '<q-item-label caption>{{mailLabel.text}}</q-item-label></q-item-section>' +
+                '</q-item>' +
+                '<template v-if="addresses.length"><q-separator></q-separator>' +
+                    '<q-item v-for="address in addresses" :key="address.addressKey" dense>' +
+                        '<q-item-section><q-item-label caption class="ellipsis">{{address.label}}</q-item-label></q-item-section>' +
+                        '<q-item-section side><q-btn flat dense no-caps size="sm" :label="t(\'Not this person\')" :aria-label="notThis(address)" ' +
+                            ':data-separate="address.addressKey" @click="$emit(\'separate\', address.addressKey)"></q-btn></q-item-section>' +
+                    '</q-item></template>' +
+                '<q-dialog v-model="adding" :maximized="phone">' +
+                    '<q-card :style="phone ? \'\' : \'width:420px;max-width:95vw\'" class="m-chat-person-add">' +
+                        '<q-card-section class="text-subtitle1">{{addTitle}}</q-card-section>' +
+                        '<q-card-section class="q-pt-none">' +
+                            '<q-input v-model="addText" dense outlined autofocus name="personAdd" :label="t(\'A name, a number or a mail address\')" @keyup.enter="addTyped"></q-input>' +
+                            '<q-list dense class="q-mt-sm">' +
+                                '<q-item v-if="typed" clickable data-add="typed" @click="addTyped"><q-item-section avatar><q-icon :name="typed.indexOf(\'email:\') === 0 ? \'sym_o_mail\' : \'sym_o_call\'"></q-icon></q-item-section>' +
+                                    '<q-item-section>{{typedLabel}}</q-item-section></q-item>' +
+                                '<q-item v-for="other in picks" :key="other.personKey" clickable :data-add="other.personKey" @click="addPerson(other)">' +
+                                    '<q-item-section>{{otherLabel(other)}}</q-item-section></q-item>' +
+                            '</q-list>' +
+                        '</q-card-section>' +
+                        '<q-card-actions align="right"><q-btn flat no-caps :label="t(\'Cancel\')" v-close-popup></q-btn></q-card-actions>' +
+                    '</q-card>' +
+                '</q-dialog>' +
+            '</q-card>'
     };
 
     if (typeof module !== "undefined" && module.exports) module.exports = chat;

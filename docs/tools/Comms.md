@@ -94,12 +94,33 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   as it scrolls, keeps what it loaded when something new comes in at the top, and opens the message, or the thread; an
   encrypted room's text is decrypted in the page. **All** groups the rooms: Pinned, Recent, Phone (a phone number's rooms) and Bridged (rooms a bridge carries
   to another network); a group's header folds it, kept per user in this browser. Phone is a filter too, and the phone's
-  home has All and Phone. **Mail on a person's row:** a direct chat with a user of this server shows their latest mail
-  thread of the last 180 days in the mail you may read (your accounts and those shared with you), matched by their
-  user account's mail address only (not a mail account they own or share), as a line "Email: subject", which says
-  "Email is not end-to-end encrypted" and opens the thread in the Inbox (a link: Tab and Enter reach it). Mail stays in the Inbox: there are no mail-only rows, and an outside person waits for
-  unified contacts (`find#DirectChatMail` of `org.moqui.comms.ChatScreenServices`, the `mailLines` transition, one query
+  home has All and Phone. **Mail on a person's row:** a person's rooms (below) show their latest mail thread of the last
+  180 days in the mail you may read (your accounts and those shared with you), as a line "Email: subject", which says
+  "Email is not end-to-end encrypted" and opens the thread in the Inbox (a link: Tab and Enter reach it). A user of this
+  server matches by their user account's mail address (not a mail account they own or share) and the addresses you
+  added to them; an outside person by their contact's addresses and those you added. Mail stays in the Inbox: there are
+  no mail-only rows (`find#DirectChatMail` of `org.moqui.comms.ChatScreenServices`, the `mailLines` transition, one query
   for the list).
+- <a id="people-across-networks"></a>**People across networks** (plans/Comms-Messaging.md §11.1, phase 22). Your rooms
+  with one person on different networks are that one person: a direct chat with a user of this server, a phone number's
+  SMS and RCS rooms, a GroupMe direct conversation. They are grouped by your own changes and by the contacts you can see
+  in the apps (with Mantle: your personal contacts, your books and those shared with you, your organizations'
+  directory). Each room stays a row of its own, with its network's icon and label, and shows the person's name. In a
+  person's room the composer starts with a **network button**: it lists their ways, the best first (MR Moqui chat for a
+  user of this server, end to end encrypted when they have a device; else the network they last wrote on; else their
+  text room with the latest message from either side, or a new text from your number; else mail), each with what it
+  encrypts. Choosing one opens that room, or starts it, with your draft added after the draft it already has; a draft
+  moved out of an encrypted chat says so, and a draft with files attached does not move (send or remove the files
+  first). A text or GroupMe room of a user of this server offers "chat there" above the composer. The People tab starts
+  with the person's **card**: Rename, Add (another conversation of theirs, a number or a mail address; a user of this
+  server takes only a number or address of one of your conversations), Not this person on each address, Undo my
+  changes, Open the contact. Your people are your own: nobody else sees them or is told. A user's phone number is never
+  shown through chat: of a user of this server you see only the numbers of your own rooms with them. A number on your
+  Blocked list, one that replied STOP or a bridge that is not connected shows dimmed with its reason and is never the
+  best; a person you blocked has no ways, and a user who blocked you, or whom an app keeps from you, is as one that does
+  not exist (no name or addresses from the contacts, no new chat). While the contacts cannot be asked (an hour's 60
+  asks used, or the app's hook failing), Rename and Add say to try again shortly
+  (`org.moqui.chat.ChatPeopleServices`, the `people` transition).
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). A new direct chat or private room is encrypted when everyone in it
   has a crypto device (Chat makes your browser's when it opens); otherwise it is plain, with the plain note. A direct chat
   you already have keeps opening; when it is plain and the other person has a device, its menu and its start offer Start
@@ -472,6 +493,18 @@ with no app root, in its `MoquiConf.xml` (only `sms-consent` today; another elem
 that names it is trusted, so its service reads only what the hook asks), even when an app's provider has the same
 name, and `get#Providers` lists it with no app. For `sms-consent` a provider that fails refuses the text, as a no does.
 
+**The contacts hook of chat's people.** Which of a user's rooms are one person is asked of one service (not a provider:
+the framework keeps no contacts), named by the `chat_contact_service` property, else the theme value
+`STRT_CHAT_CONTACT_SERVICE` of the user's theme, as the mail contact hook (`STRT_EMAIL_CONTACT_SERVICE`) is.
+`ChatPeopleServices.find#ContactPeople` (Rust, `crates/moqui-core/src/service/contacts.rs`) calls it with authorization
+disabled, in its own transaction, with `userId` and `addressList` (`tel:+E.164`, `email:address`, `user:userId`; only
+the addresses of the user's own rooms, at most 300, at most 60 times an hour a user, its answer kept three minutes for
+the user's tabs, devices and mail lines), and it answers `contactList`, the contacts the user can see with one of them,
+each `{contactRef, name, url (a path on this server), addressList}` with its own addresses. The hook
+enforces the app's visibility itself. Without one, a user's people come from their rooms and their own changes. Mantle
+answers it (`mantle.party.ContactBookServices.find#ContactPeople`, the rules of `filter#ContactAddresses`) and IronStone
+names it. A person who is a user of this server shows none of the hook's numbers or addresses.
+
 **Declared actions and panels.** `<ext-action>` and `<ext-panel>` in a screen-extend add items to a slot of a screen
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is
 `{chatRoomId, eventSeq}`; IronStone adds Create a task, request and event there, each with `hook="create-from"` so a
@@ -491,7 +524,7 @@ IronStone BOSS is the worked example: `runtime/components/addon/mr-boss/screen/C
 `./moq test basic-comms`: the user search, the System Voice screens and no call into Mantle or an app component
 (`BasicComms`), a bridged room and System, Chat Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
 user with no party, Compose retried by `clientRef` (`BasicCommsComposeRef`), the change cursor, requests once by `clientRef`, conflicts and chunked uploads (`BasicCommsSync`), the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
-provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`). `cargo test -p moqui-channels`:
+provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`), people across networks (`BasicCommsPeople`). `cargo test -p moqui-channels`:
 texts and MMS against a fake Telnyx ([SMS, Tests](../interfaces/SMS.md#tests)). `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
 phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
