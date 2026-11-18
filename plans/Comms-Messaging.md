@@ -37,7 +37,7 @@ Parts:
 | §9: the user's own phone number | Built (phase 9): group texts, the phone's dialer and Contacts through the app, contacts' names; §9.2 waits for the user's port, 10DLC and live tests | 9, built |
 | §10: the phone's SIM texts (`sim-sms`) | Phone only with an opt-in sync, decided; MMS and the synced room need a design | 10+ |
 | §11–§15: other networks and app equivalents | Plan; each network needs an adapter or a bridge | 10+ |
-| §16: RCS | Research done; business RCS through the SMS provider modules, Twilio and Sinch first, is ready to build | 10+ |
+| §16: RCS | Research done; business RCS through the SMS provider modules, Twilio and Sinch first, designed as phase 10 (§18.3) | 10 |
 
 # Part 1: The app
 
@@ -1097,6 +1097,7 @@ provider resells. The facts and their sources are in Appendix A, Finding 2.
 | No fallback | A `To` of `rcs:+1…` | `RCS` alone in the order | No fallback fields |
 | Rich content | `ContentSid` (a Content Template: cards, carousels, suggestions) | The Conversation API's rich message kinds (cards, carousels, choices) | `rich_card`, `carousel_card`, suggestions |
 | Reports | Status callbacks as for SMS, with `read` | `MESSAGE_DELIVERY`: `DELIVERED`, `READ`, `FAILED`, `SWITCHING_CHANNEL` | `message.sent`, `message.finalized`, `message.read` |
+| The path it went | The callback's `From`: `rcs:<SenderId>` when it went as RCS, else the fallback number (Twilio documents no other field); `FallbackFrom` names the fallback number | The report's `channel_identity.channel` (`RCS`, `SMS`, `MMS`; that a report after a switch names the new channel is not documented) | The answer's `data.type` |
 | Signature | `X-Twilio-Signature`, checked on the core node | `x-sinch-webhook-signature`, checked on the core node | Ed25519, as its SMS |
 
 #### RCS phase 1: business RCS in the provider modules (server)
@@ -1111,9 +1112,11 @@ provider resells. The facts and their sources are in Appendix A, Finding 2.
    `rcs-twilio`, `rcs-sinch` and `rcs-telnyx`, chosen by `ChatBridge.adapterName` as the SMS ones are. Its own bridge,
    since its sender is the brand agent, not a number: the other person's phone shows it in a thread apart from the
    number's texts. Keep `configJson` encrypted, like the SMS adapters.
-3. Config keys: the provider's SMS keys, plus its RCS sender: Twilio's `messagingServiceSid` with the RCS sender in it;
-   Sinch's `appId` with the RCS channel set up, and `smsSender` and `mmsSender` for the fallback; Telnyx's `agentId`,
-   `messagingProfileId`, `smsFallbackFrom`, `mmsFallback`.
+3. Config keys: the provider's SMS keys, plus its RCS sender: Twilio's `messagingServiceSid` with the RCS sender in it
+   and `fallbackFrom`, the bridge's home number; Sinch's `appId` with the RCS channel set up, and `smsSender` (the home
+   number) and `mmsSender` for the fallback; `smsFallback` (true; false sends RCS only); Telnyx's `agentId`,
+   `messagingProfileId`, `smsFallbackFrom`, `mmsFallback`. The bridge's numbers are numbers whose `messagingBridgeId`
+   is the RCS bridge (phase 10, §18.3).
 4. Sinch's inbound handling must accept the `RCS` channel: today `providers/sinch.rs` leaves a message and an opt-out
    on any channel but SMS and MMS. An RCS identity is a phone number, so the RCS bridge keys a room by the other
    person's number, as the SMS bridge does.
@@ -1128,8 +1131,8 @@ provider resells. The facts and their sources are in Appendix A, Finding 2.
    group texts (RBM has no groups).
 10. The provider's fallback is the capability check. Where the provider has a capability lookup (Telnyx's RCS
     Capabilities endpoint), use it only to show the path before a send.
-11. Decide where a reply to a fallback text goes: it reaches the fallback number, so the RCS room when that number is
-    the RCS bridge's own, else the number's SMS room.
+11. A reply to a fallback text reaches the fallback number: the RCS room when that number is the RCS bridge's own,
+    else the number's SMS room (decided 2026-11-17; a same-provider SMS bridge's number only, phase 10).
 12. Add tests with each provider's fake server in `crates/moqui-channels/src/tests.rs`, like the SMS tests.
 13. Write an operator guide in `docs/interfaces/`: per provider, the brand, the agent or sender, test devices, launch
     and fees, each marked not yet tested with the provider until it is.
@@ -1200,7 +1203,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 10 | GroupMe adapter (`groupme.rs`) | §13.3 |
 | 11 | Signal adapter on `signal-cli` (`signal.rs`), optional build feature | §13.3 |
 | 12 | iMessage adapter on BlueBubbles (`bluebubbles.rs`), optional build feature | §13.3 |
-| 13 | Business RCS in the SMS provider modules, Twilio and Sinch first | §16 |
+| 13 | Business RCS in the SMS provider modules, Twilio and Sinch first: designed, phase 10 (§18.3) | §16 |
 | 14 | Matrix appservice API (C6c), then `mautrix-gmessages` for personal RCS | §13.2 |
 | 15 | History imports | §15 |
 | 16 | Default phone app (`sim-dialer`): SIM calls, line choice, one call log, call screening | §14.7 |
@@ -1629,6 +1632,134 @@ Planned:
     is not read (Telecom asks `READ_PHONE_NUMBERS`, which the app does not ask), so the check says "on" only once a
     number came through it.
 
+#### Phase 10: business RCS (R1, §16 RCS phase 1)
+
+Designed 2026-11-17. Built against fake servers only, so **not yet tested with the provider** (Twilio and Sinch). Telnyx
+RCS (optional), rich cards, suggestion chips, read and typing events, and the RCS header labels are out (R2, §16 RCS
+phase 2).
+
+**The model.** An RCS bridge is a chat bridge of the new type `CbtRcs` (`enumCode` `rcs`), adapter `rcs-twilio` or
+`rcs-sinch`. Its sender is the brand's agent, and its rooms are keyed by a number of ours, as an SMS bridge's are:
+- **Its numbers.** A number's `messagingBridgeId` may name an RCS bridge (`Voice.js` takes `CbtRcs` as well as
+  `CbtSms`; System, Voice, Numbers lists both). That number is:
+  - the room's `ours`;
+  - the fallback sender of its texts;
+  - the pair of its opt-out;
+  - what its grants, limits and members come from.
+
+  So `check#SmsSend`, `ensure#PairRoom`, `receive#Sms`, the members and the calls all work unchanged. A user texts
+  "through RCS" by being granted that number.
+- **The room.** `ours/theirs` on the RCS bridge, `CrtExternal`, with the topic "RCS and texts with … on …". The other
+  person's RCS replies and their SMS replies to the fallback number come into this one room. On their phone these are
+  two threads: the agent's and the number's.
+- **The bridge's home number.** An RCS message that comes in names the agent, not a number. Its `ours` is the bridge's
+  home number: Twilio's `fallbackFrom` and Sinch's `smsSender`, a number whose `messagingBridgeId` is that bridge.
+- **The reply to a fallback text (§19.1).** A text the RCS bridge takes for one of our numbers:
+  - when the number's bridge is this RCS bridge: its room here;
+  - when the number's bridge is an SMS bridge of the same provider (`rcs-twilio` with `sms-twilio`, `rcs-sinch` with
+    `sms-sinch`): that number's SMS room, through its own bridge (`receive#Sms` with that bridge's id);
+  - when the number's bridge is another provider's: left (`unknownNumber`, logged).
+
+**The data model.**
+- `ChatEntities.xml`: Enumeration `CbtRcs` (RCS, `rcs`).
+- `VoiceEntities.xml`, beside `receiptStatus` on `ChatBridgeDelivery`: `deliveryPath`, the way a sent message went:
+  `rcs`, `sms` or `mms`. Empty until known, and always empty on an SMS bridge.
+- No other entity changes, and no migration.
+
+**The trait** (`crates/moqui-channels/src/sms.rs`). R2 adds to it without changing it:
+- `SmsProvider::channel()`: `Channel::Sms` by default, or `Channel::Rcs`. Its effects:
+  - The capabilities' `encryption` is `Transport` for RCS. It stays `None` for SMS.
+  - For RCS a sent message's path is recorded.
+- `Outgoing.fallback`: whether an RCS send may go as SMS or MMS. It comes from the bridge's `smsFallback`, true by
+  default. R2 adds `Outgoing.rich`: cards, carousels and suggestions.
+- `Path`: `Rcs`, `Sms`, `Mms`, or `Fallback`. `Fallback` means "SMS or MMS, as its files say", for a report that does
+  not say which.
+- `Receipt.path`, and `SmsEvent::Path { remote_event_id, path }` for a report that only gives the way (Sinch's
+  `SWITCHING_CHANNEL`).
+- `Inbound.location` (latitude, longitude, label, address) and `Inbound.postback` (the payload of a tapped suggestion,
+  kept for R2).
+
+R2 adds `ReceiptStatus::Read` and a typing event.
+
+**Recording the path** (`note#DeliveryPath`):
+- The core records it after an accepted send when the send cannot fall back (`rcs`), by `chatBridgeDeliveryId`.
+- Each report records it by `remoteEventId`.
+- `Fallback` becomes `sms` or `mms` by the message's files.
+- A path never moves from `sms` or `mms` back to `rcs`, and the same path again changes nothing.
+- A change pushes `push#DeliveryState`.
+
+**The providers.**
+
+| | `rcs-twilio` (`providers/twilio.rs`, `providers/twilio/rcs.rs`) | `rcs-sinch` (`providers/sinch.rs`, `providers/sinch/rcs.rs`) |
+| --- | --- | --- |
+| Config, besides the SMS keys | `messagingServiceSid` with the RCS sender in its pool (required); `fallbackFrom`, the home number (required); `smsFallback` | `smsSender`, the home number (required); `mmsSender` as for SMS; `smsFallback`. One Conversation API app for each RCS bridge, with its RCS and SMS (and MMS) channels |
+| Send | Messages API: `MessagingServiceSid`, `To` E.164, `FallbackFrom` set to the room's number, `Body`, `MediaUrl`, `StatusCallback`. No fallback: `To` `rcs:+1…` | `messages:send`: identities `RCS` and `SMS` (or `MMS` for a file), `channel_priority_order` `["RCS","SMS"]` (or `"MMS"`), `SMS_SENDER` or `MMS_SENDER` set to the room's number. No fallback: `RCS` alone |
+| Path | The status callback's `From`: `rcs:<SenderId>` is `rcs`, a number is `Fallback` | The report's `channel_identity.channel`: `RCS`, `SMS` or `MMS`. `SWITCHING_CHANNEL` is `Fallback` |
+| In | From `rcs:+1…` (prefix taken off, E.164 checked), To `rcs:<SenderId>`, which is the home number; a number `To` as SMS. `Latitude`, `Longitude`, `Label`, `Address`; `ButtonPayload` as the postback | The `RCS` channel too: `text_message`, `media_message`, `location_message`, `choice_response_message` (its `postback_data`). `sender_id` is not read on RCS (it is not a number), so ours is `smsSender`. An `RCS` opt-out notice is a STOP |
+| Group texts | none (`group_max` 0: a group room refuses) | none |
+
+`sms-sinch` still leaves RCS messages, and `sms-twilio` sends no RCS fields.
+
+**Services and screens.**
+- `ChatBridgeServices.note#DeliveryPath` (new, force-new, internal) and `get#EventDeliveries` (each destination's
+  `path`).
+- `Sms.js` (small, beside D1's work in `receive`):
+  - `receive` takes `metadata` (the postback and the location) into the item;
+  - a location with no words becomes the text "Location: {label}" with an OpenStreetMap link built from the coordinates
+    (§19.1, Location);
+  - the reroute of the reply to a fallback text, above;
+  - the RCS room's topic in `ensurePairRoom`.
+- `Voice.js` (store number), `Numbers.xml` (Texts through: SMS and RCS bridges).
+- `WebrootChat.js` `moqui.chat.pathText(destination)`: "as SMS" and "as MMS" when the path is not the network's own.
+  It is used by:
+  - `messageInfo` and `messageInfoLines`: a line "Sent as" (RCS; SMS, the phone took no RCS; MMS);
+  - `Chat.qvue` `deliveryNames`: the bubble's caption reads "Delivered to RCS as SMS".
+- `ChatTui.xml`: Info's "Sent as" line.
+- The thread header keeps the SMS banner until R2's RCS labels.
+- Phone and desktop: the same caption and Info line. Nothing depends on the width.
+
+**Failure tolerance.**
+- A path that is not kept is logged, and the send stays accepted. A report whose path is not kept still answers 200;
+  its receipt is the part that is retried.
+- An RCS message with no home number configured is left (`unknownNumber`), logged with the bridge's name.
+- A malformed `rcs:` address is a 400 for that one event.
+
+**Security and abuse.**
+- Every RCS send goes through `check#SmsSend`: the grants, the opt-out, the day's limits. RCS is billed as texts are.
+- Signatures are checked as for the provider's SMS, on the core node.
+- The reroute is only to a same-provider SMS bridge's number, never to another provider's.
+- Coordinates are numbers within range. The link is built here, never taken from the provider. Labels, addresses and
+  postbacks are cut to 200, 200 and 1024 characters.
+- The agent id is never taken as a number.
+- `configJson` stays encrypted.
+
+**Left out.**
+- Telnyx RCS.
+- The capability lookup (step 10: only Telnyx has one).
+- RCS-only per room or per message: R1 has it only bridge-wide, as `smsFallback` false.
+- Rich content, suggestion chips, read and typing (R2).
+- The RCS header labels (R2, §16.5).
+- A `rcsSenderId` check on inbound (the signature covers it).
+
+**Tests** (regression):
+- `crates/moqui-channels/src/tests/rcs.rs`, on the SMS bed with a fake Twilio and a fake Sinch:
+  - each send's fields, with and without fallback, and a file;
+  - the path from the answer and from the reports: RCS, the fallback's SMS and MMS, never back;
+  - RCS, location and suggestion replies in, into the home number's room;
+  - a fallback reply to the RCS room and to a same-provider SMS bridge's room, and left for another provider's;
+  - the RCS opt-out;
+  - the capabilities and a group room refused;
+  - the config checks;
+  - `sms-sinch` still leaving RCS.
+- `WebrootChat.spec.js`: `pathText` and Info's "Sent as" line.
+
+**Docs:**
+- New: `docs/interfaces/RCS.md`, the operator guide, per provider:
+  - the brand, agent or sender, the test devices, the launch and its fees, the webhooks, the bridge's keys;
+  - marked **not yet tested with the provider**, with the facts not confirmed in the providers' docs listed.
+- Changed: `SMS.md` and `Chat-Bridges.md` (the adapters), `docs/tools/Comms.md` (Texts), the crate's notes and
+  `providers/mod.rs`.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -1647,7 +1778,7 @@ Then the other networks and the rest of §17, in this order:
 4. Signal adapter.
 5. iMessage adapter (needs a Mac).
 6. Disappearing messages, invite links, scheduled send, SMS members.
-7. RCS: business RCS in the SMS provider modules (Twilio and Sinch first), then C6c and the personal RCS bridge if §13.4 picks B or C.
+7. RCS: business RCS in the SMS provider modules is phase 10 (Twilio and Sinch first); then C6c and the personal RCS bridge if §13.4 picks B or C.
 8. The rest of §17.
 
 **Done when** for each network: the user sends and gets text, a photo and a reaction with a real person on that network,
@@ -1675,6 +1806,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-16 | The user's number moves to an SMS and SIP provider: Twilio, Sinch or Telnyx (§13.4, choice A). Cheogram's phone number role ends; its XMPP role stays |
 | 2026-11-17 | Standard specs where they reach (SIP for calls), and no one provider at the centre: the SMS adapter is a neutral core with a module per provider (Telnyx `sms`, Twilio `sms-twilio`, Sinch `sms-sinch`). Sinch on its Conversation API, with no group texts; Twilio's group texts through its Conversations API. A secret-signed webhook is verified on the core node (§9) |
 | 2026-11-17 | Business RCS goes through the same provider modules, Twilio and Sinch first; Telnyx RCS is optional (§16.4, §19.4 Q9) |
+| 2026-11-17 | A reply to an RCS fallback text goes to the RCS room when the fallback number is that RCS bridge's own, and to the number's SMS room otherwise (§16.4 step 11, phase 10) |
 | 2026-11-16 | The layout thresholds stay as built: 1024 px for the stacked layout, 640 px for bubbles, 900 px for a pane over the timeline (§1) |
 | 2026-11-16 | Room rows keep the built swipes: right pins, left archives. Mark read is in the long-press sheet (§2.1) |
 | 2026-11-16 | Every call in an encrypted room is E2EE, direct rooms included. No fallback to a plain call (§6.1 rule 4) |
