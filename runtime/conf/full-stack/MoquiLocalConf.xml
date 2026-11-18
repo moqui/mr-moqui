@@ -15,19 +15,19 @@
 
     <!-- The edge pairing: made once, on one member, with the edge cluster (System › Edge Node, Pair with an edge node, at
         the edge cluster's own name, at the members' own addresses, or at an edge member's link name, which the front
-        passes through to that member, once it has a certificate). It writes edge_node_url,
-        edge_node_key, edge_node_pin, edge_node_id and edge_node_pairing; copy them with the rest of .env to every
+        passes through to that member, once it has a certificate). It writes edge/node@url,
+        edge/node@key, edge/node@pin, edge/node@id and edge/node@pairing; copy them with the rest of .env to every
         member. Each member then links to every live edge member, at each one's link name through the front, and keeps
         the list in runtime/db/edge_members. The edge members balance the cluster's work over its live members, and
         the queue, delegated calls, replication, mail, chat, calls, phones and PASS go over this pairing.
         With edge members (instance@node-role edge, which forward no web access), a second pairing, with the front (System › Edge
-        Node, the same Pair flow: the Pair screen shows the role front, and the pairing goes there): front_node_url,
-        front_node_key, front_node_pin and front_node_id, copied to every member as well. The wizard then sends the host
+        Node, the same Pair flow: the Pair screen shows the role front, and the pairing goes there): edge/front-node@url,
+        edge/front-node@key, edge/front-node@pin and edge/front-node@id, copied to every member as well. The wizard then sends the host
         names and XMPP domain to the front, and the mail domains, chat bridges and PASS sites to the edge cluster; the
         front balances the names over this cluster's members directly. With front_edge members there is no second
         pairing: the members forward the names. -->
 
-    <!-- The PASS authority (mr-pass's docs/Deployment.md, Full stack): the wizard's PASS step writes pass_edge_client
+    <!-- The PASS authority (mr-pass's docs/Deployment.md, Full stack): the wizard's PASS step writes edge/node@pass-client
         (edge), pass_client_edge_sites and pass_client_edge_callback, the edge cluster as a PASS client with no secret,
         which the link authenticates. Every edge member calls the authority down its own link, balanced over the live
         members, sticky by the sign-in in progress. Create each site and bind its hosts and mounts here

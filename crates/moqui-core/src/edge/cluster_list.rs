@@ -13,7 +13,7 @@
  */
 
 //! An edge cluster's members as a node that takes links lists them (plans/Edge-Node2.md §4.6): from the
-//! `ClusterMember` rows, each with its link address (`edge_link_url`), and the check of an address the Hello answer
+//! `ClusterMember` rows, each with its link address (`edge@link-url`), and the check of an address the Hello answer
 //! sends. One place for both, so `get#EdgeCluster` and the link's own list agree.
 
 use moqui_lib::error::Error;
@@ -77,7 +77,7 @@ pub fn usable_link_url(url: &str) -> Option<&str> {
 }
 
 /// The members of `factory`'s cluster with their link addresses, live or not, in id order: this member (`own_id`) with
-/// `own_url`, its `edge_link_url` as this process has it, and listed live when its row is not written yet.
+/// `own_url`, its `edge@link-url` as this process has it, and listed live when its row is not written yet.
 ///
 /// # Errors
 ///

@@ -58,31 +58,31 @@ pub const NOT_BUILT: &str = "edge link not built into this host";
 /// normal node (plans/Edge-Node2.md §4.3).
 pub const NODE_ROLE: &str = "instance@node-role";
 /// A local node's link properties, in `runtime/.env`, written by pairing and removed by unpairing (§5.1).
-pub const NODE_URL: &str = "edge_node_url";
-pub const NODE_KEY: &str = "edge_node_key";
-pub const NODE_PIN: &str = "edge_node_pin";
+pub const NODE_URL: &str = "edge/node@url";
+pub const NODE_KEY: &str = "edge/node@key";
+pub const NODE_PIN: &str = "edge/node@pin";
 /// The edge node's instance id, pinned at pairing beside its key (E7): the node its calls' media is on, which a link
 /// whose Hello names another id is refused for, so an edge node cannot take another media node's id.
-pub const NODE_ID: &str = "edge_node_id";
+pub const NODE_ID: &str = "edge/node@id";
 /// The pairing this node and the members of its cluster are known by on the edge node (plans/Edge-Node2.md §4.4): the
 /// instance id of the member that paired, written beside the key at pairing. The edge node keys its rows by it and
 /// the local node its queue rows and receipts, so every member of a pool, and a standby that takes over, is the same
 /// pairing. A node paired before E17 has none, and is its own instance id.
-pub const NODE_PAIRING: &str = "edge_node_pairing";
+pub const NODE_PAIRING: &str = "edge/node@pairing";
 /// A node's link properties for its front node (plans/Edge-Node2.md §4.7), in `runtime/.env`, written by pairing with a
 /// node whose Hello names the role `front` and removed by unpairing it: a second pairing beside `edge_node_*`. A local
 /// node pairs with the front for its web names when its edge cluster's members are `edge` (they forward no web access),
 /// and an edge node (`front_edge` or `edge`) pairs with the front that faces its visitors. Over this pairing go web
 /// access and ports only.
-pub const FRONT_URL: &str = "front_node_url";
-pub const FRONT_KEY: &str = "front_node_key";
-pub const FRONT_PIN: &str = "front_node_pin";
+pub const FRONT_URL: &str = "edge/front-node@url";
+pub const FRONT_KEY: &str = "edge/front-node@key";
+pub const FRONT_PIN: &str = "edge/front-node@pin";
 /// The front node's instance ids, learned on pinned links, as [`NODE_ID`] is for the edge pairing: a web protection
 /// ban goes up to them too.
-pub const FRONT_ID: &str = "front_node_id";
+pub const FRONT_ID: &str = "edge/front-node@id";
 /// An edge node's long-lived link key (a generated secret), which its up and down connections present instead of the
 /// web certificate, so a renewed web certificate does not break a link.
-pub const LINK_KEY: &str = "edge_link_key";
+pub const LINK_KEY: &str = "edge@link-key";
 
 /// A host whose TLS the edge node passes through to the local node, which ends it with its own certificate (§5.3).
 pub const HOST_PASSTHROUGH: &str = "EdgeHostPassthrough";
@@ -140,7 +140,7 @@ pub enum NodeRole {
     FrontEdge,
     /// An edge node behind a front node (`moqui_conf__instance__node_role=edge`): the edge set alone. It takes its local nodes' links for
     /// the queue, delegate, replicate, comms and PASS, and forwards no web access itself and binds no ports; its sites
-    /// are reached through the front, which it dials (`front_node_url`).
+    /// are reached through the front, which it dials (`edge/front-node@url`).
     Edge,
     /// An all-in-one node (`moqui_conf__instance__node_role=all-in-one`, E12): a full server with both sets, which also takes the links of
     /// paired local nodes and routes each item by its owner ([`owner`]).
@@ -240,7 +240,7 @@ pub fn takes_links() -> bool {
 /// The state of a local node's link.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LinkState {
-    /// No `edge_node_url`: not paired.
+    /// No `edge/node@url`: not paired.
     #[default]
     Unpaired,
     /// Dialing, or between the TLS handshake and Hello.
@@ -269,7 +269,7 @@ impl LinkState {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EdgeInfo {
     pub name: String,
-    /// SHA-256 of the edge node's public key, hex: what pairing pins as `edge_node_pin`.
+    /// SHA-256 of the edge node's public key, hex: what pairing pins as `edge/node@pin`.
     pub fingerprint: String,
     pub binary_version: String,
     pub link_version: u32,
@@ -331,7 +331,7 @@ pub struct LinkStatus {
 pub struct EdgeMemberLink {
     /// The edge member's instance id, as its Hello named it; empty until a link to the URL it was paired with came up.
     pub instance_id: String,
-    /// Where it is dialed: its `edge_link_url`, else the URL this node paired with.
+    /// Where it is dialed: its `edge@link-url`, else the URL this node paired with.
     pub url: String,
     pub state: LinkState,
     pub generation: u64,
@@ -351,7 +351,7 @@ pub struct EdgeMemberLink {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EdgeClusterMember {
     pub instance_id: String,
-    /// Its `edge_link_url`: where local nodes dial it; empty when it has none.
+    /// Its `edge@link-url`: where local nodes dial it; empty when it has none.
     pub link_url: String,
     /// Its heartbeat is within the cluster's liveness window: only live members are listed to local nodes.
     pub live: bool,
@@ -465,7 +465,7 @@ pub trait EdgeLink: Send + Sync {
     fn serving(&self) -> bool {
         true
     }
-    /// The local node's link (unpaired on a node with no `edge_node_url`).
+    /// The local node's link (unpaired on a node with no `edge/node@url`).
     fn status(&self) -> LinkStatus;
     /// Connect to the edge node at `url`, check its certificate by WebPKI, and return its Hello and fingerprint,
     /// without pairing.

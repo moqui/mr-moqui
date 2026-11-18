@@ -19,10 +19,10 @@
 //! - **Passthrough** ([`super::TUNNEL_HTTPS`]): a passthrough host's connection, read up to its ClientHello by the
 //!   HTTPS listener ([`super::accept`]). A PROXY v2 header with the client's address goes first, then the ClientHello's
 //!   bytes, then both ways as they come. The local node ends the TLS with its own certificate.
-//! - **SSH** ([`super::TUNNEL_SSH`]): each connection to `edge_ssh_tunnel_port`, to the SSH server of the one active
+//! - **SSH** ([`super::TUNNEL_SSH`]): each connection to `edge@ssh-tunnel-port`, to the SSH server of the one active
 //!   pairing (refused with several, and while it is away).
-//! - **XMPP** ([`super::TUNNEL_XMPP`], [`super::TUNNEL_XMPPS`]): each connection to `edge_xmpp_port` (STARTTLS) or
-//!   `edge_xmpp_tls_port` (direct TLS), to the XMPP server of the local node whose XMPP domain the connection names
+//! - **XMPP** ([`super::TUNNEL_XMPP`], [`super::TUNNEL_XMPPS`]): each connection to `edge@xmpp-port` (STARTTLS) or
+//!   `edge@xmpp-tls-port` (direct TLS), to the XMPP server of the local node whose XMPP domain the connection names
 //!   (plans/Edge-Node2.md §4.1, E16: the TLS server name on the direct TLS port, the stream header's `to` on the
 //!   STARTTLS port, [`super::xmpp_domain`]), which ends the TLS (§5.4). The edge node reads only that, sees no stanza,
 //!   and channel binding works as on the local node's own ports. An all-in-one node's own XMPP ports do the same for
@@ -404,15 +404,15 @@ fn row_kind(kind: &str) -> Option<&'static str> {
         .find(|known| *known == kind)
 }
 
-/// Where a row's port listens: on `edge_ssh_tunnel_host` for SSH, `edge_smtp_tunnel_host` for SMTP and
-/// `edge_xmpp_host` for XMPP, every address while it is empty.
+/// Where a row's port listens: on `edge@ssh-tunnel-host` for SSH, `edge@smtp-tunnel-host` for SMTP and
+/// `edge@xmpp-host` for XMPP, every address while it is empty.
 fn row_bind(kind: &str, port: u16) -> Result<SocketAddr, String> {
     let host_name = match kind {
-        TUNNEL_SSH => "edge_ssh_tunnel_host",
-        TUNNEL_SMTP => "edge_smtp_tunnel_host",
-        _ => "edge_xmpp_host",
+        TUNNEL_SSH => "edge@ssh-tunnel-host",
+        TUNNEL_SMTP => "edge@smtp-tunnel-host",
+        _ => "edge@xmpp-host",
     };
-    let host = moqui_lib::env::get_prop_or_env(host_name);
+    let host = moqui_core::context::conf_env::setting_or_property(host_name);
     let ip = match host.trim() {
         "" => std::net::IpAddr::from([0, 0, 0, 0]),
         host => host
@@ -598,7 +598,7 @@ fn reconcile(
 /// that `bind` would take: `xmpp_port` or `xmpp_tls_port` on the same port and an overlapping host. The paired node's
 /// XMPP domain gets tunnel ports of its own (plans/archive/Edge-Node.md §10), so such a tunnel port is skipped, logged.
 pub(crate) fn own_xmpp_clash(bind: SocketAddr) -> Option<&'static str> {
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+    let property = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
     if property("xmpp_domain").is_empty() {
         return None;
     }

@@ -442,7 +442,9 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         cert_fp: fingerprints.cert,
         ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        edge_link_url: env::get_prop_or_env(EDGE_LINK_URL_PROPERTY).trim().to_string(),
+        edge_link_url: crate::context::conf_env::setting(EDGE_LINK_URL_PROPERTY)
+            .trim()
+            .to_string(),
     };
     write_member(&facade, &member)?;
     let state = ClusterState::of(factory);
@@ -632,7 +634,7 @@ pub struct MemberReport {
     pub heartbeat_age_ms: u64,
     pub live: bool,
     pub version: String,
-    /// Where a local node dials it, on a member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6).
+    /// Where a local node dials it, on a member of an edge cluster (`edge@link-url`, plans/Edge-Node2.md §4.6).
     pub edge_link_url: String,
 }
 
@@ -830,13 +832,13 @@ struct Member {
     ssh_fp: String,
     /// The moqui binary's version, which an edge node reports its pool's members with (plans/Edge-Node2.md §4.4).
     version: String,
-    /// Where a local node dials this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6), read at
+    /// Where a local node dials this member of an edge cluster (`edge@link-url`, plans/Edge-Node2.md §4.6), read at
     /// start as `cluster-member@base-url` is. Empty on any other node.
     edge_link_url: String,
 }
 
 /// The property that names where a local node dials this member of an edge cluster (plans/Edge-Node2.md §4.6).
-pub const EDGE_LINK_URL_PROPERTY: &str = "edge_link_url";
+pub const EDGE_LINK_URL_PROPERTY: &str = "edge@link-url";
 
 /// The conf's `instance` `id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
 /// written to `runtime/.env`, which `plans/archive/Cluster.md` says to copy between members: two members with one id would

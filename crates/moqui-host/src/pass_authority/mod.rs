@@ -18,7 +18,7 @@
 //!   a registered client in the `x-pass-client` metadata (or its `client_id`) with its secret in
 //!   `x-pass-client-secret`, which the framework's client check (the REST servlet's) accepts before anything runs;
 //! - **on the link**, on a local node's down connection (`edge_link::down`), for its edge node only and never for a
-//!   forwarded request: the link's mutual TLS is the client's identity, its client id `pass_edge_client` (`edge`).
+//!   forwarded request: the link's mutual TLS is the client's identity, its client id `edge/node@pass-client` (`edge`).
 //!
 //! Each call runs on the request pool through `moqui_core::pass_authority`, which runs the authority service
 //! (`pass_authority_service`, Mantle's `handle#Call`) with the visitor's address as data only. [`client`] is the other

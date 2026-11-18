@@ -19,7 +19,7 @@
 //! [`fallback_check`]).
 //!
 //! **Phones off.** E8 replicates the trunks (`voiceTrunks`) and each number's fallback (`voiceFallbacks`) to the
-//! edge node, whose engine registers the trunks from its copy. With `edge_sip_enabled=false` in `runtime/.env` the
+//! edge node, whose engine registers the trunks from its copy. With `moqui_conf__edge__node__sip_enabled=false` in `runtime/.env` the
 //! link sends both sets empty (a full send with no records, so the edge node's copy is emptied and its engine loads
 //! again with no trunks and answers no number), and `Voice.js` `voiceNodes` and `SipDevices.js` `edgeSipNode` leave
 //! out the edge node's link-kept `SipNode` row, which stays: no new call goes to the edge node's engine, and its
@@ -43,7 +43,7 @@ use crate::entity::EntityFacade;
 
 /// The local setting (`runtime/.env`) that turns phones through the edge node off: on unless it is `false`, `n`,
 /// `no`, `0` or `off`. Apply writes it; unpairing removes it.
-pub const SIP_ENABLED: &str = "edge_sip_enabled";
+pub const SIP_ENABLED: &str = "edge/node@sip-enabled";
 /// The replicated sets of E8 (MoquiDefaultConf.xml `<edge>`): the trunks and the policy, and each number's fallback.
 pub const TRUNKS_SET: &str = "voiceTrunks";
 pub const FALLBACKS_SET: &str = "voiceFallbacks";
@@ -61,7 +61,7 @@ const EDGE_CLIENT: &str = "moqui.edge.EdgeClient";
 /// Whether phones go through the edge node ([`SIP_ENABLED`]).
 pub fn sip_enabled() -> bool {
     !matches!(
-        moqui_lib::env::get_prop_or_env(SIP_ENABLED)
+        crate::context::conf_env::setting(SIP_ENABLED)
             .trim()
             .to_ascii_lowercase()
             .as_str(),

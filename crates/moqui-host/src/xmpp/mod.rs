@@ -29,7 +29,7 @@
 //! - **Pushes.** A subscription to the notification bus's `notification-message` topic, as `/notws` has, hands every
 //!   chat push to the session registry, which keeps the ones for its users.
 //! - **Behind an edge node** (plans/archive/Edge-Node.md §5.4, E9). An edge node starts no XMPP server of its own; its tunnel
-//!   ports (`edge_xmpp_port`, `edge_xmpp_tls_port`) pipe each client down the link, and [`serve_tunneled`] serves the
+//!   ports (`edge@xmpp-port`, `edge@xmpp-tls-port`) pipe each client down the link, and [`serve_tunneled`] serves the
 //!   stream here as a connection from the client the edge node names, with this node's certificates and TLS, so
 //!   channel binding keeps its exporter. This node needs no listener of its own for that.
 //! - **On an all-in-one node** (plans/Edge-Node2.md §4.1, E16) its own client ports serve its pairings' domains too:
@@ -301,7 +301,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     if moqui_core::edge::settings(factory).edge_node() {
         tracing::warn!(
             "XMPP: xmpp_domain is set on a dedicated edge node (instance@node-role {}), which starts no XMPP server: \
-             edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node",
+             edge@xmpp-port and edge@xmpp-tls-port tunnel clients to the local node",
             moqui_core::edge::settings(factory).role.as_str()
         );
         listener(factory, LISTENER, State::off("an edge node starts no XMPP server"));

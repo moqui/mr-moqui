@@ -656,7 +656,7 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   change arrives.
 - **The wizard** (System › Edge Node, plans/archive/Edge-Node.md §5.7 "As built (E10, phones)"). Discover shows the edge
   node's SIP engine, the local trunks and their numbers that go through it, its registrar and how many numbers have a
-  fallback. Apply writes `edge_sip_enabled` in the local node's `runtime/.env` (on unless `false`; unpairing removes
+  fallback. Apply writes `edge/node@sip-enabled` in the local node's `runtime/.env` (on unless `false`; unpairing removes
   it). Off, the local node sends `voiceTrunks` and `voiceFallbacks` empty, so the edge node's engine registers no trunk
   and answers no number from a fallback; the edge node's `SipNode` row stays but takes no new call, no phone rings
   through a binding there (Apply removes them), and its registrar

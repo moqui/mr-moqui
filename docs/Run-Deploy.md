@@ -372,7 +372,7 @@ with `--no-data` leaves it out, so it is the place for per-host settings that sh
 
 When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
 covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `ssh-server@host-key`, `git-server@lfs-token-key`, `cluster-member@tls-cert`,
-`cluster-member@tls-key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
+`cluster-member@tls-key` and `edge@link-key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
 `mail-delivery/dkim@key` (empty by default) is made there too, the first time a server needs it.
 
 The properties most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
@@ -435,15 +435,15 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
 | `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
 | `instance@node-role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it ([A front node](#a-front-node), [Full stack](#full-stack)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
-| `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
-| `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
-| `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
-| `edge_sip_enabled` | empty (on) | On a paired local node, whether its trunks and phones go through the edge node's SIP engine; `false` sends the replicated sets `voiceTrunks` and `voiceFallbacks` empty, so the edge node registers no trunk and answers no number from a fallback, and keeps its `SipNode` row but gives it no new call. The wizard's Apply writes it and unpairing removes it ([SIP](interfaces/SIP.md#behind-an-edge-node)) |
-| `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host` | empty | On an edge node, a port whose connections go to the SSH server of the one paired local node (refused with several, and while it is away), and the address it listens on (empty for every one). With several local nodes each gets a port of its own: a `moqui.edge.EdgePort` row (System › Edge Clients › Ports), on `edge_ssh_tunnel_host` |
-| `edge_smtp_tunnel_host` | empty | On a front node, the address an `EdgePort` row of kind `smtp` listens on (empty for every one): port 25 passed to an edge cluster's members with a PROXY header naming the client ([Mail-Inbound](interfaces/Mail-Inbound.md), plans/Edge-Node2.md §4.7) |
-| `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
-| `edge_call_legs_per_pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
-| `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
+| `edge@link-key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
+| `edge/node@url`, `edge/node@key`, `edge/node@pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
+| `edge/node@calls-enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
+| `edge/node@sip-enabled` | empty (on) | On a paired local node, whether its trunks and phones go through the edge node's SIP engine; `false` sends the replicated sets `voiceTrunks` and `voiceFallbacks` empty, so the edge node registers no trunk and answers no number from a fallback, and keeps its `SipNode` row but gives it no new call. The wizard's Apply writes it and unpairing removes it ([SIP](interfaces/SIP.md#behind-an-edge-node)) |
+| `edge@ssh-tunnel-port`, `edge@ssh-tunnel-host` | empty | On an edge node, a port whose connections go to the SSH server of the one paired local node (refused with several, and while it is away), and the address it listens on (empty for every one). With several local nodes each gets a port of its own: a `moqui.edge.EdgePort` row (System › Edge Clients › Ports), on `edge@ssh-tunnel-host` |
+| `edge@smtp-tunnel-host` | empty | On a front node, the address an `EdgePort` row of kind `smtp` listens on (empty for every one): port 25 passed to an edge cluster's members with a PROXY header naming the client ([Mail-Inbound](interfaces/Mail-Inbound.md), plans/Edge-Node2.md §4.7) |
+| `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
+| `edge@call-legs-per-pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
+| `edge@offline-page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
 | `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
 | `mail-delivery@mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
 | `mail-delivery@relay-host`, `mail-delivery@relay-port` | `127.0.0.1`, `10025` | On an edge node with `moqui_conf__mail_delivery__mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
@@ -800,7 +800,7 @@ Through a reverse proxy whose client-ip header is believed, the client it names 
 list a monitor that probes through the proxy, or have it probe the port directly.
 
 The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass_authority_grpc_port`) and the edge tunnel
-ports (`edge_ssh_tunnel_port`, `edge_xmpp_port`, `edge_xmpp_tls_port`) also open only when they are configured.
+ports (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`) also open only when they are configured.
 
 Before the database opens, a start checks every port it will bind, over TCP or UDP as the listener uses it, and logs
 `Ports checked free: …`. If HTTP, HTTPS, cluster or SSH is busy, the start stops, and the error names each busy port
@@ -1071,7 +1071,7 @@ local node is away.
 
 ```
  visitors, mail servers, chat and phone providers
-    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223, edge_ssh_tunnel_port
+    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223, edge@ssh-tunnel-port
  edge node      conf/edge/MoquiEdgeConf.xml    base components and mr-pass; the link's queue and copies
     ^  the local node dials 443 and keeps one link open
  local node     conf/edge/MoquiLocalConf.xml   the apps and the data, in the office or at home
@@ -1094,8 +1094,8 @@ dropped link resumes each terminal by the count of what it drew ([Terminal](ui/T
    its System › Edge Clients › Clients, make a pairing code. Clients also lists the paired nodes, pings and revokes
    them, and shows the edge node's link key fingerprint; Domains has their host names and what each claims, and Ports
    their tunnel ports.
-2. On the local node, in System › Edge Node, choose **Pair with an edge node**. Pairing writes `edge_node_url`,
-   `edge_node_key`, `edge_node_pin` and `edge_node_id` to `runtime/.env` and brings the link up; unpairing removes them.
+2. On the local node, in System › Edge Node, choose **Pair with an edge node**. Pairing writes `edge/node@url`,
+   `edge/node@key`, `edge/node@pin` and `edge/node@id` to `runtime/.env` and brings the link up; unpairing removes them.
    The wizard's steps:
    1. **Edge node.** Its address and the pairing code.
    2. **Connect.** Check its name and link key fingerprint against Edge Clients. Next pairs and waits for the link.
@@ -1184,7 +1184,7 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
   with Check again. The server's own setup refuses an address, bridge or number the local node holds. An address both
   sides hold gets 451 at `RCPT TO`, and a bridge both hold gets 409 at its webhook; each is logged.
 - **XMPP.** The server's XMPP server keeps `xmpp_port` and `xmpp_tls_port`. Give the local node's domain tunnel ports
-  of their own, such as `edge_xmpp_port=5242` and `edge_xmpp_tls_port=5243`, named in that domain's SRV records. A
+  of their own, such as `moqui_conf__edge__xmpp_port=5242` and `moqui_conf__edge__xmpp_tls_port=5243`, named in that domain's SRV records. A
   tunnel port the same as the server's own is off, with an error logged.
 - **PASS.** The server's mr-pass keeps its local authority (`pass_backend_url` is not `edge:`). PASS sites for the
   local node are not served here yet.
@@ -1231,7 +1231,7 @@ The confs, the `.env` names and the commands are in [runtime/conf/multi-domain](
   refused while more than one local node is paired.
 - **Limits per local node.** The queue's size cap holds for each local node alone, and a local node's own cap is set
   on Edge Clients › Clients (Queue cap). Mail delivery gives each local node with mail due an even share of its
-  sessions. Call legs have a cap per local node (`edge_call_legs_per_pairing`).
+  sessions. Call legs have a cap per local node (`edge@call-legs-per-pairing`).
 - **Isolation.** Reasonable, not multi-tenant: one operator runs the edge node, and the local nodes belong to one
   organization or to related ones. Shared: the edge node's addresses and mail reputation, its DKIM key (published in
   each domain), its media and TURN ports, web protection's counts, CPU and bandwidth. Revoking a local node ends its
@@ -1368,10 +1368,10 @@ The conf, the `.env` names, the DNS records and the commands are in
 [runtime/conf/edge-cluster](../runtime/conf/edge-cluster/README.md). The members are a cluster as in
 [Cluster](#cluster): one external database, the same `.env` and secrets, a distinct instance id each.
 
-1. Start the first member once, so it generates its secrets into `.env`, among them `edge_link_key`, the one link key
+1. Start the first member once, so it generates its secrets into `.env`, among them `edge@link-key`, the one link key
    every member presents and every local node pins.
 2. Copy that `.env` to each other member before its first start, and give each member its own `cluster-member@base-url` and
-   `edge_link_url` (its own public `https` address, where local nodes dial it), and its own mail, media and SIP
+   `edge@link-url` (its own public `https` address, where local nodes dial it), and its own mail, media and SIP
    addresses.
 3. Check System › Edge Clients › Edge cluster on any member: each member live, with its link address. It warns of a
    live member with no usable address while there is more than one.
@@ -1426,8 +1426,8 @@ The confs, the `.env` names, the DNS and the commands are in [runtime/conf/front
    Node; the Pair screen shows the role, front, before the code is spent). Run the wizard: host names and XMPP.
 3. Copy that member's `.env` to each other member, with its own `cluster-member@base-url`, and start it.
 
-- **The front pairing.** Pairing with a node whose role is `front` writes `front_node_url`, `front_node_key`,
-  `front_node_pin` and `front_node_id`, a pairing of its own beside any edge pairing (`edge_node_*`). It carries web
+- **The front pairing.** Pairing with a node whose role is `front` writes `edge/front-node@url`, `edge/front-node@key`,
+  `edge/front-node@pin` and `edge/front-node@id`, a pairing of its own beside any edge pairing (`edge_node_*`). It carries web
   access and ports only: no queue, delegated calls, replication, call or SIP rows. System › Edge Node shows it, and
   Unpair (or Unpair front, beside an edge pairing) ends it.
 - **The pool, balancing, admission, draining and shared bans** are as with an edge node
@@ -1442,7 +1442,7 @@ The confs, the `.env` names, the DNS and the commands are in [runtime/conf/front
 - **Your own load balancer** in place of a front node stays supported ([Cluster](#cluster)). Before an edge cluster it
   must pass TLS through with a PROXY header, since the links need ALPN and client certificates end to end.
 - **Two front nodes** are a cluster of front nodes: one external database and one `.env`, each with its own
-  `edge_link_url`, and each node behind them links to every member, as with an [edge cluster](#an-edge-cluster). The
+  `edge@link-url`, and each node behind them links to every member, as with an [edge cluster](#an-edge-cluster). The
   names' address records name each front member.
 
 ## Full stack
@@ -1482,12 +1482,12 @@ cluster as in [An edge cluster](#an-edge-cluster).
 - **What the edge members give the front.** Their sites' hosts and chat address's host as terminate hosts, so the
   front sees the session cookie and keeps a browser on one edge member; with `front_edge`, every name of their local
   nodes in its mode. A name another pairing of the front holds is refused and given again after a minute.
-- **The local nodes' links through the front.** Each edge member names its `edge_link_url` in its Hello; the front
+- **The local nodes' links through the front.** Each edge member names its `edge@link-url` in its Hello; the front
   keeps the host as that member's link name (Edge Clients › Domains) and passes its connections through untouched to
   that member alone, picked by the server name before the link's ALPN. A local node dials each edge member there, so
   the edge members need no inbound port for links. A link name is never balanced: while its member is not linked it is
   refused. The front is then a single point for the links as well as the web: while it is down the local nodes'
-  queue, delegated calls and replication stop too. Set an edge member's `edge_link_url` to a name at its own address
+  queue, delegated calls and replication stop too. Set an edge member's `edge@link-url` to a name at its own address
   instead (443 open on it) to keep the links up without the front.
 - **The edge members' first certificate.** An edge member with no certificate starts no link server (no EdgeServer,
   no relay down), and an ACME standby listener takes no links, so a link name's first certificate cannot come through

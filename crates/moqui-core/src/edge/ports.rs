@@ -18,7 +18,7 @@
 //! and say so ([`changed`]), and the host's edge link opens or closes the port's listener within seconds, telling how
 //! it went ([`set_states`], [`states`]).
 //!
-//! The conf's own tunnel ports are apart (`edge_ssh_tunnel_port`, `edge_xmpp_port`, `edge_xmpp_tls_port`), and a row
+//! The conf's own tunnel ports are apart (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`), and a row
 //! may not take one of them, nor another port of this node's own listeners ([`reserved`]).
 
 use std::collections::BTreeMap;
@@ -78,9 +78,9 @@ const OWN_PORTS: [(&str, u16); 18] = [
     ("turn_tls_port", 5349),
     ("rtc_media_port", 10000),
     ("rtc_media_tcp_port", 0),
-    ("edge_ssh_tunnel_port", 0),
-    ("edge_xmpp_port", 0),
-    ("edge_xmpp_tls_port", 0),
+    ("edge@ssh-tunnel-port", 0),
+    ("edge@xmpp-port", 0),
+    ("edge@xmpp-tls-port", 0),
 ];
 
 /// Other ports a mail server's clients and peers use (submission, SMTPS, XMPP federation), which no row may take.

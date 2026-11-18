@@ -54,7 +54,7 @@ pub struct Hello {
     #[prost(string, tag = "15")]
     pub node_role: ::prost::alloc::string::String,
     /// A node with the edge set's, in the Hello of its link to its front node (plans/Edge-Node2.md §4.7): its own
-    /// edge_link_url, where its local nodes dial it. The front passes its host's connections through untouched to this
+    /// edge@link-url, where its local nodes dial it. The front passes its host's connections through untouched to this
     /// member alone, so their links reach it. Empty from any other node.
     #[prost(string, tag = "16")]
     pub link_url: ::prost::alloc::string::String,
@@ -164,7 +164,7 @@ pub struct HelloReply {
 pub struct EdgeMember {
     #[prost(string, tag = "1")]
     pub instance_id: ::prost::alloc::string::String,
-    /// Where a local node dials it: its edge_link_url (<https://host:port>). Empty when it has none: it is reached only at
+    /// Where a local node dials it: its edge@link-url (<https://host:port>). Empty when it has none: it is reached only at
     /// the URL the local node paired with.
     #[prost(string, tag = "2")]
     pub link_url: ::prost::alloc::string::String,
@@ -488,7 +488,7 @@ pub struct PassOffer {
     /// mr-pass is loaded on the edge node.
     #[prost(bool, tag = "1")]
     pub available: bool,
-    /// The PASS client id the local node registers the edge node as (pass_edge_client there).
+    /// The PASS client id the local node registers the edge node as (edge/node@pass-client there).
     #[prost(string, tag = "2")]
     pub client_id: ::prost::alloc::string::String,
 }
@@ -498,7 +498,7 @@ pub struct XmppOffer {
     /// A tunnel port is on.
     #[prost(bool, tag = "1")]
     pub available: bool,
-    /// edge_xmpp_port (STARTTLS) and edge_xmpp_tls_port (direct TLS); 0 while off.
+    /// edge@xmpp-port (STARTTLS) and edge@xmpp-tls-port (direct TLS); 0 while off.
     #[prost(uint32, tag = "2")]
     pub port: u32,
     #[prost(uint32, tag = "3")]
@@ -607,7 +607,7 @@ pub struct SshOffer {
     /// The edge node's public name (its first public name, webapp-list/webapp\[webroot\]@http-host).
     #[prost(string, tag = "2")]
     pub host: ::prost::alloc::string::String,
-    /// The node's own EdgePort row of kind ssh, else edge_ssh_tunnel_port while the node is the one active pairing; 0
+    /// The node's own EdgePort row of kind ssh, else edge@ssh-tunnel-port while the node is the one active pairing; 0
     /// when neither.
     #[prost(uint32, tag = "3")]
     pub port: u32,

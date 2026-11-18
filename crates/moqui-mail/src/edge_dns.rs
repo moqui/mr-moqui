@@ -82,9 +82,9 @@ pub struct XmppExpected {
     pub domain: String,
     /// The edge node's names an SRV target may be; the first is the one to set.
     pub hosts: Vec<String>,
-    /// `edge_xmpp_port` (STARTTLS), for `_xmpp-client._tcp`.
+    /// `edge@xmpp-port` (STARTTLS), for `_xmpp-client._tcp`.
     pub port: u16,
-    /// `edge_xmpp_tls_port` (direct TLS), for `_xmpps-client._tcp`.
+    /// `edge@xmpp-tls-port` (direct TLS), for `_xmpps-client._tcp`.
     pub tls_port: u16,
 }
 

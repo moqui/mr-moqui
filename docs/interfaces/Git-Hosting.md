@@ -1401,7 +1401,7 @@ cluster members an edge node balances, and an edge cluster.
   node (`https://code.example.com`), not the local node's own address; with it empty, the request's own host is used,
   which is the same behind a terminate host. Leave `ssh-server@public-host` and `ssh-server@public-port` empty behind an edge node:
   the clone URLs then name the edge node's SSH tunnel to this node, as its offer says (its public name, and the
-  pairing's own SSH port, an `EdgePort` row, else `edge_ssh_tunnel_port` while it is the one active pairing). With a
+  pairing's own SSH port, an `EdgePort` row, else `edge@ssh-tunnel-port` while it is the one active pairing). With a
   front pairing and an edge pairing (edge members behind a front, which bind no tunnel ports) they name the front's.
   Set them when clients reach SSH another way. `<git-ci server-url>` is for runners: [Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool).
 - **A host that refuses the framework's routes** (`root-screen` `framework-routes="refuse"`, a site of its own) still
@@ -1409,7 +1409,7 @@ cluster members an edge node balances, and an edge cluster.
   behind its own authentication and the web protection's checks; every other route of the host is Not Found there
   (`moqui_core::web::reserved`, which scripts read as `ec.web.reservedPaths`).
 - **The SSH tunnel.** The edge node pipes each connection to its SSH tunnel port down the link to the local node's
-  SSH server (`ssh-server@port`), which needs no open port of its own: `edge_ssh_tunnel_port` to the one active pairing, or
+  SSH server (`ssh-server@port`), which needs no open port of its own: `edge@ssh-tunnel-port` to the one active pairing, or
   a pairing's own port (System › Edge Clients › Ports). At most `<edge ssh-tunnels>` (256) connections per port at
   once. A client that a pairing's shared ban names is refused on that pairing's tunnel ports as on its hosts.
 - **Web protection.** The edge node applies its own rules before a request goes down, and the local node applies its

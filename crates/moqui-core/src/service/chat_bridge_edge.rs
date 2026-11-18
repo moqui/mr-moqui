@@ -1043,7 +1043,7 @@ fn through_edge(factory: &ExecutionContextFactory) -> bool {
     let settings = crate::edge::settings(factory);
     !settings.takes_links()
         && settings.kinds.contains_key(KIND_MEDIA)
-        && !moqui_lib::env::get_prop_or_env(crate::edge::NODE_URL).trim().is_empty()
+        && !crate::context::conf_env::setting(crate::edge::NODE_URL).trim().is_empty()
         // a build without the edge link (Lite, Dev) has no link to send the files on
         && crate::edge::link().is_ok()
 }

@@ -14,7 +14,7 @@
 
 //! The wizard's XMPP check on a local node (plans/archive/Edge-Node.md §5.7, the Test step, E10): this node's XMPP server
 //! takes tunneled connections of the kind (§5.4, E9), and a client connection to the edge node's tunnel port, on the
-//! host of `edge_node_url`, comes back to it through the link. The connection is opened as a client's would be
+//! host of `edge/node@url`, comes back to it through the link. The connection is opened as a client's would be
 //! (direct TLS with ALPN `xmpp-client`, or the stream in the clear, its features, then STARTTLS), and its TLS must
 //! present this node's own certificate for the domain (pinned to the whole certificate, from `runtime/cert`): only
 //! this node's server has its key, so a handshake that completes is the proof it came back here. Nothing more is

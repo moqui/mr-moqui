@@ -17,17 +17,17 @@ use super::*;
 #[test]
 fn calls_are_on_unless_the_setting_turns_them_off() {
     // the only test reading the setting, so setting it here races with nothing
-    moqui_lib::env::clear_property(CALLS_ENABLED);
+    moqui_lib::env::clear_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED));
     assert!(calls_enabled(), "on by default, as E7 behaves");
     for off in ["false", "N", "no", "0", " off "] {
-        moqui_lib::env::set_property(CALLS_ENABLED, off.to_string());
+        moqui_lib::env::set_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED), off.to_string());
         assert!(!calls_enabled(), "{off}");
     }
     for on in ["true", "Y", "yes", "1"] {
-        moqui_lib::env::set_property(CALLS_ENABLED, on.to_string());
+        moqui_lib::env::set_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED), on.to_string());
         assert!(calls_enabled(), "{on}");
     }
-    moqui_lib::env::clear_property(CALLS_ENABLED);
+    moqui_lib::env::clear_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED));
 }
 
 #[test]

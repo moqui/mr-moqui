@@ -128,7 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>One unit of work queued for the other end of the link: on an edge node the items for a local node
             (EqdToLocal), on a local node its outbox for the edge node (EqdToEdge). pairedNodeId is the local node of
             the pair: on an edge node the paired node's id (decision 1), on a local node the pairing it is known by
-            (edge_node_pairing, the same on every member of its cluster, plans/Edge-Node2.md §4.4), else its own instance
+            (edge/node@pairing, the same on every member of its cluster, plans/Edge-Node2.md §4.4), else its own instance
             id.
             queueItemId is a UUID, so the receiver's receipt stays unique when this database is lost and made again;
             sequenceNum orders the items, and the items of one conversationKey (a room, a mailbox, a phone number) are
@@ -358,9 +358,9 @@ along with this software (see the LICENSE.md file). If not, see
             (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS, and on a front node (instance@node-role
             front, §4.7) smtp to the SMTP listener of a member of the pairing's pool (an edge cluster's mail edge), with
             a PROXY v2 header naming the client. A port is one row; the node listens on it while its pairing is active,
-            within seconds of org.moqui.edge.EdgeServices adding it (on edge_ssh_tunnel_host, edge_xmpp_host or
-            edge_smtp_tunnel_host, every address when empty) and stops when it is removed. The conf's own tunnel ports are
-            apart: edge_ssh_tunnel_port goes to the one active pairing, and edge_xmpp_port and edge_xmpp_tls_port to the
+            within seconds of org.moqui.edge.EdgeServices adding it (on edge@ssh-tunnel-host, edge@xmpp-host or
+            edge@smtp-tunnel-host, every address when empty) and stops when it is removed. The conf's own tunnel ports are
+            apart: edge@ssh-tunnel-port goes to the one active pairing, and edge@xmpp-port and edge@xmpp-tls-port to the
             node whose XMPP domain a client names.</description>
         <field name="port" type="number-integer" is-pk="true"/>
         <field name="pairedNodeId" type="id" not-null="true"/>

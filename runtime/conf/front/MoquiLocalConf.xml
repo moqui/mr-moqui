@@ -17,7 +17,7 @@
 
     <!-- The same .env on every member: the secrets the first member's first start generates (webapp-list/webapp[webroot]/session-config@cookie-key,
         cluster-member@tls-cert, cluster-member@tls-key, moqui_conf__entity_facade__crypt_pass) and what pairing with the front writes on that member:
-        front_node_url, front_node_key (the pairing's key), front_node_pin and front_node_id. A front pairing has no
+        edge/front-node@url, edge/front-node@key (the pairing's key), edge/front-node@pin and edge/front-node@id. A front pairing has no
         pairing id: the front knows the cluster by its key and its members' ids, and there is no queue. Copy that whole
         .env to every other member, then add the member's own cluster-member@base-url, https://(this member's private
         address):8444; each links at its next start. Each member's own: its instance id (runtime/db/instance_id), its

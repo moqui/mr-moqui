@@ -32,14 +32,14 @@
 //!   those fail, saying so) and finds the name.
 //! - Calls: the edge node runs a media node and TURN (the process's one media socket: the local node, started first,
 //!   has none), on loopback and advertised as a documentation address. The offer names them and the Hello `calls`;
-//!   Discover offers calls, on by default; Apply writes `edge_calls_enabled` and the link-kept row, with lines for the
+//!   Discover offers calls, on by default; Apply writes `edge/node@calls-enabled` and the link-kept row, with lines for the
 //!   media address, the TURN secret and the row; Test finds the row live and preferred, `make#IceServers` signs the
 //!   edge node's TURN URLs with its secret, and that credential allocates on its TURN with a permission for the IP of
 //!   the media address. Calls off keeps the row as draining, which Test does not check, and Status says so.
 //! - Phones: the edge node runs a SIP engine (the process's one: the local node has none) on loopback. The offer and
 //!   the Hello name it, another local node active beside it (E16: taking nothing of its); once that node is revoked, a trunk
 //!   set up on the local node replicates and the edge node's engine loads it. Discover shows the trunk with its
-//!   numbers and the fallback summary; Apply writes `edge_sip_enabled`, with lines for the sets, the link-kept row, the
+//!   numbers and the fallback summary; Apply writes `edge/node@sip-enabled`, with lines for the sets, the link-kept row, the
 //!   realm and the fallbacks; Test finds the row live, the trunk loaded and the fallbacks there. Phones off sends both
 //!   sets empty, so the edge node's engine drops the trunk, which Test does not check, and Status says so; on again
 //!   brings it back. The DNS check takes the SIP domain's SRV records against fixed ones.
@@ -620,7 +620,7 @@ fn calls_area(local: &Gate, media: &str) {
     let row = |name: &str| field(local, "moqui.call.CallMediaNode", ("instanceId", &edge_id), name);
     assert_eq!((row("edgeLinked"), row("draining")), ("Y".to_string(), "N".to_string()));
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_calls_enabled=true"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__calls_enabled=true"), "{env}");
     let calls_lines = |out: BTreeMap<String, Value>| -> Vec<BTreeMap<String, String>> {
         list(out.get("lineList"))
             .into_iter()
@@ -669,7 +669,7 @@ fn calls_area(local: &Gate, media: &str) {
     let untouched = calls_lines(call(local, "org.moqui.edge.EdgeServices.apply#EdgeSetup", &[]));
     assert!(untouched.is_empty(), "{untouched:?}");
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_calls_enabled=true"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__calls_enabled=true"), "{env}");
     assert_eq!(row("draining"), "N");
     show(
         "EdgeNode/Status",
@@ -694,7 +694,7 @@ fn calls_area(local: &Gate, media: &str) {
     );
     assert_eq!((row("edgeLinked"), row("draining")), ("Y".to_string(), "Y".to_string()));
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_calls_enabled=false"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__calls_enabled=false"), "{env}");
     let tested = tests(call(
         local,
         "org.moqui.edge.EdgeServices.test#EdgeSetup",
@@ -872,7 +872,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
     );
     assert_eq!(post("EdgeNode/Pair/Apply/applySetup", &[]), "");
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_sip_enabled=true"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__sip_enabled=true"), "{env}");
     let sip_lines = |out: BTreeMap<String, Value>| -> Vec<BTreeMap<String, String>> {
         list(out.get("lineList"))
             .into_iter()
@@ -961,7 +961,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         );
     }
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_sip_enabled=false"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__sip_enabled=false"), "{env}");
     wait_until(
         Duration::from_secs(10),
         "the edge node's copies emptied and its engine without the trunk",
@@ -1063,9 +1063,9 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("edge_mail_bounce_domain", "bounce.example.net"),
             ("moqui_conf__channels__webhooks_enabled", "true"),
             ("edge_public_addresses", "203.0.113.5, not-an-address"),
-            ("edge_xmpp_port", &xmpp_port.to_string()),
-            ("edge_xmpp_tls_port", &xmpp_tls_port.to_string()),
-            ("edge_xmpp_host", "127.0.0.1"),
+            ("moqui_conf__edge__xmpp_port", &xmpp_port.to_string()),
+            ("moqui_conf__edge__xmpp_tls_port", &xmpp_tls_port.to_string()),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
             ("rtc_media_port", &media_port.to_string()),
             ("rtc_media_host", "127.0.0.1"),
             ("rtc_public_address", &media),
@@ -1354,7 +1354,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         env.contains(&format!("moqui_conf__channels__public_url={url}")),
         "{env}"
     );
-    assert!(env.contains("pass_edge_client=edge"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__pass_client=edge"), "{env}");
     assert!(env.contains("pass_client_edge_sites=SITE1"), "{env}");
     assert!(
         env.contains("pass_client_edge_callback=https://forum.example.com/account/Sso"),

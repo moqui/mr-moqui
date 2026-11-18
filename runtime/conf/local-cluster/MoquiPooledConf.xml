@@ -18,7 +18,7 @@
     <!-- The same secrets on every member, as in MoquiLocalConf.xml: webapp-list/webapp[webroot]/session-config@cookie-key, cluster-member@tls-cert,
         cluster-member@tls-key and moqui_conf__entity_facade__crypt_pass, which the first member's first start generates into its .env.
         The pairing is the cluster's, made once on one member (System › Edge Node, Pair with an edge node), which writes
-        edge_node_url, edge_node_key (the pairing's key), edge_node_pin, edge_node_id and edge_node_pairing (the id the
+        edge/node@url, edge/node@key (the pairing's key), edge/node@pin, edge/node@id and edge/node@pairing (the id the
         edge node knows the cluster by, which keys the outbox and its receipts) to that member's .env. Copy that whole
         .env to every other member (the secrets above, the pairing's lines, and the rest that must match, such as
         acme@account-key, ssh-server@host-key and git-server@lfs-token-key), then add the member's own cluster-member@base-url; each links at

@@ -19,7 +19,7 @@
 //! ([`super::EdgeLink::turn_probe`]).
 //!
 //! **Calls off.** E7 keeps the row from the link and `Calls.js` `liveMediaNodes` puts it first, so a paired node's new
-//! calls have their media on the edge node. With `edge_calls_enabled=false` in `runtime/.env` the link keeps the row
+//! calls have their media on the edge node. With `moqui_conf__edge__node__calls_enabled=false` in `runtime/.env` the link keeps the row
 //! as `draining`: `Calls.js` gives a draining node no new call, and calls already on the edge node go on (the row
 //! stays live, so `expire#Calls` does not end them and the delegated media events are still taken).
 
@@ -35,7 +35,7 @@ use crate::entity::EntityFacade;
 
 /// The local setting (`runtime/.env`) that turns the edge node's media node off for new calls: on unless it is
 /// `false`, `n`, `no`, `0` or `off`. Apply writes it; unpairing removes it.
-pub const CALLS_ENABLED: &str = "edge_calls_enabled";
+pub const CALLS_ENABLED: &str = "edge/node@calls-enabled";
 /// A media node's row is live while its heartbeat is this recent (`MEDIA_NODE_STALE_MS` in `Calls.js`).
 pub const STALE_MS: i64 = 60_000;
 /// The leg of the Test step's TURN credential: no leg of a call, and new each run.
@@ -49,7 +49,7 @@ const MAKE_ICE_SERVERS: &str = "org.moqui.call.CallServices.make#IceServers";
 /// Whether new calls may have their media on the edge node ([`CALLS_ENABLED`]).
 pub fn calls_enabled() -> bool {
     !matches!(
-        moqui_lib::env::get_prop_or_env(CALLS_ENABLED)
+        crate::context::conf_env::setting(CALLS_ENABLED)
             .trim()
             .to_ascii_lowercase()
             .as_str(),

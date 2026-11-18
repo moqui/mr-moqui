@@ -166,7 +166,7 @@ fn front_properties(port: &str, key: &str) -> Vec<(&'static str, String)> {
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
             port.to_string(),
         ),
-        ("edge_link_key", key.to_string()),
+        ("moqui_conf__edge__link_key", key.to_string()),
     ]
 }
 
@@ -343,7 +343,7 @@ fn an_edge_node_dials_its_front_and_forwards_its_local_nodes_names() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("edge_link_key", &new_key().unwrap()),
+            ("moqui_conf__edge__link_key", &new_key().unwrap()),
             (moqui_core::edge::FRONT_URL, &front_url),
             (moqui_core::edge::FRONT_KEY, &edge_pairing.key),
             (moqui_core::edge::FRONT_PIN, &edge_pairing.pin),
@@ -439,7 +439,7 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("edge_link_key", &new_key().unwrap()),
+            ("moqui_conf__edge__link_key", &new_key().unwrap()),
         ],
         &files(&[("cert/default.crt", &edge_cert.0), ("cert/default.key", &edge_cert.1)]),
     );
@@ -526,9 +526,11 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
     // unpairing the front revokes it there and forgets it here; the edge pairing stays
     link.unpair_front().unwrap();
     assert!(link.front_status().is_none());
-    assert!(moqui_lib::env::get_prop_or_env(moqui_core::edge::FRONT_URL)
-        .trim()
-        .is_empty());
+    assert!(
+        moqui_lib::env::get_prop_or_env(&moqui_core::context::conf_env::env_name_of(moqui_core::edge::FRONT_URL))
+            .trim()
+            .is_empty()
+    );
     assert!(!client_field(&front.server, WEB_NODE, "revokedDate").is_empty());
     let status = link.status();
     assert_eq!(status.state, LinkState::Linked, "{status:?}");
@@ -645,7 +647,10 @@ fn acceptance_a_front_node_balances_a_local_cluster_with_web_protection() {
     let second_id = moqui_core::cluster::instance_id(second.0.factory()).unwrap();
     let paired = pair_node(&rt, &front, &url, &node, &authority.root);
     // what the members' .env would say: pooled behind a front, a new session is written before its response
-    moqui_lib::env::set_property(moqui_core::edge::FRONT_URL, url.clone());
+    moqui_lib::env::set_property(
+        &moqui_core::context::conf_env::env_name_of(moqui_core::edge::FRONT_URL),
+        url.clone(),
+    );
     // the first member links on the key; the second is admitted as a member the first one lists
     let (first_dialer, stop_first) = front_member(&rt, &url, &paired, &first.server, &first.runtime);
     wait_status(&first_dialer, CHECK, "the first member linked", |status| {

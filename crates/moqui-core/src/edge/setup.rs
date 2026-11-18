@@ -93,9 +93,9 @@ pub struct XmppOffer {
     /// A tunnel port is on.
     pub available: bool,
     /// The STARTTLS port for this node's clients: its own (an `EdgePort` row), else the one of every domain
-    /// (`edge_xmpp_port`); 0 while off.
+    /// (`edge@xmpp-port`); 0 while off.
     pub port: u16,
-    /// The direct TLS port, the same way (`edge_xmpp_tls_port`); 0 while off.
+    /// The direct TLS port, the same way (`edge@xmpp-tls-port`); 0 while off.
     pub tls_port: u16,
     /// No longer set (E16): no port goes to another node by a setting.
     pub other_node: bool,
@@ -145,7 +145,7 @@ pub struct SshOffer {
     pub available: bool,
     /// The edge node's public name.
     pub host: String,
-    /// This node's own port (an `EdgePort` row), else `edge_ssh_tunnel_port` while it is the one active pairing; 0
+    /// This node's own port (an `EdgePort` row), else `edge@ssh-tunnel-port` while it is the one active pairing; 0
     /// while off.
     pub port: u16,
 }
@@ -163,10 +163,10 @@ pub fn remember_ssh(factory: &ExecutionContextFactory, ssh: &SshOffer) {
 }
 
 /// The host and port git clients reach this node's SSH server at through its edge node, as last offered, while this
-/// node is paired (`edge_node_url` or `front_node_url` set): what clone URLs name when `ssh-server@public-host` and
+/// node is paired (`edge/node@url` or `edge/front-node@url` set): what clone URLs name when `ssh-server@public-host` and
 /// `ssh-server@public-port` are not set (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
 pub fn ssh_address(factory: &ExecutionContextFactory) -> Option<(String, u16)> {
-    let paired = |name: &str| !moqui_lib::env::get_prop_or_env(name).trim().is_empty();
+    let paired = |name: &str| !crate::context::conf_env::setting_or_property(name).is_empty();
     if !paired(super::NODE_URL) && !paired(super::FRONT_URL) {
         return None;
     }
@@ -277,10 +277,10 @@ pub fn is_reserved(name: &str, reserved: &[String]) -> bool {
     })
 }
 
-/// Whether this local node is paired with an edge node now: `edge_node_url` is set, or this process's link
+/// Whether this local node is paired with an edge node now: `edge/node@url` is set, or this process's link
 /// replicates (its dialer runs). Mail for `edge:` is queued only then.
 pub fn is_paired(facade: &EntityFacade) -> bool {
-    !moqui_lib::env::get_prop_or_env(super::NODE_URL).trim().is_empty() || super::replica::replica(facade).is_some()
+    !crate::context::conf_env::setting(super::NODE_URL).trim().is_empty() || super::replica::replica(facade).is_some()
 }
 
 /// Whether `id` can be a record id the setup names (a chat bridge, a PASS site, a PASS client): 1 to 63 bytes of
@@ -381,7 +381,7 @@ pub fn check_setup(setup: &EdgeSetup) -> Result<EdgeSetup, Error> {
 /// What the local node chose in the wizard, for [`apply_local`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalChoices {
-    /// The edge node's address (`edge_node_url`), the chat address when the offer names none.
+    /// The edge node's address (`edge/node@url`), the chat address when the offer names none.
     pub edge_url: String,
     pub mail: Option<MailChoice>,
     /// The chat bridges whose webhooks go to the edge node; `None` leaves chat as it is.
@@ -428,7 +428,7 @@ impl SetupLine {
 ///   hosted or shared account sends through it (its own server, when it owns one with no incoming store, gets
 ///   `edge:`; else the account names [`EDGE_SERVER_ID`]). An account that syncs from another provider is left.
 /// - chat: [`CHAT_PUBLIC_URL`] in `env_file`, the edge node's address.
-/// - PASS: `pass_edge_client` and `pass_client_<id>_sites` and `_callback` in `env_file`.
+/// - PASS: `edge/node@pass-client` and `pass_client_<id>_sites` and `_callback` in `env_file`.
 ///
 /// An area that is `None` is left as it is. `env_file` is the server's `runtime/.env`.
 pub fn apply_local(
@@ -529,39 +529,34 @@ fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) 
 }
 
 /// Write `set` to the dotenv file; the line says so, or why not. A name of a conf attribute (a selector, with an `@`)
-/// is set by the running factory ([`ExecutionContextFactory::set_conf_value`], written to its `runtime/.env` under its
-/// environment name and seen at once); a property is written by its name. A process property of the same name wins
-/// over the file, so a value that does not read back is named.
-///
-/// [`ExecutionContextFactory::set_conf_value`]: crate::context::ExecutionContextFactory::set_conf_value
+/// is kept under its environment name and set as the process property of that name, so it holds at once for every
+/// reader ([`crate::context::conf_env::keep_in_env`]); a property is written by its name. A process property or
+/// environment variable set at start wins over the file, so a value that does not read back is named.
 pub(crate) fn set_env(area: &str, env_file: &std::path::Path, set: &[(&str, &str)], done: &str) -> SetupLine {
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    for (name, value) in set {
-        if !name.contains('@') {
-            pairs.push(((*name).to_string(), (*value).to_string()));
-            continue;
-        }
-        let kept = crate::context::ExecutionContext::with_current(|ec| {
-            ec.factory().set_conf_value(name, Some(value), true).map(|_| ())
-        });
-        match kept {
-            Some(Ok(())) => {}
-            Some(Err(err)) => {
-                tracing::error!("Edge setup: {area} settings were not written: {err}");
-                return SetupLine::new(area, false, format!("The settings were not written: {err}"));
-            }
-            None => pairs.push((crate::context::conf_env::env_name_of(name), (*value).to_string())),
-        }
-    }
-    if let Err(err) = moqui_lib::env::update_dotenv_file(env_file, &pairs, &[]) {
+    // an environment variable of a selector's name, which the next start takes over the file
+    let from_environment: Vec<&str> = set
+        .iter()
+        .filter(|(name, value)| {
+            name.contains('@')
+                && std::env::var(crate::context::conf_env::env_name_of(name))
+                    .is_ok_and(|given| !given.is_empty() && given.trim() != value.trim())
+        })
+        .map(|(name, _)| *name)
+        .collect();
+    let pairs: Vec<(String, String)> = set
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect();
+    if let Err(err) = crate::context::conf_env::keep_in_env(env_file, &pairs, &[]) {
         tracing::error!("Edge setup: {area} settings were not written: {err}");
         return SetupLine::new(area, false, format!("The settings were not written: {err}"));
     }
-    let overridden: Vec<&str> = set
+    let mut overridden: Vec<&str> = set
         .iter()
         .filter(|(name, value)| crate::context::conf_env::setting_or_property(name).trim() != value.trim())
         .map(|(name, _)| *name)
         .collect();
+    overridden.extend(from_environment);
     if overridden.is_empty() {
         tracing::info!("Edge setup: {done}");
         SetupLine::new(area, true, done)

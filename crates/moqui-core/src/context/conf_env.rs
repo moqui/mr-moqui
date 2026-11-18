@@ -268,6 +268,39 @@ pub fn setting(selector: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Keep settings in `env_path` (`runtime/.env`) at run time, as pairing does: each named by a conf selector, kept under
+/// its environment name, or by a property name. A selector's value is also set as the process property of that name,
+/// which [`setting`] and the scripts' `getConfValue` read first, so it holds at once, before any conf reload; a removed
+/// one is cleared.
+///
+/// # Errors
+///
+/// When the file cannot be written.
+pub fn keep_in_env(env_path: &Path, set: &[(String, String)], remove: &[&str]) -> Result<(), Error> {
+    let name = |given: &str| {
+        if given.contains('@') {
+            env_name_of(given)
+        } else {
+            given.to_string()
+        }
+    };
+    let pairs: Vec<(String, String)> = set.iter().map(|(given, value)| (name(given), value.clone())).collect();
+    let removed: Vec<String> = remove.iter().map(|given| name(given)).collect();
+    let removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
+    env::update_dotenv_file(env_path, &pairs, &removed_refs)?;
+    for (given, value) in set {
+        if given.contains('@') {
+            env::set_property(&name(given), value.clone());
+        }
+    }
+    for given in remove {
+        if given.contains('@') {
+            env::clear_property(&name(given));
+        }
+    }
+    Ok(())
+}
+
 /// [`setting`] on `factory`: the process property or OS environment variable of the attribute's environment name, else
 /// `factory`'s running conf. For code with its factory at hand, which must not read another factory's conf (a process
 /// of several, a test's).

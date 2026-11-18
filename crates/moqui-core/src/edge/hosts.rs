@@ -293,7 +293,7 @@ pub struct LinkClaim {
     /// A row changed: the caller loads its table again.
     pub changed: bool,
     /// The name was another member's of the pairing, now this one's: a member back with another instance id, or two
-    /// members sending one `edge_link_url`, which flip it back and forth.
+    /// members sending one `edge@link-url`, which flip it back and forth.
     pub moved_from: Option<String>,
 }
 

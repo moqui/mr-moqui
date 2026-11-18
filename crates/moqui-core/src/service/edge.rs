@@ -126,8 +126,8 @@ fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
     out.insert(
         "frontOnly".to_string(),
         Value::Bool(front_only(
-            &moqui_lib::env::get_prop_or_env(crate::edge::NODE_URL),
-            &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_URL),
+            &crate::context::conf_env::setting(crate::edge::NODE_URL),
+            &crate::context::conf_env::setting(crate::edge::FRONT_URL),
         )),
     );
     // a link installed with its HTTPS listener off serves no links: as with none started
@@ -182,7 +182,7 @@ fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
 }
 
 /// `get#EdgeCluster`: on a node that takes links, the members of its cluster with their link addresses
-/// (`edge_link_url`), live or not; its Hello answer lists the live ones to local nodes (plans/Edge-Node2.md §4.6).
+/// (`edge@link-url`), live or not; its Hello answer lists the live ones to local nodes (plans/Edge-Node2.md §4.6).
 ///
 /// Where no link serves (none installed, or its HTTPS listener off) the same list from the rows and this node's own
 /// properties, so System › Edge Clients › Edge cluster shows it; on a node that takes no links, refused.
@@ -234,8 +234,8 @@ fn get_edge_cluster(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade
     let running = crate::edge::serving_link().and_then(|link| link.front_status());
     let front = front_rows(
         running.as_ref(),
-        &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_URL),
-        &moqui_lib::env::get_prop_or_env(crate::edge::FRONT_ID),
+        &crate::context::conf_env::setting(crate::edge::FRONT_URL),
+        &crate::context::conf_env::setting(crate::edge::FRONT_ID),
     );
     Ok(BTreeMap::from([
         ("memberList".to_string(), Value::List(members)),
@@ -243,7 +243,7 @@ fn get_edge_cluster(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade
     ]))
 }
 
-/// Whether a node with `edge_url` (`edge_node_url`) and `front_url` (`front_node_url`) is paired with a front node
+/// Whether a node with `edge_url` (`edge/node@url`) and `front_url` (`edge/front-node@url`) is paired with a front node
 /// alone.
 fn front_only(edge_url: &str, front_url: &str) -> bool {
     edge_url.trim().is_empty() && !front_url.trim().is_empty()
@@ -251,7 +251,7 @@ fn front_only(edge_url: &str, front_url: &str) -> bool {
 
 /// `get#EdgeCluster`'s `frontList`: this node's link to each front node of its front pairing (plans/Edge-Node2.md
 /// §4.7), from `front` when a link serves (its link to each member of the front's cluster, else the one link), else
-/// from what pairing wrote, `url` (`front_node_url`) and `ids` (`front_node_id`), as one row `notStarted`; none without
+/// from what pairing wrote, `url` (`edge/front-node@url`) and `ids` (`edge/front-node@id`), as one row `notStarted`; none without
 /// a front pairing.
 fn front_rows(front: Option<&crate::edge::LinkStatus>, url: &str, ids: &str) -> Vec<Value> {
     struct Link<'a> {
@@ -319,13 +319,13 @@ fn front_rows(front: Option<&crate::edge::LinkStatus>, url: &str, ids: &str) -> 
 }
 
 /// This node's cluster as `get#EdgeCluster` lists it with no link serving: this member's address is its
-/// `edge_link_url` as it is now.
+/// `edge@link-url` as it is now.
 fn cluster_rows() -> Result<Vec<crate::edge::EdgeClusterMember>, LibError> {
     let factory = current_factory()?;
     let facade = factory
         .entity()
         .ok_or_else(|| LibError::new("the entity facade is not installed"))?;
-    let own_url = moqui_lib::env::get_prop_or_env(crate::cluster::EDGE_LINK_URL_PROPERTY);
+    let own_url = crate::context::conf_env::setting(crate::cluster::EDGE_LINK_URL_PROPERTY);
     crate::edge::cluster_list::members(&factory, &facade, &crate::edge::pool::own_id(&factory), own_url.trim())
 }
 
@@ -754,7 +754,7 @@ fn get_local_cluster(_parameters: &BTreeMap<String, Value>, _facade: &EntityFaca
             Value::Map(row)
         })
         .collect();
-    let pairing = moqui_lib::env::get_prop_or_env(crate::edge::NODE_PAIRING);
+    let pairing = crate::context::conf_env::setting(crate::edge::NODE_PAIRING);
     Ok(BTreeMap::from([
         ("instanceId".to_string(), Value::string(&own)),
         ("state".to_string(), Value::string(state.as_str())),
@@ -1339,7 +1339,7 @@ fn offer_value(offer: &crate::edge::EdgeOffer) -> Value {
                 ("mediaAddress", Value::string(&offer.calls.media_address)),
                 ("turnUrls", strings(&offer.calls.turn_urls)),
                 ("otherNodes", Value::Bool(offer.calls.other_nodes)),
-                // this node's own setting (edge_calls_enabled), for Discover's default and Status
+                // this node's own setting (edge/node@calls-enabled), for Discover's default and Status
                 ("enabled", Value::Bool(crate::edge::calls::calls_enabled())),
             ]),
         ),
@@ -1371,7 +1371,7 @@ fn offer_value(offer: &crate::edge::EdgeOffer) -> Value {
                 ),
                 ("fallbacks", count(offer.sip.fallbacks)),
                 ("otherNodes", Value::Bool(offer.sip.other_nodes)),
-                // this node's own setting (edge_sip_enabled), for Discover's default and Status
+                // this node's own setting (edge/node@sip-enabled), for Discover's default and Status
                 ("enabled", Value::Bool(crate::edge::sip::sip_enabled())),
             ]),
         ),
@@ -1463,7 +1463,7 @@ fn xmpp_choice(
         return Err("this node runs no XMPP server: set xmpp_domain".to_string());
     }
     if !offer.xmpp.available {
-        return Err("the edge node has no XMPP tunnel ports (edge_xmpp_port, edge_xmpp_tls_port)".to_string());
+        return Err("the edge node has no XMPP tunnel ports (edge@xmpp-port, edge@xmpp-tls-port)".to_string());
     }
     let named = |name: &str| name.trim().trim_end_matches('.').eq_ignore_ascii_case(&domain);
     if web {
@@ -1553,9 +1553,9 @@ fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> V
 /// chosen areas' local rows and settings, and send every replicated set whole again. Each step is a line; once the
 /// edge node has its part, a local step that fails does not stop the others. XMPP writes nothing here: the domain is
 /// this node's `xmpp_domain`, sent in Configure and added to the host names ([`xmpp_choice`]). Calls send nothing to
-/// the edge node: with its media node offered, `callsOn` is this node's `edge_calls_enabled`
+/// the edge node: with its media node offered, `callsOn` is this node's `edge/node@calls-enabled`
 /// ([`crate::edge::calls::apply`]). Phones neither: with its SIP engine offered, `sipOn` is this node's
-/// `edge_sip_enabled` ([`crate::edge::sip::apply`]), which holds the trunks and fallbacks back while off.
+/// `edge/node@sip-enabled` ([`crate::edge::sip::apply`]), which holds the trunks and fallbacks back while off.
 fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{self, LocalChoices, MailChoice, PassChoice, SetupLine};
     let factory = current_factory()?;
@@ -1670,7 +1670,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         lines.extend(xmpp_lines(&xmpp_domain, xmpp_hosted, &answer));
     }
     // calls: on or off when the edge node has a media node and the caller chose (callsOn given; Discover passes it
-    // only when it offered calls); absent leaves edge_calls_enabled as it is. Nothing is sent to the edge node.
+    // only when it offered calls); absent leaves edge/node@calls-enabled as it is. Nothing is sent to the edge node.
     let calls = optional_flag(parameters, "callsOn");
     if let (Some(on), true) = (calls, answer.offer.calls.available) {
         lines.extend(crate::edge::calls::apply(&factory, facade, &env_file, on, &status.peer));
@@ -1682,7 +1682,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         ));
     }
     // phones the same way: sipOn given (Discover passes it only when it offered phones), and the edge node's SIP
-    // engine offered; absent leaves edge_sip_enabled as it is
+    // engine offered; absent leaves edge/node@sip-enabled as it is
     let sip = optional_flag(parameters, "sipOn");
     if let (Some(on), true) = (sip, answer.offer.sip.available) {
         lines.extend(crate::edge::sip::apply(
@@ -2067,7 +2067,7 @@ fn calls_tests(
 /// The Test step's phones lines (plans/archive/Edge-Node.md §5.7, E10 phones): the edge node's `SipNode` row is live with its
 /// Hello's addresses (`sipNode`, [`crate::edge::sip::row_check`]), its engine has loaded this node's enabled trunks,
 /// none failed (`sipTrunks`), and its copy holds each number's fallback with nothing waiting (`sipFallbacks`). Not
-/// checked while `edge_sip_enabled` is off. No SIP request is sent: the edge node's engine answers OPTIONS only from
+/// checked while `edge/node@sip-enabled` is off. No SIP request is sent: the edge node's engine answers OPTIONS only from
 /// its trunks.
 fn sip_tests(facade: &EntityFacade, link: Option<&std::sync::Arc<dyn crate::edge::EdgeLink>>) -> Vec<TestLine> {
     let line = |check: &'static str, label: &'static str, ok: Option<bool>, message: String| TestLine {

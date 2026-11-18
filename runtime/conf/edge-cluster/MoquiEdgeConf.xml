@@ -4,7 +4,7 @@
     one external database, as an edge node that can fail or that needs more capacity. It is conf/edge/MoquiEdgeConf.xml
     with the members of a cluster in place of one node: that conf's comments say what each area needs, and this one what
     differs. Each local node pairs once, with any member, and then links to every live member at its own address
-    (edge_link_url), taking requests and items from each; the members share the pairings, host names, the queue (each
+    (edge@link-url), taking requests and items from each; the members share the pairings, host names, the queue (each
     item claimed by lease, so delivered once), receipts, replicated copies, mail delivery rows, MMS files and PASS
     visitor sessions as rows. Use the Maximal package with an external database, or Enterprise; the runtime has the base
     components and mr-pass (./moq component-get edge), the same on each member. -->
@@ -26,12 +26,12 @@
 
     <!-- The same .env on every member, made by the first member's first start and copied to each other one before its
         first start: webapp-list/webapp[webroot]/session-config@cookie-key, cluster-member@tls-cert, cluster-member@tls-key, moqui_conf__entity_facade__crypt_pass and the link key,
-        edge_link_key, so every member presents the one key a local node pinned at pairing (a member that generated a
+        edge@link-key, so every member presents the one key a local node pinned at pairing (a member that generated a
         key of its own is refused by every local node); also turn_auth_secret, mail-delivery/dkim@key and acme@account-key, and
         the public settings below that name the cluster as a whole.
         Each member's own in .env: cluster-member@base-url, https://(this member's private address):8444, which the other
-        members reach (open 8444 between the members only); and edge_link_url, https://(this member's own public
-        name), with its port when it is not 443, where local nodes dial it. A member with no edge_link_url is reached only at the address a local node
+        members reach (open 8444 between the members only); and edge@link-url, https://(this member's own public
+        name), with its port when it is not 443, where local nodes dial it. A member with no edge@link-url is reached only at the address a local node
         paired with, so set it on every member before the second one starts. Each keeps its own instance id in
         runtime/db/instance_id: never copy runtime/db between members. -->
     <cluster-member transport="" protocol=""/>
@@ -42,17 +42,17 @@
         against. Each member needs a WebPKI certificate in runtime/cert for that name, which local nodes check when they
         pair there (the same files on each, or System › Certificates with ACME, whose challenge any member answers).
         The links themselves present the link key, which the local nodes pinned, not the web certificate, so a member's
-        own edge_link_url name needs a certificate only if a node pairs at that name. No TLS-terminating proxy in
+        own edge@link-url name needs a certificate only if a node pairs at that name. No TLS-terminating proxy in
         front: the links need ALPN end to end. A terminate name's requests from any member reach the pairing's members, sticky
         by the session cookie, the same member whichever edge member a browser reaches. -->
 
     <!-- SSH and XMPP (.env, the same on each member): every member listens on the tunnel ports and sends each
         connection down a link of the pairing that owns it, as on one edge node (conf/edge/MoquiEdgeConf.xml):
-                                     <default-property name="edge_xmpp_port" value="5222"/>
-                                     <default-property name="edge_xmpp_tls_port" value="5223"/>
-                                     <default-property name="edge_xmpp_host" value=""/>
-                                     <default-property name="edge_ssh_tunnel_port" value="(a port)"/>
-        (and edge_ssh_tunnel_host). With several pairings each gets SSH and XMPP ports of its own as moqui.edge.EdgePort
+                                     moqui_conf__edge__xmpp_port=5222
+                                     moqui_conf__edge__xmpp_tls_port=5223
+                                     moqui_conf__edge__xmpp_host=
+                                     moqui_conf__edge__ssh_tunnel_port=(a port)
+        (and edge@ssh-tunnel-host). With several pairings each gets SSH and XMPP ports of its own as moqui.edge.EdgePort
         rows (System › Edge Clients › Ports), which every member reads. _xmpp-client._tcp and _xmpps-client._tcp name
         every member. -->
 

@@ -393,6 +393,9 @@ fn merge_edge(base: &MNode, over: &MNode) {
         return;
     };
     base_edge.copy_attributes_from(&over_edge);
+    // the pairings, each one element (plans/Conf-Paths.md §6.19)
+    base_edge.merge_single_child(&over_edge, "node");
+    base_edge.merge_single_child(&over_edge, "front-node");
     base_edge.merge_children_by_keys(&over_edge, "delegate", keys(&["edge", "delegate"]), None);
     base_edge.merge_children_by_keys(&over_edge, "queue-kind", keys(&["edge", "queue-kind"]), None);
     base_edge.merge_children_by_keys(&over_edge, "replicate", keys(&["edge", "replicate"]), None);

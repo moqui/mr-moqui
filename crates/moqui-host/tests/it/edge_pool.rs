@@ -511,9 +511,12 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
     }
     let certs = certs();
     // the local node keeps its queue rows and receipts by the pairing its link names, whichever member applies; an
-    // edge_node_pairing that says another is logged and written again
-    let local =
-        crate::common::start_with_properties("edge-again-local", None, &[("edge_node_pairing", "stale-pairing")]);
+    // edge/node@pairing that says another is logged and written again
+    let local = crate::common::start_with_properties(
+        "edge-again-local",
+        None,
+        &[("moqui_conf__edge__node__pairing", "stale-pairing")],
+    );
     let port = crate::common::free_port();
     let port_text = port.to_string();
     let edge = crate::common::start_second_with(
@@ -571,7 +574,7 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
     });
     let applied = receipt(&local, "pool-a", &id).unwrap();
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap_or_default();
-    assert!(env.contains("edge_node_pairing=pool-a"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__pairing=pool-a"), "{env}");
     first.stop();
     wait_until(Duration::from_secs(5), "the first member unlinked", || {
         client(&edge, "pool-a")["linked"] == "false"
@@ -846,7 +849,10 @@ fn a_standby_takes_over_gets_the_queued_items_once_and_the_first_machine_is_refu
     let (edge, paired, url) = edge_for("edge-pool-failover-edge", &first, &certs);
     let pairing = moqui_core::cluster::instance_id(first.server.factory()).unwrap();
     // the .env both machines share names the pairing (written at pairing), which their queue rows and receipts use
-    moqui_lib::env::set_property(moqui_core::edge::NODE_PAIRING, pairing.clone());
+    moqui_lib::env::set_property(
+        &moqui_core::context::conf_env::env_name_of(moqui_core::edge::NODE_PAIRING),
+        pairing.clone(),
+    );
     let rt = runtime();
     let (_, dialer, _stop) = server_dialer(&rt, &first, &paired, &url);
     wait_status(&dialer, Duration::from_secs(10), "the first machine linked", |status| {

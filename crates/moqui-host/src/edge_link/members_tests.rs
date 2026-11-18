@@ -85,7 +85,7 @@ fn a_member_gone_from_the_list_is_retired_and_a_new_one_started() {
 
 #[test]
 fn a_member_with_no_address_is_reached_at_the_paired_url() {
-    // a single edge node with no edge_link_url
+    // a single edge node with no edge@link-url
     let list = [member("edge-1", "")];
     let plan = plan(&list, PAIRED, &[link(Some("edge-1"), PAIRED, false, 9)]);
     assert!(plan.start.is_empty() && plan.dial_at.is_empty() && plan.retire.is_empty());

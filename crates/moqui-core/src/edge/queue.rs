@@ -175,14 +175,14 @@ pub fn set_pairing_id(factory: &ExecutionContextFactory, pairing: &str) {
 
 /// A local node's own id in its queue rows and receipts: the pairing it is known by on the edge node, so every member
 /// of its cluster, and a standby that takes over, sends the same outbox and finds the same receipts (plans/Edge-Node2.md
-/// §4.4). As its link said it ([`set_pairing_id`]), else as pairing wrote it (`edge_node_pairing`, in the `.env` every
+/// §4.4). As its link said it ([`set_pairing_id`]), else as pairing wrote it (`edge/node@pairing`, in the `.env` every
 /// member shares), else its instance id (a node paired before E17, which the edge node keys by the id it paired with).
 pub fn local_node_id(factory: &ExecutionContextFactory) -> String {
     let linked = lock(&factory.extension(|_| LinkedPairing::default()).0).clone();
     if !linked.is_empty() {
         return linked;
     }
-    let pairing = moqui_lib::env::get_prop_or_env(super::NODE_PAIRING);
+    let pairing = crate::context::conf_env::setting(super::NODE_PAIRING);
     match pairing.trim() {
         "" => crate::cluster::instance_id(factory).unwrap_or_else(|| "local".to_string()),
         pairing => pairing.to_string(),

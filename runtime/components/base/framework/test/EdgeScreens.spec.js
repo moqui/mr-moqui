@@ -472,7 +472,7 @@ feature("an administrator lets a displaced node link again on Clients; a user wi
 feature("a local node's Edge Node shows its own cluster, and it drains and resumes itself", {
     when() {
         // paired by its .env, with the link not running in this process (no instance@node-role: a local node)
-        context.out = withProperty("edge_node_url", "https://edge.edge-screens-spec.example.test", () => {
+        context.out = withConf("edge/node@url", "https://edge.edge-screens-spec.example.test", () => {
             const before = invoke("get#LocalCluster")
             const drained = invoke("drain#EdgeMember", {drain: true})
             const during = invoke("get#LocalCluster")
@@ -549,8 +549,8 @@ feature("Edge cluster lists this node's cluster with each member's link address,
             leaseExpireDate: new Date(Date.now() + 600000), claimedDate: new Date()}).createOrUpdate())
         // this node's own address is not https, so its Hello answer would send none
         // paired with a front node by its .env, the link not running here
-        context.out = edge(() => withProperty("edge_link_url", "http://edge1.edge-screens-spec.example.test", () =>
-            withProperty("front_node_url", FRONT_URL, () => withProperty("front_node_id", FRONT_ID, () => ({
+        context.out = edge(() => withConf("edge@link-url", "http://edge1.edge-screens-spec.example.test", () =>
+            withConf("edge/front-node@url", FRONT_URL, () => withConf("edge/front-node@id", FRONT_ID, () => ({
                 cluster: invoke("get#EdgeCluster"),
                 qvt: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "qvt"),
                 tui: render("john.doe", "apps/system/EdgeClients/EdgeCluster", {}, null, "tui")

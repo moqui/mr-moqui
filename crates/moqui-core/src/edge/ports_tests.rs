@@ -85,12 +85,12 @@ fn a_port_row_goes_to_one_active_pairing_and_the_link_is_told() {
 #[test]
 fn a_port_of_this_nodes_own_listeners_is_no_rows() {
     let properties = |name: &str| match name {
-        "edge_ssh_tunnel_port" => "2222".to_string(),
+        "edge@ssh-tunnel-port" => "2222".to_string(),
         "webapp-list/webapp[webroot]@https-listen-port" => " 443 ".to_string(),
         _ => String::new(),
     };
     let reserved = |port: u16| reserved_in(port, false, properties);
-    assert_eq!(reserved(2222).as_deref(), Some("edge_ssh_tunnel_port"));
+    assert_eq!(reserved(2222).as_deref(), Some("edge@ssh-tunnel-port"));
     assert_eq!(
         reserved(443).as_deref(),
         Some("webapp-list/webapp[webroot]@https-port"),

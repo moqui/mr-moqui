@@ -396,8 +396,8 @@ mod mail {
                     "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                     first_port_text.as_str(),
                 ),
-                ("edge_link_url", first_url.as_str()),
-                ("edge_link_key", link_key.as_str()),
+                ("moqui_conf__edge__link_url", first_url.as_str()),
+                ("moqui_conf__edge__link_key", link_key.as_str()),
                 ("moqui_conf__cluster_member__https_port", cluster_port.as_str()),
             ];
             properties.extend_from_slice(&mail);
@@ -412,8 +412,8 @@ mod mail {
                     "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                     second_port_text.as_str(),
                 ),
-                ("edge_link_url", second_url.as_str()),
-                ("edge_link_key", link_key.as_str()),
+                ("moqui_conf__edge__link_url", second_url.as_str()),
+                ("moqui_conf__edge__link_key", link_key.as_str()),
             ];
             properties.extend_from_slice(&mail);
             let second = crate::common::start_member_with_files(

@@ -9,7 +9,7 @@
       hosts, so the front ends their TLS, sees the session cookie and balances them over the live members, sticky by it.
       With front_edge members, every name of their local nodes too, each in its own mode, which the member forwards
       down that node's link; with edge members a local node gives its names to the front itself, by a second pairing.
-    - The edge members' link names. Each member names its own edge_link_url in its Hello; the front keeps the host as
+    - The edge members' link names. Each member names its own edge@link-url in its Hello; the front keeps the host as
       a link name of that member (Edge Clients › Domains) and passes its connections through untouched to that member
       alone, picked by the server name before the link's ALPN, so a local node's link reaches the member as if dialed
       directly. A link name is never balanced: while its member is not linked its connections are refused.
@@ -29,7 +29,7 @@
     <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
     <!-- .env: webapp-list/webapp[webroot]@http-host, the front's own name (where the edge members pair, and its System app), with a WebPKI
-        certificate in runtime/cert; edge_public_addresses, its public addresses; edge_link_key and the other secrets
+        certificate in runtime/cert; edge_public_addresses, its public addresses; edge@link-key and the other secrets
         made at the first start. The sites' certificates are here, as terminate hosts: in runtime/cert, or System ›
         Certificates with ACME. A passthrough name's certificate and each link name's are on the node that ends its
         TLS, whose ACME challenge passes through. -->

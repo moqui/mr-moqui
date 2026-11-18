@@ -1093,8 +1093,8 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
             ("xmpp_domain", XMPP_DOMAIN),
             ("xmpp_port", "0"),
             ("xmpp_host", "127.0.0.1"),
-            ("edge_xmpp_port", &tunnel_port),
-            ("edge_xmpp_host", "127.0.0.1"),
+            ("moqui_conf__edge__xmpp_port", &tunnel_port),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
         ],
     );
     let local = crate::common::start_with_conf_files(

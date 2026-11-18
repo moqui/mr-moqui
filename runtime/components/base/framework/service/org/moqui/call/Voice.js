@@ -194,17 +194,17 @@ function liveSipNodes() {
 
 /**
  * Whether phones go through this node's edge node (the wizard's phones area, plans/archive/Edge-Node.md §5.7 "As built (E10,
- * phones)"): on unless edge_sip_enabled is false, n, no, 0 or off (moqui_core::edge::sip::sip_enabled).
+ * phones)"): on unless edge/node@sip-enabled is false, n, no, 0 or off (moqui_core::edge::sip::sip_enabled).
  */
 function edgeSipEnabled() {
-  return !['false', 'n', 'no', '0', 'off'].includes(String(System.getProperty('edge_sip_enabled') || '').trim().toLowerCase())
+  return !['false', 'n', 'no', '0', 'off'].includes(String(ec.factory.getConfValue('edge/node@sip-enabled') || '').trim().toLowerCase())
 }
 
 /**
  * The nodes a phone call can go to: a live SIP engine with a live media node that takes calls. The edge node's
  * (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8) takes phone calls also while its media row drains (the wizard's calls
- * off, edge_calls_enabled): its trunks and phones reach only it, and their media is there whatever the browsers do.
- * With phones off (edge_sip_enabled) its link-kept row stays but takes no new call.
+ * off, edge/node@calls-enabled): its trunks and phones reach only it, and their media is there whatever the browsers do.
+ * With phones off (edge/node@sip-enabled) its link-kept row stays but takes no new call.
  */
 function voiceNodes() {
   const sip = new Map(liveSipNodes().filter((n) => n.edgeLinked !== 'Y' || edgeSipEnabled()).map((n) => [n.instanceId, n]))
@@ -810,7 +810,7 @@ function queueCallAudio(location) {
  * writes them all every minute); a failure is logged and the change goes on. phoneNumber null: every number.
  */
 function fallbackChanged(phoneNumber) {
-  if (String(System.getProperty('edge_node_url') || '').trim() === '') return
+  if (String(ec.factory.getConfValue('edge/node@url') || '').trim() === '') return
   ec.message.pushErrors()
   try {
     refreshFallbacks({ phoneNumber })
@@ -869,7 +869,7 @@ function refreshFallbacks(p) {
     writtenCount++
   }
   // the edge node plays them while this node is away: on a paired node, each one there (a name is stamped, so once)
-  if (String(System.getProperty('edge_node_url') || '').trim() !== '') {
+  if (String(ec.factory.getConfValue('edge/node@url') || '').trim() !== '') {
     for (const location of greetings) if (under(location, GREETING_ROOT)) queueCallAudio(location)
   }
   return { writtenCount, removedCount }

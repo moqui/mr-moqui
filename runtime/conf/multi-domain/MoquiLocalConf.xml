@@ -2,7 +2,7 @@
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
 <!-- One of several local nodes on one edge node (conf/multi-domain/README.md; plans/Edge-Node2.md §4.1): a production
     server with its own database and its own domains, which pairs with the shared edge node as conf/edge/MoquiLocalConf.xml
-    does, with a pairing code of its own. Pairing writes edge_node_url, edge_node_key, edge_node_pin and edge_node_id to
+    does, with a pairing code of its own. Pairing writes edge/node@url, edge/node@key, edge/node@pin and edge/node@id to
     runtime/.env, and the System › Edge Node wizard writes the rest of this node's part. What differs from a local node
     alone on its edge node is that each name must be its own: the edge node refuses a host name, XMPP domain, SIP realm,
     number or PASS site another local node claimed first ("another node has this name"), and the wizard's Apply and

@@ -405,7 +405,7 @@ the edge node is not a member of the local node's cluster:
   seconds while it lasts (`edgeLinked` Y), so a link down past the media nodes' grace (60 seconds) ends its calls with
   "media server lost", and unpairing removes it. New calls prefer that row to the local node's own media node, if it has
   one (office calls go through the edge node too; plans decision 6).
-- **Turning it off.** The Edge Node wizard's calls area (System › Edge Node, Discover) sets `edge_calls_enabled` in the
+- **Turning it off.** The Edge Node wizard's calls area (System › Edge Node, Discover) sets `edge/node@calls-enabled` in the
   local node's `runtime/.env`. While it is `false` the link keeps the row as draining: new calls go to the local node's
   own media nodes (none, and calls are unavailable), and calls already on the edge node go on, as the row stays live.
   Unpairing removes the setting. The wizard's Test checks the row is live and first, and allocates on the edge node's
@@ -424,7 +424,7 @@ the edge node is not a member of the local node's cluster:
   access ([TURN](TURN.md#on-an-edge-node)).
 - **Several local nodes** ([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16): rooms are keyed by node and call, so
   each local node's calls keep apart on one media node, and each has its own TURN secret. A local node has at most
-  `edge_call_legs_per_pairing` legs there at once (200; 0 for no cap): a leg past it is refused (`rtcError`).
+  `edge@call-legs-per-pairing` legs there at once (200; 0 for no cap): a leg past it is refused (`rtcError`).
 - **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18): each member is a media node of its own,
   with its own `rtc_public_address` and TURN. The local node keeps a `CallMediaNode` row for each, written by the
   replication sender of a clustered local node from its link to that member, and keeps each member's TURN secret (the
@@ -443,7 +443,7 @@ the edge node is not a member of the local node's cluster:
   only to a socket that bound that leg of that call with its media on the edge node; the edge node takes from the
   local node only frames whose replies go back to it, and media controls. Run as the link's delegate user, each
   delegated or queued service refuses a call whose media is not on the edge node.
-- **Pinned, alone, not cascaded.** Pairing pins the edge node's link key, and its instance id (`edge_node_id`) is
+- **Pinned, alone, not cascaded.** Pairing pins the edge node's link key, and its instance id (`edge/node@id`) is
   learned on a link with that key: the members of an edge cluster each, all with the one key (plans/Edge-Node2.md
   §4.6); a link naming this node's own id or a cluster member's is refused. A call on the edge node does not cascade (`rtc_cascade_enabled`
   leaves its legs there).

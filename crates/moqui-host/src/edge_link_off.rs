@@ -100,7 +100,7 @@ pub(crate) fn start(
         );
     }
     for name in [moqui_core::edge::NODE_URL, moqui_core::edge::FRONT_URL] {
-        if !moqui_lib::env::get_prop_or_env(name).trim().is_empty() {
+        if !moqui_core::context::conf_env::setting(name).is_empty() {
             tracing::error!(
                 "{name} is set, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
             );

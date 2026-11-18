@@ -18,7 +18,7 @@
 //! - **direct**, on the local server's gRPC listener (`pass_authority_grpc_enabled`, plain h2c with no certificate), the
 //!   client named by `pass_client_id` with its secret; a wrong secret is refused before the authority runs;
 //! - **on the link**, from the edge node down to its local node (`edge:`), where the link is the client
-//!   (`pass_edge_client`); with the link down a call fails at once with "local node offline".
+//!   (`edge/node@pass-client`); with the link down a call fails at once with "local node offline".
 //!
 //! Calls go through the scripts' binding (`ec.service.passAuthority`) in a test service, and an upload through the
 //! host's sender, which the binding wraps. A forwarded request never reaching the service is `edge_link::down`'s test.
@@ -470,7 +470,7 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
         ("pass_authority_grpc_enabled", "true"),
         ("pass_authority_grpc_port", "0"),
         ("pass_authority_service", "passtest.PassTestServices.handle#Call"),
-        ("pass_edge_client", "edgefront"),
+        ("moqui_conf__edge__node__pass_client", "edgefront"),
         ("pass_client_front_secret", "front-secret"),
         ("pass_client_front_sites", SITE),
         ("pass_client_id", "front"),

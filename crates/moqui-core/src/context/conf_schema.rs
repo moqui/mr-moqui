@@ -336,11 +336,16 @@ pub static CATALOG: &[Unit] = &[
         &["name"],
         Class::Live,
     )])]),
-    single("edge", EDGE).children(&[
-        keyed("delegate", &["service"], EDGE),
-        keyed("queue-kind", &["name"], EDGE),
-        keyed("replicate", &["set"], EDGE).children(&[keyed("entity", &["name"], EDGE)]),
-    ]),
+    single("edge", EDGE)
+        .secrets(&[("link-key", Secret::Generated)])
+        .children(&[
+            // the pairings, written by pairing and the wizard and read at once (conf_env::keep_in_env)
+            single("node", Class::Live).secrets(&[("key", Secret::Kept)]),
+            single("front-node", Class::Live).secrets(&[("key", Secret::Kept)]),
+            keyed("delegate", &["service"], EDGE),
+            keyed("queue-kind", &["name"], EDGE),
+            keyed("replicate", &["set"], EDGE).children(&[keyed("entity", &["name"], EDGE)]),
+        ]),
     // read at boot: which components load, the node's role, the server's time zone
     single(
         "instance",

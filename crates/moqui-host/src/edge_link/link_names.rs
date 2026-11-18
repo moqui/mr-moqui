@@ -13,7 +13,7 @@
  */
 
 //! The edge members' own link names on a front node (plans/Edge-Node2.md §4.7, E19). Each member of an edge cluster
-//! behind a front has a name of its own, its `edge_link_url`'s host, where local nodes dial it (§4.6). The name points
+//! behind a front has a name of its own, its `edge@link-url`'s host, where local nodes dial it (§4.6). The name points
 //! at the front, which passes its connections through untouched to that member alone, so a local node's link (its
 //! ALPN `moqui-edge/1` and client certificate) reaches the member as if dialed directly.
 //!
@@ -73,7 +73,7 @@ pub(super) async fn claim(server: &Arc<EdgeServer>, node: &str, member: &str, ro
             if let Some(from) = &claim.moved_from {
                 tracing::warn!(
                     "Edge link of {node}: link name {name} was member {from}'s and is now member {member}'s; two \
-                     members that send one edge_link_url take it from each other, so give each its own"
+                     members that send one edge@link-url take it from each other, so give each its own"
                 );
             }
             if claim.changed {

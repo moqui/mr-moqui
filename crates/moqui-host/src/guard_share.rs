@@ -141,11 +141,11 @@ fn tell(factory: &ExecutionContextFactory, notice: &BanNotice) {
             tracing::warn!("web protection: a ban was not told to the cluster: {}", err.message());
         }
     }
-    // up only: the edge nodes this node is paired with (edge_node_id) and its front node (front_node_id,
+    // up only: the edge nodes this node is paired with (edge/node@id) and its front node (edge/front-node@id,
     // plans/Edge-Node2.md §4.7), never the pairings at the other end of the links this node takes
     let ids = [moqui_core::edge::NODE_ID, moqui_core::edge::FRONT_ID]
         .iter()
-        .map(|name| moqui_lib::env::get_prop_or_env(name))
+        .map(|name| moqui_core::context::conf_env::setting(name))
         .collect::<Vec<_>>()
         .join(",");
     for edge in up_links(&ids, &from) {
@@ -158,7 +158,7 @@ fn tell(factory: &ExecutionContextFactory, notice: &BanNotice) {
     }
 }
 
-/// The edge nodes a ban goes up to: the ids `edge_node_id` names (comma separated), not this member's own.
+/// The edge nodes a ban goes up to: the ids `edge/node@id` names (comma separated), not this member's own.
 fn up_links(edge_ids: &str, own: &str) -> Vec<String> {
     edge_ids
         .split(',')

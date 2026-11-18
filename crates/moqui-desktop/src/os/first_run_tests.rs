@@ -53,16 +53,21 @@ fn a_paired_node_or_one_that_takes_links_needs_no_pairing() {
         "# comment\nedge_node_url=\nmoqui_conf__instance__node_role=normal\n",
         none
     ));
-    assert!(!needs_pairing("edge_node_url=https://edge.example.com\n", none));
     assert!(!needs_pairing(
-        "export edge_node_url=\"https://edge.example.com\"\n",
+        "moqui_conf__edge__node__url=https://edge.example.com\n",
+        none
+    ));
+    assert!(!needs_pairing(
+        "export moqui_conf__edge__node__url=\"https://edge.example.com\"\n",
         none
     ));
     assert!(!needs_pairing("moqui_conf__instance__node_role=all-in-one\n", none));
-    assert!(!needs_pairing("", |name: &str| if name == "edge_node_url" {
-        "https://edge.example.com".to_string()
-    } else {
-        String::new()
+    assert!(!needs_pairing("", |name: &str| {
+        if name == "moqui_conf__edge__node__url" {
+            "https://edge.example.com".to_string()
+        } else {
+            String::new()
+        }
     }));
     assert!(!needs_pairing("", |name: &str| {
         if name == "moqui_conf__instance__node_role" {

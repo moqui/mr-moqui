@@ -389,8 +389,8 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("edge_ssh_tunnel_port", &tunnel_port_text),
-            ("edge_ssh_tunnel_host", "127.0.0.1"),
+            ("moqui_conf__edge__ssh_tunnel_port", &tunnel_port_text),
+            ("moqui_conf__edge__ssh_tunnel_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );

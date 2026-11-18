@@ -49,7 +49,12 @@ fn each_pairing_writes_its_own_properties() {
     let names: Vec<&str> = front.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(
         names,
-        ["front_node_url", "front_node_key", "front_node_pin", "front_node_id"]
+        [
+            "edge/front-node@url",
+            "edge/front-node@key",
+            "edge/front-node@pin",
+            "edge/front-node@id"
+        ]
     );
     assert_eq!(front[0].1, "https://front.example.com");
     assert_eq!(front[3].1, "front-1");
@@ -58,11 +63,11 @@ fn each_pairing_writes_its_own_properties() {
     assert_eq!(
         names,
         [
-            "edge_node_url",
-            "edge_node_key",
-            "edge_node_pin",
-            "edge_node_id",
-            "edge_node_pairing"
+            "edge/node@url",
+            "edge/node@key",
+            "edge/node@pin",
+            "edge/node@id",
+            "edge/node@pairing"
         ]
     );
     assert_eq!(edge[4].1, "local-1");

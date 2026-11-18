@@ -2222,6 +2222,26 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:sequence>
+                <xs:element minOccurs="0" name="node"><xs:annotation><xs:documentation>A local node's pairing with its
+                    edge node, written by pairing (key is a secret) and the Edge Apply wizard.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                    <xs:attribute name="url" type="xs:string"/>
+                    <xs:attribute name="key" type="xs:string"/>
+                    <xs:attribute name="pin" type="xs:string"/>
+                    <xs:attribute name="id" type="xs:string"/>
+                    <xs:attribute name="pairing" type="xs:string"/>
+                    <xs:attribute name="calls-enabled" type="xs:string"/>
+                    <xs:attribute name="sip-enabled" type="xs:string"/>
+                    <xs:attribute name="pass-client" type="xs:string"/>
+                    </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="front-node"><xs:annotation><xs:documentation>A pairing with a front
+                    node (plans/Edge-Node2.md §4.7), as node.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                    <xs:attribute name="url" type="xs:string"/>
+                    <xs:attribute name="key" type="xs:string"/>
+                    <xs:attribute name="pin" type="xs:string"/>
+                    <xs:attribute name="id" type="xs:string"/>
+                    </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="delegate">
                     <xs:annotation><xs:documentation>A service an edge node (moqui_conf__instance__node_role=front_edge) runs on its local node
                         instead of itself, for a synchronous call (an async call or a scheduled job runs where it was
@@ -2243,7 +2263,7 @@ along with this software (see the LICENSE.md file). If not, see
                             as the SIP engine routing a call while the caller's phone rings. Past it the call fails as
                             the local node not answering in time.</xs:documentation>
                         </xs:annotation></xs:attribute>
-                    </xs:complexType>
+        </xs:complexType>
                 </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="queue-kind">
                     <xs:annotation><xs:documentation>The service that applies a queued item of this kind on its
@@ -2303,6 +2323,16 @@ along with this software (see the LICENSE.md file). If not, see
                     from its edge node for now. 0 for no cap.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="link-key" type="xs:string"/>
+            <xs:attribute name="link-url" type="xs:string"/>
+            <xs:attribute name="offline-page" type="xs:string"/>
+            <xs:attribute name="ssh-tunnel-port" type="xs:string"/>
+            <xs:attribute name="ssh-tunnel-host" type="xs:string"/>
+            <xs:attribute name="smtp-tunnel-host" type="xs:string"/>
+            <xs:attribute name="xmpp-port" type="xs:string"/>
+            <xs:attribute name="xmpp-tls-port" type="xs:string"/>
+            <xs:attribute name="xmpp-host" type="xs:string"/>
+            <xs:attribute name="call-legs-per-pairing" type="xs:string"/>
             <xs:attribute name="replica-max-rows" type="non-neg-int-expandable" default="1000000">
                 <xs:annotation><xs:documentation>On a node that takes links, the replicated records it keeps for one
                     pairing at most, all its sets together (a pairing's EdgeClient.replicaMaxRows above 0 in place of
@@ -2363,7 +2393,7 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="ssh-tunnels" type="non-neg-int-expandable" default="256">
                 <xs:annotation><xs:documentation>SSH connections piped at once by the SSH tunnel port
-                    (edge_ssh_tunnel_port), and by each pairing's own SSH port (an EdgePort row); each also counts
+                    (edge@ssh-tunnel-port), and by each pairing's own SSH port (an EdgePort row); each also counts
                     toward a link's tunnels. At least 1.
                 </xs:documentation></xs:annotation>
             </xs:attribute>

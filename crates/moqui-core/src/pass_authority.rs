@@ -23,7 +23,7 @@
 //!
 //! The input and the result are JSON (decision 7). The client is a registered PASS client: by its secret on the direct
 //! listener, checked by the framework's own check (`org.moqui.public.AccountServices.check#Client`, the one the REST
-//! servlet uses), or the edge node on its link, by the id `pass_edge_client` (default `edge`) and with no secret. The
+//! servlet uses), or the edge node on its link, by the id `edge/node@pass-client` (default `edge`) and with no secret. The
 //! visitor's address is data for rate limits only.
 
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ pub const SERVICE_PROPERTY: &str = "pass_authority_service";
 /// The authority service when [`SERVICE_PROPERTY`] is empty: Mantle's.
 pub const DEFAULT_SERVICE: &str = "mantle.pass.PassAuthorityServices.handle#Call";
 /// The property naming the PASS client the edge node is on its link (`pass_client_<id>_sites` lists its sites).
-pub const EDGE_CLIENT_PROPERTY: &str = "pass_edge_client";
+pub const EDGE_CLIENT_PROPERTY: &str = "edge/node@pass-client";
 /// The edge node's client id when [`EDGE_CLIENT_PROPERTY`] is empty.
 pub const DEFAULT_EDGE_CLIENT: &str = "edge";
 /// The largest file an upload carries, as the REST API's multipart limit.
@@ -347,9 +347,9 @@ pub enum Client {
 }
 
 impl Client {
-    /// The edge node's client id on this node: `pass_edge_client`, else `edge`.
+    /// The edge node's client id on this node: `edge/node@pass-client`, else `edge`.
     pub fn edge_client_id() -> String {
-        let id = moqui_lib::env::get_prop_or_env(EDGE_CLIENT_PROPERTY);
+        let id = crate::context::conf_env::setting(EDGE_CLIENT_PROPERTY);
         match id.trim() {
             "" => DEFAULT_EDGE_CLIENT.to_string(),
             id => id.to_string(),

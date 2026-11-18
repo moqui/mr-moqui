@@ -51,8 +51,8 @@ certificate. In dev an empty `runtime/cert` gets a self-signed `localhost` certi
 A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archive/Edge-Node.md](../../plans/archive/Edge-Node.md)
 §5.4) keeps its XMPP server; the edge node starts none, and its tunnel ports pipe clients down the link.
 
-- On the edge node, `edge_xmpp_port` (STARTTLS, 5222) and `edge_xmpp_tls_port` (direct TLS, 5223) on
-  `edge_xmpp_host`, one pair of ports for every local node's domain ([plans/Edge-Node2.md](../../plans/Edge-Node2.md)
+- On the edge node, `edge@xmpp-port` (STARTTLS, 5222) and `edge@xmpp-tls-port` (direct TLS, 5223) on
+  `edge@xmpp-host`, one pair of ports for every local node's domain ([plans/Edge-Node2.md](../../plans/Edge-Node2.md)
   §4.1, E16): each connection goes to the local node whose XMPP domain it names, by the TLS server name (SNI) on the
   direct TLS port and by the `to` of the stream header the client sends in the clear on the STARTTLS port. The edge
   node reads only that (at most 16 KB, within 10 seconds), passes the bytes it read on first, and sees no stanza. A

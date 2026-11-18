@@ -48,14 +48,14 @@ function isAdmin() {
 }
 
 /**
- * Whether phones go through this node's edge node: on unless edge_sip_enabled is false, n, no, 0 or off (the wizard's
+ * Whether phones go through this node's edge node: on unless edge/node@sip-enabled is false, n, no, 0 or off (the wizard's
  * phones area, plans/archive/Edge-Node.md §5.7 "As built (E10, phones)"; moqui_core::edge::sip::sip_enabled).
  */
-const edgeSipEnabled = () => !['false', 'n', 'no', '0', 'off'].includes(property('edge_sip_enabled').toLowerCase())
+const edgeSipEnabled = () => !['false', 'n', 'no', '0', 'off'].includes(property('edge/node@sip-enabled').toLowerCase())
 
 /**
  * The live SIP node of this node's edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the link keeps from
- * its Hello with its realm and registrar switch; null when there is none, or phones are off (edge_sip_enabled). Its
+ * its Hello with its realm and registrar switch; null when there is none, or phones are off (edge/node@sip-enabled). Its
  * registrar is the phones'.
  */
 function edgeSipNode() {
@@ -83,7 +83,7 @@ function domain() {
   return property('sip_domain') || property('sip_public_address') || 'moqui'
 }
 
-/** The live SIP nodes; the edge node's link-kept row only while phones go through it (edge_sip_enabled, E10 phones). */
+/** The live SIP nodes; the edge node's link-kept row only while phones go through it (edge/node@sip-enabled, E10 phones). */
 function liveSipNodes() {
   const edgeOn = edgeSipEnabled()
   return rows(SIP_NODE).filter((n) => ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS && (edgeOn || n.edgeLinked !== 'Y'))
@@ -310,7 +310,7 @@ function edgeDigestFresh(device) {
  */
 function checkDigest(p) {
   // the edge node's (E8): only for the realm its registrar challenges with, which its phones' verifiers are for, and
-  // none while phones are off (edge_sip_enabled, E10 phones)
+  // none while phones are off (edge/node@sip-enabled, E10 phones)
   if (isEdgeCaller() && (!edgeSipEnabled() || String(p.realm || '') !== domain())) return { matched: false }
   const auth = deviceAuth({ username: p.username, realm: p.realm })
   const verifier = (auth.verifierList || []).find((v) => String(v.algorithm).toUpperCase() === String(p.algorithm || '').toUpperCase())

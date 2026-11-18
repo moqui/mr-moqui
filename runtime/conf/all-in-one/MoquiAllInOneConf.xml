@@ -14,7 +14,7 @@
     local authority: pass_backend_url is not edge: here, so the server's own PASS sites stay its own.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link. Per-host
     settings (names, addresses, ports) go in .env. The HTTPS listener needs a WebPKI certificate in runtime/cert, which
-    the local node checks when it pairs; the links use edge_link_key, generated into .env at the first start (a changed
+    the local node checks when it pairs; the links use edge@link-key, generated into .env at the first start (a changed
     key means pairing again). Set edge_public_addresses in .env to this node's public IPv4 and IPv6 addresses, which
     the local node's wizard checks its A and AAAA records against. The local node runs conf/edge/MoquiLocalConf.xml, as
     with a dedicated edge node. -->
@@ -25,8 +25,8 @@
     <!-- XMPP (plans/archive/Edge-Node.md §5.4, §10; plans/Edge-Node2.md §4.1): the server's own XMPP server runs here, for
         its xmpp_domain, on xmpp_port and xmpp_tls_port as on a normal node, and the same ports take the paired nodes'
         XMPP domains: a connection that names one (the TLS server name, or the stream's to) goes down that node's link,
-        and the node ends its TLS with its own certificates. Tunnel ports of their own (edge_xmpp_port and
-        edge_xmpp_tls_port, other than the server's) are an option, as is a pair of ports per node (EdgePort rows). -->
+        and the node ends its TLS with its own certificates. Tunnel ports of their own (edge@xmpp-port and
+        edge@xmpp-tls-port, other than the server's) are an option, as is a pair of ports per node (EdgePort rows). -->
 
     <!-- Mail (plans/archive/Edge-Node.md §5.4, §10): the MTA in moqui (E5b). The SMTP listener takes port 25 from the internet
         itself (internet mode; smtp-server@listen-port 25 and smtp-server@listen-host 0.0.0.0, or :: for IPv6 too, in .env), with

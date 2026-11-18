@@ -9,8 +9,8 @@
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <instance purpose="production"/>
 
-    <!-- The same .env on both machines: the pairing's (edge_node_url, edge_node_key, edge_node_pin, edge_node_id and
-        edge_node_pairing, which pairing wrote on the first machine), moqui_conf__entity_facade__crypt_pass, webapp-list/webapp[webroot]/session-config@cookie-key, and
+    <!-- The same .env on both machines: the pairing's (edge/node@url, edge/node@key, edge/node@pin, edge/node@id and
+        edge/node@pairing, which pairing wrote on the first machine), moqui_conf__entity_facade__crypt_pass, webapp-list/webapp[webroot]/session-config@cookie-key, and
         the rest of the first machine's settings; copy it again after the wizard or a setting changes. Each machine's
         own: its instance id (runtime/db/instance_id) and its member key (runtime/db/edge_member_key), made at its first
         start and link. Never copy runtime/db to the standby: a copy of them would make it the first machine to the

@@ -434,7 +434,10 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
 
     // out: an MMS's file goes to the edge node before the send, and the edge node serves it until it runs out
     moqui_lib::env::set_property("moqui_conf__channels__public_url", url.clone());
-    moqui_lib::env::set_property(moqui_core::edge::NODE_URL, url.clone());
+    moqui_lib::env::set_property(
+        &moqui_core::context::conf_env::env_name_of(moqui_core::edge::NODE_URL),
+        url.clone(),
+    );
     let picture: Vec<u8> = (0..1500u32).map(|n| (n % 251) as u8).collect();
     for id in ["A1", "A2", "A3"] {
         attach(&local, id, &picture);

@@ -109,7 +109,7 @@ are open on it. A front pairing carries no TURN secret.
 **Revoking a local node ends its TURN access.** Within a second or two of the revoke the edge node's TURN refuses every
 username of that pairing and closes its relays, with no new `turn_auth_secret`; the other pairings go on. A pairing's
 secret makes credentials for its own pairing only: one signed for another pairing's name fails. A call's legs on an
-edge node are capped per pairing (`edge_call_legs_per_pairing`, 200 at once; 0 for no cap), so one local node's calls
+edge node are capped per pairing (`edge@call-legs-per-pairing`, 200 at once; 0 for no cap), so one local node's calls
 do not take every leg of the media node.
 
 The other choice, the local node's secret sent to the edge node, would put a secret the local node also uses for its own

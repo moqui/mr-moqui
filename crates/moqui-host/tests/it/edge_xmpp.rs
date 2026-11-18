@@ -15,8 +15,8 @@
 //! The XMPP tunnel (plans/archive/Edge-Node.md §5.4, E9): outside XMPP clients sign in through the edge node's tunnel ports
 //! and chat with each other on the local node, which ends their TLS. Both ends are real servers in the test's own
 //! process, as in `edge_web.rs`: the local node with `xmpp_domain` and a direct TLS port of its own, then the edge node
-//! (`moqui_conf__instance__node_role=front_edge`), which inherits those properties and still starts no XMPP server, with `edge_xmpp_port`
-//! (STARTTLS) and `edge_xmpp_tls_port` (direct TLS).
+//! (`moqui_conf__instance__node_role=front_edge`), which inherits those properties and still starts no XMPP server, with `edge@xmpp-port`
+//! (STARTTLS) and `edge@xmpp-tls-port` (direct TLS).
 //!
 //! Ann is tokio-xmpp over the direct TLS tunnel (SCRAM-SHA-256-PLUS with the local node's tls-exporter, so the TLS is
 //! the local node's); Ben is a raw stream over the STARTTLS tunnel, SASL2 with SCRAM-PLUS and Bind 2. Ann writes to
@@ -159,9 +159,9 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
-            ("edge_xmpp_port", &tunnel_text),
-            ("edge_xmpp_tls_port", &tunnel_tls_text),
-            ("edge_xmpp_host", "127.0.0.1"),
+            ("moqui_conf__edge__xmpp_port", &tunnel_text),
+            ("moqui_conf__edge__xmpp_tls_port", &tunnel_tls_text),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );

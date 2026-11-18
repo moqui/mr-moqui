@@ -102,7 +102,7 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             }
         })
         .collect();
-    // the tunnel ports (edge_xmpp_port, edge_xmpp_tls_port), never the server's own XMPP ports: on an all-in-one node a
+    // the tunnel ports (edge@xmpp-port, edge@xmpp-tls-port), never the server's own XMPP ports: on an all-in-one node a
     // tunnel port that is one of them is not listened on (hook.rs), so it is not offered (§10)
     let all_in_one = moqui_core::edge::settings(factory).all_in_one();
     let tunnel = |bind: Option<std::net::SocketAddr>| {
@@ -271,8 +271,8 @@ fn host_setting(host: &EdgeHostInfo) -> HostSetting {
 }
 
 /// The XMPP part of the offer to local node `node` (plans/Edge-Node2.md §4.1, E16): the ports of its own `EdgePort`
-/// rows when it has any (a pair of ports per node), else the ports of every domain (`edge_xmpp_port`,
-/// `edge_xmpp_tls_port`; on an all-in-one node without them, its own XMPP ports), which take its clients by the XMPP
+/// rows when it has any (a pair of ports per node), else the ports of every domain (`edge@xmpp-port`,
+/// `edge@xmpp-tls-port`; on an all-in-one node without them, its own XMPP ports), which take its clients by the XMPP
 /// domain of its last Configure. `needs_node` when those cannot find it: it named no domain and is not the one active
 /// pairing (`tunnel::xmpp_route`). `other_node` is no longer set: no port goes to another node by a setting. A read
 /// that fails is logged, and the offer is the ports of every domain.
@@ -317,7 +317,7 @@ pub(crate) fn xmpp_node(factory: &ExecutionContextFactory, node: &str, xmpp: &mu
 }
 
 /// The SSH part of the offer to local node `node` (E16): the port of its own `EdgePort` row of kind ssh when it has
-/// one, else the conf's `edge_ssh_tunnel_port` while it is the one active pairing (the port goes to no other), else
+/// one, else the conf's `edge@ssh-tunnel-port` while it is the one active pairing (the port goes to no other), else
 /// none. A node with no front set offers none (`for_role`). A read that fails is logged and offers no port: the conf's
 /// port may be another pairing's, and the next offer (at the next link) reads again.
 pub(crate) fn ssh_node(factory: &ExecutionContextFactory, node: &str, ssh: &mut ProtoSsh) {
@@ -402,12 +402,12 @@ const OWN: &str = "the edge node answers for this name itself";
 /// The names no local node's setup may claim, nor their subdomains: the edge node's public names and the server's
 /// own host names (`moqui_core::edge::claims::own_host_names`: its web host, SMTP (MX) host, bounce domain, the host
 /// of its chat address and its mr-pass sites' hosts; on an all-in-one node its XMPP and SIP domains too), and the host of
-/// its own `edge_link_url`, where nodes dial it for their links. A name the
+/// its own `edge@link-url`, where nodes dial it for their links. A name the
 /// operator gives a node on Edge Clients is not checked against them.
 pub(crate) fn reserved_names(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
     let mut names: Vec<String> = config.public_names.clone();
     names.extend(moqui_core::edge::claims::own_host_names(factory));
-    // the name this node is dialed at for its links (its edge_link_url): no pairing's host may take them (§4.7)
+    // the name this node is dialed at for its links (its edge@link-url): no pairing's host may take them (§4.7)
     names.extend(moqui_core::edge::claims::url_host(&config.link_url));
     names.retain(|name| !name.trim().is_empty());
     names

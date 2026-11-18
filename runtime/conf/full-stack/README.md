@@ -6,7 +6,7 @@ PASS authority. The desktop and mobile apps are clients of the local cluster's h
 the front balances the edge members, each local member links to every edge member, and the edge members balance the
 local members. The front is a single point in this layout, for the local nodes' links to the edge members as well as
 the web: while it is down their queue, delegated calls and replication stop too, unless each edge member's
-`edge_link_url` names its own address. Steps and limits: [Run-Deploy](../../../docs/Run-Deploy.md#full-stack); the sites:
+`edge@link-url` names its own address. Steps and limits: [Run-Deploy](../../../docs/Run-Deploy.md#full-stack); the sites:
 mr-pass's `docs/Deployment.md`, Full stack.
 
 ```
@@ -34,20 +34,20 @@ with the front as well, for its names, XMPP domain and ports.
 ## `.env`
 
 - **Front node**: `webapp-list/webapp[webroot]@http-host` (`front.example.com`), `edge_public_addresses` (its addresses), and the secrets
-  of its first start (`edge_link_key` among them). A certificate in `cert/` for its own name and the sites' hosts, or
+  of its first start (`edge@link-key` among them). A certificate in `cert/` for its own name and the sites' hosts, or
   System › Certificates with ACME.
 - **Every edge member, the same**: as in [`../edge-cluster/`](../edge-cluster/README.md) (the database, the secrets
-  with `edge_link_key`, `turn_auth_secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
+  with `edge@link-key`, `turn_auth_secret`, `mail-delivery/dkim@key` and `acme@account-key`, `edge_mail_bounce_domain`,
   `sip_port`, `sip_tls_port`, `pass_backend_web_url`), with `edge_public_addresses` set to the front's addresses, and
   `smtp-server@listen-port` (`moqui_conf__smtp_server__listen_host=127.0.0.1`) for the mail the front passes down. Once paired with the front:
-  `front_node_url`, `front_node_key`, `front_node_pin` and `front_node_id`.
-- **Each edge member, its own**: `cluster-member@base-url`, `edge_link_url=https://edge1.example.com` (its link name, at the
+  `edge/front-node@url`, `edge/front-node@key`, `edge/front-node@pin` and `edge/front-node@id`.
+- **Each edge member, its own**: `cluster-member@base-url`, `moqui_conf__edge__link_url=https://edge1.example.com` (its link name, at the
   front), `smtp-server@hostname` (its own address's reverse DNS name), `rtc_public_address`, `turn_public_host` and
   `sip_public_address` (its own address). Never copy `runtime/db`.
 - **Every local member, the same**: the database and secrets (for git hosting `ssh-server@host-key` and
-  `git-server@lfs-token-key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge_node_url`,
-  `edge_node_key`, `edge_node_pin`, `edge_node_id`, `edge_node_pairing`; with `edge` members also `front_node_*`; the
-  PASS client lines the wizard writes (`pass_edge_client`, `pass_client_edge_sites`, `pass_client_edge_callback`).
+  `git-server@lfs-token-key` too, as in [`../local-cluster/`](../local-cluster/README.md)), and once paired: `edge/node@url`,
+  `edge/node@key`, `edge/node@pin`, `edge/node@id`, `edge/node@pairing`; with `edge` members also `front_node_*`; the
+  PASS client lines the wizard writes (`edge/node@pass-client`, `pass_client_edge_sites`, `pass_client_edge_callback`).
 - **Each local member, its own**: `cluster-member@base-url`. Never copy `runtime/db`.
 
 ## DNS

@@ -549,7 +549,10 @@ impl Pool {
         .unwrap();
         // what the first member's .env would say, as the second's does: a node behind an edge node writes a new session
         // before its response (both servers of this process read it; the edge node's hook has started already)
-        moqui_lib::env::set_property(moqui_core::edge::NODE_URL, url.clone());
+        moqui_lib::env::set_property(
+            &moqui_core::context::conf_env::env_name_of(moqui_core::edge::NODE_URL),
+            url.clone(),
+        );
         let mut config = LocalConfig::new(&url, &paired.key, &paired.pin, &node);
         quick(&mut config);
         config.web = local_web(local.server.factory());

@@ -30,8 +30,8 @@ which pools the members of a pairing and balances over them. Requirements, what 
   `cluster-member@tls-key`, `moqui_conf__entity_facade__crypt_pass`, and for git hosting `ssh-server@host-key` and `git-server@lfs-token-key`: a client's
   SSH connections and LFS requests reach any member, and another one after a failover (a member whose SSH host key
   differs warns at startup). Copying the first member's whole `.env` gives each the same. Behind your own load balancer: `webapp-list/webapp[webroot]@trusted-proxies`,
-  `webapp-list/webapp[webroot]@client-ip-header`. With an edge node: what pairing writes on the first member, `edge_node_url`,
-  `edge_node_key`, `edge_node_pin`, `edge_node_id` and `edge_node_pairing`.
+  `webapp-list/webapp[webroot]@client-ip-header`. With an edge node: what pairing writes on the first member, `edge/node@url`,
+  `edge/node@key`, `edge/node@pin`, `edge/node@id` and `edge/node@pairing`.
 - **Each member, its own**: `moqui_conf__cluster_member__base_url=https://<this member's private address>:8444`. Never copy `runtime/db`:
   each member keeps its own instance id and edge member key there.
 

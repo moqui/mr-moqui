@@ -231,7 +231,7 @@ claiming its name, refuses a DMARC failure whose policy is reject (550) and file
 - **Behind a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19; [Run-Deploy, Full
   stack](../Run-Deploy.md#full-stack)). The MX points at the front, whose port 25 is an `EdgePort` row of kind `smtp`
   (System › Edge Clients › Ports on the front, to the edge cluster's pairing; only a front node takes the kind, and it
-  binds on `edge_smtp_tunnel_host`, every address when empty, at most 128 connections at once). Each connection goes
+  binds on `edge@smtp-tunnel-host`, every address when empty, at most 128 connections at once). Each connection goes
   down a live member's front link, by the sender's address, with a PROXY v2 header naming the sender; the member's own
   listener serves it as its mail edge and takes the sender's address from that header only because it came over its
   own link, so `smtp-server@allowed-addresses`, the per-address limits and SPF see the sender, not the front. The front relays the

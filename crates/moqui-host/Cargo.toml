@@ -121,7 +121,7 @@ grpc = [
     "hyper/client",
     "hyper-util/service",
 ]
-# The edge link (plans/archive/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge_node_url is set, and on an
+# The edge link (plans/archive/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge/node@url is set, and on an
 # edge node (node_role=front_edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
 # and Enterprise, whose graph already has all of it (§5.6); not Lite.
 edge = ["grpc", "dep:webpki-roots", "dep:sha1"]

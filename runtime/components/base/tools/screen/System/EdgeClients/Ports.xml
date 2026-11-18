@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     direct TLS), and on a front node to its SMTP listener (smtp, with a PROXY header naming the client, §4.7), from the moqui.edge.EdgePort rows (org.moqui.edge.EdgeServices.get#EdgePorts, add#EdgePort,
     remove#EdgePort). This node listens on a port within seconds of adding it and stops when it is removed; the list
     says whether each listens now, and why not. A port of this node's own listeners, and one another row has, is
-    refused. The conf's own tunnel ports (edge_ssh_tunnel_port, edge_xmpp_port, edge_xmpp_tls_port) are apart: the SSH
+    refused. The conf's own tunnel ports (edge@ssh-tunnel-port, edge@xmpp-port, edge@xmpp-tls-port) are apart: the SSH
     one goes to the one active pairing only (refused with several, and while it is away), and the XMPP ones to the node whose XMPP domain a client names. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Ports" default-menu-index="3">

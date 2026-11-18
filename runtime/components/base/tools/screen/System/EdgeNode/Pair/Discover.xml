@@ -20,11 +20,11 @@ along with this software (see the LICENSE.md file). If not, see
     go to it), PASS (the sites it serves, and their SSO callback) and XMPP (this node's xmpp_domain through the edge
     node's tunnel ports; on by default when both are there, and Next adds the domain to the passthrough names when it
     is in neither list, since uploads and /xmpp-websocket ride on web access) and calls (new calls' media on the edge
-    node's media node, with its TURN; on by default when it runs one, unless this node's edge_calls_enabled is false,
+    node's media node, with its TURN; on by default when it runs one, unless this node's edge/node@calls-enabled is false,
     with a note that office-to-office media then goes through the cloud, with no cascading and one local node) and
     phones (the edge node's SIP engine with this node's trunks, from the replicated set voiceTrunks, and their
     numbers; its registrar for outside phones; the numbers with a voicemail fallback; on by default when it runs one,
-    unless this node's edge_sip_enabled is false, with notes that outside phones cannot register while this node is
+    unless this node's edge/node@sip-enabled is false, with notes that outside phones cannot register while this node is
     away and that the fallback follows no call-handling rules or schedules). Next keeps the choices in the session for Apply, as the earlier steps keep the pairing code; they
     hold no secret, and nothing goes in a URL. Status links here to set a paired node up again. Not paired, an edge
     node, a build without the link, and a link that is down see why instead. -->
@@ -53,9 +53,9 @@ along with this software (see the LICENSE.md file). If not, see
                 passCallback: String(passCallback || '').trim(),
                 xmppOn: on(xmppOn), xmppDomain: String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase(),
                 // calls only when the form showed the choice (the edge node's media node was up); else Apply leaves
-                // this node's edge_calls_enabled as it is
+                // this node's edge/node@calls-enabled as it is
                 callsOffered: on(callsOffered), callsOn: on(callsOffered) && on(callsOn),
-                // phones the same way (the edge node's SIP engine was up), for edge_sip_enabled
+                // phones the same way (the edge node's SIP engine was up), for edge/node@sip-enabled
                 sipOffered: on(sipOffered), sipOn: on(sipOffered) && on(sipOn)}
             if (!choices.webOn && !choices.mailOn && !choices.chatOn && !choices.passOn && !choices.xmppOn && !choices.callsOn && !choices.sipOn) {
                 ec.message.addError(L('Turn on at least one area')); return }
@@ -253,9 +253,9 @@ along with this software (see the LICENSE.md file). If not, see
             passCallback: String(System.getProperty('pass_client_' + client + '_callback') || '') ||
                 (firstHost ? 'https://' + firstHost + '/account/Sso' : ''),
             xmppOn: xmppAvailable && !!xmppDomain,
-            // on when offered, unless this node turned it off before (edge_calls_enabled)
+            // on when offered, unless this node turned it off before (edge/node@calls-enabled)
             callsOn: callsAvailable && calls.enabled !== false,
-            // the same for phones (edge_sip_enabled)
+            // the same for phones (edge/node@sip-enabled)
             sipOn: sipAvailable && sip.enabled !== false}
         form = {webOn: choices.webOn ? 'Y' : '', passthroughNames: (choices.passthroughNames || []).join(', '),
             terminateNames: (choices.terminateNames || []).join(', '),
