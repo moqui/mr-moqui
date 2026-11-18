@@ -63,7 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdByUserId" type="id"><description>Who added it: a user adds at most chat_sticker_uploads_per_hour</description></field>
         <field name="createdDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatStickerPack" short-alias="pack"/>
-        <index name="CHAT_STICKER_PACK"><index-field name="chatStickerPackId"/><index-field name="sequenceNum"/></index>
+        <index name="CHAT_STICKER_PACK_SEQ"><index-field name="chatStickerPackId"/><index-field name="sequenceNum"/></index>
     </entity>
 
     <extend-entity entity-name="ChatAttachment" package="moqui.chat">
