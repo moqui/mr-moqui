@@ -3313,7 +3313,7 @@ const messageTemplate = `
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <chat-rich v-else-if="item.event.rich" :item="item" :room="room"></chat-rich>
-            <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
+            <div v-else-if="item.bodyHtml && !item.poll && !item.event.calEvent && !item.event.sticker && !item.event.location" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
                     v-html="item.bodyHtml" @click="room.bodyClick($event)"></div>
             <!-- an answer to a button (content.postback: tapped here, or an RCS reply) -->
             <div v-if="item.event.postback" class="row items-center no-wrap text-caption m-muted q-mt-xs m-chat-postback">
@@ -3327,6 +3327,12 @@ const messageTemplate = `
                             v-html="item.forwardOf.body" @click="room.bodyClick($event)"></div>
                 </div>
             </div>
+            <chat-cal-card v-if="item.event.calEvent" :item="item" :room="room"></chat-cal-card>
+            <chat-sticker v-if="item.event.sticker" :item="item" :room="room"></chat-sticker>
+            <chat-location-card v-if="item.event.location" :item="item" :room="room"></chat-location-card>
+            <div v-if="item.event.calChange" class="row items-center no-wrap q-mt-xs m-chat-cal-changed">
+                <q-chip dense clickable outline color="primary" :icon="item.event.calChange.cancelled ? 'sym_o_event_busy' : 'sym_o_edit_calendar'" class="q-ma-none"
+                        @click.stop="room.jumpToEvent(item.event.calChange.eventSeq)">{{item.event.calChange.cancelled ? room.t('Event cancelled') : room.t('Event changed')}}</q-chip></div>
             <q-card v-if="item.poll" flat bordered class="q-mt-xs q-pa-sm m-chat-poll" style="max-width:440px">
                 <div class="row no-wrap items-start text-weight-medium q-mb-xs"><q-icon name="sym_o_ballot" size="18px" class="q-mr-xs text-primary"></q-icon>
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
@@ -3357,7 +3363,7 @@ const messageTemplate = `
                 <q-btn v-if="room.viewOnceState(item) === 'closed'" flat dense no-caps color="primary" icon="sym_o_looks_one" class="m-chat-view-once-open" :label="room.t('Open')"
                         @click.stop="room.openViewOnce(item)"></q-btn>
             </div>
-            <div v-if="item.attachments.length && !item.event.rich" class="row q-gutter-xs q-mt-none">
+            <div v-if="item.attachments.length && !item.event.rich && !item.event.sticker" class="row q-gutter-xs q-mt-none">
                 <template v-for="file in item.attachments" :key="file.chatAttachmentId">
                     <img v-if="room.isImage(file)" :src="room.fileUrl(file, true)" :alt="file.fileName" class="rounded-borders cursor-pointer q-mt-xs"
                             style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
@@ -3535,6 +3541,383 @@ const chatRich = {
     template: richTemplate
 };
 
+// ---- events with RSVP (Comms-Messaging §18.3 phase 19; org.moqui.chat.ChatCalServices, moqui.chat.cal) ----
+// An event's card: a date badge, the title, the time in the viewer's zone (and the event's own when it differs), the place
+// (a map search the person opens by tapping it; nothing is fetched), the details, Going / Maybe / No (a tap answers, the
+// same tap takes it back), who answered, a reminder and Add to calendar: an app's calendar, the phone's calendar app
+// (moquiDesktop.calendarInsert in the Android app), else the .ics file. Its creator and a moderator Change and Cancel it.
+const calCardTemplate = `
+<q-card v-if="cal" flat bordered class="q-mt-xs m-chat-cal" :data-cal-state="state" :style="room.mobile ? 'max-width:85vw' : 'max-width:400px'">
+    <div class="row no-wrap items-start q-pa-sm">
+        <div class="column items-center justify-center rounded-borders m-tonal q-mr-sm" style="min-width:48px;height:52px">
+            <div class="text-caption text-uppercase text-primary" style="line-height:1.2">{{badge.month}}</div>
+            <div class="text-h6" style="line-height:1">{{badge.day}}</div>
+        </div>
+        <div class="col" style="min-width:0">
+            <div class="text-weight-medium m-chat-cal-title" :class="{ 'text-strike': cal.cancelled }" style="overflow-wrap:anywhere">{{cal.title}}</div>
+            <div class="text-body2 m-chat-cal-when">{{when}}</div>
+            <div v-if="zoneNote" class="text-caption m-muted m-chat-cal-zone">{{zoneNote}}</div>
+            <div v-if="cal.place" class="row no-wrap items-center text-body2 m-chat-cal-place">
+                <q-icon name="sym_o_location_on" size="16px" class="q-mr-xs"></q-icon>
+                <a :href="placeUrl" target="_blank" rel="noopener noreferrer" class="ellipsis" :title="room.t('Find it on the map')" @click.stop>{{cal.place}}</a></div>
+        </div>
+        <q-btn flat round dense size="sm" icon="sym_o_more_vert" class="m-chat-cal-menu" :aria-label="room.t('Event actions')" @click.stop>
+            <q-menu><q-list style="min-width:200px">
+                <q-item v-if="canManage" clickable v-close-popup class="m-chat-cal-change" @click="room.openCalEvent(item.threadRootEventSeq || null, item)">
+                    <q-item-section avatar><q-icon name="sym_o_edit_calendar"></q-icon></q-item-section><q-item-section>{{room.t('Change')}}</q-item-section></q-item>
+                <q-item v-if="canManage" clickable v-close-popup class="m-chat-cal-cancel" @click="room.cancelCalEvent(item)">
+                    <q-item-section avatar><q-icon name="sym_o_event_busy" color="negative"></q-icon></q-item-section><q-item-section>{{room.t('Cancel the event')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup class="m-chat-cal-ics" @click="room.downloadCalEvent(item)">
+                    <q-item-section avatar><q-icon name="sym_o_download"></q-icon></q-item-section><q-item-section>{{room.t('Download .ics')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
+    </div>
+    <div v-if="cal.description" class="q-px-sm text-body2 cursor-pointer m-chat-cal-details" :class="{ 'ellipsis-3-lines': !more }" style="white-space:pre-wrap;overflow-wrap:anywhere"
+            @click.stop="more = !more">{{cal.description}}</div>
+    <div v-if="cal.cancelled" class="q-px-sm q-pt-sm text-negative text-weight-medium m-chat-cal-cancelled">{{room.t('Cancelled')}}</div>
+    <div v-else-if="ended" class="q-px-sm q-pt-sm m-muted text-weight-medium">{{room.t('Ended')}}</div>
+    <template v-else>
+        <div class="row no-wrap q-px-sm q-pt-sm" style="gap:4px">
+            <q-btn v-for="one in answers" :key="one.key" dense no-caps size="sm" color="primary" :outline="mine !== one.key" :unelevated="mine === one.key"
+                    :icon="one.icon" :label="one.label" :disable="!room.canPost || busy" class="m-chat-cal-answer" :data-answer="one.key" @click.stop="answer(one.key)"></q-btn>
+        </div>
+        <div v-if="mine === 'going' || mine === 'maybe'" class="row items-center no-wrap q-px-sm q-pt-xs" style="gap:4px">
+            <q-icon name="sym_o_alarm" size="16px" class="m-muted"></q-icon>
+            <q-select dense borderless options-dense emit-value map-options :model-value="remind" :options="remindOptions" class="m-chat-cal-remind"
+                    style="min-width:140px" :aria-label="room.t('Remind me')" @update:model-value="setRemind"></q-select>
+            <q-space></q-space>
+            <q-btn v-if="eventUrl" flat dense no-caps size="sm" color="primary" icon="sym_o_open_in_new" :label="room.t('Open in calendar')" :href="eventUrl" target="_blank" @click.stop></q-btn>
+            <q-btn v-else flat dense no-caps size="sm" color="primary" icon="sym_o_calendar_add_on" class="m-chat-cal-add" :label="room.t('Add to calendar')" :loading="busy" @click.stop="addToCalendar"></q-btn>
+        </div>
+    </template>
+    <div class="row items-center q-pa-sm text-caption m-muted cursor-pointer m-chat-cal-counts" @click.stop="who = true">
+        <span class="ellipsis">{{countLine}}</span>
+        <q-menu v-if="!room.mobile" v-model="who"><q-list dense style="min-width:220px" class="m-chat-cal-who">
+            <template v-for="group in groups" :key="group.key"><q-item-label header>{{group.label}}</q-item-label>
+                <q-item v-for="name in group.names" :key="name"><q-item-section>{{name}}</q-item-section></q-item></template>
+            <q-item v-if="!groups.length"><q-item-section class="m-muted">{{room.t('No answers yet')}}</q-item-section></q-item>
+        </q-list></q-menu>
+    </div>
+    <q-dialog v-if="room.mobile" v-model="who" position="bottom">
+        <q-card class="m-chat-sheet m-chat-cal-who" style="width:100%;max-width:560px;border-radius:16px 16px 0 0"><q-list dense>
+            <template v-for="group in groups" :key="group.key"><q-item-label header>{{group.label}}</q-item-label>
+                <q-item v-for="name in group.names" :key="name"><q-item-section>{{name}}</q-item-section></q-item></template>
+            <q-item v-if="!groups.length"><q-item-section class="m-muted">{{room.t('No answers yet')}}</q-item-section></q-item>
+        </q-list></q-card>
+    </q-dialog>
+</q-card>`;
+const chatCalCard = {
+    name: 'ChatCalCard',
+    props: { item: Object, room: Object },
+    data: () => ({ more: false, who: false, busy: false, eventUrl: null }),
+    computed: {
+        cal() { const cal = this.item.event.calEvent; return cal && typeof cal === 'object' && cal.start != null ? cal : null; },
+        helpers() { return (moqui.chat && moqui.chat.cal) || null; },
+        ended() { return !!this.cal && this.cal.end != null && this.cal.end <= this.room.tick; },
+        state() { return this.cal.cancelled ? 'cancelled' : this.ended ? 'ended' : 'open'; },
+        mine() { return this.cal && this.cal.mine ? this.cal.mine.answer || null : null; },
+        remind() { return this.cal && this.cal.mine && this.cal.mine.remindMinutes != null ? Number(this.cal.mine.remindMinutes) : 0; },
+        when() { return this.helpers ? this.helpers.when(this.cal) : ''; },
+        zoneNote() { return this.helpers ? this.helpers.zoneNote(this.cal) : ''; },
+        countLine() { return this.helpers ? this.helpers.countLine(this.cal) : ''; },
+        badge() {
+            const z = moqui.l10n;
+            const at = this.cal.allDay && this.helpers ? this.helpers.wallIn(String(z.formatTimestamp(this.cal.start, 'yyyy-MM-dd', this.cal.timeZone)), '12:00', this.cal.timeZone) : this.cal.start;
+            return { month: z.formatZoned(at, { month: 'short' }), day: z.formatZoned(at, { day: 'numeric' }) };
+        },
+        placeUrl() { return 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(this.cal.place || ''); },
+        canManage() { return !this.cal.cancelled && !this.ended && this.room.isMember && (this.cal.createdByUserId === this.room.me.userId || this.room.canModerate); },
+        answers() {
+            return [{ key: 'going', label: this.room.t('Going'), icon: 'sym_o_check_circle' }, { key: 'maybe', label: this.room.t('Maybe'), icon: 'sym_o_help' },
+                { key: 'no', label: this.room.t('No'), icon: 'sym_o_cancel' }];
+        },
+        remindOptions() {
+            const list = this.helpers ? this.helpers.remindChoices(this.cal, this.room.tick) : [];
+            const options = list.map((one) => ({ value: one.minutes, label: one.label }));
+            if (this.remind && !options.some((one) => one.value === this.remind)) options.push({ value: this.remind, label: fill(t('{count} minutes before'), { count: this.remind }) });
+            return options;
+        },
+        groups() {
+            const answers = this.cal.answers || {};
+            const nameOf = (id) => (id === this.room.me.userId ? t('You') : this.room.nameOf(id));
+            return [{ key: 'going', label: t('Going') }, { key: 'maybe', label: t('Maybe') }, { key: 'no', label: t("Can't go") }]
+                .map((group) => Object.assign(group, { names: (answers[group.key] || []).map(nameOf) })).filter((group) => group.names.length);
+        }
+    },
+    methods: {
+        answer(key) {
+            const next = this.mine === key ? '' : key;
+            // a first Going gets a reminder an hour before when there is still time; Maybe none; a changed answer keeps it
+            let remind = this.mine && next && next !== 'no' ? this.remind : 0;
+            if (!this.mine && next === 'going' && this.remindOptions.some((one) => one.value === 60)) remind = 60;
+            this.send({ answer: next, remindMinutes: next && next !== 'no' && remind ? remind : '' });
+        },
+        setRemind(minutes) { this.send({ answer: this.mine, remindMinutes: minutes || '' }); },
+        addToCalendar() {
+            if (this.room.calProvider) { this.send({ answer: this.mine, remindMinutes: this.remind || '', addToCalendar: 'true' }); return; }
+            this.room.calendarInsert(this.item);
+        },
+        send(params) {
+            if (needsConnection()) return;
+            this.busy = true;
+            this.room.answerCalEvent(this.item, params).then((json) => {
+                this.busy = false;
+                if (json && json.eventUrl) this.eventUrl = json.eventUrl;
+            }, () => { this.busy = false; });
+        }
+    },
+    template: calCardTemplate
+};
+
+// The box that makes or changes an event: title, all day, start and end (in the zone chosen: the user's first), place and
+// details. A room with a disappearing timer says the card goes with it.
+const calBoxTemplate = `
+<m-dialog :model-value="true" :title="item ? t('Change the event') : t('New event')" width="520" @update:model-value="(open) => { if (!open) $emit('close'); }">
+    <m-text-line v-model="title" :name="'calTitle' + uid" :label="t('Title')" maxlength="200" required></m-text-line>
+    <m-check v-model="allDay" :name="'calAllDay' + uid" toggle true-value="Y" false-value="N" :single-label="t('All day')" class="q-mt-xs"></m-check>
+    <div class="row q-gutter-sm q-mt-xs">
+        <m-date-time v-model="start" :name="'calStart' + uid" :type="allDay === 'Y' ? 'date' : 'date-time'" :label="t('Starts')" @update:model-value="startMoved"></m-date-time>
+        <m-date-time v-model="end" :name="'calEnd' + uid" :type="allDay === 'Y' ? 'date' : 'date-time'" :label="allDay === 'Y' ? t('Last day') : t('Ends')"></m-date-time>
+    </div>
+    <q-select v-model="timeZone" dense outlined stack-label use-input hide-selected fill-input input-debounce="0" :options="zoneOptions" :label="t('Time zone')"
+            class="q-mt-sm m-chat-cal-zone-pick" @filter="filterZones"></q-select>
+    <m-text-line v-model="place" :name="'calPlace' + uid" :label="t('Place (optional)')" maxlength="300" class="q-mt-sm"></m-text-line>
+    <m-text-area v-model="description" :name="'calDetails' + uid" :label="t('Details (optional)')" rows="3" autogrow class="q-mt-xs"></m-text-area>
+    <div v-if="room.timerNote" class="text-caption m-muted q-mt-sm m-chat-cal-timer">{{room.timerNote}}</div>
+    <div v-if="problem" class="text-caption text-negative q-mt-sm">{{problem}}</div>
+    <div class="row q-gutter-sm q-mt-md">
+        <q-btn unelevated no-caps color="primary" icon="sym_o_event" class="m-chat-cal-post" :label="item ? t('Save the change') : t('Post the event')"
+                :disable="!ready" :loading="busy" @click="save"></q-btn>
+        <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
+    </div>
+</m-dialog>`;
+const chatCalBox = {
+    name: 'ChatCalBox',
+    props: { room: Object, threadRoot: Number, item: Object },
+    emits: ['close'],
+    data() {
+        const cal = this.item && this.item.event && this.item.event.calEvent;
+        const helpers = moqui.chat && moqui.chat.cal;
+        const zone = (cal && cal.timeZone) || this.room.calZone || null;
+        let start = '', end = '';
+        if (cal && helpers) {
+            const fields = helpers.boxFields(cal);
+            start = cal.allDay ? fields.startDay : fields.startDay + ' ' + fields.startTime;
+            end = cal.allDay ? fields.endDay : fields.endDay + ' ' + fields.endTime;
+        }
+        return { uid: Math.random().toString(36).slice(2, 8), title: cal ? cal.title : '', allDay: cal && cal.allDay ? 'Y' : 'N', start, end, timeZone: zone,
+            place: cal ? cal.place || '' : '', description: cal ? cal.description || '' : '', zoneFilter: '', busy: false };
+    },
+    computed: {
+        zoneOptions() {
+            const all = this.room.calZones || [];
+            const term = this.zoneFilter.toLowerCase();
+            const first = this.room.calZone ? [this.room.calZone] : [];
+            const rest = all.filter((zone) => zone !== this.room.calZone && (!term || zone.toLowerCase().includes(term)));
+            return first.filter((zone) => !term || zone.toLowerCase().includes(term)).concat(rest).slice(0, 200);
+        },
+        times() {
+            const helpers = moqui.chat && moqui.chat.cal;
+            if (!helpers || !this.start || !this.timeZone) return null;
+            const day = (text) => String(text || '').slice(0, 10);
+            const clock = (text) => String(text || '').slice(11, 16);
+            return helpers.boxTimes({ timeZone: this.timeZone, allDay: this.allDay === 'Y', startDay: day(this.start), startTime: clock(this.start),
+                endDay: day(this.end || this.start), endTime: clock(this.end) });
+        },
+        problem() {
+            if (!this.start || (this.allDay !== 'Y' && !this.end)) return '';
+            if (!this.times) return t('It ends after it starts');
+            if (this.times.end <= Date.now()) return t('It ends later than now');
+            return '';
+        },
+        ready() { return !!String(this.title || '').trim() && !!this.times && !this.problem && !this.busy; }
+    },
+    methods: {
+        filterZones(value, update) { update(() => { this.zoneFilter = String(value || ''); }); },
+        // a new start moves the end with it: an hour later, or the same day for a whole day
+        startMoved(value) {
+            if (!value) return;
+            if (this.allDay === 'Y') { if (!this.end || this.end < value) this.end = value; return; }
+            const at = new Date(String(value).replace(' ', 'T') + ':00Z').getTime();
+            if (Number.isNaN(at)) return;
+            const later = new Date(at + 3600000).toISOString();
+            if (!this.end || this.end <= value) this.end = later.slice(0, 10) + ' ' + later.slice(11, 16);
+        },
+        save() {
+            if (!this.ready || needsConnection()) return;
+            this.busy = true;
+            const params = { title: String(this.title).trim(), startDate: this.times.start, endDate: this.times.end, timeZone: this.timeZone,
+                allDay: this.allDay === 'Y' ? 'true' : 'false', place: String(this.place || '').trim(), description: String(this.description || '').trim() };
+            this.room.saveCalEvent(this.item, this.threadRoot, params).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
+        }
+    },
+    template: calBoxTemplate
+};
+
+// ---- stickers and locations (Comms-Messaging §18.3 phase 20; org.moqui.chat.ChatStickerServices, moqui.chat.stickers and
+// moqui.chat.place) ----
+// The sticker picker beside the emoji button: Recent, then each pack (the user's own first), a search by emoji or words;
+// the still thumbnails play on a long press or a hover; a tap sends it at once.
+const stickerPickerTemplate = `
+<div class="column m-chat-sticker-picker" :style="room.mobile ? 'width:100%;height:50vh' : 'width:360px;height:420px'">
+    <div class="row items-center no-wrap q-pa-xs">
+        <q-input v-model="term" dense outlined clearable class="col" :placeholder="room.t('Search stickers')" :aria-label="room.t('Search stickers')"></q-input>
+        <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="room.t('Manage')" :href="room.stickerManageUrl" @click.stop></q-btn>
+    </div>
+    <q-tabs v-if="!term && tabs.length" v-model="tab" dense inline-label outside-arrows mobile-arrows class="m-chat-sticker-tabs">
+        <q-tab v-for="one in tabs" :key="one.key" :name="one.key" :icon="one.icon" :label="one.label" no-caps></q-tab>
+    </q-tabs>
+    <div class="col scroll q-pa-xs">
+        <div v-if="!room.stickerPacks.length" class="text-caption m-muted q-pa-md">{{room.stickerPacksFailed ? room.t('Stickers could not be loaded') : room.t('No stickers yet: add your own in Settings, Stickers')}}</div>
+        <div v-else-if="!shown.length" class="text-caption m-muted q-pa-md">{{room.t('No stickers here')}}</div>
+        <div class="row" style="gap:4px">
+            <button v-for="sticker in shown" :key="sticker.chatStickerId" type="button" class="m-chat-sticker-cell rounded-borders" style="width:72px;height:72px;border:0;background:transparent;padding:2px;cursor:pointer"
+                    :title="sticker.altText || sticker.emoji || ''" :aria-label="sticker.altText || sticker.emoji || room.t('Sticker')" :data-sticker="sticker.chatStickerId"
+                    @click="$emit('pick', sticker)" @mouseenter="live = sticker.chatStickerId" @mouseleave="live = null"
+                    @touchstart.passive="pressed(sticker)" @touchend="live = null">
+                <img :src="room.stickerUrl(sticker.chatStickerId, live !== sticker.chatStickerId)" :alt="sticker.altText || sticker.emoji || ''" style="max-width:100%;max-height:100%;object-fit:contain" loading="lazy">
+            </button>
+        </div>
+    </div>
+</div>`;
+const chatStickerPicker = {
+    name: 'ChatStickerPicker',
+    props: { room: Object },
+    emits: ['pick'],
+    data: () => ({ term: '', tab: 'recent', live: null }),
+    computed: {
+        tabs() {
+            const recent = this.recentStickers.length ? [{ key: 'recent', icon: 'sym_o_history', label: '' }] : [];
+            return recent.concat(this.room.stickerPacks.map((pack) => ({ key: pack.chatStickerPackId, icon: undefined, label: pack.packName })));
+        },
+        recentStickers() {
+            const ids = moqui.chat.stickers.recent(this.room.me.userId || '');
+            const all = moqui.chat.stickers.search(this.room.stickerPacks, '');
+            return ids.map((id) => all.find((sticker) => sticker.chatStickerId === id)).filter((sticker) => sticker);
+        },
+        shown() {
+            if (this.term) return moqui.chat.stickers.search(this.room.stickerPacks, this.term);
+            if (this.tab === 'recent' && this.recentStickers.length) return this.recentStickers;
+            const pack = this.room.stickerPacks.find((one) => one.chatStickerPackId === this.tab) || this.room.stickerPacks[0];
+            return pack ? pack.stickers || [] : [];
+        }
+    },
+    methods: {
+        pressed(sticker) { clearTimeout(this.pressTimer); this.pressTimer = setTimeout(() => { this.live = sticker.chatStickerId; }, 350); }
+    },
+    mounted() { if (!this.recentStickers.length && this.room.stickerPacks.length) this.tab = this.room.stickerPacks[0].chatStickerPackId; },
+    template: stickerPickerTemplate
+};
+
+// A sticker message: its picture large, with no bubble (the room's copy; an encrypted room's from its decrypted blob)
+const stickerTemplate = `
+<div class="q-mt-xs m-chat-sticker" :data-sticker="sticker.chatStickerId || ''">
+    <img v-if="src" :src="src" :alt="sticker.altText || sticker.emoji || room.t('Sticker')" :title="sticker.altText || ''" class="cursor-pointer"
+            :style="'max-width:' + side + 'px;max-height:' + side + 'px;object-fit:contain;display:block'" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
+    <div v-else class="text-body2 m-muted">{{room.t('Sticker')}} {{sticker.emoji || ''}}</div>
+</div>`;
+const chatSticker = {
+    name: 'ChatSticker',
+    props: { item: Object, room: Object },
+    computed: {
+        sticker() { return this.item.event.sticker || {}; },
+        file() { return (this.item.attachments || [])[0] || null; },
+        src() { return this.file ? (this.file.blobUrl || (this.file.sealed ? null : this.room.fileUrl(this.file, true))) : null; },
+        side() { return this.room.mobile ? 160 : 180; }
+    },
+    template: stickerTemplate
+};
+
+// A location message: a pin, its label, address and coordinates, Open in maps (geo: in the Android app, OpenStreetMap
+// elsewhere) and Copy. No map.
+const locationCardTemplate = `
+<q-card flat bordered class="q-mt-xs q-pa-sm m-chat-location" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
+    <div class="row no-wrap items-start">
+        <q-icon name="sym_o_location_on" size="28px" color="primary" class="q-mr-sm"></q-icon>
+        <div class="col" style="min-width:0">
+            <div v-if="place.label" class="text-weight-medium m-chat-location-label" style="overflow-wrap:anywhere">{{place.label}}</div>
+            <div v-if="place.address" class="text-body2 m-chat-location-address" style="overflow-wrap:anywhere">{{place.address}}</div>
+            <div v-if="coordinates" class="text-caption m-muted m-chat-location-coordinates">{{coordinates}}</div>
+        </div>
+    </div>
+    <div class="row q-mt-xs" style="gap:4px">
+        <q-btn unelevated dense no-caps size="sm" color="primary" icon="sym_o_map" class="m-chat-location-open" :label="room.t('Open in maps')" @click.stop="room.openPlace(place)"></q-btn>
+        <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_content_copy" class="m-chat-location-copy" :label="room.t('Copy')" @click.stop="room.copyPlace(place)"></q-btn>
+    </div>
+</q-card>`;
+const chatLocationCard = {
+    name: 'ChatLocationCard',
+    props: { item: Object, room: Object },
+    computed: {
+        place() { return this.item.event.location || {}; },
+        coordinates() { return moqui.chat.place.coordinatesText(this.place); }
+    },
+    template: locationCardTemplate
+};
+
+// Share a location: this device's position (the browser's or the phone's permission) or one typed in (coordinates, a geo:
+// URI, a maps link or an address: moqui.chat.place.parse); a label; a preview of the card; Send. Nothing is looked up.
+const locationBoxTemplate = `
+<m-dialog :model-value="true" :title="t('Share a location')" width="440" @update:model-value="(open) => { if (!open) $emit('close'); }">
+    <div class="column q-gutter-y-sm">
+        <q-btn v-if="canLocate" unelevated no-caps color="primary" icon="sym_o_my_location" class="m-chat-location-here" :label="t('Use my current location')"
+                :loading="locating" @click="locate"></q-btn>
+        <div v-if="problem" class="text-caption text-negative m-chat-location-problem">{{problem}}</div>
+        <m-text-line v-model="typed" :name="'placeTyped' + uid" :label="t('Or enter it: coordinates, a maps link or an address')" @update:model-value="typedChanged"></m-text-line>
+        <m-text-line v-model="label" :name="'placeLabel' + uid" :label="t('Label (optional)')" maxlength="100"></m-text-line>
+        <div v-if="place" class="q-pa-sm rounded-borders m-tonal m-chat-location-preview">
+            <div class="text-weight-medium">{{label || place.address || t('Location')}}</div>
+            <div v-if="place.address && label" class="text-body2">{{place.address}}</div>
+            <div v-if="coordinates" class="text-caption m-muted">{{coordinates}}</div>
+            <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_map" :label="t('Check it in maps')" @click="room.openPlace(place)"></q-btn>
+        </div>
+    </div>
+    <div class="row q-gutter-sm q-mt-md">
+        <q-btn unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-location-send" :label="t('Send')" :disable="!place || busy" :loading="busy" @click="send"></q-btn>
+        <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
+    </div>
+</m-dialog>`;
+const chatLocationBox = {
+    name: 'ChatLocationBox',
+    props: { room: Object, threadRoot: Number },
+    emits: ['close'],
+    data: () => ({ uid: Math.random().toString(36).slice(2, 8), here: null, typed: '', label: '', locating: false, problem: '', busy: false }),
+    computed: {
+        canLocate() { return typeof navigator !== 'undefined' && !!navigator.geolocation && (typeof window === 'undefined' || window.isSecureContext !== false); },
+        typedPlace() { return this.typed ? moqui.chat.place.parse(this.typed) : null; },
+        place() {
+            const base = this.here && !this.typed ? this.here : this.typedPlace;
+            if (!base) return null;
+            return Object.assign({}, base, this.label ? { label: String(this.label).trim().slice(0, 100) } : {});
+        },
+        coordinates() { return moqui.chat.place.coordinatesText(this.place); }
+    },
+    methods: {
+        typedChanged() { this.problem = this.typed && !this.typedPlace ? t('That is not a place: coordinates, a geo: link, a maps link or an address') : ''; },
+        locate() {
+            this.locating = true;
+            this.problem = '';
+            navigator.geolocation.getCurrentPosition((position) => {
+                this.locating = false;
+                const coords = position.coords || {};
+                this.typed = '';
+                this.here = { latitude: Number(Number(coords.latitude).toFixed(6)), longitude: Number(Number(coords.longitude).toFixed(6)),
+                    accuracy: coords.accuracy != null ? Math.round(coords.accuracy) : null, source: 'here' };
+            }, (err) => {
+                this.locating = false;
+                this.problem = err && err.code === 1 ? t('Location is off for this app: allow it in the phone\'s or the browser\'s settings, or enter the place')
+                    : t('Your location could not be found: enter the place');
+            }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+        },
+        send() {
+            if (!this.place || needsConnection()) return;
+            this.busy = true;
+            const place = Object.assign({ source: this.here && !this.typed ? 'here' : 'typed' }, this.place);
+            this.room.sendPlace(place, this.threadRoot).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
+        }
+    },
+    template: locationBoxTemplate
+};
+
 // The composer's Card: a title, words, a picture and up to 4 buttons (a reply, a link, a call); with no title and no
 // picture it is a text with buttons. It shows the text people without RCS get (moqui.chat.richFallback) as it is written.
 const cardBoxTemplate = `
@@ -3682,17 +4065,38 @@ const composerTemplate = `
                     <q-item-section>{{room.t('Photos and videos')}}</q-item-section></q-item>
                 <q-item clickable v-close-popup data-attach="file" @click="pickFiles"><q-item-section avatar><q-icon name="sym_o_draft"></q-icon></q-item-section>
                     <q-item-section>{{room.t('File')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-attach="location" @click="room.openLocation(threadRoot || null)"><q-item-section avatar><q-icon name="sym_o_location_on"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('Location')}}</q-item-section></q-item>
             </q-list></q-menu></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
             <q-menu ref="emojiMenu" anchor="top left" self="bottom left" class="m-chat-emoji-menu">
                 <m-emoji-picker :user-id="room.me.userId || ''" :autofocus="!room.mobile" @pick="(key) => { $refs.emojiMenu.hide(); insert(key); }"></m-emoji-picker>
             </q-menu>
         </q-btn>
+        <!-- stickers (Comms-Messaging §18.3 phase 20): a menu on a desktop, a sheet on a phone -->
+        <q-btn flat round dense size="sm" icon="sym_o_sticky_note_2" class="m-chat-sticker-btn" :aria-label="room.t('Stickers')" :disable="room.offline" @click="room.loadStickers()">
+            <q-tooltip>{{room.t('Stickers')}}</q-tooltip>
+            <q-menu v-if="!room.mobile" ref="stickerMenu" anchor="top left" self="bottom left" class="m-chat-sticker-menu">
+                <chat-sticker-picker :room="room" @pick="(sticker) => { $refs.stickerMenu.hide(); room.sendSticker(sticker, threadRoot || null); }"></chat-sticker-picker>
+            </q-menu>
+            <q-popup-proxy v-else ref="stickerSheet" breakpoint="100000" position="bottom">
+                <q-card style="width:100%"><chat-sticker-picker :room="room" @pick="(sticker) => { $refs.stickerSheet.hide(); room.sendSticker(sticker, threadRoot || null); }"></chat-sticker-picker></q-card>
+            </q-popup-proxy>
+        </q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_view_agenda" class="m-chat-card-btn-open" :aria-label="room.t('Make a card')" :disable="room.offline"
                 @click="room.openCard(threadRoot || null)"><q-tooltip>{{room.t('Make a card with buttons')}}</q-tooltip></q-btn>
+        <!-- More (Comms-Messaging §18.3 phases 19 and 20): an event, a location -->
+        <q-btn flat round dense size="sm" icon="sym_o_add_circle" class="m-chat-more-btn" :aria-label="room.t('More')" :disable="room.offline">
+            <q-tooltip>{{room.t('More')}}</q-tooltip>
+            <q-menu anchor="top left" self="bottom left"><q-list style="min-width:200px" class="m-chat-more-menu">
+                <q-item v-if="!room.sealed" clickable v-close-popup data-more="event" @click="room.openCalEvent(threadRoot || null, null)">
+                    <q-item-section avatar><q-icon name="sym_o_event"></q-icon></q-item-section><q-item-section>{{room.t('Event')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-more="location" @click="room.openLocation(threadRoot || null)">
+                    <q-item-section avatar><q-icon name="sym_o_location_on"></q-icon></q-item-section><q-item-section>{{room.t('Share a location')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
         <!-- a voice note (Comms-Messaging §5.1): with no text, Send is the microphone; recording shows its time, Cancel and Send -->
@@ -3732,6 +4136,7 @@ const VOICE_MAX_MS = 10 * 60 * 1000;
 let voiceCount = 0;
 const chatComposer = {
     name: 'ChatComposer',
+    components: { 'chat-sticker-picker': chatStickerPicker },
     props: { room: Object, threadRoot: [Number, String], placeholder: String },
     data() {
         composerCount += 1;
@@ -4059,7 +4464,8 @@ const chatMessageMenu = {
 const chatMessage = {
     name: 'ChatMessage',
     props: { item: Object, room: Object, inThread: Boolean },
-    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich },
+    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich, 'chat-cal-card': chatCalCard,
+        'chat-sticker': chatSticker, 'chat-location-card': chatLocationCard },
     data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false, contextOpen: false }),
     watch: {
         actionsAvailable(value) {
@@ -4783,6 +5189,10 @@ const roomTemplate = `
 
     <!-- NewCard (Comms-Messaging §18.3 phase 13): a card or a text with buttons -->
     <chat-card-box v-if="cardBox.open" :room="self" :thread-root="cardBox.threadRoot" @close="cardBox = { open: false, threadRoot: null }"></chat-card-box>
+    <!-- NewEvent and Change the event (Comms-Messaging §18.3 phase 19) -->
+    <chat-cal-box v-if="calBox.open" :room="self" :thread-root="calBox.threadRoot" :item="calBox.item" @close="calBox = { open: false, threadRoot: null, item: null }"></chat-cal-box>
+    <!-- Share a location (Comms-Messaging §18.3 phase 20) -->
+    <chat-location-box v-if="locationBox.open" :room="self" :thread-root="locationBox.threadRoot" @close="locationBox = { open: false, threadRoot: null }"></chat-location-box>
     <!-- NewPoll: a question, 2 to 10 options, more than one choice, anonymous, and when it closes -->
     <m-dialog v-model="pollBox.open" :title="t('New poll')" width="520">
         <m-text-line v-model="pollBox.question" :name="'pollQuestion' + uid" :label="t('Question')" required></m-text-line>
@@ -4959,7 +5369,7 @@ const chatRoom = {
         rooms: { type: Array, default: () => [] }, firstMessage: String },
     emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox,
-        'chat-when': chatWhen, 'chat-scheduled': chatScheduled },
+        'chat-when': chatWhen, 'chat-scheduled': chatScheduled, 'chat-cal-box': chatCalBox, 'chat-location-box': chatLocationBox },
     data() {
         roomCount += 1;
         return {
@@ -4975,6 +5385,8 @@ const chatRoom = {
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
             cardBox: { open: false, threadRoot: null },
+            calBox: { open: false, threadRoot: null, item: null }, calZone: null, calZones: [], calProvider: false, calFieldsLoaded: false,
+            locationBox: { open: false, threadRoot: null }, stickerPacks: [], stickerPacksFailed: false, stickerPacksLoaded: false,
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0, secured: null },
@@ -5022,6 +5434,9 @@ const chatRoom = {
         // disappearing messages (Comms-Messaging §18.3 phase 16): the room's timer, and why it has none (a bridge cannot delete there)
         timerSeconds() { return (this.room && Number(this.room.messageTimerSeconds)) || 0; },
         timerLabel() { return moqui.chat.expiry.label(this.timerSeconds, t); },
+        // an event's box in a room with a timer (phase 19): its card goes with the message
+        stickerManageUrl() { return String(this.base || '').replace(/\/Chat(\/.*)?$/, '') + '/Settings/Stickers'; },
+        timerNote() { return this.timerSeconds ? fill(t('This room\'s messages disappear after {time}: the event\'s card goes too'), { time: this.timerLabel }) : ''; },
         timerShort() { return moqui.chat.expiry.short(this.timerSeconds, t); },
         timerBlocked() {
             if (!this.room) return null;
@@ -5926,7 +6341,7 @@ const chatRoom = {
             if (this.sealed) {
                 const clientRef = moqui.chat.newClientRef();
                 const html = message.body || '';
-                return moqui.chat.sealMessage(this.roomId, this.memberIds(), html, message.files || []).then((sealed) => {
+                return moqui.chat.sealMessage(this.roomId, this.memberIds(), html, message.files || [], message.extra || null).then((sealed) => {
                     moqui.chat.sealedTexts[clientRef] = plainOf(html) || t('Files');
                     const sealedParams = { encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds, replyToEventSeq: params.replyToEventSeq,
                         threadRootEventSeq: params.threadRootEventSeq, chatAttachmentIds: params.chatAttachmentIds, viewOnce: params.viewOnce || '' };
@@ -6383,7 +6798,7 @@ const chatRoom = {
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             return this.hoverKey === key || this.tapKey === key;
         },
-        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
+        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && !item.event.calEvent && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
         canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)) && this.bridgeCaps.delete; },
         externalText(person) { return fill(t('On {network}'), { network: person.networkName || t('another network') }); },
         // ---- a message's delivery to the room's bridges ----
@@ -6432,7 +6847,7 @@ const chatRoom = {
             const me = this.me.userId;
             for (let i = this.events.length - 1; i >= 0; i--) {
                 const event = this.events[i];
-                if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll) continue;
+                if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll || event.calEvent) continue;
                 if (Date.now() - Number(event.sentDate || 0) >= EDIT_WINDOW || !this.canPost) return false;
                 if (!this.queues('chat-edit') && needsConnection()) return true;
                 this.editing = { seq: Number(event.eventSeq), body: event.body || '' };
@@ -7043,6 +7458,151 @@ const chatRoom = {
                     if (json.poll) this.applyFields(item.eventSeq, { poll: json.poll });
                 }, () => {});
             });
+        },
+        // ---- events with RSVP (Comms-Messaging §18.3 phase 19) ----
+        // the box, for a new event (in the thread being written) or a change of item's; the zones and whether an app keeps
+        // calendars are read once
+        openCalEvent(threadRoot, item) {
+            if (needsConnection()) return;
+            const open = () => { this.calBox = { open: true, threadRoot: threadRoot || null, item: item || null }; };
+            if (this.calFieldsLoaded) { open(); return; }
+            this.get('calEventFields', {}).then((json) => {
+                this.calZone = json.timeZone || (Intl.DateTimeFormat().resolvedOptions().timeZone || null);
+                this.calZones = Array.isArray(json.timeZoneList) ? json.timeZoneList : [];
+                this.calProvider = json.calendarProvider === true;
+                this.calFieldsLoaded = true;
+                open();
+            }, () => { this.calFieldsLoaded = false; open(); });
+        },
+        saveCalEvent(item, threadRoot, params) {
+            if (item) {
+                return this.post('updateCalEvent', Object.assign({ chatRoomId: this.roomId, eventSeq: item.eventSeq }, params)).then((json) => {
+                    if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                    return json;
+                });
+            }
+            return this.post('createCalEvent', Object.assign({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot || '',
+                clientRef: moqui.chat && moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }, params)).then((json) => {
+                if (json.eventSeq == null) return Promise.reject(json);
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.calEvent) this.applyFields(json.eventSeq, { calEvent: json.calEvent || json.event.calEvent });
+                return json;
+            });
+        },
+        answerCalEvent(item, params) {
+            return this.post('answerCalEvent', Object.assign({ chatRoomId: this.roomId, eventSeq: item.eventSeq }, params)).then((json) => {
+                if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                if (json.reminderSkipped) moqui.notifyMessages([{ type: 'info', message: t('It starts too soon for that reminder') }]);
+                if (json.reminderFailed) moqui.notifyMessages([{ type: 'warning', message: t('Your answer is saved, but the reminder could not be set') }]);
+                if (json.calendarFailed) moqui.notifyMessages([{ type: 'warning', message: t('Your answer is saved, but your calendar could not be changed') }]);
+                return json;
+            });
+        },
+        cancelCalEvent(item) {
+            if (needsConnection()) return;
+            this.confirm(t('Cancel the event?'), t('Everyone in the room is told, and it cannot be undone.'), t('Cancel the event'), true).then(() => {
+                this.post('cancelCalEvent', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                    if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                }, () => {});
+            });
+        },
+        calIcsUrl(item) { return this.url('calEventIcs') + '?chatRoomId=' + encodeURIComponent(this.roomId) + '&eventSeq=' + encodeURIComponent(item.eventSeq); },
+        downloadCalEvent(item) {
+            const link = document.createElement('a');
+            link.href = this.calIcsUrl(item);
+            link.download = '';
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        },
+        // Add to calendar with no app's calendar: the phone's calendar app in the Android app, else the .ics file
+        calendarInsert(item) {
+            const cal = item.event.calEvent;
+            const desktop = window.moquiDesktop;
+            if (desktop && typeof desktop.calendarInsert === 'function') {
+                desktop.calendarInsert({ title: cal.title, start: cal.start, end: cal.end, allDay: !!cal.allDay, timeZone: cal.timeZone || '',
+                    place: cal.place || '', description: cal.description || '' }).then((opened) => { if (opened !== true) this.downloadCalEvent(item); },
+                    () => this.downloadCalEvent(item));
+                return;
+            }
+            this.downloadCalEvent(item);
+        },
+        jumpToEvent(seq) { if (seq != null) this.scrollToSeq(Number(seq), true); },
+        // ---- stickers and locations (Comms-Messaging §18.3 phase 20) ----
+        stickerUrl(chatStickerId, thumb) { return this.url('stickerImage') + '?chatStickerId=' + encodeURIComponent(chatStickerId) + (thumb ? '&thumb=true' : ''); },
+        loadStickers() {
+            if (this.stickerPacksLoaded) return;
+            this.get('stickerPacks', {}).then((json) => {
+                this.stickerPacks = Array.isArray(json.packList) ? json.packList : [];
+                this.stickerPacksLoaded = true;
+                this.stickerPacksFailed = false;
+            }, () => { this.stickerPacksFailed = true; });
+        },
+        // a plain room's sticker is the server's copy of its picture; an encrypted room's, its picture sealed here and sent
+        // in the ciphertext with its emoji and words
+        sendSticker(sticker, threadRoot) {
+            if (needsConnection()) return Promise.resolve(null);
+            moqui.chat.stickers.remember(this.me.userId || '', sticker.chatStickerId);
+            const replyTo = threadRoot ? null : this.replyTo;
+            const label = sticker.emoji ? t('Sticker') + ' ' + sticker.emoji : t('Sticker');
+            const content = moqui.chat.stickers.clean(sticker);
+            if (!threadRoot) this.replyTo = null;
+            if (this.sealed) {
+                return fetch(this.stickerUrl(sticker.chatStickerId, false), { credentials: 'same-origin' }).then((answer) => {
+                    if (!answer.ok) throw new Error(t('The sticker could not be read'));
+                    return answer.blob();
+                }).then((blob) => moqui.chat.sealFile(new File([blob], 'sticker', { type: blob.type || sticker.contentType || 'image/png' })).then((sealed) => {
+                    const form = new FormData();
+                    form.append('chatRoomId', this.roomId);
+                    form.append('file', sealed.blob, 'encrypted');
+                    if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
+                    return moqui.request(this.url('upload'), { method: 'POST', params: form }).then((result) => {
+                        const stored = ((result.json || {}).uploadList || [])[0];
+                        if (!stored) throw new Error(t('The sticker could not be sent'));
+                        const file = { chatAttachmentId: stored.chatAttachmentId, fileName: 'sticker', contentType: blob.type || sticker.contentType || 'image/png',
+                            fileSize: blob.size, info: sealed.info };
+                        return this.sendMessage({ body: '<p>' + moqui.chat.escapeHtml(label) + '</p>', threadRoot, attachmentIds: [stored.chatAttachmentId], files: [file],
+                            extra: { sticker: content } });
+                    });
+                })).catch((err) => { moqui.handleAjaxError(err); return null; });
+            }
+            return this.post('sendSticker', { chatRoomId: this.roomId, chatStickerId: sticker.chatStickerId, threadRootEventSeq: threadRoot || '',
+                replyToEventSeq: replyTo ? replyTo.eventSeq : '', clientRef: moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.sticker) this.applyFields(json.eventSeq, { sticker: json.event.sticker });
+                return json;
+            }, () => null);
+        },
+        openLocation(threadRoot) {
+            if (needsConnection()) return;
+            this.locationBox = { open: true, threadRoot: threadRoot || null };
+        },
+        sendPlace(place, threadRoot) {
+            const replyTo = threadRoot ? null : this.replyTo;
+            if (!threadRoot) this.replyTo = null;
+            if (this.sealed) {
+                const clean = moqui.chat.place.clean(place);
+                const html = '<p>' + moqui.chat.escapeHtml(moqui.chat.place.fallback(clean)) + '</p>';
+                return this.sendMessage({ body: html, threadRoot, extra: { location: clean } });
+            }
+            return this.post('sendLocation', { chatRoomId: this.roomId, locationJson: JSON.stringify(place), threadRootEventSeq: threadRoot || '',
+                replyToEventSeq: replyTo ? replyTo.eventSeq : '', clientRef: moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.location) this.applyFields(json.eventSeq, { location: json.event.location });
+                return json;
+            });
+        },
+        // Open in maps: the phone's maps app (geo:) in the Android app, OpenStreetMap elsewhere
+        openPlace(place) {
+            const desktop = window.moquiDesktop;
+            const phone = !!(desktop && typeof desktop.secureScreen === 'function' && typeof desktop.openExternal === 'function');
+            if (phone) { Promise.resolve(desktop.openExternal(moqui.chat.place.geoUri(place))).catch(() => window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener')); return; }
+            window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener');
+        },
+        copyPlace(place) {
+            const text = place.latitude != null ? moqui.chat.place.coordinatesText(Object.assign({}, place, { accuracy: null })) : place.address || '';
+            if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') }]), () => {});
         },
         // the sender takes the link previews off their message, for good
         removePreviews(item) {
@@ -9584,6 +10144,8 @@ module.exports = {
                   const _component_m_chat_verification = _resolveComponent("m-chat-verification")
                   const _component_m_chat_device_setup = _resolveComponent("m-chat-device-setup")
                   const _component_chat_card_box = _resolveComponent("chat-card-box")
+                  const _component_chat_cal_box = _resolveComponent("chat-cal-box")
+                  const _component_chat_location_box = _resolveComponent("chat-location-box")
                   const _component_m_check = _resolveComponent("m-check")
                   const _component_m_date_time = _resolveComponent("m-date-time")
                   const _component_chat_message_menu = _resolveComponent("chat-message-menu")
@@ -13615,6 +14177,23 @@ module.exports = {
                           onClose: $event => (_ctx.cardBox = { open: false, threadRoot: null })
                         }, null, 8, ["room", "thread-root", "onClose"]))
                       : _createCommentVNode("", true),
+                    (_ctx.calBox.open)
+                      ? (_openBlock(), _createBlock(_component_chat_cal_box, {
+                          key: 7,
+                          room: _ctx.self,
+                          "thread-root": _ctx.calBox.threadRoot,
+                          item: _ctx.calBox.item,
+                          onClose: $event => (_ctx.calBox = { open: false, threadRoot: null, item: null })
+                        }, null, 8, ["room", "thread-root", "item", "onClose"]))
+                      : _createCommentVNode("", true),
+                    (_ctx.locationBox.open)
+                      ? (_openBlock(), _createBlock(_component_chat_location_box, {
+                          key: 8,
+                          room: _ctx.self,
+                          "thread-root": _ctx.locationBox.threadRoot,
+                          onClose: $event => (_ctx.locationBox = { open: false, threadRoot: null })
+                        }, null, 8, ["room", "thread-root", "onClose"]))
+                      : _createCommentVNode("", true),
                     _createVNode(_component_m_dialog, {
                       modelValue: _ctx.pollBox.open,
                       "onUpdate:modelValue": $event => ((_ctx.pollBox.open) = $event),
@@ -13929,6 +14508,131 @@ module.exports = {
             delete target.template;
         }
         {
+            const target = component.components["chat-room"].components["chat-cal-box"];
+            target.render = (function () {
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, withCtx: _withCtx, createBlock: _createBlock } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_m_text_line = _resolveComponent("m-text-line")
+                  const _component_m_check = _resolveComponent("m-check")
+                  const _component_m_date_time = _resolveComponent("m-date-time")
+                  const _component_q_select = _resolveComponent("q-select")
+                  const _component_m_text_area = _resolveComponent("m-text-area")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_m_dialog = _resolveComponent("m-dialog")
+
+                  return (_openBlock(), _createBlock(_component_m_dialog, {
+                    "model-value": true,
+                    title: _ctx.item ? _ctx.t('Change the event') : _ctx.t('New event'),
+                    width: "520",
+                    "onUpdate:modelValue": (open) => { if (!open) _ctx.$emit('close'); }
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_m_text_line, {
+                        modelValue: _ctx.title,
+                        "onUpdate:modelValue": $event => ((_ctx.title) = $event),
+                        name: 'calTitle' + _ctx.uid,
+                        label: _ctx.t('Title'),
+                        maxlength: "200",
+                        required: ""
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                      _createVNode(_component_m_check, {
+                        modelValue: _ctx.allDay,
+                        "onUpdate:modelValue": $event => ((_ctx.allDay) = $event),
+                        name: 'calAllDay' + _ctx.uid,
+                        toggle: "",
+                        "true-value": "Y",
+                        "false-value": "N",
+                        "single-label": _ctx.t('All day'),
+                        class: "q-mt-xs"
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "single-label"]),
+                      _createElementVNode("div", { class: "row q-gutter-sm q-mt-xs" }, [
+                        _createVNode(_component_m_date_time, {
+                          modelValue: _ctx.start,
+                          "onUpdate:modelValue": [$event => ((_ctx.start) = $event), _ctx.startMoved],
+                          name: 'calStart' + _ctx.uid,
+                          type: _ctx.allDay === 'Y' ? 'date' : 'date-time',
+                          label: _ctx.t('Starts')
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "type", "label"]),
+                        _createVNode(_component_m_date_time, {
+                          modelValue: _ctx.end,
+                          "onUpdate:modelValue": $event => ((_ctx.end) = $event),
+                          name: 'calEnd' + _ctx.uid,
+                          type: _ctx.allDay === 'Y' ? 'date' : 'date-time',
+                          label: _ctx.allDay === 'Y' ? _ctx.t('Last day') : _ctx.t('Ends')
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "type", "label"])
+                      ]),
+                      _createVNode(_component_q_select, {
+                        modelValue: _ctx.timeZone,
+                        "onUpdate:modelValue": $event => ((_ctx.timeZone) = $event),
+                        dense: "",
+                        outlined: "",
+                        "stack-label": "",
+                        "use-input": "",
+                        "hide-selected": "",
+                        "fill-input": "",
+                        "input-debounce": "0",
+                        options: _ctx.zoneOptions,
+                        label: _ctx.t('Time zone'),
+                        class: "q-mt-sm m-chat-cal-zone-pick",
+                        onFilter: _ctx.filterZones
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label", "onFilter"]),
+                      _createVNode(_component_m_text_line, {
+                        modelValue: _ctx.place,
+                        "onUpdate:modelValue": $event => ((_ctx.place) = $event),
+                        name: 'calPlace' + _ctx.uid,
+                        label: _ctx.t('Place (optional)'),
+                        maxlength: "300",
+                        class: "q-mt-sm"
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                      _createVNode(_component_m_text_area, {
+                        modelValue: _ctx.description,
+                        "onUpdate:modelValue": $event => ((_ctx.description) = $event),
+                        name: 'calDetails' + _ctx.uid,
+                        label: _ctx.t('Details (optional)'),
+                        rows: "3",
+                        autogrow: "",
+                        class: "q-mt-xs"
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                      (_ctx.room.timerNote)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 0,
+                            class: "text-caption m-muted q-mt-sm m-chat-cal-timer"
+                          }, _toDisplayString(_ctx.room.timerNote), 1))
+                        : _createCommentVNode("", true),
+                      (_ctx.problem)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 1,
+                            class: "text-caption text-negative q-mt-sm"
+                          }, _toDisplayString(_ctx.problem), 1))
+                        : _createCommentVNode("", true),
+                      _createElementVNode("div", { class: "row q-gutter-sm q-mt-md" }, [
+                        _createVNode(_component_q_btn, {
+                          unelevated: "",
+                          "no-caps": "",
+                          color: "primary",
+                          icon: "sym_o_event",
+                          class: "m-chat-cal-post",
+                          label: _ctx.item ? _ctx.t('Save the change') : _ctx.t('Post the event'),
+                          disable: !_ctx.ready,
+                          loading: _ctx.busy,
+                          onClick: _ctx.save
+                        }, null, 8, ["label", "disable", "loading", "onClick"]),
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          "no-caps": "",
+                          label: _ctx.t('Cancel'),
+                          onClick: $event => (_ctx.$emit('close'))
+                        }, null, 8, ["label", "onClick"])
+                      ])
+                    ]),
+                    _: 1
+                  }, 8, ["title", "onUpdate:modelValue"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
             const target = component.components["chat-room"].components["chat-card-box"];
             target.render = (function () {
                 const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, withCtx: _withCtx } = Vue
@@ -14113,6 +14817,9 @@ module.exports = {
                   const _component_q_list = _resolveComponent("q-list")
                   const _component_q_menu = _resolveComponent("q-menu")
                   const _component_m_emoji_picker = _resolveComponent("m-emoji-picker")
+                  const _component_chat_sticker_picker = _resolveComponent("chat-sticker-picker")
+                  const _component_q_card = _resolveComponent("q-card")
+                  const _component_q_popup_proxy = _resolveComponent("q-popup-proxy")
                   const _component_q_space = _resolveComponent("q-space")
                   const _component_q_item_label = _resolveComponent("q-item-label")
                   const _component_m_file = _resolveComponent("m-file")
@@ -14349,6 +15056,29 @@ module.exports = {
                                         _: 1
                                       }, 8, ["onClick"])), [
                                         [_directive_close_popup]
+                                      ]),
+                                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                        clickable: "",
+                                        "data-attach": "location",
+                                        onClick: $event => (_ctx.room.openLocation(_ctx.threadRoot || null))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, { name: "sym_o_location_on" })
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.room.t('Location')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }, 8, ["onClick"])), [
+                                        [_directive_close_popup]
                                       ])
                                     ]),
                                     _: 1
@@ -14393,6 +15123,62 @@ module.exports = {
                         ]),
                         _: 1
                       }, 8, ["aria-label"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        round: "",
+                        dense: "",
+                        size: "sm",
+                        icon: "sym_o_sticky_note_2",
+                        class: "m-chat-sticker-btn",
+                        "aria-label": _ctx.room.t('Stickers'),
+                        disable: _ctx.room.offline,
+                        onClick: $event => (_ctx.room.loadStickers())
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.room.t('Stickers')), 1)
+                            ]),
+                            _: 1
+                          }),
+                          (!_ctx.room.mobile)
+                            ? (_openBlock(), _createBlock(_component_q_menu, {
+                                key: 0,
+                                ref: "stickerMenu",
+                                anchor: "top left",
+                                self: "bottom left",
+                                class: "m-chat-sticker-menu"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_chat_sticker_picker, {
+                                    room: _ctx.room,
+                                    onPick: (sticker) => { _ctx.$refs.stickerMenu.hide(); _ctx.room.sendSticker(sticker, _ctx.threadRoot || null); }
+                                  }, null, 8, ["room", "onPick"])
+                                ]),
+                                _: 1
+                              }, 512))
+                            : (_openBlock(), _createBlock(_component_q_popup_proxy, {
+                                key: 1,
+                                ref: "stickerSheet",
+                                breakpoint: "100000",
+                                position: "bottom"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_card, { style: {"width":"100%"} }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_chat_sticker_picker, {
+                                        room: _ctx.room,
+                                        onPick: (sticker) => { _ctx.$refs.stickerSheet.hide(); _ctx.room.sendSticker(sticker, _ctx.threadRoot || null); }
+                                      }, null, 8, ["room", "onPick"])
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              }, 512))
+                        ]),
+                        _: 1
+                      }, 8, ["aria-label", "disable", "onClick"]),
                       _createVNode(_component_q_btn, {
                         flat: "",
                         round: "",
@@ -14460,6 +15246,91 @@ module.exports = {
                             _: 1
                           }, 8, ["aria-label", "disable", "onClick"]))
                         : _createCommentVNode("", true),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        round: "",
+                        dense: "",
+                        size: "sm",
+                        icon: "sym_o_add_circle",
+                        class: "m-chat-more-btn",
+                        "aria-label": _ctx.room.t('More'),
+                        disable: _ctx.room.offline
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.room.t('More')), 1)
+                            ]),
+                            _: 1
+                          }),
+                          _createVNode(_component_q_menu, {
+                            anchor: "top left",
+                            self: "bottom left"
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_list, {
+                                style: {"min-width":"200px"},
+                                class: "m-chat-more-menu"
+                              }, {
+                                default: _withCtx(() => [
+                                  (!_ctx.room.sealed)
+                                    ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                        key: 0,
+                                        clickable: "",
+                                        "data-more": "event",
+                                        onClick: $event => (_ctx.room.openCalEvent(_ctx.threadRoot || null, null))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, { name: "sym_o_event" })
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.room.t('Event')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }, 8, ["onClick"])), [
+                                        [_directive_close_popup]
+                                      ])
+                                    : _createCommentVNode("", true),
+                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                    clickable: "",
+                                    "data-more": "location",
+                                    onClick: $event => (_ctx.room.openLocation(_ctx.threadRoot || null))
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, { name: "sym_o_location_on" })
+                                        ]),
+                                        _: 1
+                                      }),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.room.t('Share a location')), 1)
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }, 8, ["onClick"])), [
+                                    [_directive_close_popup]
+                                  ])
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["aria-label", "disable"]),
                       (!_ctx.room.compact && !_ctx.threadRoot)
                         ? (_openBlock(), _createElementBlock("span", {
                             key: 3,
@@ -14727,6 +15598,222 @@ module.exports = {
             delete target.template;
         }
         {
+            const target = component.components["chat-room"].components["chat-composer"].components["chat-sticker-picker"];
+            target.render = (function () {
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, withModifiers: _withModifiers, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, createBlock: _createBlock, withCtx: _withCtx, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, normalizeStyle: _normalizeStyle } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_input = _resolveComponent("q-input")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_tab = _resolveComponent("q-tab")
+                  const _component_q_tabs = _resolveComponent("q-tabs")
+
+                  return (_openBlock(), _createElementBlock("div", {
+                    class: "column m-chat-sticker-picker",
+                    style: _normalizeStyle(_ctx.room.mobile ? 'width:100%;height:50vh' : 'width:360px;height:420px')
+                  }, [
+                    _createElementVNode("div", { class: "row items-center no-wrap q-pa-xs" }, [
+                      _createVNode(_component_q_input, {
+                        modelValue: _ctx.term,
+                        "onUpdate:modelValue": $event => ((_ctx.term) = $event),
+                        dense: "",
+                        outlined: "",
+                        clearable: "",
+                        class: "col",
+                        placeholder: _ctx.room.t('Search stickers'),
+                        "aria-label": _ctx.room.t('Search stickers')
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "placeholder", "aria-label"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        "no-caps": "",
+                        size: "sm",
+                        color: "primary",
+                        class: "q-ml-xs",
+                        label: _ctx.room.t('Manage'),
+                        href: _ctx.room.stickerManageUrl,
+                        onClick: _withModifiers(() => {}, ["stop"])
+                      }, null, 8, ["label", "href", "onClick"])
+                    ]),
+                    (!_ctx.term && _ctx.tabs.length)
+                      ? (_openBlock(), _createBlock(_component_q_tabs, {
+                          key: 0,
+                          modelValue: _ctx.tab,
+                          "onUpdate:modelValue": $event => ((_ctx.tab) = $event),
+                          dense: "",
+                          "inline-label": "",
+                          "outside-arrows": "",
+                          "mobile-arrows": "",
+                          class: "m-chat-sticker-tabs"
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.tabs, (one) => {
+                              return (_openBlock(), _createBlock(_component_q_tab, {
+                                key: one.key,
+                                name: one.key,
+                                icon: one.icon,
+                                label: one.label,
+                                "no-caps": ""
+                              }, null, 8, ["name", "icon", "label"]))
+                            }), 128))
+                          ]),
+                          _: 1
+                        }, 8, ["modelValue", "onUpdate:modelValue"]))
+                      : _createCommentVNode("", true),
+                    _createElementVNode("div", { class: "col scroll q-pa-xs" }, [
+                      (!_ctx.room.stickerPacks.length)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 0,
+                            class: "text-caption m-muted q-pa-md"
+                          }, _toDisplayString(_ctx.room.stickerPacksFailed ? _ctx.room.t('Stickers could not be loaded') : _ctx.room.t('No stickers yet: add your own in Settings, Stickers')), 1))
+                        : (!_ctx.shown.length)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 1,
+                              class: "text-caption m-muted q-pa-md"
+                            }, _toDisplayString(_ctx.room.t('No stickers here')), 1))
+                          : _createCommentVNode("", true),
+                      _createElementVNode("div", {
+                        class: "row",
+                        style: {"gap":"4px"}
+                      }, [
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shown, (sticker) => {
+                          return (_openBlock(), _createElementBlock("button", {
+                            key: sticker.chatStickerId,
+                            type: "button",
+                            class: "m-chat-sticker-cell rounded-borders",
+                            style: {"width":"72px","height":"72px","border":"0","background":"transparent","padding":"2px","cursor":"pointer"},
+                            title: sticker.altText || sticker.emoji || '',
+                            "aria-label": sticker.altText || sticker.emoji || _ctx.room.t('Sticker'),
+                            "data-sticker": sticker.chatStickerId,
+                            onClick: $event => (_ctx.$emit('pick', sticker)),
+                            onMouseenter: $event => (_ctx.live = sticker.chatStickerId),
+                            onMouseleave: $event => (_ctx.live = null),
+                            onTouchstartPassive: $event => (_ctx.pressed(sticker)),
+                            onTouchend: $event => (_ctx.live = null)
+                          }, [
+                            _createElementVNode("img", {
+                              src: _ctx.room.stickerUrl(sticker.chatStickerId, _ctx.live !== sticker.chatStickerId),
+                              alt: sticker.altText || sticker.emoji || '',
+                              style: {"max-width":"100%","max-height":"100%","object-fit":"contain"},
+                              loading: "lazy"
+                            }, null, 8, ["src", "alt"])
+                          ], 40, ["title", "aria-label", "data-sticker", "onClick", "onMouseenter", "onMouseleave", "onTouchstartPassive", "onTouchend"]))
+                        }), 128))
+                      ])
+                    ])
+                  ], 4))
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-location-box"];
+            target.render = (function () {
+                const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, withCtx: _withCtx } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_m_text_line = _resolveComponent("m-text-line")
+                  const _component_m_dialog = _resolveComponent("m-dialog")
+
+                  return (_openBlock(), _createBlock(_component_m_dialog, {
+                    "model-value": true,
+                    title: _ctx.t('Share a location'),
+                    width: "440",
+                    "onUpdate:modelValue": (open) => { if (!open) _ctx.$emit('close'); }
+                  }, {
+                    default: _withCtx(() => [
+                      _createElementVNode("div", { class: "column q-gutter-y-sm" }, [
+                        (_ctx.canLocate)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 0,
+                              unelevated: "",
+                              "no-caps": "",
+                              color: "primary",
+                              icon: "sym_o_my_location",
+                              class: "m-chat-location-here",
+                              label: _ctx.t('Use my current location'),
+                              loading: _ctx.locating,
+                              onClick: _ctx.locate
+                            }, null, 8, ["label", "loading", "onClick"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.problem)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 1,
+                              class: "text-caption text-negative m-chat-location-problem"
+                            }, _toDisplayString(_ctx.problem), 1))
+                          : _createCommentVNode("", true),
+                        _createVNode(_component_m_text_line, {
+                          modelValue: _ctx.typed,
+                          "onUpdate:modelValue": [$event => ((_ctx.typed) = $event), _ctx.typedChanged],
+                          name: 'placeTyped' + _ctx.uid,
+                          label: _ctx.t('Or enter it: coordinates, a maps link or an address')
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                        _createVNode(_component_m_text_line, {
+                          modelValue: _ctx.label,
+                          "onUpdate:modelValue": $event => ((_ctx.label) = $event),
+                          name: 'placeLabel' + _ctx.uid,
+                          label: _ctx.t('Label (optional)'),
+                          maxlength: "100"
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                        (_ctx.place)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 2,
+                              class: "q-pa-sm rounded-borders m-tonal m-chat-location-preview"
+                            }, [
+                              _createElementVNode("div", { class: "text-weight-medium" }, _toDisplayString(_ctx.label || _ctx.place.address || _ctx.t('Location')), 1),
+                              (_ctx.place.address && _ctx.label)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 0,
+                                    class: "text-body2"
+                                  }, _toDisplayString(_ctx.place.address), 1))
+                                : _createCommentVNode("", true),
+                              (_ctx.coordinates)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 1,
+                                    class: "text-caption m-muted"
+                                  }, _toDisplayString(_ctx.coordinates), 1))
+                                : _createCommentVNode("", true),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                size: "sm",
+                                color: "primary",
+                                icon: "sym_o_map",
+                                label: _ctx.t('Check it in maps'),
+                                onClick: $event => (_ctx.room.openPlace(_ctx.place))
+                              }, null, 8, ["label", "onClick"])
+                            ]))
+                          : _createCommentVNode("", true)
+                      ]),
+                      _createElementVNode("div", { class: "row q-gutter-sm q-mt-md" }, [
+                        _createVNode(_component_q_btn, {
+                          unelevated: "",
+                          "no-caps": "",
+                          color: "primary",
+                          icon: "sym_o_send",
+                          class: "m-chat-location-send",
+                          label: _ctx.t('Send'),
+                          disable: !_ctx.place || _ctx.busy,
+                          loading: _ctx.busy,
+                          onClick: _ctx.send
+                        }, null, 8, ["label", "disable", "loading", "onClick"]),
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          "no-caps": "",
+                          label: _ctx.t('Cancel'),
+                          onClick: $event => (_ctx.$emit('close'))
+                        }, null, 8, ["label", "onClick"])
+                      ])
+                    ]),
+                    _: 1
+                  }, 8, ["title", "onUpdate:modelValue"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
             const target = component.components["chat-room"].components["chat-message"];
             target.render = (function () {
                 const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, renderList: _renderList, Fragment: _Fragment, withKeys: _withKeys, normalizeStyle: _normalizeStyle } = Vue
@@ -14739,6 +15826,9 @@ module.exports = {
                   const _component_q_btn = _resolveComponent("q-btn")
                   const _component_chat_edit = _resolveComponent("chat-edit")
                   const _component_chat_rich = _resolveComponent("chat-rich")
+                  const _component_chat_cal_card = _resolveComponent("chat-cal-card")
+                  const _component_chat_sticker = _resolveComponent("chat-sticker")
+                  const _component_chat_location_card = _resolveComponent("chat-location-card")
                   const _component_q_item_section = _resolveComponent("q-item-section")
                   const _component_q_item_label = _resolveComponent("q-item-label")
                   const _component_q_linear_progress = _resolveComponent("q-linear-progress")
@@ -14959,7 +16049,7 @@ module.exports = {
                                       item: _ctx.item,
                                       room: _ctx.room
                                     }, null, 8, ["item", "room"]))
-                                  : (_ctx.item.bodyHtml && !_ctx.item.poll)
+                                  : (_ctx.item.bodyHtml && !_ctx.item.poll && !_ctx.item.event.calEvent && !_ctx.item.event.sticker && !_ctx.item.event.location)
                                     ? (_openBlock(), _createElementBlock("div", {
                                         key: 2,
                                         class: "m-rich-text-content text-body2",
@@ -15029,9 +16119,51 @@ module.exports = {
                                     ])
                                   ]))
                                 : _createCommentVNode("", true),
+                              (_ctx.item.event.calEvent)
+                                ? (_openBlock(), _createBlock(_component_chat_cal_card, {
+                                    key: 6,
+                                    item: _ctx.item,
+                                    room: _ctx.room
+                                  }, null, 8, ["item", "room"]))
+                                : _createCommentVNode("", true),
+                              (_ctx.item.event.sticker)
+                                ? (_openBlock(), _createBlock(_component_chat_sticker, {
+                                    key: 7,
+                                    item: _ctx.item,
+                                    room: _ctx.room
+                                  }, null, 8, ["item", "room"]))
+                                : _createCommentVNode("", true),
+                              (_ctx.item.event.location)
+                                ? (_openBlock(), _createBlock(_component_chat_location_card, {
+                                    key: 8,
+                                    item: _ctx.item,
+                                    room: _ctx.room
+                                  }, null, 8, ["item", "room"]))
+                                : _createCommentVNode("", true),
+                              (_ctx.item.event.calChange)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 9,
+                                    class: "row items-center no-wrap q-mt-xs m-chat-cal-changed"
+                                  }, [
+                                    _createVNode(_component_q_chip, {
+                                      dense: "",
+                                      clickable: "",
+                                      outline: "",
+                                      color: "primary",
+                                      icon: _ctx.item.event.calChange.cancelled ? 'sym_o_event_busy' : 'sym_o_edit_calendar',
+                                      class: "q-ma-none",
+                                      onClick: _withModifiers($event => (_ctx.room.jumpToEvent(_ctx.item.event.calChange.eventSeq)), ["stop"])
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.item.event.calChange.cancelled ? _ctx.room.t('Event cancelled') : _ctx.room.t('Event changed')), 1)
+                                      ]),
+                                      _: 1
+                                    }, 8, ["icon", "onClick"])
+                                  ]))
+                                : _createCommentVNode("", true),
                               (_ctx.item.poll)
                                 ? (_openBlock(), _createBlock(_component_q_card, {
-                                    key: 6,
+                                    key: 10,
                                     flat: "",
                                     bordered: "",
                                     class: "q-mt-xs q-pa-sm m-chat-poll",
@@ -15138,7 +16270,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.viewOnce)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 7,
+                                    key: 11,
                                     class: "row items-center no-wrap q-mt-xs q-pa-sm rounded-borders m-tonal m-chat-view-once",
                                     "data-view-once": _ctx.room.viewOnceState(_ctx.item),
                                     style: {"max-width":"280px"}
@@ -15164,9 +16296,9 @@ module.exports = {
                                       : _createCommentVNode("", true)
                                   ], 8, ["data-view-once"]))
                                 : _createCommentVNode("", true),
-                              (_ctx.item.attachments.length && !_ctx.item.event.rich)
+                              (_ctx.item.attachments.length && !_ctx.item.event.rich && !_ctx.item.event.sticker)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 8,
+                                    key: 12,
                                     class: "row q-gutter-xs q-mt-none"
                                   }, [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.item.attachments, (file) => {
@@ -15240,7 +16372,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.linkPreviews.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 9,
+                                    key: 13,
                                     class: "q-mt-xs",
                                     style: {"max-width":"440px"}
                                   }, [
@@ -15311,7 +16443,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.records.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 10,
+                                    key: 14,
                                     class: "q-mt-xs",
                                     style: {"max-width":"440px"}
                                   }, [
@@ -15329,7 +16461,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.reactions.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 11,
+                                    key: 15,
                                     class: "row items-center q-mt-xs"
                                   }, [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.item.reactions, (reaction) => {
@@ -15371,7 +16503,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (!_ctx.inThread && _ctx.item.threadReplyCount)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 12,
+                                    key: 16,
                                     class: "q-mt-xs"
                                   }, [
                                     _createElementVNode("a", {
@@ -15384,7 +16516,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.mine && _ctx.room.leftOutBySeq[_ctx.item.eventSeq])
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 13,
+                                    key: 17,
                                     class: "row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out"
                                   }, [
                                     _createVNode(_component_q_icon, {
@@ -15407,7 +16539,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.event.delivery)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 14,
+                                    key: 18,
                                     class: _normalizeClass(["row items-center no-wrap q-mt-xs text-caption m-chat-delivery", _ctx.room.deliveryClass(_ctx.item)]),
                                     "data-delivery": _ctx.item.event.delivery.state
                                   }, [
@@ -15708,6 +16840,419 @@ module.exports = {
             delete target.template;
         }
         {
+            const target = component.components["chat-room"].components["chat-message"].components["chat-cal-card"];
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, normalizeClass: _normalizeClass, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, withModifiers: _withModifiers, withCtx: _withCtx, createTextVNode: _createTextVNode, resolveDirective: _resolveDirective, createBlock: _createBlock, withDirectives: _withDirectives, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+                  const _component_q_menu = _resolveComponent("q-menu")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_select = _resolveComponent("q-select")
+                  const _component_q_space = _resolveComponent("q-space")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_q_card = _resolveComponent("q-card")
+                  const _component_q_dialog = _resolveComponent("q-dialog")
+                  const _directive_close_popup = _resolveDirective("close-popup")
+
+                  return (_ctx.cal)
+                    ? (_openBlock(), _createBlock(_component_q_card, {
+                        key: 0,
+                        flat: "",
+                        bordered: "",
+                        class: "q-mt-xs m-chat-cal",
+                        "data-cal-state": _ctx.state,
+                        style: _normalizeStyle(_ctx.room.mobile ? 'max-width:85vw' : 'max-width:400px')
+                      }, {
+                        default: _withCtx(() => [
+                          _createElementVNode("div", { class: "row no-wrap items-start q-pa-sm" }, [
+                            _createElementVNode("div", {
+                              class: "column items-center justify-center rounded-borders m-tonal q-mr-sm",
+                              style: {"min-width":"48px","height":"52px"}
+                            }, [
+                              _createElementVNode("div", {
+                                class: "text-caption text-uppercase text-primary",
+                                style: {"line-height":"1.2"}
+                              }, _toDisplayString(_ctx.badge.month), 1),
+                              _createElementVNode("div", {
+                                class: "text-h6",
+                                style: {"line-height":"1"}
+                              }, _toDisplayString(_ctx.badge.day), 1)
+                            ]),
+                            _createElementVNode("div", {
+                              class: "col",
+                              style: {"min-width":"0"}
+                            }, [
+                              _createElementVNode("div", {
+                                class: _normalizeClass(["text-weight-medium m-chat-cal-title", { 'text-strike': _ctx.cal.cancelled }]),
+                                style: {"overflow-wrap":"anywhere"}
+                              }, _toDisplayString(_ctx.cal.title), 3),
+                              _createElementVNode("div", { class: "text-body2 m-chat-cal-when" }, _toDisplayString(_ctx.when), 1),
+                              (_ctx.zoneNote)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 0,
+                                    class: "text-caption m-muted m-chat-cal-zone"
+                                  }, _toDisplayString(_ctx.zoneNote), 1))
+                                : _createCommentVNode("", true),
+                              (_ctx.cal.place)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 1,
+                                    class: "row no-wrap items-center text-body2 m-chat-cal-place"
+                                  }, [
+                                    _createVNode(_component_q_icon, {
+                                      name: "sym_o_location_on",
+                                      size: "16px",
+                                      class: "q-mr-xs"
+                                    }),
+                                    _createElementVNode("a", {
+                                      href: _ctx.placeUrl,
+                                      target: "_blank",
+                                      rel: "noopener noreferrer",
+                                      class: "ellipsis",
+                                      title: _ctx.room.t('Find it on the map'),
+                                      onClick: _withModifiers(() => {}, ["stop"])
+                                    }, _toDisplayString(_ctx.cal.place), 9, ["href", "title", "onClick"])
+                                  ]))
+                                : _createCommentVNode("", true)
+                            ]),
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              round: "",
+                              dense: "",
+                              size: "sm",
+                              icon: "sym_o_more_vert",
+                              class: "m-chat-cal-menu",
+                              "aria-label": _ctx.room.t('Event actions'),
+                              onClick: _withModifiers(() => {}, ["stop"])
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_menu, null, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_list, { style: {"min-width":"200px"} }, {
+                                      default: _withCtx(() => [
+                                        (_ctx.canManage)
+                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                              key: 0,
+                                              clickable: "",
+                                              class: "m-chat-cal-change",
+                                              onClick: $event => (_ctx.room.openCalEvent(_ctx.item.threadRootEventSeq || null, _ctx.item))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "sym_o_edit_calendar" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.room.t('Change')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"])), [
+                                              [_directive_close_popup]
+                                            ])
+                                          : _createCommentVNode("", true),
+                                        (_ctx.canManage)
+                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                              key: 1,
+                                              clickable: "",
+                                              class: "m-chat-cal-cancel",
+                                              onClick: $event => (_ctx.room.cancelCalEvent(_ctx.item))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, {
+                                                      name: "sym_o_event_busy",
+                                                      color: "negative"
+                                                    })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.room.t('Cancel the event')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"])), [
+                                              [_directive_close_popup]
+                                            ])
+                                          : _createCommentVNode("", true),
+                                        _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                          clickable: "",
+                                          class: "m-chat-cal-ics",
+                                          onClick: $event => (_ctx.room.downloadCalEvent(_ctx.item))
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, { avatar: "" }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_icon, { name: "sym_o_download" })
+                                              ]),
+                                              _: 1
+                                            }),
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.room.t('Download .ics')), 1)
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }, 8, ["onClick"])), [
+                                          [_directive_close_popup]
+                                        ])
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 1
+                                })
+                              ]),
+                              _: 1
+                            }, 8, ["aria-label", "onClick"])
+                          ]),
+                          (_ctx.cal.description)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: _normalizeClass(["q-px-sm text-body2 cursor-pointer m-chat-cal-details", { 'ellipsis-3-lines': !_ctx.more }]),
+                                style: {"white-space":"pre-wrap","overflow-wrap":"anywhere"},
+                                onClick: _withModifiers($event => (_ctx.more = !_ctx.more), ["stop"])
+                              }, _toDisplayString(_ctx.cal.description), 11, ["onClick"]))
+                            : _createCommentVNode("", true),
+                          (_ctx.cal.cancelled)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 1,
+                                class: "q-px-sm q-pt-sm text-negative text-weight-medium m-chat-cal-cancelled"
+                              }, _toDisplayString(_ctx.room.t('Cancelled')), 1))
+                            : (_ctx.ended)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 2,
+                                  class: "q-px-sm q-pt-sm m-muted text-weight-medium"
+                                }, _toDisplayString(_ctx.room.t('Ended')), 1))
+                              : (_openBlock(), _createElementBlock(_Fragment, { key: 3 }, [
+                                  _createElementVNode("div", {
+                                    class: "row no-wrap q-px-sm q-pt-sm",
+                                    style: {"gap":"4px"}
+                                  }, [
+                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.answers, (one) => {
+                                      return (_openBlock(), _createBlock(_component_q_btn, {
+                                        key: one.key,
+                                        dense: "",
+                                        "no-caps": "",
+                                        size: "sm",
+                                        color: "primary",
+                                        outline: _ctx.mine !== one.key,
+                                        unelevated: _ctx.mine === one.key,
+                                        icon: one.icon,
+                                        label: one.label,
+                                        disable: !_ctx.room.canPost || _ctx.busy,
+                                        class: "m-chat-cal-answer",
+                                        "data-answer": one.key,
+                                        onClick: _withModifiers($event => (_ctx.answer(one.key)), ["stop"])
+                                      }, null, 8, ["outline", "unelevated", "icon", "label", "disable", "data-answer", "onClick"]))
+                                    }), 128))
+                                  ]),
+                                  (_ctx.mine === 'going' || _ctx.mine === 'maybe')
+                                    ? (_openBlock(), _createElementBlock("div", {
+                                        key: 0,
+                                        class: "row items-center no-wrap q-px-sm q-pt-xs",
+                                        style: {"gap":"4px"}
+                                      }, [
+                                        _createVNode(_component_q_icon, {
+                                          name: "sym_o_alarm",
+                                          size: "16px",
+                                          class: "m-muted"
+                                        }),
+                                        _createVNode(_component_q_select, {
+                                          dense: "",
+                                          borderless: "",
+                                          "options-dense": "",
+                                          "emit-value": "",
+                                          "map-options": "",
+                                          "model-value": _ctx.remind,
+                                          options: _ctx.remindOptions,
+                                          class: "m-chat-cal-remind",
+                                          style: {"min-width":"140px"},
+                                          "aria-label": _ctx.room.t('Remind me'),
+                                          "onUpdate:modelValue": _ctx.setRemind
+                                        }, null, 8, ["model-value", "options", "aria-label", "onUpdate:modelValue"]),
+                                        _createVNode(_component_q_space),
+                                        (_ctx.eventUrl)
+                                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: 0,
+                                              flat: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              size: "sm",
+                                              color: "primary",
+                                              icon: "sym_o_open_in_new",
+                                              label: _ctx.room.t('Open in calendar'),
+                                              href: _ctx.eventUrl,
+                                              target: "_blank",
+                                              onClick: _withModifiers(() => {}, ["stop"])
+                                            }, null, 8, ["label", "href", "onClick"]))
+                                          : (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: 1,
+                                              flat: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              size: "sm",
+                                              color: "primary",
+                                              icon: "sym_o_calendar_add_on",
+                                              class: "m-chat-cal-add",
+                                              label: _ctx.room.t('Add to calendar'),
+                                              loading: _ctx.busy,
+                                              onClick: _withModifiers(_ctx.addToCalendar, ["stop"])
+                                            }, null, 8, ["label", "loading", "onClick"]))
+                                      ]))
+                                    : _createCommentVNode("", true)
+                                ], 64)),
+                          _createElementVNode("div", {
+                            class: "row items-center q-pa-sm text-caption m-muted cursor-pointer m-chat-cal-counts",
+                            onClick: _withModifiers($event => (_ctx.who = true), ["stop"])
+                          }, [
+                            _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.countLine), 1),
+                            (!_ctx.room.mobile)
+                              ? (_openBlock(), _createBlock(_component_q_menu, {
+                                  key: 0,
+                                  modelValue: _ctx.who,
+                                  "onUpdate:modelValue": $event => ((_ctx.who) = $event)
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_list, {
+                                      dense: "",
+                                      style: {"min-width":"220px"},
+                                      class: "m-chat-cal-who"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.groups, (group) => {
+                                          return (_openBlock(), _createElementBlock(_Fragment, {
+                                            key: group.key
+                                          }, [
+                                            _createVNode(_component_q_item_label, { header: "" }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(group.label), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(group.names, (name) => {
+                                              return (_openBlock(), _createBlock(_component_q_item, { key: name }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(name), 1)
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024)
+                                                ]),
+                                                _: 2
+                                              }, 1024))
+                                            }), 128))
+                                          ], 64))
+                                        }), 128)),
+                                        (!_ctx.groups.length)
+                                          ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.room.t('No answers yet')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }))
+                                          : _createCommentVNode("", true)
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 1
+                                }, 8, ["modelValue", "onUpdate:modelValue"]))
+                              : _createCommentVNode("", true)
+                          ], 8, ["onClick"]),
+                          (_ctx.room.mobile)
+                            ? (_openBlock(), _createBlock(_component_q_dialog, {
+                                key: 4,
+                                modelValue: _ctx.who,
+                                "onUpdate:modelValue": $event => ((_ctx.who) = $event),
+                                position: "bottom"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_card, {
+                                    class: "m-chat-sheet m-chat-cal-who",
+                                    style: {"width":"100%","max-width":"560px","border-radius":"16px 16px 0 0"}
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_list, { dense: "" }, {
+                                        default: _withCtx(() => [
+                                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.groups, (group) => {
+                                            return (_openBlock(), _createElementBlock(_Fragment, {
+                                              key: group.key
+                                            }, [
+                                              _createVNode(_component_q_item_label, { header: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(group.label), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024),
+                                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(group.names, (name) => {
+                                                return (_openBlock(), _createBlock(_component_q_item, { key: name }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_item_section, null, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(name), 1)
+                                                      ]),
+                                                      _: 2
+                                                    }, 1024)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024))
+                                              }), 128))
+                                            ], 64))
+                                          }), 128)),
+                                          (!_ctx.groups.length)
+                                            ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                                    default: _withCtx(() => [
+                                                      _createTextVNode(_toDisplayString(_ctx.room.t('No answers yet')), 1)
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              }, 8, ["modelValue", "onUpdate:modelValue"]))
+                            : _createCommentVNode("", true)
+                        ]),
+                        _: 1
+                      }, 8, ["data-cal-state", "style"]))
+                    : _createCommentVNode("", true)
+                }
+            })();
+            delete target.template;
+        }
+        {
             const target = component.components["chat-room"].components["chat-message"].components["chat-edit"];
             target.render = (function () {
                 const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, withModifiers: _withModifiers, withKeys: _withKeys, openBlock: _openBlock, createElementBlock: _createElementBlock } = Vue
@@ -15756,6 +17301,90 @@ module.exports = {
                       _createElementVNode("span", { class: "text-caption m-muted" }, _toDisplayString(_ctx.room.t('Esc to cancel')), 1)
                     ])
                   ], 40, ["onKeydown"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-message"].components["chat-location-card"];
+            target.render = (function () {
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, withModifiers: _withModifiers, normalizeStyle: _normalizeStyle, withCtx: _withCtx, createBlock: _createBlock } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_card = _resolveComponent("q-card")
+
+                  return (_openBlock(), _createBlock(_component_q_card, {
+                    flat: "",
+                    bordered: "",
+                    class: "q-mt-xs q-pa-sm m-chat-location",
+                    style: _normalizeStyle(_ctx.room.mobile ? 'max-width:85vw' : 'max-width:360px')
+                  }, {
+                    default: _withCtx(() => [
+                      _createElementVNode("div", { class: "row no-wrap items-start" }, [
+                        _createVNode(_component_q_icon, {
+                          name: "sym_o_location_on",
+                          size: "28px",
+                          color: "primary",
+                          class: "q-mr-sm"
+                        }),
+                        _createElementVNode("div", {
+                          class: "col",
+                          style: {"min-width":"0"}
+                        }, [
+                          (_ctx.place.label)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "text-weight-medium m-chat-location-label",
+                                style: {"overflow-wrap":"anywhere"}
+                              }, _toDisplayString(_ctx.place.label), 1))
+                            : _createCommentVNode("", true),
+                          (_ctx.place.address)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 1,
+                                class: "text-body2 m-chat-location-address",
+                                style: {"overflow-wrap":"anywhere"}
+                              }, _toDisplayString(_ctx.place.address), 1))
+                            : _createCommentVNode("", true),
+                          (_ctx.coordinates)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 2,
+                                class: "text-caption m-muted m-chat-location-coordinates"
+                              }, _toDisplayString(_ctx.coordinates), 1))
+                            : _createCommentVNode("", true)
+                        ])
+                      ]),
+                      _createElementVNode("div", {
+                        class: "row q-mt-xs",
+                        style: {"gap":"4px"}
+                      }, [
+                        _createVNode(_component_q_btn, {
+                          unelevated: "",
+                          dense: "",
+                          "no-caps": "",
+                          size: "sm",
+                          color: "primary",
+                          icon: "sym_o_map",
+                          class: "m-chat-location-open",
+                          label: _ctx.room.t('Open in maps'),
+                          onClick: _withModifiers($event => (_ctx.room.openPlace(_ctx.place)), ["stop"])
+                        }, null, 8, ["label", "onClick"]),
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          dense: "",
+                          "no-caps": "",
+                          size: "sm",
+                          color: "primary",
+                          icon: "sym_o_content_copy",
+                          class: "m-chat-location-copy",
+                          label: _ctx.room.t('Copy'),
+                          onClick: _withModifiers($event => (_ctx.room.copyPlace(_ctx.place)), ["stop"])
+                        }, null, 8, ["label", "onClick"])
+                      ])
+                    ]),
+                    _: 1
+                  }, 8, ["style"]))
                 }
             })();
             delete target.template;
@@ -15990,6 +17619,36 @@ module.exports = {
                             ], 6))
                       ], 8, ["data-rich"]))
                     : _createCommentVNode("", true)
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-message"].components["chat-sticker"];
+            target.render = (function () {
+                const { withModifiers: _withModifiers, normalizeStyle: _normalizeStyle, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString } = Vue
+
+                return function render(_ctx, _cache) {
+                  return (_openBlock(), _createElementBlock("div", {
+                    class: "q-mt-xs m-chat-sticker",
+                    "data-sticker": _ctx.sticker.chatStickerId || ''
+                  }, [
+                    (_ctx.src)
+                      ? (_openBlock(), _createElementBlock("img", {
+                          key: 0,
+                          src: _ctx.src,
+                          alt: _ctx.sticker.altText || _ctx.sticker.emoji || _ctx.room.t('Sticker'),
+                          title: _ctx.sticker.altText || '',
+                          class: "cursor-pointer",
+                          style: _normalizeStyle('max-width:' + _ctx.side + 'px;max-height:' + _ctx.side + 'px;object-fit:contain;display:block'),
+                          onLoad: $event => (_ctx.room.imageLoaded()),
+                          onClick: _withModifiers($event => (_ctx.room.preview(_ctx.file, _ctx.item.attachments)), ["stop"])
+                        }, null, 44, ["src", "alt", "title", "onLoad", "onClick"]))
+                      : (_openBlock(), _createElementBlock("div", {
+                          key: 1,
+                          class: "text-body2 m-muted"
+                        }, _toDisplayString(_ctx.room.t('Sticker')) + " " + _toDisplayString(_ctx.sticker.emoji || ''), 1))
+                  ], 8, ["data-sticker"]))
                 }
             })();
             delete target.template;

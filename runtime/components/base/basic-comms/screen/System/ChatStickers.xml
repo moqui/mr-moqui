@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat Stickers: the server's sticker packs (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices),
+    which Chat's sticker picker offers every user, kept by a holder of the ChatStickerAdmin permission (ADMIN has it):
+    New pack, Add a sticker, Remove, Hide (kept, not offered) and Delete (template/StickerPacks.xml, as Settings, Stickers
+    keeps a user's own). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Chat Stickers" default-menu-index="23" menu-image="sym_o_sticky_note_2" menu-image-type="icon">
+    <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="createStickerPack" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="updateStickerPack" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="deleteStickerPack" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="addSticker" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="removeSticker" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <actions><set field="server" from="true"/></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm"><label type="h6" text="Chat stickers" style="q-my-none"/></container>
+        <label type="p" style="m-muted" text="The server's sticker packs, offered to every chat user beside their own."/>
+        <include-screen location="component://basic-comms/template/StickerPacks.xml"/>
+    </widgets>
+</screen>

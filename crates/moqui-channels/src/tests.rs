@@ -2368,6 +2368,7 @@ fn a_member_mappings_room_id_reads_as_its_pair_and_its_text_names_its_sender() {
         target_remote_id: None,
         reaction_key: None,
         rich: None,
+        location: None,
         attempt: 1,
     };
     let shaped = member_request(&request, 1600, 10, 5_000_000);

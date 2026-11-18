@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Location messages (plans/Comms-Messaging.md §18.3 phase 20): a message with content.location (coordinates, an address
+    or both, a label) whose body is its words and an OpenStreetMap link, so every client, bridge and text shows it. No map,
+    no geocoding, no outside request. The logic is ChatLocation.js beside this file. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="send" noun="Location">
+        <description>A location from the current user in a plain room (a member, not archived): location {latitude, longitude
+            (both, in range; rounded to 6 places), label (up to 100), address (up to 300), accuracy (metres), source (here
+            or typed)}, the coordinates or an address or both. send#Message with its words ("Location: label, address" and
+            the map link) as the body, then content.location and the update pushed. replyToEventSeq, threadRootEventSeq,
+            clientRef and roomUrl as send#Message. Refused: an encrypted room (encryptedRoom: the browser sends the place
+            in the ciphertext there), a place that is not one (badLocation). Out: eventSeq, event (with location),
+            duplicate, reasonCode.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="location" type="Map" required="true"/>
+            <parameter name="replyToEventSeq" type="Integer"/>
+            <parameter name="threadRootEventSeq" type="Integer"/>
+            <parameter name="clientRef"/>
+            <parameter name="roomUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="event" type="Map"/>
+            <parameter name="duplicate" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('send', context))</script></actions>
+    </service>
+
+    <service verb="words" noun="Location" allow-remote="false">
+        <description>Internal: the words of a place as a location message has them (for an inbound RCS location, Sms.js),
+            and the place checked. Out: text, location; or reasonCode badLocation and an error.</description>
+        <in-parameters><parameter name="location" type="Map" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="text"/>
+            <parameter name="location" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('words', context))</script></actions>
+    </service>
+
+    <service verb="mark" noun="Location" allow-remote="false">
+        <description>Internal: a received message (an inbound RCS location, Sms.js) is a location: content.location (source
+            network) set and pushed as an update. A place that is not one is logged and left out; the text stays. Out:
+            marked.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="location" type="Map" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="marked" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('mark', context))</script></actions>
+    </service>
+</services>

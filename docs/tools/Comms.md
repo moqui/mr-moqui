@@ -357,6 +357,24 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   Take out are a moderator's. Edits, reactions, deletes and polls stay in the room (the delete confirm says text members
   already got the message), photos go as MMS, and other files as a line. A room with text members cannot get
   disappearing messages, and an encrypted room cannot have text members.
+- **Stickers** (plans/Comms-Messaging.md §18.3 phase 20; `org.moqui.chat.ChatStickerServices`). The sticker button
+  beside the emoji button opens the picker: Recent, then each pack (yours first), and a search by emoji or words; a
+  tap sends the sticker, which shows large with no bubble. Your own packs are in Settings, Stickers (a pack, its
+  pictures with an emoji and a description each, Hide and Delete); the server's packs, offered to everyone, are in
+  System, Chat Stickers for a holder of `ChatStickerAdmin` (ADMIN has it). A sticker is a PNG, WebP or GIF picture,
+  animated ones too, of at most 512 KB (`chat_sticker_max_bytes`), checked by decoding it. A sent sticker is a copy in
+  its room, so deleting a pack removes no sticker already sent, and a pack of yours is seen by no one else; in an
+  encrypted room your device seals the picture as it seals any file (its size may still tell the server which known
+  sticker it is). Texts and other networks get the picture (MMS), or "Sticker 👍" where no picture can go. GIF search
+  waits for a provider.
+- **Locations** (phase 20; `org.moqui.chat.ChatLocationServices`). The More menu's (+) Share a location, and Location
+  in a phone's attach menu: Use my current location (the browser's or the phone's location permission, asked at first
+  use; the position is read only then), or enter it: coordinates, degrees and minutes, a `geo:` link, a pasted
+  OpenStreetMap, Google Maps or Apple Maps link (its coordinates read from the link, nothing fetched), or an address.
+  There is no map and no geocoding. The message is a card with the label, the address and the coordinates, Open in maps
+  (the phone's maps app in the Android app, OpenStreetMap elsewhere) and Copy. Everyone else gets "Location: …" and an
+  OpenStreetMap link; Sinch RCS its location message. A location someone shares with you over RCS shows the same way.
+  In an encrypted room the place is only in the ciphertext. Live location waits for the Maps app.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its

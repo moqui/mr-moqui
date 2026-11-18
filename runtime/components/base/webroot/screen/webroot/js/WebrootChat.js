@@ -913,12 +913,15 @@
         },
         // The send parameters of an encrypted room's message (or edit): {encryptedJson, mentionUserIds}. files are the
         // composer's uploads [{chatAttachmentId, fileName, contentType, fileSize, info}], their keys going in the ciphertext.
-        sealMessage(roomId, memberIds, html, files) {
+        sealMessage(roomId, memberIds, html, files, extra) {
             const text = chat.plainText(html);
             const list = (files || []).filter((file) => file && file.chatAttachmentId).map((file) => ({ chatAttachmentId: file.chatAttachmentId,
                 name: file.fileName || null, type: file.contentType || null, size: file.fileSize || null, file: file.info || null }));
             const content = { msgtype: !text && list.length ? "m.file" : "m.text", body: text, format: "org.matrix.custom.html", formatted_body: html || "" };
             if (list.length) content["io.moqui.files"] = list;
+            // a sticker or a place (plans/Comms-Messaging.md phase 20), only in the ciphertext
+            if (extra && extra.sticker) content["io.moqui.sticker"] = extra.sticker;
+            if (extra && extra.location) content["io.moqui.location"] = extra.location;
             return moqui.crypto.encryptRoom(roomId, memberIds, "m.room.message", content).then((encrypted) => ({
                 encryptedJson: JSON.stringify(encrypted), mentionUserIds: chat.mentionsIn(html).join(",") }));
         },
@@ -999,6 +1002,9 @@
             const files = Array.isArray(content["io.moqui.files"]) ? content["io.moqui.files"] : [];
             const stored = Array.isArray(item.attachments) ? item.attachments : [];
             Object.assign(item, { body: html || null, bodyText: content.body || "", undecryptable: false, withheld: null, verifiedSender: !!opened.verified });
+            // a sticker or a place sent encrypted (phase 20), checked as the server checks a plain one's
+            if (content["io.moqui.sticker"]) item.sticker = chat.stickers.clean(content["io.moqui.sticker"]);
+            if (content["io.moqui.location"]) item.location = chat.place.clean(content["io.moqui.location"]);
             if (files.length || stored.length) {
                 item.attachments = stored.map((file) => {
                     const sealed = files.find((one) => one.chatAttachmentId === file.chatAttachmentId) || {};
@@ -2243,6 +2249,125 @@
             return [{ minutes: 0, label: tr("No reminder") }].concat(choices.filter((one) => event && event.start - one.minutes * MINUTE > now + MINUTE));
         },
         myAnswer(event) { return event && event.mine ? event.mine.answer || null : null; }
+    };
+
+    // ---- stickers and locations (plans/Comms-Messaging.md phase 20; org.moqui.chat.ChatStickerServices, ChatLocationServices) ----
+    const fixed6 = (number) => Number(number).toFixed(6);
+    chat.place = {
+        // A place from what a person typed or pasted: coordinates ("40.7452, -111.875", or degrees, minutes and seconds
+        // with N/S/E/W), a geo: URI, or an OpenStreetMap, Google Maps or Apple Maps link (its coordinates read from the
+        // link's text, nothing fetched); any other text is an address. {latitude, longitude} or {address}, or null.
+        parse(text) {
+            const input = String(text == null ? "" : text).trim();
+            if (!input) return null;
+            const inRange = (lat, lon) => Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+            const pair = (lat, lon) => (inRange(lat, lon) ? { latitude: Number(fixed6(lat)), longitude: Number(fixed6(lon)) } : null);
+            let match = /^geo:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i.exec(input);
+            if (match) {
+                const at = pair(Number(match[1]), Number(match[2]));
+                const query = /[?&]q=([^&]*)/.exec(input);
+                if (at && (at.latitude !== 0 || at.longitude !== 0)) return at;
+                if (query) return chat.place.parse(decodeURIComponent(query[1].replace(/\+/g, " ")).replace(/\(.*\)$/, "").trim());
+                return at;
+            }
+            if (/^https?:\/\//i.test(input)) {
+                const patterns = [/[?&#]mlat=(-?\d+(?:\.\d+)?)&mlon=(-?\d+(?:\.\d+)?)/, /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+                    /[?&](?:q|ll|query|sll)=(-?\d+(?:\.\d+)?)(?:,|%2C)\s*(-?\d+(?:\.\d+)?)/i, /#map=\d+\/(-?\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)/];
+                for (const pattern of patterns) {
+                    match = pattern.exec(input);
+                    if (match) return pair(Number(match[1]), Number(match[2]));
+                }
+                return null;
+            }
+            match = /^(-?\d{1,2}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(input);
+            if (match) return pair(Number(match[1]), Number(match[2]));
+            // degrees, minutes and seconds: 40°44'42.8"N 111°52'30.0"W
+            const dms = /^(\d{1,2})°\s*(\d{1,2})?['′]?\s*(\d{1,2}(?:\.\d+)?)?["″]?\s*([NS])[,\s]+(\d{1,3})°\s*(\d{1,2})?['′]?\s*(\d{1,2}(?:\.\d+)?)?["″]?\s*([EW])$/i.exec(input);
+            if (dms) {
+                const part = (deg, min, sec, hemi) => (Number(deg) + Number(min || 0) / 60 + Number(sec || 0) / 3600) * (/[SW]/i.test(hemi) ? -1 : 1);
+                return pair(part(dms[1], dms[2], dms[3], dms[4]), part(dms[5], dms[6], dms[7], dms[8]));
+            }
+            return { address: input.replace(/\s+/g, " ").slice(0, 300) };
+        },
+        // the map link: OpenStreetMap at the coordinates, or its search for the address (as ChatLocation.js linkOf)
+        osmUrl(place) {
+            if (!place) return "";
+            if (place.latitude != null && place.longitude != null) {
+                const lat = fixed6(place.latitude), lon = fixed6(place.longitude);
+                return "https://www.openstreetmap.org/?mlat=" + lat + "&mlon=" + lon + "#map=17/" + lat + "/" + lon;
+            }
+            return place.address ? "https://www.openstreetmap.org/search?query=" + encodeURIComponent(place.address) : "";
+        },
+        // the geo: URI the phone's maps app opens (RFC 5870, with Android's q and its label)
+        geoUri(place) {
+            if (!place) return "";
+            const label = place.label ? "(" + encodeURIComponent(place.label) + ")" : "";
+            if (place.latitude != null && place.longitude != null) {
+                const at = fixed6(place.latitude) + "," + fixed6(place.longitude);
+                return "geo:" + at + "?q=" + at + label;
+            }
+            return place.address ? "geo:0,0?q=" + encodeURIComponent(place.address) : "";
+        },
+        // the words of a place, the same as the server's (ChatLocation.js fallbackText): an encrypted room's message
+        fallback(place) {
+            if (!place) return "";
+            const name = [place.label, place.address].filter((word) => word && String(word).trim()).join(", ");
+            const coordinates = place.latitude != null ? fixed6(place.latitude) + ", " + fixed6(place.longitude) : "";
+            return [fillIn(tr("Location: {name}"), { name: name || coordinates || tr("a place") }), chat.place.osmUrl(place)].filter((line) => line).join("\n");
+        },
+        coordinatesText(place) {
+            if (!place || place.latitude == null) return "";
+            const accuracy = place.accuracy != null ? " ± " + Math.round(Number(place.accuracy)) + " m" : "";
+            return fixed6(place.latitude).replace(/0+$/, "").replace(/\.$/, "") + ", " + fixed6(place.longitude).replace(/0+$/, "").replace(/\.$/, "") + accuracy;
+        },
+        // a decrypted message's place, checked as the server checks a sent one (or null)
+        clean(given) {
+            if (!given || typeof given !== "object") return null;
+            const out = {};
+            if (given.latitude != null || given.longitude != null) {
+                const lat = Number(given.latitude), lon = Number(given.longitude);
+                if (!(Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return null;
+                out.latitude = Number(fixed6(lat));
+                out.longitude = Number(fixed6(lon));
+            }
+            if (given.label) out.label = String(given.label).slice(0, 100);
+            if (given.address) out.address = String(given.address).slice(0, 300);
+            if (given.accuracy != null && Number.isFinite(Number(given.accuracy))) out.accuracy = Math.round(Number(given.accuracy));
+            if (out.latitude == null && !out.address) return null;
+            out.source = ["here", "typed", "network"].includes(given.source) ? given.source : "typed";
+            return out;
+        }
+    };
+    chat.stickers = {
+        // the stickers whose emoji or description has the words, across the packs
+        search(packs, text) {
+            const term = String(text || "").trim().toLowerCase();
+            const all = [];
+            (packs || []).forEach((pack) => (pack.stickers || []).forEach((sticker) => all.push(Object.assign({ chatStickerPackId: pack.chatStickerPackId }, sticker))));
+            if (!term) return all;
+            return all.filter((sticker) => String(sticker.emoji || "").includes(term) || String(sticker.altText || "").toLowerCase().includes(term));
+        },
+        recentKey(userId) { return moqui.scopedKey ? moqui.scopedKey("moqui.chat.recentStickers." + (userId || "")) : "moqui.chat.recentStickers." + (userId || ""); },
+        // the ids of the stickers sent last, newest first, at most 24 (the page's storage; none when it has none)
+        recent(userId) {
+            try {
+                const list = JSON.parse((root.localStorage && root.localStorage.getItem(chat.stickers.recentKey(userId))) || "[]");
+                return Array.isArray(list) ? list.filter((id) => typeof id === "string").slice(0, 24) : [];
+            } catch (err) { return []; }
+        },
+        remember(userId, chatStickerId) {
+            const list = [chatStickerId].concat(chat.stickers.recent(userId).filter((id) => id !== chatStickerId)).slice(0, 24);
+            try { if (root.localStorage) root.localStorage.setItem(chat.stickers.recentKey(userId), JSON.stringify(list)); } catch (err) { /* no storage: none kept */ }
+            return list;
+        },
+        // a decrypted message's sticker, checked (or null)
+        clean(given) {
+            if (!given || typeof given !== "object") return null;
+            const number = (value) => (value == null || !Number.isFinite(Number(value)) ? null : Math.max(1, Math.min(512, Math.round(Number(value)))));
+            return { chatStickerId: given.chatStickerId ? String(given.chatStickerId).slice(0, 40) : null, emoji: given.emoji ? String(given.emoji).slice(0, 16) : null,
+                altText: given.altText ? String(given.altText).slice(0, 80) : null, packName: given.packName ? String(given.packName).slice(0, 60) : null,
+                width: number(given.width), height: number(given.height) };
+        }
     };
 
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----

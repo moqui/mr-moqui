@@ -602,14 +602,14 @@ function noteOptSignal(p) {
   return { outcome: 'noted' }
 }
 
-/** A shared place as words: its label or address, and a map link built from its coordinates (never a link it came with). */
+/**
+ * A shared place as words: its label or address, and a map link built from its coordinates (never a link it came with),
+ * the same words a location sent from here has (ChatLocation.js, plans/Comms-Messaging.md §18.3 phase 20).
+ */
 function placeText(place) {
-  const lat = Number(place.latitude)
-  const lon = Number(place.longitude)
-  const name = [place.label, place.address].filter((word) => !blank(word)).map((word) => String(word).slice(0, 200)).join(', ')
-  const link = Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
-    ? `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}` : ''
-  return [ec.resource.expand('Location: ${name}', '', { name: name || ec.l10n.localize('a place') }), link].filter((line) => line).join('\n')
+  const out = ec.service.sync().name('org.moqui.chat.ChatLocationServices.words#Location').parameters({ location: place }).disableAuthz().call() || {}
+  if (ec.message.hasError()) { ec.message.clearErrors(); return ec.l10n.localize('Location: a place') }
+  return out.text || ec.l10n.localize('Location: a place')
 }
 
 /**
@@ -737,6 +737,20 @@ function receive(p) {
       } catch (err) {
         ec.logger.error(`SMS ${p.messageId}: its conversation was not filed: ${err && err.message ? err.message : err}`)
       }
+      ec.message.clearErrors()
+    }
+  }
+  // a shared place (Comms-Messaging §18.3 phase 20): the message is a location, its card as a sent one's; the text stays
+  // when it fails
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && extra && extra.location) {
+    try {
+      ec.service.sync().name('org.moqui.chat.ChatLocationServices.mark#Location').parameters({ chatRoomId: pair.chatRoomId,
+        eventSeq: first.eventSeq, location: extra.location }).disableAuthz().call()
+    } catch (err) {
+      ec.logger.error(`SMS ${p.messageId}: its place was not kept: ${err && err.message ? err.message : err}`)
+    }
+    if (ec.message.hasError()) {
+      ec.logger.error(`SMS ${p.messageId}: its place was not kept: ${ec.message.errorsString}`)
       ec.message.clearErrors()
     }
   }

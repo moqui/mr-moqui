@@ -179,6 +179,11 @@ external mappings (`ChatEventExternal`) dedupe its events after that.
   `ChatScheduleServices.send#DueMessages` sends it through `send#Message` as the sender, so its delivery rows are written
   then, and the adapter's checks (`check#SmsSend`: the destination, the opt-out, the day's limits; its capabilities and
   fallback) are those of that moment. Nothing about a bridge is decided when it is scheduled.
+- **A sticker and a location** (phase 20). A sticker is a message whose file is its picture (the room's copy) and whose
+  text is "Sticker 👍": a bridge that sends files gets the picture alone (`request_of` leaves the text out), and one
+  that sends none gets the text. A location's text is "Location: label, address" and an OpenStreetMap link, which every
+  bridge sends; its place is the request's `location` (latitude, longitude, label, address), which only Sinch RCS reads
+  ([RCS](RCS.md#locations)).
 - **An event** (phase 19) is a message whose text is the event (its title, its time in its zone, its place and details),
   so every bridge sends that text; its changes and cancellation are messages of their own and go the same way. An answer
   is no message and goes nowhere; an answer by text from another network is not read.

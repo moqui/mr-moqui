@@ -443,6 +443,11 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="updateCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
     <transition-include name="cancelCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
     <transition-include name="calEventIcs" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <!-- stickers and locations (plans/Comms-Messaging.md §18.3 phase 20) -->
+    <transition-include name="stickerPacks" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="sendSticker" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="sendLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <!-- files for the next message: each stored on its own, or one sent in chunks (uploadId) -->
     <transition name="upload">
         <actions><script><![CDATA[

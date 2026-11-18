@@ -109,6 +109,21 @@ pub fn location_of(message: &Json) -> Option<Location> {
     )
 }
 
+/// A location message's place (a `DeliveryRequest`'s `location`: `latitude`, `longitude`, `label`, `address`) as a
+/// Conversation API `location_message`: its `title` the label (else "Location"), its `label` the address. Sinch's RCS
+/// page says RCS has no location message of its own and the API sends it as a text with a location choice (read
+/// 2026-11-17); not yet tested with Sinch. None without both coordinates in range.
+pub fn location_message(place: &Json) -> Option<Json> {
+    let number = |key: &str| place.get(key).and_then(Json::as_f64);
+    let text = |key: &str| place.get(key).and_then(Json::as_str);
+    let place = Location::of(number("latitude"), number("longitude"), text("label"), text("address"))?;
+    Some(json!({"location_message": {
+        "coordinates": {"latitude": place.latitude, "longitude": place.longitude},
+        "title": place.label.clone().unwrap_or_else(|| "Location".to_string()),
+        "label": place.address.clone().unwrap_or_default(),
+    }}))
+}
+
 /// A suggestion as a Conversation API choice.
 fn choice(suggestion: &Suggestion) -> Json {
     match suggestion {

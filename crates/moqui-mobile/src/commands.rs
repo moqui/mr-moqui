@@ -360,10 +360,23 @@ pub(crate) fn calendar_insert(
     let place = clip(&entry.place, 300);
     let description = clip_lines(&entry.description, 2000);
     #[cfg(target_os = "android")]
-    return crate::android::calendar_insert(&title, entry.start, entry.end, entry.all_day, &zone, &place, &description);
+    return crate::android::calendar_insert(
+        &title,
+        entry.start,
+        entry.end,
+        entry.all_day,
+        &zone,
+        &place,
+        &description,
+    );
     #[cfg(not(target_os = "android"))]
     {
-        log::info!("Calendar entry {title} at {} for {} ({zone}, {place}, {} characters)", entry.start, entry.all_day, description.len());
+        log::info!(
+            "Calendar entry {title} at {} for {} ({zone}, {place}, {} characters)",
+            entry.start,
+            entry.all_day,
+            description.len()
+        );
         Ok(false)
     }
 }
@@ -371,7 +384,13 @@ pub(crate) fn calendar_insert(
 /// `text` with its line breaks kept and other control characters dropped, trimmed, at most `max` characters.
 pub(crate) fn clip_lines(text: &str, max: usize) -> String {
     let cleaned: String = text.chars().filter(|c| *c == '\n' || !c.is_control()).collect();
-    cleaned.trim().chars().take(max).collect::<String>().trim_end().to_string()
+    cleaned
+        .trim()
+        .chars()
+        .take(max)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 /// The routes the shell's speaker button may choose.
@@ -601,7 +620,7 @@ pub(crate) fn contact_numbers(numbers: &[String]) -> Vec<String> {
     out
 }
 
-/// Open `url` outside the app: http and https on the web, mailto, tel and sip.
+/// Open `url` outside the app: http and https on the web, mailto, tel, sip and geo.
 #[tauri::command(async)]
 pub(crate) fn open_external(url: String) -> Result<(), String> {
     let url = external_url(&url)?;
@@ -609,7 +628,7 @@ pub(crate) fn open_external(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// `text` as a URL the system may open: http and https with a host that is not the app's, or mailto, tel and sip.
+/// `text` as a URL the system may open: http and https with a host that is not the app's, or mailto, tel, sip and geo.
 pub(crate) fn external_url(text: &str) -> Result<Url, String> {
     if text.len() > URL_MAX {
         return Err("The URL is too long".to_string());
@@ -623,7 +642,8 @@ pub(crate) fn external_url(text: &str) -> Result<Url, String> {
             }
             Some(_) => Ok(url),
         },
-        "mailto" | "tel" | "sip" => Ok(url),
+        // geo: a chat location's Open in maps, for the phone's maps app (plans/Comms-Messaging.md §18.3 phase 20)
+        "mailto" | "tel" | "sip" | "geo" => Ok(url),
         scheme => Err(format!("Not opened outside the app: {scheme}:")),
     }
 }

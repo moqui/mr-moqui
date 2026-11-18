@@ -425,6 +425,15 @@ A chat event's Add to calendar (plans/Comms-Messaging.md §18.3 phase 19), with 
 there, so the app needs no calendar permission. It answers whether a calendar app took it; when none does (or in an APK
 before it), Chat downloads the event's `.ics` file instead.
 
+## Location and maps
+
+A chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20) is the WebView's
+`navigator.geolocation`: the manifest has `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`, and the patched wry
+`RustWebChromeClient` asks for them at the first use (refused, Chat says how to allow it and offers to enter the place).
+The app never reads the position in the background. Open in maps hands a `geo:` URI to Android
+(`moquiDesktop.openExternal`, which takes `geo:` beside http, https, mailto, tel and sip), so the person's maps app
+opens at the place.
+
 ## Screen security
 
 `moquiDesktop.secureScreen(reason, on)` (the `secure_screen` command, `ScreenSecurity.kt`) turns Android's `FLAG_SECURE`

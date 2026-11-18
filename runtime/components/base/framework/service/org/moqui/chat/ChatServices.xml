@@ -485,7 +485,8 @@ along with this software (see the LICENSE.md file). If not, see
                 body: encrypted ? null : body, bodyText: encrypted ? null : bodyText || null,
                 encrypted: encrypted && content ? content.encrypted || null : null, mentions: (content && content.mentions) || [],
                 attachments: (content && content.attachments) || [], records: (content && content.records) || [],
-                forwardOf: (content && content.forwardOf) || null, poll: null, calEvent: null, assist: (content && content.assist) || null, linkPreviews: [],
+                forwardOf: (content && content.forwardOf) || null, poll: null, calEvent: null,
+                sticker: (content && content.sticker) || null, location: (content && content.location) || null, assist: (content && content.assist) || null, linkPreviews: [],
                 rich: (content && content.rich) || null, postback: (content && content.postback) || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
                 editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null,
@@ -2299,6 +2300,7 @@ along with this software (see the LICENSE.md file). If not, see
                     attachments: redacted ? [] : (content.attachments || []), records: redacted ? [] : (content.records || []),
                     forwardOf: redacted || !isMessage ? null : content.forwardOf || null, poll: redacted ? null : polls[seq] || null,
                     calEvent: redacted ? null : calEvents[seq] || null, calChange: redacted || !isMessage ? null : content.calChange || null,
+                    sticker: redacted || !isMessage ? null : content.sticker || null, location: redacted || !isMessage ? null : content.location || null,
                     assist: redacted || !isMessage ? null : content.assist || null,
                     rich: redacted || !isMessage ? null : content.rich || null, postback: redacted || !isMessage ? null : content.postback || null,
                     linkPreviews: redacted || !isMessage ? [] : previewsOf(row),
@@ -3858,7 +3860,9 @@ along with this software (see the LICENSE.md file). If not, see
             const text = String(searchText || '').trim().replace(/[%_]/g, '')
             // the find of the room's files with the filters; made again for each query
             const filesFind = () => {
+                // a sticker's copy is no file of the room's lists (plans/Comms-Messaging.md §18.3 phase 20)
                 let find = ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', 'not-equals', null)
+                        .condition('stickerOf', null)
                 if (include.length) find = find.condition(cf.makeCondition(include.map((prefix) => cf.makeCondition('contentType', 'like', prefix + '%').ignoreCase()), 'or'))
                 for (const prefix of exclude) find = find.condition(cf.makeCondition([cf.makeCondition('contentType', 'equals', null),
                     cf.makeCondition('contentType', 'not-like', prefix + '%').ignoreCase()], 'or'))

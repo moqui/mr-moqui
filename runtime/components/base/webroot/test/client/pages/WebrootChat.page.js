@@ -1726,6 +1726,9 @@ test("the join components compile, and WebrootVue.qvt.js registers them", () => 
         const errors = [];
         compiler.compile(comp.template, { mode: "function", onError: (err) => errors.push(err.message) });
         assert.deepEqual(errors, [], name);
+    }
+});
+
 test("an event's times: a wall clock in its zone, the box's start and end, the viewer's zone note, the reminders still ahead, the counts", () => {
     const cal = chat.cal;
     const start = Date.UTC(2030, 10, 23, 21, 0);
@@ -1755,4 +1758,42 @@ test("an event's times: a wall clock in its zone, the box's start and end, the v
     } finally {
         moqui.l10n.setTimeZone(null);
     }
+});
+
+test("a place typed or pasted: coordinates, degrees, a geo: URI, three maps links, an address; its words as the server's, its links, out of range refused", () => {
+    const place = chat.place;
+    assert.deepEqual(place.parse("40.7452, -111.875"), { latitude: 40.7452, longitude: -111.875 });
+    assert.deepEqual(place.parse("40°44'42.8\"N 111°52'30.0\"W"), { latitude: 40.745222, longitude: -111.875 });
+    assert.deepEqual(place.parse("geo:45.5,-122.6?q=45.5,-122.6(The shop)"), { latitude: 45.5, longitude: -122.6 });
+    assert.deepEqual(place.parse("geo:0,0?q=1+Main+St"), { address: "1 Main St" });
+    assert.deepEqual(place.parse("https://www.openstreetmap.org/?mlat=45.5&mlon=-122.6#map=17/45.5/-122.6"), { latitude: 45.5, longitude: -122.6 });
+    assert.deepEqual(place.parse("https://www.google.com/maps/place/Cafe/@45.5231,-122.6765,17z"), { latitude: 45.5231, longitude: -122.6765 });
+    assert.deepEqual(place.parse("https://maps.apple.com/?ll=45.5,-122.6&q=Cafe"), { latitude: 45.5, longitude: -122.6 });
+    assert.equal(place.parse("https://example.com/somewhere"), null, "a link with no coordinates is no place");
+    assert.deepEqual(place.parse("  600 E 900 S,  Salt Lake City "), { address: "600 E 900 S, Salt Lake City" });
+    assert.equal(place.parse("91, 10"), null, "coordinates out of range: no place");
+    assert.equal(place.parse(""), null);
+    // the words the server makes for the same place (ChatLocation.js fallbackText, the ChatLocation spec)
+    assert.equal(place.fallback({ latitude: 40.74521, longitude: -111.875, label: "Liberty Park", address: "600 E 900 S, Salt Lake City" }),
+        "Location: Liberty Park, 600 E 900 S, Salt Lake City\nhttps://www.openstreetmap.org/?mlat=40.745210&mlon=-111.875000#map=17/40.745210/-111.875000");
+    assert.equal(place.fallback({ address: "10 Downing St, London" }),
+        "Location: 10 Downing St, London\nhttps://www.openstreetmap.org/search?query=10%20Downing%20St%2C%20London");
+    assert.equal(place.geoUri({ latitude: 45.5, longitude: -122.6, label: "Joe's & Co" }), "geo:45.500000,-122.600000?q=45.500000,-122.600000(Joe's%20%26%20Co)");
+    assert.equal(place.geoUri({ address: "1 Main St" }), "geo:0,0?q=1%20Main%20St");
+    assert.equal(place.coordinatesText({ latitude: 45.5, longitude: -122.6, accuracy: 12.4 }), "45.5, -122.6 ± 12 m");
+    assert.equal(place.clean({ latitude: 200, longitude: 0 }), null, "a decrypted place out of range is dropped");
+    assert.deepEqual(place.clean({ latitude: "1.5", longitude: 2, source: "x" }), { latitude: 1.5, longitude: 2, source: "typed" });
+});
+
+test("stickers found by emoji or words across packs, and the ones sent last kept newest first", () => {
+    const packs = [{ chatStickerPackId: "P1", stickers: [{ chatStickerId: "S1", emoji: "👍", altText: "thumbs up" }, { chatStickerId: "S2", emoji: "🎉", altText: "party" }] },
+        { chatStickerPackId: "P2", stickers: [{ chatStickerId: "S3", emoji: "👍", altText: "Okay" }] }];
+    assert.deepEqual(chat.stickers.search(packs, "👍").map((one) => one.chatStickerId), ["S1", "S3"]);
+    assert.deepEqual(chat.stickers.search(packs, "PARTY").map((one) => one.chatStickerId), ["S2"]);
+    assert.equal(chat.stickers.search(packs, "").length, 3);
+    chat.stickers.remember("ann", "S2");
+    chat.stickers.remember("ann", "S1");
+    assert.deepEqual(chat.stickers.remember("ann", "S2"), ["S2", "S1"]);
+    assert.deepEqual(chat.stickers.recent("ann").slice(0, 2), ["S2", "S1"]);
+    assert.equal(chat.stickers.clean({ chatStickerId: "S1", width: 9000, emoji: "👍" }).width, 512);
 });

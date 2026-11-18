@@ -180,6 +180,16 @@ picture, the first, which is left out (the fallback is then text alone) when it 
   the fallback, the message's (the AppMessage's) `explicit_channel_omni_message` gives SMS our text, or MMS a card of it
   with the first picture, in place of Sinch's own rendering.
 
+## Locations
+
+A chat location (plans/Comms-Messaging.md §18.3 phase 20) with coordinates goes on Sinch RCS as a `location_message`
+(`coordinates`, `title` its label or "Location", `label` its address), with its words and map link as the SMS fallback
+(`explicit_channel_omni_message`). Sinch's RCS page says RCS has no location message of its own and that the
+Conversation API sends it as a text with a location choice (read 2026-11-17). An address-only location, and every
+location on Twilio (whose `twilio/location` content is WhatsApp's only), goes as its words: "Location: label, address"
+and an OpenStreetMap link. A location the person shares from their phone comes in as a location message with the same
+words (Twilio's `Latitude`, `Longitude`, `Label`, `Address`; Sinch's `location_message`).
+
 ## Twilio
 
 Twilio's RCS is generally available since 2025-08-26 ([send RCS](https://www.twilio.com/docs/rcs/send-an-rcs-message),
@@ -292,6 +302,9 @@ means RCS did not reach the phone and the fallback is tried: SMS, or MMS when th
 ## Not confirmed
 
 These are not in the providers' documentation, or it is unclear there. Check each in the live test.
+
+- **Sinch, a location message on RCS.** How Sinch renders our `location_message` on the phone (its RCS page and its
+  location page differ), and that its SMS fallback is our text.
 
 - **Twilio, the inbound address format.** That an RCS message's `From` is `rcs:+1…` and its `To` the agent's `rcs:`
   address when the sender is in a Messaging Service. Twilio's Studio guide shows both prefixed only for a sender

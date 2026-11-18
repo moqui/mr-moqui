@@ -221,7 +221,7 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `login(username, password = "moqui")`, `logout()` | `ec.user.loginUser` and `logoutUser`. `login` throws `login of <username> failed: ...` when the login fails or needs a second factor |
 | `screenTest(baseScreenPath)` | `ec.screen.makeTest()`, with the base screen path when given ([`screenTest`](#screentest)) |
 | `parallel(n, fn, args, opts)` | Run `fn(threadNum, args)` on `n` threads, each with its own `ec` ([`parallel`](#parallel)) |
-| `uploadedFile(fileName, text, contentType = "text/plain")` | The `FileItem` that services taking an upload expect, holding the text |
+| `uploadedFile(fileName, text, contentType = "text/plain", binary = false)` | The `FileItem` that services taking an upload expect, holding the text; with `binary`, each character is a byte (0 to 255), for a picture or another binary file |
 | `setProperty(name, value)` | A process property, as a conf property would set it (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. It holds for the rest of the spec, for a policy switch its features share such as `call_recording_enabled` |
 | `withProperty(name, value, fn)` | The property only while `fn` runs, then the value it had before; returns what `fn` returned. For one feature, such as `call_captions_enabled` off |
 | `log` | `ec.logger`: `log.info(...)`, `log.warn(...)` |

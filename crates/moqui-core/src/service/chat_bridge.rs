@@ -226,6 +226,10 @@ pub struct DeliveryRequest {
     /// A rich message's cards and suggestions (the event's `content.rich`, plans/Comms-Messaging.md §18.3 phase 13), for
     /// an adapter that sends them (business RCS); `text` and `html` are its fallback, which every other adapter sends.
     pub rich: Option<serde_json::Value>,
+    /// A location message's place (the event's `content.location`: `latitude`, `longitude`, `label`, `address`;
+    /// plans/Comms-Messaging.md §18.3 phase 20), for an adapter that sends one (Sinch RCS); `text` is its words with the
+    /// map link, which every other adapter sends. Only with both coordinates.
+    pub location: Option<serde_json::Value>,
     /// This attempt's number, from 1.
     pub attempt: i64,
 }
@@ -1593,10 +1597,28 @@ fn request_of(
         DeliveryKind::Message => content.get("rich").filter(|rich| rich.is_object()).cloned(),
         _ => None,
     };
+    // a location with both coordinates, for an adapter that sends a place (phase 20)
+    let location = match kind {
+        DeliveryKind::Message => content
+            .get("location")
+            .filter(|place| place.get("latitude").and_then(serde_json::Value::as_f64).is_some())
+            .filter(|place| place.get("longitude").and_then(serde_json::Value::as_f64).is_some())
+            .cloned(),
+        _ => None,
+    };
     let sender_name = sender_name(facade, event)?;
     let attachments = match kind {
         DeliveryKind::Message => attachments_of(facade, &room_id, int_of(row, "eventSeq").unwrap_or(0))?,
         _ => Vec::new(),
+    };
+    // a sticker goes as its picture alone; its words ("Sticker 👍") only where there is no picture to send (phase 20)
+    let sticker_picture = kind == DeliveryKind::Message
+        && content.get("sticker").is_some_and(|sticker| sticker.is_object())
+        && !attachments.is_empty();
+    let (text, html) = if sticker_picture {
+        (None, None)
+    } else {
+        (text_of(event, "bodyText"), html)
     };
     Ok(Ok(DeliveryRequest {
         chat_bridge_delivery_id: text_of(row, "chatBridgeDeliveryId").unwrap_or_default(),
@@ -1606,7 +1628,7 @@ fn request_of(
         external_room_id: text_of(mapping, "externalRoomId").unwrap_or_default(),
         external_thread_id: text_of(mapping, "externalThreadId"),
         kind,
-        text: text_of(event, "bodyText"),
+        text,
         html,
         sender_name,
         sender_user_id: text_of(event, "senderUserId"),
@@ -1614,6 +1636,7 @@ fn request_of(
         target_remote_id,
         reaction_key,
         rich,
+        location,
         attempt: 0,
     }))
 }

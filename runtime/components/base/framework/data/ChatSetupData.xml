@@ -39,6 +39,9 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- System, Push Health: every user's push devices with their counts (org.moqui.ui.NotificationServices.find#PushHealth) -->
     <moqui.security.UserPermission userPermissionId="PushHealthAdmin" description="See the push devices of every user and how their pushes go"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="PushHealthAdmin" fromDate="0"/>
+    <!-- the server's sticker packs (plans/Comms-Messaging.md §18.3 phase 20) -->
+    <moqui.security.UserPermission userPermissionId="ChatStickerAdmin" description="Keep the server's chat sticker packs"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatStickerAdmin" fromDate="0"/>
 
     <!-- A chat message in the search index: its room, its sender and its current text. ChatServices indexes it on
         send#Message and edit#Message and deletes it on redact#Message (no DataFeed); search#ChatEvents searches it with

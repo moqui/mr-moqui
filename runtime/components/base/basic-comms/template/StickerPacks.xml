@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The sticker packs a screen keeps (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices),
+    included by Settings/Stickers.xml (the user's own, server false) and System/ChatStickers.xml (the server's, server
+    true, for ChatStickerAdmin): New pack, each pack's stickers with Remove, Hide or Offer and Delete, and Add a sticker to
+    a pack. Its transitions are the including screen's (ChatStickerTransitions.xml). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.chat.ChatStickerServices.get#StickerPacks').parameter('manage', true).call() || {}
+        ec.message.clearErrors()
+        const serverPacks = server === true || server === 'true'
+        allowed = !serverPacks || out.canManageServer === true
+        packList = Array.from(out.packList || []).filter((pack) => (serverPacks ? !pack.own : pack.own)).map((pack) => Object.assign({}, pack, {
+            stateText: pack.hidden ? ec.l10n.localize('Hidden') : '',
+            countText: ec.resource.expand('${count} stickers', '', {count: (pack.stickers || []).length}),
+            hideLabel: pack.hidden ? ec.l10n.localize('Offer') : ec.l10n.localize('Hide'),
+            hideValue: pack.hidden ? 'false' : 'true'}))
+        packOptions = packList.map((pack) => ({key: pack.chatStickerPackId, text: pack.packName}))
+        newPack = {server: serverPacks ? 'true' : 'false'}
+        addForm = {chatStickerPackId: packList.length ? packList[0].chatStickerPackId : null}
+    ]]></script></actions>
+    <widgets>
+        <section name="NotAllowed" condition="!allowed"><widgets>
+            <label type="p" style="m-muted" text="The server's sticker packs are for sticker administrators."/>
+        </widgets></section>
+        <section name="Packs" condition="allowed"><widgets>
+            <label type="p" style="m-muted" text="PNG, WebP or GIF pictures, animated ones too, of at most 512 KB. A sticker you send is a copy in its room: removing a pack never removes a sticker already sent."/>
+            <form-single name="NewStickerPack" transition="createStickerPack" map="newPack">
+                <field name="server"><default-field><hidden/></default-field></field>
+                <field name="packName"><default-field title="New pack"><text-line size="30" maxlength="60"/></default-field></field>
+                <field name="submitButton"><default-field title="Make the pack"><submit/></default-field></field>
+            </form-single>
+            <section name="NoPacks" condition="!packList.length"><widgets>
+                <label type="p" style="m-muted" text="No packs yet."/>
+            </widgets></section>
+            <section-iterate name="PackList" list="packList" entry="pack"><widgets>
+                <container style="q-mt-md m-sticker-pack">
+                    <container style="row items-center q-gutter-x-sm">
+                        <label type="span" text="${pack.packName}" style="text-weight-medium"/>
+                        <label type="span" text="${pack.countText}" style="text-caption m-muted"/>
+                        <label type="span" text="${pack.stateText}" style="text-caption text-warning"/>
+                        <link url="updateStickerPack" text="${pack.hideLabel}" link-type="hidden-form-link">
+                            <parameter name="chatStickerPackId" from="pack.chatStickerPackId"/><parameter name="hidden" from="pack.hideValue"/></link>
+                        <link url="deleteStickerPack" text="Delete" link-type="hidden-form-link" btn-type="danger" confirmation="Delete this pack and its stickers? Stickers already sent stay.">
+                            <parameter name="chatStickerPackId" from="pack.chatStickerPackId"/></link>
+                    </container>
+                    <container style="row q-gutter-sm q-mt-xs">
+                        <section-iterate name="StickerList" list="pack.stickers" entry="sticker"><widgets>
+                            <container style="column items-center m-sticker">
+                                <image url="stickerImage" url-type="transition" width="64" alt="${sticker.altText || sticker.emoji || ''}">
+                                    <parameter name="chatStickerId" from="sticker.chatStickerId"/><parameter name="thumb" value="true"/></image>
+                                <label type="span" text="${sticker.emoji || ''}" style="text-caption"/>
+                                <link url="removeSticker" text="Remove" link-type="hidden-form-link" confirmation="Remove this sticker? A copy already sent stays.">
+                                    <parameter name="chatStickerId" from="sticker.chatStickerId"/></link>
+                            </container>
+                        </widgets></section-iterate>
+                    </container>
+                </container>
+            </widgets></section-iterate>
+            <section name="AddStickerSection" condition="packList.length"><widgets>
+                <form-single name="AddSticker" transition="addSticker" map="addForm">
+                    <field name="chatStickerPackId"><default-field title="Pack"><drop-down allow-empty="false"><list-options list="packOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="file"><default-field title="Picture"><file/></default-field></field>
+                    <field name="emoji"><default-field title="Emoji" tooltip="One emoji it stands for: search finds it by this"><text-line size="4" maxlength="16"/></default-field></field>
+                    <field name="altText"><default-field title="Description" tooltip="What a screen reader reads"><text-line size="30" maxlength="80"/></default-field></field>
+                    <field name="submitButton"><default-field title="Add the sticker"><submit/></default-field></field>
+                </form-single>
+            </widgets></section>
+        </widgets></section>
+    </widgets>
+</screen>

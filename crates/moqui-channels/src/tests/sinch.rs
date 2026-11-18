@@ -583,6 +583,7 @@ fn a_sinch_bridge_refuses_a_group_room() {
         target_remote_id: None,
         reaction_key: None,
         rich: None,
+        location: None,
         attempt: 1,
     };
     match adapter.deliver(&bridge, &request) {
