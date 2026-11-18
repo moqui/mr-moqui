@@ -28,6 +28,10 @@
 //! write: the read times that order eviction are kept in memory and written in one unit now and then (every
 //! [`READS_HELD`] reads, before a trim, and when the store is dropped); a crash loses only some of that order.
 //!
+//! A chat event that disappears (its `expireDate`, plans/Comms-Messaging.md phase 16) is kept with its due time and
+//! removed when it comes ([`Store::expire_chat_events`]), or when the server says it went. Deleted rows are overwritten
+//! (`secure_delete`), so no expired message stays in the file's free pages.
+//!
 //! Beside them (MD5) the cursors of the server's changes feeds and the progress of files sent in chunks.
 //!
 //! The cached reads (answers, rooms with their events, mail threads with their messages) are kept under a size cap:
@@ -61,13 +65,15 @@ pub use mail::{MailFolder, MailMessage, MailThread};
 pub use outbox::{new_client_ref, order_group, OutboxOp, OutboxState, OutboxUpdate};
 pub use sync::{SyncCursor, Upload};
 
-/// The schema, a step per release that changes it; `PRAGMA user_version` is the number of steps applied. Add a step,
-/// never change one that has shipped.
+/// The schema, a step per release that changes it; `PRAGMA user_version` is the number of steps applied. From release
+/// 0.1.0 add a step and never change one that has shipped. Before it there are no migrations: a change goes into its
+/// step as is and [`SCHEMA_REV`] goes up, and a store of an earlier revision is made again when it opens ([`rebuild`]).
 const MIGRATIONS: &[&str] = &[
     // 1: MD4's tables. read_ms is the read clock (Store::tick) that orders eviction; size is the row's bytes as the
     // size cap counts them (its text and a fixed overhead). chat_range: the seq ranges of a room's timeline (thread_seq
     // 0) or of a thread that the store holds whole, from the server's pages; low 0 is the timeline's start, head 1 a
-    // range that reached the latest event and is kept up by pushes while the socket stays up.
+    // range that reached the latest event and is kept up by pushes while the socket stays up. chat_event.expire_ms: the
+    // event's expireDate, when a disappearing message's is due (plans/Comms-Messaging.md phase 16).
     "CREATE TABLE answer (
         key TEXT PRIMARY KEY,
         body BLOB NOT NULL,
@@ -91,9 +97,11 @@ const MIGRATIONS: &[&str] = &[
         event TEXT NOT NULL,
         thread_seq INTEGER,
         size INTEGER NOT NULL,
+        expire_ms INTEGER,
         PRIMARY KEY (chat_room_id, event_seq)
     ) WITHOUT ROWID;
     CREATE INDEX chat_event_thread ON chat_event (chat_room_id, thread_seq);
+    CREATE INDEX chat_event_expire ON chat_event (expire_ms);
     CREATE TABLE chat_range (
         chat_room_id TEXT NOT NULL,
         thread_seq INTEGER NOT NULL,
@@ -170,6 +178,15 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE outbox ADD COLUMN current TEXT;",
 ];
 
+/// The revision of the schema in [`MIGRATIONS`] before release 0.1.0, kept in `PRAGMA application_id`: a change of
+/// the steps as they are raises it. A store of an earlier revision (0: made before revisions) is made again when it
+/// opens, with its outbox, drafts and chunked uploads copied across; the rest it cached is read again from the server.
+/// A store of a later revision is a newer client's, and is not opened. 1: chat_event.expire_ms (phase 16).
+pub(crate) const SCHEMA_REV: i32 = 1;
+
+/// The tables a rebuild copies across: what the user made here and the server does not have yet.
+const KEPT_TABLES: [&str; 3] = ["outbox", "draft", "upload"];
+
 /// What the size cap counts for a row beside its text: keys, indexes and page slack, roughly.
 const ROW_BYTES: i64 = 64;
 
@@ -217,17 +234,26 @@ impl Store {
             crate::files::create_private_dir(data)
                 .map_err(|err| Error::new(format!("Client store {}: {err}", data.display())))?;
         }
-        create_private_file(&db).map_err(|err| Error::new(format!("Client store {}: {err}", db.display())))?;
+        let mut conn = connect(&db)?;
         let failed_open = |err: rusqlite::Error| Error::new(format!("Client store {} not opened: {err}", db.display()));
-        let mut conn = Connection::open(&db).map_err(failed_open)?;
-        conn.busy_timeout(Duration::from_secs(5)).map_err(failed_open)?;
-        // auto_vacuum takes effect only before the first table: a new file shrinks after an eviction (Store::trim).
-        conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(failed_open)?;
-        conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0))
+        let rev: i32 = conn
+            .query_row("PRAGMA application_id", [], |row| row.get(0))
             .map_err(failed_open)?;
-        conn.pragma_update(None, "synchronous", "FULL").map_err(failed_open)?;
+        if rev > SCHEMA_REV {
+            return Err(Error::new(format!(
+                "Client store {} is of a newer client (schema revision {rev}, this one knows {SCHEMA_REV})",
+                db.display()
+            )));
+        }
+        if version > 0 && rev < SCHEMA_REV {
+            conn = rebuild(conn, &db, rev)?;
+        }
         migrate(&mut conn, &db)?;
+        conn.pragma_update(None, "application_id", SCHEMA_REV)
+            .map_err(failed_open)?;
         let store = Self {
             conn,
             dir: dir.to_path_buf(),
@@ -509,6 +535,114 @@ fn create_private_file(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Open the database file with the store's settings, made 0600 first.
+fn connect(db: &Path) -> Result<Connection, Error> {
+    create_private_file(db).map_err(|err| Error::new(format!("Client store {}: {err}", db.display())))?;
+    let failed_open = |err: rusqlite::Error| Error::new(format!("Client store {} not opened: {err}", db.display()));
+    let conn = Connection::open(db).map_err(failed_open)?;
+    conn.busy_timeout(Duration::from_secs(5)).map_err(failed_open)?;
+    // auto_vacuum takes effect only before the first table: a new file shrinks after an eviction (Store::trim).
+    conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")
+        .map_err(failed_open)?;
+    conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0))
+        .map_err(failed_open)?;
+    conn.pragma_update(None, "synchronous", "FULL").map_err(failed_open)?;
+    // a deleted row's bytes are overwritten, so an expired message does not stay in a free page
+    conn.query_row("PRAGMA secure_delete = ON", [], |row| row.get::<_, i64>(0))
+        .map_err(failed_open)?;
+    Ok(conn)
+}
+
+/// The database and its WAL and shared-memory files, by a path.
+fn db_files(db: &Path) -> [PathBuf; 4] {
+    ["", "-wal", "-shm", "-journal"].map(|suffix| PathBuf::from(format!("{}{suffix}", db.display())))
+}
+
+/// A store of an earlier schema revision (`rev`) made again, before 0.1.0 (no migrations): the file moves aside, a new
+/// one is made with the current schema, and [`KEPT_TABLES`] are copied across by the columns both have; then the old
+/// files go. A table that cannot be copied is logged, and the old file is kept beside the new one (`.old`) so nothing
+/// queued is lost; the rest the store cached is read again from the server (its feeds' cursors are gone: a reset).
+fn rebuild(conn: Connection, db: &Path, rev: i32) -> Result<Connection, Error> {
+    let failed =
+        |what: &str, err: &dyn std::fmt::Display| Error::new(format!("Client store {}: {what}: {err}", db.display()));
+    // the WAL into the main file, so the file moved aside holds everything
+    if let Err(err) = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())) {
+        tracing::warn!(
+            "Client store {}: no checkpoint before it is made again: {err}",
+            db.display()
+        );
+    }
+    drop(conn);
+    let old = PathBuf::from(format!("{}.old", db.display()));
+    for file in db_files(&old) {
+        let _ = std::fs::remove_file(file);
+    }
+    std::fs::rename(db, &old).map_err(|err| failed("not moved aside", &err))?;
+    for file in db_files(db).into_iter().skip(1) {
+        let _ = std::fs::remove_file(file);
+    }
+    let mut fresh = connect(db)?;
+    migrate(&mut fresh, db)?;
+    let mut kept_all = true;
+    match fresh.execute("ATTACH DATABASE ?1 AS old", [old.display().to_string()]) {
+        Ok(_) => {
+            for table in KEPT_TABLES {
+                if let Err(err) = copy_table(&fresh, table) {
+                    kept_all = false;
+                    tracing::error!(
+                        "Client store {}: the {table} rows were not copied into the store made again ({err}); the old file stays at {}",
+                        db.display(),
+                        old.display()
+                    );
+                }
+            }
+            if let Err(err) = fresh.execute_batch("DETACH DATABASE old") {
+                tracing::warn!("Client store {}: the old file not detached: {err}", db.display());
+            }
+        }
+        Err(err) => {
+            kept_all = false;
+            tracing::error!(
+                "Client store {}: the old file not opened to copy its outbox and drafts ({err}); it stays at {}",
+                db.display(),
+                old.display()
+            );
+        }
+    }
+    if kept_all {
+        for file in db_files(&old) {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+    tracing::warn!(
+        "Client store {}: made by an earlier schema (revision {rev}, now {SCHEMA_REV}) and made again; its outbox, \
+         drafts and uploads kept, the rest read again from the server",
+        db.display()
+    );
+    Ok(fresh)
+}
+
+/// `table`'s rows of the attached old file into the new one, by the columns both have.
+fn copy_table(conn: &Connection, table: &str) -> Result<usize, rusqlite::Error> {
+    let columns = |schema: &str| -> Result<Vec<String>, rusqlite::Error> {
+        let mut statement = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
+        let names = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(names)
+    };
+    let old = columns("old")?;
+    if old.is_empty() {
+        return Ok(0);
+    }
+    let shared: Vec<String> = columns("main")?.into_iter().filter(|name| old.contains(name)).collect();
+    let list = shared.join(", ");
+    conn.execute(
+        &format!("INSERT OR IGNORE INTO main.{table} ({list}) SELECT {list} FROM old.{table}"),
+        [],
+    )
+}
+
 /// Apply the steps of [`MIGRATIONS`] past the file's `user_version`, each in a transaction with its version.
 fn migrate(conn: &mut Connection, db: &Path) -> Result<(), Error> {
     let failed_step = |err: rusqlite::Error| Error::new(format!("Client store {} not migrated: {err}", db.display()));
@@ -551,7 +685,8 @@ fn text_len(text: &str) -> i64 {
     i64::try_from(text.len()).unwrap_or(i64::MAX)
 }
 
-fn now_ms() -> i64 {
+/// The time now, ms since the epoch.
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))

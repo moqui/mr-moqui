@@ -289,6 +289,37 @@ pub(crate) fn call_audio(
     Ok(serde_json::json!({ "route": null, "routes": [] }))
 }
 
+/// Screen security for `reason` (`ScreenSecurity.set`, Android's `FLAG_SECURE`; plans/Comms-Messaging.md §18.3 phase 16):
+/// whether it is on now. Elsewhere nothing is done and the answer is false. Only for the shell's page.
+#[tauri::command(async)]
+pub(crate) fn secure_screen(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    reason: String,
+    on: bool,
+) -> Result<bool, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let reason: String = reason
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || ":-_".contains(*c))
+        .take(64)
+        .collect();
+    if reason.is_empty() {
+        return Err("No reason".to_string());
+    }
+    #[cfg(target_os = "android")]
+    return crate::android::secure_screen(&reason, on);
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!("Screen security for {reason}: {on}");
+        Ok(false)
+    }
+}
+
 /// The routes the shell's speaker button may choose.
 pub(crate) const AUDIO_ROUTES: [&str; 4] = ["earpiece", "speaker", "wired", "bluetooth"];
 

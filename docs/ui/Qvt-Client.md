@@ -31,7 +31,7 @@ browser (mounting, Quasar menus and popups, dialogs, posts, the lazy libraries, 
 
 `/qapps/**` is one HTML page, `includes/WebrootVue.qvt.html.fancy`, made by the pre-actions of `qapps.xml`. The libraries load at the end
 of the body in this order: `vue/vue.global.prod.js`, `quasar/quasar.umd.prod.js`, `quasar/lang/<pack>.umd.prod.js`, `MoquiLib.js`,
-`MoquiL10n.js`, `WebrootChat.js`, `WebrootAssist.js`, `WebrootVue.qvt.render.js`, `WebrootVue.qvt.js`. Compiling templates in the browser needs `unsafe-eval` in a content security policy; the page has no
+`MoquiL10n.js`, `WebrootChat.js`, `WebrootChatExpiry.js`, `WebrootAssist.js`, `WebrootVue.qvt.render.js`, `WebrootVue.qvt.js`. Compiling templates in the browser needs `unsafe-eval` in a content security policy; the page has no
 inline script and no inline event handler, and the settings are a data block:
 
 ```html

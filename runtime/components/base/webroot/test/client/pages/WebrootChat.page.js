@@ -1387,6 +1387,65 @@ test("the people are asked once for the page and shared; a change asks again; th
     assert.equal(card.computed.typed.call({ addText: "Jane" }), null);
 });
 
+// Disappearing messages (plans/Comms-Messaging.md §18.3 phase 16; WebrootChatExpiry.js)
+test("disappearing messages: the timer in words, the server's clock, what is due, and the page's own expired signal", async () => {
+    const expiry = chat.expiry;
+    assert.deepEqual(expiry.options().map((option) => option.value), [0, 30, 300, 3600, 28800, 86400, 604800, 2419200]);
+    assert.equal(expiry.label(0), "Off");
+    assert.equal(expiry.label(28800), "8 hours");
+    assert.equal(expiry.label(172800), "2 days", "a value the dialog does not offer, by its largest unit");
+    assert.equal(expiry.short(30), "30s");
+    assert.equal(expiry.short(604800), "1w");
+    assert.equal(expiry.short(0), "");
+    assert.equal(expiry.left(61000, 0), "2m", "rounded up");
+    assert.equal(expiry.left(5 * 3600000, 0), "5h");
+    assert.equal(expiry.left(0, 5000), "0s");
+    // localized through t, the units as keys
+    const t = (key) => ({ "8 hours": "8 Stunden", "{count}m": "{count} Min.", "{count} days": "{count} Tage" })[key] || key;
+    assert.equal(expiry.label(28800, t), "8 Stunden");
+    assert.equal(expiry.label(172800, t), "2 Tage");
+    assert.equal(expiry.short(300, t), "5 Min.");
+    assert.equal(expiry.left(61000, 0, t), "2 Min.");
+    assert.equal(expiry.options(t)[4].label, "8 Stunden");
+    // a device 10 minutes slow goes by the server's clock; a late or kept answer does not move it back
+    expiry.resetClock();
+    const local = Date.now();
+    expiry.learn(local + 600000, local);
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5);
+    expiry.learn(local - 3600000, local);
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5, "the largest of the last offsets");
+    expiry.seen({ serverNow: local - 7200000, offline: { gapBefore: false } }, "RY");
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5, "an answer kept on the device is no clock");
+    const events = [{ eventSeq: 1, expireDate: 100 }, { eventSeq: 2, expireDate: 300 }, { eventSeq: 3 }];
+    assert.deepEqual(expiry.due(events, 200), [1]);
+    assert.equal(expiry.nextDue(events, 200), 300);
+    assert.equal(expiry.nextDue(events, 400), null);
+    // the page's timer: a due event is signalled as the server's push is, and its decrypted copy goes
+    expiry.resetClock();
+    chat.opened["RX:7"] = { content: { body: "secret" } };
+    const signals = [];
+    const off = chat.on("expired", (done) => signals.push(done));
+    expiry.seen({ room: { chatRoomId: "RX", messageTimerSeconds: 60 }, serverNow: Date.now(),
+        eventList: [{ eventSeq: 7, expireDate: Date.now() + 20 }, { eventSeq: 8, expireDate: Date.now() + 600000 }] }, "RX");
+    assert.equal(expiry.timerOf("RX"), 60);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    off();
+    assert.equal(signals.length, 1);
+    assert.deepEqual(signals[0].eventSeqList, [7]);
+    assert.equal(chat.opened["RX:7"], undefined, "the decrypted copy left the page");
+    assert.deepEqual(Object.keys(expiry.held.RX), ["8"]);
+    // the server's push: what it names and what is due by its time leave the page's timer
+    const pushed = chat.reduce({ typing: {}, unread: {}, reads: {}, openRooms: {}, presence: {} },
+        { topic: "chatRoom:RX", message: { kind: "expired", chatRoomId: "RX", before: Date.now() + 700000, eventSeqList: [8] } }, "ann", 1);
+    assert.deepEqual(pushed, { kind: "expired", chatRoomId: "RX", eventSeqList: [8], before: pushed.before });
+    chat.emit("expired", pushed);
+    assert.equal(expiry.held.RX, undefined);
+    // no app host: screenshots cannot be stopped here
+    assert.equal(expiry.canSecure(), false);
+    assert.equal(await expiry.secureScreen("viewOnce", true), false);
+    expiry.resetClock();
+});
+
 // ---- scheduled sends and reminders (plans/Comms-Messaging.md phase 15) ----
 
 test("the times offered: Remind me in 20 minutes, an hour and tomorrow at 9; Send later's Monday morning only from a Friday or Saturday", () => {

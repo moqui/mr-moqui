@@ -65,6 +65,7 @@ const COMMANDS: &[&str] = &[
     "call_take_answer",
     "call_audio",
     "call_audio_route",
+    "secure_screen",
     "call_dial_account",
     "call_dial_choice",
     "call_dial_from",

@@ -235,6 +235,27 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   - *Unblock.* Their messages show again, but the mentions and Activity they made during the block do not come back.
   - *Not covered.* A blocked person's reactions and poll votes still count in the totals; the XMPP blocklist of your
     XMPP app (XEP-0191) is its own.
+- <a id="disappearing-messages"></a>**Disappearing messages and view-once** (plans/Comms-Messaging.md §18.3 phase 16).
+  - *The timer.* A room's menu, its Room settings or the timer chip in its header opens Disappearing messages: Off, 30
+    seconds, 5 minutes, 1 hour, 8 hours, 1 day, 1 week or 4 weeks. Any member of a direct chat sets it, and a moderator or
+    owner of another room. A new message then goes that long after it is sent, read or not, on the server and on every
+    member's device: it leaves the timeline, its thread, the details tabs, search results, Activity and the room list, and
+    its files, links and link previews go with it. A change is a line in the room ("Ana set disappearing messages to 1
+    hour"), and messages sent before keep their own time. An expiring message has a timer by its time with the time it has
+    left. A bridged room, a phone room and a record's room have no timer: a bridge cannot delete a message that went to its
+    network, and a record keeps its history; a room with a timer cannot be bridged until it is off. XMPP clients are not
+    served a room with a timer, an expiring message is never put in the search index (without OpenSearch the database
+    search finds one while it stands), it is not handed to an agent, it cannot be forwarded, and its notifications and
+    pushes say only who sent it and where. In an encrypted room the server also drops the key backup of a session once no
+    message of the room uses it. Anyone in the room can still copy or photograph a message before it goes; a database
+    backup made while it stood keeps it until that backup is removed (a restored one deletes what is past due at once).
+    Chat has no export; an administrator's entity export or data transfer holds what stood at that moment.
+  - *View once.* With one photo or video waiting and no text, its chip has View once (not in a bridged room). Each
+    person in the room opens it once, full screen, with no download or forward; closing it ends it, and the message
+    then reads Opened. The sender sees Opened, or "Opened by 2 of 4" (people with read receipts off are not counted). The
+    server deletes the file once everyone has opened it, and a view-once message nobody opened goes after 14 days
+    (`chat_view_once_days`). While it is open the Android app blocks screenshots and screen recording; a browser and the
+    desktop app cannot, and the viewer says so.
 - **Send later and reminders** (plans/Comms-Messaging.md §18.3 phase 15; `org.moqui.chat.ChatScheduleServices`).
   - *Send later.* A long press on Send on a phone, or the arrow beside Send or a right click on it on a desktop, opens
     Send later: in an hour, tomorrow morning or afternoon, Monday morning (on a Friday or Saturday), or a date and time

@@ -1063,13 +1063,13 @@ that adds it. "New" means this plan adds it (§17).
 |---|---|---|
 | E2EE by default | Encrypted direct and private rooms by default | §6.5 |
 | Safety numbers | Emoji and QR verification | Built |
-| Disappearing messages | A per-room timer from 30 s to 4 weeks. The clients delete at the time, the server deletes by an exact job. Today retention is whole days by a daily job | New |
-| View-once media | Media that opens once, then the clients delete it and the server deletes the file | New |
+| Disappearing messages | A per-room timer from 30 s to 4 weeks, from when a message is sent, set by a direct room's member or another room's moderator; a change is an event in the room. The clients delete at the time, the server by a due-time index and a worker that wakes at the next due time; the room's feed tells the other devices. Refused in bridged, phone and record rooms | Designed: phase 16 (§18.3) |
+| View-once media | One photo or video that each recipient opens once (a 2-minute window), with `FLAG_SECURE` on Android while open; the sender sees Opened; the server deletes the file when all have opened, or after 14 days | Designed: phase 16 (§18.3) |
 | Note to self | A room with only the user | New (check if a one-person room works) |
 | Usernames, phone number hidden | Usernames; a user's phone number is not in chat's data and is never shown to other MR Moqui users. An outside number shows to the members of its own room. Unified contacts keep it: a person who is a user shows only the numbers of the viewer's own rooms, and chat never links a number to a user from its own or voice's data (phase 22) | Built |
 | Linked devices list | Apps and devices | Built |
 | Registration lock, PIN | Device keys, password, recovery key for key backup | Built |
-| Screen security (no screenshots) | Android `FLAG_SECURE` option, per app or per encrypted room | New |
+| Screen security (no screenshots) | Android `FLAG_SECURE` option, per app or per encrypted room; the view-once viewer sets it already, through the reasons of `MainActivity.setSecure` (phase 16) | New |
 | Group links with admin approval | Room invite links and QR codes, with optional approval | New |
 | Stories | Later, if wanted | Later |
 | Sealed sender | Not possible: the server sees who sends. The UI says so (§6) | Not planned |
@@ -1321,7 +1321,7 @@ These come after phases 0 to 9 of §18, in the order at the end of §18.
 | 1 | Unified contacts: one person with many networks; pick the network per message: designed, phase 22 (§18.3) | §11, §11.1 |
 | 2 | Block and report; spam filter for outside numbers | §14.2; designed as phase 11 (§18.3) |
 | 3 | Scheduled send, message reminders | §14.2, §14.3; designed as phase 15 (§18.3) |
-| 4 | Disappearing messages (exact timer) and view-once media | §14.4 |
+| 4 | Disappearing messages (exact timer) and view-once media: designed, phase 16 (§18.3) | §14.4 |
 | 5 | Invite links and QR, with approval; join requests | §14.4, §14.5 |
 | 6 | SMS members of a room (GroupMe's SMS join) | §14.5 |
 | 7 | Stickers, GIF search, location and live location | §14.3 |
@@ -3224,6 +3224,332 @@ on Send, and a reminder's notification on the phone.
   - Android's reminder body and its link to the message (the next APK change);
   - a held message's send from the phone app in the background.
 
+#### Phase 16: disappearing messages and view-once media
+
+Designed 2026-11-17 (§14.4, §17 #4); built 2026-11-18 (the status at the end of this entry). A room has a timer: its new
+messages disappear that long after they are sent, on the server and on every member's device. A photo or video sent
+view-once opens once for each person, then goes.
+
+**The timer starts when a message is sent, for everyone.** Signal starts it at sending for the sender and at reading for
+each recipient. That works because Signal's server keeps nothing. Here the server keeps the room's timeline for every
+member and every device, so:
+- one due time per message (`expireDate`) is one row in one index; read-start would need a due time per member;
+- the server and all of a person's devices agree on when a message goes, with no per-device read state to sync;
+- a message nobody reads still goes, which a read-start timer would keep on the server for ever;
+- WhatsApp's disappearing messages also start at sending.
+
+The cost: someone offline longer than a short timer never sees the message. The timer dialog says so ("New messages
+disappear this long after they are sent, read or not"). A scheduled message (phase D2a) starts its timer when it is
+actually sent.
+
+**Data model** (`ChatEntities.xml`, `ChatKeyEntities.xml`)
+
+| Entity, field | What |
+|---|---|
+| `ChatRoom.messageTimerSeconds` | The room's timer for new messages: 30 to 2,419,200 (4 weeks); empty means off. `find#Rooms`, `get#Room` and `get#Timeline` answer it |
+| `ChatEvent.expireDate` (index `CHAT_EVENT_EXPIRE`) | When the event goes. A message gets `sentDate` plus the room's timer. A view-once message gets the earlier of that and `chat_view_once_days` (14). An edit, reaction, redaction or pin of a message gets the message's `expireDate`, so all of them are due together. Membership, call and system events never expire |
+| `ChatEvent.viewOnce` | Y: a view-once message |
+| `ChatEvent.megolmSessionId` (index `CHAT_EVENT_SESSION`: `chatRoomId`, `megolmSessionId`) | `content.encrypted.session_id` of an encrypted event, set by `append#Event`. It tells when the server's key backup of a session can go |
+| `moqui.chat.ChatViewOnceOpen` (`chatRoomId`, `eventSeq`, `userId` pk; `openedDate`, `downloadCount`) | A recipient's open of a view-once message. Its rows go with the message |
+| `moqui.chat.ChatEventDueRoom` (view: `chatRoomId`, `min(expireDate)`) | The rooms with events due, so a round takes rooms, not one room's rows |
+| `moqui.chat.ChatExpirySession` (`chatRoomId`, `sessionId` pk; `lastUsedDate`, `dueDate`) | A session whose messages went while it may still be in use: its backup goes at `dueDate` |
+| `ChatKeyBackupSession` index `CHAT_BACKUP_ROOM_SESSION` (`roomId`, `sessionId`) | The rows of a session across users' backups, found in one query |
+| `ChatEventLink` index `CHAT_LINK_HASH` (`urlHash`) | Whether another message still links a URL whose preview cache row could go |
+| `ChatSetupData.xml` | No new job: the worker below runs the deletes, and the daily `clean#ChatRetention` also runs `expire#DueMessages` as a backstop |
+| `MoquiDefaultConf.xml` | `chat_view_once_days` (14), `chat_expiry_round_limit` (2000) |
+
+**The exact delete.** A due-time index and a worker per node, with no per-message scheduling:
+- `crates/moqui-core/src/service/chat_expiry.rs`, on the pattern of `chat_push.rs`: a thread per node, started beside
+  the push worker (`moqui-host` `lib.rs`), stopped by the factory.
+  - It sleeps until the earliest `expireDate`. That is one indexed query: `expireDate` not null, ordered, limit 1. It
+    sleeps at most 60 s, so it also sees what other nodes wrote.
+  - `wake#ChatExpiry` (type rust) wakes it after the commit, with the new event's due time, when that time is sooner
+    than its planned wake.
+  - Each round calls `ChatExpiryServices.expire#DueMessages`. A round that fails is logged, and the next one starts
+    within 60 s.
+  - The message is deleted within about a second of its time.
+- `expire#DueMessages` (`nowMillis` for the tests; `limit`):
+  - It reads the due rows by the index (`expireDate` up to now, up to the limit, only `chatRoomId`, `eventSeq` and
+    `expireDate`) and groups them by room.
+  - Each room is done by `expire#RoomMessages` in its own transaction. A room that fails is logged, and its rows are
+    still due next round.
+  - Out: `roomCount`, `deletedCount`, `failedCount`, `more`. When `more` is true, the worker runs again at once.
+- Cost:
+  - Each round reads only due rows. The next wake is one row of the index.
+  - The writes are those of the deletes, plus one room change and one socket push per room per round.
+  - A cluster's nodes may run the same round. The room row is locked first, so the second node finds nothing.
+  - A busy room with a 30 s timer is a delete per message, which is the same order of work as its sends.
+- `expire#RoomMessages` (internal; `ChatExpiry.js`), with the room row locked:
+  - the due events, and any edit, reaction or redaction of them (as `clean#RoomRetention` finds them);
+  - each message's content through `clear#MessageContent`: mentions, activity, links, files, poll, previews and search;
+    plus its `ChatViewOnceOpen` rows, and each `ChatLinkPreview` whose `urlHash` no other link has;
+  - the thread roots of the expired replies get their count and last reply back (as `redact#Message` does);
+  - the room's last message is the last one that stands (as retention does);
+  - in an encrypted room, the backed-up sessions: for each `megolmSessionId` of the deleted events that no event of the
+    room still has, the `ChatKeyBackupSession` rows of `roomId` `!<chatRoomId>:<server>` and that session, in every
+    user's backup, go;
+  - the room's changes of the deleted events go, and one room change stands for them (below);
+  - the counts are published to the members who had them unread;
+  - a socket push `{kind: 'expired', chatRoomId, before, eventSeqList}` goes to the members (at most 200 seqs; `before`
+    covers the rest).
+
+**Sync.** The other devices are told through the room's feed, which costs one row per room, not one per member:
+- `record#RoomChange` with `eventSeq` empty and `{cause: 'expired', before}`. It replaces the room's earlier marker, so a
+  room has one, and `before` only grows.
+  - The marker means every event of the room whose `expireDate` is at or before `before` is gone.
+  - `before` is the latest due time the round finished, so it still holds when a round stopped at its limit.
+- The room's `lastChangeSeq` moves, so `get#UserChanges` heads send the client to the room's feed (§5.2), as for an edit.
+- A client that does not know the marker skips it: it has no `eventSeq`.
+- A view-once open is a change of that message (`push#Update` with `viewOnceChanged`, a room change `update`): each
+  client reads the message again, so the sender's devices read "Opened", and the opener's other devices drop their copy.
+- A reset of the feed reads the room's latest page again and drops what is held, so nothing expired survives a reset.
+- Clients also delete at the time by their own clock, corrected by the server's (below). The marker and the push cover
+  a device that was asleep, or whose clock is wrong.
+
+**Services** (`framework/service/org/moqui/chat/ChatExpiryServices.xml`, `ChatExpiry.js`; hooks in the shared files)
+
+| Service | What |
+|---|---|
+| `set#RoomTimer` (`chatRoomId`, `seconds`; 0 or empty is off) | Who may set it: any member of a direct room; a moderator or owner of another room. Refused, with a `reasonCode`: `notAllowed`; `range` (not 30 s to 4 weeks); `recordRoom` (a record room keeps its history); `bridged` (a mapping in force, `ChatRoomBridge`, so phone rooms too); `federated` (`federationEnabled` Y); `archived`. It writes the field and appends a system event `{action: 'timer', seconds, byUserId}` ("Ana set disappearing messages to 1 hour", "… turned them off"), and the members' feeds get a `room` change. New messages only: what was sent keeps its time |
+| `open#ViewOnce` (`chatRoomId`, `eventSeq`) | A current member who did not send it. The first call writes the open and answers the file (`chatAttachmentId`, `fileName`, `contentType`) with `until`, the end of a 2-minute window in which `get#ViewOnceFile` (the `viewOnceFile` transition, `no-store`) serves it at most 3 times (a download cut off midway). Refused: `opened` (after the window), `gone` (the file went), `sender`. The first open is a change of the message. Once every current local member but the sender has opened it, the message is due at the end of that window: `expire#RoomMessages` then removes only its file and sets it back to its own time (`content.viewOnceUntil`), so it stands as Opened |
+| `expire#DueMessages`, `expire#RoomMessages` | Above |
+| Hooks in `ChatServices.xml` | See the list below |
+
+The hooks in `ChatServices.xml`:
+- `append#Event`: one call, `ChatExpiry.js` `expiryOf`, for `expireDate`, `viewOnce` and `megolmSessionId`, then
+  `wake#ChatExpiry`.
+- `send#Message` takes `viewOnce`. Refused when the message:
+  - has text, has more or other than one photo (png, jpeg, gif or webp) or one video (mp4, webm or quicktime), or names
+    records (`viewOnceFiles`);
+  - is in a bridged or federated room (`bridged`).
+- Forwarding a message that expires, or a view-once message, is refused (`expiring`).
+- `edit#Message` refuses a view-once message.
+- `get#Attachment` never serves a view-once file (only `get#ViewOnceFile` does), and answers `expiring`, for the
+  `attachment` transition's `Cache-Control: no-store`.
+- `get#Timeline`:
+  - each event has `expireDate` (millis);
+  - a view-once message has no attachments and has `viewOnce` `{kind: 'photo' | 'video', openedByMe, gone}`; for its
+    sender it also has `openedCount` and `recipientCount`, which leave out members whose `CHAT_READ_RECEIPTS` is N;
+  - a reply to a message that went has `replyTo` `{gone: true}`;
+  - the answer has `serverNow`.
+- `index#ChatEvent` indexes no event that expires: nothing reaches OpenSearch. Without OpenSearch, the database search
+  finds a message while it stands.
+- `deliver#AgentMessage` hands an expiring message to no agent: an agent's model and its logs (`clean#LlmCallContent`,
+  14 days) would keep it.
+- `notify#Mention` gives an expiring message's notification no summary.
+
+Other hooks:
+- `ChatBridgeServices.store#RoomBridge` is refused while the room has a timer (`timerOn`). No service sets
+  `federationEnabled` today; one that does later gets the same check.
+- `XmppServices.get#RoomInfo` answers `disappearing` for a room with a timer; the XMPP session refuses that room as it
+  refuses an encrypted one (`crates/moqui-xmpp/src/session/chat.rs`).
+- `XmppServices.get#AttachmentUrls` makes no XMPP URL for a view-once file. The XMPP session sends a view-once message as the text
+  "View-once photo: open it in MR Moqui".
+- `chat_push.rs` puts no snippet in the push of an expiring message, as for an encrypted one, and its `PushOutbox`
+  `expireDate` is the earlier of the 4 weeks and the message's own `expireDate`.
+
+**Bridges: refused, and said.** A bridge cannot delete on the other network, and an SMS cannot be taken back. A room
+that is bridged, a phone room or a federated room therefore gets no timer and no view-once:
+- The timer dialog shows the choice disabled, with "This room is bridged to <networks>: a message that went there cannot
+  be deleted there."
+- The attach flow shows no view-once toggle.
+- The other way round: a room with a timer cannot be bridged or federated until the timer is off. The bridge form says
+  so.
+
+The other choice was a warning on the room. It was not taken: the timer would then promise less than it says.
+
+**Encrypted rooms.** The clients delete their decrypted copy; the server deletes the ciphertext and the key material it
+holds:
+- The ciphertext and the files' blobs go as any message's do.
+- The key backup: a backed-up Megolm session goes once no event of the room uses it (above).
+- To-device room keys are deleted when acknowledged, and after `chat_to_device_retention_days` as today.
+- So that a session does not outlive its messages, the sender's browser in a room with a timer rotates its outbound
+  session: `EncryptionSettings.rotationPeriod` is the timer (at most a week), with `rotationPeriodMessages` 100. A timer
+  change invalidates the session (`WebrootCrypto.js` `encryptRoomNow`).
+- The device's own store keeps the inbound session key, because matrix-sdk-crypto has no delete for one. With the
+  ciphertext gone from the server and the device, it opens nothing.
+- A view-once file in an encrypted room is decrypted into a blob in memory only, and the blob is revoked when the viewer
+  closes.
+
+**Where a deleted message could stay, and how each is cleared**
+
+| Place | Cleared by |
+|---|---|
+| `ChatEvent` and its edits, reactions, redactions and pins | `expire#RoomMessages` |
+| Mentions, Activity (`ChatUserActivity`), links, polls, view-once opens | `clear#MessageContent` and `expire#RoomMessages` |
+| Files: the `DbResource` bytes, `ChatAttachment`, the XMPP upload rows | `remove#AttachmentFile`; one that fails is logged |
+| Link previews: `linkPreviewJson`, and the shared `ChatLinkPreview` cache row | The row goes with the message; the cache row goes when no other link has its hash |
+| Search | Never put in OpenSearch's index. Without OpenSearch, the database search reads the rows, so it finds a message while it stands and not after |
+| The room list's last message (`ChatRoom.lastMessage*`) | The last message that stands |
+| Threads: a root's count and last reply | Set back, as for a redaction; a root that goes leaves its replies, each with its own time |
+| Replies | The quote reads `replyTo {gone}`: "This message disappeared". Nothing of it is copied into the reply |
+| Push payloads (`PushOutbox`) and stored mention notifications | No text in them. A push is not sent after the message's time |
+| The changes feeds (`ChatRoomChange`) | Its changes go; the marker stands for them |
+| The web page (Vue state; `moqui.chat`'s `opened`, `sealedTexts`, `reactionKeys`, and `fileUrls` revoked) | `moqui.chat.expiry` at the time; the `expired` push |
+| The offline store, desktop and Android (`moqui-client` SQLite) | `chat_event.expire_ms`, with an index (in the store's schema as is: no migrations before 0.1.0; a store of an earlier `SCHEMA_REV`, kept in `PRAGMA application_id`, is made again when it opens, its outbox, drafts and uploads copied across) swept by `Store::expire_chat_events(now)`, by the server's clock, at each feed run, push fold and offline chat answer; an expired row is never answered. The room's kept `/timeline`, `/roomView` and `/room` answers and the kept room lists go, and a kept page holding an expired event is written again without it. The store sets `PRAGMA secure_delete`, so deleted rows do not stay in free pages |
+| The WebView's HTTP cache | The `attachment` transition sends `Cache-Control: no-store` for a file of an expiring or view-once message |
+| The browser outbox (`localStorage`) | A waiting message is held only until it is sent, as today; its timer starts then |
+| Agents and LLM logs | Not handed |
+| Bridges, XMPP, federation | Refused, or not served |
+| Database backups | An archive made while the message stood keeps it until that archive ages out. A restored archive's past-due messages go at the worker's first round, because `expireDate` is in the row. An encrypted room's archive holds only ciphertext. The timer dialog says this for a room that is not encrypted |
+| Exports | Chat has no export. An administrator's entity export or data transfer holds what stood at that moment (said in [Comms](../docs/tools/Comms.md)) |
+
+**Clients** (`webroot/screen/webroot/js/WebrootChatExpiry.js`, new, loaded after `WebrootChat.js` in `qapps.xml` and the
+desktop shell's `index.html`: `moqui.chat.expiry`)
+- Pure parts:
+  - `options(t)`: Off, 30 seconds, 5 minutes, 1 hour, 8 hours, 1 day, 1 week, 4 weeks;
+  - `label(seconds)`;
+  - `left(expireDate, now)`: "4m", "2h", "3d";
+  - `learn(serverNow)` and `now()`: the server's clock, from `get#Timeline` and each pushed event's `sentDate`;
+  - `due(events, now)`, `nextDue(events, now)`.
+- `track(roomId, events)` and one page timer to the next due time. At that time it emits
+  `{kind: 'expired', chatRoomId, eventSeqList}` on `moqui.chat.on`, the shape the server pushes. So every list a room
+  keeps drops the event, the same way for the server's push and the page's own timer: the timeline, the thread pane,
+  the details tabs, pinned, search results, the Activity and Threads lists.
+- `moqui.chat.forgetEvents(roomId, seqs)` (a hook in `WebrootChat.js`) drops the decrypted copies and revokes their
+  blob URLs.
+- `secureScreen(reason, on)`: the app host's `moquiDesktop.secureScreen`, nothing on the web. See view-once.
+- A notification of an expiring message, the page's own or the desktop app's, shows the sender and the room only.
+
+**Screens** (`Chat.qvue`, hooks only where it can; `Chat.xml` transitions `setRoomTimer` and `openViewOnce`)
+- Room settings:
+  - a "Disappearing messages" row, with its value and Change, opens the timer dialog (`m-dialog`, 420 px; full screen
+    under 600 px): the choices as a radio list, and the notes;
+  - the notes say that messages disappear this long after they are sent, read or not, on every device; that new
+    messages only are affected; that a member can still copy or photograph a message; the bridge note; and the
+    backup note in a plain room;
+  - a member who may not change it sees the value only.
+- The header: a timer icon with the short value beside the room's name, which opens the dialog. The rail: the same icon
+  on the room's row.
+- The timeline:
+  - an expiring message has a small timer icon by its time, with its time left in the tooltip and in Info;
+  - the system event says who set the timer, and to what;
+  - an expired message leaves no trace in the timeline.
+- Attach:
+  - with exactly one photo or video waiting and no text, its chip has a "View once" toggle (`sym_o_looks_one`), on the
+    phone and on the desktop;
+  - once on, the text box says "A view-once photo has no text" and is disabled;
+  - the toggle does not show in a bridged room.
+- A view-once message:
+  - its bubble shows "Photo" or "Video" with the view-once icon, and no preview;
+  - the recipient taps it to open it in a full-screen viewer: no download, no forward, no save, no context menu, a
+    video played once;
+  - on close, the blob is revoked, and the bubble reads "Opened" (`openedByMe`);
+  - the sender's bubble reads "Sent", then "Opened", or "Opened by 2 of 4" in a group (Info names them);
+  - `gone` reads "Expired".
+- Screenshots: while the viewer is open, the Android app sets `FLAG_SECURE` through `moquiDesktop.secureScreen('viewOnce',
+  true)`:
+  - a command in `crates/moqui-mobile/src/commands.rs`, then `android.rs`, then `MainActivity.setSecure(reason, on)`;
+  - `MainActivity` holds a set of reasons, and the flag is on while any reason is;
+  - D2g adds its reasons (`app`, `room:<id>`) to the same set.
+  The desktop app and the web cannot stop a screenshot. Their viewer says so in a line.
+- Phone and desktop: the same components. On a phone, the dialog and the viewer are full screen and the toggle is on
+  the attach tray's chip. On a desktop, the dialog is 420 px and the viewer is a dark full-window overlay; Esc closes it.
+- Terminal (`ChatTui.xml`):
+  - an expiring message's line ends "disappears";
+  - a view-once message reads "View-once photo: open it in the app";
+  - the terminal does not change the timer, and it keeps nothing.
+
+**Failure tolerance**
+- The rooms of a round are each on their own. A file that cannot be removed is logged, and its message still goes.
+- A round that fails is logged, and the next one starts within 60 s.
+- A process with no worker is covered: the daily `clean#ChatRetention` runs `expire#DueMessages` too.
+- The client's sweeps are each event on their own. A view-once download cut off is tried again within its window.
+
+**Security and abuse**
+- The timer does not protect against a member who copies, photographs or keeps a message with a changed client. The
+  dialog says so.
+- A plain room's messages are readable by the server's administrators until they go; an encrypted room's never are.
+- A timer change is an event in the room, so nobody can turn it off unseen to keep what follows.
+- `set#RoomTimer` checks rights as `update#Room` does. `open#ViewOnce` and `get#Attachment` are for current members
+  only; the sender is refused the view-once file; the window and the count bound the downloads.
+- The 30 s floor, the existing send limits and the round's limit bound the work, so no user can make the worker heavy.
+- A record room is refused: a record's history is the business's.
+
+**Left out**
+- A timer that starts when a message is read.
+- A timer on one message.
+- A user's default timer for new chats.
+- Custom durations in the dialog (the server takes any value from 30 s to 4 weeks).
+- Deleting on another network.
+- Clearing a phone notification already shown, at the message's time (it has no text).
+- Stopping screenshots on the desktop and the web, and detecting them.
+- Scrubbing database backups.
+- Deleting the device's inbound Megolm session.
+- View-once for files other than photos and videos, and for voice notes.
+
+**Tests (regression)**
+- Server:
+  - `framework/test/ChatExpiry.spec.js` (new):
+    - `set#RoomTimer`: a direct room's member may; a group's member may not and its moderator may; `range`,
+      `recordRoom`, `bridged`, `federated`; the system event;
+    - `store#RoomBridge` refused while the timer is on;
+    - a message's `expireDate`, and the same on its edit and reaction; none on a membership event;
+    - `expire#DueMessages` with `nowMillis` (the job called directly): the message, its edit and reaction, file, links,
+      preview cache row (kept while another link has it), activity and mentions go; a thread root's count and the
+      room's last message are set back; the marker is there and the message's own changes are gone; a message not yet
+      due stays;
+    - an encrypted room: a backup session goes with its last event and stays while one is left;
+    - a forward of an expiring message is refused; an expiring message is not handed to an agent.
+  - `framework/test/ChatViewOnce.spec.js` (new):
+    - `send#Message` `viewOnce` rules: text, two files and a PDF refused, and a bridged room refused;
+    - `get#Timeline` gives no attachments;
+    - `open#ViewOnce` serves the file in the window and is refused after it and for the sender; `get#Attachment` is
+      refused outside the window;
+    - the sender's `openedCount`; the file goes once all have opened; the 14-day deadline through `expire#DueMessages`.
+- Rust:
+  - `moqui-core` `chat_expiry_tests.rs`: the wait from the next due time and a wake;
+  - `chat_push_tests.rs`: an expiring message's push has no snippet, and its time to live ends with it;
+  - `moqui-client` store tests: `expire_chat_events`, `secure_delete`; the feeds tests: the marker
+    folded; the push tests: `expired` folded;
+  - `moqui-xmpp` session tests: a room with a timer refused.
+- Client, offline: `webroot/test/client/WebrootChat.spec.js`, a feature for `moqui.chat.expiry`:
+  - the options and labels, `left`, `learn` and `now` with a clock 10 minutes off, `due` and `nextDue`;
+  - the timer's emit removes an event from a room's list;
+  - `forgetEvents` revokes the blob URLs.
+  The webroot offline budget, 40.6 of 48 s, is measured after.
+- `basic-comms` client: nothing. Its budget is 10.9 of 12 s; the dialog and the viewer are checked by hand.
+- No acceptance spec.
+
+**Docs**
+- [Comms](../docs/tools/Comms.md): the timer, view-once, the list of places, backups and exports.
+- [Chat keys](../docs/interfaces/Chat-Keys.md): the backup sessions deleted, and the rotation.
+- [Mobile-Client](../docs/ui/Mobile-Client.md) and [Desktop-Client](../docs/ui/Desktop-Client.md): `secureScreen`,
+  the store's sweep and `secure_delete`.
+- [XMPP](../docs/interfaces/XMPP.md): a room with a timer is not served.
+- The headers of `ChatServices.xml` (beside Retention) and `ChatEntities.xml`.
+- The `moqui-client` README (store) and the BasicComms README.
+
+**Done when.** The regression specs above pass within budget. On a real phone, the row of §18.4.
+
+Status (2026-11-18): built. The specs above pass: `ChatExpiry` and `ChatViewOnce` (0.3 s of framework's 21 s), the
+`WebrootChat` feature (the webroot offline suite measured 44.3 s of its 48 s), the Rust tests of `moqui-core`
+(`chat_expiry_tests`, `chat_push_tests`), `moqui-client` and `moqui-xmpp`; the basic-comms suites unchanged within
+budget (server 3.4 s of 9 s, client 10.6 s of 12 s). The `moqui-client` store's `expire_ms` column is in its schema as is
+(no migrations before 0.1.0): a store of an earlier schema revision is made again when it opens. Left: §18.4's row on a real
+phone, and the Android `ScreenSecurity` path is checked on the phone only.
+
+Review fixes (2026-11-18):
+- XMPP history (`get#Archive`, the MAM loop) has no disappearing message in any room, and none of a room not served.
+- The Android command `secure_screen` is in `build.rs` and the capability (a test reads the three lists); the viewer's
+  note goes by what `secureScreen` answers.
+- The client store: `SCHEMA_REV` in `PRAGMA application_id`; an earlier store is made again with its outbox and drafts.
+  It deletes by the server's clock (`serverNow` of the timeline and the feed), writes kept pages again without expired
+  events, drops the kept room, room view and room-list answers with them, and folds a view-once change.
+- The worker: rooms by `ChatEventDueRoom` (grouped by room); a failing room is skipped 5 minutes on its node
+  (`chat.expiry.failed`); a round stuck on it waits by a backoff (5 s doubled, at most the sweep).
+- Readers leave out what is past its time and not yet deleted: `get#Timeline`, `get#Attachment`, `open#ViewOnce`, the
+  database search, `find#RoomFiles`, `get#MessageSummaries`, `find#RoomThreads` and the room list's last message.
+- `createFrom` and `fileOnRecord` refuse a disappearing or view-once message (`expiring`). The agent's thread context
+  (`moqui-llm` `thread_context`) leaves them out.
+- A session's key backup goes only once its newest use is past the rotation period and 10 minutes
+  (`ChatExpirySession`); every page that shows the room rotates on the timer's system event.
+- `open#ViewOnce` locks the message row; Opened needs read receipts on on both sides, and no change is pushed to the
+  sender otherwise; a view-once file is in no list and no summary.
+- A merged push keeps the longest time to live. The page's clock takes the largest of its last offsets, from fresh
+  answers only. `checkBridge` locks the room row; no service sets `federationEnabled` (said in `ChatExpiry.js`). The
+  timer's words go through `t()`, units as keys.
+
 #### Phase 22: unified contacts and the network per message (D4, §11, §17 #1)
 
 Designed 2026-11-17 (§11.1). Chat groups one user's conversations with a person across networks into one person, with
@@ -3546,7 +3872,7 @@ Then the other networks and the rest of §17, in this order:
 2. Default phone app and the merged call log (the user stops using the Phone app).
 4. Signal adapter.
 5. iMessage adapter (needs a Mac).
-6. Disappearing messages, invite links, SMS members (scheduled send and reminders: phase 15, designed).
+6. Disappearing messages (phase 16, designed), invite links, SMS members (scheduled send and reminders: phase 15, designed).
 7. RCS: business RCS in the SMS provider modules is phase 10 (Twilio and Sinch first), its rich features phase 13;
    then C6c and the personal RCS bridge if §13.4 picks B or C.
 8. The rest of §17.
@@ -3568,6 +3894,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 9 | The calling account turned on in Calling accounts; a number dialed in the phone's dialer and from Contacts with MR Moqui is filled in on the app's Dialer and placed on Call (and with the app closed, and the phone locked); the pick of an account with two that call; `*67`; an emergency number stays on the SIM; what a car or watch shows of the cancelled Telecom call. Names from the phone's contacts on phone rooms and in the new-chat search, the permission's question at the first search, and names after allowing contacts in Android's settings. A group MMS between three real phones: one room, a reply all of them get, and each one's receipt (each provider's group receipts are from its documentation), on Telnyx and on Twilio |
 | 12 | First sign-in on a new phone with the Android app: the device made when Chat opens (and how long the module takes to load), Set up this device in an encrypted room, the recovery key typed and pasted, then on another new phone Verify with the desktop by emoji, older messages readable after each; My devices in the app at the phone's width, with the keyboard up and in dark mode; a direct chat started from the phone with a person who has a device is encrypted, and with one who has none is plain |
 | 15 | A long press on Send opens Send later (and its vibration); a message scheduled from the phone in a plain room arrives at its time with the app closed; one scheduled in an encrypted room goes at its time with the app open, and when the app next opens if it was closed (sent late); a reminder's notification at its time, with the app closed and during do not disturb (held, then shown); the current APK shows a reminder's title only, and opens the app, not the message |
+| 16 | A view-once photo and video opened in the Android app: a screenshot and the recent-apps thumbnail are blank while it is open and work again after it closes; a notification of a message in a room with a timer shows no text; a 30-second message gone on the phone and the desktop at the same time, and from the phone's offline store after it was asleep past its time |
 
 ## 19. Decisions and open questions
 
@@ -3601,6 +3928,10 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-17 | An app's contacts may link a phone number to a user of this server, only through a contact the viewer can already see in the app (Mantle's books and directory). Chat never links a number to a user from its own or voice's data (§11.1, §14.4, phase 22) |
 | 2026-11-17 | No finding a user of this server by their phone number: a user's numbers stay out of chat (§11.1, phase 22) |
 | 2026-11-16 | During Do not disturb a call rings from a person on the user's allowed list (Chat settings, beside the hours), or as the same person's second call within 3 minutes (§7.2 rule 4) |
+| 2026-11-17 | Disappearing messages: the timer starts when a message is sent, for everyone, not when it is read (§18.3 phase 16) |
+| 2026-11-17 | A timer is refused in a bridged, phone or federated room, and such a room cannot be bridged while it has one: a bridge cannot delete on the other network (phase 16) |
+| 2026-11-17 | View-once: an unopened one is kept 14 days; an open gives a 2-minute window with at most 3 downloads (phase 16) |
+| 2026-11-17 | Expiring messages are never put in OpenSearch's index; without OpenSearch the database search finds one while it stands (phase 16) |
 
 ### 19.2 Open: the app
 

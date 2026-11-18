@@ -438,6 +438,60 @@ fn a_room_feed_folds_a_redaction_and_reads_changed_messages_again() {
 }
 
 #[test]
+fn a_room_feeds_expiry_marker_removes_what_is_due_by_it_and_the_cursor_moves_past() {
+    let (store, dir) = held("expired");
+    let later = crate::store::now_ms() + 600_000;
+    {
+        let kept = store.0.lock().unwrap();
+        room_with_events(&kept);
+        // 2 is due by the marker's time, 3 after it, 4 by this device's clock already
+        let expiring: Vec<ChatEvent> = [(2, later), (3, later + 600_000), (4, 1)]
+            .into_iter()
+            .map(|(seq, due)| ChatEvent {
+                chat_room_id: "R1".to_string(),
+                event_seq: seq,
+                event: json!({ "eventSeq": seq, "type": "message", "body": format!("m{seq}"), "expireDate": due })
+                    .to_string(),
+                thread_seq: None,
+            })
+            .collect();
+        kept.put_chat_events(&expiring).unwrap();
+        kept.put_answer(
+            &format!("{CHAT}/timeline"),
+            "chatRoomId=R1&limit=50",
+            "application/json",
+            b"{}",
+        )
+        .unwrap();
+        kept.set_sync_seq(CHAT_CURSOR, 1).unwrap();
+        kept.set_sync_seq(&format!("{ROOM_CURSOR}R1"), 7).unwrap();
+    }
+    let server = Server::default();
+    server.answer(
+        &format!("{CHAT}/chatChanges?limit=200&afterSeq=1"),
+        json!({ "changes": [], "lastSeq": 1, "more": false, "reset": false,
+            "heads": [{ "chatRoomId": "R1", "lastEventSeq": 5, "lastChangeSeq": 8 }] }),
+    );
+    server.answer(
+        &format!("{CHAT}/roomChanges?chatRoomId=R1&limit=200&afterSeq=7"),
+        json!({ "changes": [{ "changeSeq": 8, "eventSeq": null, "data": { "cause": "expired", "before": later } }],
+            "lastSeq": 8, "more": false, "reset": false }),
+    );
+    let synced = feeds_of(&server, &store, sync4(), Scope::Chat);
+    assert!(synced.rooms_changed.contains("R1"));
+    let kept = store.0.lock().unwrap();
+    for (seq, stands) in [(1, true), (2, false), (3, true), (4, false), (5, true)] {
+        assert_eq!(kept.chat_event("R1", seq).is_some(), stands, "event {seq}");
+    }
+    assert!(kept
+        .answer(&format!("{CHAT}/timeline"), "chatRoomId=R1&limit=50")
+        .is_none());
+    assert_eq!(kept.sync_seq(&format!("{ROOM_CURSOR}R1")), Some(8));
+    drop(kept);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_room_without_held_events_takes_its_cursor_and_a_room_reset_reads_its_latest_page() {
     let (store, dir) = held("room-reset");
     {

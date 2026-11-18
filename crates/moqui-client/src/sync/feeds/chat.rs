@@ -38,6 +38,11 @@
 //! `eventSeq`), and a thread reply's root too. The room's cursor stops at the first change that does not fold or read
 //! (it is read again next time). More than [`REREAD_MAX`] messages, or a reset, drops the room's held events and reads
 //! its latest page. A room with no events held only takes its cursor. Only rooms the store holds are read.
+//!
+//! Disappearing messages (plans/Comms-Messaging.md phase 16): a room change with no `eventSeq` and
+//! `{cause: 'expired', before}` is the room's marker, folded in its order: every held event of the room due by `before`
+//! goes, with its kept pages (`offline::expire_room`). Each run first sweeps what is due by this device's clock
+//! (`offline::sweep_expired`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -56,6 +61,11 @@ const CHAT_PENDING: [&str; 3] = ["list", "room:", "latest:"];
 
 pub(super) fn chat(run: &mut Run<'_, '_>) -> Result<(), Ended> {
     let base = chat_base(&run.job.comms_root);
+    // the disappearing messages whose time came while no push or feed said so
+    let expired = run
+        .store(|store| offline::sweep_expired(store, offline::server_now()))
+        .unwrap_or_default();
+    run.synced.rooms_changed.extend(expired);
     // what an earlier run left to read
     run.drain(&CHAT_PENDING)?;
     let cursor = run.store(|store| store.sync_seq(CHAT_CURSOR)).flatten();
@@ -79,6 +89,10 @@ pub(super) fn chat(run: &mut Run<'_, '_>) -> Result<(), Ended> {
         let Some(page) = run.json(&path)? else {
             return Ok(());
         };
+        // the server's clock, which disappearing messages go by
+        if let Some(server) = number(&page["serverNow"]) {
+            offline::learn_server_time(server);
+        }
         if page["reset"].as_bool() == Some(true) {
             let last = number(&page["lastSeq"]).unwrap_or(0);
             // a cursor the server no longer keeps (purged, another database): what is held may be stale. The drop and
@@ -314,8 +328,11 @@ fn forget_chat_reads(store: &Store, base: &str) -> Result<(), String> {
 /// A change of a room's feed.
 struct RoomChange {
     change_seq: i64,
+    /// 0 for the expiry marker.
     event_seq: i64,
     redacted: bool,
+    /// The expiry marker's `before`: every event due by it went.
+    expired: Option<i64>,
     date: Value,
     root: Option<i64>,
 }
@@ -372,15 +389,30 @@ fn room_feed(run: &mut Run<'_, '_>, base: &str, room: &str, last_change: Option<
             return Ok(());
         }
         for change in page["changes"].as_array().into_iter().flatten() {
+            let data = &change["data"];
+            // the expiry marker has no eventSeq: a client that does not know it skips it below
+            if change["eventSeq"].is_null() && data["cause"].as_str() == Some("expired") {
+                if let (Some(change_seq), Some(before)) = (number(&change["changeSeq"]), number(&data["before"])) {
+                    changes.push(RoomChange {
+                        change_seq,
+                        event_seq: 0,
+                        redacted: false,
+                        expired: Some(before),
+                        date: Value::Null,
+                        root: None,
+                    });
+                }
+                continue;
+            }
             let (Some(change_seq), Some(event_seq)) = (number(&change["changeSeq"]), number(&change["eventSeq"]))
             else {
                 continue;
             };
-            let data = &change["data"];
             changes.push(RoomChange {
                 change_seq,
                 event_seq,
                 redacted: data["redacted"].as_bool() == Some(true),
+                expired: None,
                 date: change["changeDate"].clone(),
                 root: number(&data["threadRootEventSeq"]).filter(|root| *root != event_seq),
             });
@@ -396,7 +428,7 @@ fn room_feed(run: &mut Run<'_, '_>, base: &str, room: &str, last_change: Option<
         .store(|store| {
             changes
                 .iter()
-                .filter(|change| !change.redacted)
+                .filter(|change| !change.redacted && change.expired.is_none())
                 .flat_map(|change| std::iter::once(change.event_seq).chain(change.root))
                 .filter(|seq| store.chat_event(room, *seq).is_some())
                 .collect()
@@ -424,7 +456,17 @@ fn room_feed(run: &mut Run<'_, '_>, base: &str, room: &str, last_change: Option<
     let mut read: BTreeSet<i64> = BTreeSet::new();
     let mut ended = None;
     'changes: for change in &changes {
-        if change.redacted {
+        if let Some(before) = change.expired {
+            let mut gone = 0;
+            if !run.fold("an expiry", |store| {
+                offline::expire_room(store, room, Some(before), &[]).map(|count| gone = count)
+            }) {
+                break;
+            }
+            if gone > 0 {
+                run.synced.rooms_changed.insert(room.to_string());
+            }
+        } else if change.redacted {
             if !run.fold("a redaction", |store| {
                 push::redact_message(store, room, change.event_seq, &change.date)
             }) {

@@ -37,7 +37,11 @@ Each installed client is a device with its own login key. The host keeps the key
   server's changes feeds and the progress of chunked uploads (MD5). Past its size cap the least recently read cached
   reads go; never the outbox, drafts, files, folders or cursors. Synchronous, one connection: the host shares a `Store`
   in a `Mutex`.
-  `store::forget` removes an account's.
+  `store::forget` removes an account's. A disappearing chat event keeps its due time (`expire_ms`) and goes when it
+  comes (`expire_chat_events`, by the server's clock as its answers give it); deleted rows are overwritten
+  (`secure_delete`). No migrations before 0.1.0: the schema's revision is `SCHEMA_REV` in `PRAGMA application_id`, and
+  a store of an earlier one is made again when it opens, its outbox, drafts and chunked uploads copied across (logged;
+  the old file is kept as `.old` if a copy failed), the rest read again from the server.
 - `conf`: `ClientConf`, the client's settings from the `<client-conf>` element of the Moqui XML conf, which the host
   hands over: `device-mode` (choose, personal, shared), `mirror-days`, `prefetch-rooms`, `prefetch-mail` and
   `store-max-mb`; a bad value is logged and its default used.
@@ -62,7 +66,8 @@ The client's core, what the desktop app's client mode and the mobile app run
 - `sync`: `push` (the chat pushes folded into the store, a gap in their numbers noted), `outbox` (the operations and
   drafts, their checks and limits), `flush` (the outbox sent from a thread of its own, with WebrootChat's retry rules,
   conflicts and chunked uploads), `mirror` (the current account's chat and mail read ahead) and `feeds` (the server's
-  chat and mail changes feeds folded into the store, with a server at `clientApi` 4).
+  chat and mail changes feeds folded into the store, with a server at `clientApi` 4). Disappearing messages go by the
+  `expired` push, the room feed's expiry marker and a sweep of what is due at each push, feed run and offline answer.
 - `modes` (what each device mode keeps), `renewal` (each key renewed on a thread before it runs out) and `assets` (the
   shell's own files and their CSP: on disk for the desktop, or embedded in the mobile app, `Assets::embedded`).
 
