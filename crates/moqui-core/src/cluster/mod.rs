@@ -1566,7 +1566,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
 }
 
 /// The database server's time in epoch milliseconds, else this host's.
-pub(crate) fn db_now(facade: &EntityFacade) -> i64 {
+pub fn db_now(facade: &EntityFacade) -> i64 {
     // the statement the database's dialect takes (Oracle FROM DUAL, DB2 and Derby VALUES)
     let read = facade
         .with_group(MEMBER, |_, dialect, _, tx| {

@@ -483,6 +483,7 @@ along with this software (see the LICENSE.md file). If not, see
                 encrypted: encrypted && content ? content.encrypted || null : null, mentions: (content && content.mentions) || [],
                 attachments: (content && content.attachments) || [], records: (content && content.records) || [],
                 forwardOf: (content && content.forwardOf) || null, poll: null, assist: (content && content.assist) || null, linkPreviews: [],
+                rich: (content && content.rich) || null, postback: (content && content.postback) || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
                 editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null,
                 expireDate: expiry.expireDate ?? null, viewOnce: null}
@@ -1127,7 +1128,7 @@ along with this software (see the LICENSE.md file). If not, see
                     networkName: types[bridge.typeEnumId]?.description || null, statusId: bridge.statusId ?? null,
                     connected: bridge.statusId === 'CbsConnected', externalRoomName: row.externalRoomName ?? null,
                     externalRoomUrl: row.externalRoomUrl ?? null, directionEnumId: row.directionEnumId ?? null, outbound: outbound,
-                    encryption: cap.encryption || 'None'})
+                    encryption: cap.encryption || 'None', adapterName: bridge.adapterName ?? null})
                 const room = capabilityMap[row.chatRoomId] = capabilityMap[row.chatRoomId] || {edit: true, delete: true, reaction: true}
                 if (outbound) { room.edit = room.edit && cap.edit === true; room.delete = room.delete && cap.delete === true
                     room.reaction = room.reaction && cap.reaction === true }
@@ -2256,6 +2257,7 @@ along with this software (see the LICENSE.md file). If not, see
                     attachments: redacted ? [] : (content.attachments || []), records: redacted ? [] : (content.records || []),
                     forwardOf: redacted || !isMessage ? null : content.forwardOf || null, poll: redacted ? null : polls[seq] || null,
                     assist: redacted || !isMessage ? null : content.assist || null,
+                    rich: redacted || !isMessage ? null : content.rich || null, postback: redacted || !isMessage ? null : content.postback || null,
                     linkPreviews: redacted || !isMessage ? [] : previewsOf(row),
                     clientRef: row.senderUserId === me ? row.clientRef ?? null : null,
                     replyToEventSeq: row.replyToEventSeq != null ? Number(row.replyToEventSeq) : null, replyTo: null,
@@ -2842,6 +2844,7 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError(ec.l10n.localize('You may edit only your own messages')); return }
             if (parse(original.contentJson).poll) { ec.message.addError(ec.l10n.localize('A poll is not edited: close it, or delete it and make another')); return }
             if (original.viewOnce === 'Y') { ec.message.addError(ec.l10n.localize('A view-once photo is not edited')); return }
+            if (parse(original.contentJson).rich) { ec.message.addError(ec.l10n.localize('A card is not edited: delete it and send another')); return }
             const windowMinutes = Number(System.getProperty('chat_edit_window_minutes') || 1440)
             if (!externalActor && windowMinutes > 0 && Number(ec.user.nowTimestamp) - Number(original.sentDate) > windowMinutes * 60000) {
                 ec.message.addError(ec.l10n.localize('This message is too old to edit')); return }
@@ -3481,6 +3484,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (others.some((id) => !hush.has(id))) ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                 userIdList: others.filter((id) => !hush.has(id)), message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing,
                     statusText: typing && statusText ? String(statusText).replace(/\s+/g, ' ').trim().slice(0, 80) : null}}).call()
+            // a network with a typing indicator (business RCS) shows the other side too, never holding this signal up
+            if (typing && !userId) {
+                const bridgeIds = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
+                        .selectField('chatBridgeId').disableAuthz().list()).map((row) => row.chatBridgeId)
+                if (bridgeIds.length && ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', 'in', bridgeIds).condition('typeEnumId', 'CbtRcs').disableAuthz().count())
+                    ec.service.async().name('org.moqui.chat.ChatBridgeServices.send#BridgeTyping').parameter('chatRoomId', chatRoomId).call()
+            }
         ]]></script></actions>
     </service>
 

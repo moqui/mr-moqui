@@ -394,6 +394,13 @@ adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind debugCha
     "'{\"kind\":\"message\",\"account\":\"chat.example.com-0123456789ab\",\"chatRoomId\":\"100\",\"eventSeq\":5,\"roomName\":\"Team\",\"senderName\":\"Ann\",\"snippet\":\"Hi\"}'"
 ```
 
+## Cards and buttons
+
+A message's suggestion buttons (a card's, or a text's chips, plans/Comms-Messaging.md §18.3 phase 13) are one row under
+the bubble that scrolls sideways on a phone, and a card is at most 85 % of the screen's width; a carousel scrolls
+sideways with snap on every width. A call button opens the dialer (`tel:`). The rest is Chat's
+([Comms](../tools/Comms.md#cards)).
+
 ## Screen security
 
 `moquiDesktop.secureScreen(reason, on)` (the `secure_screen` command, `ScreenSecurity.kt`) turns Android's `FLAG_SECURE`

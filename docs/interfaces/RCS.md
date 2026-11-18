@@ -12,8 +12,9 @@ Google's RCS Business Messaging (RBM), resold by Twilio and Sinch.
 - It has no group chats, no edits, no deletes and no reactions.
 - RCS on the user's own personal number is not possible this way ([plan §16](../../plans/Comms-Messaging.md#16-rcs)).
 
-The design is [plans/Comms-Messaging.md](../../plans/Comms-Messaging.md) §16 RCS phase 1 and §18.3 phase 10. Rich
-cards, suggestion chips, read receipts, typing and the RCS labels in the thread header are phase 2.
+The design is [plans/Comms-Messaging.md](../../plans/Comms-Messaging.md) §16 RCS phases 1 and 2, and §18.3 phases 10
+and 13. Phase 2 (§18.3 phase 13) adds rich cards and suggestion buttons, read receipts, the typing indicator and the
+RCS labels ([Rich messages](#rich-messages) and below).
 
 - **Rust:** `crates/moqui-channels`. Each RCS adapter is a part of its provider's module, on the neutral SMS core
   (`sms.rs`, [SMS](SMS.md)):
@@ -21,9 +22,12 @@ cards, suggestion chips, read receipts, typing and the RCS labels in the thread 
   - `rcs-sinch`: `providers/sinch.rs` and `providers/sinch/rcs.rs`.
 - **Entities:**
   - the bridge type `CbtRcs` (RCS) in `ChatEntities.xml`;
-  - a delivery's `deliveryPath` (`rcs`, `sms` or `mms`) on `ChatBridgeDelivery` in `VoiceEntities.xml`.
+  - a delivery's `deliveryPath` (`rcs`, `sms` or `mms`) and `providerContentId` (a Twilio Content made for its
+    send) on `ChatBridgeDelivery` in `VoiceEntities.xml`;
+  - a rich message's `content.rich` and an answer's `content.postback` on the message (`ChatEvent.contentJson`).
 - **Services:**
-  - `ChatBridgeServices.note#DeliveryPath`;
+  - `ChatBridgeServices.note#DeliveryPath`, `note#DeliveryContent`, `send#BridgeTyping`, `clean#ProviderContent`;
+  - `ChatRichServices.send#Rich`, `reply#Suggestion`, `note#SuggestionReply` (`ChatRich.js`);
   - the SMS services, unchanged: `check#SmsSend`, `ensure#PairRoom`, `receive#Sms`.
 
 ## How it works
@@ -77,12 +81,26 @@ cards, suggestion chips, read receipts, typing and the RCS labels in the thread 
   - The message's caption says so ("Delivered to RCS as SMS", one translatable string), and its Info has a "Sent as"
     line. The terminal's Info
     has the same line.
-  - The thread header keeps the SMS banner until phase 2's RCS labels.
+- **The labels** (plan §16.5). An RCS room's header says "RCS Business - not end-to-end encrypted", with the open lock
+  and a verified badge (the brand's agent). Its banner: "Encrypted in transit only. Twilio, Google, carriers and this
+  server can read it." (Sinch, or "The provider"), in place of the SMS banner. Each message's Info has an
+  "Encryption" line by the way it went: that text for RCS, "The phone did not support RCS. This message went as SMS."
+  (or MMS) for the fallback. The composer says "RCS message". The terminal shows the banner and the Info line.
+- **Read receipts.** Twilio's `read` status and Sinch's `READ` report are the message read on the phone: past
+  delivered, never taken back. The caption says "Read on RCS". A failed message stays failed (and can be sent again):
+  a later read changes nothing.
+- **Typing.** While a user types in an RCS room, the person sees the agent typing: Twilio's typing indicator (it needs
+  the bridge's `rcsSenderId`) or Sinch's `composing_event`, at most once in 15 seconds for a room (started only for a
+  room with an RCS bridge), only to a person a message of ours reached, never to a person
+  who sent STOP. `typingIndicators` false turns it off for the bridge. Neither provider documents the person's typing
+  coming in, so none is shown. Our own read receipts going back to the person (Sinch's `read_message_event`) are left
+  out: they need a setting of their own, later.
 - **What comes in.**
   - Words and files, as for a text.
   - A shared place: its label and address, and an OpenStreetMap link built from its coordinates. The coordinates are
     kept on the message.
-  - A tapped suggestion: its words (Twilio) or its payload (Sinch), with the payload kept on the message for phase 2.
+  - A tapped suggestion: its words (Twilio) or its payload (Sinch), its payload kept on the message
+    (`content.postback`) and handed to `ChatRichServices.note#SuggestionReply`, where an app's SECA picks it up.
   - Opt-out keywords: STOP and START work as for SMS ([SMS, Opt-out](SMS.md#opt-out)).
 
 ## Capabilities
@@ -90,12 +108,77 @@ cards, suggestion chips, read receipts, typing and the RCS labels in the thread 
 | Operation | RCS |
 | --- | --- |
 | Text and one or more files | yes, within the bridge's limits; the fallback's MMS limits apply by default |
-| Delivery receipts | yes; `read` counts as delivered until phase 2 |
+| Delivery receipts | yes, `read` past delivered |
+| Rich messages: cards, carousels, suggestion buttons | yes ([Rich messages](#rich-messages)); every other bridge gets their text |
+| Typing indicator | out only, from a user of ours to the person |
 | The path a message went | yes (`deliveryPath`) |
 | Edit, delete, reaction | no (`bridgeUnsupported`) |
 | Group chats | no: a group room on an RCS bridge refuses to send (`groupTextsNotSupported`) |
 | Idempotent sends | no: a lost answer is uncertain and never sent again on its own |
 | Encryption | `Transport`: encrypted in transit only, never end to end |
+
+## Rich messages
+
+A rich message is a message with `content.rich`: a text with suggestion buttons (chips), a card, or a carousel of 2 to
+10 cards, each with its buttons. A button is a reply (its words come back, with its postback), a link (`http` or
+`https`) or a call (an E.164 number). The server makes its text from the rich content (`ChatRich.js`): the words, each
+card's title and words, "label: URL" for each link, "label: number" for each call and "Reply: Yes, No". That text is the
+message's body: the terminal, search, notifications and every other bridge show and send it, and an SMS room gets it
+with the cards' pictures as MMS. The limits are the stricter of Twilio's and Sinch's, so one message goes on both:
+
+| | Text with buttons | Card | Carousel |
+| --- | --- | --- | --- |
+| Words | 1 to 1600 characters | title up to 200, words up to 1600 | title and words 160 together, each card |
+| Picture | none | none or one | one on every card |
+| Buttons | 1 to 10 | up to 4 | 1 or 2 a card, the same kinds in the same order on every card |
+
+A button's words are up to 20 characters, a reply's postback up to 200. The text form is at most 1600 characters. A
+card has its title or its words and one thing more (the other, a picture or a button), as Twilio's card needs. Pictures
+are PNG, JPEG or GIF (Twilio's RCS types), each within the provider's RCS limit (`maxRcsMediaBytes`: Twilio 16 MB,
+Sinch 100 MB) and 64 MB together (`maxRcsTotalBytes`); the MMS total (`maxMediaBytes`) applies only to the fallback's one
+picture, the first, which is left out (the fallback is then text alone) when it is over that.
+
+- **Who sends one.** An app or a service: `ChatRichServices.send#Rich` (mr-boss, marketing, an agent). A member: the
+  composer's Card (a title, words, a picture and up to 4 buttons; with no title and no picture, a text with buttons),
+  which shows the text people without RCS get. A carousel and a provider's template come from apps only. None in an
+  encrypted room: the server makes its text.
+- **A tap here.** In a room with no outbound bridge, a member taps a reply on another's message: a message with its
+  words (`reply#Suggestion`). In an RCS room the buttons are the person's, on their phone: here they show only.
+- **An answer.** A message answering a button has `content.postback` and the caption "Chose a suggestion". An app that
+  sent the buttons puts its own context in the postback (`order:7:confirm`) and runs on a SECA of
+  `ChatRichServices.note#SuggestionReply`.
+- **Postbacks are untrusted.** Only an app's own call (authorization disabled) names a reply's postback; a member's is
+  always `user:` and the button's words, and an app's may not start with `user:`. An RCS reply's postback comes from the
+  person's device: it is not signed, and a device can send any text. `note#SuggestionReply` says who wrote the tapped
+  message (`authorUserId`), whether it was an app's (`fromApp`) and whether the reply came from outside (`outside`: an
+  RCS reply names no message). An app checks the tapped message's author, and that it was its own, before it acts on a
+  postback; an outside one is only the device's word.
+- **To a bridge with no RCS** (SMS, `sms-sinch`, any other provider): the text form with the first picture only, so a
+  carousel never fails for its count.
+- **Twilio.** A Content resource is made for each rich send (`POST https://content.twilio.com/v1/Content`:
+  `twilio/card` for a card or a text with buttons, `twilio/carousel` for cards, and with the fallback `twilio/text`, or
+  `twilio/media` with the first picture), then the message is sent with its `ContentSid`. Its id is kept on the
+  delivery (`providerContentId`), and the delivery's lease is renewed for the second step. The message's final status
+  (delivered, read, failed, undelivered) deletes it (`DELETE /v1/Content/{sid}`). An app that sends one card to many
+  people names a template it made once in Twilio (`rich.providerContent.twilio`: `contentSid`, `contentVariables`), sent
+  as it is and never kept or deleted.
+  - Each Content is named `moqui-{delivery}-{attempt}`. A retry sends the Content it kept again when the message has no
+    picture (a picture's address expires); else it deletes it and makes a new one. With none kept (the create's answer
+    was lost), it searches the delivery's earlier ones by name (`GET /v2/Content?ContentName=moqui-{delivery}`) and
+    deletes them first.
+  - A Content step that could not be done (429, 5xx, a lost answer) is tried again, and no message went. One Twilio
+    refuses (another 4xx) sends the text form and its picture as a plain message instead, noted on the delivery
+    (`deliveryNote` `richRefused`, its Info: "The provider refused the card; its text went instead.").
+  - The delivery worker's daily sweep deletes the Contents still named on deliveries whose last attempt was more than 2
+    days ago and that no worker holds (a status that never came, an uncertain send), the oldest first; one that cannot
+    be deleted is counted (`providerContentTries`) and let go after 5 sweeps, logged. Then it deletes our `moqui-`
+    Contents made more than 2 days ago that no delivery names (`GET /v2/Content?ContentName=moqui-&DateCreatedBefore=`,
+    3 pages at most). All of it is best effort: a failed delete is logged and tried again by the next sweep.
+  - A carousel's own `body` (RCS drops it) is cut to 1024 characters; the whole text form goes in `twilio/text` or
+    `twilio/media`. Its cards' buttons name no `chip_list` (the carousel page documents none).
+- **Sinch.** One `messages:send`: `choice_message` for a text with buttons, `card_message`, `carousel_message`. With
+  the fallback, the message's (the AppMessage's) `explicit_channel_omni_message` gives SMS our text, or MMS a card of it
+  with the first picture, in place of Sinch's own rendering.
 
 ## Twilio
 
@@ -132,6 +215,10 @@ Twilio's RCS is generally available since 2025-08-26 ([send RCS](https://www.twi
    | `messagingServiceSid` | `MG...`, the service with the RCS sender in its pool, required |
    | `fallbackFrom` | The home number in E.164, required: our number of the RCS messages that come in |
    | `smsFallback` | true (the default) or false (RCS only) |
+   | `rcsSenderId` | The agent's id (the `rcs:` address of its inbound `To`), for the typing indicator; none sends none |
+   | `typingIndicators` | true (the default) or false (no typing indicator) |
+   | `contentLanguage` | The language of the Content made for a rich message (`en`) |
+   | `contentBaseUrl`, `messagingBaseUrl` | `https://content.twilio.com` and `https://messaging.twilio.com` (a test's fake) |
 
 **Out.** `POST /2010-04-01/Accounts/{AccountSid}/Messages.json` with `MessagingServiceSid`, `To` the person's number,
 `FallbackFrom` the room's number, `Body`, a `MediaUrl` for each file, and `StatusCallback`.
@@ -179,6 +266,7 @@ Sinch's RCS is a channel of the Conversation API
    | `smsSender` | The home number, required: our number of the RCS messages that come in, and the fallback's SMS sender |
    | `mmsSender` | The MMS channel's sender; a file whose fallback would be MMS from another number is refused (`mmsNotSetUp`) |
    | `smsFallback` | true (the default) or false (RCS only) |
+   | `typingIndicators` | true (the default) or false (no typing indicator) |
 
 **Out.** `messages:send` to the person's `RCS` identity and their `SMS` identity (`MMS` for a file), with
 `channel_priority_order` `["RCS","SMS"]` (or `["RCS","MMS"]`) and `SMS_SENDER` (or `MMS_SENDER`) set to the room's
@@ -220,8 +308,24 @@ These are not in the providers' documentation, or it is unclear there. Check eac
 - **Sinch, what `sender_id` holds on RCS.**
 - **Sinch, countries, timelines and fees.** Sinch's RCS pages give none; the onboarding is in Sinch's Community guides
   and its sales terms.
-- **Both, typing and read.** Typing events (Twilio's `Indicators/Typing` API and Sinch's `composing_event`) and read
-  receipts as their own state are phase 2, untested.
+- **Twilio, content approval.** Whether a Content for RCS needs approval before it is sent: Twilio's pages name
+  approval for WhatsApp only.
+- **Twilio, the content's fallback.** That Twilio sends the content's `twilio/text` or `twilio/media` as the SMS or MMS
+  fallback (its page says it sends "the most complex type the channel supports"), and that `FallbackFrom` holds with a
+  `ContentSid`.
+- **Twilio, a tapped quick reply.** That its `id` comes back as `ButtonPayload` on RCS.
+- **Twilio, the Content search.** That `GET /v2/Content` with `ContentName` finds a Content by its `friendly_name` (the
+  reference calls it a search pattern, not an exact match: the adapter checks the name's prefix itself) and answers
+  `contents` and `meta.next_page_url` as the v1 list does.
+- **Twilio, a carousel's `body`.** Its limit: the page gives none, so 1024 is kept, and RCS drops it.
+- **Twilio, the typing indicator's auth.** Twilio's example signs it with an API key; the adapter uses the bridge's key,
+  or its account and token.
+- **Sinch, the fallback override.** The shape of `explicit_channel_omni_message`'s value (the reference names a map of
+  channel to content, with no schema), and that MMS shows a `card_message` with its title as the subject.
+- **Both, typing fees.** Whether a typing indicator is billed. The indicator goes only from a room with an RCS bridge,
+  to a person a message of ours already reached, never after a STOP.
+- **Both, typing and read in.** Neither documents the person's typing coming to the webhook; read receipts come as
+  documented (`read`, `READ`), untested.
 
 ## Tests
 
@@ -236,6 +340,15 @@ second:
   the webhook mark put back after an error;
 - one number per RCS bridge, its home number; the network and adapter agreeing in Chat Bridges; a short-code sender;
 - the RCS opt-out;
-- the system's number kept on SMS.
+- the system's number kept on SMS;
+- rich messages: Twilio's content and send (a card, a text with buttons without the fallback, a carousel), its delete
+  on the final status and by the sweep, an app's own template never made or deleted, a refused and an unavailable
+  content step; Sinch's choice, card and carousel messages with the SMS and MMS overrides; an SMS bridge sending the
+  text and the picture;
+- `read` and `READ`, never back;
+- the typing indicator of each, throttled, off, without the agent's id, and never after a STOP.
 
-`webroot/test/client/WebrootChat.spec.js` checks the caption's "as SMS" and Info's "Sent as" line.
+`crates/moqui-core/src/service/chat_bridge_tests.rs` checks that a rich message reaches the adapter with its text, and
+the typing indicator's throttle past a failing bridge. `basic-comms/test/BasicCommsRich.spec.js` checks the limits, the
+text form, the refusals and the answers to buttons. `webroot/test/client/WebrootChat.spec.js` checks the caption's
+"as SMS", Info's "Sent as" and "Encryption" lines, the RCS label and the composer's text form.

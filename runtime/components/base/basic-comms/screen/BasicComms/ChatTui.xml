@@ -122,6 +122,12 @@ along with this software (see the LICENSE.md file). If not, see
                 if (event.type === 'poll') return fill('{by} made a poll', {by})
                 return by
             }
+            // the provider of an RCS bridge's adapter (rcs-twilio: Twilio), as moqui.chat.providerName
+            const providerOf = (adapterName) => {
+                const name = String(adapterName || '')
+                return /(^|-)twilio$/.test(name) ? 'Twilio' : /(^|-)sinch$/.test(name) ? 'Sinch' : name === 'sms' || /(^|-)telnyx$/.test(name) ? 'Telnyx'
+                    : ec.l10n.localize('The provider')
+            }
             roomList = []
             eventList = []
             room = null
@@ -150,17 +156,26 @@ along with this software (see the LICENSE.md file). If not, see
                     // the room's E2EE label as one line: the rule of moqui.chat.e2eeLabel (Comms-Messaging §6.2), with no device
                     // trust, which only a browser knows
                     const roomBridges = Array.from(room.bridges || [])
+                    // business RCS (§16.5): in transit only, its provider named
+                    const rcsBridge = roomBridges.find((bridge) => bridge.network === 'rcs' && bridge.outbound !== false)
+                    const elsewhere = roomBridges.some((bridge) => bridge.network !== 'rcs')
                     const sms = room.roomTypeEnumId === 'CrtExternal' || roomBridges.some((bridge) => bridge.network === 'sms')
                     const otherBridge = roomBridges.some((bridge) => bridge.network !== 'sms')
+                    // a network its adapter says has no E2EE at all (GroupMe, NoneByNetwork) says so
+                    const plainNetworks = roomBridges.length && roomBridges.every((bridge) => bridge.encryption === 'NoneByNetwork')
+                        ? Array.from(new Set(roomBridges.map((bridge) => bridge.networkName || bridge.name).filter((name) => name))).join(', ') : ''
                     // a record's room kept to its members is a plain private room
                     const open = room.roomTypeEnumId === 'CrtPublic' || ['CrvUsers', 'CrvRecord'].includes(room.visibilityEnumId)
                         || (room.roomTypeEnumId === 'CrtRecord' && room.visibilityEnumId !== 'CrvMembers')
-                    e2eeText = ec.l10n.localize(encryptedRoom ? 'End-to-end encrypted'
+                    e2eeText = rcsBridge && !encryptedRoom ? ec.resource.expand(ec.l10n.localize('Encrypted in transit only. ${provider}, Google, carriers and this server can read it.'),
+                        '', {provider: providerOf(rcsBridge.adapterName)}) + (elsewhere ? ' ' + ec.l10n.localize('The bridge reads messages to pass them on.') : '')
+                        : ec.l10n.localize(encryptedRoom ? 'End-to-end encrypted'
                         : sms && otherBridge ? 'Not end-to-end encrypted. Texts go through the phone network and the SMS provider, and the bridge reads messages to pass them on.'
                         : sms ? 'Not end-to-end encrypted. Texts go through the phone network and the SMS provider.'
+                        : plainNetworks ? 'Not end-to-end encrypted. {network} has no end-to-end encryption, and the bridge reads messages to pass them on.'
                         : room.bridged ? 'Not end-to-end encrypted on this server. The bridge reads messages to pass them on.'
                         : open ? 'Not end-to-end encrypted: the server can read this room'
-                        : 'Not end-to-end encrypted. The server can read these messages.')
+                        : 'Not end-to-end encrypted. The server can read these messages.').replace('{network}', plainNetworks)
                     const STATES = {accepted: 'Delivered', pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}
                     const page = out.timeline || {}
                     const names = page.userNames || {}
@@ -218,7 +233,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const say = (label, text) => infoList.push({label: ec.l10n.localize(label), text: text})
                     say('Sent', ec.l10n.format(new Date(Number(event.sentDate)), 'MMM d, yyyy, h:mm a'))
                     if (event.senderExternal) say('Came from', event.senderExternal.networkName || event.senderExternal.network || '')
-                    const RECEIPTS = {delivered: "Delivered: the network's receipt says so", sent: 'Sent on by the network',
+                    const RECEIPTS = {delivered: "Delivered: the network's receipt says so", read: "Read: the network's receipt says so", sent: 'Sent on by the network',
                         unconfirmed: 'Taken by the network; it has not confirmed delivery'}
                     const STATES = {pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}
                     const destinations = Array.from((event.delivery && event.delivery.destinations) || [])
@@ -233,6 +248,11 @@ along with this software (see the LICENSE.md file). If not, see
                         // an RCS bridge's: the way it went (plans/Comms-Messaging.md §16)
                         const PATHS = {rcs: 'RCS', sms: 'SMS: the phone did not take RCS', mms: 'MMS: the phone did not take RCS'}
                         if (PATHS[one.path]) say('Sent as', ec.l10n.localize(PATHS[one.path]))
+                        // and what can read it, by that way (§16.5)
+                        if (one.path === 'sms' || one.path === 'mms') say('Encryption', ec.l10n.localize(one.path === 'sms'
+                            ? 'The phone did not support RCS. This message went as SMS.' : 'The phone did not support RCS. This message went as MMS.'))
+                        else if (one.path === 'rcs' || /^rcs-/.test(one.adapterName || '')) say('Encryption', ec.resource.expand(
+                            ec.l10n.localize('Encrypted in transit only. ${provider}, Google, carriers and this server can read it.'), '', {provider: providerOf(one.adapterName)}))
                     }
                     const thread = event.threadRootEventSeq != null
                     if (thread) infoNote = ec.l10n.localize('A thread has no read receipts.')

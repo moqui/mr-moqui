@@ -3306,8 +3306,12 @@ const messageTemplate = `
             <q-btn v-if="room.setupNeeded && item.withheld !== 'm.unverified'" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-setup-message" :label="room.t('Set up')" @click.stop="room.openSetup()"></q-btn></div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
+            <chat-rich v-else-if="item.event.rich" :item="item" :room="room"></chat-rich>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
                     v-html="item.bodyHtml" @click="room.bodyClick($event)"></div>
+            <!-- an answer to a button (content.postback: tapped here, or an RCS reply) -->
+            <div v-if="item.event.postback" class="row items-center no-wrap text-caption m-muted q-mt-xs m-chat-postback">
+                <q-icon name="sym_o_reply" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.t('Chose a suggestion')}}</span></div>
             <span v-if="item.edited && !room.isEditing(item)" class="text-caption m-muted">{{room.t('(edited)')}}<q-tooltip>{{item.editedText}}</q-tooltip></span>
             <div v-if="item.forwardOf" class="row no-wrap q-mt-xs m-chat-forward" style="max-width:520px">
                 <div class="self-stretch bg-grey-5" style="width:3px;border-radius:2px"></div>
@@ -3347,7 +3351,7 @@ const messageTemplate = `
                 <q-btn v-if="room.viewOnceState(item) === 'closed'" flat dense no-caps color="primary" icon="sym_o_looks_one" class="m-chat-view-once-open" :label="room.t('Open')"
                         @click.stop="room.openViewOnce(item)"></q-btn>
             </div>
-            <div v-if="item.attachments.length" class="row q-gutter-xs q-mt-none">
+            <div v-if="item.attachments.length && !item.event.rich" class="row q-gutter-xs q-mt-none">
                 <template v-for="file in item.attachments" :key="file.chatAttachmentId">
                     <img v-if="room.isImage(file)" :src="room.fileUrl(file, true)" :alt="file.fileName" class="rounded-borders cursor-pointer q-mt-xs"
                             style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
@@ -3474,6 +3478,152 @@ const pendingTemplate = `
 </div>`;
 const chatPending = { name: 'ChatPending', props: { item: Object, room: Object }, template: pendingTemplate };
 
+// ---- rich messages (Comms-Messaging §18.3 phase 13): a text with buttons, a card, a carousel; and an answer to a button ----
+// The words of a text with its chips (a row that scrolls sideways on a phone, wrapping on a desktop), a card (its picture,
+// title, words and buttons; at most 320 px, 85 % of a phone's width) or cards side by side (240 px each, scrolling with
+// snap). A reply sends its words (replySuggestion), a link opens in a new tab, a call goes to the dialer. A reply is the
+// other side's to tap on my own message and in a room with an outbound bridge (its buttons are the person's, on their phone).
+const richTemplate = `
+<div v-if="rich" class="m-chat-rich" :data-rich="rich.kind">
+        <template v-if="rich.kind === 'text'">
+            <div class="text-body2 m-chat-rich-text" style="white-space:pre-wrap;overflow-wrap:anywhere">{{rich.text}}</div>
+            <div class="row q-mt-xs m-chat-chips" :class="room.mobile ? 'no-wrap scroll' : 'wrap'" style="gap:4px">
+                <q-chip v-for="(one, index) in rich.suggestions || []" :key="index" dense outline color="primary" :icon="iconOf(one)"
+                        :clickable="room.canTap(item, one)" class="q-ma-none m-chat-chip" :class="{ 'm-muted': !room.canTap(item, one) }" :data-suggestion="one.type"
+                        :title="room.canTap(item, one) ? undefined : room.t('For the other person to tap')" @click.stop="room.canTap(item, one) && room.tapSuggestion(item, one, index, null)">
+                    <span class="ellipsis">{{one.text}}</span></q-chip>
+            </div>
+        </template>
+        <div v-else :class="rich.kind === 'carousel' ? 'row no-wrap scroll m-chat-carousel' : ''" :style="rich.kind === 'carousel' ? 'gap:8px;scroll-snap-type:x mandatory' : ''">
+            <q-card v-for="(card, cardIndex) in rich.cards || []" :key="cardIndex" flat bordered class="q-mt-xs m-chat-card" :style="cardStyle">
+                <img v-if="imageOf(card)" :src="room.fileUrl(imageOf(card), true)" :alt="card.title || ''" class="cursor-pointer"
+                        style="width:100%;max-height:200px;object-fit:cover;display:block" @load="room.imageLoaded()" @click.stop="room.preview(imageOf(card), item.attachments)">
+                <div class="q-pa-sm">
+                    <div v-if="card.title" class="text-weight-medium m-chat-card-title" style="overflow-wrap:anywhere">{{card.title}}</div>
+                    <div v-if="card.description" class="text-body2 m-chat-card-text" style="white-space:pre-wrap;overflow-wrap:anywhere">{{card.description}}</div>
+                </div>
+                <div v-if="card.suggestions && card.suggestions.length" class="column q-px-xs q-pb-xs">
+                    <q-btn v-for="(one, index) in card.suggestions" :key="index" flat dense no-caps align="left" color="primary" :icon="iconOf(one)" :label="one.text"
+                            :disable="!room.canTap(item, one)" :title="room.canTap(item, one) ? undefined : room.t('For the other person to tap')"
+                            class="m-chat-card-btn" :data-suggestion="one.type" @click.stop="room.tapSuggestion(item, one, index, cardIndex)"></q-btn>
+                </div>
+            </q-card>
+        </div>
+</div>`;
+const chatRich = {
+    name: 'ChatRich',
+    props: { item: Object, room: Object },
+    computed: {
+        rich() { const rich = this.item.event.rich; return rich && typeof rich === 'object' && ['text', 'card', 'carousel'].includes(rich.kind) ? rich : null; },
+        cardStyle() { return this.rich && this.rich.kind === 'carousel' ? 'width:240px;min-width:240px;scroll-snap-align:start' : (this.room.mobile ? 'max-width:85vw' : 'max-width:320px'); }
+    },
+    methods: {
+        iconOf(one) { return { reply: 'sym_o_reply', url: 'sym_o_open_in_new', dial: 'sym_o_call' }[one.type] || 'sym_o_touch_app'; },
+        imageOf(card) {
+            if (card.attachmentSeq == null) return null;
+            const files = this.item.attachments || [];
+            return files.find((file) => Number(file.attachmentSeq) === Number(card.attachmentSeq)) || files[Number(card.attachmentSeq) - 1] || null;
+        }
+    },
+    template: richTemplate
+};
+
+// The composer's Card: a title, words, a picture and up to 4 buttons (a reply, a link, a call); with no title and no
+// picture it is a text with buttons. It shows the text people without RCS get (moqui.chat.richFallback) as it is written.
+const cardBoxTemplate = `
+<m-dialog :model-value="true" :title="t('New card')" width="520" @update:model-value="(open) => { if (!open) $emit('close'); }">
+    <m-text-line v-model="title" :name="'cardTitle' + uid" :label="t('Title (optional)')" maxlength="200"></m-text-line>
+    <m-text-area v-model="text" :name="'cardText' + uid" :label="t('Text')" rows="3" autogrow class="q-mt-xs"></m-text-area>
+    <div class="row items-center no-wrap q-mt-xs">
+        <q-btn flat dense no-caps color="primary" icon="sym_o_image" :label="image ? t('Change the picture') : t('Add a picture')" :loading="image && image.uploading" @click="$refs.picker.click()"></q-btn>
+        <span v-if="image" class="text-caption m-muted ellipsis q-ml-sm">{{image.fileName}}</span>
+        <q-btn v-if="image" flat round dense size="sm" icon="sym_o_close" :aria-label="t('Remove the picture')" @click="image = null"></q-btn>
+        <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif" style="display:none" @change="pick">
+    </div>
+    <div v-for="(button, index) in buttons" :key="index" class="row no-wrap items-center q-mt-xs q-gutter-x-xs m-chat-card-box-button">
+        <q-btn-toggle v-model="button.type" dense no-caps unelevated toggle-color="primary" :options="kinds"></q-btn-toggle>
+        <div class="col"><m-text-line v-model="button.text" :name="'cardButton' + uid + '_' + index" :label="t('Words')" maxlength="20"></m-text-line></div>
+        <div v-if="button.type !== 'reply'" class="col"><m-text-line v-model="button.value" :name="'cardValue' + uid + '_' + index"
+                :label="button.type === 'url' ? t('Address (https://…)') : t('Number (+1…)')"></m-text-line></div>
+        <q-btn flat round dense size="sm" icon="sym_o_close" :aria-label="t('Remove the button')" @click="buttons.splice(index, 1)"></q-btn>
+    </div>
+    <q-btn v-if="buttons.length < 4" flat dense no-caps color="primary" icon="sym_o_add" :label="t('Add a button')" class="q-mt-xs"
+            @click="buttons.push({ type: 'reply', text: '', value: '' })"></q-btn>
+    <div v-if="fallback" class="q-mt-sm text-caption m-muted m-chat-card-box-fallback">
+        <div class="text-weight-medium">{{t('People without RCS get:')}}</div><div style="white-space:pre-wrap;overflow-wrap:anywhere">{{fallback}}</div></div>
+    <div class="row q-gutter-sm q-mt-md">
+        <q-btn unelevated no-caps color="primary" icon="sym_o_send" :label="t('Send the card')" :disable="!ready" :loading="busy" @click="send"></q-btn>
+        <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
+    </div>
+</m-dialog>`;
+const chatCardBox = {
+    name: 'ChatCardBox',
+    props: { room: Object, threadRoot: Number },
+    emits: ['close'],
+    data: () => ({ uid: Math.random().toString(36).slice(2, 8), title: '', text: '', image: null, buttons: [{ type: 'reply', text: '', value: '' }], busy: false }),
+    computed: {
+        kinds() { return [{ value: 'reply', icon: 'sym_o_reply', attrs: { 'aria-label': t('Reply') } }, { value: 'url', icon: 'sym_o_link', attrs: { 'aria-label': t('Link') } },
+            { value: 'dial', icon: 'sym_o_call', attrs: { 'aria-label': t('Call') } }]; },
+        suggestions() {
+            return this.buttons.filter((button) => String(button.text || '').trim()).map((button) => {
+                const text = String(button.text).trim();
+                if (button.type === 'url') return { type: 'url', text, url: String(button.value || '').trim() };
+                if (button.type === 'dial') return { type: 'dial', text, phone: String(button.value || '').replace(/[\s().-]/g, '') };
+                // its postback is the server's: "user:" and its words
+                return { type: 'reply', text };
+            });
+        },
+        // a card with a title or a picture, else a text with buttons
+        rich() {
+            const words = String(this.text || '').trim();
+            const title = String(this.title || '').replace(/\s+/g, ' ').trim();
+            if (!title && !this.image) return { kind: 'text', text: words, suggestions: this.suggestions };
+            const card = { suggestions: this.suggestions };
+            if (title) card.title = title;
+            if (words) card.description = words;
+            if (this.image) card.attachmentSeq = 1;
+            return { kind: 'card', cards: [card] };
+        },
+        fallback() { return moqui.chat && moqui.chat.richFallback ? moqui.chat.richFallback(this.rich).trim() : ''; },
+        ready() {
+            if (this.busy || (this.image && (this.image.uploading || !this.image.chatAttachmentId))) return false;
+            const rich = this.rich;
+            if (rich.kind === 'text') return !!rich.text && rich.suggestions.length > 0;
+            // as the server's: a title or words, and one thing more (the other, a picture or a button)
+            const card = rich.cards[0];
+            return [card.title, card.description, card.attachmentSeq, card.suggestions.length].filter((one) => !!one).length >= 2;
+        }
+    },
+    methods: {
+        t,
+        pick(event) {
+            const file = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            if (!/^image\/(png|jpe?g|gif)$/i.test(file.type || '')) { moqui.notifyMessages([{ type: 'warning', message: t('A card\'s picture is a PNG, JPEG or GIF image') }]); return; }
+            if (needsConnection()) return;
+            const entry = { fileName: file.name, contentType: file.type, uploading: true, chatAttachmentId: null };
+            this.image = entry;
+            const form = new FormData();
+            form.append('chatRoomId', this.room.roomId);
+            form.append('file', file, file.name);
+            if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
+            moqui.request(this.room.url('upload'), { method: 'POST', params: form }).then((result) => {
+                const stored = ((result.json || {}).uploadList || [])[0];
+                if (this.image !== entry) return;
+                this.image = stored ? Object.assign({}, entry, stored, { uploading: false }) : null;
+            }, (err) => { if (this.image === entry) this.image = null; moqui.handleAjaxError(err); });
+        },
+        send() {
+            if (!this.ready) return;
+            this.busy = true;
+            this.room.sendRich(this.rich, this.image ? [this.image.chatAttachmentId] : [], this.threadRoot || null)
+                .then((sent) => { this.busy = false; if (sent) this.$emit('close'); }, () => { this.busy = false; });
+        }
+    },
+    template: cardBoxTemplate
+};
+
 // ---- a message being edited in place: Enter saves (as the composer sends), Esc cancels ----
 const editTemplate = `
 <div class="q-my-xs" @keydown.esc.stop="room.cancelEdit()">
@@ -3525,6 +3675,8 @@ const composerTemplate = `
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
+        <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_view_agenda" class="m-chat-card-btn-open" :aria-label="room.t('Make a card')" :disable="room.offline"
+                @click="room.openCard(threadRoot || null)"><q-tooltip>{{room.t('Make a card with buttons')}}</q-tooltip></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
         <!-- a voice note (Comms-Messaging §5.1): with no text, Send is the microphone; recording shows its time, Cancel and Send -->
@@ -3854,7 +4006,7 @@ const chatMessageMenu = {
 const chatMessage = {
     name: 'ChatMessage',
     props: { item: Object, room: Object, inThread: Boolean },
-    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu },
+    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich },
     data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false, contextOpen: false }),
     watch: {
         actionsAvailable(value) {
@@ -3912,6 +4064,8 @@ const roomTemplate = `
                         <q-icon v-if="label.verified" name="sym_o_check" size="14px" class="q-ml-xs m-chat-verified"></q-icon>
                         <q-tooltip>{{label.text}}. {{t('Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
                     <q-icon v-else name="sym_o_lock_open" size="16px" class="q-ml-xs m-muted m-chat-not-e2ee" :data-e2ee="label.state" :aria-label="label.text">
+                        <q-tooltip>{{label.text}}</q-tooltip></q-icon>
+                    <q-icon v-if="label.badge" :name="label.badge" size="16px" class="q-ml-xs text-info m-chat-e2ee-badge" :aria-label="label.text">
                         <q-tooltip>{{label.text}}</q-tooltip></q-icon>
                     <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
                         <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
@@ -4546,6 +4700,8 @@ const roomTemplate = `
         </div>
     </m-dialog>
 
+    <!-- NewCard (Comms-Messaging §18.3 phase 13): a card or a text with buttons -->
+    <chat-card-box v-if="cardBox.open" :room="self" :thread-root="cardBox.threadRoot" @close="cardBox = { open: false, threadRoot: null }"></chat-card-box>
     <!-- NewPoll: a question, 2 to 10 options, more than one choice, anonymous, and when it closes -->
     <m-dialog v-model="pollBox.open" :title="t('New poll')" width="520">
         <m-text-line v-model="pollBox.question" :name="'pollQuestion' + uid" :label="t('Question')" required></m-text-line>
@@ -4618,7 +4774,7 @@ const chatRoom = {
         // room is shown (a dm link's unsaved message, sealed here in an encrypted room)
         rooms: { type: Array, default: () => [] }, firstMessage: String },
     emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
-    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu },
+    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox },
     data() {
         roomCount += 1;
         return {
@@ -4632,6 +4788,7 @@ const chatRoom = {
             tabs: { media: emptyTab(), files: emptyTab(), voice: emptyTab(), links: emptyTab(), reactions: emptyTab() },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
+            cardBox: { open: false, threadRoot: null },
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0 },
@@ -5064,6 +5221,7 @@ const chatRoom = {
             if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
             if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
             if (encryption === 'Transport') return t('Encrypted in transit only: the network can read it');
+            if (encryption === 'NoneByNetwork') return t('Not encrypted: that network has no end-to-end encryption, and its servers can read it');
             return t('Not encrypted: the network and its providers can read it');
         },
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
@@ -5935,7 +6093,7 @@ const chatRoom = {
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             return this.hoverKey === key || this.tapKey === key;
         },
-        canEdit(item) { return item.mine && !item.redacted && !item.poll && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
+        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
         canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)) && this.bridgeCaps.delete; },
         externalText(person) { return fill(t('On {network}'), { network: person.networkName || t('another network') }); },
         // ---- a message's delivery to the room's bridges ----
@@ -5955,6 +6113,7 @@ const chatRoom = {
             // an RCS bridge's message that went as the fallback says so (Comms-Messaging §16)
             const fallback = delivery.destinations.length === 1 ? moqui.chat.pathName(delivery.destinations[0]) : '';
             if (fallback) return fill(t('Delivered to {network} as {path}'), { network: this.deliveryNames(item), path: fallback });
+            if (delivery.destinations.length && delivery.destinations.every((destination) => destination.receipt === 'read')) return fill(t('Read on {names}'), { names: this.deliveryNames(item) });
             return fill(t('Delivered to {names}'), { names: this.deliveryNames(item) });
         },
         deliveryIcon(item) {
@@ -5963,6 +6122,7 @@ const chatRoom = {
         },
         deliveryClass(item) {
             const state = item.event.delivery && item.event.delivery.state;
+            if (state === 'accepted' && (item.event.delivery.destinations || []).every((destination) => destination.receipt === 'read')) return 'text-primary';
             return state === 'failed' ? 'text-negative' : state === 'uncertain' ? 'text-warning' : 'm-muted';
         },
         canRetry(item) { return !!(item.event.delivery && item.event.delivery.retryable) && (item.mine || this.canModerate); },
@@ -6493,6 +6653,35 @@ const chatRoom = {
         },
 
         // ---- polls ----
+        // ---- rich messages (Comms-Messaging §18.3 phase 13) ----
+        openCard(threadRoot) {
+            if (needsConnection()) return;
+            this.cardBox = { open: true, threadRoot: threadRoot || null };
+        },
+        // a reply is mine to tap on another's message in a room with no outbound bridge; a link or a call always opens
+        canTap(item, one) {
+            if (!one || one.type !== 'reply') return true;
+            return !item.mine && this.canPost && !this.roomBridges.some((bridge) => bridge.outbound !== false) && !(this.room && this.room.roomTypeEnumId === 'CrtExternal');
+        },
+        tapSuggestion(item, one, index, cardIndex) {
+            if (one.type === 'url') { if (/^https?:\/\//i.test(one.url || '')) window.open(one.url, '_blank', 'noopener,noreferrer'); return; }
+            if (one.type === 'dial') { if (/^\+[1-9]\d{3,14}$/.test(one.phone || '')) window.open('tel:' + one.phone, '_self'); return; }
+            if (!this.canTap(item, one)) return;
+            this.post('replySuggestion', { chatRoomId: this.roomId, eventSeq: item.eventSeq, index, cardIndex: cardIndex == null ? '' : cardIndex,
+                clientRef: moqui.chat && moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                if (json && json.eventSeq != null) this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: item.event.threadRootEventSeq ?? null, json });
+            }, () => {});
+        },
+        // a card from the composer (send#Rich): resolves true once sent
+        sendRich(rich, attachmentIds, threadRoot) {
+            return this.post('sendRich', { chatRoomId: this.roomId, richJson: JSON.stringify(rich), attachmentIds: (attachmentIds || []).join(','),
+                threadRootEventSeq: threadRoot || '', clientRef: moqui.chat && moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                if (!json || json.eventSeq == null) return false;
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.rich) this.applyFields(json.eventSeq, { rich: json.event.rich });
+                return true;
+            });
+        },
         openPoll(threadRoot, question) {
             if (needsConnection()) return;
             this.pollBox = { open: true, threadRoot: threadRoot || null, question: question || '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false };
@@ -8746,6 +8935,7 @@ module.exports = {
                   const _component_q_dialog = _resolveComponent("q-dialog")
                   const _component_m_chat_verification = _resolveComponent("m-chat-verification")
                   const _component_m_chat_device_setup = _resolveComponent("m-chat-device-setup")
+                  const _component_chat_card_box = _resolveComponent("chat-card-box")
                   const _component_m_check = _resolveComponent("m-check")
                   const _component_m_date_time = _resolveComponent("m-date-time")
                   const _component_chat_message_menu = _resolveComponent("chat-message-menu")
@@ -8906,9 +9096,28 @@ module.exports = {
                                       ]),
                                       _: 1
                                     }, 8, ["data-e2ee", "aria-label"])),
+                                (_ctx.label.badge)
+                                  ? (_openBlock(), _createBlock(_component_q_icon, {
+                                      key: 5,
+                                      name: _ctx.label.badge,
+                                      size: "16px",
+                                      class: "q-ml-xs text-info m-chat-e2ee-badge",
+                                      "aria-label": _ctx.label.text
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_tooltip, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.label.text), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["name", "aria-label"]))
+                                  : _createCommentVNode("", true),
                                 (_ctx.room.bridged)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 5,
+                                      key: 6,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_hub",
@@ -8928,7 +9137,7 @@ module.exports = {
                                   : _createCommentVNode("", true),
                                 (_ctx.timerSeconds)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 6,
+                                      key: 7,
                                       dense: "",
                                       square: "",
                                       clickable: "",
@@ -8951,7 +9160,7 @@ module.exports = {
                                   : _createCommentVNode("", true),
                                 (_ctx.room.notConnected)
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 7,
+                                      key: 8,
                                       dense: "",
                                       square: "",
                                       icon: "sym_o_link_off",
@@ -12576,6 +12785,14 @@ module.exports = {
                       ]),
                       _: 1
                     }, 8, ["modelValue", "onUpdate:modelValue", "title"]),
+                    (_ctx.cardBox.open)
+                      ? (_openBlock(), _createBlock(_component_chat_card_box, {
+                          key: 4,
+                          room: _ctx.self,
+                          "thread-root": _ctx.cardBox.threadRoot,
+                          onClose: $event => (_ctx.cardBox = { open: false, threadRoot: null })
+                        }, null, 8, ["room", "thread-root", "onClose"]))
+                      : _createCommentVNode("", true),
                     _createVNode(_component_m_dialog, {
                       modelValue: _ctx.pollBox.open,
                       "onUpdate:modelValue": $event => ((_ctx.pollBox.open) = $event),
@@ -12870,6 +13087,172 @@ module.exports = {
                       _: 1
                     }, 8, ["modelValue", "onUpdate:modelValue", "position", "onHide"])
                   ], 42, ["onDragover", "onDragleave", "onDrop"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-card-box"];
+            target.render = (function () {
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, withCtx: _withCtx } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_m_text_line = _resolveComponent("m-text-line")
+                  const _component_m_text_area = _resolveComponent("m-text-area")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_btn_toggle = _resolveComponent("q-btn-toggle")
+                  const _component_m_dialog = _resolveComponent("m-dialog")
+
+                  return (_openBlock(), _createBlock(_component_m_dialog, {
+                    "model-value": true,
+                    title: _ctx.t('New card'),
+                    width: "520",
+                    "onUpdate:modelValue": (open) => { if (!open) _ctx.$emit('close'); }
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_m_text_line, {
+                        modelValue: _ctx.title,
+                        "onUpdate:modelValue": $event => ((_ctx.title) = $event),
+                        name: 'cardTitle' + _ctx.uid,
+                        label: _ctx.t('Title (optional)'),
+                        maxlength: "200"
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                      _createVNode(_component_m_text_area, {
+                        modelValue: _ctx.text,
+                        "onUpdate:modelValue": $event => ((_ctx.text) = $event),
+                        name: 'cardText' + _ctx.uid,
+                        label: _ctx.t('Text'),
+                        rows: "3",
+                        autogrow: "",
+                        class: "q-mt-xs"
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"]),
+                      _createElementVNode("div", { class: "row items-center no-wrap q-mt-xs" }, [
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          dense: "",
+                          "no-caps": "",
+                          color: "primary",
+                          icon: "sym_o_image",
+                          label: _ctx.image ? _ctx.t('Change the picture') : _ctx.t('Add a picture'),
+                          loading: _ctx.image && _ctx.image.uploading,
+                          onClick: $event => (_ctx.$refs.picker.click())
+                        }, null, 8, ["label", "loading", "onClick"]),
+                        (_ctx.image)
+                          ? (_openBlock(), _createElementBlock("span", {
+                              key: 0,
+                              class: "text-caption m-muted ellipsis q-ml-sm"
+                            }, _toDisplayString(_ctx.image.fileName), 1))
+                          : _createCommentVNode("", true),
+                        (_ctx.image)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 1,
+                              flat: "",
+                              round: "",
+                              dense: "",
+                              size: "sm",
+                              icon: "sym_o_close",
+                              "aria-label": _ctx.t('Remove the picture'),
+                              onClick: $event => (_ctx.image = null)
+                            }, null, 8, ["aria-label", "onClick"]))
+                          : _createCommentVNode("", true),
+                        _createElementVNode("input", {
+                          ref: "picker",
+                          type: "file",
+                          accept: "image/png,image/jpeg,image/gif",
+                          style: {"display":"none"},
+                          onChange: _ctx.pick
+                        }, null, 40, ["onChange"])
+                      ]),
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.buttons, (button, index) => {
+                        return (_openBlock(), _createElementBlock("div", {
+                          key: index,
+                          class: "row no-wrap items-center q-mt-xs q-gutter-x-xs m-chat-card-box-button"
+                        }, [
+                          _createVNode(_component_q_btn_toggle, {
+                            modelValue: button.type,
+                            "onUpdate:modelValue": $event => ((button.type) = $event),
+                            dense: "",
+                            "no-caps": "",
+                            unelevated: "",
+                            "toggle-color": "primary",
+                            options: _ctx.kinds
+                          }, null, 8, ["modelValue", "onUpdate:modelValue", "options"]),
+                          _createElementVNode("div", { class: "col" }, [
+                            _createVNode(_component_m_text_line, {
+                              modelValue: button.text,
+                              "onUpdate:modelValue": $event => ((button.text) = $event),
+                              name: 'cardButton' + _ctx.uid + '_' + index,
+                              label: _ctx.t('Words'),
+                              maxlength: "20"
+                            }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"])
+                          ]),
+                          (button.type !== 'reply')
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "col"
+                              }, [
+                                _createVNode(_component_m_text_line, {
+                                  modelValue: button.value,
+                                  "onUpdate:modelValue": $event => ((button.value) = $event),
+                                  name: 'cardValue' + _ctx.uid + '_' + index,
+                                  label: button.type === 'url' ? _ctx.t('Address (https://…)') : _ctx.t('Number (+1…)')
+                                }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label"])
+                              ]))
+                            : _createCommentVNode("", true),
+                          _createVNode(_component_q_btn, {
+                            flat: "",
+                            round: "",
+                            dense: "",
+                            size: "sm",
+                            icon: "sym_o_close",
+                            "aria-label": _ctx.t('Remove the button'),
+                            onClick: $event => (_ctx.buttons.splice(index, 1))
+                          }, null, 8, ["aria-label", "onClick"])
+                        ]))
+                      }), 128)),
+                      (_ctx.buttons.length < 4)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 0,
+                            flat: "",
+                            dense: "",
+                            "no-caps": "",
+                            color: "primary",
+                            icon: "sym_o_add",
+                            label: _ctx.t('Add a button'),
+                            class: "q-mt-xs",
+                            onClick: $event => (_ctx.buttons.push({ type: 'reply', text: '', value: '' }))
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.fallback)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 1,
+                            class: "q-mt-sm text-caption m-muted m-chat-card-box-fallback"
+                          }, [
+                            _createElementVNode("div", { class: "text-weight-medium" }, _toDisplayString(_ctx.t('People without RCS get:')), 1),
+                            _createElementVNode("div", { style: {"white-space":"pre-wrap","overflow-wrap":"anywhere"} }, _toDisplayString(_ctx.fallback), 1)
+                          ]))
+                        : _createCommentVNode("", true),
+                      _createElementVNode("div", { class: "row q-gutter-sm q-mt-md" }, [
+                        _createVNode(_component_q_btn, {
+                          unelevated: "",
+                          "no-caps": "",
+                          color: "primary",
+                          icon: "sym_o_send",
+                          label: _ctx.t('Send the card'),
+                          disable: !_ctx.ready,
+                          loading: _ctx.busy,
+                          onClick: _ctx.send
+                        }, null, 8, ["label", "disable", "loading", "onClick"]),
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          "no-caps": "",
+                          label: _ctx.t('Cancel'),
+                          onClick: $event => (_ctx.$emit('close'))
+                        }, null, 8, ["label", "onClick"])
+                      ])
+                    ]),
+                    _: 1
+                  }, 8, ["title", "onUpdate:modelValue"]))
                 }
             })();
             delete target.template;
@@ -13182,16 +13565,40 @@ module.exports = {
                             _: 1
                           }, 8, ["aria-label", "disable", "onClick"]))
                         : _createCommentVNode("", true),
+                      (!_ctx.room.sealed)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 1,
+                            flat: "",
+                            round: "",
+                            dense: "",
+                            size: "sm",
+                            icon: "sym_o_view_agenda",
+                            class: "m-chat-card-btn-open",
+                            "aria-label": _ctx.room.t('Make a card'),
+                            disable: _ctx.room.offline,
+                            onClick: $event => (_ctx.room.openCard(_ctx.threadRoot || null))
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_tooltip, null, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.room.t('Make a card with buttons')), 1)
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["aria-label", "disable", "onClick"]))
+                        : _createCommentVNode("", true),
                       (!_ctx.room.compact && !_ctx.threadRoot)
                         ? (_openBlock(), _createElementBlock("span", {
-                            key: 1,
+                            key: 2,
                             class: "text-caption m-muted q-ml-sm ellipsis gt-xs"
                           }, _toDisplayString(_ctx.hint), 1))
                         : _createCommentVNode("", true),
                       _createVNode(_component_q_space),
                       (_ctx.voice)
                         ? (_openBlock(), _createElementBlock("div", {
-                            key: 2,
+                            key: 3,
                             class: "row items-center no-wrap q-gutter-x-xs m-chat-recording",
                             role: "status"
                           }, [
@@ -13248,7 +13655,7 @@ module.exports = {
                           ]))
                         : (_ctx.showVoice)
                           ? (_openBlock(), _createBlock(_component_q_btn, {
-                              key: 3,
+                              key: 4,
                               dense: "",
                               unelevated: "",
                               round: "",
@@ -13269,7 +13676,7 @@ module.exports = {
                               _: 1
                             }, 8, ["aria-label", "onClick"]))
                           : (_openBlock(), _createBlock(_component_q_btn, {
-                              key: 4,
+                              key: 5,
                               dense: "",
                               unelevated: "",
                               "no-caps": "",
@@ -13325,6 +13732,7 @@ module.exports = {
                   const _component_q_chip = _resolveComponent("q-chip")
                   const _component_q_btn = _resolveComponent("q-btn")
                   const _component_chat_edit = _resolveComponent("chat-edit")
+                  const _component_chat_rich = _resolveComponent("chat-rich")
                   const _component_q_item_section = _resolveComponent("q-item-section")
                   const _component_q_item_label = _resolveComponent("q-item-label")
                   const _component_q_linear_progress = _resolveComponent("q-linear-progress")
@@ -13539,18 +13947,37 @@ module.exports = {
                                     room: _ctx.room,
                                     item: _ctx.item
                                   }, null, 8, ["room", "item"]))
-                                : (_ctx.item.bodyHtml && !_ctx.item.poll)
-                                  ? (_openBlock(), _createElementBlock("div", {
+                                : (_ctx.item.event.rich)
+                                  ? (_openBlock(), _createBlock(_component_chat_rich, {
                                       key: 1,
-                                      class: "m-rich-text-content text-body2",
-                                      style: {"padding":"0","cursor":"auto","max-height":"none","overflow":"visible","overflow-wrap":"anywhere"},
-                                      innerHTML: _ctx.item.bodyHtml,
-                                      onClick: $event => (_ctx.room.bodyClick($event))
-                                    }, null, 8, ["innerHTML", "onClick"]))
-                                  : _createCommentVNode("", true),
+                                      item: _ctx.item,
+                                      room: _ctx.room
+                                    }, null, 8, ["item", "room"]))
+                                  : (_ctx.item.bodyHtml && !_ctx.item.poll)
+                                    ? (_openBlock(), _createElementBlock("div", {
+                                        key: 2,
+                                        class: "m-rich-text-content text-body2",
+                                        style: {"padding":"0","cursor":"auto","max-height":"none","overflow":"visible","overflow-wrap":"anywhere"},
+                                        innerHTML: _ctx.item.bodyHtml,
+                                        onClick: $event => (_ctx.room.bodyClick($event))
+                                      }, null, 8, ["innerHTML", "onClick"]))
+                                    : _createCommentVNode("", true),
+                              (_ctx.item.event.postback)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 3,
+                                    class: "row items-center no-wrap text-caption m-muted q-mt-xs m-chat-postback"
+                                  }, [
+                                    _createVNode(_component_q_icon, {
+                                      name: "sym_o_reply",
+                                      size: "14px",
+                                      class: "q-mr-xs"
+                                    }),
+                                    _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.t('Chose a suggestion')), 1)
+                                  ]))
+                                : _createCommentVNode("", true),
                               (_ctx.item.edited && !_ctx.room.isEditing(_ctx.item))
                                 ? (_openBlock(), _createElementBlock("span", {
-                                    key: 2,
+                                    key: 4,
                                     class: "text-caption m-muted"
                                   }, [
                                     _createTextVNode(_toDisplayString(_ctx.room.t('(edited)')), 1),
@@ -13564,7 +13991,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.forwardOf)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 3,
+                                    key: 5,
                                     class: "row no-wrap q-mt-xs m-chat-forward",
                                     style: {"max-width":"520px"}
                                   }, [
@@ -13598,7 +14025,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.poll)
                                 ? (_openBlock(), _createBlock(_component_q_card, {
-                                    key: 4,
+                                    key: 6,
                                     flat: "",
                                     bordered: "",
                                     class: "q-mt-xs q-pa-sm m-chat-poll",
@@ -13705,7 +14132,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.viewOnce)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 5,
+                                    key: 7,
                                     class: "row items-center no-wrap q-mt-xs q-pa-sm rounded-borders m-tonal m-chat-view-once",
                                     "data-view-once": _ctx.room.viewOnceState(_ctx.item),
                                     style: {"max-width":"280px"}
@@ -13731,9 +14158,9 @@ module.exports = {
                                       : _createCommentVNode("", true)
                                   ], 8, ["data-view-once"]))
                                 : _createCommentVNode("", true),
-                              (_ctx.item.attachments.length)
+                              (_ctx.item.attachments.length && !_ctx.item.event.rich)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 6,
+                                    key: 8,
                                     class: "row q-gutter-xs q-mt-none"
                                   }, [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.item.attachments, (file) => {
@@ -13807,7 +14234,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.linkPreviews.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 7,
+                                    key: 9,
                                     class: "q-mt-xs",
                                     style: {"max-width":"440px"}
                                   }, [
@@ -13878,7 +14305,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.records.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 8,
+                                    key: 10,
                                     class: "q-mt-xs",
                                     style: {"max-width":"440px"}
                                   }, [
@@ -13896,7 +14323,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.reactions.length)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 9,
+                                    key: 11,
                                     class: "row items-center q-mt-xs"
                                   }, [
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.item.reactions, (reaction) => {
@@ -13938,7 +14365,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (!_ctx.inThread && _ctx.item.threadReplyCount)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 10,
+                                    key: 12,
                                     class: "q-mt-xs"
                                   }, [
                                     _createElementVNode("a", {
@@ -13951,7 +14378,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.mine && _ctx.room.leftOutBySeq[_ctx.item.eventSeq])
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 11,
+                                    key: 13,
                                     class: "row items-center no-wrap q-mt-xs text-caption text-warning m-chat-left-out"
                                   }, [
                                     _createVNode(_component_q_icon, {
@@ -13974,7 +14401,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.item.event.delivery)
                                 ? (_openBlock(), _createElementBlock("div", {
-                                    key: 12,
+                                    key: 14,
                                     class: _normalizeClass(["row items-center no-wrap q-mt-xs text-caption m-chat-delivery", _ctx.room.deliveryClass(_ctx.item)]),
                                     "data-delivery": _ctx.item.event.delivery.state
                                   }, [
@@ -14416,6 +14843,129 @@ module.exports = {
                           _: 1
                         }, 8, ["dense", "class"]))
                   ], 8, ["data-seq"]))
+                }
+            })();
+            delete target.template;
+        }
+        {
+            const target = component.components["chat-room"].components["chat-message"].components["chat-rich"];
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, withModifiers: _withModifiers, normalizeClass: _normalizeClass, withCtx: _withCtx, createBlock: _createBlock, createCommentVNode: _createCommentVNode, normalizeStyle: _normalizeStyle } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_chip = _resolveComponent("q-chip")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_card = _resolveComponent("q-card")
+
+                  return (_ctx.rich)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 0,
+                        class: "m-chat-rich",
+                        "data-rich": _ctx.rich.kind
+                      }, [
+                        (_ctx.rich.kind === 'text')
+                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                              _createElementVNode("div", {
+                                class: "text-body2 m-chat-rich-text",
+                                style: {"white-space":"pre-wrap","overflow-wrap":"anywhere"}
+                              }, _toDisplayString(_ctx.rich.text), 1),
+                              _createElementVNode("div", {
+                                class: _normalizeClass(["row q-mt-xs m-chat-chips", _ctx.room.mobile ? 'no-wrap scroll' : 'wrap']),
+                                style: {"gap":"4px"}
+                              }, [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.rich.suggestions || [], (one, index) => {
+                                  return (_openBlock(), _createBlock(_component_q_chip, {
+                                    key: index,
+                                    dense: "",
+                                    outline: "",
+                                    color: "primary",
+                                    icon: _ctx.iconOf(one),
+                                    clickable: _ctx.room.canTap(_ctx.item, one),
+                                    class: _normalizeClass(["q-ma-none m-chat-chip", { 'm-muted': !_ctx.room.canTap(_ctx.item, one) }]),
+                                    "data-suggestion": one.type,
+                                    title: _ctx.room.canTap(_ctx.item, one) ? undefined : _ctx.room.t('For the other person to tap'),
+                                    onClick: _withModifiers($event => (_ctx.room.canTap(_ctx.item, one) && _ctx.room.tapSuggestion(_ctx.item, one, index, null)), ["stop"])
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(one.text), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["icon", "clickable", "class", "data-suggestion", "title", "onClick"]))
+                                }), 128))
+                              ], 2)
+                            ], 64))
+                          : (_openBlock(), _createElementBlock("div", {
+                              key: 1,
+                              class: _normalizeClass(_ctx.rich.kind === 'carousel' ? 'row no-wrap scroll m-chat-carousel' : ''),
+                              style: _normalizeStyle(_ctx.rich.kind === 'carousel' ? 'gap:8px;scroll-snap-type:x mandatory' : '')
+                            }, [
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.rich.cards || [], (card, cardIndex) => {
+                                return (_openBlock(), _createBlock(_component_q_card, {
+                                  key: cardIndex,
+                                  flat: "",
+                                  bordered: "",
+                                  class: "q-mt-xs m-chat-card",
+                                  style: _normalizeStyle(_ctx.cardStyle)
+                                }, {
+                                  default: _withCtx(() => [
+                                    (_ctx.imageOf(card))
+                                      ? (_openBlock(), _createElementBlock("img", {
+                                          key: 0,
+                                          src: _ctx.room.fileUrl(_ctx.imageOf(card), true),
+                                          alt: card.title || '',
+                                          class: "cursor-pointer",
+                                          style: {"width":"100%","max-height":"200px","object-fit":"cover","display":"block"},
+                                          onLoad: $event => (_ctx.room.imageLoaded()),
+                                          onClick: _withModifiers($event => (_ctx.room.preview(_ctx.imageOf(card), _ctx.item.attachments)), ["stop"])
+                                        }, null, 40, ["src", "alt", "onLoad", "onClick"]))
+                                      : _createCommentVNode("", true),
+                                    _createElementVNode("div", { class: "q-pa-sm" }, [
+                                      (card.title)
+                                        ? (_openBlock(), _createElementBlock("div", {
+                                            key: 0,
+                                            class: "text-weight-medium m-chat-card-title",
+                                            style: {"overflow-wrap":"anywhere"}
+                                          }, _toDisplayString(card.title), 1))
+                                        : _createCommentVNode("", true),
+                                      (card.description)
+                                        ? (_openBlock(), _createElementBlock("div", {
+                                            key: 1,
+                                            class: "text-body2 m-chat-card-text",
+                                            style: {"white-space":"pre-wrap","overflow-wrap":"anywhere"}
+                                          }, _toDisplayString(card.description), 1))
+                                        : _createCommentVNode("", true)
+                                    ]),
+                                    (card.suggestions && card.suggestions.length)
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 1,
+                                          class: "column q-px-xs q-pb-xs"
+                                        }, [
+                                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(card.suggestions, (one, index) => {
+                                            return (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: index,
+                                              flat: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              align: "left",
+                                              color: "primary",
+                                              icon: _ctx.iconOf(one),
+                                              label: one.text,
+                                              disable: !_ctx.room.canTap(_ctx.item, one),
+                                              title: _ctx.room.canTap(_ctx.item, one) ? undefined : _ctx.room.t('For the other person to tap'),
+                                              class: "m-chat-card-btn",
+                                              "data-suggestion": one.type,
+                                              onClick: _withModifiers($event => (_ctx.room.tapSuggestion(_ctx.item, one, index, cardIndex)), ["stop"])
+                                            }, null, 8, ["icon", "label", "disable", "title", "data-suggestion", "onClick"]))
+                                          }), 128))
+                                        ]))
+                                      : _createCommentVNode("", true)
+                                  ]),
+                                  _: 2
+                                }, 1032, ["style"]))
+                              }), 128))
+                            ], 6))
+                      ], 8, ["data-rich"]))
+                    : _createCommentVNode("", true)
                 }
             })();
             delete target.template;

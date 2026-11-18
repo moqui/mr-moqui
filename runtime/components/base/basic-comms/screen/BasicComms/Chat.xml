@@ -353,6 +353,31 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- a card or a text with buttons (Comms-Messaging §18.3 phase 13): richJson (send#Rich's rich), attachmentIds (the
+        card's picture, comma separated) -->
+    <transition name="sendRich">
+        <actions><script><![CDATA[
+            let rich = null
+            try { rich = JSON.parse(richJson || 'null') } catch (err) { rich = null }
+            const out = ec.service.sync().name('org.moqui.chat.ChatRichServices.send#Rich').parameters({chatRoomId: chatRoomId || '',
+                rich: rich && typeof rich === 'object' ? rich : {}, chatAttachmentIdList: attachmentIds ? String(attachmentIds).split(',').map((id) => id.trim()).filter((id) => id) : [],
+                threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
+                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a tap on a reply button of a message: index, of card cardIndex or of its chips -->
+    <transition name="replySuggestion">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatRichServices.reply#Suggestion').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq || 0), index: Number(index || 0), cardIndex: cardIndex !== null && cardIndex !== undefined && cardIndex !== '' ? Number(cardIndex) : null,
+                clientRef: clientRef || null,
+                roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the sender takes the link previews off their message -->
     <transition name="removePreviews">
         <actions><script><![CDATA[

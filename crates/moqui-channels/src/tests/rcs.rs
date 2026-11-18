@@ -18,6 +18,9 @@
 //! the reports, never back from the fallback to RCS; RCS messages, places and tapped suggestions in, to the home
 //! number's room; a reply to a fallback text to the RCS room, to a same-provider SMS bridge's room, and left for
 //! another provider's; the RCS opt-out; the capabilities; the bridges' settings; and the system's number kept on SMS.
+//! Phase 13 (§18.3): rich messages in each provider's form (Twilio's Content made for the send and deleted once done,
+//! or an app's own; Sinch's choice, card and carousel messages with our fallback), an SMS bridge sending the fallback,
+//! the read receipts, and the typing indicator.
 
 use super::sinch::{digits, sinch_headers, SECRET};
 use super::twilio::{form, posted, sid, value, ACCOUNT, API_KEY, TOKEN};
@@ -43,9 +46,25 @@ const TWILIO_RCS: Provider = Provider {
     config: |base, _keys| {
         json!({"accountSid": ACCOUNT, "apiKeySid": API_KEY, "apiKeySecret": "key-secret", "authToken": TOKEN,
             "messagingServiceSid": SERVICE, "fallbackFrom": OURS, "apiBaseUrl": base, "conversationsBaseUrl": base,
-            "mediaContentBaseUrl": base, "allowInternalAddresses": true, "maxMediaCount": 3, "maxMediaBytes": 2000})
+            "mediaContentBaseUrl": base, "contentBaseUrl": base, "messagingBaseUrl": base, "rcsSenderId": AGENT,
+            "allowInternalAddresses": true, "maxMediaCount": 3, "maxMediaBytes": 2000})
     },
-    accepted: |n, _path| Reply::Status(201, json!({"sid": sid("SM", n), "status": "accepted"}).to_string()),
+    accepted: |n, path| {
+        if path == CONTENT_PATH {
+            Reply::Status(201, json!({"sid": sid("HX", n), "friendly_name": "moqui"}).to_string())
+        } else if path.starts_with(CONTENT_PATH) {
+            Reply::Status(204, String::new())
+        } else if path == TYPING_PATH {
+            Reply::Status(200, json!({"success": true}).to_string())
+        } else if path.starts_with("/v2/Content") {
+            Reply::Status(
+                200,
+                json!({"contents": [], "meta": {"next_page_url": null}}).to_string(),
+            )
+        } else {
+            Reply::Status(201, json!({"sid": sid("SM", n), "status": "accepted"}).to_string())
+        }
+    },
     sign: |_keys, body, _at_seconds, url| {
         let pairs = twilio::Form::parse(body).map(|form| form.pairs).unwrap_or_default();
         vec![
@@ -60,6 +79,10 @@ const TWILIO_RCS: Provider = Provider {
 
 const TOKEN_PATH: &str = "/oauth2/token";
 const SEND_PATH: &str = "/v1/projects/proj-1/messages:send";
+const EVENTS_PATH: &str = "/v1/projects/proj-1/events:send";
+/// Twilio's Content API (a content made for a send; its delete is this and the id) and its typing indicator.
+const CONTENT_PATH: &str = "/v1/Content";
+const TYPING_PATH: &str = "/v3/Indicators/Typing.json";
 
 const SINCH_RCS: Provider = Provider {
     adapter_name: "rcs-sinch",
@@ -449,7 +472,7 @@ fn twilio_rcs_comes_in_to_the_home_numbers_room_and_goes_out_with_its_fallback_a
     assert_eq!(bed.path(&room, seq), "sms");
     bed.rcs_status(&remote, "read", AGENT);
     assert_eq!(bed.path(&room, seq), "sms", "a fallback never goes back to RCS");
-    assert_eq!(bed.delivery(&room, seq).4, "delivered");
+    assert_eq!(bed.delivery(&room, seq).4, "read");
     let deliveries = ok(
         "org.moqui.chat.ChatBridgeServices.get#EventDeliveries",
         &[
@@ -806,4 +829,619 @@ fn a_sinch_reply_to_a_fallback_text_goes_to_a_same_account_sms_bridges_room() {
     // SMS4 is another app's: left
     bed.sinch_event(&sms_in("01S3", FOURTH, "Another app"));
     assert_eq!(bed.rooms_with("SMS4", FOURTH), 0);
+}
+
+// ---- rich messages, read receipts and typing (§18.3 phase 13) ----
+
+/// alice sends `rich` (with `files`, the cards' pictures) in `room`: its eventSeq.
+fn send_rich(room: &str, rich: Json, files: &[String]) -> i64 {
+    login("alice");
+    let out = ok(
+        "org.moqui.chat.ChatRichServices.send#Rich",
+        &[
+            ("chatRoomId", text(room)),
+            ("rich", moqui_lib::json::from_json(&rich)),
+            (
+                "chatAttachmentIdList",
+                Value::List(files.iter().map(|id| text(id)).collect()),
+            ),
+        ],
+    );
+    out_text(&out, "eventSeq").parse().unwrap()
+}
+
+/// An app sends `rich` as alice (authorization disabled: its own postbacks and templates): its eventSeq.
+fn app_rich(bed: &Bed, room: &str, rich: Json, files: &[String]) -> i64 {
+    let _authz = bed.ctx.disable_authz();
+    let out = ok(
+        "org.moqui.chat.ChatRichServices.send#Rich",
+        &[
+            ("chatRoomId", text(room)),
+            ("senderUserId", text("alice")),
+            ("rich", moqui_lib::json::from_json(&rich)),
+            (
+                "chatAttachmentIdList",
+                Value::List(files.iter().map(|id| text(id)).collect()),
+            ),
+        ],
+    );
+    out_text(&out, "eventSeq").parse().unwrap()
+}
+
+/// A card with a reply, a link and a call, its picture the message's first file.
+fn a_card() -> Json {
+    json!({"kind": "card", "cards": [{"title": "Your order shipped", "description": "Arrives Tuesday", "attachmentSeq": 1,
+        "suggestions": [{"type": "reply", "text": "Thanks", "postback": "order:7:thanks"},
+            {"type": "url", "text": "Track", "url": "https://example.test/track/7"},
+            {"type": "dial", "text": "Call us", "phone": "+15550109999"}]}]})
+}
+
+/// A text with one reply chip.
+fn chips() -> Json {
+    json!({"kind": "text", "text": "Ready?", "suggestions": [{"type": "reply", "text": "Yes"}]})
+}
+
+const CARD_TEXT: &str =
+    "Your order shipped\nArrives Tuesday\nTrack: https://example.test/track/7\nCall us: +15550109999\nReply: Thanks";
+
+impl Bed {
+    /// The sends to the fake on `path`.
+    fn sent_to(&self, path: &str) -> Vec<Seen> {
+        self.fake.sends().into_iter().filter(|seen| seen.path == path).collect()
+    }
+
+    /// The sends to the fake whose path starts with `prefix`.
+    fn sent_under(&self, prefix: &str) -> Vec<Seen> {
+        self.fake
+            .sends()
+            .into_iter()
+            .filter(|seen| seen.path.starts_with(prefix))
+            .collect()
+    }
+
+    /// The Contents deleted at the fake.
+    fn deleted(&self) -> Vec<String> {
+        self.fake
+            .sends()
+            .into_iter()
+            .filter(|seen| seen.method == "DELETE")
+            .map(|seen| seen.path.trim_start_matches("/v1/Content/").to_string())
+            .collect()
+    }
+
+    /// A field of the delivery of `seq` in `room`.
+    fn delivery_field(&self, room: &str, seq: i64, field: &str) -> String {
+        self.one(
+            "moqui.chat.ChatBridgeDelivery",
+            &[("chatRoomId", text(room)), ("eventSeq", Value::I64(seq))],
+        )
+        .get(field)
+        .cloned()
+        .unwrap_or_default()
+    }
+
+    /// The content kept on the delivery of `seq` in `room`.
+    fn content_of(&self, room: &str, seq: i64) -> String {
+        self.delivery_field(room, seq, "providerContentId")
+    }
+
+    /// `send#BridgeTyping` of `room` at `at`: the bridges asked.
+    fn typing(&self, room: &str, at: i64) -> i64 {
+        let _authz = self.ctx.disable_authz();
+        let out = ok(
+            "org.moqui.chat.ChatBridgeServices.send#BridgeTyping",
+            &[("chatRoomId", text(room)), ("nowMillis", Value::I64(at))],
+        );
+        out_text(&out, "sent").parse().unwrap_or(0)
+    }
+
+    /// `clean#ProviderContent` at `at`: (deleted, kept).
+    fn sweep(&self, at: i64) -> (String, String) {
+        let _authz = self.ctx.disable_authz();
+        let out = ok(
+            "org.moqui.chat.ChatBridgeServices.clean#ProviderContent",
+            &[("nowMillis", Value::I64(at))],
+        );
+        (out_text(&out, "deleted"), out_text(&out, "kept"))
+    }
+
+    /// The RCS room of THEIRS, made by a message in; and the delivery worker's first round, whose daily sweep lists the
+    /// bridge's contents, done before a test scripts the fake's answers.
+    fn twilio_room(&self) -> String {
+        self.rcs_in(&format!("rcs:{THEIRS}"), AGENT, &[("Body", "Hi")]);
+        self.round(0);
+        self.room(THEIRS).unwrap()
+    }
+}
+
+/// A Content API search's page of `contents` ({sid, friendly_name}).
+fn search_page(contents: &[(&str, &str)]) -> Reply {
+    let list: Vec<Json> = contents
+        .iter()
+        .map(|(sid, name)| json!({"sid": sid, "friendly_name": name, "date_created": "2026-11-01T00:00:00Z"}))
+        .collect();
+    Reply::Status(
+        200,
+        json!({"contents": list, "meta": {"next_page_url": null}}).to_string(),
+    )
+}
+
+#[test]
+fn a_twilio_rcs_card_is_a_content_made_for_its_send_and_deleted_once_its_message_is_done() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let room = bed.twilio_room();
+    let picture = bed.upload(&room, "parcel.png", 100);
+    let seq = send_rich(&room, a_card(), &[picture]);
+    bed.round(0);
+
+    // first the content: the card, and the fallback (its text and picture as MMS)
+    let made = bed.sent_to(CONTENT_PATH);
+    assert_eq!(made.len(), 1, "one content for the send");
+    let content: Json = serde_json::from_str(&made[0].body).unwrap();
+    let name = content["friendly_name"].as_str().unwrap();
+    assert!(
+        name.starts_with("moqui-") && name.ends_with("-1"),
+        "a name for the delivery and attempt: {name}"
+    );
+    assert_eq!(content["language"], "en");
+    let card = &content["types"]["twilio/card"];
+    assert_eq!(card["title"], "Your order shipped");
+    assert_eq!(card["body"], "Arrives Tuesday");
+    let media = card["media"][0].as_str().unwrap();
+    assert!(media.contains("/channels/") && media.contains("/media/"), "{media}");
+    // a member's reply: its postback is "user:" and its words, never the one it gave
+    assert_eq!(
+        card["actions"],
+        json!([{"type": "QUICK_REPLY", "title": "Thanks", "id": "user:Thanks", "chip_list": false},
+            {"type": "URL", "title": "Track", "url": "https://example.test/track/7", "chip_list": false},
+            {"type": "PHONE_NUMBER", "title": "Call us", "phone": "+15550109999", "chip_list": false}])
+    );
+    let fallback = &content["types"]["twilio/media"];
+    assert_eq!(fallback["body"], CARD_TEXT);
+    assert_eq!(fallback["media"][0], media);
+    assert!(content["types"].get("twilio/text").is_none());
+
+    // then the send names it, with no Body or MediaUrl of its own
+    let pairs = posted(&bed.fake.sends().pop().unwrap());
+    let content_sid = value(&pairs, "ContentSid").unwrap().to_string();
+    assert!(content_sid.starts_with("HX"), "{content_sid}");
+    assert_eq!(value(&pairs, "Body"), None);
+    assert_eq!(value(&pairs, "MediaUrl"), None);
+    assert_eq!(value(&pairs, "FallbackFrom"), Some(OURS));
+    assert_eq!(bed.content_of(&room, seq), content_sid, "kept for its delete");
+    // the room's other clients see the fallback text
+    assert!(bed
+        .messages(&room)
+        .last()
+        .unwrap()
+        .1
+        .starts_with("Your order shipped\nArrives Tuesday"));
+
+    // sent is not done; delivered is: the content is deleted and let go
+    let remote = bed.delivery(&room, seq).3;
+    bed.rcs_status(&remote, "sent", AGENT);
+    assert!(bed.deleted().is_empty());
+    bed.rcs_status(&remote, "delivered", AGENT);
+    assert_eq!(bed.deleted(), vec![content_sid.clone()]);
+    assert_eq!(bed.content_of(&room, seq), "");
+    // read: past delivered, and never back
+    bed.rcs_status(&remote, "read", AGENT);
+    assert_eq!(bed.delivery(&room, seq).4, "read");
+    bed.rcs_status(&remote, "delivered", AGENT);
+    assert_eq!(bed.delivery(&room, seq).4, "read");
+    assert_eq!(bed.deleted().len(), 1, "nothing left to delete");
+}
+
+#[test]
+fn a_twilio_text_with_chips_and_a_carousel_and_an_apps_own_template_go_in_twilios_forms() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let room = bed.twilio_room();
+
+    // an app's text with chips, RCS only: the chip list with the app's postbacks, and no fallback type
+    bed.set_config(|config| config["smsFallback"] = json!(false));
+    app_rich(
+        &bed,
+        &room,
+        json!({"kind": "text", "text": "Table for two?", "suggestions": [{"type": "reply", "text": "Yes"},
+            {"type": "reply", "text": "No", "postback": "no"}]}),
+        &[],
+    );
+    bed.round(0);
+    let content: Json = serde_json::from_str(&bed.sent_to(CONTENT_PATH).pop().unwrap().body).unwrap();
+    assert_eq!(
+        content["types"],
+        json!({"twilio/card": {"body": "Table for two?", "actions": [
+            {"type": "QUICK_REPLY", "title": "Yes", "id": "Yes", "chip_list": true},
+            {"type": "QUICK_REPLY", "title": "No", "id": "no", "chip_list": true}]}})
+    );
+    let pairs = posted(&bed.fake.sends().pop().unwrap());
+    assert_eq!(value(&pairs, "To"), Some(format!("rcs:{THEIRS}").as_str()));
+    bed.set_config(|config| config["smsFallback"] = json!(true));
+
+    // a carousel: each card's words, picture and buttons (no chip_list: the carousel page names none); the pictures
+    // together past the MMS total (2000 here) yet each within the RCS limit; the fallback with the first picture only
+    let files = [bed.upload(&room, "a.png", 1500), bed.upload(&room, "b.png", 1500)];
+    send_rich(
+        &room,
+        json!({"kind": "carousel", "cards": [
+            {"title": "Jacket", "description": "Light", "attachmentSeq": 1, "suggestions": [{"type": "reply", "text": "Save"}]},
+            {"title": "Pack", "description": "Roomy", "attachmentSeq": 2, "suggestions": [{"type": "reply", "text": "Save"}]}]}),
+        &files,
+    );
+    bed.round(0);
+    let content: Json = serde_json::from_str(&bed.sent_to(CONTENT_PATH).pop().unwrap().body).unwrap();
+    let cards = &content["types"]["twilio/carousel"]["cards"];
+    assert_eq!(cards.as_array().unwrap().len(), 2);
+    assert_eq!(cards[1]["title"], "Pack");
+    assert_eq!(cards[1]["body"], "Roomy");
+    assert!(cards[1]["media"].as_str().unwrap().contains("/media/"));
+    assert_eq!(
+        cards[0]["actions"],
+        json!([{"type": "QUICK_REPLY", "title": "Save", "id": "user:Save"}])
+    );
+    let fallback = &content["types"]["twilio/media"];
+    assert_eq!(
+        fallback["body"],
+        "1. Jacket\nLight\nReply: Save\n\n2. Pack\nRoomy\nReply: Save"
+    );
+    assert_eq!(
+        fallback["media"].as_array().map(Vec::len),
+        Some(1),
+        "the first picture only"
+    );
+
+    // a first picture past the MMS limit: the fallback is the text alone; past the RCS limit: refused
+    let big = [bed.upload(&room, "big.png", 2500)];
+    send_rich(
+        &room,
+        json!({"kind": "card", "cards": [{"title": "Big", "description": "Picture", "attachmentSeq": 1}]}),
+        &big,
+    );
+    bed.round(0);
+    let content: Json = serde_json::from_str(&bed.sent_to(CONTENT_PATH).pop().unwrap().body).unwrap();
+    assert!(content["types"].get("twilio/media").is_none());
+    assert_eq!(content["types"]["twilio/text"]["body"], "Big\nPicture");
+    bed.set_config(|config| config["maxRcsMediaBytes"] = json!(1000));
+    let too_big = [bed.upload(&room, "huge.png", 1200)];
+    let refused = send_rich(
+        &room,
+        json!({"kind": "card", "cards": [{"title": "Huge", "description": "Picture", "attachmentSeq": 1}]}),
+        &too_big,
+    );
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, refused).1, "mediaTooLarge");
+    bed.set_config(|config| {
+        config.as_object_mut().unwrap().remove("maxRcsMediaBytes");
+    });
+
+    // an app's own template: sent as it is, never made, kept or deleted
+    let sends_before = bed.sent_to(CONTENT_PATH).len();
+    let own = concat!("HX", "0123456789abcdef", "0123456789abcdef");
+    let seq = app_rich(
+        &bed,
+        &room,
+        json!({"kind": "text", "text": "Sale today",
+            "suggestions": [{"type": "url", "text": "Shop", "url": "https://example.test/sale"}],
+            "providerContent": {"twilio": {"contentSid": own, "contentVariables": {"1": "Ann"}}}}),
+        &[],
+    );
+    bed.round(0);
+    assert_eq!(bed.sent_to(CONTENT_PATH).len(), sends_before);
+    let pairs = posted(&bed.fake.sends().pop().unwrap());
+    assert_eq!(value(&pairs, "ContentSid"), Some(own));
+    assert_eq!(value(&pairs, "ContentVariables"), Some(r#"{"1":"Ann"}"#));
+    assert_eq!(bed.content_of(&room, seq), "");
+    let remote = bed.delivery(&room, seq).3;
+    bed.rcs_status(&remote, "delivered", AGENT);
+    assert!(bed.deleted().is_empty(), "an app's template is never deleted");
+}
+
+#[test]
+fn a_card_twilio_refuses_goes_as_its_text_and_a_content_not_made_sends_nothing_yet() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let room = bed.twilio_room();
+    let picture = bed.upload(&room, "parcel.png", 100);
+    bed.fake.script(&[Reply::Status(
+        400,
+        json!({"code": 21656, "message": "Invalid content"}).to_string(),
+    )]);
+    let refused = send_rich(&room, a_card(), &[picture]);
+    bed.round(0);
+    // its text and its picture went, as a text, and the delivery says why
+    let pairs = posted(&bed.fake.sends().pop().unwrap());
+    assert_eq!(value(&pairs, "Body"), Some(CARD_TEXT));
+    assert_eq!(pairs.iter().filter(|(name, _)| name == "MediaUrl").count(), 1);
+    assert_eq!(value(&pairs, "ContentSid"), None);
+    assert_eq!(bed.delivery(&room, refused).0, "CdsAccepted");
+    assert_eq!(bed.delivery_field(&room, refused, "deliveryNote"), "richRefused");
+    assert!(bed
+        .delivery_field(&room, refused, "deliveryNoteText")
+        .contains("Invalid content"));
+    // a 503 on the content step: tried again later, and no message went
+    let messages_before = bed.sent_under("/2010-04-01").len();
+    bed.fake.script(&[Reply::Status(503, "{}".to_string())]);
+    let later = send_rich(&room, chips(), &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, later).0, "CdsPending", "tried again later");
+    assert_eq!(bed.sent_under("/2010-04-01").len(), messages_before, "no message went");
+}
+
+#[test]
+fn a_retry_sends_the_content_it_kept_and_a_lost_answer_leaves_it_kept_for_the_sweep() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let room = bed.twilio_room();
+    // a 429 on the message step after the content was made: the retry sends the same content, none made again
+    bed.fake.script(&[
+        Reply::Status(201, json!({"sid": sid("HX", 901)}).to_string()),
+        Reply::Status(429, json!({"code": 20429, "message": "Too many requests"}).to_string()),
+    ]);
+    let seq = send_rich(&room, chips(), &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, seq).0, "CdsPending");
+    assert_eq!(bed.content_of(&room, seq), sid("HX", 901));
+    bed.round(10 * 60_000);
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    assert_eq!(bed.sent_to(CONTENT_PATH).len(), 1, "made once");
+    let pairs = posted(&bed.fake.sends().pop().unwrap());
+    assert_eq!(value(&pairs, "ContentSid"), Some(sid("HX", 901).as_str()));
+
+    // the message step's answer lost after the content was made: uncertain, never sent again, its content kept for the
+    // sweep, which deletes it two days after its last attempt
+    bed.fake.script(&[
+        Reply::Status(201, json!({"sid": sid("HX", 902)}).to_string()),
+        Reply::Drop,
+    ]);
+    let lost = send_rich(&room, chips(), &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, lost).0, "CdsUncertain");
+    assert_eq!(bed.content_of(&room, lost), sid("HX", 902));
+    assert_eq!(bed.sweep(now() + 86_400_000).0, "0", "not yet two days");
+    bed.sweep(now() + 3 * 86_400_000);
+    assert!(bed.deleted().contains(&sid("HX", 902)));
+    assert_eq!(bed.content_of(&room, lost), "");
+}
+
+#[test]
+fn a_retry_after_a_lost_content_answer_deletes_the_earlier_attempts_content_found_by_name() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let room = bed.twilio_room();
+    // the content step's answer lost: nothing kept, the delivery tried again
+    bed.fake.script(&[Reply::Drop]);
+    let seq = send_rich(&room, chips(), &[]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, seq).0, "CdsPending");
+    assert_eq!(bed.content_of(&room, seq), "");
+    // the next attempt finds the first attempt's by its name and deletes it, then makes its own
+    let delivery = bed.delivery_field(&room, seq, "chatBridgeDeliveryId");
+    let first_name = format!("{}-1", twilio::rcs::name_of_delivery(&delivery));
+    let stray = sid("HX", 777);
+    let other = sid("HX", 778);
+    bed.fake
+        .script(&[search_page(&[(&stray, &first_name), (&other, "moqui-someone-else-1")])]);
+    bed.round(10 * 60_000);
+    let search = bed.sent_under("/v2/Content").pop().expect("a search by name");
+    assert!(search.path.contains("ContentName=moqui-"), "{}", search.path);
+    assert_eq!(bed.deleted(), vec![stray], "only this delivery's");
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    let made: Json = serde_json::from_str(&bed.sent_to(CONTENT_PATH).pop().unwrap().body).unwrap();
+    assert!(made["friendly_name"].as_str().unwrap().ends_with("-2"), "{made}");
+}
+
+#[test]
+fn the_daily_sweep_deletes_old_contents_keeps_one_it_could_not_and_lets_it_go_after_five_tries() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let room = bed.twilio_room();
+    let first = send_rich(&room, chips(), &[]);
+    let second = send_rich(&room, chips(), &[]);
+    bed.round(0);
+    let (one, two) = (bed.content_of(&room, first), bed.content_of(&room, second));
+    assert!(!one.is_empty() && !two.is_empty());
+    // not yet two days after their last attempt: kept
+    assert_eq!(bed.sweep(now() + 86_400_000).0, "0");
+    // past two days: one delete fails (counted, kept), the other is done (a 404: Twilio has it no more)
+    bed.fake.script(&[
+        Reply::Status(500, "{}".to_string()),
+        Reply::Status(404, "{}".to_string()),
+    ]);
+    assert_eq!(bed.sweep(now() + 3 * 86_400_000), ("1".to_string(), "1".to_string()));
+    let left: Vec<String> = [first, second].iter().map(|seq| bed.content_of(&room, *seq)).collect();
+    assert_eq!(left.iter().filter(|id| id.is_empty()).count(), 1, "{left:?}");
+    let stuck = if left[0].is_empty() { second } else { first };
+    assert_eq!(bed.delivery_field(&room, stuck, "providerContentTries"), "1");
+    // one that never deletes is let go after five sweeps, never holding up the rest
+    for _ in 0..4 {
+        bed.fake.script(&[Reply::Status(500, "{}".to_string())]);
+        bed.sweep(now() + 3 * 86_400_000);
+    }
+    assert_eq!(bed.content_of(&room, stuck), "", "let go");
+
+    // ours that no delivery keeps (a lost create's, Twilio's search by name and date) are deleted; a kept one is not
+    let third = send_rich(&room, chips(), &[]);
+    bed.round(0);
+    let kept = bed.content_of(&room, third);
+    let orphan = sid("HX", 555);
+    let deletes = bed.deleted().len();
+    bed.fake
+        .script(&[search_page(&[(&orphan, "moqui-gone-1"), (&kept, "moqui-kept-1")])]);
+    bed.sweep(now() + 60_000);
+    let search = bed.sent_under("/v2/Content").pop().expect("the search of ours");
+    assert!(search.path.contains("DateCreatedBefore="), "{}", search.path);
+    assert_eq!(bed.deleted()[deletes..].to_vec(), vec![orphan]);
+}
+
+#[test]
+fn sinch_rcs_rich_messages_go_as_choice_card_and_carousel_messages_with_our_fallback() {
+    let bed = sinch_bed();
+    let _entered = bed.ctx.enter();
+    bed.sinch_event(&sinch_rcs_in("01RICH0", json!({"text_message": {"text": "Hi"}})));
+    let room = bed.room(THEIRS).unwrap();
+    let last_send = || -> Json { serde_json::from_str(&bed.sent_to(SEND_PATH).pop().unwrap().body).unwrap() };
+
+    app_rich(
+        &bed,
+        &room,
+        json!({"kind": "text", "text": "Table for two?", "suggestions": [{"type": "reply", "text": "Yes", "postback": "t:yes"},
+            {"type": "dial", "text": "Call", "phone": "+15550109999"}]}),
+        &[],
+    );
+    bed.round(0);
+    let body = last_send();
+    assert_eq!(
+        body["message"]["choice_message"],
+        json!({"text_message": {"text": "Table for two?"}, "choices": [
+            {"text_message": {"text": "Yes"}, "postback_data": "t:yes"},
+            {"call_message": {"title": "Call", "phone_number": "+15550109999"}}]})
+    );
+    // our fallback is the AppMessage's own field, not the request's
+    assert_eq!(
+        body["message"]["explicit_channel_omni_message"],
+        json!({"SMS": {"text_message": {"text": "Table for two?\n\nCall: +15550109999\nReply: Yes"}}})
+    );
+    assert!(body.get("explicit_channel_omni_message").is_none());
+    assert_eq!(body["channel_priority_order"], json!(["RCS", "SMS"]));
+
+    // a card with its picture: MMS is its fallback, a card of our text
+    let picture = bed.upload(&room, "parcel.png", 100);
+    let seq = send_rich(&room, a_card(), &[picture]);
+    bed.round(0);
+    let body = last_send();
+    let card = &body["message"]["card_message"];
+    assert_eq!(card["title"], "Your order shipped");
+    assert_eq!(card["description"], "Arrives Tuesday");
+    assert!(card["media_message"]["url"].as_str().unwrap().contains("/media/"));
+    assert_eq!(
+        card["choices"][0]["postback_data"], "user:Thanks",
+        "a member's postback"
+    );
+    assert_eq!(
+        card["choices"][1],
+        json!({"url_message": {"title": "Track", "url": "https://example.test/track/7"}})
+    );
+    assert_eq!(body["channel_priority_order"], json!(["RCS", "MMS"]));
+    let mms = &body["message"]["explicit_channel_omni_message"]["MMS"]["card_message"];
+    assert_eq!(mms["title"], "Your order shipped");
+    assert!(mms["description"].as_str().unwrap().ends_with("Reply: Thanks"));
+
+    // a carousel's two pictures go in its cards (more than one file only for a rich message)
+    let files = [bed.upload(&room, "a.png", 10), bed.upload(&room, "b.png", 10)];
+    bed.set_config(|config| config["smsFallback"] = json!(false));
+    send_rich(
+        &room,
+        json!({"kind": "carousel", "cards": [
+            {"title": "Jacket", "attachmentSeq": 1, "suggestions": [{"type": "url", "text": "See", "url": "https://example.test/j"}]},
+            {"title": "Pack", "attachmentSeq": 2, "suggestions": [{"type": "url", "text": "See", "url": "https://example.test/p"}]}]}),
+        &files,
+    );
+    bed.round(0);
+    let body = last_send();
+    assert_eq!(
+        body["message"]["carousel_message"]["cards"].as_array().unwrap().len(),
+        2
+    );
+    assert!(
+        body["message"].get("explicit_channel_omni_message").is_none(),
+        "no fallback: no override"
+    );
+
+    // READ is read, past delivered
+    let remote = bed.delivery(&room, seq).3;
+    bed.sinch_event(&sinch_report(&remote, "DELIVERED", "RCS"));
+    bed.sinch_event(&sinch_report(&remote, "READ", "RCS"));
+    assert_eq!(bed.delivery(&room, seq).4, "read");
+}
+
+#[test]
+fn an_sms_bridge_sends_a_rich_messages_fallback_with_its_first_picture_only() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.text_in(THEIRS, "Hello", json!([]));
+    let room = bed.room(THEIRS).unwrap();
+    let picture = bed.upload(&room, "parcel.png", 100);
+    let seq = send_rich(&room, a_card(), &[picture]);
+    bed.round(0);
+    let body: Json = serde_json::from_str(&bed.fake.sends().pop().unwrap().body).unwrap();
+    assert_eq!(body["text"], CARD_TEXT);
+    assert_eq!(body["media_urls"].as_array().map(Vec::len), Some(1), "{body}");
+    assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
+    // a carousel to a bridge that takes one file a text: its text and its first picture, never tooManyFiles
+    bed.set_config(|config| config["maxMediaCount"] = json!(1));
+    let files = [bed.upload(&room, "a.png", 10), bed.upload(&room, "b.png", 10)];
+    let carousel = send_rich(
+        &room,
+        json!({"kind": "carousel", "cards": [
+            {"title": "Jacket", "attachmentSeq": 1, "suggestions": [{"type": "reply", "text": "Save"}]},
+            {"title": "Pack", "attachmentSeq": 2, "suggestions": [{"type": "reply", "text": "Save"}]}]}),
+        &files,
+    );
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, carousel).0, "CdsAccepted");
+    let body: Json = serde_json::from_str(&bed.fake.sends().pop().unwrap().body).unwrap();
+    assert_eq!(body["media_urls"].as_array().map(Vec::len), Some(1));
+    assert!(body["text"].as_str().unwrap().starts_with("1. Jacket"));
+}
+
+#[test]
+fn a_users_typing_shows_on_the_persons_phone_once_in_15_seconds_and_never_after_a_stop() {
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    let room = bed.twilio_room();
+    let start = now();
+    // a person we never wrote to: none
+    bed.typing(&room, start);
+    assert!(bed.sent_to(TYPING_PATH).is_empty(), "never messaged");
+    bed.send(&room, "Hello", &[]);
+    bed.round(0);
+    assert_eq!(bed.typing(&room, start + 20_000), 1);
+    let typed = bed.sent_to(TYPING_PATH);
+    assert_eq!(typed.len(), 1);
+    let body: Json = serde_json::from_str(&typed[0].body).unwrap();
+    assert_eq!(
+        body,
+        json!({"channel": "RCS", "from": "rcs:brand_spec_agent", "to": format!("rcs:{THEIRS}"), "event": "START"})
+    );
+    // again within the window: nothing
+    assert_eq!(bed.typing(&room, start + 25_000), 0);
+    assert_eq!(bed.sent_to(TYPING_PATH).len(), 1);
+    // turned off on the bridge, then without the agent's id: asked, nothing sent
+    bed.set_config(|config| config["typingIndicators"] = json!(false));
+    bed.typing(&room, start + 40_000);
+    bed.set_config(|config| {
+        config["typingIndicators"] = json!(true);
+        config.as_object_mut().unwrap().remove("rcsSenderId");
+    });
+    bed.typing(&room, start + 60_000);
+    assert_eq!(bed.sent_to(TYPING_PATH).len(), 1);
+    // the person sent STOP: none
+    bed.set_config(|config| config["rcsSenderId"] = json!(AGENT));
+    bed.rcs_in(&format!("rcs:{THEIRS}"), AGENT, &[("Body", "STOP")]);
+    bed.typing(&room, start + 80_000);
+    assert_eq!(bed.sent_to(TYPING_PATH).len(), 1);
+}
+
+#[test]
+fn a_sinch_rcs_typing_indicator_is_a_composing_event() {
+    let bed = sinch_bed();
+    let _entered = bed.ctx.enter();
+    bed.sinch_event(&sinch_rcs_in("01TYPE0", json!({"text_message": {"text": "Hi"}})));
+    let room = bed.room(THEIRS).unwrap();
+    bed.send(&room, "Hello", &[]);
+    bed.round(0);
+    assert_eq!(bed.typing(&room, now()), 1);
+    let event = bed.sent_to(EVENTS_PATH).pop().expect("an event sent");
+    assert!(event
+        .headers
+        .iter()
+        .any(|(name, value)| name == "authorization" && value.starts_with("Bearer ")));
+    let body: Json = serde_json::from_str(&event.body).unwrap();
+    assert_eq!(body["event"], json!({"composing_event": {}}));
+    assert_eq!(
+        body["recipient"]["identified_by"]["channel_identities"],
+        json!([{"channel": "RCS", "identity": THEIRS}])
+    );
 }

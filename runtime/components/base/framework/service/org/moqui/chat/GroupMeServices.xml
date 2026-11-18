@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The GroupMe bridge (plans/Comms-Messaging.md §18.3 phase 14, docs/interfaces/GroupMe.md): a ChatBridge of type
+    CbtGroupMe whose adapter, crates/moqui-channels/src/groupme, holds the push connection to GroupMe. The logic is
+    GroupMe.js beside this file. ensure#Room, receive#Likes and check#Bridge are internal (the adapter and store#Bridge);
+    get#MyGroupMe, connect#MyGroupMe and disconnect#MyGroupMe are the current user's own bridge (Settings, Chat), unless
+    the property chat_groupme_self_service is false. No Java counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="ensure" noun="Room" allow-remote="false">
+        <description>Internal (the adapter): the room of a GroupMe group (kind group, externalRoomId g:(group id)), Topic (kind
+            topic, g:(topic id), named "Group › Topic" from parentName) or direct conversation (kind direct, dm:(their id),
+            conversationId its chat id), found or made under the bridge's row lock: a private room the bridge's owner (its
+            ownerUserId) owns, with a mapping both ways. A new name from GroupMe renames the room while it still has
+            GroupMe's last one. A new mapping's catch-up mark (syncCursor) is startCursor. reasonCode roomLimit, with no
+            error, past the bridge's maxRooms (200), or for a direct conversation past its maxDirectRooms (50, inside
+            maxRooms).</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="externalRoomId" required="true"/>
+            <parameter name="kind"/>
+            <parameter name="name"/>
+            <parameter name="parentName"/>
+            <parameter name="conversationId"/>
+            <parameter name="startCursor"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatRoomId"/>
+            <parameter name="chatRoomBridgeId"/>
+            <parameter name="syncCursor"/>
+            <parameter name="created" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/GroupMe.js').execute('ensureRoom', context))</script></actions>
+    </service>
+
+    <service verb="receive" noun="Likes" allow-remote="false" transaction="ignore">
+        <description>Internal (the adapter, inside its transport mark): the likes of GroupMe message messageId of
+            externalRoomId as a state (likedByList: its likers' GroupMe ids, nameMap their names). The heart reactions of the
+            room's GroupMe people on it are made to match through ingest#Event; ownGroupMeId (the token's user) counts as
+            liked while the owner has a heart of their own on it. Out: outcome (unchanged, unknownMessage, sent), added,
+            removed.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="externalRoomId" required="true"/>
+            <parameter name="messageId" required="true"/>
+            <parameter name="likedByList" type="List"/>
+            <parameter name="ownGroupMeId"/>
+            <parameter name="nameMap" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="outcome"/>
+            <parameter name="added" type="Integer"/>
+            <parameter name="removed" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/GroupMe.js').execute('receiveLikes', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="Bridge" allow-remote="false">
+        <description>Internal (store#Bridge): why a GroupMe bridge's configuration is refused, else no reasonCode: the adapter
+            groupme, an accessToken, an ownerUserId who is a user, the owner unchanged while the bridge has rooms
+            (ownerFixed), and no other GroupMe bridge of that owner (oneBridge). Out also ownerUserId, kept plain on the
+            row.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId"/>
+            <parameter name="adapterName"/>
+            <parameter name="configJson" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+            <parameter name="message"/>
+            <parameter name="ownerUserId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/GroupMe.js').execute('checkBridge', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="MyGroupMe">
+        <description>The current user's own GroupMe bridge: enabled (whether users may connect their own here), hasBridge,
+            its status (statusId, statusText, connected, errorCode and errorText: the last error's code and its words in
+            the user's language, lastStatusDate), hasToken and roomCount. Never the token.</description>
+        <out-parameters>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="hasBridge" type="Boolean"/>
+            <parameter name="chatBridgeId"/>
+            <parameter name="statusId"/>
+            <parameter name="statusText"/>
+            <parameter name="connected" type="Boolean"/>
+            <parameter name="hasToken" type="Boolean"/>
+            <parameter name="roomCount" type="Integer"/>
+            <parameter name="errorCode"/>
+            <parameter name="errorText"/>
+            <parameter name="lastStatusDate" type="Timestamp"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/GroupMe.js').execute('getMine', context))</script></actions>
+    </service>
+
+    <service verb="connect" noun="MyGroupMe">
+        <description>Connect the current user's own GroupMe with their access token (dev.groupme.com, Access Token): makes
+            their GroupMe bridge (one per user, owned by them), or replaces its token and connects it again; an empty token
+            keeps the one kept. Refused (reasonCode) when the property chat_groupme_self_service is false (selfServiceOff),
+            for a token that is not one (badToken), or with none (tokenRequired).</description>
+        <in-parameters><parameter name="accessToken"/></in-parameters>
+        <out-parameters>
+            <parameter name="chatBridgeId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/GroupMe.js').execute('connectMine', context))</script></actions>
+    </service>
+
+    <service verb="disconnect" noun="MyGroupMe">
+        <description>Disconnect the current user's own GroupMe: the bridge is disabled (its push connection stops), its
+            token forgotten, and its rooms keep their history and stop syncing.</description>
+        <out-parameters>
+            <parameter name="chatBridgeId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/GroupMe.js').execute('disconnectMine', context))</script></actions>
+    </service>
+</services>

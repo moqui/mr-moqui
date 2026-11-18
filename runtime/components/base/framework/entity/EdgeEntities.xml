@@ -375,7 +375,8 @@ along with this software (see the LICENSE.md file). If not, see
             from the pool to the edge node"), the member that sends replication and keeps the link's own rows
             (CallMediaNode, SipNode) and the phone numbers' fallbacks: lockName replicate. On a node that takes links
             (plans/Edge-Node2.md §4.6), the member of an edge cluster whose SIP engine registers the trunks: lockName
-            sipTrunks. A member claims it and renews the lease (the database's time) while it holds it; a lease that
+            sipTrunks. On any cluster, the member that holds a GroupMe bridge's push connection: lockName
+            groupme:(chatBridgeId) (crates/moqui-channels/src/groupme/push.rs). A member claims it and renews the lease (the database's time) while it holds it; a lease that
             lapsed is taken over by another member, which then sends each replicated set whole, or registers the trunks.
             A member that stops lets it go. No Java counterpart.</description>
         <field name="lockName" type="id" is-pk="true"/>

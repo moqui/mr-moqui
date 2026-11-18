@@ -511,8 +511,12 @@ const messageTemplate = `
             <q-btn v-if="room.setupNeeded && item.withheld !== 'm.unverified'" flat dense no-caps size="sm" color="primary" class="q-ml-xs m-chat-setup-message" :label="room.t('Set up')" @click.stop="room.openSetup()"></q-btn></div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
+            <chat-rich v-else-if="item.event.rich" :item="item" :room="room"></chat-rich>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
                     v-html="item.bodyHtml" @click="room.bodyClick($event)"></div>
+            <!-- an answer to a button (content.postback: tapped here, or an RCS reply) -->
+            <div v-if="item.event.postback" class="row items-center no-wrap text-caption m-muted q-mt-xs m-chat-postback">
+                <q-icon name="sym_o_reply" size="14px" class="q-mr-xs"></q-icon><span class="ellipsis">{{room.t('Chose a suggestion')}}</span></div>
             <span v-if="item.edited && !room.isEditing(item)" class="text-caption m-muted">{{room.t('(edited)')}}<q-tooltip>{{item.editedText}}</q-tooltip></span>
             <div v-if="item.forwardOf" class="row no-wrap q-mt-xs m-chat-forward" style="max-width:520px">
                 <div class="self-stretch bg-grey-5" style="width:3px;border-radius:2px"></div>
@@ -552,7 +556,7 @@ const messageTemplate = `
                 <q-btn v-if="room.viewOnceState(item) === 'closed'" flat dense no-caps color="primary" icon="sym_o_looks_one" class="m-chat-view-once-open" :label="room.t('Open')"
                         @click.stop="room.openViewOnce(item)"></q-btn>
             </div>
-            <div v-if="item.attachments.length" class="row q-gutter-xs q-mt-none">
+            <div v-if="item.attachments.length && !item.event.rich" class="row q-gutter-xs q-mt-none">
                 <template v-for="file in item.attachments" :key="file.chatAttachmentId">
                     <img v-if="room.isImage(file)" :src="room.fileUrl(file, true)" :alt="file.fileName" class="rounded-borders cursor-pointer q-mt-xs"
                             style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
@@ -679,6 +683,152 @@ const pendingTemplate = `
 </div>`;
 const chatPending = { name: 'ChatPending', props: { item: Object, room: Object }, template: pendingTemplate };
 
+// ---- rich messages (Comms-Messaging §18.3 phase 13): a text with buttons, a card, a carousel; and an answer to a button ----
+// The words of a text with its chips (a row that scrolls sideways on a phone, wrapping on a desktop), a card (its picture,
+// title, words and buttons; at most 320 px, 85 % of a phone's width) or cards side by side (240 px each, scrolling with
+// snap). A reply sends its words (replySuggestion), a link opens in a new tab, a call goes to the dialer. A reply is the
+// other side's to tap on my own message and in a room with an outbound bridge (its buttons are the person's, on their phone).
+const richTemplate = `
+<div v-if="rich" class="m-chat-rich" :data-rich="rich.kind">
+        <template v-if="rich.kind === 'text'">
+            <div class="text-body2 m-chat-rich-text" style="white-space:pre-wrap;overflow-wrap:anywhere">{{rich.text}}</div>
+            <div class="row q-mt-xs m-chat-chips" :class="room.mobile ? 'no-wrap scroll' : 'wrap'" style="gap:4px">
+                <q-chip v-for="(one, index) in rich.suggestions || []" :key="index" dense outline color="primary" :icon="iconOf(one)"
+                        :clickable="room.canTap(item, one)" class="q-ma-none m-chat-chip" :class="{ 'm-muted': !room.canTap(item, one) }" :data-suggestion="one.type"
+                        :title="room.canTap(item, one) ? undefined : room.t('For the other person to tap')" @click.stop="room.canTap(item, one) && room.tapSuggestion(item, one, index, null)">
+                    <span class="ellipsis">{{one.text}}</span></q-chip>
+            </div>
+        </template>
+        <div v-else :class="rich.kind === 'carousel' ? 'row no-wrap scroll m-chat-carousel' : ''" :style="rich.kind === 'carousel' ? 'gap:8px;scroll-snap-type:x mandatory' : ''">
+            <q-card v-for="(card, cardIndex) in rich.cards || []" :key="cardIndex" flat bordered class="q-mt-xs m-chat-card" :style="cardStyle">
+                <img v-if="imageOf(card)" :src="room.fileUrl(imageOf(card), true)" :alt="card.title || ''" class="cursor-pointer"
+                        style="width:100%;max-height:200px;object-fit:cover;display:block" @load="room.imageLoaded()" @click.stop="room.preview(imageOf(card), item.attachments)">
+                <div class="q-pa-sm">
+                    <div v-if="card.title" class="text-weight-medium m-chat-card-title" style="overflow-wrap:anywhere">{{card.title}}</div>
+                    <div v-if="card.description" class="text-body2 m-chat-card-text" style="white-space:pre-wrap;overflow-wrap:anywhere">{{card.description}}</div>
+                </div>
+                <div v-if="card.suggestions && card.suggestions.length" class="column q-px-xs q-pb-xs">
+                    <q-btn v-for="(one, index) in card.suggestions" :key="index" flat dense no-caps align="left" color="primary" :icon="iconOf(one)" :label="one.text"
+                            :disable="!room.canTap(item, one)" :title="room.canTap(item, one) ? undefined : room.t('For the other person to tap')"
+                            class="m-chat-card-btn" :data-suggestion="one.type" @click.stop="room.tapSuggestion(item, one, index, cardIndex)"></q-btn>
+                </div>
+            </q-card>
+        </div>
+</div>`;
+const chatRich = {
+    name: 'ChatRich',
+    props: { item: Object, room: Object },
+    computed: {
+        rich() { const rich = this.item.event.rich; return rich && typeof rich === 'object' && ['text', 'card', 'carousel'].includes(rich.kind) ? rich : null; },
+        cardStyle() { return this.rich && this.rich.kind === 'carousel' ? 'width:240px;min-width:240px;scroll-snap-align:start' : (this.room.mobile ? 'max-width:85vw' : 'max-width:320px'); }
+    },
+    methods: {
+        iconOf(one) { return { reply: 'sym_o_reply', url: 'sym_o_open_in_new', dial: 'sym_o_call' }[one.type] || 'sym_o_touch_app'; },
+        imageOf(card) {
+            if (card.attachmentSeq == null) return null;
+            const files = this.item.attachments || [];
+            return files.find((file) => Number(file.attachmentSeq) === Number(card.attachmentSeq)) || files[Number(card.attachmentSeq) - 1] || null;
+        }
+    },
+    template: richTemplate
+};
+
+// The composer's Card: a title, words, a picture and up to 4 buttons (a reply, a link, a call); with no title and no
+// picture it is a text with buttons. It shows the text people without RCS get (moqui.chat.richFallback) as it is written.
+const cardBoxTemplate = `
+<m-dialog :model-value="true" :title="t('New card')" width="520" @update:model-value="(open) => { if (!open) $emit('close'); }">
+    <m-text-line v-model="title" :name="'cardTitle' + uid" :label="t('Title (optional)')" maxlength="200"></m-text-line>
+    <m-text-area v-model="text" :name="'cardText' + uid" :label="t('Text')" rows="3" autogrow class="q-mt-xs"></m-text-area>
+    <div class="row items-center no-wrap q-mt-xs">
+        <q-btn flat dense no-caps color="primary" icon="sym_o_image" :label="image ? t('Change the picture') : t('Add a picture')" :loading="image && image.uploading" @click="$refs.picker.click()"></q-btn>
+        <span v-if="image" class="text-caption m-muted ellipsis q-ml-sm">{{image.fileName}}</span>
+        <q-btn v-if="image" flat round dense size="sm" icon="sym_o_close" :aria-label="t('Remove the picture')" @click="image = null"></q-btn>
+        <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif" style="display:none" @change="pick">
+    </div>
+    <div v-for="(button, index) in buttons" :key="index" class="row no-wrap items-center q-mt-xs q-gutter-x-xs m-chat-card-box-button">
+        <q-btn-toggle v-model="button.type" dense no-caps unelevated toggle-color="primary" :options="kinds"></q-btn-toggle>
+        <div class="col"><m-text-line v-model="button.text" :name="'cardButton' + uid + '_' + index" :label="t('Words')" maxlength="20"></m-text-line></div>
+        <div v-if="button.type !== 'reply'" class="col"><m-text-line v-model="button.value" :name="'cardValue' + uid + '_' + index"
+                :label="button.type === 'url' ? t('Address (https://…)') : t('Number (+1…)')"></m-text-line></div>
+        <q-btn flat round dense size="sm" icon="sym_o_close" :aria-label="t('Remove the button')" @click="buttons.splice(index, 1)"></q-btn>
+    </div>
+    <q-btn v-if="buttons.length < 4" flat dense no-caps color="primary" icon="sym_o_add" :label="t('Add a button')" class="q-mt-xs"
+            @click="buttons.push({ type: 'reply', text: '', value: '' })"></q-btn>
+    <div v-if="fallback" class="q-mt-sm text-caption m-muted m-chat-card-box-fallback">
+        <div class="text-weight-medium">{{t('People without RCS get:')}}</div><div style="white-space:pre-wrap;overflow-wrap:anywhere">{{fallback}}</div></div>
+    <div class="row q-gutter-sm q-mt-md">
+        <q-btn unelevated no-caps color="primary" icon="sym_o_send" :label="t('Send the card')" :disable="!ready" :loading="busy" @click="send"></q-btn>
+        <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
+    </div>
+</m-dialog>`;
+const chatCardBox = {
+    name: 'ChatCardBox',
+    props: { room: Object, threadRoot: Number },
+    emits: ['close'],
+    data: () => ({ uid: Math.random().toString(36).slice(2, 8), title: '', text: '', image: null, buttons: [{ type: 'reply', text: '', value: '' }], busy: false }),
+    computed: {
+        kinds() { return [{ value: 'reply', icon: 'sym_o_reply', attrs: { 'aria-label': t('Reply') } }, { value: 'url', icon: 'sym_o_link', attrs: { 'aria-label': t('Link') } },
+            { value: 'dial', icon: 'sym_o_call', attrs: { 'aria-label': t('Call') } }]; },
+        suggestions() {
+            return this.buttons.filter((button) => String(button.text || '').trim()).map((button) => {
+                const text = String(button.text).trim();
+                if (button.type === 'url') return { type: 'url', text, url: String(button.value || '').trim() };
+                if (button.type === 'dial') return { type: 'dial', text, phone: String(button.value || '').replace(/[\s().-]/g, '') };
+                // its postback is the server's: "user:" and its words
+                return { type: 'reply', text };
+            });
+        },
+        // a card with a title or a picture, else a text with buttons
+        rich() {
+            const words = String(this.text || '').trim();
+            const title = String(this.title || '').replace(/\s+/g, ' ').trim();
+            if (!title && !this.image) return { kind: 'text', text: words, suggestions: this.suggestions };
+            const card = { suggestions: this.suggestions };
+            if (title) card.title = title;
+            if (words) card.description = words;
+            if (this.image) card.attachmentSeq = 1;
+            return { kind: 'card', cards: [card] };
+        },
+        fallback() { return moqui.chat && moqui.chat.richFallback ? moqui.chat.richFallback(this.rich).trim() : ''; },
+        ready() {
+            if (this.busy || (this.image && (this.image.uploading || !this.image.chatAttachmentId))) return false;
+            const rich = this.rich;
+            if (rich.kind === 'text') return !!rich.text && rich.suggestions.length > 0;
+            // as the server's: a title or words, and one thing more (the other, a picture or a button)
+            const card = rich.cards[0];
+            return [card.title, card.description, card.attachmentSeq, card.suggestions.length].filter((one) => !!one).length >= 2;
+        }
+    },
+    methods: {
+        t,
+        pick(event) {
+            const file = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            if (!/^image\/(png|jpe?g|gif)$/i.test(file.type || '')) { moqui.notifyMessages([{ type: 'warning', message: t('A card\'s picture is a PNG, JPEG or GIF image') }]); return; }
+            if (needsConnection()) return;
+            const entry = { fileName: file.name, contentType: file.type, uploading: true, chatAttachmentId: null };
+            this.image = entry;
+            const form = new FormData();
+            form.append('chatRoomId', this.room.roomId);
+            form.append('file', file, file.name);
+            if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
+            moqui.request(this.room.url('upload'), { method: 'POST', params: form }).then((result) => {
+                const stored = ((result.json || {}).uploadList || [])[0];
+                if (this.image !== entry) return;
+                this.image = stored ? Object.assign({}, entry, stored, { uploading: false }) : null;
+            }, (err) => { if (this.image === entry) this.image = null; moqui.handleAjaxError(err); });
+        },
+        send() {
+            if (!this.ready) return;
+            this.busy = true;
+            this.room.sendRich(this.rich, this.image ? [this.image.chatAttachmentId] : [], this.threadRoot || null)
+                .then((sent) => { this.busy = false; if (sent) this.$emit('close'); }, () => { this.busy = false; });
+        }
+    },
+    template: cardBoxTemplate
+};
+
 // ---- a message being edited in place: Enter saves (as the composer sends), Esc cancels ----
 const editTemplate = `
 <div class="q-my-xs" @keydown.esc.stop="room.cancelEdit()">
@@ -730,6 +880,8 @@ const composerTemplate = `
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
+        <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_view_agenda" class="m-chat-card-btn-open" :aria-label="room.t('Make a card')" :disable="room.offline"
+                @click="room.openCard(threadRoot || null)"><q-tooltip>{{room.t('Make a card with buttons')}}</q-tooltip></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
         <!-- a voice note (Comms-Messaging §5.1): with no text, Send is the microphone; recording shows its time, Cancel and Send -->
@@ -1059,7 +1211,7 @@ const chatMessageMenu = {
 const chatMessage = {
     name: 'ChatMessage',
     props: { item: Object, room: Object, inThread: Boolean },
-    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu },
+    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich },
     data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false, contextOpen: false }),
     watch: {
         actionsAvailable(value) {
@@ -1117,6 +1269,8 @@ const roomTemplate = `
                         <q-icon v-if="label.verified" name="sym_o_check" size="14px" class="q-ml-xs m-chat-verified"></q-icon>
                         <q-tooltip>{{label.text}}. {{t('Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
                     <q-icon v-else name="sym_o_lock_open" size="16px" class="q-ml-xs m-muted m-chat-not-e2ee" :data-e2ee="label.state" :aria-label="label.text">
+                        <q-tooltip>{{label.text}}</q-tooltip></q-icon>
+                    <q-icon v-if="label.badge" :name="label.badge" size="16px" class="q-ml-xs text-info m-chat-e2ee-badge" :aria-label="label.text">
                         <q-tooltip>{{label.text}}</q-tooltip></q-icon>
                     <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
                         <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
@@ -1751,6 +1905,8 @@ const roomTemplate = `
         </div>
     </m-dialog>
 
+    <!-- NewCard (Comms-Messaging §18.3 phase 13): a card or a text with buttons -->
+    <chat-card-box v-if="cardBox.open" :room="self" :thread-root="cardBox.threadRoot" @close="cardBox = { open: false, threadRoot: null }"></chat-card-box>
     <!-- NewPoll: a question, 2 to 10 options, more than one choice, anonymous, and when it closes -->
     <m-dialog v-model="pollBox.open" :title="t('New poll')" width="520">
         <m-text-line v-model="pollBox.question" :name="'pollQuestion' + uid" :label="t('Question')" required></m-text-line>
@@ -1823,7 +1979,7 @@ const chatRoom = {
         // room is shown (a dm link's unsaved message, sealed here in an encrypted room)
         rooms: { type: Array, default: () => [] }, firstMessage: String },
     emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
-    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu },
+    components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox },
     data() {
         roomCount += 1;
         return {
@@ -1837,6 +1993,7 @@ const chatRoom = {
             tabs: { media: emptyTab(), files: emptyTab(), voice: emptyTab(), links: emptyTab(), reactions: emptyTab() },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
+            cardBox: { open: false, threadRoot: null },
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0 },
@@ -2269,6 +2426,7 @@ const chatRoom = {
             if (encryption === 'EndToEnd') return t('End-to-end encrypted through the bridge');
             if (encryption === 'BridgeDecrypted') return t('End-to-end encrypted on that network; the bridge here decrypts it');
             if (encryption === 'Transport') return t('Encrypted in transit only: the network can read it');
+            if (encryption === 'NoneByNetwork') return t('Not encrypted: that network has no end-to-end encryption, and its servers can read it');
             return t('Not encrypted: the network and its providers can read it');
         },
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
@@ -3140,7 +3298,7 @@ const chatRoom = {
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             return this.hoverKey === key || this.tapKey === key;
         },
-        canEdit(item) { return item.mine && !item.redacted && !item.poll && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
+        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
         canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)) && this.bridgeCaps.delete; },
         externalText(person) { return fill(t('On {network}'), { network: person.networkName || t('another network') }); },
         // ---- a message's delivery to the room's bridges ----
@@ -3160,6 +3318,7 @@ const chatRoom = {
             // an RCS bridge's message that went as the fallback says so (Comms-Messaging §16)
             const fallback = delivery.destinations.length === 1 ? moqui.chat.pathName(delivery.destinations[0]) : '';
             if (fallback) return fill(t('Delivered to {network} as {path}'), { network: this.deliveryNames(item), path: fallback });
+            if (delivery.destinations.length && delivery.destinations.every((destination) => destination.receipt === 'read')) return fill(t('Read on {names}'), { names: this.deliveryNames(item) });
             return fill(t('Delivered to {names}'), { names: this.deliveryNames(item) });
         },
         deliveryIcon(item) {
@@ -3168,6 +3327,7 @@ const chatRoom = {
         },
         deliveryClass(item) {
             const state = item.event.delivery && item.event.delivery.state;
+            if (state === 'accepted' && (item.event.delivery.destinations || []).every((destination) => destination.receipt === 'read')) return 'text-primary';
             return state === 'failed' ? 'text-negative' : state === 'uncertain' ? 'text-warning' : 'm-muted';
         },
         canRetry(item) { return !!(item.event.delivery && item.event.delivery.retryable) && (item.mine || this.canModerate); },
@@ -3698,6 +3858,35 @@ const chatRoom = {
         },
 
         // ---- polls ----
+        // ---- rich messages (Comms-Messaging §18.3 phase 13) ----
+        openCard(threadRoot) {
+            if (needsConnection()) return;
+            this.cardBox = { open: true, threadRoot: threadRoot || null };
+        },
+        // a reply is mine to tap on another's message in a room with no outbound bridge; a link or a call always opens
+        canTap(item, one) {
+            if (!one || one.type !== 'reply') return true;
+            return !item.mine && this.canPost && !this.roomBridges.some((bridge) => bridge.outbound !== false) && !(this.room && this.room.roomTypeEnumId === 'CrtExternal');
+        },
+        tapSuggestion(item, one, index, cardIndex) {
+            if (one.type === 'url') { if (/^https?:\/\//i.test(one.url || '')) window.open(one.url, '_blank', 'noopener,noreferrer'); return; }
+            if (one.type === 'dial') { if (/^\+[1-9]\d{3,14}$/.test(one.phone || '')) window.open('tel:' + one.phone, '_self'); return; }
+            if (!this.canTap(item, one)) return;
+            this.post('replySuggestion', { chatRoomId: this.roomId, eventSeq: item.eventSeq, index, cardIndex: cardIndex == null ? '' : cardIndex,
+                clientRef: moqui.chat && moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                if (json && json.eventSeq != null) this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: item.event.threadRootEventSeq ?? null, json });
+            }, () => {});
+        },
+        // a card from the composer (send#Rich): resolves true once sent
+        sendRich(rich, attachmentIds, threadRoot) {
+            return this.post('sendRich', { chatRoomId: this.roomId, richJson: JSON.stringify(rich), attachmentIds: (attachmentIds || []).join(','),
+                threadRootEventSeq: threadRoot || '', clientRef: moqui.chat && moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                if (!json || json.eventSeq == null) return false;
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.rich) this.applyFields(json.eventSeq, { rich: json.event.rich });
+                return true;
+            });
+        },
         openPoll(threadRoot, question) {
             if (needsConnection()) return;
             this.pollBox = { open: true, threadRoot: threadRoot || null, question: question || '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false };
