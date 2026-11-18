@@ -342,6 +342,13 @@ test("a message info with a link notifies with a button that follows it: an app 
         moqui.openLink("Detail?x=1");
         assert.deepEqual(went.slice(1), ["/qapps/Orders/Order?orderId=1", "Detail?x=1"]);
         assert.ok(moqui.isExternalLink("mailto:a@b.c") && moqui.isExternalLink("//cdn.example.org/x") && !moqui.isExternalLink("/apps/x"));
+        // SEC-CLU-06: a link that runs script or carries a document is not followed, however it is written
+        for (const link of ["javascript:alert(1)", " JavaScript:alert(1)", "java\tscript:alert(1)", "java\nscript:alert(1)",
+            "data:text/html,<b>x</b>", "vbscript:x"]) moqui.openLink(link);
+        assert.deepEqual(opened.length, 1, JSON.stringify(opened));
+        assert.deepEqual(went.length, 3, JSON.stringify(went));
+        assert.equal(moqui.followableLink("tel:+15551234"), "tel:+15551234");
+        assert.equal(moqui.followableLink("java\nscript:alert(1)"), null);
     } finally {
         delete moqui.webrootVue;
         globalThis.open = savedOpen;
