@@ -384,7 +384,8 @@ The UI explains this when the user picks an encrypted room:
 Decided (§19): `createDirect` and a new private group make an encrypted room when every person in it has a crypto
 device, else a plain room with the plain banner; the plain direct rooms that exist stay, and when a person has both the
 picker opens the encrypted one; no search in an encrypted room at first; a phone notification for an encrypted room
-shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3); the two choices marked **(user)** are in §19.2.
+shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3), with the user's two answers of the same day
+(§19.1): Chat makes the browser's device, and a plain direct chat that exists keeps opening, with a switch.
 
 - **Rooms today.** An encrypted direct room is a room of its own beside the plain direct room of the same people
   (`directKey` with an `e2ee:` prefix, `create#Room`), and encryption cannot be turned on or off after the room is made.
@@ -392,17 +393,17 @@ shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3); the tw
 - **Who has a crypto device.** A user whose device is not revoked, has uploaded its identity keys
   (`ChatDevice.curve25519Key`) and was seen in the last 90 days (`lastSeenDate`, set by each key upload and sync;
   property `chat_device_active_days`). A device that has not synced for that long would never read what is sent to it.
-- **Devices are made when Chat opens (user).** Today a browser makes its device only when it first needs one, so few
-  people would have one and the default would seldom apply. From phase 12 the Chat screen (on the web, and the bundled
-  Chat of the desktop and Android apps) makes this browser's device once its room list shows, in idle time
+- **Devices are made when Chat opens (decided, §19.1).** Today a browser makes its device only when it first needs
+  one, so few people would have one and the default would seldom apply. From phase 12 the Chat screen (on the web, and
+  the bundled Chat of the desktop and Android apps) makes this browser's device once its room list shows, in idle time
   (`moqui.crypto.ensureDevice`): the 7.8 MB module loads once per browser and is cached. Not the tray's chat panel,
   not a desktop app window (`elsewhere`), not a browser without WebAssembly or IndexedDB (logged; Chat works, its rooms
   plain).
 - **The rule, on the server.** `ChatScreenServices.create#ChatRoom`, which Chat's `createDirect` and `createRoom`
   transitions call. When `encrypted` is not given:
   - a direct room (one person or several): the encrypted direct room of exactly these people, when there is one, is
-    answered whatever their devices now; else, when the user and every member have a device (`check#DevicesReady`), a
-    new encrypted room, beside a plain one if there is one, which stays **(user)**; else the plain room, found or made;
+    answered whatever their devices now; else the plain one, when there is one, whatever their devices (decided,
+    §19.1); else a new room, encrypted when the user and every member have a device (`check#DevicesReady`), else plain;
   - a private room: encrypted when every member has a device;
   - a public room: never.
 
@@ -415,13 +416,17 @@ shows the room and sender only. Designed 2026-11-17 as phase 12 (§18.3); the tw
   counts as one with no device. At most 50 people an ask and 600 an hour a user (then `rateLimited` and false). The bit
   is what the room made would show anyway; the ask only lets the screen show it before the room exists.
 - **The picker.** `moqui.chat.directRoomFor` answers the encrypted direct room of these people first, then the plain
-  one. When there is only a plain one and `encryptionDefault` says true, Chat's dm link (the pickers, the palette's
-  people, a person's Message) opens the unsaved first message of a new encrypted chat, whose start says "Earlier
-  messages with {name} are in a chat that is not end-to-end encrypted" with Open. The unsaved chat shows the label of
-  the room its first send makes; its first message is sent by the room's own send once `createDirect` made the room,
-  so it is sealed in an encrypted room. `startChat` sends no `encrypted` for a named group (the server decides). New
-  room: the Encrypted toggle follows `encryptionDefault` for the members picked until the user changes it; untouched,
-  nothing is sent and the server decides.
+  one, as `createDirect` does. Chat's dm link (the pickers, the palette's people, a person's Message) with no room yet
+  opens the unsaved first message, which shows the label of the room its first send makes (`encryptionDefault`); that
+  message is sent by the room's own send once `createDirect` made the room, so it is sealed in an encrypted room.
+  `startChat` sends no `encrypted` for a named group (the server decides). New room: the Encrypted toggle follows
+  `encryptionDefault` for the members picked until the user changes it; untouched, nothing is sent and the server
+  decides.
+- **Start an encrypted chat.** A plain direct room's header menu and its details (Room settings) offer "Start an
+  encrypted chat" when `encryptionDefault` says true for its people: `createDirect` with `encrypted` true makes or
+  opens the encrypted direct room of the same people, and the picker opens that one from then on. The encrypted room's
+  start then says "Earlier messages with {name} are in a chat that is not end-to-end encrypted", with Open. The plain
+  room stays as it is.
 - **First sign-in on a new device.** A new browser, phone or desktop app makes its device when Chat opens. Messages sent
   before that were encrypted for the user's other devices only. Until this device is set up:
   - the encrypted room shows "Set up this device to read messages sent before it was added", with Set up, in the
@@ -1706,10 +1711,10 @@ everyone in them has a crypto device; a new device is set up from the key backup
 | Work | Files |
 |---|---|
 | `check#DevicesReady` (internal) and `get#EncryptionDefault` (one bit, 50 people an ask, 600 an hour), from `ChatDevice` (not revoked, identity keys, seen in `chat_device_active_days`, default 90) | `ChatKeyServices.xml`, `ChatKeys.js`, `MoquiDefaultConf.xml` (the property) |
-| The default in `create#ChatRoom` (`encrypted` not given: the encrypted direct room first, then the rule; out `encrypted`); the transitions `createDirect`, `createRoom` (no `encrypted` unless given) and `encryptionDefault` | `ChatScreenServices.xml`, `Chat.xml` |
+| The default in `create#ChatRoom` (`encrypted` not given: the encrypted direct room, then the plain one, then the rule; out `encrypted`); the transitions `createDirect` (`encrypted` when given: Start an encrypted chat), `createRoom` (no `encrypted` unless given) and `encryptionDefault` | `ChatScreenServices.xml`, `Chat.xml` |
 | `directRoomFor` encrypted first; `startChat` without `encrypted`; `setupNeeded`; `undecryptableText`'s set-up text; `e2eeLabel`'s set-up state; the `m-chat-device-setup` card | `WebrootChat.js` |
 | `setupStatus`, the secrets asked after a verification with one's own device (`requestMissingSecretsIfNeeded`, the receive-secret callback, the backup key checked against the current backup and restored with it: `restoreBackup`'s import shared), the state's `setup` | `WebrootCrypto.js` |
-| Chat: the device made when the rooms show (idle time); the unsaved chat's label from `encryptionDefault` and its first send through the room's send; the plain chat's link at an encrypted chat's start; the set-up bar and the message's Set up; an own-device verification request as a dialog anywhere in Chat; New room's toggle | `Chat.qvue` |
+| Chat: the device made when the rooms show (idle time); the unsaved chat's label from `encryptionDefault` and its first send through the room's send; Start an encrypted chat in a plain direct room's header menu and settings, and the plain chat's link at the encrypted chat's start; the set-up bar and the message's Set up; an own-device verification request as a dialog anywhere in Chat; New room's toggle | `Chat.qvue` |
 | The chat panel's Start (no `encrypted`) | `Panel/ChatPanel.qvue` |
 | My devices: the set-up card at its top; COM-UI-012 and 014 whatever the retest finds | `Settings/Devices.qvue` |
 | My devices in the apps: the route, the account menu's item, the bundle | `crates/moqui-desktop/shell/screens/Root.qvue`, `shell/bundled-screens.txt`, `bundled-screens.js` |
@@ -1747,13 +1752,13 @@ everyone in them has a crypto device; a new device is set up from the key backup
     false for one without, a revoked or keyless device, one not seen in 90 days, a refused and an unknown user; the
     answer holds the bit only; 51 people refused; past 600 an hour `rateLimited`. `basic-comms/test/BasicCommsEncrypted`
     (a feature): `create#ChatRoom` with no `encrypted`, a direct room, a group direct and a private room encrypted when
-    all have devices and plain otherwise; the encrypted direct room answered after a device of theirs went; a new
-    encrypted room beside the plain one, which stays; an explicit false kept; a public room never; `create#Room`'s own
-    default plain.
+    all have devices and plain otherwise; the encrypted direct room answered after a device of theirs went; a plain
+    direct room that exists answered though all have devices, and `encrypted` true then making the encrypted one
+    beside it; an explicit false kept; a public room never; `create#Room`'s own default plain.
   - Client, offline: `webroot/test/client/WebrootChat` (`directRoomFor` encrypted first, then plain; `startChat` sends
     no `encrypted`; `setupNeeded`; the set-up texts and label) and `basic-comms/test/client/ShellSync` (the bundled Chat
-    with a stand-in server and crypto: a dm link to a person with a plain chat only and the default true opens the
-    unsaved encrypted chat with its label and the link to the plain one; the search pane's notice before a query; the
+    with a stand-in server and crypto: a dm link with no room shows the label the default gives; a plain direct room
+    offers Start an encrypted chat, and the encrypted room links to it; the search pane's notice before a query; the
     set-up bar, the card's Restore with the key and Verify of one's own device, the bar gone when done; My devices
     routed in the shell).
   - Client, with the server: `basic-comms/test/client/CryptoFlow`'s emoji feature goes on: the first device has a key
@@ -1822,6 +1827,8 @@ These cannot be shown by a browser at phone width. They are collected here for e
 | 2026-11-16 | Mod+K stays the shell palette's key. Chat adds to its sources and adds no key listener of its own (§3) |
 | 2026-11-16 | No chat component moves to a plain `.js` file. Helpers go to `moqui.chat`; a new shared component is an `m-` component (§2.2) |
 | 2026-11-16 | E2EE by default: a new direct chat or private group is encrypted when every person in it has a crypto device, else plain with the plain banner. The plain direct rooms that exist stay; the picker opens the encrypted room when a person has both (§6.1 rule 5, §6.5) |
+| 2026-11-17 | Chat makes the browser's crypto device when it opens (idle time after the room list shows), on the web and in the apps' bundled Chat, so E2EE by default applies (§6.5) |
+| 2026-11-17 | A plain direct chat that exists keeps opening from Start, though everyone in it now has a device; its header and details offer "Start an encrypted chat", which makes or opens the encrypted direct room, linked back to the plain one. Only people with no direct chat yet get an encrypted one by default (§6.5) |
 | 2026-11-16 | Search in an encrypted room: none at first, said in the pane before a query. Later, in memory over the messages the device has decrypted; nothing decrypted is written to disk for search (§6.5) |
 | 2026-11-16 | A phone notification for an encrypted room keeps the room and sender only, with no later design for its text. Revisit only from daily use (§6.5, §7.4) |
 | 2026-11-16 | A reaction to my message shows in Activity, with no push (§7.2 rule 4) |
@@ -1833,15 +1840,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 
 ### 19.2 Open: the app
 
-The questions asked here before are decided in §19.1. Phase 12 (§6.5) asks two, each with the design's default:
-
-1. Should Chat make a browser's crypto device when it opens? Default yes: today a device is made only when an encrypted
-   room or call first needs one, so few people would have one and E2EE by default would seldom apply. The cost is the
-   7.8 MB module, loaded once per browser and then cached, and a device for each private window.
-2. When a person has only a plain direct chat with the user and both now have devices, does Start (and their Message
-   link) open a new encrypted chat beside it? Default yes, as §19.1 reads ("the picker opens the encrypted one"): the
-   plain chat stays in the list with its history, and the encrypted chat's start links to it. The alternative keeps
-   opening the plain chat, so only people with no direct chat yet get an encrypted one.
+None. The questions asked here are decided in §19.1.
 
 ### 19.3 Open: other networks
 
