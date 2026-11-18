@@ -12,6 +12,11 @@ left were carried out after them, and on 2026-11-17 the ones fixed in part were 
 findings 149 are fixed and 5 deferred, none refuted, and 61 (21 Low, 40 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
+A third round began 2026-11-17: it reads the code the first two did not reach (the "not reached" of the
+[coverage](#coverage) table and the map files' open questions), in about 60 units, and records what it finds without
+fixing it. Its findings have ids from 81 up in each area. The counts above and the [counts](#counts) table are of the
+first two rounds until the third is recorded whole; [method](#method) step 7 says how it is run.
+
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
 [Attack-Surface](../docs/security/Attack-Surface.md) and its area files; this document holds what looks wrong with
@@ -40,6 +45,15 @@ in [Security-Review-Low](Security-Review-Low.md).
 6. The map files whose first-round reports had not been applied (Routes, Admin, Tools, AI, Git, Comms,
    Cluster-Edge, and the PASS frontend and authority) were then written from those reports by one writer each, who trusted an item whose quoted code was
    specific and read the code only where it was not.
+7. In a third round (2026-11-17) the code no reviewer had reached was cut into about 60 units, by exposure: what a
+   network peer or an anonymous caller reaches in the framework (19 units), what a signed-in user and the clients
+   reach (17), PASS (9), and BOSS with the Mantle services behind it (15). One reviewer read each unit and its map
+   text, ran nothing, and wrote a report in the form of step 3, with the controls found sound and the map's open
+   questions answered from the code. A unit over about 20,000 lines was read from what untrusted input reaches
+   inward, and its report says what was read whole, sampled or not reached. The lead read the cited lines of every
+   High and Medium candidate before it was recorded (its **Re-check** says which lines, and what was not read); a
+   Low or Info one is as its reviewer reported it. One writer for each area then wrote the entries and brought the
+   area's map file up to date from the reports. Nothing was run and nothing found in this round is fixed.
 
 Status values:
 
