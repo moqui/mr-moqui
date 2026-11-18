@@ -36,7 +36,7 @@ of `./moq` (the binary is `target\release\moqui.exe`). The first build that need
 ```sh
 git clone https://github.com/moqui/mr-moqui.git
 cd mr-moqui
-./moq component-get apps   # optional: Marble ERP (mr-marble) and IronStone BOSS (mr-boss), with Mantle (mr-mantle)
+./moq component-get apps   # optional: Marble ERP (mr-marble), IronStone BOSS (mr-boss) and PASS (mr-pass), with Mantle (mr-mantle)
 ./moq load                 # builds the Maximal package the first time, then loads every data type, demo included
 ./moq run                  # serves http://localhost:8080; ctrl-c stops it
 ```
@@ -1827,7 +1827,7 @@ with no names) and `default-repository` on its root.
 
 | Task | What it does |
 |---|---|
-| `./moq component-get <name...>` | Get components and the components they depend on (`depends-on` in `component.xml`); a `component-set` name gets the components of the set (`apps`: mr-marble and mr-boss) |
+| `./moq component-get <name...>` | Get components and the components they depend on (`depends-on` in `component.xml`); a `component-set` name gets the components of the set (`apps`: mr-marble, mr-boss and mr-pass) |
 | `./moq component-depends` | Get missing dependencies of what is in `runtime/components/addon` |
 | `./moq component-create <name>` | Make a component from the component template, `runtime/components/dev/template`: an entity, services, a REST API, screens, data and specs; `--rest` or `--screens` for one part |
 | `./moq component-zip [name...]` | Zip components |
