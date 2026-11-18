@@ -57,6 +57,8 @@ fn setup() -> (ExecutionContext, EntityFacade) {
             &[
                 ("userId", "LookupA"),
                 ("username", "lookup.a"),
+                ("userFullName", "Lookup A"),
+                ("emailAddress", "a@lookup.invalid"),
                 ("disabled", "N"),
                 ("currentPassword", "hash-a"),
             ],
@@ -106,11 +108,21 @@ fn a_lookup_labels_only_the_rows_the_frame_names() {
         "displayField":"currentPassword"}}),
     );
     assert_eq!(mappings(&ctx, "spec", "userId", &by_key, &[json!("LookupA")]), None);
-    // a name by the primary key (the shipped datasets' organization, facility and product names), by short name too
+    // nor an account's identity fields: a dataset does not list usernames or email addresses (by short name too)
     let names = config(json!({"lookup":{"entityName":"UserAccount","keyField":"userId","displayField":"username"}}));
+    assert_eq!(mappings(&ctx, "spec", "userId", &names, &[json!("LookupA")]), None);
+    let emails = json!({"entityName":"moqui.security.UserAccount","keyField":"userId","displayField":"emailAddress"});
+    assert!(refusal(&ctx, &emails).unwrap_or_default().contains("identity field"));
+    let disabled = json!({"entityName":"moqui.security.UserAccount","keyField":"userId","displayField":"userFullName",
+        "conditions":{"disabled":"N"}});
+    assert!(refusal(&ctx, &disabled).unwrap_or_default().contains("identity field"));
+    // a name by the primary key, as the shipped datasets' organization, facility and product names
+    let full_name = config(
+        json!({"lookup":{"entityName":"moqui.security.UserAccount","keyField":"userId","displayField":"userFullName"}}),
+    );
     assert_eq!(
-        mappings(&ctx, "spec", "userId", &names, &[json!("LookupA")]),
-        Some(vec![json!({"value":"LookupA","text":"lookup.a"})])
+        mappings(&ctx, "spec", "userId", &full_name, &[json!("LookupA")]),
+        Some(vec![json!({"value":"LookupA","text":"Lookup A"})])
     );
 
     let expected = Some(vec![json!({"value":"LookupOpen","text":"Open"})]);

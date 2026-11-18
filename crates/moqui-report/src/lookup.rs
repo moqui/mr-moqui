@@ -17,8 +17,9 @@
 //! (docs/tools/Monitoring.md, Dashboards). The entity, key field, display field and conditions are the dataset author's,
 //! so a lookup labels only the rows the frame's ids name: its key is the entity's single primary-key field, its
 //! conditions are plain equalities, it never reads a restricted entity or a view over one, and it never keys, shows or
-//! conditions on a password or encrypted field (plans/Security-Review.md SEC-TLS-82: a lookup on `UserAccount` keyed
-//! by `disabled` answered password hashes).
+//! conditions on a password or encrypted field, nor on an identity field of `UserAccount` (its username, email address
+//! and the rest), so a dataset does not list accounts' emails (plans/Security-Review.md SEC-TLS-82: a lookup on
+//! `UserAccount` keyed by `disabled` answered password hashes).
 
 use std::collections::BTreeSet;
 use std::sync::{LazyLock, Mutex};
@@ -62,7 +63,8 @@ fn of_config(config: &Map<String, Json>) -> Option<Json> {
 /// Why `lookup` is not resolved, or None when it may be: its entity is defined and is not restricted to generic access
 /// (nor a view over one), its `keyField` is the entity's single primary-key field, so it reads only the rows the frame's
 /// ids name and not every row that shares a value, its `conditions` are a map of plain values (equalities), and none of
-/// its key, display and condition fields is a password or encrypted field.
+/// its key, display and condition fields is a password or encrypted field, nor, on `UserAccount` or a view with it as a
+/// member, an identity field.
 pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
     if !lookup.is_object() {
         return Some("a lookup must be a map".into());
@@ -76,9 +78,14 @@ pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
     let Some(facade) = ec.factory().entity() else {
         return Some("the entity facade is unavailable".into());
     };
-    let Ok((full_name, pk_fields)) = facade.with_entity(entity_name, |entity, _, _| {
+    let Ok((full_name, pk_fields, reads_accounts)) = facade.with_entity(entity_name, |entity, _, _| {
         let pk_fields: Vec<String> = entity.pk_field_names().into_iter().map(str::to_string).collect();
-        Ok((entity.full_name.clone(), pk_fields))
+        let reads_accounts = sensitive::is_user_account_entity(&entity.full_name)
+            || entity
+                .member_entities
+                .iter()
+                .any(|member| sensitive::is_user_account_entity(&member.entity_name));
+        Ok((entity.full_name.clone(), pk_fields, reads_accounts))
     }) else {
         return Some(format!("entity {entity_name} is not defined"));
     };
@@ -107,9 +114,15 @@ pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
     }
     let condition_fields = conditions.into_iter().flat_map(|map| map.keys().map(String::as_str));
     let fields: Vec<&str> = [key, display].into_iter().chain(condition_fields).collect();
-    if let Some(field) = fields.into_iter().find(|field| access.hidden(field)) {
+    if let Some(field) = fields.iter().find(|field| access.hidden(field)) {
         return Some(format!(
             "field {field} of {full_name} is a password or encrypted field, which a lookup does not read"
+        ));
+    }
+    let identity = |field: &&&str| reads_accounts && sensitive::USER_ACCOUNT_IDENTITY_FIELDS.contains(*field);
+    if let Some(field) = fields.iter().find(identity) {
+        return Some(format!(
+            "field {field} of {full_name} is an account's identity field, which a lookup does not read"
         ));
     }
     None
