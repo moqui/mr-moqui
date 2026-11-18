@@ -1332,14 +1332,20 @@
             return z.formatZoned(at, { year: "numeric", month: "short", day: "numeric" });
         },
         roomIcon(room) { return (room && room.record && room.record.icon) || (room && chat.ROOM_ICONS[room.roomTypeEnumId]) || "sym_o_chat"; },
-        // The plain direct room of exactly these people with me (the rooms of find#Rooms, otherUserIdList), or null: Chat's
-        // dm link opens it, else an unsaved message whose first send makes the room (Comms-Messaging §3), so a link
-        // followed by mistake makes nothing the other person sees.
-        directRoomFor(rooms, userIds, me) {
+        // The direct room of exactly these people with me (the rooms of find#Rooms, otherUserIdList), the encrypted one first
+        // when there are both (Comms-Messaging §6.5), or null: Chat's dm link opens it, else an unsaved message whose first
+        // send makes the room (§3), so a link followed by mistake makes nothing the other person sees. plain: the plain one
+        // only (the link back from an encrypted direct room to the earlier chat).
+        directRoomFor(rooms, userIds, me, plain) {
             const wanted = Array.from(new Set((userIds || []).map(String).filter((id) => id && id !== me))).sort().join(",");
             if (!wanted) return null;
-            const found = (rooms || []).find((room) => room && room.roomTypeEnumId === "CrtDirect" && room.isMember && !room.encrypted
-                && Array.from(new Set((room.otherUserIdList || (room.otherUserId ? [room.otherUserId] : [])).map(String))).sort().join(",") === wanted);
+            const of = (room) => room && room.roomTypeEnumId === "CrtDirect" && room.isMember
+                && Array.from(new Set((room.otherUserIdList || (room.otherUserId ? [room.otherUserId] : [])).map(String))).sort().join(",") === wanted;
+            // the oldest of each kind, as the server answers it (two made at once: create#ChatRoom answers the oldest)
+            const order = (a, b) => (Number(a.createdDate) || 0) - (Number(b.createdDate) || 0)
+                || (/^\d+$/.test(a.chatRoomId) && /^\d+$/.test(b.chatRoomId) ? Number(a.chatRoomId) - Number(b.chatRoomId) : String(a.chatRoomId).localeCompare(String(b.chatRoomId)));
+            const list = (rooms || []).filter(of).sort(order);
+            const found = (plain ? null : list.find((room) => room.encrypted)) || list.find((room) => !room.encrypted);
             return found ? found.chatRoomId : null;
         },
         // The mail lines of the people's direct chats (the Chat screen's mailLines, find#DirectChatMail) by room, asked once for
@@ -1389,8 +1395,9 @@
             return list.length > 1 ? "group" : "direct";
         },
         // Start: the number's room (textRoom: open#PairRoom, from fromNumber or the user's only number), a private room when
-        // a group has a name (createRoom), else the direct or group direct chat (createDirect). post(name, params) is the
-        // screen's, a promise of the transition's JSON (chatRoomId).
+        // a group has a name (createRoom), else the direct or group direct chat (createDirect); the server decides whether a
+        // new one is encrypted (everyone in it has a crypto device, Comms-Messaging §6.5). post(name, params) is the screen's,
+        // a promise of the transition's JSON (chatRoomId, encrypted).
         startChat(post, pick) {
             const values = ((pick && pick.values) || []).map((value) => String(value).trim()).filter((value) => value);
             const kind = chat.pickKind(values);
@@ -1403,7 +1410,7 @@
                 return post("textRoom", { textTo: values.map((value) => value.slice(4)).join(","), textFrom: (pick && pick.fromNumber) || "" });
             }
             const name = String((pick && pick.name) || "").trim();
-            if (kind === "group" && name) return post("createRoom", { roomTypeEnumId: "private", roomName: name, memberUserIds: values.join(","), encrypted: "false" });
+            if (kind === "group" && name) return post("createRoom", { roomTypeEnumId: "private", roomName: name, memberUserIds: values.join(",") });
             return post("createDirect", { userIds: values.join(",") });
         },
         // ---- names of outside numbers (plans/Comms-Messaging.md §9, Phone book) ----
@@ -1652,13 +1659,57 @@
             return fillIn(tr("Not readable by {who}: their devices are not verified"), { who: people.join(", ") });
         },
         // An encrypted message this device cannot read: why, when the sender withheld its key from an unverified device
-        // (m.room_key.withheld m.unverified, "only verified devices"), else the key backup or another device's share
-        undecryptableText(withheld, senderName) {
+        // (m.room_key.withheld m.unverified, "only verified devices"); sent before this device was set up (setup: setupNeeded
+        // says so, Comms-Messaging §6.5); else the key backup or another device's share
+        undecryptableText(withheld, senderName, setup) {
             if (withheld === "m.unverified") {
                 return fillIn(tr("{name} has not verified this device, so it cannot read this message. Verify each other in this chat (Members, Verify) and compare emoji; then {name}'s next messages can be read here."),
                     { name: senderName || tr("The sender") });
             }
+            if (setup) return tr("Sent before this device was set up. Set up this device to read it.");
             return tr("Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.");
+        },
+        // ---- a new device (Comms-Messaging §6.5, first sign-in) ----
+        // Whether this device must be set up to read what was sent before it, from moqui.crypto.setupStatus's answer: until it
+        // can read that, which is when it holds the current backup's key, or (with no backup on the server to receive) it was
+        // verified with another of the user's devices, which then forwards keys; and only when the user has a key backup or
+        // another device to set it up from (a first device needs none). Verified with a backup there is not enough: the
+        // backup key must come too (setupWaiting).
+        setupNeeded(status) {
+            if (!status || status.restored) return false;
+            if (status.verified && !status.backup) return false;
+            return !!status.backup || (Array.isArray(status.otherDevices) && status.otherDevices.length > 0);
+        },
+        // verified with another device, the backup key not here yet: the card says it is getting the keys
+        setupWaiting(status) { return !!status && !!status.verified && !!status.backup && !status.restored; },
+        // a user's first device with encrypted rooms and no key backup: offer to set one up (once, closed per account)
+        backupHinted(status) { return !!status && !status.backup && !chat.setupHintClosed(); },
+        setupHintKey() { return moqui.scopedKey("moqui.chat.backupHint." + (chat.me || "")); },
+        setupHintClosed() {
+            try { return !!root.localStorage && root.localStorage.getItem(chat.setupHintKey()) === "closed"; } catch (err) { return false; }
+        },
+        closeSetupHint() {
+            try { if (root.localStorage) root.localStorage.setItem(chat.setupHintKey(), "closed"); } catch (err) { /* this page only */ }
+        },
+        // "Not now" on Set up this device: per account and device, in this browser
+        setupLaterKey(deviceId) { return moqui.scopedKey("moqui.chat.setupLater." + (chat.me || "") + "." + (deviceId || "")); },
+        setupLater(deviceId) {
+            try { return !!root.localStorage && root.localStorage.getItem(chat.setupLaterKey(deviceId)) === "later"; } catch (err) { return false; }
+        },
+        putSetupLater(deviceId) {
+            try { if (root.localStorage) root.localStorage.setItem(chat.setupLaterKey(deviceId), "later"); } catch (err) { /* this page only */ }
+        },
+        // The page makes this browser's crypto device when Chat opens (Comms-Messaging §6.5): in idle time, never in a
+        // desktop app window (the shell owns the device) or a browser without WebAssembly or IndexedDB. A failure is logged;
+        // Chat goes on, and this browser has no device.
+        makeDeviceSoon() {
+            const crypto = moqui.crypto;
+            if (!crypto || !crypto.ensureDevice || (crypto.elsewhere && crypto.elsewhere())) return false;
+            if (typeof root.WebAssembly !== "object" || !root.indexedDB) return false;
+            const run = () => crypto.ensureDevice({ automatic: true }).catch((err) => console.info("This browser has no chat crypto device", err));
+            if (typeof root.requestIdleCallback === "function") root.requestIdleCallback(run, { timeout: 5000 });
+            else setTimeout(run, 1500);
+            return true;
         },
         // Before a send (§6.1 rule 3): a verified person's new device or changed identity, as encryptRoom refuses with them
         // (verifiedUserProblem), one line each, by name
@@ -1904,6 +1955,136 @@
                     '</div>' +
                 '</template>' +
             '</q-card>'
+    };
+
+    // Set up this device (Comms-Messaging §6.5, first sign-in on a new device): what was sent before it was added is read
+    // here after a restore of the key backup with the recovery key, or a verification with another of the user's devices,
+    // which then sends this one the backup key (moqui.crypto's secrets) or the room keys it holds. status is
+    // moqui.crypto.setupStatus's answer; the parent reads it again on refresh (after a restore, room keys or a trust change)
+    // and closes the card once chat.setupNeeded says no. A full-screen dialog on a phone, 480 px on a desktop; Not now emits
+    // later (the parent keeps it per account and device).
+    components["m-chat-device-setup"] = {
+        name: "mChatDeviceSetup",
+        props: { modelValue: Boolean, status: Object },
+        emits: ["update:modelValue", "refresh", "later"],
+        data() { return { recoveryKey: "", busy: false, verifiedAt: 0, now: Date.now(), timer: null }; },
+        computed: {
+            phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
+            hasBackup() { return !!(this.status && this.status.backup); },
+            // the user's other devices in use (seen lately: the server's active), each by its name and when it was last seen
+            devices() { return ((this.status && this.status.otherDevices) || []).filter((d) => d.active !== false); },
+            me() { return (root.moqui && root.moqui.webrootVue && root.moqui.webrootVue.userId) || chat.me || null; },
+            // the verifications with the user's own devices (another person's are Chat's)
+            flows() { return ((moqui.crypto && moqui.crypto.state.verifications) || []).filter((v) => v.otherUserId === this.me); },
+            done() { return !chat.setupNeeded(this.status); },
+            // verified, and the keys not here yet: they come from the other device while it is open (two minutes, then said)
+            waiting() { return !this.done && (!!this.verifiedAt || chat.setupWaiting(this.status)); },
+            waitedLong() { return this.waiting && this.now - (this.verifiedAt || this.now) > 120000; }
+        },
+        watch: {
+            flows(list) {
+                if (!this.verifiedAt && (list || []).some((v) => v.done)) {
+                    this.verifiedAt = Date.now();
+                    this.$emit("refresh");
+                }
+            },
+            waiting(on) {
+                clearInterval(this.timer);
+                if (on && !this.verifiedAt) this.verifiedAt = Date.now();
+                this.timer = on ? setInterval(() => { this.now = Date.now(); this.$emit("refresh"); }, 10000) : null;
+            }
+        },
+        beforeUnmount() { clearInterval(this.timer); },
+        methods: {
+            t: tr,
+            nameOf(device) { return device.displayName || device.deviceId; },
+            whenText(millis) { return millis ? chat.dateTime(Number(millis)) : ""; },
+            whoOf(flow) { const device = this.devices.find((d) => d.deviceId === flow.otherDeviceId); return device ? this.nameOf(device) : flow.otherDeviceId; },
+            canRetry(flow) { return this.devices.some((d) => d.deviceId === flow.otherDeviceId); },
+            setOpen(value) { this.$emit("update:modelValue", value); },
+            close() { this.setOpen(false); },
+            later() { this.$emit("later"); this.close(); },
+            restore() {
+                if (!String(this.recoveryKey || "").trim() || this.busy) return;
+                this.busy = true;
+                moqui.crypto.restoreBackup(this.recoveryKey).then((out) => {
+                    this.busy = false;
+                    this.recoveryKey = "";
+                    if (moqui.notifyMessages) moqui.notifyMessages([{ type: "success", message: fillIn(tr("This device is set up: {count} keys restored"), { count: out.imported }) }]);
+                    this.$emit("refresh");
+                }, (err) => {
+                    this.busy = false;
+                    const code = err && err.reasonCode;
+                    const text = code === "badRecoveryKey" ? tr("This is not a recovery key. Check it and try again.")
+                        : code === "wrongRecoveryKey" ? tr("This recovery key does not open your key backup.")
+                        : (err && err.errors) || tr("The keys were not restored");
+                    if (moqui.notifyMessages) moqui.notifyMessages([], text);
+                });
+            },
+            // the keys asked of the other devices again, and two more minutes to wait
+            askAgain() {
+                this.verifiedAt = Date.now();
+                this.now = this.verifiedAt;
+                if (moqui.crypto && moqui.crypto.requestSecrets) moqui.crypto.requestSecrets().catch(() => null);
+            },
+            useRecoveryKey() {
+                const input = this.$el && this.$el.querySelector ? this.$el.querySelector("input[name='setupRecoveryKey']") : null;
+                const field = input || (document.querySelector && document.querySelector(".m-chat-device-setup input[name='setupRecoveryKey']"));
+                if (field && field.focus) field.focus();
+            },
+            verify(device) {
+                this.verifiedAt = 0;
+                moqui.crypto.verifyDevice(this.me, device.deviceId).catch((err) => moqui.notifyMessages && moqui.notifyMessages([], (err && err.errors) || tr("The verification did not start")));
+            },
+            retry(flow) {
+                const device = this.devices.find((d) => d.deviceId === flow.otherDeviceId);
+                if (device) this.verify(device);
+            }
+        },
+        template:
+            '<q-dialog :model-value="modelValue" :maximized="phone" @update:model-value="setOpen">' +
+            '<q-card class="m-chat-device-setup column no-wrap" :style="phone ? \'\' : \'width:480px;max-width:95vw\'">' +
+                '<q-card-section class="row items-center no-wrap q-pb-none">' +
+                    '<q-icon name="sym_o_phonelink_lock" size="24px" class="text-primary q-mr-sm"></q-icon>' +
+                    '<div class="text-h6 col">{{t(\'Set up this device\')}}</div>' +
+                    '<q-btn flat round dense icon="sym_o_close" :aria-label="t(\'Close\')" @click="close"></q-btn>' +
+                '</q-card-section>' +
+                '<q-card-section class="col scroll" style="min-height:0">' +
+                    '<div v-if="done" class="text-positive m-chat-device-setup-done" role="status">{{t(\'This device is set up: it reads your encrypted messages.\')}}</div>' +
+                    '<template v-else>' +
+                    '<div class="text-body2 q-mb-md">{{t(\'Messages sent before this device was added were encrypted for your other devices. To read them here, use one of these.\')}}</div>' +
+                    '<div v-if="hasBackup" class="q-mb-md m-chat-device-setup-key">' +
+                        '<div class="text-subtitle2">{{t(\'Your recovery key\')}}</div>' +
+                        '<div class="text-caption m-muted q-mb-xs">{{t(\'The key you kept when you set up key backup.\')}}</div>' +
+                        '<div class="row no-wrap items-center q-gutter-sm">' +
+                            '<div class="col" style="min-width:0"><q-input v-model="recoveryKey" dense outlined autocomplete="off" spellcheck="false" name="setupRecoveryKey" :label="t(\'Recovery key\')" @keydown.enter.prevent="restore"></q-input></div>' +
+                            '<q-btn unelevated no-caps color="primary" :label="t(\'Restore\')" :loading="busy" :disable="!recoveryKey.trim()" class="m-chat-device-setup-restore" @click="restore"></q-btn>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div v-if="devices.length" class="m-chat-device-setup-devices">' +
+                        '<div class="text-subtitle2">{{t(\'Another of your devices\')}}</div>' +
+                        '<div class="text-caption m-muted q-mb-xs">{{t(\'Verify this device from one you use, with Chat or My devices open there: you compare emoji on both.\')}}</div>' +
+                        '<q-list dense separator bordered class="rounded-borders">' +
+                            '<q-item v-for="d in devices" :key="d.deviceId" class="m-chat-device-setup-device" :data-device="d.deviceId">' +
+                                '<q-item-section style="min-width:0"><q-item-label class="ellipsis">{{nameOf(d)}}</q-item-label>' +
+                                    '<q-item-label caption v-if="d.lastSeenDate">{{t(\'last seen\')}} {{whenText(d.lastSeenDate)}}</q-item-label></q-item-section>' +
+                                '<q-item-section side><q-btn flat dense no-caps color="primary" icon="sym_o_verified_user" :label="t(\'Verify\')" class="m-chat-device-setup-verify" @click="verify(d)"></q-btn></q-item-section>' +
+                            '</q-item>' +
+                        '</q-list>' +
+                    '</div>' +
+                    '<m-chat-verification v-for="v in flows" :key="v.flowId" :flow="v" :who="whoOf(v)" :can-retry="canRetry(v)" class="q-mt-md" @retry="retry(v)"></m-chat-verification>' +
+                    '<div v-if="waiting && !waitedLong" class="m-muted q-mt-sm m-chat-device-setup-waiting" role="status">{{t(\'Verified. Getting your keys from the other device…\')}}</div>' +
+                    '<div v-if="waitedLong" class="q-mt-sm m-chat-device-setup-slow" role="status"><div class="text-negative">{{t(\'Your other device did not send the keys. Open Chat there and keep it open, then try again, or use your recovery key.\')}}</div>' +
+                        '<div class="row q-gutter-xs q-mt-xs"><q-btn unelevated no-caps color="primary" :label="t(\'Try again\')" class="m-chat-device-setup-again" @click="askAgain"></q-btn>' +
+                        '<q-btn v-if="hasBackup" flat no-caps color="primary" :label="t(\'Use your recovery key\')" class="m-chat-device-setup-use-key" @click="useRecoveryKey"></q-btn></div></div>' +
+                    '</template>' +
+                '</q-card-section>' +
+                '<q-card-actions align="right">' +
+                    '<q-btn v-if="!done" flat no-caps :label="t(\'Not now\')" class="m-chat-device-setup-later" @click="later"></q-btn>' +
+                    '<q-btn v-else unelevated no-caps color="primary" :label="t(\'Done\')" @click="close"></q-btn>' +
+                '</q-card-actions>' +
+            '</q-card>' +
+            '</q-dialog>'
     };
 
     // The status message dialog of the account menu, outside the menu so it outlives it.

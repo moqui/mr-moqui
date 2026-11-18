@@ -19,7 +19,8 @@ An app adds to these screens without copying them: it mounts them under its own 
 `ext-action` and `ext-panel` items ([docs/ui/Qvt-Client.md](../../../../docs/ui/Qvt-Client.md#declared-actions-and-panels)).
 IronStone BOSS does this for its Comms; it hides BasicComms from the launcher and sets `comms_app_root` to `/qapps/Comms`.
 
-The desktop client bundles the chat panel, Chat, Inbox (Mail), Compose, Calls/Call and Calls/Dialer in its shell,
+The desktop client bundles the chat panel, Chat, Inbox (Mail), Compose, Calls/Call, Calls/Dialer and Settings/Devices
+(My devices) in its shell,
 precompiled from these `.qvue` files, and shows them under the server's comms app root; it owns the calls (its app
 windows open them there); the rest of the app opens in its app windows. Their offline presentation (queued and failed
 sends and message changes, conflicts and the copy of a draft changed elsewhere, the Inbox's Outbox, "needs a

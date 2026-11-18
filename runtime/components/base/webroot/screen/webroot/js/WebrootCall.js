@@ -836,8 +836,12 @@
         },
         textTo(chatRoomId, userId, text) {
             const base = call.chatBase();
+            // a page that cannot encrypt (no crypto, or a desktop app window) asks for the plain direct room, so no encrypted
+            // room is made that it cannot write in (plans/Comms-Messaging.md §6.5); one that can takes the default
+            const canSeal = !!(moqui.chat && moqui.chat.sealMessage && moqui.crypto && !(moqui.crypto.elsewhere && moqui.crypto.elsewhere()));
             const roomOf = chatRoomId ? Promise.resolve(chatRoomId)
-                : moqui.request(base + "/createDirect", { method: "POST", params: { userIds: userId } }).then((r) => (r.json || {}).chatRoomId || null);
+                : moqui.request(base + "/createDirect", { method: "POST", params: canSeal ? { userIds: userId } : { userIds: userId, encrypted: "false" } })
+                    .then((r) => (r.json || {}).chatRoomId || null);
             const failed = () => {
                 if (moqui.notifyMessages) moqui.notifyMessages([{ type: "warning", message: t("The message to the caller was not sent") }]);
                 return false;

@@ -63,6 +63,10 @@
  * - thisDeviceId(): the deviceId this browser uses for the signed-in user, without loading anything (null when none).
  * - state: {status: idle, loading, ready or error, deviceId, matrixUserId, error, problem ({reasonCode storeUnreadable,
  *   deviceId}: the store cannot be read)}.
+ * - setupStatus(): whether this device reads what was sent before it (plans/Comms-Messaging.md §6.5): {deviceId, backup,
+ *   restored, verified, otherDevices}. A verification with another of this user's devices asks it for the secrets this
+ *   device lacks (requestSecrets asks again); a backup key it sends is used when it opens the current backup, and the
+ *   backup is restored with it. ensureDevice({automatic: true}) is Chat's, as it opens: a device made so is marked.
  */
 (function (root) {
     "use strict";
@@ -416,10 +420,10 @@
         state.problem = { reasonCode: err.reasonCode, deviceId: pointer.deviceId, userId: user, errors: err.errors };
     }
 
-    async function open(user, retry) {
+    async function open(user, retry, automatic) {
         let pointer = readPointer(user);
         if (!pointer) {
-            const made = await call("device", { displayName: deviceName() });
+            const made = await call("device", automatic ? { displayName: deviceName(), automatic: true } : { displayName: deviceName() });
             pointer = { deviceId: made.deviceId, user_id: made.user_id };
             writePointer(user, pointer);
         }
@@ -463,13 +467,16 @@
             await resumeBackup();
             await flushNow();
             await syncNow();
+            await secretsWaiting();
         } catch (err) {
             if (!machine && !retry) return open(user, true);
             throw err;
         }
     }
 
-    function ensureDevice() {
+    // options.automatic: Chat asks for the device as it opens (plans/Comms-Messaging.md §6.5); a device made by it is marked
+    // so on the server, where it counts toward the encryption default only once it was used on another day or verified
+    function ensureDevice(options) {
         if (elsewhere()) return Promise.reject(elsewhereError());
         const user = currentUser();
         if (!user) return Promise.reject(new Error("Sign in first"));
@@ -480,7 +487,7 @@
         loading = serial(async () => {
             if (machine && me !== user) await closeNow();
             await loadSdk();
-            if (!machine && role !== "follower") await open(user, false);
+            if (!machine && role !== "follower") await open(user, false, !!(options && options.automatic));
             return identity();
         }).then((out) => {
             loading = null;
@@ -837,6 +844,10 @@
             machine.registerDevicesUpdatedCallback(async (userIds) => trustChanged(Array.from(userIds || []).map((id) => userIdOf(String(id)))));
             machine.registerUserIdentityUpdatedCallback(async (userId) => trustChanged([userIdOf(userId.toString())]));
         } catch (err) { console.info("Trust updates are not heard", err); }
+        // the backup key from a verified device of this user's, out of the sync's serial section
+        try {
+            machine.registerReceiveSecretCallback(async (name, value) => { if (name === BACKUP_SECRET) setTimeout(() => backupFromSecret(value), 0); });
+        } catch (err) { console.info("Secrets from other devices are not heard", err); }
     }
     const trustListeners = new Set();
     function noticeTrust(userIds) {
@@ -1260,8 +1271,14 @@
         const listed = await call("backupVersions", null, "GET");
         const match = (listed.versionList || []).find((v) => v.publicKey === publicKey);
         if (!match) throw { reasonCode: "wrongRecoveryKey", errors: "This recovery key is not the one of any of your key backups" };
-        const version = String(match.version);
-        const current = !!match.current;
+        return importBackup(key, String(match.version), !!match.current);
+    }
+    /**
+     * The room keys of backup version, decrypted with its key and imported; when it is the current version this device keeps
+     * the key and backs up to it from now on. A backed-up key that does not decrypt is counted (failed) and skipped.
+     */
+    async function importBackup(key, version, current) {
+        const publicKey = key.megolmV1PublicKey.publicKeyBase64;
         let imported = 0;
         let total = 0;
         let failed = 0;
@@ -1304,6 +1321,91 @@
         noticeRoomKeys([]);
         post({ op: "roomKeys", sessions: [] });
         return { version, imported, total, failed, current };
+    }
+
+    // ---- setting up a new device (plans/Comms-Messaging.md §6.5) ----
+
+    const BACKUP_SECRET = "m.megolm_backup.v1";
+    // this device was verified with another of its user's devices here (a user with no cross-signing has no other proof)
+    const setupKey = (userId, deviceId) => moqui.scopedKey("moqui.crypto.setup." + userId + "." + deviceId);
+    function markSetup() {
+        try { if (me && state.deviceId) root.localStorage.setItem(setupKey(me, state.deviceId), "verified"); } catch (err) { /* storage off */ }
+    }
+    function setupMarked() {
+        try { return !!(me && state.deviceId && root.localStorage.getItem(setupKey(me, state.deviceId))); } catch (err) { return false; }
+    }
+    /**
+     * Whether this device is set up to read what was sent before it: {deviceId, backup (the server's current backup version, or
+     * null), restored (this device holds that backup's key), verified (signed by the user's verified identity, or verified here
+     * with another of their devices), otherDevices [{deviceId, displayName, lastSeenDate}] (the user's others with keys, the last
+     * seen first)}. moqui.chat.setupNeeded is the rule on it.
+     */
+    async function setupStatusNow() {
+        await ensureDevice();
+        const current = await call("backupVersion", {}).catch(() => null);
+        const listed = await call("devices", null, "GET").catch(() => ({ deviceList: [] }));
+        return serial(async () => {
+            if (!machine) throw closedError();
+            let restored = false;
+            try {
+                const keys = await machine.getBackupKeys();
+                const key = keys ? keys.decryptionKey : null;
+                restored = !!(current && key && current.auth_data && String(keys.backupVersion) === String(current.version)
+                    && key.megolmV1PublicKey.publicKeyBase64 === current.auth_data.public_key);
+            } catch (err) { restored = false; }
+            let signed = false;
+            try {
+                const own = await machine.getDevice(new sdk.UserId(state.matrixUserId), new sdk.DeviceId(state.deviceId), 5);
+                signed = !!(own && own.isCrossSigningTrusted());
+            } catch (err) { signed = false; }
+            // the user's other devices in use (the server's active: seen in chat_device_active_days), the last seen first
+            const others = (listed.deviceList || []).filter((d) => d && d.deviceId !== state.deviceId && d.hasKeys && !d.revoked && d.active !== false)
+                .sort((a, b) => (Number(b.lastSeenDate) || 0) - (Number(a.lastSeenDate) || 0))
+                .map((d) => ({ deviceId: d.deviceId, displayName: d.displayName || null, createdDate: d.createdDate || null, lastSeenDate: d.lastSeenDate || null }));
+            return { deviceId: state.deviceId, backup: current ? String(current.version) : null, restored, verified: signed || setupMarked(), otherDevices: others };
+        });
+    }
+    /**
+     * The backup key another of this user's verified devices sent (m.secret.send, after this device verified with it): used
+     * only when it opens the server's current backup, whose keys are then imported as a restore with the recovery key does.
+     */
+    async function backupFromSecret(value) {
+        try {
+            await loadSdk();
+            const key = sdk.BackupDecryptionKey.fromBase64(String(value || ""));
+            const current = await call("backupVersion", {}).catch(() => null);
+            if (!current || !current.auth_data || current.auth_data.public_key !== key.megolmV1PublicKey.publicKeyBase64) {
+                console.info("A backup key from another device does not open the current key backup: not used");
+                return null;
+            }
+            const out = await importBackup(key, String(current.version), true);
+            await serial(async () => { if (machine) await machine.deleteSecretsFromInbox(BACKUP_SECRET); });
+            return out;
+        } catch (err) {
+            console.error("The backup key from another device was not used", err);
+            return null;
+        }
+    }
+    // a backup key received before this page handled it (the page closed first): used once the store is open
+    async function secretsWaiting() {
+        let values = [];
+        try { values = machine ? Array.from((await machine.getSecretsFromInbox(BACKUP_SECRET)) || []) : []; } catch (err) { values = []; }
+        if (values.length) setTimeout(() => backupFromSecret(values[values.length - 1]), 0);
+    }
+    // a verification with another of this user's devices is done: this device asks its verified devices for the secrets
+    // it lacks (the backup key, the cross-signing keys), which the SDK sends only to a verified device of the same user
+    function askSecrets() {
+        markSetup();
+        setTimeout(() => requestSecretsNow().catch((err) => console.info("The secrets were not asked for", err)), 0);
+    }
+    /** The secrets this device lacks asked of the user's verified devices again (the set-up card's Try again). */
+    function requestSecretsNow() {
+        return serial(async () => {
+            if (!machine) throw closedError();
+            const asked = !!(await machine.requestMissingSecretsIfNeeded());
+            if (asked) await flushNow();
+            return asked;
+        });
     }
 
     // ---- cross-signing ----
@@ -1417,11 +1519,13 @@
             let emojis = null;
             try { if (sas && sas.canBePresented()) emojis = Array.from(sas.emoji() || []).map((e) => ({ symbol: e.symbol, description: e.description })); } catch (err) { emojis = null; }
             const done = request.isDone() || (!!sas && sas.isDone()) || (!!flow.qr && flow.qr.isDone());
+            const otherUserId = userIdOf(request.otherUserId.toString());
+            if (done && otherUserId === me && !flow.secretsAsked && machine) { flow.secretsAsked = true; askSecrets(); }
             const cancelled = request.isCancelled() || (!!sas && sas.isCancelled()) || (!!flow.qr && flow.qr.isCancelled());
             const ask = (run) => { try { return run(); } catch (err) { return null; } };
             const cancelInfo = (sas && ask(() => sas.cancelInfo())) || (flow.qr && ask(() => flow.qr.cancelInfo())) || null;
             const phase = PHASES[request.phase()] || String(request.phase());
-            list.push({ flowId, otherUserId: userIdOf(request.otherUserId.toString()), otherDeviceId: request.otherDeviceId ? request.otherDeviceId.toString() : null,
+            list.push({ flowId, otherUserId, otherDeviceId: request.otherDeviceId ? request.otherDeviceId.toString() : null,
                 weStarted: !!request.weStarted(), phase, ready: !!request.isReady(), done, cancelled,
                 emojis, confirmed: !!sas && !!sas.haveWeConfirmed(), qrImage: flow.qrImage, scanned: !!flow.qr && !!flow.qr.hasBeenScanned(),
                 // the states between: started and waiting for the other device, its time left, why it ended
@@ -1518,7 +1622,7 @@
         encryptRoom: api("encryptRoom", encryptRoomNow), decryptRoom: api("decryptRoom", decryptRoomNow), rotateRoom: api("rotateRoom", rotateRoomNow),
         roomTrust: api("roomTrust", roomTrustNow), leftOut: relayOnly("leftOut", leftOutNow), acceptProblems: acceptProblemsNow, problemsOf, readAllowed, onTrust,
         backupStatus: api("backupStatus", backupStatusNow), enableBackup: api("enableBackup", enableBackupNow),
-        restoreBackup: api("restoreBackup", restoreBackupNow), crossSigningStatus: api("crossSigningStatus", crossSigningStatusNow),
+        restoreBackup: api("restoreBackup", restoreBackupNow), setupStatus: api("setupStatus", setupStatusNow), requestSecrets: api("requestSecrets", requestSecretsNow), crossSigningStatus: api("crossSigningStatus", crossSigningStatusNow),
         setupCrossSigning: api("setupCrossSigning", setupCrossSigningNow), verifyDevice: api("verifyDevice", verifyDeviceNow),
         verification: api("verification", verificationNow), dismissVerification: api("dismissVerification", dismissVerification) };
 })(window);

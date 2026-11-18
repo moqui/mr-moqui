@@ -237,15 +237,17 @@ fn on_app_origin(url: &Url) -> Url {
 
 /// The comms app's screens the shell shows itself (bundled from basic-comms, `shell/bundled-screens.txt`), by their path
 /// under the comms root, as `Shell/Root` routes them (`SHELL_ROUTES` in `shell/screens/Root.qvue`): a call's screen is
-/// the shell's, which holds the crypto device of its encrypted calls; Calls' other screens (History, Voicemail,
-/// Recordings) open in an app window.
-const SHELL_SCREENS: [&str; 6] = [
+/// the shell's, which holds the crypto device of its encrypted calls, and so is My devices (`Settings/Devices`: its key
+/// backup, verification and Set up this device); Calls' other screens (History, Voicemail, Recordings) and the other
+/// Settings open in an app window.
+const SHELL_SCREENS: [&str; 7] = [
     "Chat",
     "Inbox",
     "Inbox/Mail",
     "Inbox/Compose",
     "Calls/Call",
     "Calls/Dialer",
+    "Settings/Devices",
 ];
 
 /// Whether the server's `path` (`/qapps/...` or `/apps/...`, with its query, a `.qvt`, `.qvue` or `.qjs` ending as
