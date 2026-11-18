@@ -118,6 +118,21 @@ feature("a moderator of a private room that is not encrypted adds a number, with
     }
 })
 
+feature("disappearing messages and text members exclude each other, both ways (phase 16)", {
+    when() {
+        const timed = as(MOD, CHAT + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Timed"}).chatRoomId
+        const timer = as(MOD, "org.moqui.chat.ChatExpiryServices.set#RoomTimer", {chatRoomId: timed, seconds: 3600})
+        const add = as(MOD, ROOMS + "add#TextMember", {chatRoomId: timed, phoneNumber: OTHER, consent: "Y"})
+        const onTexted = as(MOD, "org.moqui.chat.ChatExpiryServices.set#RoomTimer", {chatRoomId: shared.room, seconds: 3600})
+        return {timer, add, onTexted}
+    },
+    then({timer, add, onTexted}) {
+        timer.errors == ""
+        add.reasonCode == "timerOn"
+        onTexted.reasonCode == "bridged"
+    }
+})
+
 feature("one room per outside number on each of our numbers: the second room takes another number, a third none", {
     when() {
         const second = as(MOD, ROOMS + "add#TextMember", {chatRoomId: shared.second, phoneNumber: THEIRS, consent: "Y"})
