@@ -2386,8 +2386,15 @@
             return Promise.resolve(host.secureScreen(reason, on === true)).then((held) => held === true, () => false);
         },
         available() { return !!(root.moquiDesktop && typeof root.moquiDesktop.secureScreen === "function"); },
-        // the whole app's reason, from the account's preference, once the shell has its config
-        applyApp(setting) { return chat.screen.set("app", setting === "app"); }
+        // the whole app's reason of this account (its storage scope): each account on the phone holds its own, so any one
+        // with "everywhere" keeps the flag on, and turning it off there takes only that account's away
+        appReason() {
+            const host = root.moquiDesktop;
+            const scope = typeof moqui.storageScope === "string" ? moqui.storageScope : (host && host.storageScope) || "";
+            return ("app:" + String(scope).replace(/[^A-Za-z0-9_-]/g, "")).slice(0, 64);
+        },
+        // the whole app's setting applied at once, on or off (CHAT_SCREEN_SECURITY: its preference applier, and Chat)
+        applyApp(setting) { return chat.screen.set(chat.screen.appReason(), setting === "app"); }
     };
     chat.otp = {
         // a message's code chip: "Code 482913", and when it is to disappear "Deletes tomorrow at 15:40"
@@ -2405,48 +2412,55 @@
             const all = [[2048, 0.85], [2048, 0.7], [1600, 0.7], [1600, 0.55], [1280, 0.55], [1024, 0.5]];
             return maxBytes > 0 ? all : all.slice(0, 1);
         },
-        // The photo made smaller in the browser (createImageBitmap with its orientation, a canvas, toBlob): a JPEG of at most
-        // 2048 px a side, its metadata (its GPS among it) gone; a PNG stays a PNG and is made smaller only when it is larger
-        // than that (a screenshot's text stays sharp); with maxBytes it steps down until it fits. The file as it was when it
-        // is no still photo, the browser cannot read it (HEIC on most), or it comes out larger.
+        // The photo drawn again in the browser (createImageBitmap with its orientation, a canvas, toBlob), so its metadata (its
+        // GPS among it: EXIF, and a PNG's eXIf, tEXt, iTXt and zTXt chunks) never goes: a JPEG or WebP becomes a JPEG of at
+        // most 2048 px a side, also when that is no smaller; a PNG stays a PNG (a screenshot's text stays sharp), made
+        // smaller only past 2048 px. With maxBytes it steps down until it fits. The file as it was only when it is no still
+        // photo or the browser cannot read it (HEIC on most): the composer then says it goes as it is.
         compress(file, options) {
             const opts = options || {};
             if (!chat.photos.compressible(file) || typeof root.createImageBitmap !== "function") return Promise.resolve(file);
             const maxBytes = Number(opts.maxBytes || 0);
             const png = /png$/i.test(file.type);
             return root.createImageBitmap(file, { imageOrientation: "from-image" }).then((bitmap) => {
-                const encode = (side, quality) => {
+                const encode = (side, quality, asPng) => {
                     const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
                     const width = Math.max(1, Math.round(bitmap.width * scale)), height = Math.max(1, Math.round(bitmap.height * scale));
                     const canvas = typeof root.OffscreenCanvas === "function" ? new root.OffscreenCanvas(width, height)
                         : Object.assign(root.document.createElement("canvas"), { width, height });
                     const context = canvas.getContext("2d");
-                    if (!png) { context.fillStyle = "#fff"; context.fillRect(0, 0, width, height); }
+                    if (!asPng) { context.fillStyle = "#fff"; context.fillRect(0, 0, width, height); }
                     context.drawImage(bitmap, 0, 0, width, height);
-                    const type = png ? "image/png" : "image/jpeg";
+                    const type = asPng ? "image/png" : "image/jpeg";
                     if (canvas.convertToBlob) return canvas.convertToBlob({ type, quality });
                     return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
                 };
-                const big = Math.max(bitmap.width, bitmap.height) > 2048;
-                if (png && !big && !(maxBytes > 0 && file.size > maxBytes)) return file;
+                // a PNG stays a PNG while it fits; past the limit it goes as a JPEG, which steps down
                 const steps = chat.photos.steps(maxBytes);
-                const tryStep = (index) => encode(steps[index][0], steps[index][1]).then((blob) => {
-                    if (blob && maxBytes > 0 && blob.size > maxBytes && index + 1 < steps.length) return tryStep(index + 1);
+                const tryStep = (index, asPng) => encode(steps[index][0], steps[index][1], asPng).then((blob) => {
+                    if (blob && maxBytes > 0 && blob.size > maxBytes) {
+                        if (asPng) return tryStep(0, false);
+                        if (index + 1 < steps.length) return tryStep(index + 1, false);
+                    }
                     return blob;
                 });
-                return tryStep(0).then((blob) => {
+                return tryStep(0, png).then((blob) => {
                     if (bitmap.close) bitmap.close();
-                    if (!blob || (blob.size >= file.size && !(maxBytes > 0 && file.size > maxBytes))) return file;
-                    const name = String(file.name || "photo").replace(/\.[^.]*$/, "") + (png ? ".png" : ".jpg");
-                    return new root.File([blob], name, { type: blob.type || (png ? "image/png" : "image/jpeg") });
+                    if (!blob) return file;
+                    const asPng = /png$/i.test(blob.type || "");
+                    const name = String(file.name || "photo").replace(/\.[^.]*$/, "") + (asPng ? ".png" : ".jpg");
+                    return new root.File([blob], name, { type: blob.type || (asPng ? "image/png" : "image/jpeg") });
                 });
             }, () => file);
-        }
+        },
+        // the most bytes one more photo may have so the message's files stay within a text's total limit: the limit shared
+        // by the files the message will have (0 for no limit)
+        budget(maxBytes, fileCount) { return maxBytes > 0 ? Math.floor(maxBytes / Math.max(1, fileCount)) : 0; }
     };
     // the account's whole-app screen security, once the shell has its preferences (phase 21)
     try {
         const prefs = (moqui.config && moqui.config.preferences) || {};
-        if (prefs.CHAT_SCREEN_SECURITY === "app") chat.screen.applyApp("app");
+        if (prefs.CHAT_SCREEN_SECURITY) chat.screen.applyApp(prefs.CHAT_SCREEN_SECURITY);
     } catch (err) { /* no config yet: Chat applies it when it opens */ }
 
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----

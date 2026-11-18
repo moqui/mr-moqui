@@ -27,6 +27,11 @@
 //! ec.resource.getChangeLog(location, limit)-> [{versionName, previousVersionName, versionDate, userId, note, paths}]
 //! ec.resource.getTreeSize(location)        -> bytes
 //! ec.resource.makeThumbnail(source, target, maxSize) -> {width, height, contentType} or null (not an image)
+//! ec.resource.makeStickerThumbnail(source, target, maxSide, thumbSize)
+//!                                          -> {format, contentType, width, height, thumbWidth, thumbHeight} or
+//!                                             {reasonCode: badType | tooLarge, format, width, height}: a PNG, GIF or WebP
+//!                                             (its type read from its bytes), no side over maxSide (read from its header,
+//!                                             before it is decoded), decoded within a small memory limit
 //! ec.resource.makePdfPreview(source, target, maxSize) -> {width, height, pages, contentType} or null (no PDF engine,
 //!                                             or the PDF does not open: logged)
 //! ec.resource.readSheetPreview(location, sheetName, maxRows, maxCols)
@@ -93,6 +98,8 @@ macro_rules! files_js {
     Object.defineProperty(ec.service, "ssoAvailable", {get: () => host.filesSsoAvailable()});
     ec.resource.makeThumbnail = (source, target, maxSize) =>
         host.filesThumbnail(String(source), String(target), maxSize == null ? 256 : Number(maxSize));
+    ec.resource.makeStickerThumbnail = (source, target, maxSide, thumbSize) =>
+        host.filesStickerThumbnail(String(source), String(target), maxSide == null ? 512 : Number(maxSide), thumbSize == null ? 128 : Number(thumbSize));
     ec.resource.makePdfPreview = (source, target, maxSize) =>
         host.filesPdfPreview(String(source), String(target), maxSize == null ? 1024 : Number(maxSize));
     ec.resource.readSheetPreview = (location, sheetName, maxRows, maxCols) =>
@@ -132,6 +139,12 @@ pub(super) static METHODS: &[Method] = &[
     method!("tools", "filesImageAvailable", [], None, leaf, files_image_available),
     method!("tools", "filesSsoAvailable", [], None, leaf, files_sso_available),
     method!("tools", "filesThumbnail", [Text, Text, Number], files_thumbnail),
+    method!(
+        "tools",
+        "filesStickerThumbnail",
+        [Text, Text, Number, Number],
+        files_sticker_thumbnail
+    ),
     method!("tools", "filesPdfPreview", [Text, Text, Number], files_pdf_preview),
     method!(
         "tools",
@@ -441,6 +454,152 @@ fn files_thumbnail(call: &mut Call<'_>) -> Result<Ret, HostError> {
     map.insert("height".to_string(), Value::I64(i64::from(height)));
     map.insert("contentType".to_string(), Value::string("image/png"));
     Ok(Ret::Value(Value::Map(map)))
+}
+
+/// `makeStickerThumbnail` (plans/Comms-Messaging.md §18.3 phase 20): a sticker's picture checked before it is decoded,
+/// so a small file that claims huge sides (a decompression bomb) is refused from its header: its format guessed from its
+/// bytes (PNG, GIF or WebP only, whatever the name or the browser said), its sides at most `maxSide`, then decoded within
+/// [`STICKER_MAX_ALLOC`] and its still thumbnail written to `target`.
+fn files_sticker_thumbnail(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let source = call.text_or_empty(0);
+    let target = call.text_or_empty(1);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let side = |number: f64, default: u32| {
+        if number.is_finite() && number >= 1.0 {
+            (number as u32).min(4096)
+        } else {
+            default
+        }
+    };
+    let max_side = side(call.number(2).unwrap_or_default(), 512);
+    let thumb_size = side(call.number(3).unwrap_or_default(), 128);
+    let bytes = with_resources(|resources| resources.get(&source)?.read_bytes())?;
+    let checked = sticker_thumbnail(&bytes, max_side, thumb_size);
+    let mut map = indexmap::IndexMap::default();
+    match checked {
+        Sticker::Refused {
+            reason,
+            format,
+            width,
+            height,
+        } => {
+            map.insert("reasonCode".to_string(), Value::string(reason));
+            map.insert("format".to_string(), format.map(Value::string).unwrap_or(Value::Null));
+            map.insert(
+                "width".to_string(),
+                width.map_or(Value::Null, |w| Value::I64(i64::from(w))),
+            );
+            map.insert(
+                "height".to_string(),
+                height.map_or(Value::Null, |h| Value::I64(i64::from(h))),
+            );
+        }
+        Sticker::Made {
+            format,
+            width,
+            height,
+            thumb,
+        } => {
+            with_resources(|resources| resources.write_bytes(&target, &thumb.png))?;
+            map.insert("format".to_string(), Value::string(format));
+            map.insert("contentType".to_string(), Value::string(format!("image/{format}")));
+            map.insert("width".to_string(), Value::I64(i64::from(width)));
+            map.insert("height".to_string(), Value::I64(i64::from(height)));
+            map.insert("thumbWidth".to_string(), Value::I64(i64::from(thumb.width)));
+            map.insert("thumbHeight".to_string(), Value::I64(i64::from(thumb.height)));
+        }
+    }
+    Ok(Ret::Value(Value::Map(map)))
+}
+
+/// The memory one sticker's decode may take: a 512 px RGBA frame is 1 MiB; a GIF or WebP decodes its first frame.
+pub(crate) const STICKER_MAX_ALLOC: u64 = 16 * 1024 * 1024;
+
+/// What a sticker's check found.
+pub(crate) enum Sticker {
+    Refused {
+        reason: &'static str,
+        format: Option<&'static str>,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
+    Made {
+        format: &'static str,
+        width: u32,
+        height: u32,
+        thumb: Thumbnail,
+    },
+}
+
+/// A sticker's picture: its format from its bytes, its sides from its header, and only then its decode, within limits.
+#[cfg(feature = "image")]
+pub(crate) fn sticker_thumbnail(bytes: &[u8], max_side: u32, thumb_size: u32) -> Sticker {
+    use ::image::{ImageFormat, ImageReader, Limits};
+    let refused = |reason, format, width, height| Sticker::Refused {
+        reason,
+        format,
+        width,
+        height,
+    };
+    let reader = match ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
+        Ok(reader) => reader,
+        Err(_) => return refused("badType", None, None, None),
+    };
+    let format = match reader.format() {
+        Some(ImageFormat::Png) => "png",
+        Some(ImageFormat::Gif) => "gif",
+        Some(ImageFormat::WebP) => "webp",
+        _ => return refused("badType", None, None, None),
+    };
+    let (width, height) = match reader.into_dimensions() {
+        Ok(sides) => sides,
+        Err(_) => return refused("badType", Some(format), None, None),
+    };
+    if width == 0 || height == 0 || width > max_side || height > max_side {
+        return refused("tooLarge", Some(format), Some(width), Some(height));
+    }
+    let mut reader = match ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
+        Ok(reader) => reader,
+        Err(_) => return refused("badType", Some(format), None, None),
+    };
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(max_side);
+    limits.max_image_height = Some(max_side);
+    limits.max_alloc = Some(STICKER_MAX_ALLOC);
+    reader.limits(limits);
+    let Ok(image) = reader.decode() else {
+        return refused("badType", Some(format), Some(width), Some(height));
+    };
+    let small = if image.width() > thumb_size || image.height() > thumb_size {
+        image.thumbnail(thumb_size, thumb_size)
+    } else {
+        image
+    };
+    let mut out = Cursor::new(Vec::new());
+    if small.write_to(&mut out, ImageFormat::Png).is_err() {
+        return refused("badType", Some(format), Some(width), Some(height));
+    }
+    Sticker::Made {
+        format,
+        width,
+        height,
+        thumb: Thumbnail {
+            width: small.width(),
+            height: small.height(),
+            png: out.into_inner(),
+        },
+    }
+}
+
+/// No image decoder in this build (the `image` feature): no sticker.
+#[cfg(not(feature = "image"))]
+pub(crate) fn sticker_thumbnail(_bytes: &[u8], _max_side: u32, _thumb_size: u32) -> Sticker {
+    Sticker::Refused {
+        reason: "badType",
+        format: None,
+        width: None,
+        height: None,
+    }
 }
 
 /// A scaled image as PNG, with its size.
@@ -842,6 +1001,81 @@ mod tests {
         assert!(!check_grant("secret", "share:1", &stale), "an expired grant fails");
         assert!(make_grant("", "share:1", 60).is_none());
         assert!(!check_grant("secret", "share:1", "nonsense"));
+    }
+
+    /// The picture in `format` of a `width` by `height` solid image.
+    #[cfg(feature = "image")]
+    fn picture(width: u32, height: u32, format: ::image::ImageFormat) -> Vec<u8> {
+        let image = ::image::RgbImage::from_pixel(width, height, ::image::Rgb([200, 30, 30]));
+        let mut out = Cursor::new(Vec::new());
+        ::image::DynamicImage::ImageRgb8(image)
+            .write_to(&mut out, format)
+            .unwrap();
+        out.into_inner()
+    }
+
+    /// A sticker's picture (plans/Comms-Messaging.md §18.3 phase 20): its type from its bytes, its sides from its header
+    /// before any decode (a tiny PNG claiming 100,000 px a side is refused unread), within the sticker's limits.
+    #[cfg(feature = "image")]
+    #[test]
+    fn a_sticker_is_checked_by_its_bytes_and_its_header_before_it_is_decoded() {
+        let Sticker::Made {
+            format,
+            width,
+            height,
+            thumb,
+        } = sticker_thumbnail(&picture(300, 150, ::image::ImageFormat::Png), 512, 128)
+        else {
+            panic!("a PNG sticker")
+        };
+        assert_eq!((format, width, height), ("png", 300, 150));
+        assert_eq!((thumb.width, thumb.height), (128, 64));
+        assert!(matches!(
+            sticker_thumbnail(&picture(8, 8, ::image::ImageFormat::Gif), 512, 128),
+            Sticker::Made { format: "gif", .. }
+        ));
+        // a JPEG or a BMP, whatever it is named, is no sticker
+        for format in [::image::ImageFormat::Jpeg, ::image::ImageFormat::Bmp] {
+            assert!(matches!(
+                sticker_thumbnail(&picture(8, 8, format), 512, 128),
+                Sticker::Refused { reason: "badType", .. }
+            ));
+        }
+        assert!(matches!(
+            sticker_thumbnail(b"<svg xmlns='http://www.w3.org/2000/svg'/>", 512, 128),
+            Sticker::Refused { reason: "badType", .. }
+        ));
+        assert!(matches!(
+            sticker_thumbnail(&picture(600, 10, ::image::ImageFormat::Png), 512, 128),
+            Sticker::Refused {
+                reason: "tooLarge",
+                width: Some(600),
+                ..
+            }
+        ));
+        // a decompression bomb: a header claiming 100,000 by 100,000 px and almost no data, refused from its header
+        let mut bomb = picture(1, 1, ::image::ImageFormat::Png);
+        bomb[16..20].copy_from_slice(&100_000_u32.to_be_bytes());
+        bomb[20..24].copy_from_slice(&100_000_u32.to_be_bytes());
+        let crc = bomb[12..29].iter().fold(0xffff_ffff_u32, |crc, byte| {
+            (0..8).fold(crc ^ u32::from(*byte), |c, _| {
+                if c & 1 == 1 {
+                    0xedb8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                }
+            })
+        }) ^ 0xffff_ffff;
+        bomb[29..33].copy_from_slice(&crc.to_be_bytes());
+        assert!(bomb.len() < 200, "{}", bomb.len());
+        assert!(matches!(
+            sticker_thumbnail(&bomb, 512, 128),
+            Sticker::Refused {
+                reason: "tooLarge",
+                width: Some(100_000),
+                ..
+            }
+        ));
     }
 
     #[cfg(feature = "image")]

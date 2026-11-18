@@ -86,9 +86,16 @@ feature("a code near its keyword is found; phone numbers, prices, dates, times, 
         const none = ["Call me at +1 555 123 4567 about the code", "Your code costs $1234", "Pay 1234.50 with code", "The code meeting on 11/17",
             "Code review at 12:30", "Our code since 2026", "Code at https://x.example/482913", "Code 1234 or code 5678", "Your order 482913 shipped",
             "Code 1234567890"].map((text) => detect(text).code || null)
-        return {found, none}
+        // a code by "confirm", "login" or "pin" is for Copy, never deleted; a core word far from it deletes nothing either
+        const kept = ["Order #11223344 confirmation", "Your PIN 4821 was changed", "Use 7788 to sign in",
+            "Your code for the shop, valid for ten minutes from now: 4455"].map((text) => detect(text))
+        return {found, none, kept}
     },
-    then({found, none}) {
+    then({found, none, kept}) {
+        found[0].deletable == true
+        kept[0].code == "11223344"
+        kept[1].code == "4821"
+        kept.every((one) => one.deletable == false)
         found[0].code == "482913"
         found[0].strong == true
         found[1].code == "482913"
@@ -114,6 +121,10 @@ feature("a code is kept on an incoming text; it goes after a day only when every
         const third = outsideText(shared.team, "Your code is 663344")
         const thirdMarked = as(A, PRIV + "mark#OneTimeCode", {chatRoomId: shared.team, eventSeq: third})
         const thirdRow = row("moqui.chat.ChatEvent", {chatRoomId: shared.team, eventSeq: third})
+        // a PIN's text keeps its code for Copy but is never deleted
+        const pin = outsideText(shared.team, "Your PIN 4821 was changed")
+        as(A, PRIV + "mark#OneTimeCode", {chatRoomId: shared.team, eventSeq: pin})
+        const pinRow = row("moqui.chat.ChatEvent", {chatRoomId: shared.team, eventSeq: pin})
         // a user's own message is no incoming text; a text with no code keeps nothing
         const own = as(A, CHAT + "send#Message", {chatRoomId: shared.team, body: "<p>my code is 123456</p>"}).eventSeq
         const ownMarked = as(A, PRIV + "mark#OneTimeCode", {chatRoomId: shared.team, eventSeq: own})
@@ -122,9 +133,12 @@ feature("a code is kept on an incoming text; it goes after a day only when every
         const kept = as(B, PRIV + "keep#CodeMessage", {chatRoomId: shared.team, eventSeq: third})
         return {marked, firstOtp: JSON.parse(firstRow.contentJson).otp, firstExpires: firstRow.expireDate, secondExpires: secondRow.expireDate,
             thirdMarked, thirdExpires: Number(thirdRow.expireDate), thirdSent: Number(thirdRow.sentDate), ownMarked, timeline, stranger, kept,
-            afterKeep: row("moqui.chat.ChatEvent", {chatRoomId: shared.team, eventSeq: third}).expireDate}
+            afterKeep: row("moqui.chat.ChatEvent", {chatRoomId: shared.team, eventSeq: third}).expireDate,
+            pinOtp: JSON.parse(pinRow.contentJson).otp, pinExpires: pinRow.expireDate}
     },
-    then({marked, firstOtp, firstExpires, secondExpires, thirdMarked, thirdExpires, thirdSent, ownMarked, timeline, stranger, kept, afterKeep}) {
+    then({marked, firstOtp, firstExpires, secondExpires, thirdMarked, thirdExpires, thirdSent, ownMarked, timeline, stranger, kept, afterKeep, pinOtp, pinExpires}) {
+        pinOtp.code == "4821"
+        pinExpires == null
         marked.code == "482913"
         firstOtp.code == "482913"
         firstExpires == null

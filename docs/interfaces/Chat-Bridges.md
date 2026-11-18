@@ -180,8 +180,10 @@ external mappings (`ChatEventExternal`) dedupe its events after that.
   then, and the adapter's checks (`check#SmsSend`: the destination, the opt-out, the day's limits; its capabilities and
   fallback) are those of that moment. Nothing about a bridge is decided when it is scheduled.
 - **A sticker and a location** (phase 20). A sticker is a message whose file is its picture (the room's copy) and whose
-  text is "Sticker 👍": a bridge that sends files gets the picture alone (`request_of` leaves the text out), and one
-  that sends none gets the text. A location's text is "Location: label, address" and an OpenStreetMap link, which every
+  text is "Sticker 👍": a bridge that sends files gets the picture alone (`request_of` leaves the text out). When an
+  adapter refuses a message's files (`FILE_REFUSALS`: `mediaTooLarge`, `tooManyFiles`, `mmsNotSetUp`,
+  `filesUnsupported`, `noFiles`), the round sends the message's words alone in their place (`text_form`, the sticker's
+  words or a message's own text) and the delivery has that outcome; a message with no words stays refused. A location's text is "Location: label, address" and an OpenStreetMap link, which every
   bridge sends; its place is the request's `location` (latitude, longitude, label, address), which only Sinch RCS reads
   ([RCS](RCS.md#locations)).
 - **An event** (phase 19) is a message whose text is the event (its title, its time in its zone, its place and details),

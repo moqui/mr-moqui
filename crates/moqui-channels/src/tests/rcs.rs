@@ -1131,7 +1131,8 @@ fn a_twilio_text_with_chips_and_a_carousel_and_an_apps_own_template_go_in_twilio
         &too_big,
     );
     bed.round(0);
-    assert_eq!(bed.delivery(&room, refused).1, "mediaTooLarge");
+    // its picture refused: its text form goes alone (phase 20)
+    assert_eq!(bed.delivery(&room, refused).0, "CdsAccepted");
     bed.set_config(|config| {
         config.as_object_mut().unwrap().remove("maxRcsMediaBytes");
     });

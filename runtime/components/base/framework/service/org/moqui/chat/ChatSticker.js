@@ -2,8 +2,11 @@
 //
 // Sticker packs (plans/Comms-Messaging.md §18.3 phase 20): the services of org.moqui.chat.ChatStickerServices. The server's
 // packs (no owner) are kept by a holder of ChatStickerAdmin and offered to every chat user; a user's own are theirs alone.
-// A sticker is a PNG, WebP or GIF picture (animated ones too) stored as content under chat_sticker_root, checked by
-// decoding it (ec.resource.makeThumbnail, which also makes its still 128 px thumbnail), at most chat_sticker_max_bytes.
+// A sticker is a PNG, WebP or GIF picture (animated ones too) stored as content under chat_sticker_root, at most
+// chat_sticker_max_bytes: its type is read from its bytes (whatever the name or the browser said), its sides (at most
+// chat_sticker_max_side, 512 px) from its header before it is decoded, and it is decoded within a small memory limit
+// (ec.resource.makeStickerThumbnail, which also makes its still 128 px thumbnail). A user adds at most
+// chat_sticker_uploads_per_hour (60) stickers an hour.
 // Sending one copies its picture into the room as an ordinary ChatAttachment (stickerOf), so every path files take works
 // for it (access by the room, retention, redaction, disappearing messages, the bridges' files and MMS), removing a pack
 // never breaks a message, and a user's pack stays theirs. The message's body is its words ("Sticker 👍") for search,
@@ -15,7 +18,6 @@ const STICKER = 'moqui.chat.ChatSticker'
 const ATTACHMENT = 'moqui.chat.ChatAttachment'
 const EVENT = 'moqui.chat.ChatEvent'
 const TYPES = { 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }
-const EXTENSIONS = { png: 'image/png', webp: 'image/webp', gif: 'image/gif' }
 
 const find = (entity) => ec.entity.find(entity).disableAuthz()
 const blank = (value) => value == null || String(value).trim() === ''
@@ -28,7 +30,8 @@ const message = (err) => (err && err.message ? err.message : String(err))
 const property = (name, fallback) => { const value = Number(System.getProperty(name)); return value > 0 ? value : fallback }
 const limits = () => ({ maxBytes: property('chat_sticker_max_bytes', 512 * 1024), packStickers: property('chat_sticker_pack_max', 200),
   serverPacks: property('chat_sticker_server_packs_max', 50), userPacks: property('chat_sticker_user_packs_max', 10),
-  userPackStickers: property('chat_sticker_user_pack_max', 100) })
+  userPackStickers: property('chat_sticker_user_pack_max', 100), maxSide: property('chat_sticker_max_side', 512),
+  perHour: property('chat_sticker_uploads_per_hour', 60) })
 const root = () => (System.getProperty('chat_sticker_root') || 'dbresource://chat-stickers').replace(/\/+$/, '')
 const isAdmin = () => ec.user.hasPermission('ChatStickerAdmin') === true
 
@@ -151,15 +154,6 @@ function deletePack(p) {
   return {}
 }
 
-/** The kind of an uploaded picture: its given type, else its name's extension; only PNG, WebP and GIF. */
-function typeOf(file) {
-  const given = String(file.getContentType ? file.getContentType() || '' : '').split(';')[0].trim().toLowerCase()
-  if (TYPES[given]) return given
-  const name = String(file.getName ? file.getName() || '' : '')
-  const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
-  return EXTENSIONS[extension] || null
-}
-
 /**
  * add#Sticker: a picture into a pack the caller may change: PNG, WebP or GIF, at most chat_sticker_max_bytes, that
  * decodes (its still thumbnail made); the same picture once a pack; emoji (one, for search and its words) and altText.
@@ -170,27 +164,35 @@ function addSticker(p) {
   const pack = got.pack
   const file = p.file
   if (!file) return refuse('noFile', localize('No picture uploaded'))
-  const type = typeOf(file)
-  if (!type) return refuse('badType', localize('A sticker is a PNG, WebP or GIF picture'))
   const lim = limits()
   const size = Number(file.getSize() || 0)
   if (size <= 0) return refuse('noFile', localize('No picture uploaded'))
   if (size > lim.maxBytes) return refuse('tooLarge', expand('A sticker is at most ${kb} KB', { kb: Math.floor(lim.maxBytes / 1024) }))
   const most = pack.ownerUserId ? lim.userPackStickers : lim.packStickers
   if (find(STICKER).condition('chatStickerPackId', pack.chatStickerPackId).count() >= most) return refuse('tooMany', expand('A pack has at most ${max} stickers', { max: most }))
+  const hourAgo = new Date(Number(ec.user.nowTimestamp) - 3600 * 1000)
+  if (find(STICKER).condition('createdByUserId', ec.user.userId).condition('createdDate', '>=', hourAgo).count() >= lim.perHour) {
+    return refuse('tooMany', expand('At most ${max} stickers an hour; try again later', { max: lim.perHour }))
+  }
   const emoji = words(p.emoji).slice(0, 16)
   const altText = words(p.altText).slice(0, 80)
   const row = ec.entity.makeValue(STICKER)
   row.setSequencedIdPrimary()
   const base = `${root()}/${pack.chatStickerPackId}/${row.chatStickerId}`
-  const location = `${base}/sticker.${TYPES[type]}`
+  const upload = `${base}/upload`
   const thumbLocation = `${base}/thumb.png`
-  file.write(location)
-  const thumb = ec.resource.makeThumbnail(location, thumbLocation, 128)
-  if (!thumb) {
-    removeFiles({ contentLocation: location })
-    return refuse('badType', localize('That file is not a picture this server can read'))
+  file.write(upload)
+  // its type from its bytes and its sides from its header, before it is decoded (a decompression bomb is refused unread)
+  const checked = ec.resource.makeStickerThumbnail(upload, thumbLocation, lim.maxSide, 128) || {}
+  if (checked.reasonCode || !TYPES[checked.contentType]) {
+    removeFiles({ contentLocation: upload, thumbLocation })
+    if (checked.reasonCode === 'tooLarge') return refuse('tooLarge', expand('A sticker is at most ${side} px a side', { side: lim.maxSide }))
+    return refuse('badType', localize('A sticker is a PNG, WebP or GIF picture'))
   }
+  const type = checked.contentType
+  const location = `${base}/sticker.${TYPES[type]}`
+  ec.resource.getLocationReference(upload).move(location)
+  const thumb = { width: checked.thumbWidth, height: checked.thumbHeight }
   const digest = ec.resource.digest(location, 'sha256')
   if (digest && find(STICKER).condition({ chatStickerPackId: pack.chatStickerPackId, digest }).count()) {
     removeFiles({ contentLocation: location, thumbLocation })
@@ -198,7 +200,8 @@ function addSticker(p) {
   }
   row.setFields({ chatStickerPackId: pack.chatStickerPackId, sequenceNum: find(STICKER).condition('chatStickerPackId', pack.chatStickerPackId).count() + 1,
     emoji: emoji || null, altText: altText || null, contentLocation: location, thumbLocation, contentType: type, fileSize: size,
-    width: Number(thumb.width), height: Number(thumb.height), digest: digest || null, createdDate: ec.user.nowTimestamp }, true, null, null)
+    width: Number(thumb.width), height: Number(thumb.height), digest: digest || null, createdByUserId: ec.user.userId,
+    createdDate: ec.user.nowTimestamp }, true, null, null)
   row.create()
   return { chatStickerId: row.chatStickerId, sticker: stickerOut(row) }
 }

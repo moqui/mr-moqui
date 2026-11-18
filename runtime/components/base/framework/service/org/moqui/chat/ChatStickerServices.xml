@@ -69,8 +69,10 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="add" noun="Sticker">
-        <description>A picture into a pack the caller keeps: a PNG, WebP or GIF (by its type, else its name), animated ones too,
-            at most chat_sticker_max_bytes (512 KB), that this server decodes (its still 128 px thumbnail is made from it);
+        <description>A picture into a pack the caller keeps: a PNG, WebP or GIF by its bytes (whatever its name or type says;
+            it is stored with its real type and extension), animated ones too, at most chat_sticker_max_bytes (512 KB) and
+            chat_sticker_max_side (512 px a side, read from its header before it is decoded), decoded within a small memory
+            limit (its still 128 px thumbnail is made from it); at most chat_sticker_uploads_per_hour (60) of a user an hour;
             the same picture once a pack; at most chat_sticker_pack_max (200) stickers a server pack and
             chat_sticker_user_pack_max (100) a user's. emoji (one, up to 16 characters) and altText (up to 80). Refused:
             noFile, badType, tooLarge, tooMany, duplicate. Out: chatStickerId, sticker.</description>

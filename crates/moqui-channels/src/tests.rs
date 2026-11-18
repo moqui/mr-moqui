@@ -982,15 +982,25 @@ fn mms_comes_in_and_goes_out_within_the_limits() {
     assert!(moqui_core::service::chat_bridge::media(bed.ctx.factory(), BRIDGE, token, now() + 2 * 3_600_000).is_none());
     assert_eq!(bed.delivery(&room, seq).0, "CdsAccepted");
 
-    // over the bridge's limits (3 files, 2000 bytes in all): refused before the provider, for good
+    // over the bridge's limits (3 files, 2000 bytes in all): the files refused before the provider, the words sent
+    // alone in their place (plans/Comms-Messaging.md §18.3 phase 20)
     let many: Vec<String> = (0..4).map(|i| bed.upload(&room, &format!("f{i}.png"), 10)).collect();
     let too_many = bed.send(&room, "Many", &many);
     let large = bed.upload(&room, "big.png", 2500);
     let too_large = bed.send(&room, "Big", &[large]);
     bed.round(0);
-    assert_eq!(bed.fake.sends().len(), 1);
-    assert_eq!(bed.delivery(&room, too_many).1, "tooManyFiles");
-    assert_eq!(bed.delivery(&room, too_large).1, "mediaTooLarge");
+    let sends = bed.fake.sends();
+    assert_eq!(sends.len(), 3);
+    assert!(
+        sends[1..].iter().all(|seen| !seen.body.contains("media")),
+        "the words alone"
+    );
+    assert_eq!(bed.delivery(&room, too_many).0, "CdsAccepted");
+    assert_eq!(bed.delivery(&room, too_large).0, "CdsAccepted");
+    // a message of files with no words stays refused
+    let silent = bed.send(&room, "", &[bed.upload(&room, "big2.png", 2500)]);
+    bed.round(0);
+    assert_eq!(bed.delivery(&room, silent).1, "mediaTooLarge");
 }
 
 #[test]
@@ -2369,6 +2379,7 @@ fn a_member_mappings_room_id_reads_as_its_pair_and_its_text_names_its_sender() {
         reaction_key: None,
         rich: None,
         location: None,
+        text_form: None,
         attempt: 1,
     };
     let shaped = member_request(&request, 1600, 10, 5_000_000);

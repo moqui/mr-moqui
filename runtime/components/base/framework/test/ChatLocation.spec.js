@@ -76,10 +76,17 @@ feature("a place with its coordinates or an address: its words and map link, its
         }
         const timeline = Array.from(as(B, CHAT + "get#Timeline", {chatRoomId: shared.team}).eventList || []).find((one) => one.eventSeq === here.eventSeq)
         const words = as(A, LOC + "words#Location", {location: {latitude: "45.5", longitude: "-122.6", label: "The shop"}})
-        return {here, hereText: row("moqui.chat.ChatEvent", {chatRoomId: shared.team, eventSeq: here.eventSeq}).bodyText,
+        // as phase 10's: a label alone, and coordinates out of range, keep the label with no link
+        const labelOnly = as(A, LOC + "words#Location", {location: {label: "The shop"}})
+        const outOfRange = as(A, LOC + "words#Location", {location: {latitude: 95, longitude: 10, label: "The shop"}})
+        return {labelOnly, outOfRange, here, hereText: row("moqui.chat.ChatEvent", {chatRoomId: shared.team, eventSeq: here.eventSeq}).bodyText,
             typedText: row("moqui.chat.ChatEvent", {chatRoomId: shared.team, eventSeq: typed.eventSeq}).bodyText, refused, timeline, words}
     },
-    then({here, hereText, typedText, refused, timeline, words}) {
+    then({labelOnly, outOfRange, here, hereText, typedText, refused, timeline, words}) {
+        labelOnly.text == "Location: The shop"
+        labelOnly.errors == ""
+        outOfRange.text == "Location: The shop"
+        outOfRange.location == null
         here.errors == ""
         hereText == "Location: Liberty Park, 600 E 900 S, Salt Lake City\nhttps://www.openstreetmap.org/?mlat=40.745210&mlon=-111.875000#map=17/40.745210/-111.875000"
         typedText == "Location: 10 Downing St, London\nhttps://www.openstreetmap.org/search?query=10%20Downing%20St%2C%20London"

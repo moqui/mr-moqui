@@ -1465,6 +1465,14 @@ const chatComposer = {
             // Enter while a voice note records sends nothing: the text waits for its own Send
             if (this.voice || this.voiceStarting) return;
             if (this.uploading) { moqui.notifyMessages([{ type: 'info', message: t('Wait for the files to finish uploading') }]); return; }
+            // a room that goes out by text: its files over a text's total limit are refused there, so they are not sent (phase 21)
+            const limit = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+            const total = this.files.reduce((sum, file) => sum + Number(file.fileSize || 0), 0);
+            if (limit > 0 && total > limit) {
+                moqui.notifyMessages([{ type: 'warning', message: fill(t('These files are over a text\'s limit of {size}: send fewer at a time'),
+                    { size: Math.round(limit / 104857.6) / 10 + ' MB' }) }]);
+                return;
+            }
             if (!this.canSend) return;
             const text = plainOf(this.body);
             const command = /^\/(task|request|event|poll)\b\s*([\s\S]*)$/.exec(text);
@@ -1626,11 +1634,13 @@ const chatComposer = {
         },
         upload(list, original) {
             if (this.room.offline) { moqui.notifyMessages([{ type: 'info', message: t('Files go up when you are back online') }]); return Promise.resolve(); }
+            // a room that goes out by text: the message's files share its total limit (phase 21)
+            const limit = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+            const most = moqui.chat.photos ? moqui.chat.photos.budget(limit, this.files.length + list.length) : 0;
             return Promise.all(list.map((picked) => {
                 const entry = { key: 'f' + Date.now() + Math.random(), fileName: picked.name, contentType: picked.type, fileSize: picked.size, uploading: true, chatAttachmentId: null };
                 this.files.push(entry);
-                // a photo goes compressed unless Original was asked (phase 21): 2048 px, its metadata gone, under the room's texts' limit
-                const most = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+                // a photo goes drawn again unless Original was asked (phase 21): 2048 px, its metadata gone, within its share of the limit
                 const preparing = !original && moqui.chat.photos && moqui.chat.photos.compressible(picked)
                     ? moqui.chat.photos.compress(picked, { maxBytes: most }) : Promise.resolve(picked);
                 let file = picked;
@@ -5670,6 +5680,8 @@ module.exports = {
             return this.get('chatData').then((json) => {
                 this.me = json.me || {};
                 this.prefs = json.prefs || {};
+                // the whole app's screen security, as the account has it now (phase 21)
+                if (moqui.chat && moqui.chat.screen) moqui.chat.screen.applyApp(this.prefs.screenSecurity || 'off');
                 this.rooms = json.roomList || [];
                 this.filteredCount = Number(json.filteredCount || 0);
                 if (this.filter === 'spam') this.loadSpam();

@@ -44,7 +44,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="words" noun="Location" allow-remote="false">
         <description>Internal: the words of a place as a location message has them (for an inbound RCS location, Sms.js),
-            and the place checked. Out: text, location; or reasonCode badLocation and an error.</description>
+            and the place checked. A place that is not one (coordinates out of range, a label alone) keeps its words with
+            no link ("Location: label") and location null, with no error. Out: text, location.</description>
         <in-parameters><parameter name="location" type="Map" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="text"/>

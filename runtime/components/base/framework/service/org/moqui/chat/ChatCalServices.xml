@@ -156,6 +156,18 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('ics', context))</script></actions>
     </service>
 
+    <service verb="mark" noun="CalendarSync" allow-remote="false">
+        <description>Internal: the result of the chat-calendar providers' change or cancel of an event: failed keeps it to be
+            tried again (calendarSyncPending, calendarSyncTries, calendarSyncNextDate a minute on, doubled each try to a day;
+            the tenth failure is logged and given up), at the event's next answer or change; else it is cleared.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="failed" type="Boolean" default="false"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('markSync', context))</script></actions>
+    </service>
+
     <service verb="forget" noun="CalEvent" allow-remote="false">
         <description>Internal: an event's message is gone (a redaction, retention, an expiry): the answers' pending reminders
             cancelled, the chat-calendar providers' cancel when one put an entry, and its rows removed, each part on its own.

@@ -189,6 +189,47 @@ function calendarCall(chatRoomId, eventSeq, action) {
   return out
 }
 
+/**
+ * A change or cancel the providers failed is kept to be tried again (calendarSyncPending, its tries and when next), at the
+ * next answer or change of the event, after a wait that doubles from a minute to a day; the tenth failure is the last.
+ */
+const SYNC_TRIES = 10
+function markSync(chatRoomId, eventSeq, failed) {
+  committed(() => {
+    const cal = ec.entity.find(CAL).condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
+    if (!cal) return true
+    if (!failed) {
+      if (cal.calendarSyncPending) { cal.set('calendarSyncPending', null); cal.set('calendarSyncTries', null); cal.set('calendarSyncNextDate', null); cal.update() }
+      return true
+    }
+    const tries = Number(cal.calendarSyncTries || 0) + 1
+    if (tries >= SYNC_TRIES) {
+      ec.logger.error(`The calendars of event ${eventSeq} of room ${chatRoomId} were not brought up to date after ${tries} tries: given up`)
+      cal.set('calendarSyncPending', null)
+    } else {
+      cal.set('calendarSyncPending', 'Y')
+      cal.set('calendarSyncNextDate', new Date(now() + Math.min(DAY, MINUTE * Math.pow(2, tries - 1))))
+    }
+    cal.set('calendarSyncTries', tries)
+    cal.update()
+    return true
+  })
+}
+/** The providers' change or cancel of an event, its failure kept to be tried again. */
+function syncCalendars(chatRoomId, eventSeq, action) {
+  const called = calendarCall(chatRoomId, eventSeq, action)
+  if (called.failed) ec.logger.error(`The chat-calendar ${action} of event ${eventSeq} of room ${chatRoomId} failed: it is tried again later`)
+  // no provider: nothing to bring up to date, and nothing kept
+  markSync(chatRoomId, eventSeq, called.failed && !called.none)
+  return called
+}
+/** A failed change or cancel tried again once its wait is over (at an answer or a change of the event). */
+function retrySync(chatRoomId, eventSeq) {
+  const cal = find(CAL).condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
+  if (!cal || cal.calendarSyncPending !== 'Y' || millis(cal.calendarSyncNextDate) > now()) return
+  syncCalendars(chatRoomId, eventSeq, cal.cancelledDate ? 'cancel' : 'change')
+}
+
 /** Cancel the pending reminders these answers made; each on its own. */
 function cancelReminders(answers) {
   for (const row of answers) {
@@ -211,9 +252,10 @@ function cancelReminders(answers) {
  */
 function create(p) {
   const out = { eventSeq: null, event: null, duplicate: false, reasonCode: null }
-  if (encryptedRoom(p.chatRoomId)) return Object.assign(out, refuse('encryptedRoom', localize('An encrypted room has no events: the server keeps the answers and makes the event\'s text')))
+  // its access first, so a room the caller cannot see tells nothing of itself
   const room = postable(p.chatRoomId)
   if (room.error) return Object.assign(out, { reasonCode: room.reasonCode })
+  if (encryptedRoom(p.chatRoomId)) return Object.assign(out, refuse('encryptedRoom', localize('An encrypted room has no events: the server keeps the answers and makes the event\'s text')))
   const check = checked(p, null)
   if (!check.fields) return Object.assign(out, check)
   const fields = check.fields
@@ -250,9 +292,13 @@ function states(p) {
   }
   const me = ec.user.userId
   const at = now()
+  // the answers of the room's members now: one who left is in no count and no list (the row stays)
+  const members = new Set(Array.from(find('moqui.chat.ChatRoomMember').condition('chatRoomId', p.chatRoomId).condition('leftDate', null)
+    .selectField('userId').list()).map((member) => member.userId).filter((userId) => userId))
   for (const row of rows) {
     const seq = Number(row.eventSeq)
-    const given = answers[seq] || []
+    const given = (answers[seq] || []).filter((answer) => !answer.userId || members.has(answer.userId))
+    const count = (code) => given.filter((answer) => answer.answerEnumId === code).length
     const byAnswer = { going: [], maybe: [], no: [] }
     for (const answer of given) if (CODES[answer.answerEnumId] && answer.userId) byAnswer[CODES[answer.answerEnumId]].push(answer.userId)
     const end = millis(row.endDate)
@@ -260,7 +306,7 @@ function states(p) {
       place: row.place ?? null, description: row.description ?? null, revision: Number(row.revision || 0), cancelled: !!row.cancelledDate,
       cancelledDate: millis(row.cancelledDate), ended: end != null && end <= at, createdByUserId: row.createdByUserId ?? null,
       lastChangeEventSeq: row.lastChangeEventSeq != null ? Number(row.lastChangeEventSeq) : null,
-      going: Number(row.goingCount || 0), maybe: Number(row.maybeCount || 0), no: Number(row.noCount || 0), answers: byAnswer,
+      going: count('CcaGoing'), maybe: count('CcaMaybe'), no: count('CcaNo'), answers: byAnswer,
       uid: uidOf(p.chatRoomId, seq) }
     if (!p.shared) {
       const mine = given.find((answer) => answer.userId === me)
@@ -288,6 +334,7 @@ function answer(p) {
   const out = { calEvent: null, eventUrl: null, reminderSkipped: false, reminderFailed: false, calendarFailed: false, reasonCode: null }
   const done = committed(() => recordAnswer(p, out))
   if (!done) return out
+  retrySync(p.chatRoomId, Number(p.eventSeq))
   // the calendar: the current user's entry put, changed or removed by the providers, once the answer is committed
   if (done.wantsEntry || (done.hadEntry && (!done.after || done.after === 'CcaNo'))) {
     const called = calendarCall(p.chatRoomId, Number(p.eventSeq), 'answer')
@@ -422,9 +469,9 @@ function update(p) {
   const done = committed(() => recordUpdate(p, out))
   if (!done) return out
   if (done.changed) {
-    calendarCall(p.chatRoomId, Number(p.eventSeq), 'change')
+    syncCalendars(p.chatRoomId, Number(p.eventSeq), 'change')
     pushState(p.chatRoomId, Number(p.eventSeq))
-  }
+  } else retrySync(p.chatRoomId, Number(p.eventSeq))
   out.calEvent = myState(p.chatRoomId, Number(p.eventSeq))
   return out
 }
@@ -489,7 +536,7 @@ function cancel(p) {
   const done = committed(() => recordCancel(p, out))
   if (!done) return out
   if (done.changed) {
-    calendarCall(p.chatRoomId, Number(p.eventSeq), 'cancel')
+    syncCalendars(p.chatRoomId, Number(p.eventSeq), 'cancel')
     pushState(p.chatRoomId, Number(p.eventSeq))
   }
   out.calEvent = myState(p.chatRoomId, Number(p.eventSeq))
@@ -558,7 +605,8 @@ function forget(p) {
   return { forgotten: true }
 }
 
-const operations = { create, states, answer, update, cancel, ics, forget, whenText: (p) => ({ text: whenText(p) }) }
+const operations = { create, states, answer, update, cancel, ics, forget, whenText: (p) => ({ text: whenText(p) }),
+  markSync: (p) => { markSync(p.chatRoomId, Number(p.eventSeq), p.failed === true || p.failed === 'true'); return {} } }
 
 function execute(op, parameters) {
   if (!operations[op]) throw new Error('Unknown chat event operation ' + op)

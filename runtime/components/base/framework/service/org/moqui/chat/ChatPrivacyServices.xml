@@ -23,18 +23,20 @@ along with this software (see the LICENSE.md file). If not, see
             allowed, or after a "G-" style prefix) within 40 characters of a keyword (chat_otp_keywords, comma separated,
             else English: code, verification, OTP, passcode, PIN, login, 2FA and the like), not part of a phone number, a
             price or amount, a date or time, a year or a link; two candidates as near are none. strong: it is the text's only
-            candidate.</description>
+            candidate; deletable: strong, and within 20 characters of a core word (code, OTP, verification, passcode,
+            security code, one-time), which alone may delete its message after a day.</description>
         <in-parameters><parameter name="text"/></in-parameters>
         <out-parameters>
             <parameter name="code"/>
             <parameter name="strong" type="Boolean"/>
+            <parameter name="deletable" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatOtp.js').execute('detect', context))</script></actions>
     </service>
 
     <service verb="mark" noun="OneTimeCode" allow-remote="false">
         <description>Internal (Sms.js, after an incoming text was taken in): the message's code kept as content.otp {code};
-            a strong code's message disappears a day after it was sent (expireDate) when every local member of the room has
+            a deletable code's message (detect#OneTimeCode) disappears a day after it was sent (expireDate) when every local member of the room has
             CHAT_OTP_DELETE Y. Nothing for a message that is no outside text or has no code. The update is pushed. Out: code,
             expireDate.</description>
         <in-parameters>

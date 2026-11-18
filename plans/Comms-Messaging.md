@@ -4256,6 +4256,17 @@ terminal; GroupMe's native events; floating times with no zone.
 - Regression: framework `ChatCal` (6 features), webroot `WebrootChat` (one feature); the bundled screens golden
   regenerated. Left: §18.4's row, and Android's `calendar_insert` (`CalendarIntent.kt`) is checked on a phone only.
 
+**Review fixes (2026-11-18).**
+- *A failed provider change or cancel is tried again*: `ChatCalEvent.calendarSyncPending`, `calendarSyncTries` and
+  `calendarSyncNextDate` (a minute, doubled each try to a day; given up and logged after ten), retried at the event's next
+  answer or change (`mark#CalendarSync`). Each failure is logged.
+- *mr-boss's provider* (`cbbf1e72` on `d2e-chat-calendar`) locks the chat event's own row (else its room's) before it
+  looks for or makes the Mantle event, so two answers at once make one; a change and a cancel touch every event of the
+  UID; it checks that the caller reads the chat room first. The Mantle event is shared: an edit in Commons is overwritten
+  by the next change of the chat event.
+- `create#CalEvent` checks the room's access before it refuses an encrypted room. The answers of one who left the room
+  are in no count and no list (their rows stay).
+
 #### Phase 20: sticker packs and location messages
 
 Designed 2026-11-17 (D2f; §14.3, §17 #7, as decided in the batch: packs local with no outside service, GIF search
@@ -4283,10 +4294,11 @@ sticker is a message that shows large.
 
 - Storage: `${chat_sticker_root || 'dbresource://chat-stickers'}/<packId>/<stickerId>/<n>.<ext>`, through
   `ec.resource`.
-- The type is read from the bytes, never from the name or the browser: PNG, GIF or WebP magic, and the picture must
-  decode (`makeThumbnail` answers its width and height, or null).
-- Limits (properties): `chat_sticker_max_bytes` 512 KB; 512 × 512 px at most and 64 px at least a side; 200
-  stickers a pack; 50 server packs; 10 packs and 100 stickers a pack for a user.
+- The type is the decoder's guess from the bytes, never the name or the browser's: PNG, GIF or WebP only, stored with
+  that type and extension. The sides are read from the header before any decode, then it is decoded within a small
+  memory limit (`ec.resource.makeStickerThumbnail`, which answers its sides and makes its thumbnail).
+- Limits (properties): `chat_sticker_max_bytes` 512 KB; `chat_sticker_max_side` 512 px a side; 200 stickers a pack; 50
+  server packs; 10 packs and 100 stickers a pack for a user; `chat_sticker_uploads_per_hour` 60 a user.
 
 **Services** (new `org.moqui.chat.ChatStickerServices`, logic in `ChatSticker.js`)
 
@@ -4471,13 +4483,24 @@ location attachment outbound (its text goes).
   (as the postback is), in place of a hook in `ingest#Event`.
 - *A sticker's words are its body* ("Sticker 👍"), so the room list, search and the push show them with no hook in
   `snippetOf` or `chat_push.rs`. `chat_bridge.rs` `request_of` leaves the text out when the sticker's picture goes.
-- *A sticker's checks* are its type (PNG, WebP or GIF), its bytes (512 KB) and that it decodes; there is no rule on its
-  sides. `width` and `height` are its 128 px thumbnail's, its shape for the layout.
+- *A sticker's* `width` and `height` are its 128 px thumbnail's, its shape for the layout (its checks: the review fixes
+  below).
 - *Android*: `geo:` is one of the links `openExternal` hands to the system.
 - *The test kit*: `uploadedFile(name, text, type, binary)` takes a binary file, each character a byte, for the specs'
   pictures ([JS-Testkit](../docs/dev/JS-Testkit.md)).
 - Regression: framework `ChatSticker` (3 features) and `ChatLocation` (1), moqui-channels (a Sinch location message
   and Twilio's words; the inbound place a location message), webroot `WebrootChat` (two features). Left: §18.4's row.
+
+**Review fixes (2026-11-18).**
+- *A sticker's picture is checked before it is decoded* (`ec.resource.makeStickerThumbnail`, `files.rs`): its type from
+  its bytes (PNG, GIF or WebP only; a JPEG or BMP named `.png` is refused; it is stored with its real type and
+  extension), its sides from its header (none over `chat_sticker_max_side`, 512 px), then a decode within 16 MiB; a tiny
+  PNG claiming 100,000 px a side is refused unread. At most `chat_sticker_uploads_per_hour` (60) stickers a user an hour.
+- *A refused file goes as words*: when an adapter refuses a message's files (`mediaTooLarge`, `tooManyFiles`,
+  `mmsNotSetUp`, `filesUnsupported`, `noFiles`), the round sends its words alone (`DeliveryRequest.text_form`; a
+  sticker's "Sticker 👍"); one with no words stays refused.
+- *An inbound place keeps phase 10's words*: a label alone, and coordinates out of range, read "Location: label" with no
+  link. The receive's own messages are set aside and given back around its place and code steps, never cleared.
 
 #### Phase 21: screen security, one-time codes, send original
 
@@ -4683,6 +4706,19 @@ entity: a code is in the message's content, and its deletion is phase 16's `expi
   (an inbound text's code kept), webroot `WebrootChat` (two features) and `WebrootServiceWorker` (one). The Kotlin
   (`ChatNotifications.kt`, `ChatActionReceiver.kt`, `ScreenSecurity.kt`) is not built here: it is checked with the next
   APK on a phone (§18.4). Left: §18.4's row.
+
+**Review fixes (2026-11-18).**
+- *Metadata never goes on the compressed path*: every still photo is drawn again, a JPEG or WebP as a JPEG also when that
+  is no smaller, a PNG as a PNG (its eXIf and text chunks gone). The message's files share a text's total limit (each
+  photo fitted under its share), and a message still over it is not sent and says so.
+- *The whole app's screen security applies at once both ways*: the `CHAT_SCREEN_SECURITY` preference applier
+  (`WebrootVue.qvt.js`) and Chat's opening hold or drop `app:<account>`; `ScreenSecurity.kt` forgets a reason turned off.
+  Several accounts on a phone: any one set to everywhere keeps it on; turning it off there takes only its own away.
+- *A code deletes itself only by a core word*: the text's only candidate within 20 characters of code, OTP, verification,
+  passcode, security code or one-time; "confirm", "login" and "PIN" find a code for Copy but never delete it
+  (`detect#OneTimeCode` `deletable`).
+- *A code goes only where the snippet goes*: none with previews off, in an encrypted room or for a disappearing message.
+- The flaky `a_ring_to_a_keyed_device_is_sealed` checks only the clear-text fields.
 
 #### Phase 22: unified contacts and the network per message (D4, §11, §17 #1)
 

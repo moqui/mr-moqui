@@ -362,7 +362,9 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   tap sends the sticker, which shows large with no bubble. Your own packs are in Settings, Stickers (a pack, its
   pictures with an emoji and a description each, Hide and Delete); the server's packs, offered to everyone, are in
   System, Chat Stickers for a holder of `ChatStickerAdmin` (ADMIN has it). A sticker is a PNG, WebP or GIF picture,
-  animated ones too, of at most 512 KB (`chat_sticker_max_bytes`), checked by decoding it. A sent sticker is a copy in
+  animated ones too, of at most 512 KB (`chat_sticker_max_bytes`) and 512 px a side: its type is read from its bytes,
+  whatever its name says, and its sides from its header before it is decoded (a file claiming huge sides is refused
+  unread); at most 60 stickers a person an hour (`chat_sticker_uploads_per_hour`). A sent sticker is a copy in
   its room, so deleting a pack removes no sticker already sent, and a pack of yours is seen by no one else; in an
   encrypted room your device seals the picture as it seals any file (its size may still tell the server which known
   sticker it is). Texts and other networks get the picture (MMS), or "Sticker 👍" where no picture can go. GIF search
@@ -375,22 +377,29 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   (the phone's maps app in the Android app, OpenStreetMap elsewhere) and Copy. Everyone else gets "Location: …" and an
   OpenStreetMap link; Sinch RCS its location message. A location someone shares with you over RCS shows the same way.
   In an encrypted room the place is only in the ciphertext. Live location waits for the Maps app.
-- **Photos: compressed or original** (phase 21). A photo you attach (JPEG, PNG or WebP) now goes compressed: at most
-  2048 px on its long side as a JPEG, its metadata (its GPS location among it) removed. **This changes how Chat worked
-  before, when every photo went at full size.** The file's chip in the composer has Original, which sends that photo as
-  it is, details and location included. A PNG is made smaller only when it is larger than 2048 px, so a screenshot
-  keeps its sharp text; a GIF, a video, and a photo the browser cannot read (HEIC on most) go as they are. In a room that
-  goes out by text, the photo is fitted under the text's file limit (Telnyx 1 MiB, Twilio 5 MB, Sinch 1 MiB, or the
-  bridge's `maxMediaBytes`), and Original is offered only when the original fits.
+- **Photos: compressed or original** (phase 21). A photo you attach (JPEG, PNG or WebP) is now drawn again in your
+  browser before it goes: a JPEG or WebP becomes a JPEG of at most 2048 px on its long side, also when that is no
+  smaller, and a PNG stays a PNG (made smaller only past 2048 px, so a screenshot keeps its sharp text); either way its
+  metadata (EXIF, a PNG's text chunks, the GPS location among them) is gone. **This changes how Chat worked before, when
+  every photo went at full size.** The file's chip in the composer has Original, which sends that photo as it is,
+  details and location included. A GIF, a video, and a photo the browser cannot read (HEIC on most) go as they are. In a
+  room that goes out by text, the message's files share the text's total limit (Telnyx 1 MiB, Twilio 5 MB, Sinch 1 MiB,
+  or the bridge's `maxMediaBytes`): each photo is fitted under its share, Original is offered only when the original
+  fits, and a message whose files are still over the limit is not sent and says to send fewer at a time.
 - **One-time codes** (phase 21; `org.moqui.chat.ChatPrivacyServices`). A code in a text that came in (SMS, MMS, RCS)
   shows a "Code 482913" chip with Copy. Its notification has Copy too: on the web where the browser shows notification
   actions (it opens the message and copies the code there, or lights Copy for one tap where the browser asks for one),
   and in the Android app (its next APK) a Copy code button that puts it on the clipboard marked sensitive, with the lock
-  screen saying only "A code from …". The code goes in a notification only where the message's words may (message
-  previews on, a plain room). Settings, Chat, Privacy can delete a text's code a day after it came, when everyone in its
-  room asks the same; the chip then says when, with Keep. Codes in chat between people are never looked for.
+  screen saying only "A code from …". The code goes in a notification only where the message's words do: message
+  previews on, a plain room, and a message that does not disappear. Settings, Chat, Privacy can delete a text's code a
+  day after it came, when everyone in its room asks the same, and only for a code that is the text's only one and within
+  about 20 characters of "code", "OTP", "verification", "passcode" or "security code" ("confirm", "login" and "PIN"
+  find a code for Copy but never delete it); the chip then says when, with Keep. Codes in chat between people are never
+  looked for.
 - **Screen security** (phase 21). Settings, Chat, Privacy: Off, Block screenshots in encrypted rooms, or everywhere in the
-  app; an encrypted room's menu also has Block screenshots here, your own choice for that room. It is Android's
+  app (applied at once, on and off); an encrypted room's menu also has Block screenshots here, your own choice for that
+  room. With several accounts on one phone, any account set to everywhere keeps it on, and turning it off in that
+  account takes away only its own. It is Android's
   `FLAG_SECURE`: no screenshot, no screen recording and a blank recent-apps thumbnail while it holds. Only the Android app
   can do this; the web and the desktop app cannot stop a screenshot, and no app can stop a camera.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
@@ -570,7 +579,7 @@ records drive's folders by their records.
 | `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); one no refuses it, and without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out)). Also answerable from a component's conf (below): Mantle registers its consent records' answer there, so a campaign's text, sent with no user, is asked too |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 | `call-target` | Which users the current user may not call, transfer a call to or add to one (`userIdList`; answers `refusedUserIdList`): a refused user is answered as one that does not exist, a desk phone's REFER to one gets 403; with no provider any enabled user may be reached, and one that fails refuses (IronStone: the users of the parties the user may see, under the organization filter of `recipient-source`; a user with no party is in no organization and may be reached; the example gallery refuses users named `*.offlimits`) |
-| `chat-calendar` | A chat event's entry on the current user's calendar (`ProviderInterfaces.chat#CalendarEntry`: `chatRoomId`, `eventSeq`, `action` answer, change or cancel; answers `eventUrl`). Called by `ChatCalServices` after its writes are committed, each provider in a transaction of its own; one that fails is logged and the answer stands. It is given ids only and reads `ChatCalEvent` and the user's `ChatCalAnswer` itself. Without a provider Add to calendar is the `.ics` file (IronStone: one Mantle event per chat event, its `universalId` the chat event's UID) |
+| `chat-calendar` | A chat event's entry on the current user's calendar (`ProviderInterfaces.chat#CalendarEntry`: `chatRoomId`, `eventSeq`, `action` answer, change or cancel; answers `eventUrl`). Called by `ChatCalServices` after its writes are committed, each provider in a transaction of its own; one that fails is logged and the answer stands. It is given ids only and reads `ChatCalEvent` and the user's `ChatCalAnswer` itself. Without a provider Add to calendar is the `.ics` file (IronStone: one Mantle event per chat event, its `universalId` the chat event's UID, changed only by one who can read the chat room; it is shared, so an edit of it in Commons, Calendar is overwritten by the next change of the chat event). A change or cancel a provider failed is kept (`ChatCalEvent.calendarSyncPending`) and tried again at the event's next answer or change, after a wait that doubles from a minute to a day, ten times at most |
 | `chat-target` | Which users the current user may not find in the people search (`CommsServices.search#Users`), start a direct room with, add to a room or mention in a public room they are not in (`userIdList`; answers `refusedUserIdList`, the interface `chat#Target`, whose parameters are `call#Target`'s): a refused user is left out of the search and answered as one that does not exist; with no provider any enabled user may be reached, and one that fails refuses (`ChatServices.get#RefusedUsers`). The search leaves out every external user (`EXTERNAL_USER`), and an external user reaches only the people of their own rooms. The example gallery refuses users named `*.offlimits`; one service may answer both hooks |
 
 A provider runs with the app's authorization and entity filters; a read that fails is left out and named, and a mutation that fails is an error.

@@ -730,8 +730,9 @@ impl Content {
             "tag": room_tag(&self.room_id),
             "topic": "ChatMessage",
         });
-        // a one-time code for the notification's Copy (phase 21), where the push may carry the message's words
-        if let Some(code) = self.otp.as_ref().filter(|_| preview) {
+        // a one-time code for the notification's Copy (phase 21), only where the push carries the message's words: none
+        // with previews off, in an encrypted room or for a disappearing message (its snippet is none there too)
+        if let Some(code) = self.otp.as_ref().filter(|_| preview && self.snippet.is_some()) {
             payload["otp"] = json!({"code": code});
         }
         payload["title"] = title_of(&payload).into();

@@ -233,8 +233,43 @@ pub struct DeliveryRequest {
     /// plans/Comms-Messaging.md §18.3 phase 20), for an adapter that sends one (Sinch RCS); `text` is its words with the
     /// map link, which every other adapter sends. Only with both coordinates.
     pub location: Option<serde_json::Value>,
+    /// The message's words when its files cannot go (a sticker's "Sticker 👍"; a message's own text): sent alone in
+    /// their place when the adapter refuses the files ([`FILE_REFUSALS`]), plans/Comms-Messaging.md §18.3 phase 20.
+    pub text_form: Option<String>,
     /// This attempt's number, from 1.
     pub attempt: i64,
+}
+
+/// The reason codes of an adapter that refuses a message's files, not its words (too large, too many, none taken): the
+/// message then goes as its [`DeliveryRequest::text_form`] alone, when it has one.
+pub const FILE_REFUSALS: [&str; 5] = [
+    "mediaTooLarge",
+    "tooManyFiles",
+    "mmsNotSetUp",
+    "filesUnsupported",
+    "noFiles",
+];
+
+/// The same request with its words in place of its files, when the adapter refused the files and the message has words.
+pub fn words_instead(request: &DeliveryRequest, outcome: &DeliveryOutcome) -> Option<DeliveryRequest> {
+    let DeliveryOutcome::Failed { reason_code, .. } = outcome else {
+        return None;
+    };
+    let words = request
+        .text_form
+        .as_deref()
+        .map(str::trim)
+        .filter(|words| !words.is_empty())?;
+    if request.attachments.is_empty() || !FILE_REFUSALS.contains(&reason_code.as_str()) {
+        return None;
+    }
+    Some(DeliveryRequest {
+        text: Some(words.to_string()),
+        html: None,
+        attachments: Vec::new(),
+        rich: None,
+        ..request.clone()
+    })
 }
 
 /// The outcome of an attempt.
@@ -1425,6 +1460,26 @@ fn deliver_head(
         );
         return Ok(Step::Retry);
     };
+    // its files refused (too large for a text, too many, none taken): its words alone, when it has some (phase 20)
+    let outcome = match words_instead(&request, &outcome) {
+        Some(words) => {
+            tracing::info!(
+                "delivery {delivery_id}: the adapter {} refused its files ({outcome:?}); its words go alone",
+                adapter.name()
+            );
+            match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.deliver(info, &words))) {
+                Ok(again) => again,
+                Err(_) => {
+                    tracing::error!(
+                        "the chat bridge adapter {} failed on delivery {delivery_id}",
+                        adapter.name()
+                    );
+                    return Ok(Step::Retry);
+                }
+            }
+        }
+        None => outcome,
+    };
     let attempt = attempts + 1;
     let step = match outcome {
         DeliveryOutcome::Accepted { remote_event_id } => {
@@ -1624,6 +1679,12 @@ fn request_of(
     } else {
         (text_of(event, "bodyText"), html)
     };
+    // the words sent alone if its files are refused
+    let text_form = if attachments.is_empty() {
+        None
+    } else {
+        text_of(event, "bodyText")
+    };
     Ok(Ok(DeliveryRequest {
         chat_bridge_delivery_id: text_of(row, "chatBridgeDeliveryId").unwrap_or_default(),
         idempotency_key: text_of(row, "idempotencyKey").unwrap_or_default(),
@@ -1641,6 +1702,7 @@ fn request_of(
         reaction_key,
         rich,
         location,
+        text_form,
         attempt: 0,
     }))
 }

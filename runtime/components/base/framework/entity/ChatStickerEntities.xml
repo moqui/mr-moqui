@@ -44,8 +44,8 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="ChatSticker" package="moqui.chat" use="transactional" cache="never">
-        <description>A sticker of a pack: a PNG, WebP or GIF picture (animated ones too) at contentLocation, checked by
-            decoding it; thumbLocation is its still PNG of at most 128 px a side, and width and height that thumbnail's
+        <description>A sticker of a pack: a PNG, WebP or GIF picture (animated ones too) at contentLocation, its type read
+            from its bytes and its sides (at most 512 px) from its header before it is decoded; thumbLocation is its still PNG of at most 128 px a side, and width and height that thumbnail's
             (its shape). emoji is the one emoji it stands for (search, and its text form "Sticker 👍"); altText what a
             screen reader reads. digest (SHA-256) keeps the same picture once a pack.</description>
         <field name="chatStickerId" type="id" is-pk="true"/>
@@ -60,6 +60,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="width" type="number-integer"/>
         <field name="height" type="number-integer"/>
         <field name="digest" type="text-medium"/>
+        <field name="createdByUserId" type="id"><description>Who added it: a user adds at most chat_sticker_uploads_per_hour</description></field>
         <field name="createdDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatStickerPack" short-alias="pack"/>
         <index name="CHAT_STICKER_PACK"><index-field name="chatStickerPackId"/><index-field name="sequenceNum"/></index>

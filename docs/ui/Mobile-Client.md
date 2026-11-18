@@ -441,9 +441,12 @@ on for a reason, and off once no reason holds it: no screenshot, no screen recor
 Chat's view-once viewer holds `viewOnce` while it is open (plans/Comms-Messaging.md §18.3 phase 16); the reasons are a
 set, so a screen-security setting of the app or of a room can hold its own. Phase 21's are `room:<chatRoomId>`, held by
 Chat while an encrypted room is shown with Settings, Chat, Privacy on "in encrypted rooms" or the room's own Block
-screenshots here, and `app`, from "everywhere in the app" (WebrootChat.js applies it when the shell loads). `app` is
-remembered on the phone (`ScreenSecurity.kt`, its SharedPreferences), so from the next start the flag is on before the
-first frame, the splash and the account list included; turning the setting off in any account on the phone clears it.
+screenshots here, and `app:<account>` (the page's storage scope), from "everywhere in the app": WebrootChat.js applies it
+when the shell loads and Chat opens, and the `CHAT_SCREEN_SECURITY` preference applier on each change, on and off at
+once. Each account holds its own: any account set to everywhere keeps the flag on, and turning it off in that account
+takes away only that account's reason. The `app:` reasons are remembered on the phone (`ScreenSecurity.kt`, its
+SharedPreferences, one forgotten when it is turned off), so from the next start the flag is on before the first frame,
+the splash and the account list included.
 
 ### One-time codes
 

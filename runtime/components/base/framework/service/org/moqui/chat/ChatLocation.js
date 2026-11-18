@@ -79,11 +79,17 @@ function fallbackHtml(place) {
   return '<p>' + fallbackText(place).split('\n').map(escape).join('<br>') + '</p>'
 }
 
-/** words#Location: the words of a place (for Sms.js and the specs). Out: text, location (clean), or an error. */
+/**
+ * words#Location: the words of a place (for Sms.js and the specs). Out: text, location (clean). A place that is not one
+ * (coordinates out of range, a label alone) keeps its words with no link, as phase 10's did: "Location: label", and
+ * location null; no error.
+ */
 function wordsOf(p) {
   const checked = clean(p.location)
-  if (checked.error) return Object.assign(refuse('badLocation', checked.error), { text: null, location: null })
-  return { text: fallbackText(checked.location), location: checked.location }
+  if (!checked.error) return { text: fallbackText(checked.location), location: checked.location }
+  const it = p.location && typeof p.location === 'object' ? p.location : {}
+  const name = [words(it.label).slice(0, LIMITS.labelMax), words(it.address).slice(0, LIMITS.addressMax)].filter((word) => word).join(', ')
+  return { text: expand('Location: ${name}', { name: name || localize('a place') }), location: null }
 }
 
 /**

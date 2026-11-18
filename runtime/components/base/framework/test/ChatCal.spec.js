@@ -257,3 +257,36 @@ feature("deleting an event's message removes its rows and the reminders its answ
         delivered == 1
     }
 })
+
+feature("a failed calendar change is tried again with a growing wait, given up after ten; an answer of one who left counts no more", {
+    when() {
+        const made = as(A, CAL + "create#CalEvent", Object.assign({chatRoomId: shared.team}, event({title: "Retry"})))
+        const seq = made.eventSeq
+        const mark = (failed) => sys(() => ec.service.sync().name(CAL + "mark#CalendarSync").parameters({chatRoomId: shared.team, eventSeq: seq, failed}).call())
+        mark(true)
+        const first = row("moqui.chat.ChatCalEvent", {chatRoomId: shared.team, eventSeq: seq})
+        mark(true)
+        const second = row("moqui.chat.ChatCalEvent", {chatRoomId: shared.team, eventSeq: seq})
+        // its wait over, the next answer tries it again: with no provider here there is nothing to keep
+        clock += 10 * MINUTE
+        as(B, CAL + "answer#CalEvent", {chatRoomId: shared.team, eventSeq: seq, answer: "going"})
+        const retried = row("moqui.chat.ChatCalEvent", {chatRoomId: shared.team, eventSeq: seq})
+        for (let i = 0; i < 10; i++) mark(true)
+        const givenUp = row("moqui.chat.ChatCalEvent", {chatRoomId: shared.team, eventSeq: seq})
+        // B leaves: their answer is in no count and no list
+        as(B, CHAT + "remove#Member", {chatRoomId: shared.team})
+        return {first, second, retried, givenUp, left: sys(() => ec.service.sync().name(CAL + "get#CalEventStates").parameters({chatRoomId: shared.team,
+            eventSeqList: [seq]}).call()).calEventMap[seq]}
+    },
+    then({first, second, retried, givenUp, left}) {
+        first.calendarSyncPending == "Y"
+        Number(first.calendarSyncTries) == 1
+        Number(first.calendarSyncNextDate) == clock - 10 * MINUTE + MINUTE
+        Number(second.calendarSyncNextDate) == clock - 10 * MINUTE + 2 * MINUTE
+        retried.calendarSyncPending == null
+        givenUp.calendarSyncPending == null
+        Number(givenUp.calendarSyncTries) == 10
+        left.going == 0
+        left.answers.going.length == 0
+    }
+})

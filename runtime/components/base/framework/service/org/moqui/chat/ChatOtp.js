@@ -5,12 +5,17 @@
 // receive), never in chat between users: a 4 to 8 digit candidate near a keyword (chat_otp_keywords), with phone numbers,
 // prices, dates, times, years and links left out, and two candidates as near taken as none. The message keeps it as
 // content.otp {code}; its push carries it where the push carries the snippet (chat_push.rs), for a Copy button. When every
-// local member of the room asks for it (CHAT_OTP_DELETE) and the code is a strong one (the only candidate of the text), the
-// message gets phase 16's expireDate a day on, and goes from the server and every device then; Keep takes that back.
+// local member of the room asks for it (CHAT_OTP_DELETE) and the code may delete itself (the text's only candidate, within
+// 20 characters of a core word: code, OTP, verification, passcode, security code, one-time; "confirm", "login" and "pin"
+// find a code for Copy but never delete one), the message gets phase 16's expireDate a day on, and goes from the server
+// and every device then; Keep takes that back.
 
 const EVENT = 'moqui.chat.ChatEvent'
 const MEMBER = 'moqui.chat.ChatRoomMember'
 const DAY = 86400 * 1000
+// the words a code may delete itself by: only these, near it (CORE_NEAR characters), with one candidate in the text
+const CORE = ['code', 'codes', 'otp', 'verification', 'passcode', 'security code', 'one-time', 'one time']
+const CORE_NEAR = 20
 const KEYWORDS = ['code', 'codes', 'verification', 'verify', 'otp', 'passcode', 'one-time', 'one time', 'pin', 'security code', 'login', 'log in',
   'sign in', 'sign-in', '2fa', 'two-factor', 'authentication', 'authenticate', 'confirm', 'confirmation']
 
@@ -38,7 +43,7 @@ function detect(text) {
   for (const word of keywords()) {
     const pattern = new RegExp('(^|[^a-z0-9])' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[^a-z0-9])', 'g')
     let match
-    while ((match = pattern.exec(lower))) marks.push({ start: match.index + match[1].length, end: match.index + match[1].length + word.length })
+    while ((match = pattern.exec(lower))) marks.push({ word, start: match.index + match[1].length, end: match.index + match[1].length + word.length })
   }
   if (!marks.length) return null
   // the parts no code is in: links, phone numbers, prices and amounts, dates and times
@@ -68,17 +73,21 @@ function detect(text) {
     candidates.push({ code: digits, start, end })
   }
   if (!candidates.length) return null
-  const distance = (one) => Math.min(...marks.map((mark) => (one.end <= mark.start ? mark.start - one.end : one.start >= mark.end ? one.start - mark.end : 0)))
-  const near = candidates.map((one) => Object.assign(one, { distance: distance(one) })).filter((one) => one.distance <= 40).sort((a, b) => a.distance - b.distance)
+  const gap = (one, mark) => (one.end <= mark.start ? mark.start - one.end : one.start >= mark.end ? one.start - mark.end : 0)
+  const distance = (one, list) => Math.min(...list.map((mark) => gap(one, mark)))
+  const near = candidates.map((one) => Object.assign(one, { distance: distance(one, marks) })).filter((one) => one.distance <= 40).sort((a, b) => a.distance - b.distance)
   if (!near.length) return null
   if (near.length > 1 && near[1].distance === near[0].distance && near[1].code !== near[0].code) return null
-  return { code: near[0].code, strong: candidates.length === 1 }
+  // a code may delete itself only by a core word near it (not "confirm", "login" or "pin"), the text's only candidate
+  const core = marks.filter((mark) => CORE.includes(mark.word))
+  const deletable = candidates.length === 1 && core.length > 0 && distance(near[0], core) <= CORE_NEAR
+  return { code: near[0].code, strong: candidates.length === 1, deletable }
 }
 
 /** detect#OneTimeCode: the code of a text (for Sms.js and the spec). */
 function detectOp(p) {
   const found = detect(p.text)
-  return { code: found ? found.code : null, strong: found ? found.strong : false }
+  return { code: found ? found.code : null, strong: found ? found.strong : false, deletable: found ? found.deletable : false }
 }
 
 /**
@@ -95,7 +104,7 @@ function mark(p) {
   content.otp = { code: found.code }
   row.set('contentJson', JSON.stringify(content))
   let expireDate = null
-  if (found.strong && !row.expireDate) {
+  if (found.deletable && !row.expireDate) {
     const members = Array.from(find(MEMBER).condition('chatRoomId', p.chatRoomId).condition('leftDate', null).selectField('userId').list())
       .map((member) => member.userId).filter((userId) => userId)
     const wants = members.length > 0 && members.every((userId) => {

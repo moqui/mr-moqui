@@ -1058,6 +1058,36 @@ fn a_one_time_code_is_in_the_push_only_with_previews() {
     let posts = bed.net.take();
     let said = payload(posts.iter().find(|post| post.device == "BOB-PHONE").unwrap());
     assert!(said.get("otp").is_none(), "{said}");
+
+    // previews on again, and a code's message that disappears (its snippet is none): no code either
+    update(
+        &bed.facade,
+        "moqui.security.UserPreference",
+        &[("userId", "bob"), ("preferenceKey", "CHAT_NOTIFY_PREVIEW")],
+        &[("preferenceValue", text("Y"))],
+    );
+    login("alice");
+    let gone = send(&bed.room, "<p>Your code is 778899</p>", &[]);
+    {
+        let _authz = bed.ctx.disable_authz();
+        update(
+            &bed.facade,
+            "moqui.chat.ChatEvent",
+            &[("chatRoomId", &bed.room), ("eventSeq", &gone.to_string())],
+            &[
+                (
+                    "contentJson",
+                    text(r#"{"body":"<p>Your code is 778899</p>","otp":{"code":"778899"}}"#),
+                ),
+                ("expireDate", Value::I64(bed.now + 86_400_000)),
+            ],
+        );
+    }
+    run(bed.now + 2000);
+    let posts = bed.net.take();
+    let said = payload(posts.iter().find(|post| post.device == "BOB-PHONE").unwrap());
+    assert!(said["snippet"].is_null(), "{said}");
+    assert!(said.get("otp").is_none(), "no code where no snippet: {said}");
 }
 
 /// Rule 4: on do not disturb a call rings from a person on the user's allowed list, or as the same person's second
@@ -1525,7 +1555,10 @@ fn a_ring_to_a_keyed_device_is_sealed() {
         BTreeSet::from(["enc", "kind", "pushId"])
     );
     assert_eq!(data["kind"], "ring");
-    assert!(!body.to_string().contains("Ann"));
+    // the caller is in no clear-text field: every field but the ciphertext (a random base64 enc may spell "Ann")
+    let mut clear = body.clone();
+    clear["message"]["data"]["enc"] = serde_json::Value::Null;
+    assert!(!clear.to_string().contains("Ann"), "{clear}");
     let opened = decrypt(&push_crypto::decode_b64(data["enc"].as_str().unwrap()).unwrap());
     assert_eq!(opened["caller"], "Ann");
     assert_eq!(opened["callSessionId"], "CS1");

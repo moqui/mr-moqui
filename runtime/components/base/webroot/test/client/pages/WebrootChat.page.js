@@ -1832,15 +1832,56 @@ test("a photo goes smaller: 2048 px as a JPEG from 4000 x 3000, stepped under a 
     const limit = Math.floor(small.size / 2);
     const fitted = await photos.compress(photo, { maxBytes: limit });
     assert.ok(fitted.size <= limit || fitted.size < small.size, fitted.size + " under " + limit);
-    // a small PNG stays as it is (a screenshot keeps its sharp text)
+    // a small JPEG drawn again comes out no smaller, and is still the one sent: its metadata goes
     const tiny = document.createElement("canvas");
     tiny.width = 40; tiny.height = 30;
-    const png = new File([await new Promise((resolve) => tiny.toBlob(resolve, "image/png"))], "shot.png", { type: "image/png" });
-    assert.equal(await photos.compress(png, {}), png);
+    const jpeg = new File([await new Promise((resolve) => tiny.toBlob(resolve, "image/jpeg", 0.3))], "small.jpg", { type: "image/jpeg" });
+    const redrawn = await photos.compress(jpeg, {});
+    assert.notEqual(redrawn, jpeg, "drawn again, though no smaller");
+    assert.equal(redrawn.type, "image/jpeg");
+    // a small PNG with a text chunk (a GPS note) stays a PNG, drawn again without the chunk
+    const bytes = new Uint8Array(await (await new Promise((resolve) => tiny.toBlob(resolve, "image/png"))).arrayBuffer());
+    const crcTable = Array.from({ length: 256 }, (n, c) => { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+    const crc = (data) => { let c = 0xffffffff; for (const b of data) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+    const text = new TextEncoder().encode("tEXtGPS\u000040.7452,-111.875");
+    const chunk = new Uint8Array(12 + text.length - 4);
+    new DataView(chunk.buffer).setUint32(0, text.length - 4);
+    chunk.set(text, 4);
+    new DataView(chunk.buffer).setUint32(4 + text.length, crc(text));
+    const iend = bytes.length - 12;
+    const tagged = new Uint8Array(bytes.length + chunk.length);
+    tagged.set(bytes.subarray(0, iend), 0);
+    tagged.set(chunk, iend);
+    tagged.set(bytes.subarray(iend), iend + chunk.length);
+    const png = new File([tagged], "shot.png", { type: "image/png" });
+    const has = (array, word) => new TextDecoder("latin1").decode(array).includes(word);
+    assert.ok(has(tagged, "tEXtGPS"), "the test's PNG has its chunk");
+    const stripped = await photos.compress(png, {});
+    assert.equal(stripped.type, "image/png");
+    assert.ok(!has(new Uint8Array(await stripped.arrayBuffer()), "GPS"), "the chunk is gone");
+    assert.equal(photos.budget(1048576, 4), 262144);
+    assert.equal(photos.budget(0, 4), 0);
     assert.equal(photos.compressible(new File(["x"], "a.gif", { type: "image/gif" })), false);
     assert.equal(photos.compressible(new File(["x"], "a.mp4", { type: "video/mp4" })), false);
     // a file the browser cannot read goes as it is
     const broken = new File(["not a picture"], "x.jpg", { type: "image/jpeg" });
     assert.equal(await photos.compress(broken, {}), broken);
     assert.deepEqual(photos.steps(0).length, 1);
+});
+
+test("the whole app's screen security applies at once both ways, as this account's own reason", async () => {
+    const calls = [];
+    const was = { desktop: globalThis.moquiDesktop, scope: moqui.storageScope };
+    globalThis.moquiDesktop = { secureScreen: (reason, on) => { calls.push([reason, on]); return Promise.resolve(on); } };
+    moqui.storageScope = "acct-1";
+    try {
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "app");
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "encrypted");
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "");
+        await Promise.resolve();
+        assert.deepEqual(calls, [["app:acct-1", true], ["app:acct-1", false], ["app:acct-1", false]]);
+    } finally {
+        globalThis.moquiDesktop = was.desktop;
+        moqui.storageScope = was.scope;
+    }
 });
