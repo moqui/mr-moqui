@@ -146,6 +146,17 @@ along with this software (see the LICENSE.md file). If not, see
                 UserSecurityChecks.assertStoredTemplate(menuTitle, "SubscreensItem.menuTitle")
         </script></actions>
     </eeca>
+    <!-- a text block's ${name} placeholders are values put in as text where it is used (a queue's acknowledgement,
+        mantle.request.RequestServices.send#IntakeConfirmation), never a template run; any other ${} in its body is held as
+        one (plans/Security-Review.md SEC-BAP-81). Removing the placeholders first holds a ${ that removing one makes. -->
+    <eeca id="EmailTextBlockScript" entity="moqui.basic.email.EmailTextBlock"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>
+            if (eecaOperation != "update" || bodyHtml != originalValue?.bodyHtml)
+                UserSecurityChecks.assertStoredTemplate(String(bodyHtml ?? "").replace(/\$\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}/g, ""),
+                    "EmailTextBlock.bodyHtml")
+        </script></actions>
+    </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
         most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own
