@@ -30,3 +30,11 @@ test("only a whole answer marked public is kept", () => {
     assert.equal(kept(answer("public", 206)), false);
     assert.equal(keepable(answer("public")), false);
 });
+test("a text's one-time code adds a Copy action that opens its message to copy it; no code, no action", () => {
+    const shown = notificationOf({ kind: "message", senderName: "+15550100", snippet: "Your code is 482913", eventSeq: 7,
+        link: "/qapps/BasicComms/Chat?chatRoomId=R1", otp: { code: "482913" } });
+    assert.deepEqual(shown.options.actions, [{ action: "copy", title: "Copy 482913" }]);
+    assert.equal(shown.options.data.copyLink, "/qapps/BasicComms/Chat?chatRoomId=R1&eventSeq=7&copyCode=1");
+    assert.equal(notificationOf({ kind: "message", snippet: "Hi", link: "/qapps" }).options.actions, undefined);
+    assert.equal(notificationOf({ kind: "message", otp: { code: "<b>" } }).options.actions, undefined, "a code is digits only");
+});

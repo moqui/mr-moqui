@@ -523,6 +523,7 @@ impl ChatBridgeAdapter for GroupMeAdapter {
             // GroupMe has no end-to-end encryption at all, and the bridge reads every message
             encryption: Encryption::NoneByNetwork,
             group_max: 0,
+            media_max_bytes: 0,
         }
     }
 

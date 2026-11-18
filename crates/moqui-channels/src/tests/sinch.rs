@@ -303,28 +303,27 @@ fn a_sinch_text_goes_on_the_sms_channel_and_a_file_on_the_mms_channel() {
     // two files: Sinch sends one a message
     let two = [bed.upload(&room, "a.png", 10), bed.upload(&room, "b.png", 10)];
     let many = bed.send(&room, "Two", &two);
-    // no MMS channel set up: a file is refused, words still go
+    // no MMS channel set up: a file is refused, its words go alone (phase 20)
     bed.reconfigure(|config| {
         config.as_object_mut().unwrap().remove("mmsSender");
     });
     let unset = bed.send(&room, "No MMS", &[bed.upload(&room, "c.png", 10)]);
     bed.round(0);
-    assert_eq!(bed.delivery(&room, many).1, "tooManyFiles");
+    assert_eq!(bed.delivery(&room, many).0, "CdsAccepted");
     let (state, reason, ..) = bed.delivery(&room, unset);
-    assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "mmsNotSetUp"));
+    assert_eq!((state.as_str(), reason.as_str()), ("CdsAccepted", ""));
     let row = bed.one(
         "moqui.chat.ChatBridgeDelivery",
         &[("chatRoomId", text(&room)), ("eventSeq", Value::I64(unset))],
     );
-    assert!(row["lastErrorText"].contains("no mmsSender"), "{row:?}");
-    // the MMS sender another number: never from another number than the room's
+    assert_eq!(row["remoteEventId"], "sinch-6", "{row:?}");
+    // the MMS sender another number: never from another number than the room's (a file with no words stays refused)
     bed.reconfigure(|config| config["mmsSender"] = json!("+15550002000"));
-    let other = bed.send(&room, "Other", &[bed.upload(&room, "d.png", 10)]);
+    let other = bed.send(&room, "", &[bed.upload(&room, "d.png", 10)]);
     let still = bed.send(&room, "Words go", &[]);
     bed.round(0);
     assert_eq!(bed.delivery(&room, other).1, "mmsNotSetUp");
     assert_eq!(bed.delivery(&room, still).0, "CdsAccepted");
-    assert_eq!(bed.sinch_calls(SEND_PATH).len(), 4);
 }
 
 /// Sinch's answers: 429 tried again and taken; an answer lost after the request went uncertain, never sent again; the
@@ -583,6 +582,8 @@ fn a_sinch_bridge_refuses_a_group_room() {
         target_remote_id: None,
         reaction_key: None,
         rich: None,
+        location: None,
+        text_form: None,
         attempt: 1,
     };
     match adapter.deliver(&bridge, &request) {

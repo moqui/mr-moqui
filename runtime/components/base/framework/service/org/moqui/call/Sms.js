@@ -602,14 +602,41 @@ function noteOptSignal(p) {
   return { outcome: 'noted' }
 }
 
-/** A shared place as words: its label or address, and a map link built from its coordinates (never a link it came with). */
+/**
+ * A step after a text was taken in (its place, its code: phases 20 and 21), in the receive's transaction: its failure is
+ * logged and the text stays; the receive's own messages are set aside while it runs and given back after, so nothing of
+ * the receive's is cleared.
+ */
+function sideStep(what, name, parameters) {
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name(name).parameters(parameters).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.error(`${what} was not kept: ${ec.message.errorsString}`)
+  } catch (err) {
+    ec.logger.error(`${what} was not kept: ${err && err.message ? err.message : err}`)
+  }
+  ec.message.clearErrors()
+  ec.message.popErrors()
+}
+
+/**
+ * A shared place as words: its label or address, and a map link built from its coordinates (never a link it came with),
+ * the same words a location sent from here has (ChatLocation.js, plans/Comms-Messaging.md §18.3 phase 20).
+ */
 function placeText(place) {
-  const lat = Number(place.latitude)
-  const lon = Number(place.longitude)
-  const name = [place.label, place.address].filter((word) => !blank(word)).map((word) => String(word).slice(0, 200)).join(', ')
-  const link = Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
-    ? `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}` : ''
-  return [ec.resource.expand('Location: ${name}', '', { name: name || ec.l10n.localize('a place') }), link].filter((line) => line).join('\n')
+  // the receive's own errors set aside while the words are made, and given back after
+  ec.message.pushErrors()
+  let out = {}
+  try {
+    out = ec.service.sync().name('org.moqui.chat.ChatLocationServices.words#Location').parameters({ location: place }).disableAuthz().call() || {}
+  } catch (err) {
+    ec.logger.error(`An inbound place's words were not made: ${err && err.message ? err.message : err}`)
+  }
+  const failed = ec.message.hasError()
+  if (failed) ec.logger.error(`An inbound place's words were not made: ${ec.message.errorsString}`)
+  ec.message.clearErrors()
+  ec.message.popErrors()
+  return (!failed && out.text) || ec.l10n.localize('Location: a place')
 }
 
 /**
@@ -739,6 +766,18 @@ function receive(p) {
       }
       ec.message.clearErrors()
     }
+  }
+  // a shared place (Comms-Messaging §18.3 phase 20): the message is a location, its card as a sent one's; the text stays
+  // when it fails
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && extra && extra.location) {
+    sideStep(`SMS ${p.messageId}: its place`, 'org.moqui.chat.ChatLocationServices.mark#Location', { chatRoomId: pair.chatRoomId,
+      eventSeq: first.eventSeq, location: extra.location })
+  }
+  // a one-time code (Comms-Messaging §18.3 phase 21): kept on the message for its Copy, and its delete after a day when
+  // everyone in the room asks; the text stays when it fails
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && item.text) {
+    sideStep(`SMS ${p.messageId}: its code`, 'org.moqui.chat.ChatPrivacyServices.mark#OneTimeCode', { chatRoomId: pair.chatRoomId,
+      eventSeq: first.eventSeq, text: item.text })
   }
   // an RCS reply to a suggestion (Comms-Messaging §18.3 phase 13): its postback on the message, for the app that sent
   // the buttons (a SECA on note#SuggestionReply); the text stays when it fails

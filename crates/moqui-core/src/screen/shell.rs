@@ -169,7 +169,7 @@ pub struct PageAction {
 /// The provider hooks an app root's `shell-providers` may declare (plans/archive/Comms-Framework.md §3.3): services the framework
 /// calls through [`crate::service`]'s `call#Providers` and combines, so several apps answer one hook. Each is declared
 /// with a provider-qualified `name`, a `service` and a `sequence`, and merged by `name` in a screen-extend.
-pub const PROVIDER_HOOKS: [&str; 14] = [
+pub const PROVIDER_HOOKS: [&str; 15] = [
     "inbox-source",
     "recipient-source",
     "record-lookup",
@@ -187,6 +187,8 @@ pub const PROVIDER_HOOKS: [&str; 14] = [
     "call-target",
     // whether the current user may find, message or add a user to a chat room (ChatServices get#RefusedUsers)
     "chat-target",
+    // a chat event's calendar entry (ChatCal.js; plans/Comms-Messaging.md §18.3 phase 19)
+    "chat-calendar",
 ];
 
 /// The hooks a component may also answer from its `MoquiConf.xml`, apart from any app root

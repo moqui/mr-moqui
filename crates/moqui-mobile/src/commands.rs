@@ -320,6 +320,79 @@ pub(crate) fn secure_screen(
     }
 }
 
+/// An event the shell asks the phone's calendar app to add (plans/Comms-Messaging.md §18.3 phase 19).
+#[derive(serde::Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct CalendarEntry {
+    title: String,
+    start: i64,
+    end: i64,
+    all_day: bool,
+    time_zone: String,
+    place: String,
+    description: String,
+}
+
+/// The phone's calendar app opened on a new event filled in from `entry` (`CalendarIntent.insert`, Android's
+/// `ACTION_INSERT`: the calendar app saves it, so the app needs no calendar permission). Whether it opened; false
+/// elsewhere and when no calendar app takes it, so the page offers the .ics file. Only for the shell's page.
+#[tauri::command(async)]
+pub(crate) fn calendar_insert(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    entry: CalendarEntry,
+) -> Result<bool, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let title = clip(&entry.title, 200);
+    if title.is_empty() || entry.start <= 0 || entry.end <= entry.start {
+        return Err("An event needs its title, start and end".to_string());
+    }
+    let zone: String = entry
+        .time_zone
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || "/_+-".contains(*c))
+        .take(64)
+        .collect();
+    let place = clip(&entry.place, 300);
+    let description = clip_lines(&entry.description, 2000);
+    #[cfg(target_os = "android")]
+    return crate::android::calendar_insert(
+        &title,
+        entry.start,
+        entry.end,
+        entry.all_day,
+        &zone,
+        &place,
+        &description,
+    );
+    #[cfg(not(target_os = "android"))]
+    {
+        log::info!(
+            "Calendar entry {title} at {} for {} ({zone}, {place}, {} characters)",
+            entry.start,
+            entry.all_day,
+            description.len()
+        );
+        Ok(false)
+    }
+}
+
+/// `text` with its line breaks kept and other control characters dropped, trimmed, at most `max` characters.
+pub(crate) fn clip_lines(text: &str, max: usize) -> String {
+    let cleaned: String = text.chars().filter(|c| *c == '\n' || !c.is_control()).collect();
+    cleaned
+        .trim()
+        .chars()
+        .take(max)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
 /// The routes the shell's speaker button may choose.
 pub(crate) const AUDIO_ROUTES: [&str; 4] = ["earpiece", "speaker", "wired", "bluetooth"];
 
@@ -547,7 +620,7 @@ pub(crate) fn contact_numbers(numbers: &[String]) -> Vec<String> {
     out
 }
 
-/// Open `url` outside the app: http and https on the web, mailto, tel and sip.
+/// Open `url` outside the app: http and https on the web, mailto, tel, sip and geo.
 #[tauri::command(async)]
 pub(crate) fn open_external(url: String) -> Result<(), String> {
     let url = external_url(&url)?;
@@ -555,7 +628,7 @@ pub(crate) fn open_external(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// `text` as a URL the system may open: http and https with a host that is not the app's, or mailto, tel and sip.
+/// `text` as a URL the system may open: http and https with a host that is not the app's, or mailto, tel, sip and geo.
 pub(crate) fn external_url(text: &str) -> Result<Url, String> {
     if text.len() > URL_MAX {
         return Err("The URL is too long".to_string());
@@ -569,7 +642,8 @@ pub(crate) fn external_url(text: &str) -> Result<Url, String> {
             }
             Some(_) => Ok(url),
         },
-        "mailto" | "tel" | "sip" => Ok(url),
+        // geo: a chat location's Open in maps, for the phone's maps app (plans/Comms-Messaging.md §18.3 phase 20)
+        "mailto" | "tel" | "sip" | "geo" => Ok(url),
         scheme => Err(format!("Not opened outside the app: {scheme}:")),
     }
 }

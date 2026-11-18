@@ -51,8 +51,9 @@
     });
 
     // An uploaded file with the text as its content, for the services that take a FileItem: uploadedFile("a.txt", "text", "text/plain").
-    define("uploadedFile", (fileName, text, contentType) => __moquiTestHost.uploadedFile(String(fileName), String(text == null ? "" : text),
-        contentType == null ? "text/plain" : String(contentType)));
+    // binary true takes each character as a byte (0 to 255), for a picture: uploadedFile("a.png", "\x89PNG...", "image/png", true).
+    define("uploadedFile", (fileName, text, contentType, binary) => __moquiTestHost.uploadedFile(String(fileName), String(text == null ? "" : text),
+        contentType == null ? "text/plain" : String(contentType), binary === true));
 
     // A process property, as a conf property is (null clears it): a setting the code under test reads from its
     // properties, such as a feature's switch. Specs run one at a time in a run. Every property a spec changes is put

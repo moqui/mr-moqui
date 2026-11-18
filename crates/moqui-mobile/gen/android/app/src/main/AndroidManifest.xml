@@ -26,6 +26,10 @@
     <!-- The phone's contacts (PhoneBook.kt, plans/Comms-Messaging.md §9.2): names of outside numbers and the new-chat
         picker's search, read on the phone only; asked at the first search, with the reason. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- a chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20): asked at first use by the
+         WebView's geolocation prompt (RustWebChromeClient), never in the background -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 

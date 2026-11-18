@@ -548,7 +548,7 @@ const messageTemplate = `
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <chat-rich v-else-if="item.event.rich" :item="item" :room="room"></chat-rich>
-            <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
+            <div v-else-if="item.bodyHtml && !item.poll && !item.event.calEvent && !item.event.sticker && !item.event.location" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
                     v-html="item.bodyHtml" @click="room.bodyClick($event)"></div>
             <!-- an answer to a button (content.postback: tapped here, or an RCS reply) -->
             <div v-if="item.event.postback" class="row items-center no-wrap text-caption m-muted q-mt-xs m-chat-postback">
@@ -562,6 +562,22 @@ const messageTemplate = `
                             v-html="item.forwardOf.body" @click="room.bodyClick($event)"></div>
                 </div>
             </div>
+            <chat-cal-card v-if="item.event.calEvent" :item="item" :room="room"></chat-cal-card>
+            <chat-sticker v-if="item.event.sticker" :item="item" :room="room"></chat-sticker>
+            <chat-location-card v-if="item.event.location" :item="item" :room="room"></chat-location-card>
+            <!-- a text's one-time code (Comms-Messaging §18.3 phase 21): Copy, and its delete after a day with Keep -->
+            <div v-if="item.event.otp && item.event.otp.code" class="row items-center q-mt-xs m-chat-otp" style="gap:6px">
+                <q-chip dense outline color="primary" icon="sym_o_password" class="q-ma-none">{{room.otpLine(item)}}</q-chip>
+                <q-btn :flat="room.copyWantedSeq !== item.eventSeq" :unelevated="room.copyWantedSeq === item.eventSeq" dense no-caps size="sm" color="primary"
+                        icon="sym_o_content_copy" class="m-chat-otp-copy" :label="room.t('Copy')" @click.stop="room.copyCode(item)"></q-btn>
+                <template v-if="item.expireDate && !room.timerSeconds">
+                    <span class="text-caption m-muted">{{room.otpDeleteLine(item)}}</span>
+                    <q-btn flat dense no-caps size="sm" color="primary" class="m-chat-otp-keep" :label="room.t('Keep')" @click.stop="room.keepCode(item)"></q-btn>
+                </template>
+            </div>
+            <div v-if="item.event.calChange" class="row items-center no-wrap q-mt-xs m-chat-cal-changed">
+                <q-chip dense clickable outline color="primary" :icon="item.event.calChange.cancelled ? 'sym_o_event_busy' : 'sym_o_edit_calendar'" class="q-ma-none"
+                        @click.stop="room.jumpToEvent(item.event.calChange.eventSeq)">{{item.event.calChange.cancelled ? room.t('Event cancelled') : room.t('Event changed')}}</q-chip></div>
             <q-card v-if="item.poll" flat bordered class="q-mt-xs q-pa-sm m-chat-poll" style="max-width:440px">
                 <div class="row no-wrap items-start text-weight-medium q-mb-xs"><q-icon name="sym_o_ballot" size="18px" class="q-mr-xs text-primary"></q-icon>
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
@@ -592,7 +608,7 @@ const messageTemplate = `
                 <q-btn v-if="room.viewOnceState(item) === 'closed'" flat dense no-caps color="primary" icon="sym_o_looks_one" class="m-chat-view-once-open" :label="room.t('Open')"
                         @click.stop="room.openViewOnce(item)"></q-btn>
             </div>
-            <div v-if="item.attachments.length && !item.event.rich" class="row q-gutter-xs q-mt-none">
+            <div v-if="item.attachments.length && !item.event.rich && !item.event.sticker" class="row q-gutter-xs q-mt-none">
                 <template v-for="file in item.attachments" :key="file.chatAttachmentId">
                     <img v-if="room.isImage(file)" :src="room.fileUrl(file, true)" :alt="file.fileName" class="rounded-borders cursor-pointer q-mt-xs"
                             style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
@@ -770,6 +786,383 @@ const chatRich = {
     template: richTemplate
 };
 
+// ---- events with RSVP (Comms-Messaging §18.3 phase 19; org.moqui.chat.ChatCalServices, moqui.chat.cal) ----
+// An event's card: a date badge, the title, the time in the viewer's zone (and the event's own when it differs), the place
+// (a map search the person opens by tapping it; nothing is fetched), the details, Going / Maybe / No (a tap answers, the
+// same tap takes it back), who answered, a reminder and Add to calendar: an app's calendar, the phone's calendar app
+// (moquiDesktop.calendarInsert in the Android app), else the .ics file. Its creator and a moderator Change and Cancel it.
+const calCardTemplate = `
+<q-card v-if="cal" flat bordered class="q-mt-xs m-chat-cal" :data-cal-state="state" :style="room.mobile ? 'max-width:85vw' : 'max-width:400px'">
+    <div class="row no-wrap items-start q-pa-sm">
+        <div class="column items-center justify-center rounded-borders m-tonal q-mr-sm" style="min-width:48px;height:52px">
+            <div class="text-caption text-uppercase text-primary" style="line-height:1.2">{{badge.month}}</div>
+            <div class="text-h6" style="line-height:1">{{badge.day}}</div>
+        </div>
+        <div class="col" style="min-width:0">
+            <div class="text-weight-medium m-chat-cal-title" :class="{ 'text-strike': cal.cancelled }" style="overflow-wrap:anywhere">{{cal.title}}</div>
+            <div class="text-body2 m-chat-cal-when">{{when}}</div>
+            <div v-if="zoneNote" class="text-caption m-muted m-chat-cal-zone">{{zoneNote}}</div>
+            <div v-if="cal.place" class="row no-wrap items-center text-body2 m-chat-cal-place">
+                <q-icon name="sym_o_location_on" size="16px" class="q-mr-xs"></q-icon>
+                <a :href="placeUrl" target="_blank" rel="noopener noreferrer" class="ellipsis" :title="room.t('Find it on the map')" @click.stop>{{cal.place}}</a></div>
+        </div>
+        <q-btn flat round dense size="sm" icon="sym_o_more_vert" class="m-chat-cal-menu" :aria-label="room.t('Event actions')" @click.stop>
+            <q-menu><q-list style="min-width:200px">
+                <q-item v-if="canManage" clickable v-close-popup class="m-chat-cal-change" @click="room.openCalEvent(item.threadRootEventSeq || null, item)">
+                    <q-item-section avatar><q-icon name="sym_o_edit_calendar"></q-icon></q-item-section><q-item-section>{{room.t('Change')}}</q-item-section></q-item>
+                <q-item v-if="canManage" clickable v-close-popup class="m-chat-cal-cancel" @click="room.cancelCalEvent(item)">
+                    <q-item-section avatar><q-icon name="sym_o_event_busy" color="negative"></q-icon></q-item-section><q-item-section>{{room.t('Cancel the event')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup class="m-chat-cal-ics" @click="room.downloadCalEvent(item)">
+                    <q-item-section avatar><q-icon name="sym_o_download"></q-icon></q-item-section><q-item-section>{{room.t('Download .ics')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
+    </div>
+    <div v-if="cal.description" class="q-px-sm text-body2 cursor-pointer m-chat-cal-details" :class="{ 'ellipsis-3-lines': !more }" style="white-space:pre-wrap;overflow-wrap:anywhere"
+            @click.stop="more = !more">{{cal.description}}</div>
+    <div v-if="cal.cancelled" class="q-px-sm q-pt-sm text-negative text-weight-medium m-chat-cal-cancelled">{{room.t('Cancelled')}}</div>
+    <div v-else-if="ended" class="q-px-sm q-pt-sm m-muted text-weight-medium">{{room.t('Ended')}}</div>
+    <template v-else>
+        <div class="row no-wrap q-px-sm q-pt-sm" style="gap:4px">
+            <q-btn v-for="one in answers" :key="one.key" dense no-caps size="sm" color="primary" :outline="mine !== one.key" :unelevated="mine === one.key"
+                    :icon="one.icon" :label="one.label" :disable="!room.canPost || busy" class="m-chat-cal-answer" :data-answer="one.key" @click.stop="answer(one.key)"></q-btn>
+        </div>
+        <div v-if="mine === 'going' || mine === 'maybe'" class="row items-center no-wrap q-px-sm q-pt-xs" style="gap:4px">
+            <q-icon name="sym_o_alarm" size="16px" class="m-muted"></q-icon>
+            <q-select dense borderless options-dense emit-value map-options :model-value="remind" :options="remindOptions" class="m-chat-cal-remind"
+                    style="min-width:140px" :aria-label="room.t('Remind me')" @update:model-value="setRemind"></q-select>
+            <q-space></q-space>
+            <q-btn v-if="eventUrl" flat dense no-caps size="sm" color="primary" icon="sym_o_open_in_new" :label="room.t('Open in calendar')" :href="eventUrl" target="_blank" @click.stop></q-btn>
+            <q-btn v-else flat dense no-caps size="sm" color="primary" icon="sym_o_calendar_add_on" class="m-chat-cal-add" :label="room.t('Add to calendar')" :loading="busy" @click.stop="addToCalendar"></q-btn>
+        </div>
+    </template>
+    <div class="row items-center q-pa-sm text-caption m-muted cursor-pointer m-chat-cal-counts" @click.stop="who = true">
+        <span class="ellipsis">{{countLine}}</span>
+        <q-menu v-if="!room.mobile" v-model="who"><q-list dense style="min-width:220px" class="m-chat-cal-who">
+            <template v-for="group in groups" :key="group.key"><q-item-label header>{{group.label}}</q-item-label>
+                <q-item v-for="name in group.names" :key="name"><q-item-section>{{name}}</q-item-section></q-item></template>
+            <q-item v-if="!groups.length"><q-item-section class="m-muted">{{room.t('No answers yet')}}</q-item-section></q-item>
+        </q-list></q-menu>
+    </div>
+    <q-dialog v-if="room.mobile" v-model="who" position="bottom">
+        <q-card class="m-chat-sheet m-chat-cal-who" style="width:100%;max-width:560px;border-radius:16px 16px 0 0"><q-list dense>
+            <template v-for="group in groups" :key="group.key"><q-item-label header>{{group.label}}</q-item-label>
+                <q-item v-for="name in group.names" :key="name"><q-item-section>{{name}}</q-item-section></q-item></template>
+            <q-item v-if="!groups.length"><q-item-section class="m-muted">{{room.t('No answers yet')}}</q-item-section></q-item>
+        </q-list></q-card>
+    </q-dialog>
+</q-card>`;
+const chatCalCard = {
+    name: 'ChatCalCard',
+    props: { item: Object, room: Object },
+    data: () => ({ more: false, who: false, busy: false, eventUrl: null }),
+    computed: {
+        cal() { const cal = this.item.event.calEvent; return cal && typeof cal === 'object' && cal.start != null ? cal : null; },
+        helpers() { return (moqui.chat && moqui.chat.cal) || null; },
+        ended() { return !!this.cal && this.cal.end != null && this.cal.end <= this.room.tick; },
+        state() { return this.cal.cancelled ? 'cancelled' : this.ended ? 'ended' : 'open'; },
+        mine() { return this.cal && this.cal.mine ? this.cal.mine.answer || null : null; },
+        remind() { return this.cal && this.cal.mine && this.cal.mine.remindMinutes != null ? Number(this.cal.mine.remindMinutes) : 0; },
+        when() { return this.helpers ? this.helpers.when(this.cal) : ''; },
+        zoneNote() { return this.helpers ? this.helpers.zoneNote(this.cal) : ''; },
+        countLine() { return this.helpers ? this.helpers.countLine(this.cal) : ''; },
+        badge() {
+            const z = moqui.l10n;
+            const at = this.cal.allDay && this.helpers ? this.helpers.wallIn(String(z.formatTimestamp(this.cal.start, 'yyyy-MM-dd', this.cal.timeZone)), '12:00', this.cal.timeZone) : this.cal.start;
+            return { month: z.formatZoned(at, { month: 'short' }), day: z.formatZoned(at, { day: 'numeric' }) };
+        },
+        placeUrl() { return 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(this.cal.place || ''); },
+        canManage() { return !this.cal.cancelled && !this.ended && this.room.isMember && (this.cal.createdByUserId === this.room.me.userId || this.room.canModerate); },
+        answers() {
+            return [{ key: 'going', label: this.room.t('Going'), icon: 'sym_o_check_circle' }, { key: 'maybe', label: this.room.t('Maybe'), icon: 'sym_o_help' },
+                { key: 'no', label: this.room.t('No'), icon: 'sym_o_cancel' }];
+        },
+        remindOptions() {
+            const list = this.helpers ? this.helpers.remindChoices(this.cal, this.room.tick) : [];
+            const options = list.map((one) => ({ value: one.minutes, label: one.label }));
+            if (this.remind && !options.some((one) => one.value === this.remind)) options.push({ value: this.remind, label: fill(t('{count} minutes before'), { count: this.remind }) });
+            return options;
+        },
+        groups() {
+            const answers = this.cal.answers || {};
+            const nameOf = (id) => (id === this.room.me.userId ? t('You') : this.room.nameOf(id));
+            return [{ key: 'going', label: t('Going') }, { key: 'maybe', label: t('Maybe') }, { key: 'no', label: t("Can't go") }]
+                .map((group) => Object.assign(group, { names: (answers[group.key] || []).map(nameOf) })).filter((group) => group.names.length);
+        }
+    },
+    methods: {
+        answer(key) {
+            const next = this.mine === key ? '' : key;
+            // a first Going gets a reminder an hour before when there is still time; Maybe none; a changed answer keeps it
+            let remind = this.mine && next && next !== 'no' ? this.remind : 0;
+            if (!this.mine && next === 'going' && this.remindOptions.some((one) => one.value === 60)) remind = 60;
+            this.send({ answer: next, remindMinutes: next && next !== 'no' && remind ? remind : '' });
+        },
+        setRemind(minutes) { this.send({ answer: this.mine, remindMinutes: minutes || '' }); },
+        addToCalendar() {
+            if (this.room.calProvider) { this.send({ answer: this.mine, remindMinutes: this.remind || '', addToCalendar: 'true' }); return; }
+            this.room.calendarInsert(this.item);
+        },
+        send(params) {
+            if (needsConnection()) return;
+            this.busy = true;
+            this.room.answerCalEvent(this.item, params).then((json) => {
+                this.busy = false;
+                if (json && json.eventUrl) this.eventUrl = json.eventUrl;
+            }, () => { this.busy = false; });
+        }
+    },
+    template: calCardTemplate
+};
+
+// The box that makes or changes an event: title, all day, start and end (in the zone chosen: the user's first), place and
+// details. A room with a disappearing timer says the card goes with it.
+const calBoxTemplate = `
+<m-dialog :model-value="true" :title="item ? t('Change the event') : t('New event')" width="520" @update:model-value="(open) => { if (!open) $emit('close'); }">
+    <m-text-line v-model="title" :name="'calTitle' + uid" :label="t('Title')" maxlength="200" required></m-text-line>
+    <m-check v-model="allDay" :name="'calAllDay' + uid" toggle true-value="Y" false-value="N" :single-label="t('All day')" class="q-mt-xs"></m-check>
+    <div class="row q-gutter-sm q-mt-xs">
+        <m-date-time v-model="start" :name="'calStart' + uid" :type="allDay === 'Y' ? 'date' : 'date-time'" :label="t('Starts')" @update:model-value="startMoved"></m-date-time>
+        <m-date-time v-model="end" :name="'calEnd' + uid" :type="allDay === 'Y' ? 'date' : 'date-time'" :label="allDay === 'Y' ? t('Last day') : t('Ends')"></m-date-time>
+    </div>
+    <q-select v-model="timeZone" dense outlined stack-label use-input hide-selected fill-input input-debounce="0" :options="zoneOptions" :label="t('Time zone')"
+            class="q-mt-sm m-chat-cal-zone-pick" @filter="filterZones"></q-select>
+    <m-text-line v-model="place" :name="'calPlace' + uid" :label="t('Place (optional)')" maxlength="300" class="q-mt-sm"></m-text-line>
+    <m-text-area v-model="description" :name="'calDetails' + uid" :label="t('Details (optional)')" rows="3" autogrow class="q-mt-xs"></m-text-area>
+    <div v-if="room.timerNote" class="text-caption m-muted q-mt-sm m-chat-cal-timer">{{room.timerNote}}</div>
+    <div v-if="problem" class="text-caption text-negative q-mt-sm">{{problem}}</div>
+    <div class="row q-gutter-sm q-mt-md">
+        <q-btn unelevated no-caps color="primary" icon="sym_o_event" class="m-chat-cal-post" :label="item ? t('Save the change') : t('Post the event')"
+                :disable="!ready" :loading="busy" @click="save"></q-btn>
+        <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
+    </div>
+</m-dialog>`;
+const chatCalBox = {
+    name: 'ChatCalBox',
+    props: { room: Object, threadRoot: Number, item: Object },
+    emits: ['close'],
+    data() {
+        const cal = this.item && this.item.event && this.item.event.calEvent;
+        const helpers = moqui.chat && moqui.chat.cal;
+        const zone = (cal && cal.timeZone) || this.room.calZone || null;
+        let start = '', end = '';
+        if (cal && helpers) {
+            const fields = helpers.boxFields(cal);
+            start = cal.allDay ? fields.startDay : fields.startDay + ' ' + fields.startTime;
+            end = cal.allDay ? fields.endDay : fields.endDay + ' ' + fields.endTime;
+        }
+        return { uid: Math.random().toString(36).slice(2, 8), title: cal ? cal.title : '', allDay: cal && cal.allDay ? 'Y' : 'N', start, end, timeZone: zone,
+            place: cal ? cal.place || '' : '', description: cal ? cal.description || '' : '', zoneFilter: '', busy: false };
+    },
+    computed: {
+        zoneOptions() {
+            const all = this.room.calZones || [];
+            const term = this.zoneFilter.toLowerCase();
+            const first = this.room.calZone ? [this.room.calZone] : [];
+            const rest = all.filter((zone) => zone !== this.room.calZone && (!term || zone.toLowerCase().includes(term)));
+            return first.filter((zone) => !term || zone.toLowerCase().includes(term)).concat(rest).slice(0, 200);
+        },
+        times() {
+            const helpers = moqui.chat && moqui.chat.cal;
+            if (!helpers || !this.start || !this.timeZone) return null;
+            const day = (text) => String(text || '').slice(0, 10);
+            const clock = (text) => String(text || '').slice(11, 16);
+            return helpers.boxTimes({ timeZone: this.timeZone, allDay: this.allDay === 'Y', startDay: day(this.start), startTime: clock(this.start),
+                endDay: day(this.end || this.start), endTime: clock(this.end) });
+        },
+        problem() {
+            if (!this.start || (this.allDay !== 'Y' && !this.end)) return '';
+            if (!this.times) return t('It ends after it starts');
+            if (this.times.end <= Date.now()) return t('It ends later than now');
+            return '';
+        },
+        ready() { return !!String(this.title || '').trim() && !!this.times && !this.problem && !this.busy; }
+    },
+    methods: {
+        filterZones(value, update) { update(() => { this.zoneFilter = String(value || ''); }); },
+        // a new start moves the end with it: an hour later, or the same day for a whole day
+        startMoved(value) {
+            if (!value) return;
+            if (this.allDay === 'Y') { if (!this.end || this.end < value) this.end = value; return; }
+            const at = new Date(String(value).replace(' ', 'T') + ':00Z').getTime();
+            if (Number.isNaN(at)) return;
+            const later = new Date(at + 3600000).toISOString();
+            if (!this.end || this.end <= value) this.end = later.slice(0, 10) + ' ' + later.slice(11, 16);
+        },
+        save() {
+            if (!this.ready || needsConnection()) return;
+            this.busy = true;
+            const params = { title: String(this.title).trim(), startDate: this.times.start, endDate: this.times.end, timeZone: this.timeZone,
+                allDay: this.allDay === 'Y' ? 'true' : 'false', place: String(this.place || '').trim(), description: String(this.description || '').trim() };
+            this.room.saveCalEvent(this.item, this.threadRoot, params).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
+        }
+    },
+    template: calBoxTemplate
+};
+
+// ---- stickers and locations (Comms-Messaging §18.3 phase 20; org.moqui.chat.ChatStickerServices, moqui.chat.stickers and
+// moqui.chat.place) ----
+// The sticker picker beside the emoji button: Recent, then each pack (the user's own first), a search by emoji or words;
+// the still thumbnails play on a long press or a hover; a tap sends it at once.
+const stickerPickerTemplate = `
+<div class="column m-chat-sticker-picker" :style="room.mobile ? 'width:100%;height:50vh' : 'width:360px;height:420px'">
+    <div class="row items-center no-wrap q-pa-xs">
+        <q-input v-model="term" dense outlined clearable class="col" :placeholder="room.t('Search stickers')" :aria-label="room.t('Search stickers')"></q-input>
+        <q-btn flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="room.t('Manage')" :href="room.stickerManageUrl" @click.stop></q-btn>
+    </div>
+    <q-tabs v-if="!term && tabs.length" v-model="tab" dense inline-label outside-arrows mobile-arrows class="m-chat-sticker-tabs">
+        <q-tab v-for="one in tabs" :key="one.key" :name="one.key" :icon="one.icon" :label="one.label" no-caps></q-tab>
+    </q-tabs>
+    <div class="col scroll q-pa-xs">
+        <div v-if="!room.stickerPacks.length" class="text-caption m-muted q-pa-md">{{room.stickerPacksFailed ? room.t('Stickers could not be loaded') : room.t('No stickers yet: add your own in Settings, Stickers')}}</div>
+        <div v-else-if="!shown.length" class="text-caption m-muted q-pa-md">{{room.t('No stickers here')}}</div>
+        <div class="row" style="gap:4px">
+            <button v-for="sticker in shown" :key="sticker.chatStickerId" type="button" class="m-chat-sticker-cell rounded-borders" style="width:72px;height:72px;border:0;background:transparent;padding:2px;cursor:pointer"
+                    :title="sticker.altText || sticker.emoji || ''" :aria-label="sticker.altText || sticker.emoji || room.t('Sticker')" :data-sticker="sticker.chatStickerId"
+                    @click="$emit('pick', sticker)" @mouseenter="live = sticker.chatStickerId" @mouseleave="live = null"
+                    @touchstart.passive="pressed(sticker)" @touchend="live = null">
+                <img :src="room.stickerUrl(sticker.chatStickerId, live !== sticker.chatStickerId)" :alt="sticker.altText || sticker.emoji || ''" style="max-width:100%;max-height:100%;object-fit:contain" loading="lazy">
+            </button>
+        </div>
+    </div>
+</div>`;
+const chatStickerPicker = {
+    name: 'ChatStickerPicker',
+    props: { room: Object },
+    emits: ['pick'],
+    data: () => ({ term: '', tab: 'recent', live: null }),
+    computed: {
+        tabs() {
+            const recent = this.recentStickers.length ? [{ key: 'recent', icon: 'sym_o_history', label: '' }] : [];
+            return recent.concat(this.room.stickerPacks.map((pack) => ({ key: pack.chatStickerPackId, icon: undefined, label: pack.packName })));
+        },
+        recentStickers() {
+            const ids = moqui.chat.stickers.recent(this.room.me.userId || '');
+            const all = moqui.chat.stickers.search(this.room.stickerPacks, '');
+            return ids.map((id) => all.find((sticker) => sticker.chatStickerId === id)).filter((sticker) => sticker);
+        },
+        shown() {
+            if (this.term) return moqui.chat.stickers.search(this.room.stickerPacks, this.term);
+            if (this.tab === 'recent' && this.recentStickers.length) return this.recentStickers;
+            const pack = this.room.stickerPacks.find((one) => one.chatStickerPackId === this.tab) || this.room.stickerPacks[0];
+            return pack ? pack.stickers || [] : [];
+        }
+    },
+    methods: {
+        pressed(sticker) { clearTimeout(this.pressTimer); this.pressTimer = setTimeout(() => { this.live = sticker.chatStickerId; }, 350); }
+    },
+    mounted() { if (!this.recentStickers.length && this.room.stickerPacks.length) this.tab = this.room.stickerPacks[0].chatStickerPackId; },
+    template: stickerPickerTemplate
+};
+
+// A sticker message: its picture large, with no bubble (the room's copy; an encrypted room's from its decrypted blob)
+const stickerTemplate = `
+<div class="q-mt-xs m-chat-sticker" :data-sticker="sticker.chatStickerId || ''">
+    <img v-if="src" :src="src" :alt="sticker.altText || sticker.emoji || room.t('Sticker')" :title="sticker.altText || ''" class="cursor-pointer"
+            :style="'max-width:' + side + 'px;max-height:' + side + 'px;object-fit:contain;display:block'" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
+    <div v-else class="text-body2 m-muted">{{room.t('Sticker')}} {{sticker.emoji || ''}}</div>
+</div>`;
+const chatSticker = {
+    name: 'ChatSticker',
+    props: { item: Object, room: Object },
+    computed: {
+        sticker() { return this.item.event.sticker || {}; },
+        file() { return (this.item.attachments || [])[0] || null; },
+        src() { return this.file ? (this.file.blobUrl || (this.file.sealed ? null : this.room.fileUrl(this.file, true))) : null; },
+        side() { return this.room.mobile ? 160 : 180; }
+    },
+    template: stickerTemplate
+};
+
+// A location message: a pin, its label, address and coordinates, Open in maps (geo: in the Android app, OpenStreetMap
+// elsewhere) and Copy. No map.
+const locationCardTemplate = `
+<q-card flat bordered class="q-mt-xs q-pa-sm m-chat-location" :style="room.mobile ? 'max-width:85vw' : 'max-width:360px'">
+    <div class="row no-wrap items-start">
+        <q-icon name="sym_o_location_on" size="28px" color="primary" class="q-mr-sm"></q-icon>
+        <div class="col" style="min-width:0">
+            <div v-if="place.label" class="text-weight-medium m-chat-location-label" style="overflow-wrap:anywhere">{{place.label}}</div>
+            <div v-if="place.address" class="text-body2 m-chat-location-address" style="overflow-wrap:anywhere">{{place.address}}</div>
+            <div v-if="coordinates" class="text-caption m-muted m-chat-location-coordinates">{{coordinates}}</div>
+        </div>
+    </div>
+    <div class="row q-mt-xs" style="gap:4px">
+        <q-btn unelevated dense no-caps size="sm" color="primary" icon="sym_o_map" class="m-chat-location-open" :label="room.t('Open in maps')" @click.stop="room.openPlace(place)"></q-btn>
+        <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_content_copy" class="m-chat-location-copy" :label="room.t('Copy')" @click.stop="room.copyPlace(place)"></q-btn>
+    </div>
+</q-card>`;
+const chatLocationCard = {
+    name: 'ChatLocationCard',
+    props: { item: Object, room: Object },
+    computed: {
+        place() { return this.item.event.location || {}; },
+        coordinates() { return moqui.chat.place.coordinatesText(this.place); }
+    },
+    template: locationCardTemplate
+};
+
+// Share a location: this device's position (the browser's or the phone's permission) or one typed in (coordinates, a geo:
+// URI, a maps link or an address: moqui.chat.place.parse); a label; a preview of the card; Send. Nothing is looked up.
+const locationBoxTemplate = `
+<m-dialog :model-value="true" :title="t('Share a location')" width="440" @update:model-value="(open) => { if (!open) $emit('close'); }">
+    <div class="column q-gutter-y-sm">
+        <q-btn v-if="canLocate" unelevated no-caps color="primary" icon="sym_o_my_location" class="m-chat-location-here" :label="t('Use my current location')"
+                :loading="locating" @click="locate"></q-btn>
+        <div v-if="problem" class="text-caption text-negative m-chat-location-problem">{{problem}}</div>
+        <m-text-line v-model="typed" :name="'placeTyped' + uid" :label="t('Or enter it: coordinates, a maps link or an address')" @update:model-value="typedChanged"></m-text-line>
+        <m-text-line v-model="label" :name="'placeLabel' + uid" :label="t('Label (optional)')" maxlength="100"></m-text-line>
+        <div v-if="place" class="q-pa-sm rounded-borders m-tonal m-chat-location-preview">
+            <div class="text-weight-medium">{{label || place.address || t('Location')}}</div>
+            <div v-if="place.address && label" class="text-body2">{{place.address}}</div>
+            <div v-if="coordinates" class="text-caption m-muted">{{coordinates}}</div>
+            <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_map" :label="t('Check it in maps')" @click="room.openPlace(place)"></q-btn>
+        </div>
+    </div>
+    <div class="row q-gutter-sm q-mt-md">
+        <q-btn unelevated no-caps color="primary" icon="sym_o_send" class="m-chat-location-send" :label="t('Send')" :disable="!place || busy" :loading="busy" @click="send"></q-btn>
+        <q-btn flat no-caps :label="t('Cancel')" @click="$emit('close')"></q-btn>
+    </div>
+</m-dialog>`;
+const chatLocationBox = {
+    name: 'ChatLocationBox',
+    props: { room: Object, threadRoot: Number },
+    emits: ['close'],
+    data: () => ({ uid: Math.random().toString(36).slice(2, 8), here: null, typed: '', label: '', locating: false, problem: '', busy: false }),
+    computed: {
+        canLocate() { return typeof navigator !== 'undefined' && !!navigator.geolocation && (typeof window === 'undefined' || window.isSecureContext !== false); },
+        typedPlace() { return this.typed ? moqui.chat.place.parse(this.typed) : null; },
+        place() {
+            const base = this.here && !this.typed ? this.here : this.typedPlace;
+            if (!base) return null;
+            return Object.assign({}, base, this.label ? { label: String(this.label).trim().slice(0, 100) } : {});
+        },
+        coordinates() { return moqui.chat.place.coordinatesText(this.place); }
+    },
+    methods: {
+        typedChanged() { this.problem = this.typed && !this.typedPlace ? t('That is not a place: coordinates, a geo: link, a maps link or an address') : ''; },
+        locate() {
+            this.locating = true;
+            this.problem = '';
+            navigator.geolocation.getCurrentPosition((position) => {
+                this.locating = false;
+                const coords = position.coords || {};
+                this.typed = '';
+                this.here = { latitude: Number(Number(coords.latitude).toFixed(6)), longitude: Number(Number(coords.longitude).toFixed(6)),
+                    accuracy: coords.accuracy != null ? Math.round(coords.accuracy) : null, source: 'here' };
+            }, (err) => {
+                this.locating = false;
+                this.problem = err && err.code === 1 ? t('Location is off for this app: allow it in the phone\'s or the browser\'s settings, or enter the place')
+                    : t('Your location could not be found: enter the place');
+            }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+        },
+        send() {
+            if (!this.place || needsConnection()) return;
+            this.busy = true;
+            const place = Object.assign({ source: this.here && !this.typed ? 'here' : 'typed' }, this.place);
+            this.room.sendPlace(place, this.threadRoot).then(() => { this.busy = false; this.$emit('close'); }, () => { this.busy = false; });
+        }
+    },
+    template: locationBoxTemplate
+};
+
 // The composer's Card: a title, words, a picture and up to 4 buttons (a reply, a link, a call); with no title and no
 // picture it is a text with buttons. It shows the text people without RCS get (moqui.chat.richFallback) as it is written.
 const cardBoxTemplate = `
@@ -897,7 +1290,12 @@ const composerTemplate = `
     <div v-if="files.length" class="row q-mb-xs">
         <q-chip v-for="file in files" :key="file.key" dense square removable class="m-tonal q-ml-none q-mr-xs" :icon="file.uploading ? undefined : room.fileIcon(file)"
                 @remove="removeFile(file)"><q-spinner v-if="file.uploading" size="14px" class="q-mr-xs"></q-spinner>
-            <span class="ellipsis" style="max-width:180px">{{file.fileName}}</span></q-chip>
+            <span class="ellipsis" style="max-width:180px">{{file.fileName}}</span>
+            <!-- a photo goes compressed (Comms-Messaging §18.3 phase 21); Original sends it as it was -->
+            <q-btn v-if="file.compressed && !file.uploading" flat dense no-caps size="xs" color="primary" class="q-ml-xs m-chat-photo-original"
+                    :label="room.t('Original')" :disable="!!originalOff(file)" @click.stop="sendOriginal(file)">
+                <q-tooltip>{{originalOff(file) || room.t('Send the photo as it is: larger, with its details, its location among them')}}</q-tooltip></q-btn>
+            <span v-else-if="file.originalSent" class="text-caption m-muted q-ml-xs">{{room.t('Original')}}</span></q-chip>
         <!-- one photo or video may go view-once (phase 16): opened once by each person, then gone -->
         <q-toggle v-if="canViewOnce" v-model="viewOnce" dense size="sm" icon="sym_o_looks_one" class="q-ml-xs m-chat-view-once-toggle" :label="room.t('View once')"></q-toggle>
         <span v-if="viewOnce && canViewOnce && !isEmptyHtml(body)" class="text-caption text-warning q-ml-xs self-center">{{room.t('A view-once photo has no text')}}</span>
@@ -917,17 +1315,38 @@ const composerTemplate = `
                     <q-item-section>{{room.t('Photos and videos')}}</q-item-section></q-item>
                 <q-item clickable v-close-popup data-attach="file" @click="pickFiles"><q-item-section avatar><q-icon name="sym_o_draft"></q-icon></q-item-section>
                     <q-item-section>{{room.t('File')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-attach="location" @click="room.openLocation(threadRoot || null)"><q-item-section avatar><q-icon name="sym_o_location_on"></q-icon></q-item-section>
+                    <q-item-section>{{room.t('Location')}}</q-item-section></q-item>
             </q-list></q-menu></q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_mood" :aria-label="room.t('Emoji')"><q-tooltip>{{room.t('Emoji')}}</q-tooltip>
             <q-menu ref="emojiMenu" anchor="top left" self="bottom left" class="m-chat-emoji-menu">
                 <m-emoji-picker :user-id="room.me.userId || ''" :autofocus="!room.mobile" @pick="(key) => { $refs.emojiMenu.hide(); insert(key); }"></m-emoji-picker>
             </q-menu>
         </q-btn>
+        <!-- stickers (Comms-Messaging §18.3 phase 20): a menu on a desktop, a sheet on a phone -->
+        <q-btn flat round dense size="sm" icon="sym_o_sticky_note_2" class="m-chat-sticker-btn" :aria-label="room.t('Stickers')" :disable="room.offline" @click="room.loadStickers()">
+            <q-tooltip>{{room.t('Stickers')}}</q-tooltip>
+            <q-menu v-if="!room.mobile" ref="stickerMenu" anchor="top left" self="bottom left" class="m-chat-sticker-menu">
+                <chat-sticker-picker :room="room" @pick="(sticker) => { $refs.stickerMenu.hide(); room.sendSticker(sticker, threadRoot || null); }"></chat-sticker-picker>
+            </q-menu>
+            <q-popup-proxy v-else ref="stickerSheet" breakpoint="100000" position="bottom">
+                <q-card style="width:100%"><chat-sticker-picker :room="room" @pick="(sticker) => { $refs.stickerSheet.hide(); room.sendSticker(sticker, threadRoot || null); }"></chat-sticker-picker></q-card>
+            </q-popup-proxy>
+        </q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" class="m-chat-mention-btn" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_view_agenda" class="m-chat-card-btn-open" :aria-label="room.t('Make a card')" :disable="room.offline"
                 @click="room.openCard(threadRoot || null)"><q-tooltip>{{room.t('Make a card with buttons')}}</q-tooltip></q-btn>
+        <!-- More (Comms-Messaging §18.3 phases 19 and 20): an event, a location -->
+        <q-btn flat round dense size="sm" icon="sym_o_add_circle" class="m-chat-more-btn" :aria-label="room.t('More')" :disable="room.offline">
+            <q-tooltip>{{room.t('More')}}</q-tooltip>
+            <q-menu anchor="top left" self="bottom left"><q-list style="min-width:200px" class="m-chat-more-menu">
+                <q-item v-if="!room.sealed" clickable v-close-popup data-more="event" @click="room.openCalEvent(threadRoot || null, null)">
+                    <q-item-section avatar><q-icon name="sym_o_event"></q-icon></q-item-section><q-item-section>{{room.t('Event')}}</q-item-section></q-item>
+                <q-item clickable v-close-popup data-more="location" @click="room.openLocation(threadRoot || null)">
+                    <q-item-section avatar><q-icon name="sym_o_location_on"></q-icon></q-item-section><q-item-section>{{room.t('Share a location')}}</q-item-section></q-item>
+            </q-list></q-menu></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
         <!-- a voice note (Comms-Messaging §5.1): with no text, Send is the microphone; recording shows its time, Cancel and Send -->
@@ -967,6 +1386,7 @@ const VOICE_MAX_MS = 10 * 60 * 1000;
 let voiceCount = 0;
 const chatComposer = {
     name: 'ChatComposer',
+    components: { 'chat-sticker-picker': chatStickerPicker },
     props: { room: Object, threadRoot: [Number, String], placeholder: String },
     data() {
         composerCount += 1;
@@ -1045,6 +1465,14 @@ const chatComposer = {
             // Enter while a voice note records sends nothing: the text waits for its own Send
             if (this.voice || this.voiceStarting) return;
             if (this.uploading) { moqui.notifyMessages([{ type: 'info', message: t('Wait for the files to finish uploading') }]); return; }
+            // a room that goes out by text: its files over a text's total limit are refused there, so they are not sent (phase 21)
+            const limit = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+            const total = this.files.reduce((sum, file) => sum + Number(file.fileSize || 0), 0);
+            if (limit > 0 && total > limit) {
+                moqui.notifyMessages([{ type: 'warning', message: fill(t('These files are over a text\'s limit of {size}: send fewer at a time'),
+                    { size: Math.round(limit / 104857.6) / 10 + ' MB' }) }]);
+                return;
+            }
             if (!this.canSend) return;
             const text = plainOf(this.body);
             const command = /^\/(task|request|event|poll)\b\s*([\s\S]*)$/.exec(text);
@@ -1190,13 +1618,39 @@ const chatComposer = {
         },
         // each file goes up at once (upload#ChatFiles); the message names them when it is sent. Not offline: a file waits
         // for no one, and the outbox keeps only text. Resolves when all are up (or failed)
-        upload(list) {
+        // the original of a photo sent compressed: refused over the room's texts' file limit (phase 21)
+        originalOff(file) {
+            const most = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+            if (most > 0 && file.original && file.original.size > most) {
+                return fill(t('Too large for a text (over {size}): it goes compressed'), { size: Math.round(most / 104857.6) / 10 + ' MB' });
+            }
+            return '';
+        },
+        sendOriginal(file) {
+            const original = file.original;
+            if (!original || this.originalOff(file)) return;
+            this.removeFile(file);
+            this.upload([original], true);
+        },
+        upload(list, original) {
             if (this.room.offline) { moqui.notifyMessages([{ type: 'info', message: t('Files go up when you are back online') }]); return Promise.resolve(); }
-            return Promise.all(list.map((file) => {
-                const entry = { key: 'f' + Date.now() + Math.random(), fileName: file.name, contentType: file.type, fileSize: file.size, uploading: true, chatAttachmentId: null };
+            // a room that goes out by text: the message's files share its total limit (phase 21)
+            const limit = Number((this.room.bridgeCaps || {}).mediaMaxBytes || 0);
+            const most = moqui.chat.photos ? moqui.chat.photos.budget(limit, this.files.length + list.length) : 0;
+            return Promise.all(list.map((picked) => {
+                const entry = { key: 'f' + Date.now() + Math.random(), fileName: picked.name, contentType: picked.type, fileSize: picked.size, uploading: true, chatAttachmentId: null };
                 this.files.push(entry);
+                // a photo goes drawn again unless Original was asked (phase 21): 2048 px, its metadata gone, within its share of the limit
+                const preparing = !original && moqui.chat.photos && moqui.chat.photos.compressible(picked)
+                    ? moqui.chat.photos.compress(picked, { maxBytes: most }) : Promise.resolve(picked);
+                let file = picked;
                 // an encrypted room's file goes up encrypted, named encrypted; its name, type and key go in the message (C7)
-                const sealing = this.room.sealed ? moqui.chat.sealFile(file) : Promise.resolve(null);
+                const sealing = preparing.then((ready) => {
+                    file = ready;
+                    if (ready !== picked) Object.assign(entry, { fileName: ready.name, contentType: ready.type, fileSize: ready.size, compressed: true, original: picked });
+                    else if (original) entry.originalSent = true;
+                    return this.room.sealed ? moqui.chat.sealFile(ready) : null;
+                });
                 return sealing.then((sealed) => {
                     if (sealed) entry.info = sealed.info;
                     const form = new FormData();
@@ -1294,7 +1748,8 @@ const chatMessageMenu = {
 const chatMessage = {
     name: 'ChatMessage',
     props: { item: Object, room: Object, inThread: Boolean },
-    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich },
+    components: { 'chat-edit': chatEdit, 'chat-message-menu': chatMessageMenu, 'chat-rich': chatRich, 'chat-cal-card': chatCalCard,
+        'chat-sticker': chatSticker, 'chat-location-card': chatLocationCard },
     data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false, contextOpen: false }),
     watch: {
         actionsAvailable(value) {
@@ -1429,6 +1884,11 @@ const roomTemplate = `
                         <q-item-section avatar><q-icon :name="room.record.icon || 'sym_o_description'"></q-icon></q-item-section><q-item-section>{{t('The record')}}</q-item-section></q-item>
                     <q-item v-if="canModerate" clickable v-close-popup @click="openSettings">
                         <q-item-section avatar><q-icon name="sym_o_settings"></q-icon></q-item-section><q-item-section>{{t('Room settings')}}</q-item-section></q-item>
+                    <q-item v-if="isMember && sealed" clickable v-close-popup class="m-chat-screen-item" @click="toggleRoomScreen">
+                        <q-item-section avatar><q-icon name="sym_o_screenshot_monitor"></q-icon></q-item-section>
+                        <q-item-section><q-item-label>{{t('Block screenshots here')}}</q-item-label>
+                            <q-item-label v-if="!screenAvailable" caption>{{t('Only the Android app can stop screenshots')}}</q-item-label></q-item-section>
+                        <q-item-section side><q-icon :name="member && member.screenSecure === 'Y' ? 'sym_o_toggle_on' : 'sym_o_toggle_off'" :color="member && member.screenSecure === 'Y' ? 'primary' : undefined"></q-icon></q-item-section></q-item>
                     <q-item v-if="isMember" clickable v-close-popup class="m-chat-timer-item" @click="openTimer">
                         <q-item-section avatar><q-icon name="sym_o_timer"></q-icon></q-item-section><q-item-section>{{t('Disappearing messages')}}</q-item-section>
                         <q-item-section side class="text-caption">{{timerLabel}}</q-item-section></q-item>
@@ -2018,6 +2478,10 @@ const roomTemplate = `
 
     <!-- NewCard (Comms-Messaging §18.3 phase 13): a card or a text with buttons -->
     <chat-card-box v-if="cardBox.open" :room="self" :thread-root="cardBox.threadRoot" @close="cardBox = { open: false, threadRoot: null }"></chat-card-box>
+    <!-- NewEvent and Change the event (Comms-Messaging §18.3 phase 19) -->
+    <chat-cal-box v-if="calBox.open" :room="self" :thread-root="calBox.threadRoot" :item="calBox.item" @close="calBox = { open: false, threadRoot: null, item: null }"></chat-cal-box>
+    <!-- Share a location (Comms-Messaging §18.3 phase 20) -->
+    <chat-location-box v-if="locationBox.open" :room="self" :thread-root="locationBox.threadRoot" @close="locationBox = { open: false, threadRoot: null }"></chat-location-box>
     <!-- NewPoll: a question, 2 to 10 options, more than one choice, anonymous, and when it closes -->
     <m-dialog v-model="pollBox.open" :title="t('New poll')" width="520">
         <m-text-line v-model="pollBox.question" :name="'pollQuestion' + uid" :label="t('Question')" required></m-text-line>
@@ -2194,7 +2658,7 @@ const chatRoom = {
         rooms: { type: Array, default: () => [] }, firstMessage: String },
     emits: ['back', 'thread', 'changed', 'left', 'read', 'first-sent'],
     components: { 'chat-message': chatMessage, 'chat-composer': chatComposer, 'chat-pending': chatPending, 'chat-message-menu': chatMessageMenu, 'chat-card-box': chatCardBox,
-        'chat-when': chatWhen, 'chat-scheduled': chatScheduled },
+        'chat-when': chatWhen, 'chat-scheduled': chatScheduled, 'chat-cal-box': chatCalBox, 'chat-location-box': chatLocationBox },
     data() {
         roomCount += 1;
         return {
@@ -2210,6 +2674,9 @@ const chatRoom = {
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
             pollBox: { open: false, threadRoot: null, question: '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false },
             cardBox: { open: false, threadRoot: null },
+            calBox: { open: false, threadRoot: null, item: null }, calZone: null, calZones: [], calProvider: false, calFieldsLoaded: false,
+            locationBox: { open: false, threadRoot: null }, stickerPacks: [], stickerPacksFailed: false, stickerPacksLoaded: false,
+            copyWantedSeq: null, screenHeld: null,
             searchPane: { text: '', results: [], loading: false, searched: false }, addPeople: { userIds: [], busy: false },
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0, secured: null },
@@ -2257,6 +2724,12 @@ const chatRoom = {
         // disappearing messages (Comms-Messaging §18.3 phase 16): the room's timer, and why it has none (a bridge cannot delete there)
         timerSeconds() { return (this.room && Number(this.room.messageTimerSeconds)) || 0; },
         timerLabel() { return moqui.chat.expiry.label(this.timerSeconds, t); },
+        // an event's box in a room with a timer (phase 19): its card goes with the message
+        // Android's FLAG_SECURE while this room is shown (phase 21): the setting, or the member's own switch here
+        screenWanted() { return this.state === 'ready' && moqui.chat.screen.wanted((this.prefs || {}).screenSecurity || 'off', this.room, this.member); },
+        screenAvailable() { return moqui.chat.screen.available(); },
+        stickerManageUrl() { return String(this.base || '').replace(/\/Chat(\/.*)?$/, '') + '/Settings/Stickers'; },
+        timerNote() { return this.timerSeconds ? fill(t('This room\'s messages disappear after {time}: the event\'s card goes too'), { time: this.timerLabel }) : ''; },
         timerShort() { return moqui.chat.expiry.short(this.timerSeconds, t); },
         timerBlocked() {
             if (!this.room) return null;
@@ -2465,6 +2938,11 @@ const chatRoom = {
         seq(value) { if (value && this.state === 'ready') this.jumpTo(Number(value)); },
         // the room's timer, for the encrypted room's key rotation (WebrootCrypto.js)
         timerSeconds(value) { moqui.chat.expiry.timers[this.roomId] = value || 0; },
+        // this room's screen security reason, on while it is shown and wanted, off when it goes (phase 21)
+        screenWanted: { immediate: true, handler(on) { this.holdScreen(on); } },
+        roomId() { this.holdScreen(false); this.$nextTick(() => this.holdScreen(this.screenWanted)); },
+        // a code's Copy asked from its notification (copyCode=1): once its message is here
+        events() { if (this.copyWantedSeq != null) this.copyFromLink(); },
         cryptoReady(value) { if (value) this.loadTrust(); },
         // the room shown: its first message (a dm link's) sent through the room's own send, sealed in an encrypted room
         state(value) {
@@ -3161,7 +3639,7 @@ const chatRoom = {
             if (this.sealed) {
                 const clientRef = moqui.chat.newClientRef();
                 const html = message.body || '';
-                return moqui.chat.sealMessage(this.roomId, this.memberIds(), html, message.files || []).then((sealed) => {
+                return moqui.chat.sealMessage(this.roomId, this.memberIds(), html, message.files || [], message.extra || null).then((sealed) => {
                     moqui.chat.sealedTexts[clientRef] = plainOf(html) || t('Files');
                     const sealedParams = { encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds, replyToEventSeq: params.replyToEventSeq,
                         threadRootEventSeq: params.threadRootEventSeq, chatAttachmentIds: params.chatAttachmentIds, viewOnce: params.viewOnce || '' };
@@ -3618,7 +4096,7 @@ const chatRoom = {
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             return this.hoverKey === key || this.tapKey === key;
         },
-        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
+        canEdit(item) { return item.mine && !item.redacted && !item.poll && !item.event.rich && !item.event.calEvent && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
         canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)) && this.bridgeCaps.delete; },
         externalText(person) { return fill(t('On {network}'), { network: person.networkName || t('another network') }); },
         // ---- a message's delivery to the room's bridges ----
@@ -3667,7 +4145,7 @@ const chatRoom = {
             const me = this.me.userId;
             for (let i = this.events.length - 1; i >= 0; i--) {
                 const event = this.events[i];
-                if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll) continue;
+                if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll || event.calEvent) continue;
                 if (Date.now() - Number(event.sentDate || 0) >= EDIT_WINDOW || !this.canPost) return false;
                 if (!this.queues('chat-edit') && needsConnection()) return true;
                 this.editing = { seq: Number(event.eventSeq), body: event.body || '' };
@@ -4279,6 +4757,186 @@ const chatRoom = {
                 }, () => {});
             });
         },
+        // ---- events with RSVP (Comms-Messaging §18.3 phase 19) ----
+        // the box, for a new event (in the thread being written) or a change of item's; the zones and whether an app keeps
+        // calendars are read once
+        openCalEvent(threadRoot, item) {
+            if (needsConnection()) return;
+            const open = () => { this.calBox = { open: true, threadRoot: threadRoot || null, item: item || null }; };
+            if (this.calFieldsLoaded) { open(); return; }
+            this.get('calEventFields', {}).then((json) => {
+                this.calZone = json.timeZone || (Intl.DateTimeFormat().resolvedOptions().timeZone || null);
+                this.calZones = Array.isArray(json.timeZoneList) ? json.timeZoneList : [];
+                this.calProvider = json.calendarProvider === true;
+                this.calFieldsLoaded = true;
+                open();
+            }, () => { this.calFieldsLoaded = false; open(); });
+        },
+        saveCalEvent(item, threadRoot, params) {
+            if (item) {
+                return this.post('updateCalEvent', Object.assign({ chatRoomId: this.roomId, eventSeq: item.eventSeq }, params)).then((json) => {
+                    if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                    return json;
+                });
+            }
+            return this.post('createCalEvent', Object.assign({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot || '',
+                clientRef: moqui.chat && moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }, params)).then((json) => {
+                if (json.eventSeq == null) return Promise.reject(json);
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.calEvent) this.applyFields(json.eventSeq, { calEvent: json.calEvent || json.event.calEvent });
+                return json;
+            });
+        },
+        answerCalEvent(item, params) {
+            return this.post('answerCalEvent', Object.assign({ chatRoomId: this.roomId, eventSeq: item.eventSeq }, params)).then((json) => {
+                if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                if (json.reminderSkipped) moqui.notifyMessages([{ type: 'info', message: t('It starts too soon for that reminder') }]);
+                if (json.reminderFailed) moqui.notifyMessages([{ type: 'warning', message: t('Your answer is saved, but the reminder could not be set') }]);
+                if (json.calendarFailed) moqui.notifyMessages([{ type: 'warning', message: t('Your answer is saved, but your calendar could not be changed') }]);
+                return json;
+            });
+        },
+        cancelCalEvent(item) {
+            if (needsConnection()) return;
+            this.confirm(t('Cancel the event?'), t('Everyone in the room is told, and it cannot be undone.'), t('Cancel the event'), true).then(() => {
+                this.post('cancelCalEvent', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                    if (json.calEvent) this.applyFields(item.eventSeq, { calEvent: json.calEvent });
+                }, () => {});
+            });
+        },
+        calIcsUrl(item) { return this.url('calEventIcs') + '?chatRoomId=' + encodeURIComponent(this.roomId) + '&eventSeq=' + encodeURIComponent(item.eventSeq); },
+        downloadCalEvent(item) {
+            const link = document.createElement('a');
+            link.href = this.calIcsUrl(item);
+            link.download = '';
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        },
+        // Add to calendar with no app's calendar: the phone's calendar app in the Android app, else the .ics file
+        calendarInsert(item) {
+            const cal = item.event.calEvent;
+            const desktop = window.moquiDesktop;
+            if (desktop && typeof desktop.calendarInsert === 'function') {
+                desktop.calendarInsert({ title: cal.title, start: cal.start, end: cal.end, allDay: !!cal.allDay, timeZone: cal.timeZone || '',
+                    place: cal.place || '', description: cal.description || '' }).then((opened) => { if (opened !== true) this.downloadCalEvent(item); },
+                    () => this.downloadCalEvent(item));
+                return;
+            }
+            this.downloadCalEvent(item);
+        },
+        jumpToEvent(seq) { if (seq != null) this.scrollToSeq(Number(seq), true); },
+        // ---- screen security and one-time codes (Comms-Messaging §18.3 phase 21) ----
+        holdScreen(on) {
+            const reason = this.screenHeld || ('room:' + this.roomId);
+            if (on) { this.screenHeld = 'room:' + this.roomId; moqui.chat.screen.set(this.screenHeld, true); }
+            else if (this.screenHeld) { moqui.chat.screen.set(reason, false); this.screenHeld = null; }
+        },
+        toggleRoomScreen() {
+            if (needsConnection()) return;
+            const on = !(this.member && this.member.screenSecure === 'Y');
+            this.post('roomScreenSecure', { chatRoomId: this.roomId, on: on ? 'true' : 'false' }).then((json) => {
+                if (this.member) this.member = Object.assign({}, this.member, { screenSecure: json.screenSecure ? 'Y' : null });
+            }, () => {});
+        },
+        otpLine(item) { return moqui.chat.otp.line(item.event); },
+        otpDeleteLine(item) { return fill(t('Deletes {when}'), { when: fullTime(item.expireDate) }); },
+        copyCode(item) {
+            const code = item.event.otp && item.event.otp.code;
+            moqui.chat.otp.copy(code).then((copied) => {
+                if (copied) { this.copyWantedSeq = null; moqui.notifyMessages([{ type: 'success', message: t('Code copied') }]); }
+                else this.copyWantedSeq = item.eventSeq;
+            });
+        },
+        // opened from a code's notification (copyCode=1): copied when the browser lets the page, else its Copy is lit
+        copyFromLink() {
+            const item = this.events.find((one) => Number(one.eventSeq) === Number(this.copyWantedSeq));
+            if (!item || !(item.otp || (item.content && item.content.otp))) return;
+            const code = (item.otp || item.content.otp).code;
+            moqui.chat.otp.copy(code).then((copied) => {
+                if (copied) { this.copyWantedSeq = null; moqui.notifyMessages([{ type: 'success', message: t('Code copied') }]); }
+            });
+        },
+        keepCode(item) {
+            if (needsConnection()) return;
+            this.post('keepCode', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then(() => this.applyFields(item.eventSeq, { expireDate: null }), () => {});
+        },
+        // ---- stickers and locations (Comms-Messaging §18.3 phase 20) ----
+        stickerUrl(chatStickerId, thumb) { return this.url('stickerImage') + '?chatStickerId=' + encodeURIComponent(chatStickerId) + (thumb ? '&thumb=true' : ''); },
+        loadStickers() {
+            if (this.stickerPacksLoaded) return;
+            this.get('stickerPacks', {}).then((json) => {
+                this.stickerPacks = Array.isArray(json.packList) ? json.packList : [];
+                this.stickerPacksLoaded = true;
+                this.stickerPacksFailed = false;
+            }, () => { this.stickerPacksFailed = true; });
+        },
+        // a plain room's sticker is the server's copy of its picture; an encrypted room's, its picture sealed here and sent
+        // in the ciphertext with its emoji and words
+        sendSticker(sticker, threadRoot) {
+            if (needsConnection()) return Promise.resolve(null);
+            moqui.chat.stickers.remember(this.me.userId || '', sticker.chatStickerId);
+            const replyTo = threadRoot ? null : this.replyTo;
+            const label = sticker.emoji ? t('Sticker') + ' ' + sticker.emoji : t('Sticker');
+            const content = moqui.chat.stickers.clean(sticker);
+            if (!threadRoot) this.replyTo = null;
+            if (this.sealed) {
+                return fetch(this.stickerUrl(sticker.chatStickerId, false), { credentials: 'same-origin' }).then((answer) => {
+                    if (!answer.ok) throw new Error(t('The sticker could not be read'));
+                    return answer.blob();
+                }).then((blob) => moqui.chat.sealFile(new File([blob], 'sticker', { type: blob.type || sticker.contentType || 'image/png' })).then((sealed) => {
+                    const form = new FormData();
+                    form.append('chatRoomId', this.roomId);
+                    form.append('file', sealed.blob, 'encrypted');
+                    if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
+                    return moqui.request(this.url('upload'), { method: 'POST', params: form }).then((result) => {
+                        const stored = ((result.json || {}).uploadList || [])[0];
+                        if (!stored) throw new Error(t('The sticker could not be sent'));
+                        const file = { chatAttachmentId: stored.chatAttachmentId, fileName: 'sticker', contentType: blob.type || sticker.contentType || 'image/png',
+                            fileSize: blob.size, info: sealed.info };
+                        return this.sendMessage({ body: '<p>' + moqui.chat.escapeHtml(label) + '</p>', threadRoot, attachmentIds: [stored.chatAttachmentId], files: [file],
+                            extra: { sticker: content } });
+                    });
+                })).catch((err) => { moqui.handleAjaxError(err); return null; });
+            }
+            return this.post('sendSticker', { chatRoomId: this.roomId, chatStickerId: sticker.chatStickerId, threadRootEventSeq: threadRoot || '',
+                replyToEventSeq: replyTo ? replyTo.eventSeq : '', clientRef: moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.sticker) this.applyFields(json.eventSeq, { sticker: json.event.sticker });
+                return json;
+            }, () => null);
+        },
+        openLocation(threadRoot) {
+            if (needsConnection()) return;
+            this.locationBox = { open: true, threadRoot: threadRoot || null };
+        },
+        sendPlace(place, threadRoot) {
+            const replyTo = threadRoot ? null : this.replyTo;
+            if (!threadRoot) this.replyTo = null;
+            if (this.sealed) {
+                const clean = moqui.chat.place.clean(place);
+                const html = '<p>' + moqui.chat.escapeHtml(moqui.chat.place.fallback(clean)) + '</p>';
+                return this.sendMessage({ body: html, threadRoot, extra: { location: clean } });
+            }
+            return this.post('sendLocation', { chatRoomId: this.roomId, locationJson: JSON.stringify(place), threadRootEventSeq: threadRoot || '',
+                replyToEventSeq: replyTo ? replyTo.eventSeq : '', clientRef: moqui.chat.newClientRef ? moqui.chat.newClientRef() : '' }).then((json) => {
+                this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
+                if (json.event && json.event.location) this.applyFields(json.eventSeq, { location: json.event.location });
+                return json;
+            });
+        },
+        // Open in maps: the phone's maps app (geo:) in the Android app, OpenStreetMap elsewhere
+        openPlace(place) {
+            const desktop = window.moquiDesktop;
+            const phone = !!(desktop && typeof desktop.secureScreen === 'function' && typeof desktop.openExternal === 'function');
+            if (phone) { Promise.resolve(desktop.openExternal(moqui.chat.place.geoUri(place))).catch(() => window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener')); return; }
+            window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener');
+        },
+        copyPlace(place) {
+            const text = place.latitude != null ? moqui.chat.place.coordinatesText(Object.assign({}, place, { accuracy: null })) : place.address || '';
+            if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') }]), () => {});
+        },
         // the sender takes the link previews off their message, for good
         removePreviews(item) {
             this.post('removePreviews', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then(() => this.applyFields(item.eventSeq, { linkPreviews: [] }), () => {});
@@ -4576,6 +5234,11 @@ const chatRoom = {
     mounted() {
         this.composers = {};
         this.unsubscribe = [];
+        // a code's notification opens its message with copyCode=1 (Comms-Messaging §18.3 phase 21)
+        try {
+            const query = new URLSearchParams(window.location.search);
+            if (query.get('copyCode') === '1' && this.seq) this.copyWantedSeq = Number(this.seq);
+        } catch (err) { this.copyWantedSeq = null; }
         // what Back closes (moqui.back): the message sheet, an edit, the side pane or thread
         if (moqui.back) {
             this.unsubscribe.push(moqui.back.track(this, () => this.side, () => this.closeSide()));
@@ -4615,6 +5278,7 @@ const chatRoom = {
     },
     beforeUnmount() {
         this.holdCancel();
+        this.holdScreen(false);
         (this.unsubscribe || []).forEach((off) => off());
         document.removeEventListener('visibilitychange', this.onVisibleBound);
         clearInterval(this.ticker);
@@ -5016,6 +5680,8 @@ module.exports = {
             return this.get('chatData').then((json) => {
                 this.me = json.me || {};
                 this.prefs = json.prefs || {};
+                // the whole app's screen security, as the account has it now (phase 21)
+                if (moqui.chat && moqui.chat.screen) moqui.chat.screen.applyApp(this.prefs.screenSecurity || 'off');
                 this.rooms = json.roomList || [];
                 this.filteredCount = Number(json.filteredCount || 0);
                 if (this.filter === 'spam') this.loadSpam();

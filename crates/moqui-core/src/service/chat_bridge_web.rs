@@ -736,6 +736,8 @@ fn send_bridge_direct(
         target_remote_id: None,
         reaction_key: None,
         rich: None,
+        location: None,
+        text_form: None,
         attempt: 1,
     };
     match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.deliver(&info, &request))) {

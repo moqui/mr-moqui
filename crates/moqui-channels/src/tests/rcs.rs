@@ -425,12 +425,32 @@ fn twilio_rcs_comes_in_to_the_home_numbers_room_and_goes_out_with_its_fallback_a
     assert_eq!(texts[0], "Hi from RCS");
     assert!(texts[1].starts_with("Location: The shop, 1 Main St"), "{}", texts[1]);
     assert!(
-        texts[1].contains("https://www.openstreetmap.org/?mlat=45.5&mlon=-122.6"),
+        // the same words and link a location sent from here has (ChatLocation.js, phase 20)
+        texts[1].contains("https://www.openstreetmap.org/?mlat=45.500000&mlon=-122.600000"),
         "{}",
         texts[1]
     );
     assert_eq!(texts[2], "Yes please");
     let _authz = bed.ctx.disable_authz();
+    // the place is a location message's, as a sent one is (phase 20)
+    let places: Vec<String> = bed
+        .facade
+        .find("moqui.chat.ChatEvent")
+        .unwrap()
+        .eq("chatRoomId", text(&room))
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .filter_map(|row| row.get("contentJson").map(to_plain_string))
+        .filter(|json| json.contains("\"location\""))
+        .collect();
+    assert!(
+        places
+            .iter()
+            .any(|json| json.contains("\"latitude\":45.5") && json.contains("\"source\":\"network\"")),
+        "{places:?}"
+    );
     let metadata: Vec<String> = bed
         .facade
         .find("moqui.chat.ChatEventExternal")
@@ -1111,7 +1131,8 @@ fn a_twilio_text_with_chips_and_a_carousel_and_an_apps_own_template_go_in_twilio
         &too_big,
     );
     bed.round(0);
-    assert_eq!(bed.delivery(&room, refused).1, "mediaTooLarge");
+    // its picture refused: its text form goes alone (phase 20)
+    assert_eq!(bed.delivery(&room, refused).0, "CdsAccepted");
     bed.set_config(|config| {
         config.as_object_mut().unwrap().remove("maxRcsMediaBytes");
     });
@@ -1354,6 +1375,111 @@ fn sinch_rcs_rich_messages_go_as_choice_card_and_carousel_messages_with_our_fall
     bed.sinch_event(&sinch_report(&remote, "DELIVERED", "RCS"));
     bed.sinch_event(&sinch_report(&remote, "READ", "RCS"));
     assert_eq!(bed.delivery(&room, seq).4, "read");
+}
+
+/// An incoming text's one-time code (plans/Comms-Messaging.md §18.3 phase 21) is kept on its message (`content.otp`), by
+/// Sms.js after the text is taken in; a text with no code keeps none.
+#[test]
+fn an_incoming_texts_one_time_code_is_kept_on_its_message() {
+    let bed = sinch_bed();
+    let _entered = bed.ctx.enter();
+    bed.sinch_event(&sinch_rcs_in(
+        "01CODE1",
+        json!({"text_message": {"text": "Your verification code is 482913"}}),
+    ));
+    bed.sinch_event(&sinch_rcs_in(
+        "01CODE2",
+        json!({"text_message": {"text": "Thanks, see you at 9"}}),
+    ));
+    let room = bed.room(THEIRS).unwrap();
+    let _authz = bed.ctx.disable_authz();
+    let contents: Vec<String> = bed
+        .facade
+        .find("moqui.chat.ChatEvent")
+        .unwrap()
+        .eq("chatRoomId", text(&room))
+        .eq("eventTypeEnumId", text("CetMessage"))
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .filter_map(|row| row.get("contentJson").map(to_plain_string))
+        .collect();
+    assert_eq!(contents.len(), 2, "{contents:?}");
+    assert!(contents[0].contains("\"otp\":{\"code\":\"482913\"}"), "{contents:?}");
+    assert!(!contents[1].contains("otp"), "{contents:?}");
+}
+
+/// alice sends a place (ChatLocationServices.send#Location, plans/Comms-Messaging.md §18.3 phase 20): its eventSeq.
+fn send_place(room: &str, place: Json) -> i64 {
+    login("alice");
+    let out = ok(
+        "org.moqui.chat.ChatLocationServices.send#Location",
+        &[
+            ("chatRoomId", text(room)),
+            ("location", moqui_lib::json::from_json(&place)),
+        ],
+    );
+    out_text(&out, "eventSeq").parse().unwrap()
+}
+
+/// A location goes on Sinch RCS as Sinch's location message, its words the SMS fallback; with an address only, and on
+/// Twilio (whose location content is WhatsApp's only), its words and the map link.
+#[test]
+fn a_location_goes_as_sinchs_location_message_and_elsewhere_as_its_words_and_map_link() {
+    let bed = sinch_bed();
+    let _entered = bed.ctx.enter();
+    bed.sinch_event(&sinch_rcs_in("01PLACE0", json!({"text_message": {"text": "Where?"}})));
+    let room = bed.room(THEIRS).unwrap();
+    let last_send = || -> Json { serde_json::from_str(&bed.sent_to(SEND_PATH).pop().unwrap().body).unwrap() };
+    send_place(
+        &room,
+        json!({"latitude": 45.5, "longitude": -122.6, "label": "The shop", "address": "1 Main St"}),
+    );
+    bed.round(0);
+    let body = last_send();
+    assert_eq!(
+        body["message"]["location_message"],
+        json!({"coordinates": {"latitude": 45.5, "longitude": -122.6}, "title": "The shop", "label": "1 Main St"})
+    );
+    let fallback = body["message"]["explicit_channel_omni_message"]["SMS"]["text_message"]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        fallback.starts_with("Location: The shop, 1 Main St\nhttps://www.openstreetmap.org/?mlat=45.500000"),
+        "{fallback}"
+    );
+    // an address only: no coordinates for Sinch's message, so its words
+    send_place(&room, json!({"address": "1 Main St"}));
+    bed.round(0);
+    let body = last_send();
+    assert!(body["message"].get("location_message").is_none(), "{body}");
+    assert!(
+        body["message"]["text_message"]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("openstreetmap.org/search?query=1%20Main%20St"),
+        "{body}"
+    );
+    drop(_entered);
+
+    let bed = twilio_bed();
+    let _entered = bed.ctx.enter();
+    bed.rcs_in(&format!("rcs:{THEIRS}"), AGENT, &[("Body", "Where?")]);
+    let room = bed.room(THEIRS).unwrap();
+    send_place(
+        &room,
+        json!({"latitude": 45.5, "longitude": -122.6, "label": "The shop"}),
+    );
+    bed.round(0);
+    let sent = bed.fake.sends().pop().unwrap();
+    let pairs = posted(&sent);
+    let words = value(&pairs, "Body").unwrap_or_default().to_string();
+    assert!(
+        words.starts_with("Location: The shop\nhttps://www.openstreetmap.org/?mlat=45.500000"),
+        "{words}"
+    );
 }
 
 #[test]

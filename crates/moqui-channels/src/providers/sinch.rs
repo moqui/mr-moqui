@@ -388,7 +388,16 @@ impl SmsProvider for Sinch {
         } else {
             ("SMS", "SMS_SENDER")
         };
+        // a location message (plans/Comms-Messaging.md §18.3 phase 20): Sinch's location_message on RCS, our words the
+        // SMS fallback; with no RCS, the words
+        let place = out
+            .request
+            .location
+            .as_ref()
+            .filter(|_| self.is_rcs() && out.rich.is_none() && file.is_none())
+            .and_then(rcs::location_message);
         let message = match (out.rich.filter(|_| self.is_rcs()), file, out.text) {
+            _ if place.is_some() => place.clone().unwrap_or_default(),
             // an RCS bridge's cards and suggestions, with its own fallback for the SMS or MMS channel
             (Some(rich), _, _) => rcs::rich_message(out, rich),
             (None, Some(url), Some(text)) => {
@@ -413,6 +422,8 @@ impl SmsProvider for Sinch {
             if let Some(fallback) = out.rich.and_then(|rich| rcs::fallback_override(out, rich)) {
                 // the AppMessage's own field, beside its kind
                 body["message"]["explicit_channel_omni_message"] = fallback;
+            } else if let Some(text) = out.text.filter(|_| place.is_some() && out.fallback) {
+                body["message"]["explicit_channel_omni_message"] = json!({"SMS": {"text_message": {"text": text}}});
             }
         }
         let delivery = &out.request.chat_bridge_delivery_id;

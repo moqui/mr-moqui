@@ -436,6 +436,21 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="reportHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="setReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="cancelReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <!-- events with RSVP (plans/Comms-Messaging.md §18.3 phase 19) -->
+    <transition-include name="calEventFields" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="createCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="answerCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="updateCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="cancelCalEvent" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <transition-include name="calEventIcs" location="component://basic-comms/template/ChatCalTransitions.xml"/>
+    <!-- one-time codes and screen security (plans/Comms-Messaging.md §18.3 phase 21) -->
+    <transition-include name="keepCode" location="component://basic-comms/template/ChatPrivacyTransitions.xml"/>
+    <transition-include name="roomScreenSecure" location="component://basic-comms/template/ChatPrivacyTransitions.xml"/>
+    <!-- stickers and locations (plans/Comms-Messaging.md §18.3 phase 20) -->
+    <transition-include name="stickerPacks" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="sendSticker" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="sendLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <!-- files for the next message: each stored on its own, or one sent in chunks (uploadId) -->
     <transition name="upload">
         <actions><script><![CDATA[

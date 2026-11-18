@@ -1018,6 +1018,8 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
                 Channel::Rcs => Encryption::Transport,
             },
             group_max: u32::try_from(self.provider.group_max()).unwrap_or(u32::MAX),
+            // the MMS limit of the bridge's text, which the composer fits a photo under (phase 21)
+            media_max_bytes: self.settings(bridge).max_media_bytes,
         }
     }
 

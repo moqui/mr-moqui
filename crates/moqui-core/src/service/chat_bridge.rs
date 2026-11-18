@@ -127,6 +127,9 @@ pub struct Capabilities {
     /// The most outside numbers a group text has (an SMS provider's group MMS: Telnyx 8); 0 when the network carries no
     /// group texts, and a group room on it then refuses to send (`Sms.js`, the adapter).
     pub group_max: u32,
+    /// The most bytes of files one message carries on the network (an SMS provider's MMS limit, `maxMediaBytes`); 0 for
+    /// no limit the adapter knows. The composer fits a compressed photo under it (plans/Comms-Messaging.md §18.3 phase 21).
+    pub media_max_bytes: i64,
 }
 
 /// Where a bridge's webhook signature is checked when an edge node takes the network's requests (plans/archive/Edge-Node.md
@@ -226,8 +229,47 @@ pub struct DeliveryRequest {
     /// A rich message's cards and suggestions (the event's `content.rich`, plans/Comms-Messaging.md §18.3 phase 13), for
     /// an adapter that sends them (business RCS); `text` and `html` are its fallback, which every other adapter sends.
     pub rich: Option<serde_json::Value>,
+    /// A location message's place (the event's `content.location`: `latitude`, `longitude`, `label`, `address`;
+    /// plans/Comms-Messaging.md §18.3 phase 20), for an adapter that sends one (Sinch RCS); `text` is its words with the
+    /// map link, which every other adapter sends. Only with both coordinates.
+    pub location: Option<serde_json::Value>,
+    /// The message's words when its files cannot go (a sticker's "Sticker 👍"; a message's own text): sent alone in
+    /// their place when the adapter refuses the files ([`FILE_REFUSALS`]), plans/Comms-Messaging.md §18.3 phase 20.
+    pub text_form: Option<String>,
     /// This attempt's number, from 1.
     pub attempt: i64,
+}
+
+/// The reason codes of an adapter that refuses a message's files, not its words (too large, too many, none taken): the
+/// message then goes as its [`DeliveryRequest::text_form`] alone, when it has one.
+pub const FILE_REFUSALS: [&str; 5] = [
+    "mediaTooLarge",
+    "tooManyFiles",
+    "mmsNotSetUp",
+    "filesUnsupported",
+    "noFiles",
+];
+
+/// The same request with its words in place of its files, when the adapter refused the files and the message has words.
+pub fn words_instead(request: &DeliveryRequest, outcome: &DeliveryOutcome) -> Option<DeliveryRequest> {
+    let DeliveryOutcome::Failed { reason_code, .. } = outcome else {
+        return None;
+    };
+    let words = request
+        .text_form
+        .as_deref()
+        .map(str::trim)
+        .filter(|words| !words.is_empty())?;
+    if request.attachments.is_empty() || !FILE_REFUSALS.contains(&reason_code.as_str()) {
+        return None;
+    }
+    Some(DeliveryRequest {
+        text: Some(words.to_string()),
+        html: None,
+        attachments: Vec::new(),
+        rich: None,
+        ..request.clone()
+    })
 }
 
 /// The outcome of an attempt.
@@ -692,6 +734,7 @@ fn get_bridge_capabilities(
             ("encryption", Value::string(caps.encryption.as_str())),
             ("groupTexts", Value::Bool(caps.group_max > 0)),
             ("groupMax", Value::I64(i64::from(caps.group_max))),
+            ("mediaMaxBytes", Value::I64(caps.media_max_bytes)),
             ("adapter", Value::Bool(adapter.is_some())),
         ]
         .into_iter()
@@ -1417,6 +1460,26 @@ fn deliver_head(
         );
         return Ok(Step::Retry);
     };
+    // its files refused (too large for a text, too many, none taken): its words alone, when it has some (phase 20)
+    let outcome = match words_instead(&request, &outcome) {
+        Some(words) => {
+            tracing::info!(
+                "delivery {delivery_id}: the adapter {} refused its files ({outcome:?}); its words go alone",
+                adapter.name()
+            );
+            match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.deliver(info, &words))) {
+                Ok(again) => again,
+                Err(_) => {
+                    tracing::error!(
+                        "the chat bridge adapter {} failed on delivery {delivery_id}",
+                        adapter.name()
+                    );
+                    return Ok(Step::Retry);
+                }
+            }
+        }
+        None => outcome,
+    };
     let attempt = attempts + 1;
     let step = match outcome {
         DeliveryOutcome::Accepted { remote_event_id } => {
@@ -1593,10 +1656,34 @@ fn request_of(
         DeliveryKind::Message => content.get("rich").filter(|rich| rich.is_object()).cloned(),
         _ => None,
     };
+    // a location with both coordinates, for an adapter that sends a place (phase 20)
+    let location = match kind {
+        DeliveryKind::Message => content
+            .get("location")
+            .filter(|place| place.get("latitude").and_then(serde_json::Value::as_f64).is_some())
+            .filter(|place| place.get("longitude").and_then(serde_json::Value::as_f64).is_some())
+            .cloned(),
+        _ => None,
+    };
     let sender_name = sender_name(facade, event)?;
     let attachments = match kind {
         DeliveryKind::Message => attachments_of(facade, &room_id, int_of(row, "eventSeq").unwrap_or(0))?,
         _ => Vec::new(),
+    };
+    // a sticker goes as its picture alone; its words ("Sticker 👍") only where there is no picture to send (phase 20)
+    let sticker_picture = kind == DeliveryKind::Message
+        && content.get("sticker").is_some_and(|sticker| sticker.is_object())
+        && !attachments.is_empty();
+    let (text, html) = if sticker_picture {
+        (None, None)
+    } else {
+        (text_of(event, "bodyText"), html)
+    };
+    // the words sent alone if its files are refused
+    let text_form = if attachments.is_empty() {
+        None
+    } else {
+        text_of(event, "bodyText")
     };
     Ok(Ok(DeliveryRequest {
         chat_bridge_delivery_id: text_of(row, "chatBridgeDeliveryId").unwrap_or_default(),
@@ -1606,7 +1693,7 @@ fn request_of(
         external_room_id: text_of(mapping, "externalRoomId").unwrap_or_default(),
         external_thread_id: text_of(mapping, "externalThreadId"),
         kind,
-        text: text_of(event, "bodyText"),
+        text,
         html,
         sender_name,
         sender_user_id: text_of(event, "senderUserId"),
@@ -1614,6 +1701,8 @@ fn request_of(
         target_remote_id,
         reaction_key,
         rich,
+        location,
+        text_form,
         attempt: 0,
     }))
 }

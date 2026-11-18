@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Event messages with RSVP (plans/Comms-Messaging.md §18.3 phase 19): an event is a message whose body is the event in
+    words (so every client, bridge and text shows it) with ChatCalEvent and the members' ChatCalAnswer rows, as a poll is.
+    A change or a cancellation posts a message to the room. An answer may ask for a reminder (ChatScheduleServices) and a
+    calendar entry: an app's chat-calendar provider (given ids only), else the .ics file. No events in an encrypted room.
+    answer#, update# and cancel#CalEvent commit their own writes, in a transaction of their own, before they call the
+    providers (each in a transaction of its own, which reads only what is committed).
+    The logic is ChatCal.js beside this file. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="create" noun="CalEvent">
+        <description>An event from the current user, a member of a room that is not archived or encrypted: title (1 to 200
+            characters), startDate and endDate (it ends after it starts, at most 31 days later and later than now, and
+            starts within two years), timeZone (an IANA zone; the user's by default), allDay (whole days: midnights in that
+            zone), place (up to 300) and description (up to 2,000). A message (send#Message, its body the event in words,
+            content.calEvent {title}) and its ChatCalEvent; the state pushed as an update. threadRootEventSeq, clientRef and
+            roomUrl as send#Message. Out: eventSeq, event (with calEvent), duplicate, reasonCode (encryptedRoom, badEvent,
+            badTime, tooLong).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="title" required="true"/>
+            <parameter name="startDate" type="Timestamp" required="true"/>
+            <parameter name="endDate" type="Timestamp" required="true"/>
+            <parameter name="timeZone"/>
+            <parameter name="allDay" type="Boolean" default="false"/>
+            <parameter name="place"/>
+            <parameter name="description"/>
+            <parameter name="threadRootEventSeq" type="Integer"/>
+            <parameter name="clientRef"/>
+            <parameter name="roomUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="event" type="Map"/>
+            <parameter name="duplicate" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('create', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="CalEventStates" allow-remote="false">
+        <description>Internal: the events of these messages of a room, as calEventMap eventSeq to {title, start, end (epoch
+            millis), timeZone, allDay, place, description, revision, cancelled, cancelledDate, ended, createdByUserId,
+            lastChangeEventSeq, going, maybe, no (the counts), answers {going, maybe, no: [userId]}, uid, mine {answer (going,
+            maybe or no), remindMinutes, calendarDate} or null}. shared leaves out mine (the same for every member, as
+            push#Update sends it). The caller has checked access.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeqList" type="List" required="true"/>
+            <parameter name="shared" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="calEventMap" type="Map"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('states', context))</script></actions>
+    </service>
+
+    <service verb="answer" noun="CalEvent" transaction="ignore">
+        <description>The current user's answer to an event of a room they may post in, while it is not cancelled or over:
+            answer going, maybe or no, or empty to take it back (the counts kept, the row locked). remindMinutes (0 to
+            10,080, with going or maybe) sets or moves a reminder that long before the start (ChatScheduleServices
+            set#Reminder; none when that is less than a minute ahead: reminderSkipped); no reminder, No or a take-back
+            cancels the one the answer made. addToCalendar asks the chat-calendar providers to put the entry, and No or a
+            take-back removes one they put. The reminder and the calendar each run on their own: a failure is logged and
+            answered (reminderFailed, calendarFailed) and the answer stands. The state is pushed as an update. Out: calEvent
+            (with mine), eventUrl (a provider's), reasonCode (notFound, notMember, archived, cancelled, ended, badAnswer,
+            badTime).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="answer"/>
+            <parameter name="remindMinutes" type="Integer"/>
+            <parameter name="addToCalendar" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="calEvent" type="Map"/>
+            <parameter name="eventUrl"/>
+            <parameter name="reminderSkipped" type="Boolean"/>
+            <parameter name="reminderFailed" type="Boolean"/>
+            <parameter name="calendarFailed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('answer', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="CalEvent" transaction="ignore">
+        <description>A change of an event by its creator (still a member who may post) or a moderator or owner, while it is
+            not cancelled or over, at most 20 times: any of the fields of create#CalEvent, checked the same way; revision + 1.
+            A change of the title, time, place or details posts a change message as the changer (a reply to the event, in its
+            thread, content.calChange {eventSeq, revision, what}); the answers' reminders move with the start (each on its
+            own; one now too near is cancelled); then the chat-calendar providers' change. Out: calEvent, changeEventSeq,
+            reasonCode (notAllowed, cancelled, ended, tooManyChanges and those of create#CalEvent).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="title"/>
+            <parameter name="startDate" type="Timestamp"/>
+            <parameter name="endDate" type="Timestamp"/>
+            <parameter name="timeZone"/>
+            <parameter name="allDay" type="Boolean"/>
+            <parameter name="place"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="calEvent" type="Map"/>
+            <parameter name="changeEventSeq" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('update', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="CalEvent" transaction="ignore">
+        <description>Cancel an event, for good: its creator or a moderator or owner. A cancellation message (content.calChange
+            {eventSeq, revision, cancelled}), the answers' pending reminders cancelled, then the chat-calendar providers'
+            cancel. Nothing more when it is cancelled already. Out: calEvent, changeEventSeq, reasonCode.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="calEvent" type="Map"/>
+            <parameter name="changeEventSeq" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('cancel', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="CalEventIcs">
+        <description>An event as an .ics file, for one who can read the room (the ICalendar tool): PUBLISH, or CANCEL once
+            cancelled; UID chat-roomId-eventSeq@ the property chat_cal_uid_domain (chat.moqui by default) and SEQUENCE the
+            revision, so a calendar that imports it again updates its entry; the times in the event's zone (TZID), or the
+            days of an all-day event; baseUrl (the server's) makes the message's link its URL. Out: fileText, fileName,
+            contentType, reasonCode (notFound, noIcs).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="baseUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fileText"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('ics', context))</script></actions>
+    </service>
+
+    <service verb="mark" noun="CalendarSync" allow-remote="false">
+        <description>Internal: the result of the chat-calendar providers' change or cancel of an event: failed keeps it to be
+            tried again (calendarSyncPending, calendarSyncTries, calendarSyncNextDate a minute on, doubled each try to a day;
+            the tenth failure is logged and given up), at the event's next answer or change; else it is cleared.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="failed" type="Boolean" default="false"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('markSync', context))</script></actions>
+    </service>
+
+    <service verb="forget" noun="CalEvent" allow-remote="false">
+        <description>Internal: an event's message is gone (a redaction, retention, an expiry): the answers' pending reminders
+            cancelled, the chat-calendar providers' cancel when one put an entry, and its rows removed, each part on its own.
+            Nothing when the message is no event. The caller has checked access. Out: forgotten.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="forgotten" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatCal.js').execute('forget', context))</script></actions>
+    </service>
+</services>

@@ -223,6 +223,43 @@ pub(crate) fn secure_screen(reason: &str, on: bool) -> Result<bool, String> {
     })
 }
 
+/// The phone's calendar app on a new event (`CalendarIntent.insert`): whether one took it.
+pub(crate) fn calendar_insert(
+    title: &str,
+    start: i64,
+    end: i64,
+    all_day: bool,
+    zone: &str,
+    place: &str,
+    description: &str,
+) -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CalendarIntent"))?;
+        let title = env.new_string(title)?;
+        let zone = env.new_string(zone)?;
+        let place = env.new_string(place)?;
+        let description = env.new_string(description)?;
+        let opened = env
+            .call_static_method(
+                &class,
+                jni_str!("insert"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;JJZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z"),
+                &[
+                    JValue::Object(app),
+                    JValue::Object(&title),
+                    JValue::Long(start),
+                    JValue::Long(end),
+                    JValue::Bool(all_day),
+                    JValue::Object(&zone),
+                    JValue::Object(&place),
+                    JValue::Object(&description),
+                ],
+            )?
+            .z()?;
+        Ok(opened)
+    })
+}
+
 /// The phone's notification state, as the check screen shows it (`PushCheck.state(context)`, JSON: notifications
 /// allowed, channels on, battery optimization, the last push received).
 pub(crate) fn push_check_state() -> Result<String, String> {

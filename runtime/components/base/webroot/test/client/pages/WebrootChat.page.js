@@ -1728,3 +1728,160 @@ test("the join components compile, and WebrootVue.qvt.js registers them", () => 
         assert.deepEqual(errors, [], name);
     }
 });
+
+test("an event's times: a wall clock in its zone, the box's start and end, the viewer's zone note, the reminders still ahead, the counts", () => {
+    const cal = chat.cal;
+    const start = Date.UTC(2030, 10, 23, 21, 0);
+    const event = { title: "Picnic", start, end: start + 7200000, timeZone: "America/Denver", allDay: false, going: 2, maybe: 0, no: 1 };
+    try {
+        moqui.l10n.setTimeZone("America/New_York");
+        assert.equal(cal.wallIn("2030-11-23", "14:00", "America/Denver"), start);
+        assert.equal(cal.wallIn("2030-07-04", "14:00", "America/Denver"), Date.UTC(2030, 6, 4, 20, 0), "summer time");
+        assert.equal(cal.zoneNote(event), "14:00 in America/Denver");
+        moqui.l10n.setTimeZone("America/Denver");
+        assert.equal(cal.zoneNote(event), "", "the same wall clock: no note");
+        assert.deepEqual(cal.boxFields(event), { startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "16:00" });
+        assert.deepEqual(cal.boxTimes({ timeZone: "America/Denver", allDay: false, startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "16:00" }),
+            { start, end: start + 7200000 });
+        assert.deepEqual(cal.boxTimes({ timeZone: "America/Denver", allDay: true, startDay: "2030-11-24", endDay: "2030-11-24" }),
+            { start: Date.UTC(2030, 10, 24, 7), end: Date.UTC(2030, 10, 25, 7) }, "a whole day: midnight to midnight there");
+        assert.equal(cal.boxTimes({ timeZone: "America/Denver", allDay: false, startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "13:00" }), null);
+        assert.deepEqual(cal.remindChoices(event, start - 30 * 60000).map((one) => one.minutes), [0, 15], "only those still ahead");
+        assert.deepEqual(cal.remindChoices(event, start - 3 * 86400000).map((one) => one.minutes), [0, 15, 60, 1440]);
+        assert.equal(cal.countLine(event), "2 going · 1 can't go");
+        assert.equal(cal.countLine({ going: 0, maybe: 0, no: 0 }), "No answers yet");
+        assert.equal(cal.canAnswer(event, start), true);
+        assert.equal(cal.canAnswer(event, start + 7200000), false, "over");
+        assert.equal(cal.canAnswer(Object.assign({}, event, { cancelled: true }), start), false);
+        assert.equal(cal.myAnswer(Object.assign({}, event, { mine: { answer: "maybe" } })), "maybe");
+        assert.ok(cal.when(event).length > 0);
+    } finally {
+        moqui.l10n.setTimeZone(null);
+    }
+});
+
+test("a place typed or pasted: coordinates, degrees, a geo: URI, three maps links, an address; its words as the server's, its links, out of range refused", () => {
+    const place = chat.place;
+    assert.deepEqual(place.parse("40.7452, -111.875"), { latitude: 40.7452, longitude: -111.875 });
+    assert.deepEqual(place.parse("40°44'42.8\"N 111°52'30.0\"W"), { latitude: 40.745222, longitude: -111.875 });
+    assert.deepEqual(place.parse("geo:45.5,-122.6?q=45.5,-122.6(The shop)"), { latitude: 45.5, longitude: -122.6 });
+    assert.deepEqual(place.parse("geo:0,0?q=1+Main+St"), { address: "1 Main St" });
+    assert.deepEqual(place.parse("https://www.openstreetmap.org/?mlat=45.5&mlon=-122.6#map=17/45.5/-122.6"), { latitude: 45.5, longitude: -122.6 });
+    assert.deepEqual(place.parse("https://www.google.com/maps/place/Cafe/@45.5231,-122.6765,17z"), { latitude: 45.5231, longitude: -122.6765 });
+    assert.deepEqual(place.parse("https://maps.apple.com/?ll=45.5,-122.6&q=Cafe"), { latitude: 45.5, longitude: -122.6 });
+    assert.equal(place.parse("https://example.com/somewhere"), null, "a link with no coordinates is no place");
+    assert.deepEqual(place.parse("  600 E 900 S,  Salt Lake City "), { address: "600 E 900 S, Salt Lake City" });
+    assert.equal(place.parse("91, 10"), null, "coordinates out of range: no place");
+    assert.equal(place.parse(""), null);
+    // the words the server makes for the same place (ChatLocation.js fallbackText, the ChatLocation spec)
+    assert.equal(place.fallback({ latitude: 40.74521, longitude: -111.875, label: "Liberty Park", address: "600 E 900 S, Salt Lake City" }),
+        "Location: Liberty Park, 600 E 900 S, Salt Lake City\nhttps://www.openstreetmap.org/?mlat=40.745210&mlon=-111.875000#map=17/40.745210/-111.875000");
+    assert.equal(place.fallback({ address: "10 Downing St, London" }),
+        "Location: 10 Downing St, London\nhttps://www.openstreetmap.org/search?query=10%20Downing%20St%2C%20London");
+    assert.equal(place.geoUri({ latitude: 45.5, longitude: -122.6, label: "Joe's & Co" }), "geo:45.500000,-122.600000?q=45.500000,-122.600000(Joe's%20%26%20Co)");
+    assert.equal(place.geoUri({ address: "1 Main St" }), "geo:0,0?q=1%20Main%20St");
+    assert.equal(place.coordinatesText({ latitude: 45.5, longitude: -122.6, accuracy: 12.4 }), "45.5, -122.6 ± 12 m");
+    assert.equal(place.clean({ latitude: 200, longitude: 0 }), null, "a decrypted place out of range is dropped");
+    assert.deepEqual(place.clean({ latitude: "1.5", longitude: 2, source: "x" }), { latitude: 1.5, longitude: 2, source: "typed" });
+});
+
+test("stickers found by emoji or words across packs, and the ones sent last kept newest first", () => {
+    const packs = [{ chatStickerPackId: "P1", stickers: [{ chatStickerId: "S1", emoji: "👍", altText: "thumbs up" }, { chatStickerId: "S2", emoji: "🎉", altText: "party" }] },
+        { chatStickerPackId: "P2", stickers: [{ chatStickerId: "S3", emoji: "👍", altText: "Okay" }] }];
+    assert.deepEqual(chat.stickers.search(packs, "👍").map((one) => one.chatStickerId), ["S1", "S3"]);
+    assert.deepEqual(chat.stickers.search(packs, "PARTY").map((one) => one.chatStickerId), ["S2"]);
+    assert.equal(chat.stickers.search(packs, "").length, 3);
+    chat.stickers.remember("ann", "S2");
+    chat.stickers.remember("ann", "S1");
+    assert.deepEqual(chat.stickers.remember("ann", "S2"), ["S2", "S1"]);
+    assert.deepEqual(chat.stickers.recent("ann").slice(0, 2), ["S2", "S1"]);
+    assert.equal(chat.stickers.clean({ chatStickerId: "S1", width: 9000, emoji: "👍" }).width, 512);
+});
+
+test("screen security: the whole app, an encrypted room by the setting, any room by the member's own switch; a code's line", () => {
+    const screen = chat.screen;
+    assert.equal(screen.wanted("app", { encrypted: false }, null), true);
+    assert.equal(screen.wanted("encrypted", { encrypted: true }, null), true);
+    assert.equal(screen.wanted("encrypted", { encrypted: false }, null), false);
+    assert.equal(screen.wanted("off", { encrypted: true }, null), false);
+    assert.equal(screen.wanted("off", { encrypted: true }, { screenSecure: "Y" }), true);
+    assert.equal(chat.otp.line({ otp: { code: "482913" } }), "Code 482913");
+    assert.equal(chat.otp.line({}), "");
+});
+
+test("a photo goes smaller: 2048 px as a JPEG from 4000 x 3000, stepped under a limit; a small PNG, a GIF and a video as they are", async () => {
+    const photos = chat.photos;
+    const canvas = document.createElement("canvas");
+    canvas.width = 4000;
+    canvas.height = 3000;
+    const context = canvas.getContext("2d");
+    // noise, so the JPEG has something to make smaller
+    const image = context.createImageData(4000, 3000);
+    for (let i = 0; i < image.data.length; i += 4) {
+        image.data[i] = (i * 7919) % 256; image.data[i + 1] = (i * 104729) % 256; image.data[i + 2] = (i * 31) % 256; image.data[i + 3] = 255;
+    }
+    context.putImageData(image, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
+    const photo = new File([blob], "IMG_0001.JPG", { type: "image/jpeg" });
+    const small = await photos.compress(photo, {});
+    assert.equal(small.type, "image/jpeg");
+    assert.equal(small.name, "IMG_0001.jpg");
+    assert.ok(small.size < photo.size, small.size + " < " + photo.size);
+    const bitmap = await createImageBitmap(small);
+    assert.equal(Math.max(bitmap.width, bitmap.height), 2048);
+    const limit = Math.floor(small.size / 2);
+    const fitted = await photos.compress(photo, { maxBytes: limit });
+    assert.ok(fitted.size <= limit || fitted.size < small.size, fitted.size + " under " + limit);
+    // a small JPEG drawn again comes out no smaller, and is still the one sent: its metadata goes
+    const tiny = document.createElement("canvas");
+    tiny.width = 40; tiny.height = 30;
+    const jpeg = new File([await new Promise((resolve) => tiny.toBlob(resolve, "image/jpeg", 0.3))], "small.jpg", { type: "image/jpeg" });
+    const redrawn = await photos.compress(jpeg, {});
+    assert.notEqual(redrawn, jpeg, "drawn again, though no smaller");
+    assert.equal(redrawn.type, "image/jpeg");
+    // a small PNG with a text chunk (a GPS note) stays a PNG, drawn again without the chunk
+    const bytes = new Uint8Array(await (await new Promise((resolve) => tiny.toBlob(resolve, "image/png"))).arrayBuffer());
+    const crcTable = Array.from({ length: 256 }, (n, c) => { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+    const crc = (data) => { let c = 0xffffffff; for (const b of data) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+    const text = new TextEncoder().encode("tEXtGPS\u000040.7452,-111.875");
+    const chunk = new Uint8Array(12 + text.length - 4);
+    new DataView(chunk.buffer).setUint32(0, text.length - 4);
+    chunk.set(text, 4);
+    new DataView(chunk.buffer).setUint32(4 + text.length, crc(text));
+    const iend = bytes.length - 12;
+    const tagged = new Uint8Array(bytes.length + chunk.length);
+    tagged.set(bytes.subarray(0, iend), 0);
+    tagged.set(chunk, iend);
+    tagged.set(bytes.subarray(iend), iend + chunk.length);
+    const png = new File([tagged], "shot.png", { type: "image/png" });
+    const has = (array, word) => new TextDecoder("latin1").decode(array).includes(word);
+    assert.ok(has(tagged, "tEXtGPS"), "the test's PNG has its chunk");
+    const stripped = await photos.compress(png, {});
+    assert.equal(stripped.type, "image/png");
+    assert.ok(!has(new Uint8Array(await stripped.arrayBuffer()), "GPS"), "the chunk is gone");
+    assert.equal(photos.budget(1048576, 4), 262144);
+    assert.equal(photos.budget(0, 4), 0);
+    assert.equal(photos.compressible(new File(["x"], "a.gif", { type: "image/gif" })), false);
+    assert.equal(photos.compressible(new File(["x"], "a.mp4", { type: "video/mp4" })), false);
+    // a file the browser cannot read goes as it is
+    const broken = new File(["not a picture"], "x.jpg", { type: "image/jpeg" });
+    assert.equal(await photos.compress(broken, {}), broken);
+    assert.deepEqual(photos.steps(0).length, 1);
+});
+
+test("the whole app's screen security applies at once both ways, as this account's own reason", async () => {
+    const calls = [];
+    const was = { desktop: globalThis.moquiDesktop, scope: moqui.storageScope };
+    globalThis.moquiDesktop = { secureScreen: (reason, on) => { calls.push([reason, on]); return Promise.resolve(on); } };
+    moqui.storageScope = "acct-1";
+    try {
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "app");
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "encrypted");
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "");
+        await Promise.resolve();
+        assert.deepEqual(calls, [["app:acct-1", true], ["app:acct-1", false], ["app:acct-1", false]]);
+    } finally {
+        globalThis.moquiDesktop = was.desktop;
+        moqui.storageScope = was.scope;
+    }
+});
