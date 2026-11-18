@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Invite links and join requests (plans/Comms-Messaging.md §18.3 phase 17; docs/tools/Comms.md "Invite links"): the
+    links of a room (ChatInviteLink, /join/<token>), the join requests (ChatJoinRequest) and their queue, and the private rooms
+    listed in Browse. The logic is ChatInvites.js beside this file. Each service checks the caller's access in the room
+    (get#RoomAccess); check#InviteToken and join#ByInvite take a token instead. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="create" noun="InviteLink">
+        <description>A room's invite link, /join/&lt;token&gt;: in a private room by a moderator or owner, with approval or not; in a public room by any member, never with approval. expiryHours 1 to 720, 0 for no end, empty for a week; maxUses 1, 5, 10, 25 or 100, empty for no limit; a label. The token is in the answer, and kept encrypted for the room's moderators. Refused (reasonCode): notAllowed (not a moderator of a private room, not a member of a public room, an external user), roomType (direct, record, phone), archived, tooManyLinks (20 in force), badExpiry, badUses.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="label"/>
+            <parameter name="expiryHours" type="Integer"/>
+            <parameter name="maxUses" type="Integer"/>
+            <parameter name="approvalRequired"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatInviteLinkId"/>
+            <parameter name="token"/>
+            <parameter name="path"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('createLink', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="InviteLinks">
+        <description>The invite links in force of a room: all of them for its moderators, a public room's member their own. Each {chatInviteLinkId, path, label, createdByName, createdDate, expiryDate, maxUses, useCount, approvalRequired, lastUsedDate} (millis). canMake, roomKind (private or public), canList (an owner of a private room) and listed (in Browse).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="linkList" type="List"/>
+            <parameter name="canMake" type="Boolean"/>
+            <parameter name="roomKind"/>
+            <parameter name="canList" type="Boolean"/>
+            <parameter name="listed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('findLinks', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="InviteQr">
+        <description>The QR code (an SVG) of an invite link's URL: baseUrl (the request's own scheme and host, which the screen passes) and the link's path. For its maker or a moderator of its room. qrSvg is empty when it could not be drawn; the link stands.</description>
+        <in-parameters>
+            <parameter name="chatInviteLinkId" required="true"/>
+            <parameter name="baseUrl" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="url"/>
+            <parameter name="qrSvg"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('linkQr', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="InviteLink">
+        <description>Revoke an invite link (its maker, or a moderator or owner of its room): it takes no one from then on. Its pending requests stay for the moderators to decide.</description>
+        <in-parameters>
+            <parameter name="chatInviteLinkId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="revoked" type="Boolean"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('revokeLink', context))</script></actions>
+    </service>
+
+    <service verb="set" noun="RoomListed">
+        <description>List a private room in Browse, or not (its owner): its name, topic and member count show to the users who are not in it, who may ask to join.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="listed" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="listed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('setListed', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="InviteToken" authenticate="anonymous-all">
+        <description>The token check of the /join/&lt;token&gt; route (the token-route "join" of basic-comms MoquiConf): valid when the token names a link that takes people. routeContext is what the join page may show: roomName, memberCount, roomKind, approval, encrypted, verifiedOnly, signedIn; with a session user also member, pending, makerName and roomUrl (a member). Nothing is read for a bad token.</description>
+        <in-parameters>
+            <parameter name="token" required="true"/>
+            <parameter name="routeName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="routeContext" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('checkToken', context))</script></actions>
+    </service>
+
+    <service verb="join" noun="ByInvite" authenticate="anonymous-all">
+        <description>The signed-in user joins a room by an invite link's token, or asks to: a link with approval, or a person another member took out of the room, makes a join request (with note), else they join (the membership event via link). A join or a request is a use. outcome joined, requested or member; chatRoomId and roomUrl when in. Refused: notSignedIn, notFound (a link that takes no one, one whose maker blocked the user, an external user and a public room), rateLimited (30 an hour), deniedRecently (7 days), tooManyRequests (10 pending), queueFull (100 pending a room).</description>
+        <in-parameters>
+            <parameter name="token" required="true"/>
+            <parameter name="note"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="outcome"/>
+            <parameter name="chatRoomId"/>
+            <parameter name="roomUrl"/>
+            <parameter name="chatJoinRequestId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('joinByInvite', context))</script></actions>
+    </service>
+
+    <service verb="request" noun="Join">
+        <description>Ask to join a private room its owner listed in Browse: a join request for its moderators, with the refusals of join#ByInvite.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="note"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="outcome"/>
+            <parameter name="chatJoinRequestId"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('requestJoin', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="JoinRequest">
+        <description>Cancel the signed-in user's own pending join request.</description>
+        <in-parameters>
+            <parameter name="chatJoinRequestId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="cancelled" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('cancelRequest', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="JoinRequests">
+        <description>The pending join requests of a room, for its moderators and owners (not those of people the moderator blocked): each {chatJoinRequestId, userId, name, note, requestedDate, fromBrowse, linkLabel, linkRevoked, wasRemoved}.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="requestList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('findRequests', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="JoinRequestCount">
+        <description>The pending join requests of a room a moderator sees (the room's banner); 0 for anyone else.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="pendingCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('requestCount', context))</script></actions>
+    </service>
+
+    <service verb="decide" noun="JoinRequest">
+        <description>Approve (add#Member, as this moderator, with its checks) or deny (decision) a pending join request, or each of chatJoinRequestIdList on its own, in a transaction of its own (failedList names the ones that failed). The person gets the ChatJoinDecision notification.</description>
+        <in-parameters>
+            <parameter name="chatJoinRequestId"/>
+            <parameter name="chatJoinRequestIdList" type="List"/>
+            <parameter name="decision" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="decided" type="Boolean"/>
+            <parameter name="statusEnumId"/>
+            <parameter name="decidedCount" type="Integer"/>
+            <parameter name="failedList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('decide', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="ListedRooms">
+        <description>The private rooms listed in Browse that the user is not in (none for an external user), by name or topic: each {chatRoomId, roomName, topic, memberCount, pending}.</description>
+        <in-parameters>
+            <parameter name="searchText"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="roomList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatInvites.js').execute('findListed', context))</script></actions>
+    </service>
+</services>

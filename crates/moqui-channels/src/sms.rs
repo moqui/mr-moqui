@@ -687,9 +687,13 @@ impl<P: SmsProvider> SmsAdapter<P> {
 }
 
 /// Our number and the outside numbers, from a mapping's external room id: a pair's (`ours/theirs`) or a group text's
-/// (`ours/a,b,c`, plans/Comms-Messaging.md §9), at most [`NUMBERS_READ`] of them. None for anything else.
+/// (`ours/a,b,c`, plans/Comms-Messaging.md §9), at most [`NUMBERS_READ`] of them; a text member's (`ours/theirs#room`,
+/// [`member_of`]) is its pair. None for anything else.
 pub fn numbers_of(external_room_id: &str) -> Option<(String, Vec<String>)> {
-    let (ours, theirs) = external_room_id.split_once('/')?;
+    let numbers = external_room_id
+        .split_once('#')
+        .map_or(external_room_id, |(numbers, _)| numbers);
+    let (ours, theirs) = numbers.split_once('/')?;
     let valid = |number: &str| {
         number
             .strip_prefix('+')
@@ -698,6 +702,79 @@ pub fn numbers_of(external_room_id: &str) -> Option<(String, Vec<String>)> {
     let theirs: Vec<String> = theirs.split(',').map(str::to_string).collect();
     let fits = !theirs.is_empty() && theirs.len() <= NUMBERS_READ && theirs.iter().all(|number| valid(number));
     (valid(ours) && fits && !theirs.iter().any(|number| number == ours)).then(|| (ours.to_string(), theirs))
+}
+
+/// A text member's mapping (plans/Comms-Messaging.md §18.3 phase 18): our number, theirs and the room, from its external
+/// room id `ours/theirs#chatRoomId`. None for any other mapping.
+pub fn member_of(external_room_id: &str) -> Option<(String, String, String)> {
+    let (numbers, room) = external_room_id.split_once('#')?;
+    let room = room.trim();
+    if room.is_empty()
+        || room.len() > 64
+        || !room
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    {
+        return None;
+    }
+    let (ours, theirs) = pair_of(numbers)?;
+    Some((ours, theirs, room.to_string()))
+}
+
+/// What a text member gets of a room's message: `<sender>: <text>` (the sender's name cut to 30 characters, the whole cut
+/// to `max_text` characters, ending `…`), the photos, videos and sounds the bridge's MMS limits take, and a line for each
+/// other file, which a text member could not open from a link. No rich cards: their text is the fallback.
+pub fn member_request(request: &DeliveryRequest, max_text: usize, max_count: usize, max_bytes: i64) -> DeliveryRequest {
+    let name: String = request
+        .sender_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("?")
+        .chars()
+        .take(30)
+        .collect();
+    let mut lines: Vec<String> = Vec::new();
+    let mut kept = Vec::new();
+    let mut bytes = 0_i64;
+    for file in &request.attachments {
+        let media = file
+            .content_type
+            .as_deref()
+            .is_some_and(|kind| kind.starts_with("image/") || kind.starts_with("video/") || kind.starts_with("audio/"));
+        let size = file.file_size.unwrap_or(0);
+        if media && kept.len() < max_count && bytes + size <= max_bytes {
+            bytes += size;
+            kept.push(file.clone());
+        } else {
+            lines.push(format!(
+                "[{}: a file, not sent by text]",
+                file.file_name.as_deref().unwrap_or("a file")
+            ));
+        }
+    }
+    let body = request.text.as_deref().map(str::trim).unwrap_or_default();
+    let mut text = if body.is_empty() && !kept.is_empty() && lines.is_empty() {
+        format!("{name}:")
+    } else {
+        let words = [body.to_string()]
+            .into_iter()
+            .chain(lines)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{name}: {words}")
+    };
+    if text.chars().count() > max_text.max(2) {
+        text = text.chars().take(max_text.max(2) - 1).collect::<String>() + "…";
+    }
+    DeliveryRequest {
+        text: Some(text),
+        html: None,
+        rich: None,
+        attachments: kept,
+        ..request.clone()
+    }
 }
 
 /// Our number and theirs, from a mapping's external room id (`ours/theirs`); none for a group's.
@@ -986,7 +1063,52 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
         // the day's counts this send holds (check#SmsSend reserve, one a recipient), let go when it does not reach the
         // provider
         let mut reserved: Vec<BTreeMap<String, Value>> = Vec::new();
-        if in_room {
+        // a room's text member (plans/Comms-Messaging.md §18.3 phase 18): the room sends, whoever wrote, checked in room
+        // mode (the number carries room texts, the pair, the room's and all users' day), and the text names its sender
+        let member = in_room && member_of(&request.external_room_id).is_some();
+        let shaped;
+        let request = if member {
+            if request.kind != DeliveryKind::Message {
+                return failed("bridgeUnsupported", "A text member gets messages only");
+            }
+            let parameters = BTreeMap::from([
+                ("fromNumber".to_string(), Value::string(&ours)),
+                ("toNumber".to_string(), Value::string(&theirs[0])),
+                ("chatRoomId".to_string(), Value::string(&request.chat_room_id)),
+                ("reserve".to_string(), Value::Bool(true)),
+            ]);
+            match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
+                Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => reserved.push(BTreeMap::from([
+                    ("chatRoomId".to_string(), Value::string(&request.chat_room_id)),
+                    ("fromNumber".to_string(), Value::string(&ours)),
+                    (
+                        "counterDay".to_string(),
+                        out.get("counterDay").cloned().unwrap_or(Value::Null),
+                    ),
+                ])),
+                Ok(out) => {
+                    let text = |key: &str| out.get(key).map(to_plain_string).unwrap_or_default();
+                    return failed(&text("reasonCode"), text("message"));
+                }
+                Err(error) => {
+                    return DeliveryOutcome::Retry {
+                        error: format!("The send could not be checked: {error}"),
+                        not_connected: false,
+                    }
+                }
+            }
+            let settings = self.settings(bridge);
+            shaped = member_request(
+                request,
+                settings.max_text_length,
+                settings.max_media_count,
+                settings.max_media_bytes,
+            );
+            &shaped
+        } else {
+            request
+        };
+        if in_room && !member {
             // a text in a room goes from a user granted our number, never as the system
             let Some(user) = request.sender_user_id.as_deref().filter(|user| !user.is_empty()) else {
                 return failed("numberNotGranted", "A text goes from a user granted the number");
@@ -999,6 +1121,8 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
                     ("toNumber".to_string(), Value::string(to)),
                     ("userId".to_string(), Value::string(user)),
                     ("reserve".to_string(), Value::Bool(true)),
+                    // a room's text: refused while the number is a text member of a room on ours (inRoomByText)
+                    ("inRoom".to_string(), Value::Bool(true)),
                 ]);
                 let refusal = match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
                     Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {
@@ -1080,7 +1204,10 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
         if self.provider.channel() != Channel::Rcs || !typing_on(&bridge.config) {
             return Ok(());
         }
-        // a pair only: RBM has no groups
+        // a pair only: RBM has no groups; and no typing to a room's text member
+        if member_of(external_room_id).is_some() {
+            return Ok(());
+        }
         let Some((ours, theirs)) = pair_of(external_room_id) else {
             return Ok(());
         };

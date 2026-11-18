@@ -3210,7 +3210,7 @@ on Send, and a reminder's notification on the phone.
 
 #### Phase 17: invite links and QR codes, and join requests (D2c, §14.4, §14.5, §17 #5)
 
-Designed 2026-11-17. A room's moderator makes a link (and its QR code) that lets people with an account into the room,
+Designed 2026-11-17; built 2026-11-18 (the status at the end of this entry). A room's moderator makes a link (and its QR code) that lets people with an account into the room,
 straight in or through the moderators' approval. A private room its owner lists in Browse takes join requests too.
 
 **Which rooms take links.**
@@ -3422,9 +3422,29 @@ Hooks in shared files:
 - [Desktop-Client](../docs/ui/Desktop-Client.md): the dialogs in the bundled Chat.
 - The BasicComms README: the `/join/<token>` route.
 
+**Status (2026-11-18): built** as designed, with these changes:
+- The client parts of both phases are one file, `webroot/screen/webroot/js/WebrootChatJoin.js` (`moqui.chat.invites`,
+  `moqui.chat.texts`, `m-chat-invites`, `m-chat-join-requests`, `m-chat-text-members`), loaded after `WebrootChat.js` in
+  `qapps.xml` and the desktop shell's `index.html`; its render functions are in `WebrootVue.qvt.render.js`
+  (`client_components_are_precompiled` reads it).
+- A join link with several accounts on its host opens in the current one when it is there, else the first; there is no
+  pick dialog.
+- The QR code is drawn for the conf's own address (`ec.web.getWebappRootUrl`), never the request's `Host`.
+- `WebrootChat.js` passes the room's `joinRequests` push through the chat store (one line), and the room listens for it.
+- Files: `ChatInvites.js`, `ChatInviteServices.xml` (new); `ChatEntities.xml` (`ChatInviteLink`, `ChatJoinRequest`,
+  `ChatRoom.directoryListed`, `ChatRoomMember.removedByUserId`), `ChatSetupData.xml` (the two topics),
+  `ChatServices.xml` (`remove#Member`'s `removedByUserId`); `basic-comms/screen/ChatJoin.xml`, `ChatJoin.qvue`,
+  `template/ChatInviteTransitions.xml` (new), `MoquiConf.xml` (the route and its rate limits), `Chat.xml` (the
+  includes), `Chat.qvue` (the menu items, the banner, Browse's listed rooms, the membership lines); moqui-mobile
+  `src/join.rs` (new), `src/lib.rs`, `src/host.rs` (`open_join_link`), the manifest's `/join` filter.
+- Tests. Regression: `framework/test/ChatInvites.spec.js` (new: the rules above), `basic-comms/test/ChatJoin.spec.js`
+  (new: the page in qvue, its `join` and `signIn`, and Chat's invite transitions), `webroot/test/client/WebrootChat.spec.js`
+  (the pure parts, the push, the components compiling), moqui-mobile `join_tests.rs` (the link, the account's pick).
+- Left: §18.4's row; the dialogs and the join page are not walked in a browser.
+
 #### Phase 18: text members of a room (D2d, §14.5 "Join by SMS without the app", §17 #6)
 
-Designed 2026-11-17. A moderator adds a phone number to a private room. That number gets each message of the room as a
+Designed 2026-11-17; built 2026-11-18 (the status at the end of this entry). A moderator adds a phone number to a private room. That number gets each message of the room as a
 text, "Ann: …", from one of our numbers, and its replies post to the room as that number, as GroupMe's SMS members do.
 
 **Routing: one room per outside number on each of our numbers.** A text a person sends to our number carries no room.
@@ -3434,8 +3454,10 @@ GroupMe gave each group its own reply number. Here:
 - An outside number is a text member of at most one room on each such number. While it is one, all of its texts to that
   number go to that room.
 - With one marked number, a person is in one room by text. With three, three.
-- A fourth room on three numbers is refused: `noFreeNumber`, "This number is already in a room by text on each of your
-  numbers for room texts: take it out of one first".
+- A fourth room on three numbers is refused: `noFreeNumber`. The add dialog explains the limit where it applies, for
+  each number the adder may use: "This person is already a text member of <room> on this number; another number is
+  needed."
+- Decided by the user (§19.1, 2026-11-17).
 
 The other choices were not taken:
 - *The room the person was last texted from*: a reply to an older message goes to the wrong room, and nobody can tell.
@@ -3463,7 +3485,7 @@ Otherwise its replies would land in the room. The add dialog warns when the pair
 | `ChatRoomBridge.welcomeDate`, `welcomeReasonCode` | The welcome text sent, or why not |
 | `PhoneNumber.roomTextsEnabled` | Y: the number may carry rooms' text members (`VoiceEntities.xml`; System, Voice, Numbers) |
 | `VoicePolicy`: `smsRoomMaxMembers` (10), `smsRoomMaxPerDay` (500), `smsRoomAddsPerDay` (20) | Text members a room; texts a room sends a day; text members one user adds a day. Counted in `SmsSendCount` as `room:<chatRoomId>` and `roomAdds:<userId>`, and inside `all` (`smsMaxPerDay`) |
-| `ChatExternalUser.displayName` | The member's name, as the adder gives it, when the number's external user has none but its number. A moderator renames it. The number's other rooms show the same name |
+| `ChatRoomBridge.memberName` | The member's name in this room, as the adder gives it; a moderator renames it. It is the room's alone (the user's change, 2026-11-17): the shared `ChatExternalUser` keeps the number, so another user's rooms never show it. Elsewhere the number shows, or its phone-book name (phase 9) |
 
 **Adding a text member** (`add#TextMember`: `chatRoomId`, `phoneNumber`, `displayName`, `ourNumber` (optional),
 `consent` Y). A moderator or owner of the room who is granted a room-texts number. It:
@@ -3525,7 +3547,7 @@ photo costs more."
 | `add#TextMember` | Above. Refused: `notAllowed`, `roomType`, `encrypted`, `timerOn`, `archived`, `badNumber`, `emergency`, `internationalNotEnabled`, `premiumNotEnabled`, `optedOut`, `consentRequired`, `noRoomNumber` (the adder has no room-texts number), `noFreeNumber`, `alreadyMember`, `tooManyMembers`, `dailyLimit` |
 | `find#TextMembers` (`chatRoomId`) | The room's text members for its members: actor, name, number, our number, added by and when, the welcome's state, opted out, the last delivery's failure |
 | `get#TextMemberChoices` (`chatRoomId`, `phoneNumber`) | The adder's room-texts numbers, each free or taken for that number, and whether the pair room was active |
-| `rename#TextMember` (`chatRoomId`, `chatActorId`, `displayName`) | A moderator |
+| `rename#TextMember` (`chatRoomId`, `chatActorId`, `memberName`) | A moderator |
 | `end#TextMember` (internal; the SECA, STOP) | Ends the mapping |
 | `route#MemberText` (internal; `receive#Sms`) | The member mapping of a pair text, or none |
 
@@ -3635,6 +3657,33 @@ rather than typed. The desktop app's bundled Chat is the same; offline, Add says
 - §18.4: after phase 18, a text member on a real phone (welcome, a message both ways, a photo, STOP), on Telnyx and on
   Twilio.
 
+**Status (2026-11-18): built** as designed, with these changes:
+- The user's change (§19.1): the name a moderator gives a text member is the room's alone, `ChatRoomBridge.memberName`;
+  the shared `ChatExternalUser` keeps the number. `get#ActorNames` takes `chatRoomId` and names a text member of that room
+  so (with `textMember` and `phoneNumber`), for `append#Event`, `get#Room`, `get#Timeline`, `get#MessageSummaries`,
+  `find#RoomFiles`, `find#RoomLinks` and `find#RoomReactions`; `get#Room`'s `memberList` carries `textMember` and
+  `phoneNumber`; `chat_bridge.rs` `sender_name` uses it for the text's "<sender>: ". Elsewhere (the room list's last
+  message, Activity) the number shows, or its phone-book name.
+- The add dialog says, for each of the adder's numbers the person is already on, "This person is already a text member
+  of <room> on this number; another number is needed." (`get#TextMemberChoices` `takenRoomName`).
+- The SMS adapter passes `inRoom` with a pair room's check, so `check#SmsSend` refuses `inRoomByText` there.
+- A text member's ingest has a transaction id of its own (`member:<eventId>`), so a text its room refuses still goes to
+  the pair room under the provider's id.
+- HELP's reply reads its mapping unlocked (its date is written in a transaction of its own).
+- Files: `SmsRoom.js`, `SmsRoomServices.xml`, `SmsRoom.secas.xml` (new); `Sms.js` (`receive`'s member route, `checkSend`'s
+  room mode and `inRoomByText`, `inMyPhoneRoom`), `SmsServices.xml`, `Voice.js` and `VoiceServices.xml` (the number's
+  switch, the three limits), `VoiceEntities.xml`, `ChatEntities.xml` (`ChatRoomBridge` member fields),
+  `ChatServices.xml` (`append#Event`, `get#RoomBridges`, `check#BridgeSupport`, `get#ActorNames`, `get#Room`);
+  `crates/moqui-channels/src/sms.rs` (`member_of`, `member_request`, room mode, no typing), `crates/moqui-core`
+  `chat_bridge.rs` (`sender_name`); `template/ChatTextTransitions.xml` (new), `Chat.xml`, `Chat.qvue` (People's text
+  members, the cost line, the delete confirm), `System/Voice/Numbers.xml`, `System/Voice/Fraud.xml`.
+- Tests. Regression: `framework/test/SmsRoomMembers.spec.js` (new: the rules above), `basic-comms/test/BasicCommsTexts`
+  (the transitions), moqui-channels `src/tests.rs` (on the fake Telnyx: the welcome, a message as "ALICE: …" counted as
+  the room's, the reply in and nothing back, a number turned off refused and given back; the room id and the text's
+  shape), `webroot/test/client/WebrootChat.spec.js` (the pure parts).
+- Not done: the timer check (`timerOn`) reads `ChatRoom.messageTimerSeconds`, which phase 16 adds; until it is merged,
+  no room has a timer. Left: §18.4's row; Add by phone number is not walked in a browser.
+
 #### Phase 10 and later
 
 Each of these needs its design first:
@@ -3684,6 +3733,7 @@ These cannot be shown by a browser at phone width. They are collected here for e
 |---|---|
 | 2026-11-16 | The user's number moves to an SMS and SIP provider: Twilio, Sinch or Telnyx (§13.4, choice A). Cheogram's phone number role ends; its XMPP role stays |
 | 2026-11-17 | Standard specs where they reach (SIP for calls), and no one provider at the centre: the SMS adapter is a neutral core with a module per provider (Telnyx `sms`, Twilio `sms-twilio`, Sinch `sms-sinch`). Sinch on its Conversation API, with no group texts; Twilio's group texts through its Conversations API. A secret-signed webhook is verified on the core node (§9) |
+| 2026-11-17 | Text members of a room (phase 18): one room per outside person on each of our numbers marked for room texts. A further room on a number is refused (`noFreeNumber`), and the add dialog says so: "This person is already a text member of <room> on this number; another number is needed." While they are a member, a send from the pair room of that number is refused (`inRoomByText`). The name a moderator gives a text member is the room's alone |
 | 2026-11-17 | Business RCS goes through the same provider modules, Twilio and Sinch first; Telnyx RCS is optional (§16.4, §19.4 Q9) |
 | 2026-11-17 | A reply to an RCS fallback text goes to the RCS room when the fallback number is that RCS bridge's own, and to the number's SMS room otherwise (§16.4 step 11, phase 10) |
 | 2026-11-17 | Scheduled send in an encrypted room is held by the sender's own device: it keeps the draft sealed under its store key and encrypts and sends it at the time, claiming the server's placeholder (no text) so one device sends it; if no device is open then, it goes when that device next opens, marked sent late; a device that is gone leaves it "can't be sent". Plain, phone and bridged rooms use the server-held send. Reminders are held during do not disturb (phase 15) |

@@ -175,6 +175,14 @@ external mappings (`ChatEventExternal`) dedupe its events after that.
   `ChatScheduleServices.send#DueMessages` sends it through `send#Message` as the sender, so its delivery rows are written
   then, and the adapter's checks (`check#SmsSend`: the destination, the opt-out, the day's limits; its capabilities and
   fallback) are those of that moment. Nothing about a bridge is decided when it is scheduled.
+- <a id="text-members"></a>**Text members** (plans/Comms-Messaging.md §18.3 phase 18, [SMS](SMS.md#text-members-of-a-room)). A
+  mapping with `memberChatActorId` is one outside person in a room by text, its external room id
+  `<ours>/<theirs>#<chatRoomId>`. It gets a delivery for a message only, and never for its own member's message; the echo
+  rule for it is by actor, not by bridge, so one text member's reply reaches the others on the same bridge. Its mappings
+  are left out of `get#RoomBridges`' `bridgeMap` and `capabilityMap` (counted in `textMemberMap`) and out of
+  `check#BridgeSupport`, so the room keeps edits, reactions and deletes. A delivery names its sender by the room's name for
+  a text member (`chat_bridge.rs` `sender_name`: `ChatRoomBridge.memberName`), and the SMS adapter sends it as
+  `<sender>: <text>`, checked in room mode.
 - **Woken after the commit.** `wake#BridgeDelivery` wakes this node's worker once the transaction commits. The commit hook
   is in memory and a crash loses it, so the worker (a thread per node, started by the host after the cluster) also runs a
   round at start, and once a minute while any bridge exists.

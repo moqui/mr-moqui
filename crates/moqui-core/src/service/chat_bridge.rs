@@ -1688,6 +1688,19 @@ pub(super) fn sender_name(facade: &EntityFacade, event: &EntityValue) -> Result<
     let Some(actor) = text_of(event, "senderActorId") else {
         return Ok(None);
     };
+    // a room's text member (plans/Comms-Messaging.md §18.3 phase 18): the name the room gave them, the room's alone
+    if let Some(room) = text_of(event, "chatRoomId") {
+        let member = facade
+            .find(MAPPING)?
+            .eq("chatRoomId", Value::string(&room))
+            .eq("memberChatActorId", Value::string(&actor))
+            .condition(Condition::is_null("thruDate"))
+            .disable_authz()
+            .one()?;
+        if let Some(name) = member.and_then(|row| text_of(&row, "memberName")) {
+            return Ok(Some(name));
+        }
+    }
     let external = facade
         .find(ACTOR)?
         .eq("chatActorId", Value::string(&actor))

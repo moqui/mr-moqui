@@ -257,6 +257,43 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
     its text: a plain room's notification shows the message's start (unless message previews are off), an encrypted
     room's does not. A reminder of a message deleted since, or of a room you can no longer read, does not come, nor one
     of an account closed or without the app; a sign-in lock only makes it wait.
+- **Invite links and join requests** (plans/Comms-Messaging.md §18.3 phase 17; `org.moqui.chat.ChatInviteServices`).
+  - *Invite links.* The room menu's Invite links, in a private room for its moderators and owners, in a public room for
+    any member (there the link is a shortcut: anyone with an account may join a public room from Browse). A link is
+    `https://<server>/join/<token>`, with a label, an end (an hour, a day, a week by default, 30 days, or none) and a number
+    of people it takes (1 to 100, or no limit); in a private room it may ask a moderator to approve each person. The dialog
+    lists the links in force with Copy, QR code (large, for a phone's camera; Download as SVG), Share (a phone's share
+    sheet) and Revoke, which stops a link at once. A link also stops when its maker is no longer a moderator (or member),
+    when the room is archived, and at most 20 are in force a room. Direct, record and phone rooms take none.
+  - *The join page.* A link opens the room's name and member count. Signed out, it asks you to sign in and comes back
+    after; there are no guests: you need an account on the server. Signed in, Join puts you in the room ("joined by an
+    invite link"), or Ask to join with a note sends a request. Someone a member took out of the room comes back only by a
+    request. In an encrypted room you read what is sent after you join, on a device set up for encrypted chat. On Android
+    the page offers Open in the MR Moqui app, which opens the same page in the app's account on that server.
+  - *Join requests.* A moderator hears of a new request by the notification bell, and the room shows "2 people ask to
+    join · Review" above the composer; the dialog lists each person with their note and where they came from, with Approve,
+    Deny and Approve all. The person is told either way. A request waits 30 days; after a deny the person may ask again
+    in 7 days. Limits: 10 waiting requests a person, 100 a room, 30 joins and requests an hour.
+  - *List in Browse.* A private room's owner lists it in Browse (the Invite links dialog): its name, topic and member count
+    show to people who are not in it, under "Private rooms you can ask to join", and Ask to join sends a request. Its
+    messages stay its members'.
+  - *Blocks.* A link whose maker blocked you does not work for you (it reads as not found), and a moderator who blocked
+    you does not see your request; another moderator does. An outside user of an app (`EXTERNAL_USER`) makes no links and
+    joins no public room by one.
+- **Text members** (plans/Comms-Messaging.md §18.3 phase 18; `org.moqui.call.SmsRoomServices`;
+  [SMS](../interfaces/SMS.md#text-members-of-a-room)). In a private room that is not encrypted, a moderator's Add by phone
+  number (People) adds someone without the app: they get each message as a text, "Ann: …", from one of our numbers
+  marked for room texts, and their replies post to the room as them. The dialog asks for the number, their name in this
+  room (only this room shows it; elsewhere the number, or its name in your phone book, shows), and your confirmation that
+  they agreed to get the room's texts; it says what it costs ("With 3 text members, one message is 3 texts"). A person
+  is a text member of one room on each of our numbers: for a second room the dialog picks another number, and when none
+  is free it says "This person is already a text member of <room> on this number; another number is needed." While they
+  are a member, their texts to that number go to the room, and your own texts to them from that number are not sent:
+  write in the room. They get a welcome text that says how to leave; STOP takes them out, HELP gets a short answer.
+  People shows them with a phone icon and their state (replied STOP, the welcome or the last text not sent); Rename and
+  Take out are a moderator's. Edits, reactions, deletes and polls stay in the room (the delete confirm says text members
+  already got the message), photos go as MMS, and other files as a line. A room with text members cannot get
+  disappearing messages, and an encrypted room cannot have text members.
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its

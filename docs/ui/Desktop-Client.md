@@ -459,6 +459,8 @@ leaves them alone (`pushDelivers`) and only tells the host which room shows (`ro
 - Send later (Send's arrow or a right click; plans/Comms-Messaging.md phase 15) needs a connection: a scheduled message
   is not an outbox operation. An encrypted room's scheduled message, which the device holds, goes only while a Chat
   window of the account is open, and when one next opens if none was (sent late).
+- Invite links, join requests and text members (plans/Comms-Messaging.md phases 17 and 18; `js/WebrootChatJoin.js`,
+  loaded by the shell's `index.html`) need a connection: their dialogs read the server, and nothing of them is kept.
 - The store's cap keeps no running total of its size: each check measures the rows and files again, a cost that
   grows with the store.
 - A reply or forward built offline quotes with English labels and this computer's time zone, not the user's locale and

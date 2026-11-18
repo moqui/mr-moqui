@@ -371,6 +371,12 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
   Reply's mutable intent cannot have filled in. A tap opens the room at the message
   (`org.moqui.mobile:/room?account=...&chatRoomId=...&eventSeq=...&sig=...`): the activity is exported, so the link is
   signed by Rust (`Native.roomLink`, an HMAC with the app's own link key) and another app's opens nothing.
+- **A room's invite link** (plans/Comms-Messaging.md §18.3 phase 17). A link or QR code opens the room's join page in
+  the phone's browser; on Android the page's "Open in the MR Moqui app" is `org.moqui.mobile:/join?host=<host>&token=<token>`
+  (a `BROWSABLE` intent filter, `src/join.rs`). A web page makes it, so it is not signed, and it only opens a page: the
+  app opens `/join/<token>` in its account on that host (the current one when it is there, else the first), where the
+  person presses Join. With no account on that host the shell says so and adds none. Android App Links are not used:
+  each server has its own host.
 - **Clear and ack.** The server's `clear` (the room was read on another device) removes the room's notification, and
   the summary only when no other room's shows; a read in the app removes it too, Mark all read every room's of the
   account (the page's `notifyClear` reaches

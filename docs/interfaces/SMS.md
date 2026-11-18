@@ -139,6 +139,42 @@ others: a group that has two of ours is ours, and a group MMS never goes to one 
 - **Start one.** Text a number with several numbers (`open#PairRoom` with `toNumber` comma-separated, each checked as
   a send), or several numbers picked in a new-chat picker.
 
+## Text members of a room
+
+An outside number in a private chat room by text (plans/Comms-Messaging.md §18.3 phase 18; `SmsRoom.js`,
+`SmsRoomServices`), as GroupMe's SMS members are: it gets each message of the room as a text, "Ann: …", and its replies
+post to the room as it.
+
+- **Numbers for room texts.** An administrator marks a number (System, Voice, Numbers: Room texts,
+  `PhoneNumber.roomTextsEnabled`). A moderator or owner of the room adds a member on one of their granted numbers
+  that is marked (`add#TextMember`), with their confirmation that the person agreed (`consentDate`), and the person gets
+  a welcome text that names the room and the adder and says "Reply STOP to leave".
+- **One room per outside number on each of our numbers** (decided by the user, plans/Comms-Messaging.md §19.1). A text
+  has no room in it, so while a number is a text member on one of ours, all of its pair texts to that number go to that
+  room (`receive#Sms`, before the spam filter, which does not judge them). A second room takes another marked number; with
+  none free, `noFreeNumber`: "This person is already a text member of <room> on this number; another number is needed."
+  While they are a member, a text from the pair room of the two numbers is refused (`inRoomByText`), so a reply never
+  lands somewhere unexpected; calls still use the pair room.
+- **The mapping.** The member is an external actor of the number's bridge (its `ChatExternalUser` keeps the number, not
+  the adder's name for them, which is the room's own: `ChatRoomBridge.memberName`), and its mapping is a `ChatRoomBridge`
+  with `memberChatActorId` and the external room id `<ours>/<theirs>#<chatRoomId>`. It gets messages only (edits,
+  reactions, deletes, polls and calls stay in the room) and never its own member's; other members' replies reach it
+  ([Chat-Bridges](Chat-Bridges.md#text-members)).
+- **Out.** The adapter sends `<sender>: <text>` (the sender's name cut to 30 characters, the whole to the bridge's
+  `maxTextLength`, ending "…"), photos, videos and sounds within the MMS limits, and a line for any other file. It checks
+  each in room mode (`check#SmsSend` with `chatRoomId`: no user's grant, the number still marked (`roomTextsOff`), the
+  pair not opted out, the destination class, the room's day and everyone's day), so a refusal fails that member's
+  delivery alone. No typing goes to a text member.
+- **STOP and HELP.** STOP is applied as for any text (the pair opts out) and also takes the member out: its mapping
+  ends, its member row is left, and the room says "<name> left by replying STOP". START opts back in and does not add
+  them back. HELP gets one answer a day. A member taken out of the room (People, Take out) has its mapping ended by a SECA
+  (`SmsRoom.secas.xml`); its texts go to the pair room again, as do texts to an archived room.
+- **Limits and cost.** Each message is a text to each text member. The add dialog and the composer say so. VoicePolicy
+  (System, Voice, Fraud): `smsRoomMaxMembers` (10 a room), `smsRoomMaxPerDay` (500 texts a room a day, counted as
+  `room:<chatRoomId>` and in `smsMaxPerDay`), `smsRoomAddsPerDay` (20 adds a user a day, `roomAdds:<userId>`).
+- **Never** in an encrypted room, a direct, record, phone or public room, or one with disappearing messages; a room with
+  a text member cannot get a timer either, since it has a mapping in force.
+
 ## Texts that come in
 
 `POST /channels/{chatBridgeId}/webhook` (off unless `channels_webhooks_enabled`):

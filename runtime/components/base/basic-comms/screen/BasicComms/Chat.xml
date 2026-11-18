@@ -413,6 +413,23 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="sendScheduledNow" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="claimHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="completeHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
+    <!-- invite links and join requests (Comms-Messaging §18.3 phase 17) -->
+    <transition-include name="inviteLinks" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="createInviteLink" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="revokeInviteLink" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="inviteQr" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="setRoomListed" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="joinRequests" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="joinRequestCount" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="decideJoinRequest" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="cancelJoinRequest" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="listedRooms" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <transition-include name="requestJoin" location="component://basic-comms/template/ChatInviteTransitions.xml"/>
+    <!-- a room's text members (Comms-Messaging §18.3 phase 18) -->
+    <transition-include name="textMembers" location="component://basic-comms/template/ChatTextTransitions.xml"/>
+    <transition-include name="textMemberChoices" location="component://basic-comms/template/ChatTextTransitions.xml"/>
+    <transition-include name="addTextMember" location="component://basic-comms/template/ChatTextTransitions.xml"/>
+    <transition-include name="renameTextMember" location="component://basic-comms/template/ChatTextTransitions.xml"/>
     <transition-include name="sendHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="reportHeld" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>
     <transition-include name="setReminder" location="component://basic-comms/template/ChatScheduleTransitions.xml"/>

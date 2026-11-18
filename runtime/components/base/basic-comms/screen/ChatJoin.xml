@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- ChatJoin (plans/Comms-Messaging.md §18.3 phase 17): the page of a room's invite link, /join/<token>: the token-route
+    "join" of basic-comms MoquiConf.xml renders it in the public shell after org.moqui.chat.ChatInviteServices.check#InviteToken
+    accepted the token, so a link that takes no one never reaches this screen. The component is ChatJoin.qvue next to this
+    file: the room's name and member count, then Sign in to join (signed out: the link is kept as the return path in the
+    session, never in a query string), Join or Ask to join with a note, or Open the room; on Android, Open in the MR Moqui
+    app (org.moqui.mobile:/join). There are no guests: a person needs an account here. Each transition checks the token
+    again (the route gives it as the token parameter, whatever the request says). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-include="false" default-menu-title="Join" render-modes="qvue,tui" server-static="qvue">
+
+    <!-- the signed-in person joins, or asks to -->
+    <transition name="join">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.join#ByInvite').parameters({token: token || '', note: note || null})
+                .requireNewTransaction(true).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, outcome: out.outcome || null, roomUrl: out.roomUrl || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- signed out: back to this page after Login (its screen-last), the token kept in the session only -->
+    <transition name="signIn">
+        <actions><script><![CDATA[
+            const check = ec.service.sync().name('org.moqui.chat.ChatInviteServices.check#InviteToken').parameter('token', token || '').call() || {}
+            ec.message.clearErrors()
+            if (check.valid) ec.web.saveScreenLastInfo('/join/' + token, null)
+            ec.web.sendJsonResponse({loginUrl: check.valid ? '/Login' : null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/ChatJoin.qvue" template="false"/>
+            <text type="tui" template="false"><![CDATA[[{"t": "text", "id": "ChatJoin", "text": "A chat room's invite link: open it in a browser to join the room."}]]]></text></render-mode>
+    </widgets>
+</screen>
