@@ -12,19 +12,17 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::*;
-use crate::context::conf::conf_files_of;
+use crate::context::conf::{conf_files_of, merge_files};
 use crate::context::tests::TempRuntime;
 
 const DEFAULT: &str = r#"<?xml version="1.0" encoding="UTF-8" ?>
 <moqui-conf>
     <!-- The purpose of the instance:
         production, dev or test. -->
-    <default-property name="instance_purpose" value="production"/>
-    <default-property name="view_test_password" value="sekret"/>
+    <instance purpose="production"/>
     <webapp-list>
         <webapp name="webroot" http-port="8080">
             <session-config timeout="60"/><!-- minutes -->
@@ -44,7 +42,7 @@ const COMPONENT: &str = r#"<moqui-conf>
 "#;
 
 const RUNTIME: &str = r#"<moqui-conf>
-    <default-property name="instance_purpose" value="dev"/>
+    <instance purpose="dev"/>
     <webapp-list>
         <webapp name="webroot" http-port="9090"/>
     </webapp-list>
@@ -98,18 +96,17 @@ fn the_view_has_each_values_file_class_and_default_comments() {
     assert!(file_infos(files)[2].editable);
 
     let merged = with_merge_sources(|| merge_files(files, None)).unwrap();
-    let view = build_view(files, &merged, None, &HashMap::new());
+    let view = build_view(files, &merged, None, &[]);
 
-    let purpose = child(&view.root, "default-property", Some("instance_purpose"));
-    assert_eq!(purpose.path, "default-property[instance_purpose]");
+    let purpose = child(&view.root, "instance", None);
+    assert_eq!(purpose.path, "instance");
     assert_eq!(
         purpose.comments,
         ["The purpose of the instance:\nproduction, dev or test."]
     );
     assert_eq!(purpose.sources, [At { file: 0, line: 5 }, At { file: 2, line: 2 }]);
-    assert_eq!(attr(purpose, "value").value, "dev");
-    assert_eq!(attr(purpose, "value").source, Some(At { file: 2, line: 2 }));
-    assert_eq!(attr(purpose, "name").source, Some(At { file: 2, line: 2 }));
+    assert_eq!(attr(purpose, "purpose").value, "dev");
+    assert_eq!(attr(purpose, "purpose").source, Some(At { file: 2, line: 2 }));
 
     let webapp = child(child(&view.root, "webapp-list", None), "webapp", Some("webroot"));
     assert_eq!(webapp.path, "webapp-list/webapp[webroot]");
@@ -117,7 +114,7 @@ fn the_view_has_each_values_file_class_and_default_comments() {
     assert_eq!(
         webapp.sources,
         [
-            At { file: 0, line: 8 },
+            At { file: 0, line: 7 },
             At { file: 1, line: 3 },
             At { file: 2, line: 4 }
         ]
@@ -129,14 +126,12 @@ fn the_view_has_each_values_file_class_and_default_comments() {
     // the component's session-config merged into the default's, which keeps its comment on the same line
     let session = child(webapp, "session-config", None);
     assert_eq!(session.class, "live");
-    assert_eq!(session.sources, [At { file: 0, line: 9 }, At { file: 1, line: 4 }]);
+    assert_eq!(session.sources, [At { file: 0, line: 8 }, At { file: 1, line: 4 }]);
     assert_eq!(session.comments, ["minutes"]);
     assert_eq!(attr(session, "timeout").value, "90");
     assert_eq!(attr(session, "timeout").class, None);
 
-    // secrets are masked, by the property's name and by the attribute's
-    let property = child(&view.root, "default-property", Some("view_test_password"));
-    assert_eq!(attr(property, "value").value, MASKED);
+    // a secret is masked, by the attribute's name
     let smtp = child(&view.root, "smtp-server", None);
     assert_eq!(attr(smtp, "password").value, MASKED);
     assert_eq!(attr(smtp, "enabled").value, "false");
@@ -157,7 +152,7 @@ fn the_lines_of_one_file_have_classes_and_follow_an_edited_text() {
     assert_eq!(
         found,
         [
-            (2, "default-property[instance_purpose]", "apply"),
+            (2, "instance", "restart"),
             (3, "webapp-list", "restart"),
             (4, "webapp-list/webapp[webroot]", "live"),
         ]
@@ -182,7 +177,7 @@ fn the_lines_of_one_file_have_classes_and_follow_an_edited_text() {
     let merged = with_merge_sources(|| merge_files(files, Some((&runtime_path, &edited)))).unwrap();
     let lines = file_lines(files, 2, &merged);
     assert_eq!(lines.last().map(|line| line.line), Some(6));
-    let view = build_view(files, &merged, None, &HashMap::new());
+    let view = build_view(files, &merged, None, &[]);
     let webapp = child(child(&view.root, "webapp-list", None), "webapp", Some("webroot"));
     assert_eq!(attr(child(webapp, "session-config", None), "timeout").value, "30");
 }
@@ -196,4 +191,36 @@ fn a_text_that_is_not_a_conf_file_is_a_problem() {
     let other = text_problems("x.xml", "<screen/>");
     assert!(other[0].message.contains("moqui-conf"));
     assert!(text_problems("x.xml", RUNTIME).is_empty());
+}
+
+/// Each attribute has its environment name; one an environment name set says which, from where; a secret by the
+/// schema (the SSH host key) is masked as one by its name is (plans/archive/Conf-Paths.md §4).
+#[test]
+fn the_view_names_each_attributes_environment_name_and_what_set_it() {
+    let held = files();
+    let files = &held.files;
+    let merged = with_merge_sources(|| merge_files(files, None)).unwrap();
+    merged.append("ssh-server").set_attribute("host-key", "a-host-key");
+    let overrides = crate::context::conf_env::apply_from(
+        &merged,
+        vec![(
+            "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__HTTP_PORT".to_string(),
+            "8091".to_string(),
+            crate::context::conf_env::Source::DotEnv,
+        )],
+    );
+    let view = build_view(files, &merged, None, &overrides);
+    let webapp = child(child(&view.root, "webapp-list", None), "webapp", Some("webroot"));
+    let port = attr(webapp, "http-port");
+    assert_eq!(port.value, "8091");
+    assert_eq!(
+        port.env.as_deref(),
+        Some("moqui_conf__webapp_list__webapp__WEBROOT__http_port")
+    );
+    let set_by = port.set_by.as_ref().expect("set by the environment name");
+    assert_eq!(set_by.name, "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__HTTP_PORT");
+    assert_eq!(set_by.source, "runtime/.env");
+    let ssh = child(&view.root, "ssh-server", None);
+    assert_eq!(attr(ssh, "host-key").value, MASKED);
+    assert!(attr(webapp, "name").set_by.is_none());
 }

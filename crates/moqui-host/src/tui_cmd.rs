@@ -183,7 +183,7 @@ fn run_here(flags: &TuiFlags) -> Result<(), Error> {
 
     let (runtime, framework) = crate::runtime_framework_dirs();
     let cluster = runtime.join("db/embedded");
-    let port = crate::http::http_port(&moqui_lib::env::get_prop_or_env("webapp_http_port")).unwrap_or(8080);
+    let port = crate::http::http_port(&moqui_core::context::conf_env::webroot_setting("http-port")).unwrap_or(8080);
     if !flags.serve && served_on(port) {
         return Err(Error::new(format!(
             "moqui tui: a server already answers on port {port}, likely on this runtime. Stop it first, or reach it \
@@ -219,10 +219,10 @@ fn run_here(flags: &TuiFlags) -> Result<(), Error> {
         .ok_or_else(|| Error::new("moqui tui: the runtime has no factory"))?;
     let link = match &flags.user {
         Some(user) => {
-            let purpose = moqui_lib::env::get_prop_or_env("instance_purpose");
+            let purpose = moqui_core::context::conf_env::setting_on(&factory, moqui_core::context::conf_env::PURPOSE);
             if purpose != "dev" {
                 return Err(Error::new(format!(
-                    "moqui tui: --user logs in without a password, so only an instance_purpose of dev takes it (this \
+                    "moqui tui: --user logs in without a password, so only an instance@purpose of dev takes it (this \
                      one is {})",
                     if purpose.is_empty() { "production" } else { &purpose }
                 )));

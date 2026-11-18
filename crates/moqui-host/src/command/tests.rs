@@ -14,7 +14,7 @@
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::{interactive, MAX_LINE};
+use super::{interactive, with_newlines, MAX_LINE};
 
 #[tokio::test]
 async fn an_overlong_shell_line_or_js_block_is_refused() {
@@ -51,4 +51,15 @@ async fn an_overlong_shell_line_or_js_block_is_refused() {
     assert!(seen.ends_with("bye\n"), "{seen}");
     drop(send.await.unwrap());
     assert_eq!(shell.await.unwrap(), 0);
+}
+
+#[test]
+fn shell_output_drops_terminal_controls_but_keeps_tab_and_newlines() {
+    // a title change (OSC 0), a clipboard write (OSC 52), a C1 CSI, DEL and a bidirectional override
+    let error = "failed: \u{1b}]0;owned\u{7}name\u{1b}]52;c;Zm9v\u{7}\u{9b}2J\u{7f}\u{202e}x\tend\nnext";
+    assert_eq!(
+        with_newlines(error, "\r\n"),
+        "failed: ]0;ownedname]52;c;Zm9v2Jx\tend\r\nnext"
+    );
+    assert_eq!(with_newlines("a\rb\nc", "\n"), "ab\nc");
 }

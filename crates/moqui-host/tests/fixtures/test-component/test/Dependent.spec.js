@@ -14,6 +14,6 @@ feature("data from the spec it depends on is there", {
 
 feature("the component's test/MoquiConf.xml merges in a test run", {
     expect() {
-        System.getProperty("moqui_test_fixture_conf") == "test"
+        ec.factory.getConfValue("moqui-test-fixture@test-conf") == "test"
     },
 })

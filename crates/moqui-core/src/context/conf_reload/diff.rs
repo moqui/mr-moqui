@@ -16,9 +16,10 @@
 //! the edit that makes the running conf take it. An element added or removed whole is one edit; the changes inside it
 //! are reported with it and take its edit.
 
+use moqui_lib::node::path::AttrPath;
 use moqui_lib::node::MNode;
 
-use super::catalog::{Class, Key, Unit, CATALOG, UNKNOWN};
+use crate::context::conf_schema::{self, Class, Key, Unit, CATALOG, COMPONENT};
 
 /// Longest text of an element kept in a change, for the report.
 const MAX_TEXT: usize = 4000;
@@ -74,6 +75,12 @@ pub(super) enum Edit {
         name: &'static str,
         from: Vec<MNode>,
     },
+    /// A top-level element no unit names (a component's own) replaced by `from`, in order.
+    Named {
+        parent: MNode,
+        name: String,
+        from: Vec<MNode>,
+    },
 }
 
 impl Edit {
@@ -105,6 +112,12 @@ impl Edit {
                     same
                 });
             }
+            Self::Named { parent, name, from } => {
+                parent.remove_where(|child| child.has_name(name));
+                for child in from {
+                    parent.append_node(child.deep_copy());
+                }
+            }
             Self::Sequence { parent, name, from } => {
                 parent.remove_where(|child| child.has_name(name));
                 for child in from {
@@ -131,17 +144,21 @@ pub(super) fn diff(running: &MNode, disk: &MNode) -> Vec<UnitChange> {
         }
     }
     for name in names {
-        let old = text_of(&running.children_named(&name));
-        let new = text_of(&disk.children_named(&name));
+        let (old_nodes, new_nodes) = (running.children_named(&name), disk.children_named(&name));
+        let (old, new) = (text_of(&old_nodes), text_of(&new_nodes));
         if old != new {
             out.push(UnitChange {
-                path: name,
+                path: name.clone(),
                 attr: None,
                 kind: kind_of(&old, &new),
-                class: UNKNOWN,
-                old: non_empty(old),
-                new: non_empty(new),
-                edit: Edit::None,
+                class: COMPONENT,
+                old: non_empty(shown_all(&old_nodes)),
+                new: non_empty(shown_all(&new_nodes)),
+                edit: Edit::Named {
+                    parent: running.clone(),
+                    name,
+                    from: new_nodes,
+                },
                 within: None,
             });
         }
@@ -185,6 +202,7 @@ fn diff_units(
                 let old_nodes = old.map(|node| node.children_named(unit.name)).unwrap_or_default();
                 let new_nodes = new.map(|node| node.children_named(unit.name)).unwrap_or_default();
                 let (old_text, new_text) = (text_of(&old_nodes), text_of(&new_nodes));
+                let shown_new = new_nodes.clone();
                 if old_text == new_text {
                     continue;
                 }
@@ -201,8 +219,8 @@ fn diff_units(
                     attr: None,
                     kind: kind_of(&old_text, &new_text),
                     class: unit.class,
-                    old: non_empty(old_text),
-                    new: non_empty(new_text),
+                    old: non_empty(shown_all(&old_nodes)),
+                    new: non_empty(shown_all(&shown_new)),
                     edit,
                     within,
                 });
@@ -260,7 +278,7 @@ fn instance(
                 kind: Kind::Added,
                 class: unit.class,
                 old: None,
-                new: Some(clip(new.write_string())),
+                new: Some(clip(shown(&new))),
                 edit,
                 within,
             });
@@ -282,7 +300,7 @@ fn instance(
                 attr: None,
                 kind: Kind::Removed,
                 class: unit.class,
-                old: Some(clip(old.write_string())),
+                old: Some(clip(shown(&old))),
                 new: None,
                 edit,
                 within,
@@ -320,9 +338,9 @@ fn instance(
                         _ => Kind::Changed,
                     },
                     class: unit.attr_class(&name),
+                    old: shown_value(&old, &name, before),
+                    new: shown_value(&new, &name, after),
                     attr: Some(name),
-                    old: before,
-                    new: after,
                     edit,
                     within,
                 });
@@ -330,6 +348,7 @@ fn instance(
             let covered: Vec<&'static str> = unit.children.iter().map(|child| child.name).collect();
             let (before, after) = (content(&old, &covered), content(&new, &covered));
             if before != after {
+                let (shown_before, shown_after) = (shown_content(&old, &covered), shown_content(&new, &covered));
                 let edit = if within.is_none() {
                     Edit::Content {
                         node: old.clone(),
@@ -344,8 +363,8 @@ fn instance(
                     attr: None,
                     kind: Kind::Changed,
                     class: unit.class,
-                    old: non_empty(before),
-                    new: non_empty(after),
+                    old: non_empty(shown_before),
+                    new: non_empty(shown_after),
                     edit,
                     within,
                 });
@@ -363,9 +382,10 @@ fn whole_attrs(node: &MNode, unit: &Unit, path: &str, kind: Kind, out: &mut Vec<
         if class == unit.class {
             continue;
         }
+        let value = shown_value(node, &name, Some(value));
         let (old, new) = match kind {
-            Kind::Removed => (Some(value), None),
-            _ => (None, Some(value)),
+            Kind::Removed => (value, None),
+            _ => (None, value),
         };
         out.push(UnitChange {
             path: path.to_string(),
@@ -393,6 +413,58 @@ fn content(node: &MNode, covered: &[&str]) -> String {
 
 fn text_of(nodes: &[MNode]) -> String {
     nodes.iter().map(MNode::write_string).collect()
+}
+
+/// Whether the attribute `attr` of `node` holds a secret: the conf schema marks it, or its name says so.
+fn secret_attr(node: &MNode, attr: &str) -> bool {
+    AttrPath::of(node, attr, &conf_schema::keying).map_or_else(
+        || conf_schema::secret_name(attr),
+        |path| crate::context::conf_env::attribute_secret(&path),
+    )
+}
+
+/// `value` of `node`'s attribute `attr` as a report shows it: masked when it holds a secret.
+fn shown_value(node: &MNode, attr: &str, value: Option<String>) -> Option<String> {
+    value.map(|value| {
+        if !value.is_empty() && secret_attr(node, attr) {
+            super::view::MASKED.to_string()
+        } else {
+            value
+        }
+    })
+}
+
+/// `node` as text, each secret attribute in it masked: a report never shows a secret, though overrides and generated
+/// secrets are in the running conf.
+fn shown(node: &MNode) -> String {
+    fn mask(original: &MNode, copy: &MNode) {
+        for (name, value) in original.attributes() {
+            if !value.is_empty() && secret_attr(original, &name) {
+                copy.set_attribute(name, super::view::MASKED);
+            }
+        }
+        for (original, copy) in original.children().iter().zip(copy.children().iter()) {
+            mask(original, copy);
+        }
+    }
+    let copy = node.deep_copy();
+    mask(node, &copy);
+    copy.write_string()
+}
+
+fn shown_all(nodes: &[MNode]) -> String {
+    nodes.iter().map(shown).collect()
+}
+
+/// [`content`] as a report shows it, secrets masked.
+fn shown_content(node: &MNode, covered: &[&str]) -> String {
+    let mut out = node.text().unwrap_or_default().trim().to_string();
+    for child in node.children() {
+        if !child.with_name(|name| covered.contains(&name)) {
+            out.push_str(&shown(&child));
+        }
+    }
+    out
 }
 
 fn kind_of(old: &str, new: &str) -> Kind {
@@ -424,93 +496,4 @@ fn clip(text: String) -> String {
         end -= 1;
     }
     format!("{}…", &text[..end])
-}
-
-/// Each attribute of `root`'s units, with the class of its unit, whose value refers to one of `names` (`${name}` or
-/// `${name ?: ...}`): the units a property change reaches. (unit path, attribute, class, property name)
-pub(super) fn property_users(root: &MNode, names: &[String]) -> Vec<(String, String, Class, String)> {
-    let mut out = Vec::new();
-    if names.is_empty() {
-        return out;
-    }
-    users_in(root, CATALOG, "", names, &mut out);
-    for node in root.children() {
-        let name = node.name();
-        if !CATALOG.iter().any(|unit| unit.name == name) {
-            scan(&node, &name, UNKNOWN, names, &mut out);
-        }
-    }
-    out
-}
-
-fn users_in(
-    parent: &MNode,
-    units: &[Unit],
-    path: &str,
-    names: &[String],
-    out: &mut Vec<(String, String, Class, String)>,
-) {
-    for unit in units {
-        let unit_path = join(path, unit.name);
-        for node in parent.children_named(unit.name) {
-            let path = match unit.key {
-                Key::By(attrs) => {
-                    let key: Vec<String> = attrs
-                        .iter()
-                        .map(|attr| node.attribute(attr).unwrap_or_default())
-                        .collect();
-                    format!("{unit_path}[{}]", key.join(","))
-                }
-                Key::Single | Key::Sequence => unit_path.clone(),
-            };
-            for (attr, value) in node.attributes() {
-                for name in names {
-                    if refers(&value, name) {
-                        out.push((path.clone(), attr.clone(), unit.attr_class(&attr), name.clone()));
-                    }
-                }
-            }
-            for child in node.children() {
-                if !unit.children.iter().any(|known| child.has_name(known.name)) {
-                    scan(&child, &path, unit.class, names, out);
-                }
-            }
-            users_in(&node, unit.children, &path, names, out);
-            if unit.key == Key::Single {
-                break;
-            }
-        }
-    }
-}
-
-/// Every attribute and text of `node` and below it, as part of the unit at `path` of `class`.
-fn scan(node: &MNode, path: &str, class: Class, names: &[String], out: &mut Vec<(String, String, Class, String)>) {
-    for (attr, value) in node.attributes() {
-        for name in names {
-            if refers(&value, name) {
-                out.push((path.to_string(), format!("{}@{attr}", node.name()), class, name.clone()));
-            }
-        }
-    }
-    if let Some(text) = node.text() {
-        for name in names {
-            if refers(&text, name) {
-                out.push((path.to_string(), node.name(), class, name.clone()));
-            }
-        }
-    }
-    for child in node.children() {
-        scan(&child, path, class, names, out);
-    }
-}
-
-/// Whether `text` expands the property `name`: `${name}`, `${name ?: 'x'}`.
-pub(super) fn refers(text: &str, name: &str) -> bool {
-    let opener = format!("${{{name}");
-    text.match_indices(&opener).any(|(at, _)| {
-        text[at + opener.len()..]
-            .chars()
-            .next()
-            .is_some_and(|next| !(next.is_ascii_alphanumeric() || next == '_' || next == '.'))
-    })
 }

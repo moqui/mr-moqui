@@ -21,7 +21,7 @@
 //! after it and in order ([`moqui_core::cluster::Sender::post_batch`]).
 //!
 //! The sender keeps one HTTP/2 connection to each peer, dialed again when it closes. A peer that does not choose h2 (a
-//! member built before gRPC, or one with `cluster_protocol=rest`) is posted to over HTTP/1.1 instead, and dialed for
+//! member built before gRPC, or one with `moqui_conf__cluster_member__protocol=rest`) is posted to over HTTP/1.1 instead, and dialed for
 //! gRPC again after [`REST_RECHECK`].
 
 use std::collections::HashMap;

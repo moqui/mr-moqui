@@ -371,20 +371,20 @@ fn the_dev_conf_datasource_overrides_keep_the_default_jdbc_child() {
     };
     let content = datasource("content");
     assert_eq!(content.attribute("pg-stat-statements").as_deref(), Some("true"));
-    assert_eq!(
-        content.attribute("database-conf-name").as_deref(),
-        Some("${content_ds_db_conf}")
-    );
+    assert_eq!(content.attribute("database-conf-name").as_deref(), Some(""));
     let inline = content
         .first_named("inline-jdbc")
         .expect("content keeps its inline-jdbc");
     assert_eq!(inline.attribute("pool-maxsize"), default_content);
-    assert!(inline.first_named("xa-properties").is_some());
+    assert!(
+        inline.first_named("xa-properties").is_none(),
+        "the connection is the datasource's attributes"
+    );
     let transactional = datasource("transactional");
     assert_eq!(transactional.attribute("pg-stat-statements").as_deref(), Some("true"));
     assert_eq!(
         transactional.attribute("database-conf-name").as_deref(),
-        Some("${entity_ds_db_conf}")
+        Some("embedded")
     );
     assert!(transactional.first_named("inline-jdbc").is_none());
     // merged in place, none added
@@ -438,4 +438,111 @@ fn each_component_adds_authz_elements_and_keeps_the_defaults() {
     super::merge_conf(&base, &replacing);
     assert_eq!(authz.attribute("privileged-groups").as_deref(), Some("ADMIN"));
     assert_eq!(names("privileged-group"), ["APP_ADMIN", "OTHER_ADMIN"]);
+}
+
+/// Every keyed merge takes its key attributes from the conf schema (`conf_schema::merge_keys`), which asserts in a
+/// debug build that its path is a keyed unit: merging one of each keyed element runs them all.
+#[test]
+fn every_keyed_merge_has_its_key_in_the_conf_schema() {
+    let text = r#"<moqui-conf>
+        <tools><tool-factory class="t"/></tools>
+        <cache-list><cache name="c"/></cache-list>
+        <telemetry><artifact type="AT_SERVICE"/><operations><operation service="s"/></operations></telemetry>
+        <webapp-list><webapp name="webroot">
+            <root-screen host=".*" location="l"/><error-screen error="e"/><token-route name="r"/>
+            <token-path pattern="p"/><public-site host="h"/><listener class="l"/><endpoint path="/x"/>
+            <filter name="f"><init-param name="i" value="v"/></filter>
+            <servlet name="s"><init-param name="i" value="v"/></servlet>
+            <web-protection><rate-limit name="r"/><ban name="b"/><client-rule name="c"/><path-rule name="p"/>
+                <user-agent-rule name="u"/></web-protection>
+        </webapp></webapp-list>
+        <artifact-execution-facade><artifact-execution type="AT_SERVICE"/></artifact-execution-facade>
+        <user-facade><authz><sealed-permission name="s"/><privileged-group name="g"/></authz></user-facade>
+        <resource-facade><resource-reference scheme="s"/><template-renderer extension="e"/><script-runner extension="e"/></resource-facade>
+        <screen-facade><screen-text-output type="t"/><screen-output type="t"/>
+            <screen location="l"><subscreens-item name="i"/></screen></screen-facade>
+        <service-facade><service-location name="l"/><service-type name="t"/><service-file location="f"/>
+            <startup-service name="s"/><thread-pool><run-from-pool name="p"/></thread-pool></service-facade>
+        <llm-facade><endpoint id="e"><header name="h"/></endpoint><model id="m"><reasoning level="low"/></model>
+            <bind feature="f"/><data-entity package="p" entity="e"/><user-facts service="s"/>
+            <constitution-provider service="s"/><ai-task name="t"/></llm-facade>
+        <entity-facade><datasource group-name="g"/></entity-facade>
+        <database-list><dictionary-type type="t"/><database name="d"><database-type type="t"/></database></database-list>
+        <repository-list><repository name="r"><init-param name="i"/></repository></repository-list>
+        <edge><delegate service="s"/><queue-kind name="q"/><replicate set="s"/></edge>
+        <instance-hosting><token-command name="t"/></instance-hosting>
+    </moqui-conf>"#;
+    let base = MNode::parse_text("moqui-conf", text).unwrap();
+    let over = MNode::parse_text("moqui-conf", text).unwrap();
+    super::merge_conf(&base, &over);
+    assert_eq!(
+        base.first_named("webapp-list").unwrap().children_named("webapp").len(),
+        1,
+        "the same key merges into one element"
+    );
+}
+
+/// Every element the XSD takes under `moqui-conf` is one the conf schema knows, so the generic merge of a component's
+/// own settings element never merges a framework element a second time; an add-on's element (mr-pass's `pass`) merges
+/// by that rule: its attributes replace, a child with a name merges into the base's, any other child is added.
+#[test]
+fn an_add_on_element_merges_as_settings_and_the_frameworks_are_known() {
+    let xsd = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime/components/base/framework/xsd/moqui-conf-3.xsd"),
+    )
+    .unwrap();
+    let start = xsd.find(r#"<xs:element name="moqui-conf">"#).unwrap();
+    let end = start + xsd[start..].find("</xs:sequence>").unwrap();
+    let names: Vec<&str> = xsd[start..end]
+        .split(r#"ref=""#)
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert!(names.len() > 40, "{names:?}");
+    for name in names {
+        assert!(
+            super::super::conf_schema::is_known_element(name),
+            "the conf element {name} is not in the conf schema, so a component's copy would also merge as settings"
+        );
+    }
+    let base = MNode::parse_text(
+        "base",
+        r#"<moqui-conf><pass backend-url="https://a"><lane name="a" size="1"/></pass></moqui-conf>"#,
+    )
+    .unwrap();
+    let over = MNode::parse_text(
+        "over",
+        r#"<moqui-conf><pass backend-url="https://b"><lane name="a" size="2"/><lane name="b"/><note/></pass>
+            <mantle content-root="/c"/></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &over);
+    let pass = base.first_named("pass").unwrap();
+    assert_eq!(pass.attribute("backend-url").as_deref(), Some("https://b"));
+    assert_eq!(pass.children_named("lane").len(), 2);
+    let a = pass.first_named_attrs("lane", &[("name", "a")]).unwrap();
+    assert_eq!(a.attribute("size").as_deref(), Some("2"));
+    assert_eq!(pass.children_named("note").len(), 1);
+    assert_eq!(
+        base.first_named("mantle").unwrap().attribute("content-root").as_deref(),
+        Some("/c")
+    );
+}
+
+/// A `default-property` of a component or runtime conf is kept in the merge, each one whole, so the boot's refusal of
+/// retired properties names it (plans/archive/Conf-Paths.md, phase 7).
+#[test]
+fn a_default_property_in_a_later_conf_reaches_the_refusal() {
+    let base = MNode::parse_text("base", "<moqui-conf><instance purpose=\"dev\"/></moqui-conf>").unwrap();
+    let over = MNode::parse_text(
+        "over",
+        r#"<moqui-conf><default-property name="webapp_http_port" value="9999"/>
+            <default-property name="entity_ds_host" value="db"/></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &over);
+    assert_eq!(base.children_named("default-property").len(), 2);
+    let err = super::super::conf_env::refuse_retired(&base).unwrap_err().to_string();
+    assert!(err.contains("webapp_http_port") && err.contains("entity_ds_host"), "{err}");
 }

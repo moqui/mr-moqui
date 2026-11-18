@@ -33,7 +33,7 @@ struct Setup {
 }
 
 /// The connector on this test's thread is not production, whatever another test's boot left in
-/// the process's `instance_purpose`.
+/// the process's `instance@purpose`.
 fn setup() -> Setup {
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
     let facade = moqui_core::testing::open();
@@ -478,7 +478,7 @@ fn a_file_root_is_not_served_in_production_and_a_data_root_is() {
     assert!(!root_refused(true, "git://repo"));
     assert!(!root_refused(false, "file:runtime"));
 
-    // A boot of the default conf leaves instance_purpose production for the process; the connector
+    // A boot of the default conf leaves instance@purpose production for the process; the connector
     // reads it through the thread's override, so the other tests here are not production.
     let setup = setup();
     let _entered = setup.context.enter();

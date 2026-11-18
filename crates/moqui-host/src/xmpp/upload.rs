@@ -22,7 +22,7 @@
 //! length and content type are the slot's. A second PUT of a slot while one is coming on this node is 409 at once. The
 //! body is spooled as it arrives (under `runtime/tmp/upload`, so no request worker, database connection or memory is
 //! held while a slow client sends), never more than the slot's size (a longer body is 413, a shorter one 400), within
-//! `xmpp_upload_seconds` (300; past it 408). Then it is stored with the slot's row locked for update, in the
+//! `xmpp-server/upload@seconds` (300; past it 408). Then it is stored with the slot's row locked for update, in the
 //! transaction that marks it done, so of PUTs on two nodes one writes and the other finds it done (409). A PUT that
 //! fails leaves no file and the slot open.
 
@@ -47,7 +47,7 @@ pub(crate) const PREFIX: &str = "/xmpp-upload/";
 const UPLOAD: &str = "moqui.xmpp.XmppUpload";
 /// How long an upload slot takes its PUT.
 const SLOT_LIFETIME_MS: i64 = 3_600_000;
-/// The longest a PUT may take, by default (`xmpp_upload_seconds`).
+/// The longest a PUT may take, by default (`xmpp-server/upload@seconds`).
 const DEFAULT_PUT_SECONDS: u64 = 300;
 /// Bytes of a body gathered before they are written to its spool file.
 const SPOOL_FEED: usize = 256 * 1024;
@@ -86,9 +86,9 @@ fn field(row: &moqui_core::entity::EntityValue, name: &str) -> String {
     row.get(name).map(to_plain_string).unwrap_or_default()
 }
 
-/// The longest a PUT may take (`xmpp_upload_seconds`).
+/// The longest a PUT may take (`xmpp-server/upload@seconds`).
 fn put_deadline() -> Duration {
-    let seconds = moqui_lib::env::get_prop_or_env("xmpp_upload_seconds")
+    let seconds = moqui_core::context::conf_env::setting("xmpp-server/upload@seconds")
         .trim()
         .parse::<u64>()
         .ok()

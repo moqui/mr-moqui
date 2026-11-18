@@ -84,9 +84,9 @@ fn startup_speed() {
     }
     let framework = runtime.join("components/base/framework");
     for (name, value) in [
-        ("entity_empty_db_load", load.as_str()),
-        ("ssh_port", "0"),
-        ("cluster_https_port", "0"),
+        ("moqui_conf__tools__empty_db_load", load.as_str()),
+        ("moqui_conf__ssh_server__port", "0"),
+        ("moqui_conf__cluster_member__https_port", "0"),
         ("cluster_ssh_port", "0"),
     ] {
         moqui_lib::env::set_property(name, value);

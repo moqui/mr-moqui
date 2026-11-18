@@ -162,7 +162,7 @@ feature("a busy user's caller goes straight to voicemail; a free one rings for t
     }
 })
 
-feature("a box that rings longer than call_ring_seconds keeps its user ringing until its voicemail", {
+feature("a box that rings longer than calls@ring-seconds keeps its user ringing until its voicemail", {
     when() {
         as(A, "update#VoicemailSettings", {rings: 10})
         const long = receive(NUMBER_A)
@@ -171,7 +171,7 @@ feature("a box that rings longer than call_ring_seconds keeps its user ringing u
             row.set(field, new Date(Date.now() - seconds * 1000))
             row.update()
         })
-        // rung 50 s: past call_ring_seconds (45), before its voicemail (60) and ring expiry (90)
+        // rung 50 s: past calls@ring-seconds (45), before its voicemail (60) and ring expiry (90)
         backdate("moqui.call.CallLeg", "offeredDate", "callLegId", userLeg(long.callSessionId, A).callLegId, 50)
         engine("org.moqui.call.CallServices.expire#Calls")
         const ringing = userLeg(long.callSessionId, A).statusId
@@ -281,7 +281,7 @@ feature("the PIN: short and weak ones refused, a wrong one refused over the phon
     when() {
         const weak = as(A, "set#VoicemailPin", {pin: "123456"})
         const short = as(A, "set#VoicemailPin", {pin: "4719"})
-        const fourWhenAllowed = withProperty("voicemail_pin_min_digits", "4", () => as(A, "set#VoicemailPin", {pin: "4719"}))
+        const fourWhenAllowed = withConf("voicemail@pin-min-digits", "4", () => as(A, "set#VoicemailPin", {pin: "4719"}))
         const settings = as(A, "get#VoicemailSettings")
         const set = as(A, "set#VoicemailPin", {pin: "471935"})
         const hash = boxOf(A).pinHash
@@ -296,7 +296,7 @@ feature("the PIN: short and weak ones refused, a wrong one refused over the phon
     },
     then({weak, short, fourWhenAllowed, settings, set, hash, wrong, right, byNumber, noBox, noPin, wrongByNumber}) {
         weak.reasonCode == "weakPin"
-        // six digits at least by default (voicemail_pin_min_digits); a deployment may allow four
+        // six digits at least by default (voicemail@pin-min-digits); a deployment may allow four
         short.reasonCode == "badPin"
         fourWhenAllowed.errors == ""
         settings.pinMinDigits == 6
@@ -405,7 +405,7 @@ feature("notices are optional and attachments are off by default", {
 feature("a failed transcription keeps the audio and shows its state, and its owner retries it", {
     when() {
         const off = as(A, "retry#VoicemailTranscript", {voicemailId: first})
-        return withProperty("voicemail_transcribe", "true", () => {
+        return withConf("voicemail@transcribe", "true", () => {
             // no speech provider answers here: the transcription fails
             const ran = engine("transcribe#Voicemail", {voicemailId: first})
             const detail = as(A, "get#Voicemail", {voicemailId: first})
@@ -434,7 +434,7 @@ feature("a failed transcription keeps the audio and shows its state, and its own
     }
 })
 
-feature("delete goes to the trash, the trash empties after voicemail_trash_days with its audio and transcripts", {
+feature("delete goes to the trash, the trash empties after voicemail@trash-days with its audio and transcripts", {
     when() {
         const location = voicemailRow(first).audioLocation
         const trashed = as(A, "delete#Voicemail", {voicemailId: first})
@@ -446,7 +446,7 @@ feature("delete goes to the trash, the trash empties after voicemail_trash_days 
         const recent = leave(boxA).voicemailId
         as(A, "delete#Voicemail", {voicemailId: recent})
         sys(() => { const v = ec.entity.find(VOICEMAIL).condition("voicemailId", first).one(); v.set("trashedDate", new Date(Date.now() - 40 * 86400000)); v.update() })
-        const kept = withProperty("voicemail_trash_days", "0", () => engine("expire#VoicemailTrash"))
+        const kept = withConf("voicemail@trash-days", "0", () => engine("expire#VoicemailTrash"))
         const expired = engine("expire#VoicemailTrash")
         const gone = voicemailRow(first)
         const transcripts = sys(() => ec.entity.find(TRANSCRIPT).condition("voicemailId", first).count())

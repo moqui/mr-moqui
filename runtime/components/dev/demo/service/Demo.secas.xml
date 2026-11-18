@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The shared demo login cannot be locked: before each account service that would change who can log in, an error
-    for a user in demo_shared_user_ids stops it (demo.DemoServices.refuse#SharedAccountChange). Mantle's update#Account
+    for a user in demo@shared-user-ids stops it (demo.DemoServices.refuse#SharedAccountChange). Mantle's update#Account
     and update#PartyUserAccount go through update#UserAccount. Any active sign-in factor makes the login ask for a
     second one, so creating a factor is refused too. -->
 <secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">

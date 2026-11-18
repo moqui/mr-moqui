@@ -210,7 +210,10 @@ fn a_stop_closes_terminal_and_xmpp_websockets_at_once() {
         "termws-stop",
         Some(PLAIN_USER),
         "",
-        &[("xmpp_domain", "stop.example"), ("xmpp_websocket_enabled", "true")],
+        &[
+            ("moqui_conf__xmpp_server__domain", "stop.example"),
+            ("moqui_conf__xmpp_server__websocket_enabled", "true"),
+        ],
     );
     let address = gate.server.address();
     let cookie = crate::common::sign_in(address, "john.doe", "moqui");
@@ -444,7 +447,7 @@ fn the_command_line_opens_on_a_dev_instance_for_a_user_with_ssh_shell() {
         "termws-command",
         Some(PLAIN_USER),
         "",
-        &[("instance_purpose", "dev")],
+        &[("moqui_conf__instance__purpose", "dev")],
     );
     let address = gate.server.address();
     let page = Page::signed_in(address, "john.doe");
@@ -573,7 +576,7 @@ fn a_host_session_runs_a_program_on_a_pty() {
         "termws-host",
         Some(PLAIN_USER),
         r#"<terminal><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
-        &[("instance_purpose", "dev"), (helper.0, &helper.1)],
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
     );
     let address = gate.server.address();
     let page = Page::signed_in(address, "john.doe");
@@ -666,7 +669,7 @@ fn a_host_session_outlives_a_restart_of_the_server() {
         "termws-hold",
         None,
         r#"<terminal><host-profile name="plain" command="sh"/></terminal>"#,
-        &[("instance_purpose", "dev"), (helper.0, &helper.1)],
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
     );
     let page = Page::signed_in(gate.server.address(), "john.doe");
     gate.server.factory().flush_sessions().unwrap();
@@ -725,7 +728,7 @@ fn a_session_says_its_status_and_notifies_when_nobody_looks() {
         None,
         r#"<terminal><host-profile name="plain" command="sh"/>
             <host-profile name="ib" command="bash" integration="true"/></terminal>"#,
-        &[("instance_purpose", "dev"), (helper.0, &helper.1)],
+        &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
     );
     let page = Page::signed_in(gate.server.address(), "john.doe");
     gate.server.factory().flush_sessions().unwrap();
@@ -836,7 +839,13 @@ fn a_device_key_opens_a_remote_command_line_with_a_ticket() {
         "termws-key",
         None,
         r#"<terminal remote="true"/>"#,
-        &[("instance_purpose", "dev"), ("webapp_client_ip_header", "X-Real-IP")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__client_ip_header",
+                "X-Real-IP",
+            ),
+        ],
     );
     let address = gate.server.address();
     let key = {

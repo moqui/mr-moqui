@@ -332,7 +332,7 @@ fn a_container_runner_is_given_an_https_url_or_a_loopback_one() {
     assert!(engine::runner_server_url(&pool("http://localhost")).is_ok());
     let refused = engine::runner_server_url(&pool("http://moqui.example.com:8080")).unwrap_err();
     assert!(
-        refused.contains("git-ci server-url") && refused.contains("git_public_url") && refused.contains("linux"),
+        refused.contains("git-ci server-url") && refused.contains("git-server public-url") && refused.contains("linux"),
         "{refused}"
     );
 }

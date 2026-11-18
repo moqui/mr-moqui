@@ -84,7 +84,7 @@ Telemetry is on by default in builds with the `telemetry` feature (`lite` and `e
 with an `artifact` override and the receiver limits written out:
 
 ```xml
-<telemetry enabled="${telemetry_enabled}" sample-ratio="${telemetry_sample_ratio}" interval-seconds="60"
+<telemetry enabled="true" sample-ratio="0" interval-seconds="60"
         span-retention-days="7" log-retention-days="7" error-retention-days="90"
         minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730">
     <artifact type="AT_ENTITY" spans="true" metrics="true"/>
@@ -94,8 +94,8 @@ with an `artifact` override and the receiver limits written out:
 </telemetry>
 ```
 
-- **`telemetry_enabled=false`** turns it all off.
-- **`sample-ratio`** (`telemetry_sample_ratio`, default `0`) is the share of traces whose child spans are all kept.
+- **`moqui_conf__telemetry__enabled=false`** turns it all off.
+- **`sample-ratio`** (`telemetry@sample-ratio`, default `0`) is the share of traces whose child spans are all kept.
   At `0` (roots mode) every request and job root is kept, and the child spans of a trace are kept only when the trace
   has an error or a slow root (over `slow-root-ms`, default 1000) or slow frame; the rest are dropped. At `1` every span is kept. The decision
   is made from the trace id, so services with the same ratio agree. The sampled flag of an incoming `traceparent` is
@@ -217,7 +217,9 @@ alert state changes and notes.
 
 - CI posts JSON to `POST /v1/annotations` with an ingest key: `time` (default now), optional `timeEnd`, `source`
   (`deploy`, `config`, `release` or `user`), `text`, `tags`, and optionally `serviceName`, `instanceId`, `version`,
-  `revision`, `dashboardId` and `panelId`.
+  `revision`, `dashboardId` and `panelId`. A `release` of this server's own service is refused: the server records its
+  own releases at start. Received telemetry that names this server's own `service.name` is stored as
+  `<name> (received)`, another service, so a sender cannot move the local service's regressions or releases.
 - A signed-in user or a script with a login key can post the same to `/rest/s1/moqui/monitor/annotations`.
 - Dashboards › Annotations lists them and adds notes by hand.
 
@@ -251,7 +253,7 @@ It is mostly dashboards shipped from `tools/report/` and Explore presets. It has
 is the short name of its screens.
 
 The System home shows the shipped `system-home` dashboard as its Activity strip. To show another there, set
-`system_home_dashboard` to that dashboard's definition id (a conf property, so System › Configuration or the
+`screen-facade@system-home-dashboard` to that dashboard's definition id (a conf property, so System › Configuration or the
 environment): it gets the home's period and, as its `instance` variable, this server. A reader who may not read it sees
 the shipped one.
 
@@ -1172,7 +1174,7 @@ conf or restarting, for a while: to see full traces or DEBUG lines of one module
   Revert all every one.
 - **On disk stays visible.** Each row shows its on-disk value and where it comes from: `conf` (the merged conf:
   MoquiDefaultConf, the components' MoquiConf, the runtime conf), `default` (the conf leaves it out), `env
-  moqui_log_level`, or `as started` (the console). To keep a change, change it there and deploy (on production a git
+  logging@level`, or `as started` (the console). To keep a change, change it there and deploy (on production a git
   commit and the normal test and deploy).
 - **Every running instance.** A change is published on the `runtime-settings` cluster topic and applied by every
   member; each expires it at the same absolute time. An instance that starts later has the on-disk values only.
@@ -1225,7 +1227,7 @@ changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. T
   recovery actions `MONITOR_RECOVER`; policies, adapters and the emergency stop `MONITOR_RECOVER_ADMIN`. ADMIN holds
   all three. Changing runtime settings needs `MONITOR_SETTINGS`; letting a check or scrape target reach the private
   network, `MONITOR_PRIVATE_NETWORK`. A recovery webhook adapter reads only `recovery_` properties, or the ones the
-  conf property `monitor_recovery_properties` lists, and sends no property the conf marks secret unless it is listed. Editing eval datasets and scorers and scoring runs
+  conf property `telemetry/recovery@properties` lists, and sends no property the conf marks secret unless it is listed. Editing eval datasets and scorers and scoring runs
   needs `MONITOR_EVAL`; starting and cancelling experiments, which start agent runs that cost money,
   `MONITOR_EVAL_RUN`. Their views and changes are logged on the `moqui.monitor.audit` target.
 
@@ -1314,7 +1316,7 @@ take the index refresh interval to appear.
 - **Site confs.** `server-stats/@stats-skip-condition` and `artifact-stats` are deprecated and only warn at start. The
   confs in `runtime/conf` no longer set them; a site conf copied from an older one should drop them too, or move
   `artifact-stats` to `telemetry/artifact` as `MoquiDevConf.xml` now does.
-- **Defaults changed** in the review pass: the sample ratio is now `0` (set `telemetry_sample_ratio=1` to keep every
+- **Defaults changed** in the review pass: the sample ratio is now `0` (set `moqui_conf__telemetry__sample_ratio=1` to keep every
   span), and the browser no longer carries the page's `traceparent`, so a session's requests are separate traces
   (find them together by `moqui.visit.id` or `moqui.page.trace_id`).
 

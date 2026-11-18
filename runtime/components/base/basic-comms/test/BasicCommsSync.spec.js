@@ -144,7 +144,7 @@ spec({
         const row = sys(() => ec.entity.find("moqui.basic.email.EmailIdentity").condition("emailAccountId", accountId).list())[0]
         identity = "identity:" + row.emailIdentityId
         // the chunks of these specs are a few bytes
-        setProperty("client_upload_min_chunk_bytes", "1")
+        setConf("client-sync@upload-min-chunk-bytes", "1")
         capture.enable()
     },
     cleanupSpec() {
@@ -590,13 +590,13 @@ feature("uploads are limited: a small chunk other than the last, and more open u
         ec.user.internalLoginUser(OWNER)
         const chunk = (uploadId, text, total) =>
             attempt(SYNC + "upload#Chunk", {uploadId, offset: 0, total, fileName: "x.txt", chunk: uploadedFile("x.txt", text)})
-        const small = withProperty("client_upload_min_chunk_bytes", "4", () => chunk("sync-small-1", "abc", 10))
-        const lastSmall = withProperty("client_upload_min_chunk_bytes", "4", () => chunk("sync-small-2", "abc", 3))
-        const open = withProperty("client_upload_max_count", "1", () => [
+        const small = withConf("client-sync@upload-min-chunk-bytes", "4", () => chunk("sync-small-1", "abc", 10))
+        const lastSmall = withConf("client-sync@upload-min-chunk-bytes", "4", () => chunk("sync-small-2", "abc", 3))
+        const open = withConf("client-sync@upload-max-count", "1", () => [
             chunk("sync-open-1", "ab", 10),
             chunk("sync-open-2", "ab", 10)
         ])
-        const big = withProperty("client_upload_max_mb", "1", () => chunk("sync-big-1", "ab", 2 * 1048576))
+        const big = withConf("client-sync@upload-max-mb", "1", () => chunk("sync-big-1", "ab", 2 * 1048576))
         return {small, lastSmall, open, big}
     },
     then({small, lastSmall, open, big}) {

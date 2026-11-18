@@ -238,7 +238,7 @@ fn a_bad_mac_is_an_unknown_session() {
     assert_ne!(guard.session_id(), id);
 }
 
-/// `session_cookie_key` has no old key to fall back on: a new key ends every session cookie and every value signed
+/// `webapp-list/webapp[webroot]/session-config@cookie-key` has no old key to fall back on: a new key ends every session cookie and every value signed
 /// with a key derived from it (`derived_cookie_key`). A derived key differs by label and is never the session MAC.
 ///
 /// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.
@@ -255,7 +255,10 @@ fn known_gap_a_new_session_cookie_key_ends_every_session_cookie() {
     let (_, tag) = value.split_once('.').unwrap();
     assert_ne!(URL_SAFE_NO_PAD.decode(tag).unwrap(), handle);
 
-    moqui_lib::env::set_property("session_cookie_key", STANDARD.encode([7_u8; 32]));
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        STANDARD.encode([7_u8; 32]),
+    );
     assert!(verify_session_cookie(&value).unwrap().is_none());
     assert_ne!(derived_cookie_key("handle").unwrap(), handle);
 }
@@ -1503,14 +1506,17 @@ struct KeyGuard;
 
 impl KeyGuard {
     fn install() -> Self {
-        moqui_lib::env::set_property("session_cookie_key", test_cookie_key());
+        moqui_lib::env::set_property(
+            "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+            test_cookie_key(),
+        );
         Self
     }
 }
 
 impl Drop for KeyGuard {
     fn drop(&mut self) {
-        moqui_lib::env::clear_property("session_cookie_key");
+        moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key");
         reset_session();
     }
 }

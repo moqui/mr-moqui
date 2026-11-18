@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
             then fails (the client tries again and gets the duplicate), and a request that fails leaves no claim. Call
             store#ClientRequest with the result in the same transaction. The reference is keyed by user and serviceName
             alone, not by the parameters: a client gives each request its own ref, and the same ref with other parameters
-            answers the first request's result. A ref is kept client_request_keep_days (30): sent again after that, the
+            answers the first request's result. A ref is kept client-sync@request-keep-days (30): sent again after that, the
             request runs again.</description>
         <in-parameters>
             <parameter name="clientRef" required="true"/>
@@ -123,12 +123,12 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="clean" noun="ClientRequests" authenticate="anonymous-all">
-        <description>The daily job: the clientRefs older than days (the property client_request_keep_days, 30 by default)
+        <description>The daily job: the clientRefs older than days (the property client-sync@request-keep-days, 30 by default)
             go, so a client's retry is answered as a duplicate for that long.</description>
         <in-parameters><parameter name="days" type="Integer"/></in-parameters>
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
-            const keep = Math.max(1, Number(days || System.getProperty('client_request_keep_days') || 30))
+            const keep = Math.max(1, Number(days || ec.factory.getConfValue('client-sync@request-keep-days') || 30))
             const before = Number(ec.user.nowTimestamp) - keep * 86400000
             removedCount = Number(ec.entity.find('moqui.basic.client.ClientRequestRef').condition('createdDate', 'less', String(before))
                     .disableAuthz().deleteAll() || 0)
@@ -147,8 +147,8 @@ along with this software (see the LICENSE.md file). If not, see
             complete upload changes nothing (complete true). A total other than the upload's, or a chunk past it, is an
             error.
 
-            Limits: a chunk other than the last is at least client_upload_min_chunk_bytes (256 KB by default); a user has at
-            most client_upload_max_count (20) uploads not complete, of client_upload_max_mb (100) MB in all, so a new one past
+            Limits: a chunk other than the last is at least client-sync@upload-min-chunk-bytes (256 KB by default); a user has at
+            most client-sync@upload-max-count (20) uploads not complete, of client-sync@upload-max-mb (100) MB in all, so a new one past
             them is refused until one finishes or expires. The join reads the chunks one at a time into the file's buffer,
             so the heap holds the file once and a chunk.</description>
         <in-parameters>
@@ -193,8 +193,8 @@ along with this software (see the LICENSE.md file). If not, see
             const partSize = Number(typeof part.getSize === 'function' ? part.getSize() : (part.size || 0))
             if (!(partSize > 0)) { ec.message.addError(L('The chunk is empty')); return }
             if (at + partSize > size) { ec.message.addError(L('The chunk goes past the total size')); return }
-            const property = (name, fallback) => { const value = Number(System.getProperty(name)); return value > 0 ? value : fallback }
-            const minChunk = property('client_upload_min_chunk_bytes', 262144)
+            const setting = (selector, fallback) => { const value = Number(ec.factory.getConfValue(selector)); return value > 0 ? value : fallback }
+            const minChunk = setting('client-sync@upload-min-chunk-bytes', 262144)
             if (at + partSize < size && partSize < minChunk) {
                 ec.message.addError(ec.resource.expand('A chunk other than the last is at least ${bytes} bytes', '', {bytes: minChunk})); return }
             const now = ec.user.nowTimestamp
@@ -202,8 +202,8 @@ along with this software (see the LICENSE.md file). If not, see
                 // what the user has open: a new upload past the limits waits for one to finish or expire
                 const open = Array.from(ec.entity.find(UPLOAD).condition('userId', userId).condition(ec.entity.conditionFactory.makeCondition('completedDate', 'is-null', null))
                         .selectField('totalSize').disableAuthz().list())
-                const maxCount = property('client_upload_max_count', 20)
-                const maxBytesOpen = property('client_upload_max_mb', 100) * 1048576
+                const maxCount = setting('client-sync@upload-max-count', 20)
+                const maxBytesOpen = setting('client-sync@upload-max-mb', 100) * 1048576
                 if (open.length >= maxCount) {
                     ec.message.addError(ec.resource.expand('At most ${count} uploads at once: finish one first', '', {count: maxCount})); return }
                 if (open.reduce((sum, item) => sum + Number(item.totalSize || 0), 0) + size > maxBytesOpen) {
@@ -301,14 +301,14 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="clean" noun="ClientUploads" authenticate="anonymous-all" transaction="ignore">
-        <description>The hourly job: uploads with no chunk for hours (the property client_upload_expire_hours, 24 by default),
+        <description>The hourly job: uploads with no chunk for hours (the property client-sync@upload-expire-hours, 24 by default),
             finished or not, go with their files (remove#ClientUpload), and a user's upload folder left empty goes too. Each
             upload is on its own, in its own transaction: one that cannot be removed is logged and the rest go on.</description>
         <in-parameters><parameter name="hours" type="Integer"/></in-parameters>
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
             removedCount = 0
-            const keep = Math.max(1, Number(hours || System.getProperty('client_upload_expire_hours') || 24))
+            const keep = Math.max(1, Number(hours || ec.factory.getConfValue('client-sync@upload-expire-hours') || 24))
             const before = Number(ec.user.nowTimestamp) - keep * 3600000
             const cf = ec.entity.conditionFactory
             // read through the find's iterator, so a long backlog is not held whole; each removal runs in a

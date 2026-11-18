@@ -128,7 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>One unit of work queued for the other end of the link: on an edge node the items for a local node
             (EqdToLocal), on a local node its outbox for the edge node (EqdToEdge). pairedNodeId is the local node of
             the pair: on an edge node the paired node's id (decision 1), on a local node the pairing it is known by
-            (edge_node_pairing, the same on every member of its cluster, plans/Edge-Node2.md §4.4), else its own instance
+            (edge/node@pairing, the same on every member of its cluster, plans/Edge-Node2.md §4.4), else its own instance
             id.
             queueItemId is a UUID, so the receiver's receipt stays unique when this database is lost and made again;
             sequenceNum orders the items, and the items of one conversationKey (a room, a mailbox, a phone number) are
@@ -229,14 +229,14 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="EdgeMailDelivery" package="moqui.edge" use="transactional" cache="never">
-        <description>On an edge node with the MTA in moqui (edge_mail_mta=moqui, plans/archive/Edge-Node.md §5.4 E5b), the
+        <description>On an edge node with the MTA in moqui (moqui_conf__mail_delivery__mta=moqui, plans/archive/Edge-Node.md §5.4 E5b), the
             delivery of one message a local node sent (its mailOut queueItemId) to the recipients of one domain, by that
             domain's MX; the domain "(local node)" is the recipients queued back to the local node itself. Written in
             the transaction that applies the mailOut item, so the item is delivered once these rows are there.
             recipientsJson is the addresses still to deliver; mailFrom the envelope sender (the VERP address when
-            edge_mail_bounce_domain is set); contentLocation the signed message, shared by the rows of one message and
+            mail-delivery@bounce-domain is set); contentLocation the signed message, shared by the rows of one message and
             removed with its last report. statusEnumId: EmdPending (nextAttemptDate is the next try), EmdSent, EmdBounced
-            (bouncedCount refused for good, or not delivered within mail_delivery_days). sentCount and refusedText (each
+            (bouncedCount refused for good, or not delivered within mail-delivery@days). sentCount and refusedText (each
             refused address with the answer) are what the report says; reportPending is Y while the report (the
             mailStatus back) is not queued yet, which each round tries again without delivering again. lastReplyText is
             the last answer of the MX, or why it was not reached.</description>
@@ -310,7 +310,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="EdgeReplicaConflict" package="moqui.edge" use="transactional" cache="never">
-        <description>On an all-in-one node (node_role=all-in-one, plans/archive/Edge-Node.md §10), a record of a paired node's
+        <description>On an all-in-one node (moqui_conf__instance__node_role=all-in-one, plans/archive/Edge-Node.md §10), a record of a paired node's
             replicated set that was not applied because it claims an item the server holds itself: a mail address, a
             chat bridge id or a phone number (claimKind: MailAddress, ChatBridge, PhoneNumber; itemKey the item). The
             server's own item wins; ownerText names its holder. Keyed as the EdgeReplicaValue it would have been, with
@@ -338,7 +338,7 @@ along with this software (see the LICENSE.md file). If not, see
             with the send (the queue kind chatMedia), so the network fetches it from the edge node at
             /channels/{chatBridgeId}/media/{token} (plans/archive/Edge-Node.md §5.4, E6). edgeMediaId is the SHA-256 (hex) of
             the token, which the local node makes and only it and the network know; location is the file, under
-            dbresource://moqui/edge/media/. Served until expireDate (channels_media_minutes after it came), then
+            dbresource://moqui/edge/media/. Served until expireDate (channels@media-minutes after it came), then
             removed with its file.</description>
         <field name="edgeMediaId" type="id-long" is-pk="true"/>
         <field name="pairedNodeId" type="id"/>
@@ -355,12 +355,12 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgePort" package="moqui.edge" use="configuration" cache="never">
         <description>On an edge node, a TCP port whose connections each go down one paired local node's link as a byte
             tunnel (plans/Edge-Node2.md §4.1, §4.10 Ports, E16): tunnelKind ssh to the node's SSH server, xmpp
-            (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS, and on a front node (node_role
+            (STARTTLS) or xmpps (direct TLS) to its XMPP server, which ends the TLS, and on a front node (instance@node-role
             front, §4.7) smtp to the SMTP listener of a member of the pairing's pool (an edge cluster's mail edge), with
             a PROXY v2 header naming the client. A port is one row; the node listens on it while its pairing is active,
-            within seconds of org.moqui.edge.EdgeServices adding it (on edge_ssh_tunnel_host, edge_xmpp_host or
-            edge_smtp_tunnel_host, every address when empty) and stops when it is removed. The conf's own tunnel ports are
-            apart: edge_ssh_tunnel_port goes to the one active pairing, and edge_xmpp_port and edge_xmpp_tls_port to the
+            within seconds of org.moqui.edge.EdgeServices adding it (on edge@ssh-tunnel-host, edge@xmpp-host or
+            edge@smtp-tunnel-host, every address when empty) and stops when it is removed. The conf's own tunnel ports are
+            apart: edge@ssh-tunnel-port goes to the one active pairing, and edge@xmpp-port and edge@xmpp-tls-port to the
             node whose XMPP domain a client names.</description>
         <field name="port" type="number-integer" is-pk="true"/>
         <field name="pairedNodeId" type="id" not-null="true"/>
@@ -375,7 +375,8 @@ along with this software (see the LICENSE.md file). If not, see
             from the pool to the edge node"), the member that sends replication and keeps the link's own rows
             (CallMediaNode, SipNode) and the phone numbers' fallbacks: lockName replicate. On a node that takes links
             (plans/Edge-Node2.md §4.6), the member of an edge cluster whose SIP engine registers the trunks: lockName
-            sipTrunks. A member claims it and renews the lease (the database's time) while it holds it; a lease that
+            sipTrunks. On any cluster, the member that holds a GroupMe bridge's push connection: lockName
+            groupme:(chatBridgeId) (crates/moqui-channels/src/groupme/push.rs). A member claims it and renews the lease (the database's time) while it holds it; a lease that
             lapsed is taken over by another member, which then sends each replicated set whole, or registers the trunks.
             A member that stops lets it go. No Java counterpart.</description>
         <field name="lockName" type="id" is-pk="true"/>

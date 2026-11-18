@@ -97,6 +97,9 @@ const GLOBALS_JS: &str = concat!(
     const factory = ec.factory || (ec.factory = {});
     factory.moquiVersion = hidden.moquiVersion();
     factory.hasFeature = hidden.hasFeature;
+    factory.getConfValue = hidden.getConfValue;
+    factory.isConfValueSet = hidden.isConfValueSet;
+    factory.isConfSecret = hidden.isConfSecret;
     // Java's TransactionFacade (`transaction.rs`)
     // body() in a transaction begun by `begin`: committed when it returns, rolled back (or, joined, marked
     // rollback-only) when it throws, and what it threw is thrown on
@@ -293,6 +296,9 @@ pub(crate) static SHIM: Shim = Shim {
         method!("ec.resource", "getTemplateRendererExtensionSet", [], None, leaf, template_extensions),
         method!("ec.factory", "moquiVersion", [], None, leaf, moqui_version),
         method!("ec.factory", "hasFeature", [Text], None, leaf, has_feature),
+        method!("ec.factory", "getConfValue", [Text], None, leaf, get_conf_value),
+        method!("ec.factory", "isConfValueSet", [Text], None, leaf, is_conf_value_set),
+        method!("ec.factory", "isConfSecret", [Text], None, leaf, is_conf_secret),
         method!("ec.transaction", "isTransactionInPlace", [], None, leaf, in_transaction),
         method!(
             "ec.transaction",
@@ -619,7 +625,7 @@ fn in_date_range(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `is-secret`; plans/Security-Review-Medium.md SEC-SCR-03).
 fn get_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = call.text_or_empty(0);
-    if crate::context::identity::script_refused_property_here(&name) {
+    if crate::context::identity::script_refused_property(&name) {
         return Ok(None::<String>.into());
     }
     let found = moqui_lib::env::get_prop_or_env(&name);
@@ -638,11 +644,13 @@ fn is_property_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok((!value.trim().is_empty() && value.trim() != "CHANGEME").into())
 }
 
-/// `System.propertyMatches(name, given)`: whether `given` is the property's value, compared by digest so the time does
-/// not depend on how much matched; false when either is empty. The value is not returned.
+/// `System.propertyMatches(name, given)`: whether `given` is the value of the property, or of the conf attribute a
+/// selector names, compared by digest so the time does not depend on how much matched; false when either is empty. The
+/// value is not returned.
 fn property_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
     use sha2::Digest as _;
-    let value = property_value(&call.text_or_empty(0));
+    // a conf attribute by its selector (a PASS client's secret), else a property
+    let value = crate::context::conf_env::setting_or_property(&call.text_or_empty(0));
     let given = call.opt_text(1).unwrap_or_default();
     if value.is_empty() || given.is_empty() {
         return Ok(false.into());
@@ -652,19 +660,19 @@ fn property_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// The secret properties [`secret_code_hash`] keys a digest with: the XMPP upload secret, which `get#AttachmentUrls`
 /// derives a file's download token from.
-const KEYED_SECRETS: &[&str] = &["xmpp_upload_secret"];
+const KEYED_SECRETS: &[&str] = &["xmpp-server/upload@secret"];
 
-/// `System.secretCodeHash(name, text)`: `ec.user.singleUseCodeHash` of the secret property's value followed by `text`,
-/// for a name of [`KEYED_SECRETS`] only; null when the property is not set. The secret is not returned.
+/// `System.secretCodeHash(selector, text)`: `ec.user.singleUseCodeHash` of the secret conf attribute's value followed by
+/// `text`, for a selector of [`KEYED_SECRETS`] only; null when it is not set. The secret is not returned.
 fn secret_code_hash(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = call.text_or_empty(0);
     if !KEYED_SECRETS.contains(&name.as_str()) {
         return Err(lib(moqui_lib::error::Error::new(format!(
-            "secretCodeHash does not take the property {name}"
+            "secretCodeHash does not take {name}"
         ))));
     }
-    let secret = property_value(&name);
-    if secret.is_empty() {
+    let secret = crate::context::conf_env::setting(&name);
+    if secret.is_empty() || secret.ends_with("CHANGEME") {
         return Ok(None::<String>.into());
     }
     let hash = crate::user::single_use_hash(&format!("{secret}{}", call.opt_text(1).unwrap_or_default()))
@@ -891,6 +899,52 @@ fn paginate_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 fn moqui_version(_: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(env!("CARGO_PKG_VERSION").to_string().into())
+}
+
+/// `ec.factory.getConfValue(selector)`: the running conf's attribute at `selector` (`webapp-list/webapp[webroot]@http-port`,
+/// plans/archive/Conf-Paths.md §1), or a process property of its environment name set since the boot
+/// ([`crate::context::conf_env::conf_value_now`]); null when the conf has none or it holds a secret, which a script
+/// never gets. A selector that does not parse is an error.
+fn get_conf_value(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let selector = call.text_or_empty(0);
+    if let Err(err) = moqui_lib::node::path::AttrPath::parse(&selector) {
+        return Err(HostError::message(format!("getConfValue({selector}): {err}")));
+    }
+    let found = crate::context::ExecutionContext::with_current(|ec| {
+        crate::context::conf_env::conf_value_now(ec.factory(), &selector)
+    })
+    .flatten();
+    Ok(found.filter(|found| !found.secret).map(|found| found.value).into())
+}
+
+/// `ec.factory.isConfValueSet(selector)`: whether the running conf's attribute at `selector`, a secret one too, has a
+/// value other than empty or the `CHANGEME` placeholder; the value is not returned. A selector that does not parse is
+/// an error.
+fn is_conf_value_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let selector = call.text_or_empty(0);
+    if let Err(err) = moqui_lib::node::path::AttrPath::parse(&selector) {
+        return Err(HostError::message(format!("isConfValueSet({selector}): {err}")));
+    }
+    let found = crate::context::ExecutionContext::with_current(|ec| {
+        crate::context::conf_env::conf_value_now(ec.factory(), &selector)
+    })
+    .flatten();
+    Ok(found
+        .is_some_and(|found| {
+            let value = found.value.trim();
+            !value.is_empty() && !value.ends_with("CHANGEME")
+        })
+        .into())
+}
+
+/// `ec.factory.isConfSecret(selector)`: whether the attribute at `selector` holds a secret by the conf schema or its name
+/// (a password, a key), whatever it is set to. A selector that does not parse is an error.
+fn is_conf_secret(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let selector = call.text_or_empty(0);
+    match moqui_lib::node::path::AttrPath::parse(&selector) {
+        Ok(path) => Ok(crate::context::conf_env::attribute_secret(&path).into()),
+        Err(err) => Err(HostError::message(format!("isConfSecret({selector}): {err}"))),
+    }
 }
 
 /// `ec.factory.hasFeature(name)`: whether this binary has a build feature.

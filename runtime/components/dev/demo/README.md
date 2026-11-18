@@ -18,12 +18,12 @@ This is not production policy. A production server loads no demo users and does 
   ./moq run-production -c conf/MoquiDemoConf.xml
   ```
 
-  A first start on an empty database loads all data too (`entity_empty_db_load=all` in that conf).
+  A first start on an empty database loads all data too (`moqui_conf__tools__empty_db_load=all` in that conf).
 - **A dev instance**: `./moq run -D demo_disabled=false`, to try it. Never run a public demo as a dev instance: the Dev
   AIDE loads there, and `moqui tui --user` logs in with no password.
 
-`component.xml` has `disabled="${demo_disabled ?: 'true'}"`. The property is read before `runtime/.env` and the conf's
-default properties, so set it with `-D` or in the environment.
+`component.xml` has `disabled="${demo_disabled ?: 'true'}"`. That is a process property, read before `runtime/.env`,
+so set it with `-D` or in the environment.
 
 ## What it does
 
@@ -33,7 +33,7 @@ default properties, so set it with `-D` or in the environment.
 | `MoquiConf.xml` | Turns off SSH (`ssh-server enabled="false"`), WebDAV, the MCP server and client, A2A both ways and the LLM gateway, whatever their properties say. Mail connects only to `localhost`, so no one syncs a real mailbox into Comms, where every visitor would read it. |
 | `data/DemoSecurityData.xml` (seed) | ADMIN is VIEW-only on Tools, System (Monitor with it), the `/moqui` REST API, EntitySync and SystemMessage services, the `/resources` command service (so refused), git repositories (no push or mirrors), report git sync and report webhooks, the data load wrap and the Dev AIDE's project list. ADMIN loses the search and dashboard proxies, `ADMIN_PASSWORD` (another user's password without the old one), SFTP and git over SSH, telemetry ingest, report files written on the server, recovery and runtime settings, the Admin app's writes (grants and memberships, accounts, backups and their downloads, connections, imports and exports, settings, jobs, the agents' Constitution), the agents' and eval administration, chat bridges, phone trunks, CI runners, session replays, hosted mail accounts, and handing another user's shared drives, shared mail accounts and report schedules to a new owner. |
 | `data/DemoUserData.xml` (demo) | John Doe leaves ADMIN_ADV: no login as another user, SQL, SSH admin shell or load testing. ADMIN_ADV is a privileged group, so a member of ADMIN cannot add him back. |
-| `service/Demo.secas.xml` | Before a password change or reset, a sign-in factor, or a change of username, disabled or require-password-change, `demo.DemoServices.refuse#SharedAccountChange` stops it for a user in `demo_shared_user_ids` (default `EX_JOHN_DOE`). |
+| `service/Demo.secas.xml` | Before a password change or reset, a sign-in factor, or a change of username, disabled or require-password-change, `demo.DemoServices.refuse#SharedAccountChange` stops it for a user in `demo@shared-user-ids` (default `EX_JOHN_DOE`). |
 
 The security data is `seed`, not `demo` as in Moqui Java's `moqui-demo`: each seed load runs the tools and framework
 seed and then this, so the lock-down holds. The John Doe row is `demo` because a seed load without the demo users would
@@ -50,7 +50,7 @@ permission the demo data neither ends nor names there.
   the server stopped): visitors change the demo data.
 - Every visitor is John Doe, so the `ALL_SCREENS` tarpit (120 screens a minute per user) is shared.
 - Keep real keys and passwords out of the database: Tools' Data Grid shows every entity to a VIEW-only user.
-- Leave `llm_openai_api_key` empty, or accept the `llm-facade` `user-daily-cost` as the cap for every visitor together.
+- Leave `llm-facade/endpoint[default]@api-key` empty, or accept the `llm-facade` `user-daily-cost` as the cap for every visitor together.
 - To undo the lock-down on a database, load seed, seed-initial and demo data again with the component off.
 
 ## Tests

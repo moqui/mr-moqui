@@ -13,7 +13,7 @@
  */
 
 //! What a load run from Tools may reach and how big it may be (plans/archive/LoadRunner.md §10 Targets and Limits, D6). A
-//! run reaches this server, loopback and the URL prefixes of `load_runner_targets`; a dev instance any URL. Without
+//! run reaches this server, loopback and the URL prefixes of `load-runner@targets`; a dev instance any URL. Without
 //! the rule a holder could aim the server at another site, a request forgery and a denial of service tool. Plain
 //! http to another machine is refused unless the list names it, since a login crosses in the clear: a prefix carries
 //! its scheme, so an https entry does not allow http, and this server's own http URL counts only on a loopback host
@@ -22,7 +22,7 @@
 //! segments are resolved.
 //!
 //! SSH (plans/archive/LoadRunner.md L7): a run's `ssh.connect` reaches this server's own SSH listener, loopback, and the
-//! `ssh://host:port` entries of `load_runner_targets`; a dev instance any host.
+//! `ssh://host:port` entries of `load-runner@targets`; a dev instance any host.
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
@@ -32,9 +32,9 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::web::origin::{configured_origins, SiteOrigin};
 
-/// The loads that may run at once on an instance when `load_runner_max_runs` is not set (D6).
+/// The loads that may run at once on an instance when `load-runner@max-runs` is not set (D6).
 pub(crate) const DEFAULT_MAX_RUNS: usize = 1;
-/// The most users a run may have when `load_runner_max_users` is not set (D6).
+/// The most users a run may have when `load-runner@max-users` is not set (D6).
 pub(crate) const DEFAULT_MAX_USERS: usize = 1000;
 
 /// The targets a run may reach.
@@ -42,9 +42,9 @@ pub(crate) const DEFAULT_MAX_USERS: usize = 1000;
 pub(crate) struct TargetPolicy {
     /// This server's own origins (the conf webroot's http and https URLs); an http one counts only on a loopback host.
     pub(crate) own: Vec<SiteOrigin>,
-    /// The `load_runner_targets` prefixes.
+    /// The `load-runner@targets` prefixes.
     pub(crate) prefixes: Vec<Prefix>,
-    /// The `ssh://host:port` entries of `load_runner_targets`, the host in lower case.
+    /// The `ssh://host:port` entries of `load-runner@targets`, the host in lower case.
     pub(crate) ssh: Vec<(String, u16)>,
     /// This server's SSH listener, when it has one.
     pub(crate) own_ssh: Option<std::net::SocketAddr>,
@@ -52,7 +52,7 @@ pub(crate) struct TargetPolicy {
     pub(crate) any: bool,
 }
 
-/// A `load_runner_targets` entry: an origin, and the path a target must be at or under (empty for any path).
+/// A `load-runner@targets` entry: an origin, and the path a target must be at or under (empty for any path).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Prefix {
     origin: SiteOrigin,
@@ -60,9 +60,9 @@ pub(crate) struct Prefix {
 }
 
 impl TargetPolicy {
-    /// The policy of this instance: its own origins, `load_runner_targets`, and whether it is a dev instance.
+    /// The policy of this instance: its own origins, `load-runner@targets`, and whether it is a dev instance.
     pub(crate) fn of_factory(factory: &ExecutionContextFactory) -> Self {
-        let targets = moqui_lib::env::get_prop_or_env("load_runner_targets");
+        let targets = moqui_core::context::conf_env::setting("load-runner@targets");
         Self {
             own: configured_origins(factory),
             prefixes: parse_prefixes(&targets),
@@ -93,7 +93,7 @@ impl TargetPolicy {
             return Ok(());
         }
         Err(format!(
-            "ssh to {host}:{port} is not this server's SSH, loopback, or an ssh://host:port entry in load_runner_targets"
+            "ssh to {host}:{port} is not this server's SSH, loopback, or an ssh://host:port entry in load-runner@targets"
         ))
     }
 
@@ -114,12 +114,12 @@ impl TargetPolicy {
         }
         if origin.scheme == "http" {
             return Err(format!(
-                "{url} is plain http to another machine, which a run reaches only when load_runner_targets names it: \
+                "{url} is plain http to another machine, which a run reaches only when load-runner@targets names it: \
                  a login would cross in the clear"
             ));
         }
         Err(format!(
-            "{url} is not this server, loopback, or a prefix in load_runner_targets"
+            "{url} is not this server, loopback, or a prefix in load-runner@targets"
         ))
     }
 }
@@ -138,7 +138,7 @@ impl Prefix {
     }
 }
 
-/// The comma- or space-separated prefixes of `load_runner_targets`; an entry that is not an http or https URL is
+/// The comma- or space-separated prefixes of `load-runner@targets`; an entry that is not an http or https URL is
 /// logged and left out.
 pub(crate) fn parse_prefixes(text: &str) -> Vec<Prefix> {
     let mut prefixes = Vec::new();
@@ -152,13 +152,13 @@ pub(crate) fn parse_prefixes(text: &str) -> Vec<Prefix> {
         }
         match parse_url(entry) {
             Some((origin, path)) => prefixes.push(Prefix { origin, path }),
-            None => tracing::error!(entry, "load_runner_targets: not an http, https or ssh URL; left out"),
+            None => tracing::error!(entry, "load-runner@targets: not an http, https or ssh URL; left out"),
         }
     }
     prefixes
 }
 
-/// The `ssh://host:port` entries of `load_runner_targets` (port 22 when it names none); one that does not read is
+/// The `ssh://host:port` entries of `load-runner@targets` (port 22 when it names none); one that does not read is
 /// logged and left out.
 pub(crate) fn parse_ssh_targets(text: &str) -> Vec<(String, u16)> {
     let mut targets = Vec::new();
@@ -174,7 +174,7 @@ pub(crate) fn parse_ssh_targets(text: &str) -> Vec<(String, u16)> {
         });
         match parsed {
             Some(target) => targets.push(target),
-            None => tracing::error!(entry, "load_runner_targets: not an ssh://host:port entry; left out"),
+            None => tracing::error!(entry, "load-runner@targets: not an ssh://host:port entry; left out"),
         }
     }
     targets
@@ -284,29 +284,29 @@ fn whole_number(text: &str) -> Option<usize> {
         .flatten()
 }
 
-/// Refuses a run of more than `load_runner_max_users` users in all.
+/// Refuses a run of more than `load-runner@max-users` users in all.
 pub(crate) fn check_users(total: usize) -> Result<(), String> {
     let max = max_users();
     if total > max {
         return Err(format!(
-            "A run may have at most {max} users (load_runner_max_users); the scenarios ask for {total}"
+            "A run may have at most {max} users (load-runner@max-users); the scenarios ask for {total}"
         ));
     }
     Ok(())
 }
 
-/// The loads that may run at once on this instance (`load_runner_max_runs`, D6).
+/// The loads that may run at once on this instance (`load-runner@max-runs`, D6).
 pub(crate) fn max_runs() -> usize {
     limit_of(
-        &moqui_lib::env::get_prop_or_env("load_runner_max_runs"),
+        &moqui_core::context::conf_env::setting("load-runner@max-runs"),
         DEFAULT_MAX_RUNS,
     )
 }
 
-/// The most users a run may have (`load_runner_max_users`, D6).
+/// The most users a run may have (`load-runner@max-users`, D6).
 pub(crate) fn max_users() -> usize {
     limit_of(
-        &moqui_lib::env::get_prop_or_env("load_runner_max_users"),
+        &moqui_core::context::conf_env::setting("load-runner@max-users"),
         DEFAULT_MAX_USERS,
     )
 }

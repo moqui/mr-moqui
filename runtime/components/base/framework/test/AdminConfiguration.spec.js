@@ -104,7 +104,7 @@ spec({
                 settingKey: secretKey,
                 title: "Spec secret",
                 valueTypeEnumId: "IsvText",
-                propertyName: "default_locale",
+                propertyName: "instance@default-locale",
                 isSecret: "Y"
             },
             {
@@ -118,15 +118,15 @@ spec({
                 settingKey: flaggedKey,
                 title: "Spec flagged",
                 valueTypeEnumId: "IsvText",
-                propertyName: "fcm_service_account"
+                propertyName: "push/fcm@service-account"
             },
             {
                 settingKey: confKey,
                 title: "Spec locale",
                 valueTypeEnumId: "IsvText",
-                propertyName: "default_locale",
+                propertyName: "instance@default-locale",
                 restartRequired: "Y",
-                operatorNote: "Set default_locale and restart"
+                operatorNote: "Set moqui_conf__instance__default_locale and restart"
             }
         ]
         for (const fields of settings) make("moqui.server.InstanceSetting", Object.assign({settingGroup: "Spec"}, fields))
@@ -267,8 +267,8 @@ feature("a secret-classified setting is never returned or made a preference; con
         secretPreference === undefined
         storeSecret.applied === false && storeSecret.reasonCode == "NOT_REGISTERED"
         readSecret.error.includes("not a registered instance preference")
-        conf.value == System.getProperty("default_locale") && conf.editable === false && conf.canEdit === false
-        conf.restartRequired === true && conf.propertyName == "default_locale" && conf.operatorNote.includes("restart")
+        conf.value == ec.factory.getConfValue("instance@default-locale") && conf.editable === false && conf.canEdit === false
+        conf.restartRequired === true && conf.propertyName == "instance@default-locale" && conf.operatorNote.includes("restart")
         conf.source == "default" || conf.source == "configuration"
         // the first registered preferences: presentation, the new-device window and the group recipient ceiling
         firstPreferences.every(key => seeded.includes(key))

@@ -41,7 +41,7 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
         entry(
             Section::Listener,
             "SIP",
-            State::off("sip_port and sip_tls_port are not set"),
+            State::off("sip-server@port and sip-server@tls-port are not set"),
         ),
         entry(Section::Integration, "IPP printing", State::NotBuilt),
         entry(Section::Integration, "SSO", State::on("")),
@@ -54,7 +54,7 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
   Listeners
     HTTP    tcp 0.0.0.0:8080
     SSH     tcp 127.0.0.1:2222
-    SIP     off: sip_port and sip_tls_port are not set
+    SIP     off: sip-server@port and sip-server@tls-port are not set
   Integrations
     Search  on: Postgres
     SSO     on
@@ -85,18 +85,17 @@ fn a_skipped_or_failed_entry_makes_the_report_a_warning() {
 /// model bound it is the default model's line.
 #[test]
 fn the_llm_line_names_the_model_assist_is_bound_to() {
-    moqui_lib::env::set_property("report_test_assist_model", "claude-haiku".to_string());
     let conf = r#"<moqui-conf><llm-facade>
         <model id="default" endpoint="default" name=""/>
         <model id="claude-haiku" endpoint="anthropic" name="claude-haiku-5-5"/>
         <bind feature="title" model="default"/>
-        <bind feature="assist" model="${report_test_assist_model}" reasoning="low"/>
+        <bind feature="assist" model="claude-haiku" reasoning="low"/>
     </llm-facade></moqui-conf>"#;
     assert_eq!(
         assist_model(conf),
         Some(("claude-haiku".to_string(), "claude-haiku-5-5".to_string()))
     );
-    let bound_default = conf.replace("${report_test_assist_model}", "default");
+    let bound_default = conf.replace(r#"model="claude-haiku" reasoning"#, r#"model="default" reasoning"#);
     assert_eq!(assist_model(&bound_default).map(|(id, _)| id), Some("default".to_string()));
     assert_eq!(assist_model("<moqui-conf/>"), None);
 }

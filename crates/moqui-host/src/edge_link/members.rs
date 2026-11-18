@@ -15,7 +15,7 @@
 //! The members of the edge cluster a local node links to (plans/Edge-Node2.md §4.6), as far as they need no network.
 //!
 //! Every edge member's Hello answer, and each answer to a Ping, lists the cluster's live members with their own link
-//! addresses (`edge_link_url`). The local node dials each one ([`plan`]), checks that a link dialed for a member reaches
+//! addresses (`edge@link-url`). The local node dials each one ([`plan`]), checks that a link dialed for a member reaches
 //! that member, and keeps the list and the ids it learned ([`Known`]) in `runtime/db/edge_members`: this machine's, as
 //! `runtime/db/instance_id` and `runtime/db/edge_member_key` are, since each member of a local cluster learns the list
 //! from its own links and `runtime/.env` is what people copy between the members. A restart then finds a member when
@@ -42,7 +42,7 @@ const FRONT_FILE: &str = "db/front_members";
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct EdgeMember {
     pub instance_id: String,
-    /// Its `edge_link_url`; empty when it has none, so it is reached only at the URL this node paired with.
+    /// Its `edge@link-url`; empty when it has none, so it is reached only at the URL this node paired with.
     pub link_url: String,
 }
 
@@ -105,7 +105,7 @@ pub(crate) fn check_list(list: &[EdgeMember]) -> Result<(), String> {
     Ok(())
 }
 
-/// What a local node keeps of its edge cluster: the latest list and the member ids it learned (`edge_node_id`, each
+/// What a local node keeps of its edge cluster: the latest list and the member ids it learned (`edge/node@id`, each
 /// on a link whose key is pinned), for the edge node it paired with: kept with that URL and pin, so a list from before
 /// pairing with another edge node is not used.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

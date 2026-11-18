@@ -12,7 +12,7 @@ services:
     image: localhost/moqui:latest
     restart: unless-stopped
     # The binary is PID 1 and handles SIGTERM itself, so no init process.
-    # 60s covers the 30s connection drain (webapp_shutdown_timeout) plus stopping embedded Postgres.
+    # 60s covers the 30s connection drain (webapp-list/webapp[webroot]/web-protection/connections@shutdown-timeout) plus stopping embedded Postgres.
     # The health check is the image HEALTHCHECK (podman/build.sh keeps it with --format docker).
     init: false
     stop_grace_period: 60s
@@ -22,8 +22,8 @@ services:
     volumes:
       - moqui-data:/var/lib/moqui
     environment:
-      instance_purpose: production
-      entity_ds_crypt_pass: ${MOQUI_CRYPT_PASS:-}
+      moqui_conf__instance__purpose: production
+      moqui_conf__entity_facade__crypt_pass: ${MOQUI_CRYPT_PASS:-}
 
 volumes:
   moqui-data:

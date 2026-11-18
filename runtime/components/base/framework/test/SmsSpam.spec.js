@@ -337,7 +337,7 @@ feature("the provider's lookup is asked only when it can change the verdict, kep
     }
 })
 
-feature("the spam purge deletes old texts only in rooms every member has in Spam, and only with chat_spam_purge_days", {
+feature("the spam purge deletes old texts only in rooms every member has in Spam, and only with chat@spam-purge-days", {
     when() {
         text(N(13), "Final notice: https://bit.ly/toll unpaid toll")
         const spamRoom = roomOf(N(13))

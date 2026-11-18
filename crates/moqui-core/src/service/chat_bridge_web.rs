@@ -25,8 +25,8 @@
 //!   check uses (`moqui.security.hmac.replay`), so a copy of a request is caught on every node that cache reaches (it
 //!   stays on its node until a distributed cache is configured, as for the HMAC check: docs/security/Proof-Tests.md).
 //! - [`media_url`] and [`media`]: a file of a message that goes out by address (MMS), at
-//!   `/channels/{chatBridgeId}/media/{token}` under `channels_public_url`. The token names the `ChatAttachment` and an
-//!   expiry, signed with HMAC-SHA-256 under `channels_media_key`; only a file of a message delivered to that bridge is
+//!   `/channels/{chatBridgeId}/media/{token}` under `channels@public-url`. The token names the `ChatAttachment` and an
+//!   expiry, signed with HMAC-SHA-256 under `channels@media-key`; only a file of a message delivered to that bridge is
 //!   served, and none without the key or the public URL.
 //! - `store#BridgeMedia`: a file a network's message names, fetched by its adapter ([`super::ChatBridgeAdapter::fetch_media`])
 //!   within a size bound and kept as a `ChatAttachment` of the room with no uploader, for `ingest#Event` to send with the
@@ -34,7 +34,7 @@
 //! - `send#BridgeDirect`: one message straight to an adapter, outside any room (a sign-in code by SMS): no delivery row,
 //!   no retry; the caller has checked it.
 //!
-//! On an edge node (`node_role=front_edge`) [`webhook`] and [`media`] are the edge node's own (`chat_bridge_edge.rs`): a
+//! On an edge node (`moqui_conf__instance__node_role=front_edge`) [`webhook`] and [`media`] are the edge node's own (`chat_bridge_edge.rs`): a
 //! webhook is checked with the local node's replicated bridge and queued, and a file is one the local node put there.
 
 use std::collections::BTreeMap;
@@ -61,11 +61,11 @@ pub(super) fn register(
 }
 
 /// The base URL the network reaches this server at, for the files of messages that go out by address.
-const PUBLIC_URL_PROPERTY: &str = "channels_public_url";
+const PUBLIC_URL_PROPERTY: &str = "channels@public-url";
 /// The key a file's address is signed with (generated when unset).
-const MEDIA_KEY_PROPERTY: &str = "channels_media_key";
+const MEDIA_KEY_PROPERTY: &str = "channels@media-key";
 /// How long a file's address works, in minutes.
-const MEDIA_MINUTES_PROPERTY: &str = "channels_media_minutes";
+const MEDIA_MINUTES_PROPERTY: &str = "channels@media-minutes";
 /// The largest file `store#BridgeMedia` takes when the caller names no bound.
 const DEFAULT_MEDIA_BYTES: u64 = 5 * 1024 * 1024;
 /// The file types kept as they are; any other is kept as `application/octet-stream`, so a file from a network is never
@@ -351,7 +351,7 @@ pub struct MediaFile {
 }
 
 pub(super) fn media_key() -> Option<String> {
-    let key = moqui_lib::env::get_prop_or_env(MEDIA_KEY_PROPERTY);
+    let key = crate::context::conf_env::setting(MEDIA_KEY_PROPERTY);
     (!key.trim().is_empty() && !key.ends_with("CHANGEME")).then_some(key)
 }
 
@@ -362,7 +362,7 @@ fn media_signature(key: &str, bridge_id: &str, attachment_id: &str, expiry: i64)
 }
 
 /// The address a network fetches file `attachment_id` of a message to bridge `bridge_id` at, good for
-/// `channels_media_minutes` from `now`; none without `channels_public_url` or `channels_media_key`.
+/// `channels@media-minutes` from `now`; none without `channels@public-url` or `channels@media-key`.
 pub fn media_url(bridge_id: &str, attachment_id: &str, now: i64) -> Option<String> {
     let base = public_base()?;
     let key = media_key()?;
@@ -375,9 +375,9 @@ pub fn media_url(bridge_id: &str, attachment_id: &str, now: i64) -> Option<Strin
 }
 
 /// The public URL a network posted `request` to, as it signed it (Twilio signs the exact URL with its query): the
-/// bridge's `webhookUrl` (its `configJson`) when set, used as it is, else `channels_public_url` and the request's path
+/// bridge's `webhookUrl` (its `configJson`) when set, used as it is, else `channels@public-url` and the request's path
 /// and query as received. Behind a proxy or an edge node the address the server sees is not the one the network used;
-/// `channels_public_url` names the public one (on a paired local node, the edge node's), and `webhookUrl` covers a
+/// `channels@public-url` names the public one (on a paired local node, the edge node's), and `webhookUrl` covers a
 /// bridge whose URL is another. None when neither is set.
 pub fn webhook_public_url(bridge: &super::BridgeInfo, request: &WebhookRequest) -> Option<String> {
     let configured = bridge.config.get("webhookUrl").and_then(serde_json::Value::as_str);
@@ -398,16 +398,16 @@ pub(super) fn public_url_of(configured: Option<&str>, base: Option<&str>, path_a
     Some(format!("{base}{path}"))
 }
 
-/// `channels_public_url` with no trailing `/`, when it is an http or https address.
+/// `channels@public-url` with no trailing `/`, when it is an http or https address.
 pub(super) fn public_base() -> Option<String> {
-    let base = moqui_lib::env::get_prop_or_env(PUBLIC_URL_PROPERTY);
+    let base = crate::context::conf_env::setting(PUBLIC_URL_PROPERTY);
     let base = base.trim().trim_end_matches('/');
     (base.starts_with("https://") || base.starts_with("http://")).then(|| base.to_string())
 }
 
-/// How long a file's address works, in minutes: `channels_media_minutes` (60), from 1 minute to 7 days.
+/// How long a file's address works, in minutes: `channels@media-minutes` (60), from 1 minute to 7 days.
 pub(super) fn media_minutes() -> i64 {
-    moqui_lib::env::get_prop_or_env(MEDIA_MINUTES_PROPERTY)
+    crate::context::conf_env::setting(MEDIA_MINUTES_PROPERTY)
         .trim()
         .parse::<i64>()
         .unwrap_or(60)
@@ -472,11 +472,18 @@ pub fn media_at(
 /// [`media`] of the server's own messages.
 fn own_media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, now: i64) -> Option<MediaFile> {
     let attachment_id = media_token_valid(bridge_id, token, now)?;
+    delivery_file(factory, bridge_id, &attachment_id)
+}
+
+/// File `attachment_id` of a message that goes to bridge `bridge_id`, read for an adapter that uploads it to its
+/// network (GroupMe's image service) rather than give an address: only a file of a message with a delivery to that
+/// bridge. None when it is not one, or cannot be read.
+pub fn delivery_file(factory: &ExecutionContextFactory, bridge_id: &str, attachment_id: &str) -> Option<MediaFile> {
     let facade = factory.entity()?;
     let row = facade
         .find("moqui.chat.ChatAttachment")
         .and_then(|find| {
-            find.eq("chatAttachmentId", Value::string(&attachment_id))
+            find.eq("chatAttachmentId", Value::string(attachment_id))
                 .disable_authz()
                 .one()
         })
@@ -577,7 +584,7 @@ fn safe_name(given: Option<&str>, content_type: &str) -> String {
 
 /// `store#BridgeMedia`: fetch the file at `url` of a message from bridge `chatBridgeId` (its adapter's
 /// [`fetch_media`](super::ChatBridgeAdapter::fetch_media), at most `maxBytes`) and keep it as a `ChatAttachment` of room
-/// `chatRoomId` with no uploader and no event yet, at `chat_attachment_root`/(room)/(attachment)/(name), in the caller's
+/// `chatRoomId` with no uploader and no event yet, at `chat@attachment-root`/(room)/(attachment)/(name), in the caller's
 /// transaction. Out: chatAttachmentId, fileName, contentType, fileSize; or `error` (and no chatAttachmentId) when the file
 /// cannot be fetched, which is not an error of the call, so the caller's transaction (the message's) goes on without it.
 fn store_bridge_media(
@@ -627,7 +634,7 @@ fn store_bridge_media(
     let mut attachment = facade.make_value("moqui.chat.ChatAttachment")?;
     attachment.set_sequenced_id_primary(facade)?;
     let id = text_of(&attachment, "chatAttachmentId").unwrap_or_default();
-    let root = moqui_lib::env::get_property("chat_attachment_root")
+    let root = Some(crate::context::conf_env::setting("chat@attachment-root"))
         .filter(|root| !root.trim().is_empty())
         .unwrap_or_else(|| "dbresource://chat".to_string());
     let location = format!("{}/{room}/{id}/{file_name}", root.trim_end_matches('/'));
@@ -728,6 +735,9 @@ fn send_bridge_direct(
         attachments: Vec::new(),
         target_remote_id: None,
         reaction_key: None,
+        rich: None,
+        location: None,
+        text_form: None,
         attempt: 1,
     };
     match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.deliver(&info, &request))) {
@@ -777,9 +787,9 @@ mod tests {
 
     #[test]
     fn a_file_address_is_signed_for_its_bridge_and_runs_out() {
-        moqui_lib::env::set_property("channels_public_url", "https://example.test/");
-        moqui_lib::env::set_property("channels_media_key", "a-test-key");
-        moqui_lib::env::set_property("channels_media_minutes", "10");
+        moqui_lib::env::set_property("moqui_conf__channels__public_url", "https://example.test/");
+        moqui_lib::env::set_property("moqui_conf__channels__media_key", "a-test-key");
+        moqui_lib::env::set_property("moqui_conf__channels__media_minutes", "10");
         let url = media_url("B1", "100200", 1_000).unwrap();
         let token = url.rsplit('/').next().unwrap();
         assert!(url.starts_with("https://example.test/channels/B1/media/100200."));

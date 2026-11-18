@@ -13,7 +13,7 @@
  */
 
 //! The engine's side of the registrar for desk and soft phones (plans/archive/Comms-Framework.md §5.2 "Registrar for phones
-//! (V4)"; docs/interfaces/SIP.md "Registrar"). Off unless `sip_registrar_enabled` is true, even with the SIP listeners
+//! (V4)"; docs/interfaces/SIP.md "Registrar"). Off unless `sip-server/registrar@enabled` is true, even with the SIP listeners
 //! on.
 //!
 //! - **Verifiers.** The user agent asks for a device's digest verifiers by username on each REGISTER or INVITE that
@@ -31,7 +31,7 @@
 //! - **On an edge node** (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) no verifier is here: each answer is
 //!   checked on the local node (`check#SipDeviceDigest`), so phones sign in only while it is reachable.
 //! - **On an all-in-one node** (plans/archive/Edge-Node.md §10, E12) by the domain a phone registers to: the server's own realm
-//!   (`sip_domain`) is its own phones', checked here; the paired node's domain (its Configure's `sipDomain`, which
+//!   (`sip-server@domain`) is its own phones', checked here; the paired node's domain (its Configure's `sipDomain`, which
 //!   the user agent challenges in, `Ua::set_device_realms`) is the paired node's, checked there. A paired node's
 //!   device ids are keyed by the node, and its bindings by `username@domain` (`moqui_sip::ua::aor_key`).
 
@@ -64,10 +64,10 @@ const CHECK_SERVICE: &str = "org.moqui.call.SipDeviceServices.check#SipDeviceDig
 const STORE_SERVICE: &str = "org.moqui.call.SipDeviceServices.store#SipRegistration";
 const RECEIVE_SERVICE: &str = "org.moqui.call.SipDeviceServices.receive#DeviceCall";
 
-/// The registrar's limits from the `sip_registrar_*` properties, or `None` while `sip_registrar_enabled` is not true.
+/// The registrar's limits from the `sip_registrar_*` properties, or `None` while `sip-server/registrar@enabled` is not true.
 /// A value that is not a number is logged and keeps its default.
 pub(super) fn registrar_from(property: &dyn Fn(&str) -> String) -> Option<RegistrarLimits> {
-    let enabled = property("sip_registrar_enabled");
+    let enabled = property("sip-server/registrar@enabled");
     if !matches!(enabled.trim().to_ascii_lowercase().as_str(), "true" | "y" | "yes" | "1") {
         return None;
     }
@@ -83,12 +83,12 @@ pub(super) fn registrar_from(property: &dyn Fn(&str) -> String) -> Option<Regist
         })
     };
     let defaults = RegistrarLimits::default();
-    let min_expires = read("sip_registrar_min_expires", defaults.min_expires).max(1);
+    let min_expires = read("sip-server/registrar@min-expires", defaults.min_expires).max(1);
     Some(RegistrarLimits {
         min_expires,
-        max_expires: read("sip_registrar_max_expires", defaults.max_expires).max(min_expires),
-        default_expires: read("sip_registrar_default_expires", defaults.default_expires).max(min_expires),
-        nat_expires: read("sip_registrar_nat_expires", defaults.nat_expires).max(min_expires),
+        max_expires: read("sip-server/registrar@max-expires", defaults.max_expires).max(min_expires),
+        default_expires: read("sip-server/registrar@default-expires", defaults.default_expires).max(min_expires),
+        nat_expires: read("sip-server/registrar@nat-expires", defaults.nat_expires).max(min_expires),
         ..defaults
     })
 }
@@ -258,7 +258,7 @@ impl DeviceDirectory for ServiceDirectory {
 const MAX_DEVICE_RING: Duration = Duration::from_secs(300);
 
 /// How long a `ringDevice` rings its phone: `ringSeconds`, the call's time left to ring (a voicemail box's rings can make
-/// it longer than `call_ring_seconds`), at most [`MAX_DEVICE_RING`]; [`RING_TIMEOUT`] when it is missing.
+/// it longer than `calls@ring-seconds`), at most [`MAX_DEVICE_RING`]; [`RING_TIMEOUT`] when it is missing.
 pub(super) fn device_ring_timeout(body: &Json) -> Duration {
     number(body, "ringSeconds")
         .filter(|s| *s > 0)

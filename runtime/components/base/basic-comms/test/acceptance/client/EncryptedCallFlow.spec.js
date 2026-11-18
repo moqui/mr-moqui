@@ -5,7 +5,7 @@
 // media goes both ways, decrypted with the keys each got from the other's device. The third person answers later: they get
 // both keys and the others get theirs. Recording the call is refused. The third leaves: the others rotate their keys, and
 // the new keys go only to the two still in it. Chromium's fake camera and microphone stand in for devices; needs a binary
-// with the rtc feature (the suite's --serve server sets rtc_media_port). Then an encrypted voice call (phase 4 of
+// with the rtc feature (the suite's --serve server sets media-server@port). Then an encrypted voice call (phase 4 of
 // plans/Comms-Messaging.md): audio only, and video turned on in the call, under the same keys, as a prompt on the other side.
 // Run: ./moq accept basic-comms --spec EncryptedCallFlow
 const PASSWORD = "CallsClient1!!"

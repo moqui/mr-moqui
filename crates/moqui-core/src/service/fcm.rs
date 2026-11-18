@@ -15,10 +15,10 @@
 //! Firebase Cloud Messaging (the HTTP v1 API) to the native apps a user registered (plans/Mobile-Desktop.md §5, "Native
 //! push"), for `send#WebPush` in [`super::web_push`]:
 //!
-//! - the server signs in as a Google service account (`fcm_service_account`: its JSON key file's path, or the JSON): an
+//! - the server signs in as a Google service account (`push/fcm@service-account`: its JSON key file's path, or the JSON): an
 //!   RS256 JWT for the `firebase.messaging` scope, exchanged at the account's `token_uri` for an OAuth access token,
 //!   kept until five minutes before it expires ([`Tokens`]);
-//! - each message is a POST to `<fcm_base_url>/v1/projects/<fcm_project_id>/messages:send`: a data message (the app's
+//! - each message is a POST to `<push/fcm@base-url>/v1/projects/<push/fcm@project-id>/messages:send`: a data message (the app's
 //!   own code shows it), high priority for a call's ring, with the push's time to live.
 //!
 //! A 404, UNREGISTERED, SENDER_ID_MISMATCH or a 400 about `message.token` means the token is no good
@@ -42,9 +42,9 @@ use moqui_lib::sync::lock;
 
 use crate::outbound::{Method, Request, Response};
 
-pub(crate) const ACCOUNT_PROPERTY: &str = "fcm_service_account";
-pub(crate) const PROJECT_PROPERTY: &str = "fcm_project_id";
-pub(crate) const BASE_URL_PROPERTY: &str = "fcm_base_url";
+pub(crate) const ACCOUNT_PROPERTY: &str = "push/fcm@service-account";
+pub(crate) const PROJECT_PROPERTY: &str = "push/fcm@project-id";
+pub(crate) const BASE_URL_PROPERTY: &str = "push/fcm@base-url";
 const DEFAULT_BASE_URL: &str = "https://fcm.googleapis.com";
 const DEFAULT_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 const SCOPE: &str = "https://www.googleapis.com/auth/firebase.messaging";
@@ -107,11 +107,11 @@ impl Config {
     }
 }
 
-/// The sender's configuration from the properties; `None` when `fcm_service_account` is not set. The account is the
-/// JSON itself when the value starts with `{`, else the path of its file. `fcm_project_id` defaults to the account's
+/// The sender's configuration from the properties; `None` when `push/fcm@service-account` is not set. The account is the
+/// JSON itself when the value starts with `{`, else the path of its file. `push/fcm@project-id` defaults to the account's
 /// `project_id`.
 pub(crate) fn config() -> Result<Option<Config>, String> {
-    let given = moqui_lib::env::get_prop_or_env(ACCOUNT_PROPERTY);
+    let given = crate::context::conf_env::setting(ACCOUNT_PROPERTY);
     let given = given.trim();
     if given.is_empty() {
         return Ok(None);
@@ -122,7 +122,7 @@ pub(crate) fn config() -> Result<Option<Config>, String> {
         std::fs::read_to_string(given).map_err(|err| format!("{ACCOUNT_PROPERTY} file {given} not read: {err}"))?
     };
     let account = ServiceAccount::parse(&json)?;
-    let project_id = Some(moqui_lib::env::get_prop_or_env(PROJECT_PROPERTY).trim().to_string())
+    let project_id = Some(crate::context::conf_env::setting(PROJECT_PROPERTY).trim().to_string())
         .filter(|id| !id.is_empty())
         .unwrap_or_else(|| account.project_id.clone());
     if project_id.is_empty() {
@@ -130,7 +130,7 @@ pub(crate) fn config() -> Result<Option<Config>, String> {
             "{PROJECT_PROPERTY} is not set and the service account names no project_id"
         ));
     }
-    let base_url = Some(moqui_lib::env::get_prop_or_env(BASE_URL_PROPERTY).trim().to_string())
+    let base_url = Some(crate::context::conf_env::setting(BASE_URL_PROPERTY).trim().to_string())
         .filter(|url| !url.is_empty())
         .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
     Ok(Some(Config {
@@ -142,7 +142,7 @@ pub(crate) fn config() -> Result<Option<Config>, String> {
 
 /// Whether the properties name a service account (not whether it works): for the clients' feature list.
 pub(crate) fn configured() -> bool {
-    !moqui_lib::env::get_prop_or_env(ACCOUNT_PROPERTY).trim().is_empty()
+    !crate::context::conf_env::setting(ACCOUNT_PROPERTY).trim().is_empty()
 }
 
 static UNSET_LOGGED: AtomicBool = AtomicBool::new(false);

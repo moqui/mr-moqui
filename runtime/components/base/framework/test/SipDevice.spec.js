@@ -42,7 +42,7 @@ function as(userId, name, parameters) {
     return Object.assign({errors}, out)
 }
 const internal = (name, parameters) => as(null, name, parameters)
-const on = (run) => withProperty("sip_registrar_enabled", "true", run)
+const on = (run) => withConf("sip-server/registrar@enabled", "true", run)
 function makeUser(userId, groupId) {
     sys(() => {
         if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() === 0) {
@@ -264,16 +264,16 @@ feature("a phone registered with another node rings there only with cascading me
                 contactUri: "sip:" + device.username + "@192.168.1.21:5060", transport: "udp", sourceAddress: "198.51.100.8", sourcePort: 61001,
                 sipCallId: "reg-leg-node", cseq: 2, credentialRevision: device.credentialRevision || 1, expiresDate: Date.now() + 300000,
                 lastRefreshDate: Date.now(), userAgent: "Spec Phone/1.0"})
-            setProperty("rtc_cascade_enabled", "false")
+            setConf("media-server@cascade-enabled", "false")
             const off = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const offLegs = deviceLegs(off.callSessionId)
             as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: off.callSessionId})
-            setProperty("rtc_cascade_enabled", "true")
+            setConf("media-server@cascade-enabled", "true")
             const onCall = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const onLegs = deviceLegs(onCall.callSessionId)
             const session = sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", onCall.callSessionId).one())
             as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: onCall.callSessionId})
-            setProperty("rtc_cascade_enabled", "false")
+            setConf("media-server@cascade-enabled", "false")
             sys(() => {
                 ec.entity.find("moqui.call.SipRegistration").condition("sipRegistrationId", "ring-leg-node").deleteAll()
                 ec.entity.find("moqui.call.SipNode").condition("instanceId", LEG_NODE).deleteAll()
@@ -346,7 +346,7 @@ feature("with phones and a voicemail box, tabs and phones ring together until vo
             const sessionOf = (callSessionId) => sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", callSessionId).one())
             const ended = []
 
-            // unanswered: rung 50 s, past call_ring_seconds (45) and before the box's 10 rings (60 s), every leg still rings
+            // unanswered: rung 50 s, past calls@ring-seconds (45) and before the box's 10 rings (60 s), every leg still rings
             const call = receive()
             ended.push(call.callSessionId)
             const rung = legsOfA(call.callSessionId)

@@ -86,9 +86,16 @@ pub(super) fn dispatch(args: &TestArgs, runtime: &Path, framework: &Path) -> Res
         )));
     }
     // a dev component's agents run on a dev instance, where it loads (plans/design-dev-aide.md 3.1)
-    if super::needs_dev_purpose(runtime, &components) && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty()
+    if super::needs_dev_purpose(runtime, &components)
+        && moqui_lib::env::get_prop_or_env(&moqui_core::context::conf_env::env_name_of(
+            moqui_core::context::conf_env::PURPOSE,
+        ))
+        .is_empty()
     {
-        moqui_lib::env::set_property("instance_purpose", "dev");
+        moqui_lib::env::set_property(
+            &moqui_core::context::conf_env::env_name_of(moqui_core::context::conf_env::PURPOSE),
+            "dev",
+        );
     }
     let started = Instant::now();
     let fixture = fixture::open(runtime, framework, args.db, args.keep)?;
@@ -257,8 +264,8 @@ fn file_safe(text: &str) -> String {
         .collect()
 }
 
-/// A live run's model settings from the real runtime's `.env`: its `llm_*` entries (an endpoint's key, the model a conf
-/// property names), which the scratch runtime the tests boot on does not have. Nothing else of the file is read, so the
+/// A live run's model settings from the real runtime's `.env`: its `llm-facade` entries (an endpoint's key, the
+/// default model), which the scratch runtime the tests boot on does not have. Nothing else of the file is read, so the
 /// runtime's other secrets stay out of the test database. A property or environment variable already set wins.
 fn carry_llm_settings(runtime: &Path) {
     let Ok(text) = std::fs::read_to_string(runtime.join(".env")) else {
@@ -277,11 +284,12 @@ fn carry_llm_settings(runtime: &Path) {
     }
 }
 
-/// The `llm_*` entries of dotenv text with a value.
+/// The `llm-facade` entries of dotenv text with a value: those whose environment name is under
+/// `moqui_conf__llm_facade__`, in any case.
 pub(super) fn llm_settings(text: &str) -> Vec<(String, String)> {
     moqui_lib::env::parse_dotenv(text)
         .into_iter()
-        .filter(|(name, value)| name.starts_with("llm_") && !value.is_empty())
+        .filter(|(name, value)| name.to_ascii_lowercase().starts_with("moqui_conf__llm_facade__") && !value.is_empty())
         .collect()
 }
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link (plans/archive/Edge-Node.md §5.1, E1). The edge end is a real server (`node_role=front_edge`, the HTTPS listener on
+//! The edge link (plans/archive/Edge-Node.md §5.1, E1). The edge end is a real server (`moqui_conf__instance__node_role=front_edge`, the HTTPS listener on
 //! a certificate from a test authority) in the test's own process; the local end is the link's dialer driven with an
 //! explicit `LocalConfig`, which needs no factory and opens no port, so the two share the process without sharing
 //! properties. Pairing works once per code; a local node with no listening port links up and down, with Hello both
@@ -83,7 +83,10 @@ pub(crate) fn start_edge(label: &str, certs: &Certs, port: u16) -> Gate {
     crate::common::start_with_files(
         label,
         None,
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port)],
+        &[
+            ("moqui_conf__instance__node_role", "front_edge"),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
+        ],
         &[
             ("cert/default.crt", &certs.cert_pem),
             ("cert/default.key", &certs.key_pem),

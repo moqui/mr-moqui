@@ -76,7 +76,7 @@ const HELD: &str = "Waiting for a sign-in";
 /// (WebrootChat.js `OUTBOX_FILES_FOR`).
 const FILES_FOR_MS: i64 = 20 * 3600 * 1000;
 /// A file larger than this goes in chunks, with a server at `clientApi` 4: the server's least chunk but the last
-/// (`client_upload_min_chunk_bytes`).
+/// (`client-sync@upload-min-chunk-bytes`).
 pub(crate) const CHUNK_MIN: usize = 262_144;
 /// The bytes of a chunk.
 const CHUNK_BYTES: usize = 1024 * 1024;

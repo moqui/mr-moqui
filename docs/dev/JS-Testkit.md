@@ -149,7 +149,7 @@ feature("#path shows #text", {
 | `requires: [...]` | On the spec, a feature or a row: skipped in a binary without the build feature, with `requires git, not built into this binary (moqui version)` |
 | `skip(reason)` | Called in a block: the feature is reported as SKIPPED with the reason. In `setupSpec` it skips every feature of the spec, and `cleanupSpec` still runs |
 | A missing tool | A case that does not say `requires`, and fails only because the binary reports that a tool is not built in (`git is not built into this host`, `scheme git is not supported`, and the same messages for the other tools), is skipped the same way. So is a `setupSpec` that fails that way: its features are skipped |
-| No Chromium | A case that fails only because PDF is not available, on a machine with no Chromium (`./moq chromium-download`, or `moqui_chromium_path`), is skipped; the skip reason is that message |
+| No Chromium | A case that fails only because PDF is not available, on a machine with no Chromium (`./moq chromium-download`, or `screen-facade/pdf@chromium-path`), is skipped; the skip reason is that message |
 
 A stepwise file that is entirely about one tool says so with `requires` on `spec()`, so its later features are not
 started without their setup.
@@ -221,9 +221,11 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `login(username, password = "moqui")`, `logout()` | `ec.user.loginUser` and `logoutUser`. `login` throws `login of <username> failed: ...` when the login fails or needs a second factor |
 | `screenTest(baseScreenPath)` | `ec.screen.makeTest()`, with the base screen path when given ([`screenTest`](#screentest)) |
 | `parallel(n, fn, args, opts)` | Run `fn(threadNum, args)` on `n` threads, each with its own `ec` ([`parallel`](#parallel)) |
-| `uploadedFile(fileName, text, contentType = "text/plain")` | The `FileItem` that services taking an upload expect, holding the text |
-| `setProperty(name, value)` | A process property, as a conf property would set it (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. It holds for the rest of the spec, for a policy switch its features share such as `call_recording_enabled` |
-| `withProperty(name, value, fn)` | The property only while `fn` runs, then the value it had before; returns what `fn` returned. For one feature, such as `call_captions_enabled` off |
+| `uploadedFile(fileName, text, contentType = "text/plain", binary = false)` | The `FileItem` that services taking an upload expect, holding the text; with `binary`, each character is a byte (0 to 255), for a picture or another binary file |
+| `setProperty(name, value)` | A process property (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. It holds for the rest of the spec. For a conf setting use `setConf` |
+| `withProperty(name, value, fn)` | The property only while `fn` runs, then the value it had before; returns what `fn` returned. For a conf setting use `withConf` |
+| `setConf(selector, value)` | A conf attribute by its selector (`ssh-server@public-host`), set over the conf files as its environment name would set it ([Conf-Paths](../../plans/archive/Conf-Paths.md#1-paths-and-names)): `ec.factory.getConfValue` and the server's readers of the conf see it; `null` puts back what the files and the environment give. It holds for the rest of the spec |
+| `withConf(selector, value, fn)` | The attribute only while `fn` runs, then as it was before; returns what `fn` returned |
 | `log` | `ec.logger`: `log.info(...)`, `log.warn(...)` |
 | `skip(reason)` | Skip the feature, or in `setupSpec` the spec ([Skipped and ignored](#skipped-and-ignored)) |
 | `assert(condition, message)` and its methods | [`assert`](#assert) |
@@ -231,8 +233,8 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `sum(list, field)` | The decimal sum of a field of a list's items, or of the items themselves with no `field`. An array or an entity list; a null or empty value counts as zero |
 | `runInContext(source, sandbox)` | Evaluate script text with `sandbox` as its global ([`runInContext`](#runincontext)) |
 
-Every property a spec changed, by `setProperty` or `withProperty`, is put back as it was before the spec after
-`cleanupSpec`, and when the spec ends without reaching it.
+Every property a spec changed, by `setProperty` or `withProperty`, and every conf attribute, by `setConf` or `withConf`,
+is put back as it was before the spec after `cleanupSpec`, and when the spec ends without reaching it.
 
 `ec.user.setEffectiveTime(millis)` pins the clock for `ec.user.nowTimestamp`, date filters with no date, and the
 `fromDate` defaults; the runner clears it after the spec.
@@ -342,10 +344,10 @@ A spec checks a send that goes, with no mail server, through the mail capture: w
 and so `send#EmailTemplate` and the mail client's `send#Draft`, does all of a real send (the `EmailMessage` row, its
 `ES_SENT` status and `sentDate`, the mail client's Sent folder) except connect, and keeps the message in memory. The
 `EmailServer` must still have an SMTP host, as for a real send (an empty one sends nothing); it is never connected. A
-spec turns it on for itself, and the conf property `mail_capture_sends=true` turns it on for a whole run
-(`mail_capture_sends=true ./moq test ...`, a `moqui test --serve` server too); it is off otherwise, so a spec that
-checks a send that cannot connect sees one. Only a `moqui test` run captures: elsewhere `enable()` throws and the
-property is ignored with a warning, so no running server can hold back its mail. `send#Draft` called in a transaction (as `send#Compose` calls it) only
+spec turns it on for itself, and the conf's `email-client@capture-sends` turns it on for a whole run
+(`moqui_conf__email_client__capture_sends=true ./moq test ...`, a `moqui test --serve` server too); it is off otherwise,
+so a spec that checks a send that cannot connect sees one. Only a `moqui test` run captures: elsewhere `enable()` throws
+and the setting is ignored with a warning, so no running server can hold back its mail. `send#Draft` called in a transaction (as `send#Compose` calls it) only
 claims the message there and sends once that commits, on a service worker: such a spec waits for the message's status
 before it reads the capture. The tool reads and clears what was captured:
 

@@ -12,12 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The optional SSH cluster channel (`plans/archive/Ssh.md`, `cluster_transport=ssh`). The HTTPS POST of `plans/archive/Cluster.md`
+//! The optional SSH cluster channel (`plans/archive/Ssh.md`, `moqui_conf__cluster_member__transport=ssh`). The HTTPS POST of `plans/archive/Cluster.md`
 //! stays the default; a peer whose `clusterBaseUrl` is `https://` still gets it.
 //!
 //! A member advertises `ssh://host:port`, its SSH server, and records its host key fingerprint on its `ClusterMember`
 //! row; a peer pins that fingerprint. The sender logs in as `moqui-cluster` with an Ed25519 key derived from the shared
-//! `cluster_tls_key`, so only a holder of the cluster material gets in, and keeps one SSH session to each peer with one
+//! `cluster-member@tls-key`, so only a holder of the cluster material gets in, and keeps one SSH session to each peer with one
 //! channel for each topic. A message is a frame: the payload length on a line, then the payload, the same topic JSON as
 //! the HTTPS body. The peer answers each frame with a status line (204 applied, else the HTTP status the POST would
 //! give), after applying it through the same path as a POST.
@@ -27,7 +27,7 @@
 //! `cluster <topic>` channel proves it holds the cluster material: the server sends a random challenge
 //! (`challenge <nonce>`), the connecting member answers with a nonce of its own and its signature of both
 //! (`proof <nonce> <signature>`), and the server, once it has checked that, answers with its own signature
-//! (`proof <signature>`), or `403` and closes. Each signs with an Ed25519 key derived from `cluster_tls_key` (the key
+//! (`proof <signature>`), or `403` and closes. Each signs with an Ed25519 key derived from `cluster-member@tls-key` (the key
 //! of the certificate whose fingerprint `cluster::same_material` compares) under a label of its own, over its role, the
 //! server's host key fingerprint and both nonces, so a proof is good for one channel to one host and for nothing else.
 //! The server takes no frame before the connecting member's proof, and the sender sends none before the server's: a
@@ -66,7 +66,7 @@ const NONCE: usize = 32;
 /// The longest line of the channel proof: a nonce and a signature in base64, with room to spare.
 const MAX_PROOF_LINE: u64 = 512;
 
-/// The login key every member derives from the shared `cluster_tls_key`.
+/// The login key every member derives from the shared `cluster-member@tls-key`.
 ///
 /// # Errors
 ///
@@ -83,7 +83,7 @@ pub fn cluster_login_key() -> Result<PrivateKey, Error> {
 }
 
 /// The key a member proves the cluster material with on a cluster channel (SEC-CLU-04): Ed25519, derived from the
-/// shared `cluster_tls_key` as the login key is, under a label of its own.
+/// shared `cluster-member@tls-key` as the login key is, under a label of its own.
 ///
 /// # Errors
 ///
@@ -246,11 +246,11 @@ pub fn is_cluster_key(key: &PublicKey) -> bool {
     cluster_login_key().is_ok_and(|own| own.public_key().key_data() == key.key_data())
 }
 
-/// Whether this member takes the SSH cluster channel: its base URL is `ssh://` (`cluster_transport=ssh`, or a
-/// `cluster_base_url` of `ssh://`). Peers reach any other member over the cluster port.
+/// Whether this member takes the SSH cluster channel: its base URL is `ssh://` (`moqui_conf__cluster_member__transport=ssh`, or a
+/// `cluster-member@base-url` of `ssh://`). Peers reach any other member over the cluster port.
 pub(crate) fn takes_ssh_channel() -> bool {
-    moqui_lib::env::get_prop_or_env("cluster_transport") == "ssh"
-        || moqui_lib::env::get_prop_or_env("cluster_base_url").starts_with("ssh://")
+    moqui_core::context::conf_env::setting("cluster-member@transport") == "ssh"
+        || moqui_core::context::conf_env::setting("cluster-member@base-url").starts_with("ssh://")
 }
 
 /// Why a login with the cluster key is refused, or `None` when it is taken (SEC-CLU-03): only on a member that takes

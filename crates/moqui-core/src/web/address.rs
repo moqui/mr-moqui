@@ -141,20 +141,11 @@ impl ClientAddressing {
         }
     }
 
-    /// From the `webroot` webapp's `client-ip-header` and `trusted-proxies`, or the `webapp_client_ip_header` and
-    /// `webapp_trusted_proxies` properties when the conf leaves them out.
+    /// From the `webroot` webapp's `client-ip-header` and `trusted-proxies`.
     pub fn of_factory(factory: &ExecutionContextFactory) -> Self {
-        let setting = |name: &str, property: &str| {
-            let value = factory.webapp_setting("webroot", name);
-            if value.is_empty() {
-                moqui_lib::env::get_prop_or_env(property).trim().to_string()
-            } else {
-                value
-            }
-        };
         Self::for_node(
-            &setting("client-ip-header", "webapp_client_ip_header"),
-            parse_cidrs(&setting("trusted-proxies", "webapp_trusted_proxies"), "trusted-proxies"),
+            &factory.webapp_setting("webroot", "client-ip-header"),
+            parse_cidrs(&factory.webapp_setting("webroot", "trusted-proxies"), "trusted-proxies"),
             crate::edge::takes_links(),
         )
     }
@@ -167,7 +158,7 @@ impl ClientAddressing {
         if takes_links && !header.trim().is_empty() && trusted.is_empty() {
             tracing::error!(
                 "client-ip-header {} is set with no trusted-proxies on an edge node: it is ignored; name the proxies in \
-                 front in trusted-proxies (webapp_trusted_proxies) to use it",
+                 front in the webroot webapp's trusted-proxies to use it",
                 header.trim()
             );
             return Self::new("", trusted);
@@ -175,14 +166,12 @@ impl ClientAddressing {
         Self::new(header, trusted)
     }
 
-    /// From the properties alone, for a request with no factory.
+    /// From the running conf ([`crate::context::conf_env::webroot_setting`]), for a request with no factory.
     pub fn of_properties() -> Self {
+        use crate::context::conf_env::webroot_setting;
         Self::new(
-            &moqui_lib::env::get_prop_or_env("webapp_client_ip_header"),
-            parse_cidrs(
-                &moqui_lib::env::get_prop_or_env("webapp_trusted_proxies"),
-                "webapp_trusted_proxies",
-            ),
+            &webroot_setting("client-ip-header"),
+            parse_cidrs(&webroot_setting("trusted-proxies"), "trusted-proxies"),
         )
     }
 

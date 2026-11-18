@@ -246,10 +246,10 @@ fn the_size_limit_stops_the_recording_after_storing_what_it_has() {
 #[test]
 fn the_limits_come_from_the_properties() {
     let props = |name: &str| match name {
-        "call_recording_queue_frames" => "1000".to_string(),
-        "call_recording_segment_mb" => "8".to_string(),
-        "call_recording_segment_minutes" => "5".to_string(),
-        "call_recording_max_mb" => "x".to_string(),
+        "calls/recording@queue-frames" => "1000".to_string(),
+        "calls/recording@segment-mb" => "8".to_string(),
+        "calls/recording@segment-minutes" => "5".to_string(),
+        "calls/recording@max-mb" => "x".to_string(),
         _ => String::new(),
     };
     let limits = Limits::from_properties(&props, true);
@@ -267,7 +267,7 @@ fn the_limits_come_from_the_properties() {
 #[test]
 fn an_edge_node_s_segments_fit_the_link_queue_s_content() {
     let props = |name: &str| match name {
-        "call_recording_segment_mb" => "100".to_string(),
+        "calls/recording@segment-mb" => "100".to_string(),
         _ => String::new(),
     };
     let edge = Limits::from_properties(&props, false).for_edge();
@@ -275,7 +275,7 @@ fn an_edge_node_s_segments_fit_the_link_queue_s_content() {
     assert!(edge.record.max_segment_bytes < moqui_core::edge::queue::MAX_CONTENT_BYTES as u64);
     // a smaller setting stays
     let small = |name: &str| match name {
-        "call_recording_segment_mb" => "16".to_string(),
+        "calls/recording@segment-mb" => "16".to_string(),
         _ => String::new(),
     };
     assert_eq!(

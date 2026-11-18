@@ -27,15 +27,12 @@ fn a_held_required_port_is_named_and_a_free_one_passes() {
     let held_port = held.local_addr().unwrap().port();
     let free_port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let targets = [
-        required("HTTP", "webapp_http_port", held_port),
-        required("SSH", "ssh_port", free_port),
+        required("HTTP", "http-port", held_port),
+        required("SSH", "ssh-server@port", free_port),
     ];
     let err = check(&targets).unwrap_err().to_string();
-    assert!(
-        err.contains(&format!("{held_port} (webapp_http_port) on 127.0.0.1")),
-        "{err}"
-    );
-    assert!(!err.contains("ssh_port"), "{err}");
+    assert!(err.contains(&format!("{held_port} (http-port) on 127.0.0.1")), "{err}");
+    assert!(!err.contains("ssh-server@port"), "{err}");
     #[cfg(target_os = "linux")]
     assert!(err.contains(&format!("held by pid {}", std::process::id())), "{err}");
     drop(held);
@@ -55,7 +52,7 @@ fn a_held_optional_port_is_returned_and_does_not_stop_the_start() {
     let held_port = held.local_addr().unwrap().port();
     let busy = check(&[Target::optional(
         "SMTP",
-        "smtp_listen_port",
+        "smtp-server@listen-port",
         "127.0.0.1",
         held_port,
         Proto::Tcp,
@@ -70,7 +67,7 @@ fn a_held_udp_port_is_found() {
     let held_port = held.local_addr().unwrap().port();
     let busy = check(&[Target::optional(
         "Call media",
-        "rtc_media_port",
+        "media-server@port",
         "127.0.0.1",
         held_port,
         Proto::Udp,
@@ -89,9 +86,11 @@ fn a_held_udp_port_is_found() {
 
 #[test]
 fn port_zero_is_not_checked() {
-    assert!(check(&[required("Cluster", "cluster_https_port", 0)])
-        .unwrap()
-        .is_empty());
+    assert!(
+        check(&[required("Cluster", "moqui_conf__cluster_member__https_port", 0)])
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

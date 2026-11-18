@@ -2118,7 +2118,7 @@ along with this software (see the LICENSE.md file). If not, see
             its status and window (one whose sign-in failed is active again). oauthProviderEnumId defaults to the account
             server's, else the address's domain. The state, the PKCE verifier (S256) and a nonce stay in the user's
             session for ten minutes, bound to the user and the account or address; the redirect URI is the deployment's
-            (email_oauth_redirect_uri), never the request's. The signed-in address must be the account's, unless
+            (email-client@oauth-redirect-uri), never the request's. The signed-in address must be the account's, unless
             allowAddressChange (the user confirmed it), which then changes the account's address. Refused when this
             server is not set up for the provider (get#OAuthProviders). authUrl is what the popup opens; signInId is for
             get#OAuthStatus.</description>
@@ -2945,7 +2945,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             lastSeq is the cursor to read from next. reset true, with no changes, means the cursor cannot be used: there is
             none yet (afterSeq empty, or the user's first read, which starts the log), it is older than the log kept
-            (mail_change_keep_days, 30 by default), the log started again (the user's accounts changed, a member added or
+            (client-sync@mail-change-keep-days, 30 by default), the log started again (the user's accounts changed, a member added or
             removed, or it was not read for that long), or it is past the last change (another server's). The client then
             reads its folders again and goes on from lastSeq; take lastSeq before reading them. Only the user's own log is
             read, and only messages of accounts the user reaches now are answered.
@@ -3068,7 +3068,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="clean" noun="MailChanges" authenticate="anonymous-all" transaction="ignore">
         <description>The daily job of the mail change cursors: a cursor not read for days (the property
-            mail_change_keep_days, 30 by default) goes dormant: its log goes and no change is noted for it until it is read
+            client-sync@mail-change-keep-days, 30 by default) goes dormant: its log goes and no change is noted for it until it is read
             again, which answers reset (its numbers go on; a sequence never starts again). Of the others, the changes
             older than that go, and a cursor before them answers reset (purgedThruSeq). Each user is on its own, in its own
             transaction: one that fails is logged and the rest go on.</description>
@@ -3079,7 +3079,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             userCount = 0; removedCount = 0
-            const keep = Math.max(1, Number(days || System.getProperty('mail_change_keep_days') || 30))
+            const keep = Math.max(1, Number(days || ec.factory.getConfValue('client-sync@mail-change-keep-days') || 30))
             const before = Number(ec.user.nowTimestamp) - keep * 86400000
             const states = Array.from(ec.entity.find('moqui.basic.email.EmailUserState').selectField('userId').disableAuthz().list())
             for (const state of states) {
@@ -5186,7 +5186,7 @@ along with this software (see the LICENSE.md file). If not, see
             transaction="ignore" allow-remote="false">
         <description>Which of these addresses are contacts of a user (the current user; another user only with authorization
             disabled), for an automatic reply to contacts only. The framework keeps no contacts (they are the app's, such as
-            Mantle's parties), so it asks a hook service, as the shell counts do: the one the email_contact_service property
+            Mantle's parties), so it asks a hook service, as the shell counts do: the one the email-client@contact-service property
             names, else the theme value STRT_EMAIL_CONTACT_SERVICE of the user's qapps theme. The hook is called with
             authorization disabled, in a transaction of its own (one that fails leaves the caller's as it was), with userId
             and emailAddressList and answers contactAddressList: those that are on a
@@ -5309,7 +5309,7 @@ along with this software (see the LICENSE.md file). If not, see
               address at the domain of a hosted or shared account or at one of the reply's internalDomains (the
               organization's own domains);
             - to the reply's audience (replyAudienceEnumId): everyone; internal senders and the owner's contacts
-              (EraContacts: filter#ContactAddresses asks the app's hook, the email_contact_service property or the theme
+              (EraContacts: filter#ContactAddresses asks the app's hook, the email-client@contact-service property or the theme
               value STRT_EMAIL_CONTACT_SERVICE; with no hook, or an account with no owner, no sender counts as a contact, and a
               hook that fails counts none, logged); or internal senders only (EraInternal).
             The subject is the reply's own, else "Automatic reply: " and the mail's subject. Each message is on its own:

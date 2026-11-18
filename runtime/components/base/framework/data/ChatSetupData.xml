@@ -23,9 +23,25 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="ChatMention" inboxEnumId="NinNotifications" description="Mentioned in a Chat Room" typeString="info"
             showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
             titleTemplate="${authorName} mentioned you in ${roomName}${summary ? ': ' + summary : ''}" linkTemplate=""/>
+    <!-- Join requests (plans/Comms-Messaging.md §18.3 phase 17, ChatInviteServices): a new request to a room's moderators
+        (roomName, chatRoomId, chatJoinRequestId, requesterName, note), and the decision to the person who asked (its title
+        set by the sender). The bell and the room's banner; no push. -->
+    <moqui.security.user.NotificationTopic topic="ChatJoinRequest" inboxEnumId="NinNotifications" description="Asks to join a chat room" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${requesterName} asks to join ${roomName}${note ? ': ' + note : ''}" linkTemplate=""/>
+    <!-- A room's text member whose texts stopped for a reason of the moderator who added them (plans/Comms-Messaging.md
+        §18.3 phase 18, SmsRoom.js noteAdderProblem): to the room's moderators, once a day for the member. -->
+    <moqui.security.user.NotificationTopic topic="ChatTextMember" inboxEnumId="NinNotifications" description="A chat room's text member gets no texts" typeString="warning"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${memberName} in ${roomName} gets no texts: ${reason}" linkTemplate=""/>
+    <moqui.security.user.NotificationTopic topic="ChatJoinDecision" inboxEnumId="NinNotifications" description="A chat room join request decided" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" titleTemplate="${roomName}" linkTemplate=""/>
     <!-- System, Push Health: every user's push devices with their counts (org.moqui.ui.NotificationServices.find#PushHealth) -->
     <moqui.security.UserPermission userPermissionId="PushHealthAdmin" description="See the push devices of every user and how their pushes go"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="PushHealthAdmin" fromDate="0"/>
+    <!-- the server's sticker packs (plans/Comms-Messaging.md §18.3 phase 20) -->
+    <moqui.security.UserPermission userPermissionId="ChatStickerAdmin" description="Keep the server's chat sticker packs"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatStickerAdmin" fromDate="0"/>
 
     <!-- A chat message in the search index: its room, its sender and its current text. ChatServices indexes it on
         send#Message and edit#Message and deletes it on redact#Message (no DataFeed); search#ChatEvents searches it with
@@ -63,7 +79,25 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Retention: the events older than a room's retentionDays. Each room is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_ChatRetention_daily" description="Delete chat events past their room's retention"
             serviceName="org.moqui.chat.ChatServices.clean#ChatRetention" cronExpression="0 45 3 * * ?" paused="N"/>
-    <!-- The changes feeds of users and rooms: changes older than chat_changes_keep_days (30). Each is on its own. -->
+    <!-- The changes feeds of users and rooms: changes older than chat@changes-keep-days (30). Each is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_ChatChanges_daily" description="Remove old chat changes from the users' and rooms' feeds"
             serviceName="org.moqui.chat.ChatServices.clean#ChatChanges" cronExpression="0 50 3 * * ?" paused="N"/>
+
+    <!-- Scheduled sends and reminders (plans/Comms-Messaging.md phase 15; org.moqui.chat.ChatScheduleServices): the messages
+        the server holds that are due, sent as their senders, and the reminders due, each on its own; the old rows daily. A
+        success is not kept: the message or the reminder is the record. -->
+    <moqui.service.job.ServiceJob jobName="send_DueChatMessages_frequent" description="Send the scheduled chat messages that are due"
+            serviceName="org.moqui.chat.ChatScheduleServices.send#DueMessages" cronExpression="0 * * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="send_DueChatReminders_frequent" description="Send the chat message reminders that are due"
+            serviceName="org.moqui.chat.ChatScheduleServices.send#DueReminders" cronExpression="0 * * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="clean_ChatSchedule_daily" description="Remove old scheduled chat messages and reminders"
+            serviceName="org.moqui.chat.ChatScheduleServices.clean#ScheduledMessages" cronExpression="0 55 3 * * ?" paused="N"/>
+    <!-- A reminder that came (ChatScheduleServices.send#DueReminders): stored and on the socket; its push goes through the
+        chat push worker (PUSHED_TOPICS), so it is not pushed twice. A scheduled message that was not sent. -->
+    <moqui.security.user.NotificationTopic topic="ChatReminder" inboxEnumId="NinNotifications" description="A chat message reminder" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" titleTemplate="${title}" linkTemplate="${link}"/>
+    <moqui.security.user.NotificationTopic topic="ChatScheduleFailed" inboxEnumId="NinNotifications" description="A scheduled chat message was not sent" typeString="warning"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" titleTemplate="${title}" linkTemplate="${link}"/>
 </entity-facade-xml>

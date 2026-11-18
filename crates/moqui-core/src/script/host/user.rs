@@ -115,7 +115,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user.context", "read", [Text], context_read),
         method!("ec.user.context", "write", [Text, OptValue], context_write),
         method!("ec.user.context", "names", [], context_names),
-        method!("ec.user", "getPreferences", [], None, all_preferences),
+        method!("ec.user", "getPreferences", [OptText], None, all_preferences),
     ],
     shim_js: Some(USER_JS),
     shim_members: &[
@@ -129,8 +129,8 @@ pub(super) static USER: HostClass = HostClass {
     ],
 };
 
-/// `getPreferences(keyRegexp)` filters in the script, so the key pattern is a JavaScript regular expression matched
-/// against the whole key, as Java's `String.matches` does.
+/// `getPreferences(keyRegexp)`: the key pattern is matched against the whole key, as Java's `String.matches` does, by
+/// the host ([`key_matcher`]).
 ///
 /// `ec.user.context`: a map for the current execution context's user. Each read and write goes to the host, so the
 /// entity filters see what `setup#UserOrganizationInfo` puts there. A list read from it is a copy: put it back to
@@ -138,12 +138,7 @@ pub(super) static USER: HostClass = HostClass {
 const USER_JS: &str = r#"(function (proto, hidden) {
     const all = hidden.getPreferences;
     proto.getPreferences = function (keyRegexp) {
-        const prefs = all();
-        if (keyRegexp == null || keyRegexp === "") return prefs;
-        const pattern = new RegExp("^(?:" + keyRegexp + ")$");
-        const out = {};
-        for (const key of Object.keys(prefs)) if (pattern.test(key)) out[key] = prefs[key];
-        return out;
+        return all(keyRegexp == null ? null : String(keyRegexp));
     };
     const read = hidden.read, write = hidden.write, names = hidden.names;
     const methods = {
@@ -479,14 +474,37 @@ fn set_preference(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Undefined)
 }
 
-fn all_preferences(_: &mut Call<'_>) -> Result<Ret, HostError> {
+fn all_preferences(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let matcher = match call.opt_text(0).filter(|pattern| !pattern.is_empty()) {
+        Some(pattern) => Some(key_matcher(&pattern).map_err(|err| user_error(&err))?),
+        None => None,
+    };
     let prefs = crate::user::get_preferences().map_err(|err| user_error(&err))?;
     Ok(Ret::Value(Value::Map(
         prefs
             .into_iter()
+            .filter(|(key, _)| matcher.as_ref().is_none_or(|matcher| matcher.is_match(key)))
             .map(|(key, value)| (key, Value::String(value)))
             .collect(),
     )))
+}
+
+/// The longest key pattern `getPreferences` takes.
+const KEY_PATTERN_MAX: usize = 256;
+
+/// A `getPreferences` key pattern, matched against the whole key. The pattern comes from a request (`/apps/getPreferences`),
+/// so it is compiled by the `regex` crate, whose matching time is linear in the key: a backtracking pattern cannot hold a
+/// worker as it did in the script's engine (SEC-RTE-15). Its syntax is the common one (no back-references or look-around).
+pub(crate) fn key_matcher(pattern: &str) -> Result<regex::Regex, Error> {
+    if pattern.len() > KEY_PATTERN_MAX {
+        return Err(Error::new(format!(
+            "a preference key pattern has at most {KEY_PATTERN_MAX} characters"
+        )));
+    }
+    regex::RegexBuilder::new(&format!("^(?:{pattern})$"))
+        .size_limit(1 << 20)
+        .build()
+        .map_err(|_| Error::new("the preference key pattern is not a valid regular expression"))
 }
 
 /// Java `UserFacade.getClientIp`: the request's client address, empty when there is no request.
@@ -598,8 +616,8 @@ fn server_grant_key(purpose: &str) -> Result<String, Error> {
 
 /// `ec.user.serverGrant(purpose, subject, ttlSeconds)`: a token that [`check_server_grant`] accepts for the same purpose
 /// and subject until `ttlSeconds` (3600; 1 second to 7 days) have passed, `<expiry millis>.<HMAC-SHA256 hex>`, keyed by
-/// the server's own secret (`session_cookie_key`, through a key derived for the purpose), so a script can sign a value
-/// it hands a client (a page's nonce) with no key of its own. An error with no purpose or no `session_cookie_key`.
+/// the server's own secret (`webapp-list/webapp[webroot]/session-config@cookie-key`, through a key derived for the purpose), so a script can sign a value
+/// it hands a client (a page's nonce) with no key of its own. An error with no purpose or no `webapp-list/webapp[webroot]/session-config@cookie-key`.
 fn server_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let key = server_grant_key(&call.text_or_empty(0)).map_err(|err| user_error(&err))?;
     let ttl_seconds = call.number(2).filter(|seconds| seconds.is_finite()).unwrap_or(3600.0);
@@ -754,4 +772,25 @@ fn user_preference(key: &str) -> Result<Option<String>, Error> {
         return Ok(None);
     }
     crate::user::get_preference(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_preference_key_pattern_matches_whole_keys_in_linear_time_and_is_capped() {
+        let print = key_matcher("qz\\.print.*").unwrap();
+        assert!(print.is_match("qz.print.label"));
+        assert!(!print.is_match("xqz.print"));
+        assert!(key_matcher("a|b").unwrap().is_match("b"));
+        assert!(!key_matcher("a|b").unwrap().is_match("ab"));
+        // a pattern that backtracks without end in a script's engine answers at once
+        let nested = key_matcher("(a+)+$").unwrap();
+        let started = std::time::Instant::now();
+        assert!(!nested.is_match(&format!("{}!", "a".repeat(10_000))));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(key_matcher(&"a".repeat(KEY_PATTERN_MAX + 1)).is_err());
+        assert!(key_matcher("(unclosed").is_err());
+    }
 }

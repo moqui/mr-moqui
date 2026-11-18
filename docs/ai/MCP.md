@@ -23,13 +23,13 @@ The server is off by default; while it is off `/mcp` and its documents answer 40
 
 ```xml
 <llm-facade>
-    <mcp server-enabled="${mcp_enabled}" protocol-version="2026-07-28" tools-ttl-ms="300000" agent="mcp"
-            public-url="${mcp_public_url}" trust-forwarded-headers="false" request-state-key="${mcp_request_state_key}"
+    <mcp server-enabled="false" protocol-version="2026-07-28" tools-ttl-ms="300000" agent="mcp"
+            public-url="" trust-forwarded-headers="false" request-state-key=""
             approval-wait="20" max-direct-tools="40"/>
 </llm-facade>
 ```
 
-- `mcp_enabled=true` turns it on. A caller needs the `McpServerUse` and `AgentUse` permissions.
+- `moqui_conf__llm_facade__mcp__server_enabled=true` turns it on. A caller needs the `McpServerUse` and `AgentUse` permissions.
 - `agent` names the `AgentDefinition` that bounds the tools: it must serve `mcp` and have `exposeMcp="Y"` (the seed's
   `mcp` agent does). Its `AgentToolPolicy` rows are the server's allowlist and its role group the MCP role group, kept
   apart from the assistant's; what a caller gets is their own authority ∩ that role group ∩ that policy (plan 4.3). The
@@ -39,7 +39,7 @@ The server is off by default; while it is off `/mcp` and its documents answer 40
   admin renames a tool for local terms there; each edit moves `lockVersion` on, which `tools/list` gives as
   `_meta["org.moqui/lockVersion"]`.
 - `request-state-key` (standard base64, 32 bytes or more) signs the `requestState` of a write waiting for its approval;
-  without it a key derived from `session_cookie_key` (which a cluster has, so every node checks every state), and on a
+  without it a key derived from `webapp-list/webapp[webroot]/session-config@cookie-key` (which a cluster has, so every node checks every state), and on a
   single node without either a random key of the process (a waiting write must then be retried before a restart).
 - `public-url` is the base URL of the approval links and the documents; without it the request's scheme and `Host`, and
   a believed proxy's forwarded headers only with `trust-forwarded-headers="true"`, as A2A takes them.
@@ -108,13 +108,13 @@ from marker paths: Java Moqui when it has `framework/src/main/java` or `framewor
 `framework/build.gradle` with `.java` or `.groovy` files under `framework/src`) beside `runtime/`, else MR Moqui when
 it has `runtime/components/base/framework` (a clone) or `components/base/framework` (a runtime); a relative path, a `.`
 or `..` part, or a directory that is neither is refused with why. `projectLayout: "java"` reads it as a Java checkout
-whatever its sources (`--java DIR` sends it). A production instance (`instance_purpose` production) reads no other
+whatever its sources (`--java DIR` sends it). A production instance (`instance@purpose` production) reads no other
 project: any `project` but its own runtime gets one error that does not say whether the path is there. The project is booted inside the server for its
 artifacts only (no database, threads, properties or hooks of its own; a Java checkout with the server's framework conf)
 and read into memory on the first call, which holds only that project; later calls look at its files at most every
 500 ms and read a changed one again (a changed `component.xml`, `MoquiConf.xml`, runtime conf or set of components
 boots it again), so an answer follows the files with no restart; when it does not boot again (a conf saved half-edited),
-the error is logged and the index read before answers until it does. `moqui_devtools_projects` (3) projects are kept, the
+the error is logged and the index read before answers until it does. `dev-reload@projects` (3) projects are kept, the
 least recently used dropped first. A file that does not parse is logged and left out. `describe` answers a service's
 in and out parameters too, for the server's own services and a project's.
 

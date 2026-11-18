@@ -236,19 +236,6 @@ fn legacy_configuration_and_slow_threshold() {
 }
 
 #[test]
-fn configuration_expands_telemetry_properties() {
-    moqui_lib::env::set_property("monitoring_test_telemetry_disabled", "false");
-    moqui_lib::env::set_property("monitoring_test_telemetry_ratio", "0.25");
-    let config = Config::from_conf(
-        r#"<moqui-conf><telemetry enabled="${monitoring_test_telemetry_disabled}" sample-ratio="${monitoring_test_telemetry_ratio}"/></moqui-conf>"#,
-    );
-    moqui_lib::env::clear_property("monitoring_test_telemetry_disabled");
-    moqui_lib::env::clear_property("monitoring_test_telemetry_ratio");
-    assert!(!config.enabled);
-    assert_eq!(config.sample_ratio, 0.25);
-}
-
-#[test]
 fn json_ingest_keeps_valid_records_and_redacts_attributes() {
     let input = serde_json::json!({"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"demo"}},{"key":"authorization","value":{"stringValue":"secret"}}]},"scopeSpans":[{"spans":[
         {"traceId":"0123456789abcdef0123456789abcdef","spanId":"0123456789abcdef","name":"demo","kind":2,"startTimeUnixNano":"1000000000","endTimeUnixNano":"1100000000","attributes":[{"key":"password","value":{"stringValue":"hidden"}},{"key":"safe","value":{"stringValue":"yes"}}]},

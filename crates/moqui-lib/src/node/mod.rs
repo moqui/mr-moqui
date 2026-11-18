@@ -19,6 +19,7 @@
 //! the next child; these files do not depend on that.
 
 mod parse;
+pub mod path;
 
 pub use parse::{malformed_comments, FlatElement, XmlEvent, XmlEvents};
 

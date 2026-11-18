@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
         ec.message.clearErrors()
         const L = (text) => ec.l10n.localize(text)
         const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
-        registrarText = out.registrarEnabled ? L('On') + (out.domain ? ' · ' + out.domain : '') : L('Off (sip_registrar_enabled)')
+        registrarText = out.registrarEnabled ? L('On') + (out.domain ? ' · ' + out.domain : '') : L('Off (sip-server/registrar@enabled)')
         deviceList = Array.from(out.deviceList || []).map((d) => ({sipDeviceId: d.sipDeviceId, userName: d.userName, name: d.name,
             username: d.username, profileText: d.deviceProfile === 'legacy' ? L('Legacy (MD5)') : L('Standard'),
             statusText: d.status === 'revoked' ? L('Removed') : L('Active'), active: d.status === 'active',

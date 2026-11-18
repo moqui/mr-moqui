@@ -33,13 +33,12 @@ pub(crate) struct Header {
 /// listener's routes, `listeners` false for a boot that opens none (`moqui tui`).
 pub(crate) fn log(factory: &ExecutionContextFactory, routes: &str, listeners: bool) {
     record_integrations(factory);
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
     let header = Header {
         version: env!("CARGO_PKG_VERSION"),
         package: crate::build_package(),
         seconds: crate::process_started().elapsed().as_secs_f64(),
-        purpose: property("instance_purpose"),
-        role: property("node_role"),
+        purpose: moqui_core::context::conf_env::setting_on(factory, moqui_core::context::conf_env::PURPOSE),
+        role: moqui_core::context::conf_env::setting_on(factory, moqui_core::edge::NODE_ROLE),
     };
     let report = moqui_core::startup::report(factory);
     // scripts read the same report (ec.factory.getStartupReport(), plans/archive/Tools-Fancy.md B1)
@@ -181,7 +180,7 @@ fn record_integrations(factory: &ExecutionContextFactory) {
         if !cfg!(feature = "telemetry") {
             State::NotBuilt
         } else if factory.conf_setting("telemetry", "enabled") == "false" {
-            State::off("telemetry_enabled is false")
+            State::off("telemetry enabled is false")
         } else {
             match factory.conf_setting("telemetry", "otlp-endpoint") {
                 endpoint if endpoint.is_empty() => State::on("kept in the search store"),
@@ -197,10 +196,12 @@ fn record_integrations(factory: &ExecutionContextFactory) {
 /// The model the merged conf binds Assist to, and that model's name, its properties expanded: (`claude-haiku`,
 /// `claude-haiku-5-5`). A binding an administrator saved (`LlmFeatureBinding`) is not read here.
 fn assist_model(conf_text: &str) -> Option<(String, String)> {
-    let expand = |raw: String| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string();
+    let expand = |raw: String| raw.trim().to_string();
     let conf = moqui_lib::node::MNode::parse_text("conf", conf_text).ok()?;
     let facade = conf.first_named("llm-facade")?;
-    let id = expand(facade.first_named_attrs("bind", &[("feature", "assist")])?.attribute("model")?);
+    // the assist bind's model, else the facade's default-model, which a bind with no model takes
+    let bind = facade.first_named_attrs("bind", &[("feature", "assist")])?;
+    let id = expand(bind.attribute("model").or_else(|| facade.attribute("default-model"))?);
     let name = facade
         .named_iter("model")
         .find(|model| model.attribute("id").map(expand).as_deref() == Some(id.as_str()))
@@ -221,7 +222,10 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
     }
     let setting = |path: &str, name: &str| factory.conf_setting(path, name);
     let facade = setting("llm-facade", "enabled") != "false";
-    let model = moqui_lib::env::get_prop_or_env("llm_openai_model").trim().to_string();
+    let model = factory
+        .conf_value("llm-facade/model[default]@name")
+        .map(|found| found.value.trim().to_string())
+        .unwrap_or_default();
     let assist = assist_model(&factory.conf_text()).filter(|(id, _)| id != "default");
     report.record_default(
         Section::Integration,
@@ -230,14 +234,14 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
             (false, _, _) => State::off("llm-facade enabled is false"),
             (true, Some((id, name)), _) if name.is_empty() => State::on(format!("Assist on {id}")),
             (true, Some((id, name)), _) => State::on(format!("Assist on {id} ({name})")),
-            (true, None, true) => State::on("no default model (llm_openai_model is not set)"),
+            (true, None, true) => State::on("no default model (llm-facade/model[default]@name is not set)"),
             (true, None, false) => State::on(format!("default model {model}")),
         },
     );
-    for (name, path, attribute, property) in [
-        ("MCP server", "llm-facade/mcp", "server-enabled", "mcp_enabled"),
-        ("A2A server", "llm-facade/a2a", "enabled", "a2a_enabled"),
-        ("LLM gateway", "llm-facade/gateway", "enabled", "llm_gateway_enabled"),
+    for (name, path, attribute) in [
+        ("MCP server", "llm-facade/mcp", "server-enabled"),
+        ("A2A server", "llm-facade/a2a", "enabled"),
+        ("LLM gateway", "llm-facade/gateway", "enabled"),
     ] {
         let on = facade && setting(path, attribute) == "true";
         report.record_default(
@@ -246,7 +250,7 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
             if on {
                 State::on("")
             } else if facade {
-                State::off(format!("{property} is not true"))
+                State::off(format!("{path}@{attribute} is not true"))
             } else {
                 State::off("llm-facade enabled is false")
             },
@@ -256,28 +260,28 @@ fn record_agents(factory: &ExecutionContextFactory, report: &moqui_core::startup
 
 /// Web push and FCM: on when their keys are set.
 fn record_push(report: &moqui_core::startup::StartupReport) {
-    let set = |name: &str| {
-        let value = moqui_lib::env::get_prop_or_env(name);
-        !value.trim().is_empty() && !value.ends_with("CHANGEME")
+    let set = |selector: &str| {
+        let value = moqui_core::context::conf_env::setting(selector);
+        !value.is_empty() && !value.ends_with("CHANGEME")
     };
     report.record_default(
         Section::Integration,
         "Web push",
         if !moqui_core::build_info::has_feature("web-push") {
             State::NotBuilt
-        } else if set("web_push_vapid_key") {
+        } else if set("push/web@vapid-key") {
             State::on("VAPID key set")
         } else {
-            State::off("web_push_vapid_key is not set")
+            State::off("push/web@vapid-key is not set")
         },
     );
     report.record_default(
         Section::Integration,
         "Mobile push (FCM)",
-        if set("fcm_service_account") {
+        if set("push/fcm@service-account") {
             State::on("")
         } else {
-            State::off("fcm_service_account is not set")
+            State::off("push/fcm@service-account is not set")
         },
     );
 }
@@ -285,8 +289,8 @@ fn record_push(report: &moqui_core::startup::StartupReport) {
 /// Call recording and captions: on by their properties, while call media runs.
 fn record_calls(report: &moqui_core::startup::StartupReport) {
     let names = [
-        ("Call recording", "call_recording_enabled"),
-        ("Call captions", "call_captions_enabled"),
+        ("Call recording", "calls/recording@enabled"),
+        ("Call captions", "calls/captions@enabled"),
     ];
     if !cfg!(feature = "rtc") {
         for (name, _) in names {
@@ -299,7 +303,7 @@ fn record_calls(report: &moqui_core::startup::StartupReport) {
         .iter()
         .any(|entry| entry.name == "Call media" && matches!(entry.state, State::On(_)));
     for (name, property) in names {
-        let on = moqui_lib::env::get_prop_or_env(property).trim() == "true";
+        let on = moqui_core::context::conf_env::setting_or_property(property) == "true";
         report.record_default(
             Section::Integration,
             name,

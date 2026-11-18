@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- For moqui test runs of basic-comms only (test/MoquiConf.xml registers this file and names it in chat@contact-service):
+    the contacts hook of chat's people (org.moqui.chat.ChatPeopleServices.find#ContactPeople) for the BasicCommsPeople
+    spec's numbers (+1555333....), deterministic, so the people test never depends on another component. Each address it
+    is asked about is kept (cache moqui.test.people.asked, by user), so the spec sees what reached the hook. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="find" noun="ContactPeople">
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="addressList" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="contactList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            contactList = []
+            const asked = Array.from(addressList || []).map(String)
+            const kept = ec.cache.getCache('moqui.test.people.asked')
+            kept.put(String(userId), (kept.get(String(userId)) || '') + ',' + asked.join(','))
+            const contacts = [
+                {contactRef: 'SPEC_JANE', name: 'Jane Contact', url: '/qapps/spec/Contact?partyId=SPEC_JANE',
+                    addressList: ['tel:+15553334001', 'email:jane.contact@people-spec.example', 'tel:+15553334009']},
+                {contactRef: 'SPEC_PAT', name: 'Pat Employee', url: '/qapps/spec/Contact?partyId=SPEC_PAT',
+                    addressList: ['tel:+15553334002', 'user:CHAT_PEOPLE_SPEC_B', 'tel:+15553334008', 'email:pat.private@people-spec.example']},
+                {contactRef: 'SPEC_GONE', name: 'Gone User', url: null,
+                    addressList: ['tel:+15553334005', 'user:CHAT_PEOPLE_SPEC_GONE', 'email:gone.extra@people-spec.example']},
+                {contactRef: 'SPEC_BLOCKER', name: 'Blocker Contact', url: null,
+                    addressList: ['tel:+15553334006', 'user:CHAT_PEOPLE_SPEC_R', 'email:blocker.extra@people-spec.example', 'tel:+15553334016']},
+            ]
+            for (const contact of contacts) if (contact.addressList.some((key) => asked.includes(key))) contactList.push(contact)
+        ]]></script></actions>
+    </service>
+</services>

@@ -249,7 +249,9 @@ pub trait HttpResponder {
 }
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    moqui_core::context::conf_env::setting_or_property(name)
+        .trim()
+        .to_string()
 }
 
 /// An attribute of the conf's `git-server` as a positive number; None when it is empty, 0 or not a number.
@@ -355,12 +357,12 @@ pub(crate) fn copy_objects(
     result.map(|_| planned.objects.len())
 }
 
-/// The base URL git clients reach the web server at: the conf's `git-server` `public-url` (`git_public_url`), else
+/// The base URL git clients reach the web server at: the conf's `git-server` `public-url` (`git-server@public-url`), else
 /// from the webapp host and port properties.
 pub(crate) fn public_base_url() -> String {
     let mut configured = crate::setting("public-url");
     if configured.is_empty() {
-        configured = property("git_public_url");
+        configured = property("git-server@public-url");
     }
     if !configured.is_empty() {
         return configured.trim_end_matches('/').to_string();
@@ -373,15 +375,15 @@ pub(crate) fn public_base_url() -> String {
             }
         }
     }
-    let host = Some(property("webapp_http_host"))
+    let host = Some(property("webapp-list/webapp[webroot]@http-host"))
         .filter(|host| !host.is_empty())
         .unwrap_or_else(|| "localhost".to_string());
-    let (scheme, port, default) = if property("webapp_https_enabled") == "true" {
-        ("https", property("webapp_https_port"), "443")
+    let (scheme, port, default) = if property("webapp-list/webapp[webroot]@https-enabled") == "true" {
+        ("https", property("webapp-list/webapp[webroot]@https-port"), "443")
     } else {
         (
             "http",
-            moqui_core::web::http_url_port(&property("webapp_http_port")),
+            moqui_core::web::http_url_port(&property("webapp-list/webapp[webroot]@http-port")),
             "80",
         )
     };

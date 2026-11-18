@@ -55,7 +55,7 @@ use super::hosts::Mode;
 use super::{CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER};
 use crate::http::{plain, ExtendedConnect, Peer, TlsConnection};
 
-/// The offline page of a terminate host whose node's link is down, unless `edge_offline_page` names another.
+/// The offline page of a terminate host whose node's link is down, unless `edge@offline-page` names another.
 pub(crate) const DEFAULT_OFFLINE_PAGE: &str = r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Offline</title>

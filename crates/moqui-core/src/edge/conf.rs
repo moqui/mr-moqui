@@ -54,7 +54,7 @@ pub struct Delegate {
 /// The `<edge>` conf of one factory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeSettings {
-    /// This node's role (`node_role`), as the property was when the settings were first read. Read it through
+    /// This node's role (`instance@node-role`), as the property was when the settings were first read. Read it through
     /// [`EdgeSettings::edge_node`], [`EdgeSettings::all_in_one`] and [`EdgeSettings::takes_links`].
     pub role: NodeRole,
     /// The services an edge node runs on its local node, and the only ones a local node runs for it, by canonical
@@ -153,7 +153,7 @@ impl EdgeSettings {
         self.role.edge_node()
     }
 
-    /// An all-in-one node (`node_role=all-in-one`, E12): a full server that decides per item by its owner
+    /// An all-in-one node (`moqui_conf__instance__node_role=all-in-one`, E12): a full server that decides per item by its owner
     /// ([`super::owner`]).
     pub fn all_in_one(&self) -> bool {
         self.role.all_in_one()
@@ -337,15 +337,15 @@ pub fn settings(factory: &ExecutionContextFactory) -> Arc<EdgeSettings> {
     }
     let by_role = factory.extension(|_| ByRole::default());
     let pinned = *by_role.pinned.lock().unwrap_or_else(PoisonError::into_inner);
-    read(factory, &by_role, pinned.unwrap_or_else(super::node_role_kind))
+    read(factory, &by_role, pinned.unwrap_or_else(|| super::role_of(factory)))
 }
 
-/// At boot: hold the node to the role it booted with, so a later change of the `node_role` property (a spec's step
+/// At boot: hold the node to the role it booted with, so a later change of the `instance@node-role` property (a spec's step
 /// as another role) does not change what this node delegates, queues or replicates. On a node that takes links, read
 /// the `<edge>` conf now, so a service it delegates goes to the link from the first call, before the link is installed
 /// or with no listener at all (then failing as offline), and never runs here.
 pub(crate) fn init(factory: &ExecutionContextFactory) {
-    let role = super::node_role_kind();
+    let role = super::role_of(factory);
     if role.takes_links() {
         settings_as(factory, role);
     } else {

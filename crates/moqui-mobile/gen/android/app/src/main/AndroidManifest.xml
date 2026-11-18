@@ -26,6 +26,10 @@
     <!-- The phone's contacts (PhoneBook.kt, plans/Comms-Messaging.md §9.2): names of outside numbers and the new-chat
         picker's search, read on the phone only; asked at the first search, with the reason. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- a chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20): asked at first use by the
+         WebView's geolocation prompt (RustWebChromeClient), never in the background -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
@@ -72,6 +76,15 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="org.moqui.mobile" android:path="/room" />
+            </intent-filter>
+            <!-- A chat room's invite link from its join page's "Open in the MR Moqui app" (org.moqui.mobile:/join?host=&token=,
+                src/join.rs): the page in the account on that host (src/lib.rs), where the person presses Join. BROWSABLE: a
+                web page opens it; it only opens a page. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="org.moqui.mobile" android:path="/join" />
             </intent-filter>
         </activity>
 

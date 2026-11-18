@@ -912,7 +912,7 @@ pub(super) fn sync_account_service(
 }
 
 fn instance_name() -> String {
-    let instance = moqui_lib::env::get_prop_or_env("instance_id");
+    let instance = moqui_core::context::conf_env::setting(moqui_core::context::conf_env::INSTANCE_ID);
     if !instance.trim().is_empty() {
         return instance;
     }

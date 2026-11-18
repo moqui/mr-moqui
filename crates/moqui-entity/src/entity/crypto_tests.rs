@@ -251,8 +251,8 @@ fn known_gap_des_ciphertext_still_decrypts_through_the_alternates() {
     assert_eq!(encrypt(PLAIN, &des_config()).unwrap(), DES_STORED);
 }
 
-/// The default conf keeps `entity_ds_crypt_pass_old` at its public sentinel and decrypts with it as an alternate
-/// (`MoquiDefaultConf.xml`, `decrypt-alt`). A writer to the database with no key stores a value sealed under the
+/// The default conf keeps `entity-facade@crypt-pass-old` at its public sentinel and decrypts with it as an alternate
+/// (`MoquiDefaultConf.xml`, the `decrypt-alt` entries marked old). A writer to the database with no key stores a value sealed under the
 /// public pass, and a read with the generated pass takes it as valid.
 ///
 /// When this is fixed, this test fails: update the threat model in Attack-Surface-Data.md.

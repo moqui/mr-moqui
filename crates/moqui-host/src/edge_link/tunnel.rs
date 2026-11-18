@@ -19,12 +19,12 @@
 //! - **Passthrough** ([`super::TUNNEL_HTTPS`]): a passthrough host's connection, read up to its ClientHello by the
 //!   HTTPS listener ([`super::accept`]). A PROXY v2 header with the client's address goes first, then the ClientHello's
 //!   bytes, then both ways as they come. The local node ends the TLS with its own certificate.
-//! - **SSH** ([`super::TUNNEL_SSH`]): each connection to `edge_ssh_tunnel_port`, to the SSH server of the one active
+//! - **SSH** ([`super::TUNNEL_SSH`]): each connection to `edge@ssh-tunnel-port`, to the SSH server of the one active
 //!   pairing (refused with several, and while it is away).
-//! - **XMPP** ([`super::TUNNEL_XMPP`], [`super::TUNNEL_XMPPS`]): each connection to `edge_xmpp_port` (STARTTLS) or
-//!   `edge_xmpp_tls_port` (direct TLS), to the XMPP server of the local node whose XMPP domain the connection names
+//! - **XMPP** ([`super::TUNNEL_XMPP`], [`super::TUNNEL_XMPPS`]): each connection to `edge@xmpp-port` (STARTTLS) or
+//!   `edge@xmpp-tls-port` (direct TLS), to the XMPP server of the local node whose XMPP domain the connection names
 //!   (plans/Edge-Node2.md §4.1, E16: the TLS server name on the direct TLS port, the stream header's `to` on the
-//!   STARTTLS port, [`super::xmpp_domain`]), which ends the TLS (§5.4). The edge node reads only that, sees no stanza,
+//!   STARTTLS port, [`super::xmpp-server@domain`]), which ends the TLS (§5.4). The edge node reads only that, sees no stanza,
 //!   and channel binding works as on the local node's own ports. An all-in-one node's own XMPP ports do the same for
 //!   its pairings' domains ([`xmpp_to_pairing`]), so one pair of ports serves every domain.
 //! - **A port per pairing** ([`watch_rows`], E16): each `moqui.edge.EdgePort` row, an SSH or XMPP port whose
@@ -38,7 +38,7 @@
 //! Each tunnel goes to one member of the pairing's pool, by the client's address (an IPv6 one by its /64,
 //! plans/Edge-Node2.md §4.4): a client's connections stay on one member, whose XMPP sessions are its own. Any member
 //! may still take a client's next connection after a failover, so the members of a pool share one SSH host key
-//! (`ssh_host_key`, runtime/conf/local-cluster). A tunnel that is not opened counts toward setting its member aside,
+//! (`ssh-server@host-key`, runtime/conf/local-cluster). A tunnel that is not opened counts toward setting its member aside,
 //! and a client the pairing banned (shared bans, §4.3) is refused as its requests to the pairing's hosts are. A
 //! passthrough tunnel for an edge member's link name on a front goes to that member alone ([`super::accept`]).
 
@@ -264,7 +264,7 @@ pub(crate) enum XmppRoute {
 
 /// Where an XMPP connection naming `domain` goes: to the one pairing whose Configure named that XMPP domain
 /// (`pairings`, each pairing and its domain); else to this node's own server when it has one (`own`, an all-in-one
-/// node's `xmpp_domain`) and the connection names it, a subdomain of it, or none; else, while exactly one pairing is
+/// node's `xmpp-server@domain`) and the connection names it, a subdomain of it, or none; else, while exactly one pairing is
 /// active (`active`), to it, as before a node named its domain, linked or not (an away one is refused when its tunnel
 /// opens, never sent to another). A domain two pairings name is refused.
 pub(crate) fn xmpp_route(
@@ -336,7 +336,7 @@ pub(crate) fn xmpp_domains(
 
 /// This node's own XMPP domain while its own XMPP server runs (an all-in-one node), lower case.
 fn own_xmpp_domain(factory: &ExecutionContextFactory, direct: bool) -> Option<String> {
-    let domain = moqui_lib::env::get_prop_or_env("xmpp_domain");
+    let domain = moqui_core::context::conf_env::setting("xmpp-server@domain");
     (crate::xmpp::running(factory, direct))
         .then(|| super::xmpp_domain::host_name(&domain))
         .flatten()
@@ -404,15 +404,15 @@ fn row_kind(kind: &str) -> Option<&'static str> {
         .find(|known| *known == kind)
 }
 
-/// Where a row's port listens: on `edge_ssh_tunnel_host` for SSH, `edge_smtp_tunnel_host` for SMTP and
-/// `edge_xmpp_host` for XMPP, every address while it is empty.
+/// Where a row's port listens: on `edge@ssh-tunnel-host` for SSH, `edge@smtp-tunnel-host` for SMTP and
+/// `edge@xmpp-host` for XMPP, every address while it is empty.
 fn row_bind(kind: &str, port: u16) -> Result<SocketAddr, String> {
     let host_name = match kind {
-        TUNNEL_SSH => "edge_ssh_tunnel_host",
-        TUNNEL_SMTP => "edge_smtp_tunnel_host",
-        _ => "edge_xmpp_host",
+        TUNNEL_SSH => "edge@ssh-tunnel-host",
+        TUNNEL_SMTP => "edge@smtp-tunnel-host",
+        _ => "edge@xmpp-host",
     };
-    let host = moqui_lib::env::get_prop_or_env(host_name);
+    let host = moqui_core::context::conf_env::setting_or_property(host_name);
     let ip = match host.trim() {
         "" => std::net::IpAddr::from([0, 0, 0, 0]),
         host => host
@@ -542,7 +542,7 @@ fn reconcile(
             .ok_or_else(|| format!("{} is not a tunnel kind", row.tunnel_kind))
             .and_then(|kind| {
                 if kind == TUNNEL_SMTP && !front_only {
-                    return Err("an smtp port is a front node's (node_role front)".to_string());
+                    return Err("an smtp port is a front node's (instance@node-role front)".to_string());
                 }
                 Ok((kind, row_bind(kind, row.port)?))
             })
@@ -594,27 +594,30 @@ fn reconcile(
     }
 }
 
-/// On an all-in-one node with its own XMPP server (`xmpp_domain` set), the property of the server's own XMPP listener
-/// that `bind` would take: `xmpp_port` or `xmpp_tls_port` on the same port and an overlapping host. The paired node's
+/// On an all-in-one node with its own XMPP server (`xmpp-server@domain` set), the property of the server's own XMPP listener
+/// that `bind` would take: `xmpp-server@port` or `xmpp-server@tls-port` on the same port and an overlapping host. The paired node's
 /// XMPP domain gets tunnel ports of its own (plans/archive/Edge-Node.md §10), so such a tunnel port is skipped, logged.
 pub(crate) fn own_xmpp_clash(bind: SocketAddr) -> Option<&'static str> {
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
-    if property("xmpp_domain").is_empty() {
+    let property = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
+    if property("xmpp-server@domain").is_empty() {
         return None;
     }
-    let shared_host = property("xmpp_host");
-    [("xmpp_port", "xmpp_host"), ("xmpp_tls_port", "xmpp_tls_host")]
-        .into_iter()
-        .find(|(port_name, host_name)| {
-            let Ok(port) = property(port_name).parse::<u16>() else {
-                return false;
-            };
-            let host = Some(property(host_name))
-                .filter(|host| !host.is_empty())
-                .unwrap_or_else(|| shared_host.clone());
-            same_listener(bind, port, &host)
-        })
-        .map(|(port_name, _)| port_name)
+    let shared_host = property("xmpp-server@host");
+    [
+        ("xmpp-server@port", "xmpp-server@host"),
+        ("xmpp-server@tls-port", "xmpp-server@tls-host"),
+    ]
+    .into_iter()
+    .find(|(port_name, host_name)| {
+        let Ok(port) = property(port_name).parse::<u16>() else {
+            return false;
+        };
+        let host = Some(property(host_name))
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| shared_host.clone());
+        same_listener(bind, port, &host)
+    })
+    .map(|(port_name, _)| port_name)
 }
 
 /// Whether a listener on `bind` and one on `port` of `host` (an IP, a name, or empty for every address) would take the

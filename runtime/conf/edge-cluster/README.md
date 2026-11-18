@@ -25,24 +25,25 @@ queue, the pairings and the host names are rows the members share. A clustered a
 ## `.env`
 
 - **Every edge member, the same** (the first member's, copied before each other one's first start):
-  `entity_ds_host`, `entity_ds_port`, `entity_ds_database`, `entity_ds_user`, `entity_ds_password`; the secrets the first
-  start generates, `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key`, `entity_ds_crypt_pass`,
-  `edge_link_key` (the one link key local nodes pin), `turn_auth_secret`, `acme_account_key` and, once made,
-  `mail_dkim_key`; `webapp_http_host`, `edge_public_addresses` (every member's addresses), `edge_mail_bounce_domain`,
-  `smtp_listen_port=25`, `smtp_listen_host`, `sip_port`, `sip_tls_port`, `sip_host`, `sip_registrar_enabled`,
-  `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host`, `edge_ssh_tunnel_port`, `pass_backend_web_url`. A WebPKI
+  the transactional datasource's `host`, `port`, `database`, `user`
+  and `password` (`moqui_conf__entity_facade__datasource__TRANSACTIONAL__host` and the rest); the secrets the first
+  start generates, `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster-member@tls-cert`, `cluster-member@tls-key`, `moqui_conf__entity_facade__crypt_pass`,
+  `edge@link-key` (the one link key local nodes pin), `media-server/turn-server@auth-secret`, `acme@account-key` and, once made,
+  `mail-delivery/dkim@key`; `webapp-list/webapp[webroot]@http-host`, `edge@public-addresses` (every member's addresses), `mail-delivery@bounce-domain`,
+  `moqui_conf__smtp_server__listen_port=25`, `smtp-server@listen-host`, `sip-server@port`, `sip-server@tls-port`, `sip-server@host`, `sip-server/registrar@enabled`,
+  `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host`, `edge@ssh-tunnel-port`, `pass@backend-web-url`. A WebPKI
   certificate in `cert/` for the names local nodes pair at; the links present the pinned link key, not it.
-- **Each edge member, its own**: `cluster_base_url=https://<private address>:8444`, `edge_link_url=https://<its own
-  public name>`, `smtp_hostname` (its MX name), `rtc_public_address`, `turn_public_host`, `sip_public_address`. Never
+- **Each edge member, its own**: `moqui_conf__cluster_member__base_url=https://<private address>:8444`, `moqui_conf__edge__link_url=https://<its own
+  public name>`, `smtp-server@hostname` (its MX name), `media-server@public-address`, `media-server/turn-server@public-host`, `sip-server@public-address`. Never
   copy `runtime/db`: each member keeps its own instance id there.
-- **A local node**: as with one edge node. Pairing writes `edge_node_url`, `edge_node_key`, `edge_node_pin`,
-  `edge_node_id` and `edge_node_pairing`; the list of edge members is kept in `runtime/db/edge_members`.
+- **A local node**: as with one edge node. Pairing writes `edge/node@url`, `edge/node@key`, `edge/node@pin`,
+  `edge/node@id` and `edge/node@pairing`; the list of edge members is kept in `runtime/db/edge_members`.
 
 ## DNS
 
 With no front node before the cluster, for each member: an A (and AAAA) record under each public name a local node
-uses (the cluster's `webapp_http_host` and each host name), an A record for its own `edge_link_url` name, an MX record
-for each mail domain (the same preference on each) with reverse DNS naming its `smtp_hostname`, and SRV records for
+uses (the cluster's `webapp-list/webapp[webroot]@http-host` and each host name), an A record for its own `edge@link-url` name, an MX record
+for each mail domain (the same preference on each) with reverse DNS naming its `smtp-server@hostname`, and SRV records for
 SIP (`_sip._udp`, `_sip._tcp`, `_sips._tcp`) and XMPP (`_xmpp-client._tcp`, `_xmpps-client._tcp`).
 
 ## Commands
@@ -53,7 +54,7 @@ SIP (`_sip._udp`, `_sip._tcp`, `_sips._tcp`) and XMPP (`_xmpp-client._tcp`, `_xm
 ```
 
 1. Start the first member once with the shared database settings in `.env`, so it generates its secrets.
-2. Copy that `.env` to each other member, add its own lines, set `edge_link_url` on the first one too, and start
+2. Copy that `.env` to each other member, add its own lines, set `edge@link-url` on the first one too, and start
    them. Open 8444 between the members only.
 3. Check System › Edge Clients › Edge cluster on any member: every member live, each with its link address.
 4. Pair each local node as with one edge node (System › Edge Clients › Clients for the code, System › Edge Node on the

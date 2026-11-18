@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <!-- The framework's development tools (crates/moqui-core/src/devtools; plans/design-dev-aide.md 17), for the
-        dev-aide component, the command line and agents outside the server. Each answers only when instance_purpose is
+        dev-aide component, the command line and agents outside the server. Each answers only when instance@purpose is
         dev, for a user with the DEV_AIDE permission or in the ADMIN group; the pure text services (the XML operations,
         the outline, the schema digest) and the index's reads for any dev-aide permission. The index's reads
         (find#Artifacts and get#Artifact*) also answer on any instance for a user with the AIDE_READ permission, about

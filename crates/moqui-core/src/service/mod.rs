@@ -28,7 +28,9 @@ pub mod call;
 mod call_media;
 mod chat;
 pub mod chat_bridge;
+pub mod chat_expiry;
 pub mod chat_push;
+pub mod chat_schedule;
 mod chat_keys;
 mod chat_link;
 #[cfg(test)]

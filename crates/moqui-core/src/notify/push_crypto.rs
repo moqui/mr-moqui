@@ -63,7 +63,7 @@ pub(crate) struct Vapid {
 }
 
 impl Vapid {
-    /// The pair from the 32-byte private scalar, in base64 (the generated `web_push_vapid_key` property).
+    /// The pair from the 32-byte private scalar, in base64 (the generated `push/web@vapid-key` property).
     pub(crate) fn from_seed(seed: &str) -> Result<Self, String> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(seed.trim())

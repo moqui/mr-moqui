@@ -24,6 +24,7 @@ use std::sync::Arc;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use minidom::Element;
+use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::{Out, Session, Transport};
@@ -470,6 +471,35 @@ async fn a_room_message_reaches_the_other_member_and_reflects_with_its_id() {
     );
 }
 
+/// A disappearing message (plans/Comms-Messaging.md §18.3 phase 16) is in no XMPP history, though its room is served
+/// now (its timer turned off), and a room with a timer has no history at all.
+#[tokio::test]
+async fn history_leaves_out_disappearing_messages_and_rooms_with_a_timer() {
+    let (server, fake) = server();
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    {
+        let mut state = fake.state.lock().unwrap();
+        for room_id in ["r1", "TIMED"] {
+            let room = state.rooms.iter_mut().find(|room| room.id == room_id).unwrap();
+            for (seq, body, expires) in [(1_i64, "kept", None), (2, "gone soon", Some(1_800_000_000_000_i64))] {
+                room.events.push(json!({"chatRoomId": room_id, "eventSeq": seq, "type": "message", "senderUserId": "U1",
+                    "sentDate": 1_700_000_000_000_i64 + seq * 1000, "content": {}, "bodyText": body, "expireDate": expires}));
+            }
+        }
+    }
+    let out = jane
+        .send("<iq type='set' id='q1' to='r1@rooms.moqui.local'><query xmlns='urn:xmpp:mam:2' queryid='a1'/></iq>")
+        .await;
+    let text = text_of(&out);
+    assert!(text.contains("kept"), "{text}");
+    assert!(!text.contains("gone soon"), "{text}");
+    let out = jane
+        .send("<iq type='set' id='q2' to='x-54494d4544@rooms.moqui.local'><query xmlns='urn:xmpp:mam:2' queryid='a2'/></iq>")
+        .await;
+    let text = text_of(&out);
+    assert!(text.contains("item-not-found") && !text.contains("kept"), "{text}");
+}
+
 #[tokio::test]
 async fn a_direct_message_goes_to_the_other_user_and_to_my_other_session_as_a_carbon() {
     let (server, _) = server();
@@ -561,6 +591,18 @@ async fn omemo_is_kept_as_it_came_and_moqui_s_encrypted_rooms_are_refused() {
         text.contains("not-acceptable") && text.contains("end-to-end encrypted"),
         "{text}"
     );
+
+    // so is a room with disappearing messages (plans/Comms-Messaging.md §18.3 phase 16): an XMPP client keeps what it gets
+    let out = john
+        .send(
+            "<presence to='x-54494d4544@rooms.moqui.local/john'><x xmlns='http://jabber.org/protocol/muc'/></presence>",
+        )
+        .await;
+    let text = text_of(&out);
+    assert!(
+        text.contains("not-acceptable") && text.contains("disappearing messages"),
+        "{text}"
+    );
 }
 
 #[tokio::test]
@@ -645,7 +687,7 @@ async fn a_request_past_a_users_cap_is_a_resource_constraint() {
 
 #[tokio::test]
 async fn every_advertised_feature_answers() {
-    // TURN on for XMPP (xmpp_turn_enabled), so external services (XEP-0215) are advertised too
+    // TURN on for XMPP (xmpp-server@turn-enabled), so external services (XEP-0215) are advertised too
     let mut config = Config::for_domain("moqui.local");
     config.software_version = "test".to_string();
     config.turn_enabled = true;
@@ -723,7 +765,7 @@ async fn disco_features(client: &mut Client) -> Vec<String> {
 
 #[tokio::test]
 async fn turn_for_xmpp_is_off_by_default_and_then_neither_advertised_nor_issued() {
-    // off (xmpp_turn_enabled false, the default): the server's features have no XEP-0215, and a client that asks
+    // off (xmpp-server@turn-enabled false, the default): the server's features have no XEP-0215, and a client that asks
     // anyway gets an empty list, without the TURN service being asked
     let (server, fake) = server();
     assert!(!server.config.turn_enabled);
@@ -788,7 +830,7 @@ async fn decoy_salt(server: &Arc<Server>, username: &str) -> String {
 
 #[tokio::test]
 async fn an_unknown_users_salt_is_the_same_from_a_restarted_server_with_the_same_key() {
-    // xmpp_scram_decoy_key: two servers (a restart, or two nodes) with the same key give an unknown name the same salt;
+    // xmpp-server@scram-decoy-key: two servers (a restart, or two nodes) with the same key give an unknown name the same salt;
     // another key gives another
     let config = |key: &[u8]| {
         let mut config = Config::for_domain("moqui.local");

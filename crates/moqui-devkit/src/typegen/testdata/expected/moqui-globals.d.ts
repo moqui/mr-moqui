@@ -17,7 +17,7 @@ declare const System: {
     getProperty(name: string): string | null;
     isPropertySet(name: string): boolean;
     propertyMatches(name: string, given: string | null): boolean;
-    secretCodeHash(name: "xmpp_upload_secret", text: string | null): string | null;
+    secretCodeHash(name: "xmpp-server/upload@secret", text: string | null): string | null;
 };
 /** Java's `MNode` statics: an XML text or resource parsed, or a new element. */
 declare const MNode: {

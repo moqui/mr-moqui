@@ -143,7 +143,7 @@ the user services call.
 | `setEffectiveTime(time)` | `nowTimestamp`, date filters with no date, and the entity-auto `fromDate` and audit stamps use `time` (epoch millis, a `Date` or timestamp text) in this execution context; null goes back to the clock |
 | `timestampMillis(value)` | Epoch milliseconds of a timestamp, null when the value is not one |
 | `getPreference(key)` | The user's preference: a property, the user's `UserPreference`, a group's, or null |
-| `getPreferences(keyRegexp)` | The preferences as a map; with a pattern, those whose whole key matches it |
+| `getPreferences(keyRegexp)` | The preferences as a map; with a pattern, those whose whole key matches it. The pattern is matched in linear time (the Rust `regex` syntax: no back-references or look-around) and has at most 256 characters |
 | `setPreference(key, value)` | Saves the user's preference |
 | `context` | A map for the user of this execution context, read by the entity filters. `get`, `put`, `putAll`, `remove`, `containsKey`, and names as properties. A list read from it is a copy |
 | `hasPermission(permissionId)` | Whether the user has the permission |
@@ -171,8 +171,8 @@ the user services call.
 | `singleUseCodeHash(code)` | The stored form of a single-use code |
 | `randomCode(width)` | A random number of `width` digits (6) as text, zero padded |
 | `randomString(length)` | Random URL-safe text of the length |
-| `serverGrant(purpose, subject, ttlSeconds)` | A token for the subject, valid `ttlSeconds` (3600; at most 7 days), keyed by a key the server derives for the purpose from its own secret (`session_cookie_key`), which no script reads: to sign a value handed to a client (a page's nonce) where `ec.resource.makeGrant` would need a key of the script's own. An error with no purpose or no server secret |
-| `checkServerGrant(purpose, subject, token)` | Whether the token is a `serverGrant` of this purpose and subject that has not expired; false for a null token. A new `session_cookie_key` ends every grant |
+| `serverGrant(purpose, subject, ttlSeconds)` | A token for the subject, valid `ttlSeconds` (3600; at most 7 days), keyed by a key the server derives for the purpose from its own secret (`webapp-list/webapp[webroot]/session-config@cookie-key`), which no script reads: to sign a value handed to a client (a page's nonce) where `ec.resource.makeGrant` would need a key of the script's own. An error with no purpose or no server secret |
+| `checkServerGrant(purpose, subject, token)` | Whether the token is a `serverGrant` of this purpose and subject that has not expired; false for a null token. A new `webapp-list/webapp[webroot]/session-config@cookie-key` ends every grant |
 | `totpSecret()` | A new TOTP shared secret (base32) |
 | `totpCodeValid(secret, code)` | Whether the code is the authenticator code of the secret now, or one period either side |
 | `totpCodeStep(secret, code, afterStep)` | The step (period number) the code is the authenticator code of the secret for now, one period either side, when it is after `afterStep` (the last step a code of the factor was taken for; null for none); else null. A factor keeps the step it took (`UserAuthcFactor.lastTotpStep`), so a code works once |
@@ -356,6 +356,7 @@ Change sets, version notes and change logs are described in
 | `xslFoTransform(document, xslt, out, contentType)` | The PDF bytes of an `html-print` document (old name `xsl-fo`), a `Uint8Array`. `xslt` must be null and `out` is ignored. Throws when this server has no PDF engine |
 | `markdownHtml(text)` | CommonMark as HTML, not sanitized |
 | `makeThumbnail(source, target, maxSize)` | Writes a PNG thumbnail of an image, no side over `maxSize` (256): `{width, height, contentType}`; null when the bytes are not an image |
+| `makeStickerThumbnail(source, target, maxSide, thumbSize)` | A chat sticker's picture checked before it is decoded: its format from its bytes (PNG, GIF or WebP only), its sides from its header (none over `maxSide`, 512), then decoded within 16 MiB and its still PNG thumbnail (`thumbSize`, 128) written: `{format, contentType, width, height, thumbWidth, thumbHeight}`, or `{reasonCode: badType or tooLarge, format, width, height}` |
 | `makePdfPreview(source, target, maxSize)` | Writes page 1 of a PDF as a PNG (1024): `{width, height, pages, contentType}`; null with no PDF engine or a PDF that does not open |
 | `imageAvailable` | Whether this build can read images |
 | `theme` | The theme composition adapter: `validate`, `render`, `engines`, `engineInfo`, `limits`, `sanitizeSvg`, `sanitizeRichText` ([Themes](../ui/Themes.md)) |
@@ -929,7 +930,7 @@ A future:
 | `uri()` | A URI builder (below) |
 | `getUri()`, `getUriString()` | The URL set |
 | `addHeader(name, value)`, `addHeaders(map)` | Request headers |
-| `addPropertyHeader(headerName, propertyName, baseUrlPropertyName)` | A header whose value is the property `propertyName` (a credential at another server, such as `pass_client_secret`, which `System.getProperty` does not return), read by the host when the request is sent and never given to the script. It goes only to a URL under the base URL in the property `baseUrlPropertyName`: the same scheme, host and port, a path at or below the base's (`https://pass.example.com.evil` and `https://pass.example.com@evil` are not under `https://pass.example.com`). A request carrying it follows no redirect (the 3xx comes back), in `call()` and `send()`. The call fails, with nothing sent, when the property or the base is not set, the URL is outside the base, the base property is itself a secret, or the property is one the conf marks `is-secret` (this server's own keys) |
+| `addPropertyHeader(headerName, propertyName, baseUrlPropertyName)` | A header whose value is the setting `propertyName`, a conf selector (it has an `@`) or a property: a credential at another server, such as mr-pass's `pass@client-secret`, which `ec.factory.getConfValue` does not return, read by the host when the request is sent and never given to the script. It goes only to a URL under the base URL in the setting `baseUrlPropertyName` (`pass@backend-url`): the same scheme, host and port, a path at or below the base's (`https://pass.example.com.evil` and `https://pass.example.com@evil` are not under `https://pass.example.com`). A request carrying it follows no redirect (the 3xx comes back), in `call()` and `send()`. The call fails, with nothing sent, when the setting or the base is not set, the URL is outside the base, the base is itself a secret, or the setting is a key of this server's own (an attribute the conf schema marks secret, such as `entity-facade@crypt-pass` or an LLM endpoint's key, or a property the conf marks `is-secret`) |
 | `basicAuth(username, password)` | The `Authorization` header of HTTP basic authentication |
 | `contentType(contentType)` | The content type of a text body, and the `Accept` header unless one is set; `application/json` by default |
 | `acceptContentType(contentType)` | The `Accept` header |
@@ -943,7 +944,7 @@ A future:
 | `timeout(seconds)` | The timeout, 30 by default |
 | `followRedirects(follow)` | With false a redirect comes back as the 3xx response; `send()` only |
 | `denyInternal()` | Refuses a host that is or resolves to an internal address (loopback, private, link-local), redirects included, in `call()` and `send()`; it wins over `allowInternal()` |
-| `allowInternal(allow)` | On a production instance (`instance_purpose` production) a request to an internal address is refused unless the script calls this (`allowInternal(false)` undoes it): for an address the conf or an administrator set, such as an upstream beside the server. Another instance allows internal addresses either way. A link-local or metadata address is refused always. A request that refuses internal addresses (production's default, or `denyInternal()`) goes direct, never through a proxy named in `HTTP_PROXY` or `HTTPS_PROXY` |
+| `allowInternal(allow)` | On a production instance (`instance@purpose` production) a request to an internal address is refused unless the script calls this (`allowInternal(false)` undoes it): for an address the conf or an administrator set, such as an upstream beside the server. Another instance allows internal addresses either way. A link-local or metadata address is refused always. A request that refuses internal addresses (production's default, or `denyInternal()`) goes direct, never through a proxy named in `HTTP_PROXY` or `HTTPS_PROXY` |
 | `call()` | Sends the request; a response |
 | `send()` | As `call()`, with the headers only as given and the body of the response left on the server until `text()` or `bytes()` reads it or `ec.web.response.forward()` passes it on |
 | `callFuture()` | Makes the call and returns `{get(), isDone(), isCancelled(), cancel()}` holding the response |
@@ -1214,6 +1215,9 @@ The server the execution context belongs to.
 | `entity`, `service`, `l10n`, `resource`, `cache`, `screen`, `logger` | The same objects as `ec.entity` and the rest |
 | `getTool(name, ...parameters)` | A tool (below) |
 | `getToolFactory(name)` | The tool factory a conf `tool-factory` element selected: `name` and `getInstance(...parameters)`; null when there is none of that name |
+| `getConfValue(selector)` | The running conf's attribute at a selector, `webapp-list/webapp[webroot]@dev-marker-color` ([Conf-Paths](../../plans/archive/Conf-Paths.md#1-paths-and-names)): its value as set by the conf files or, over them, by its environment name (a process property of that name set since the boot too, as a spec's `setProperty` does); null when the conf has no such attribute, and for a secret attribute (a password, a key), which a script never gets. Element and attribute names and key values compare without case or punctuation. A selector that does not parse is an error |
+| `isConfValueSet(selector)` | Whether the running conf's attribute at a selector, a secret one too, has a value other than empty or the `CHANGEME` placeholder; the value is not returned. For a check such as "is the OAuth client secret set" |
+| `isConfSecret(selector)` | Whether the attribute at a selector holds a secret (a password, a key) by the conf schema or its name, whatever it is set to |
 
 ### Tools
 
@@ -1326,7 +1330,7 @@ Members Moqui Java does not have.
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
 | `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `serverGrant`, `checkServerGrant`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
-| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
+| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makeStickerThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `addPropertyHeader`, `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `allowInternal`, `send`; response `bytes` |

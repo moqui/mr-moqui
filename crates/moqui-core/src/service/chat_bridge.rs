@@ -70,6 +70,7 @@ pub(in crate::service) fn register(
     rust_service!(map, check_bridge_token)?;
     web::register(map)?;
     edge::register(map)?;
+    provider::register(map)?;
     Ok(())
 }
 
@@ -126,6 +127,9 @@ pub struct Capabilities {
     /// The most outside numbers a group text has (an SMS provider's group MMS: Telnyx 8); 0 when the network carries no
     /// group texts, and a group room on it then refuses to send (`Sms.js`, the adapter).
     pub group_max: u32,
+    /// The most bytes of files one message carries on the network (an SMS provider's MMS limit, `maxMediaBytes`); 0 for
+    /// no limit the adapter knows. The composer fits a compressed photo under it (plans/Comms-Messaging.md §18.3 phase 21).
+    pub media_max_bytes: i64,
 }
 
 /// Where a bridge's webhook signature is checked when an edge node takes the network's requests (plans/archive/Edge-Node.md
@@ -152,6 +156,9 @@ pub enum Encryption {
     /// None: the network and its providers read every message (SMS and MMS). An adapter that says nothing says this.
     #[default]
     None,
+    /// None, and the adapter says so of its network: it has no end-to-end encryption at all (GroupMe). The room's label
+    /// names the network; [`Encryption::None`] alone may be an adapter that said nothing.
+    NoneByNetwork,
     /// In transit only (TLS to and between servers): the provider and the network's servers read it.
     Transport,
     /// End to end on the network, decrypted by the bridge on this server and encrypted again (WhatsApp through a bridge).
@@ -165,6 +172,7 @@ impl Encryption {
     pub fn as_str(self) -> &'static str {
         match self {
             Encryption::None => "None",
+            Encryption::NoneByNetwork => "NoneByNetwork",
             Encryption::Transport => "Transport",
             Encryption::BridgeDecrypted => "BridgeDecrypted",
             Encryption::EndToEnd => "EndToEnd",
@@ -218,8 +226,50 @@ pub struct DeliveryRequest {
     /// back).
     pub target_remote_id: Option<String>,
     pub reaction_key: Option<String>,
+    /// A rich message's cards and suggestions (the event's `content.rich`, plans/Comms-Messaging.md §18.3 phase 13), for
+    /// an adapter that sends them (business RCS); `text` and `html` are its fallback, which every other adapter sends.
+    pub rich: Option<serde_json::Value>,
+    /// A location message's place (the event's `content.location`: `latitude`, `longitude`, `label`, `address`;
+    /// plans/Comms-Messaging.md §18.3 phase 20), for an adapter that sends one (Sinch RCS); `text` is its words with the
+    /// map link, which every other adapter sends. Only with both coordinates.
+    pub location: Option<serde_json::Value>,
+    /// The message's words when its files cannot go (a sticker's "Sticker 👍"; a message's own text): sent alone in
+    /// their place when the adapter refuses the files ([`FILE_REFUSALS`]), plans/Comms-Messaging.md §18.3 phase 20.
+    pub text_form: Option<String>,
     /// This attempt's number, from 1.
     pub attempt: i64,
+}
+
+/// The reason codes of an adapter that refuses a message's files, not its words (too large, too many, none taken): the
+/// message then goes as its [`DeliveryRequest::text_form`] alone, when it has one.
+pub const FILE_REFUSALS: [&str; 5] = [
+    "mediaTooLarge",
+    "tooManyFiles",
+    "mmsNotSetUp",
+    "filesUnsupported",
+    "noFiles",
+];
+
+/// The same request with its words in place of its files, when the adapter refused the files and the message has words.
+pub fn words_instead(request: &DeliveryRequest, outcome: &DeliveryOutcome) -> Option<DeliveryRequest> {
+    let DeliveryOutcome::Failed { reason_code, .. } = outcome else {
+        return None;
+    };
+    let words = request
+        .text_form
+        .as_deref()
+        .map(str::trim)
+        .filter(|words| !words.is_empty())?;
+    if request.attachments.is_empty() || !FILE_REFUSALS.contains(&reason_code.as_str()) {
+        return None;
+    }
+    Some(DeliveryRequest {
+        text: Some(words.to_string()),
+        html: None,
+        attachments: Vec::new(),
+        rich: None,
+        ..request.clone()
+    })
 }
 
 /// The outcome of an attempt.
@@ -257,6 +307,12 @@ pub trait ChatBridgeAdapter: Send + Sync {
     fn start(&self, bridge: &BridgeInfo) -> Result<(), String> {
         let _ = bridge;
         Ok(())
+    }
+    /// Whether the adapter keeps the bridge's status itself (a connection of its own, which only the node holding it
+    /// knows the outcome of): then a [`Self::start`] that succeeds does not mark the bridge connected. The default is
+    /// false.
+    fn keeps_status(&self) -> bool {
+        false
     }
     /// Disconnect it (disabled, or the server stopping).
     fn stop(&self, chat_bridge_id: &str) {
@@ -327,6 +383,38 @@ pub trait ChatBridgeAdapter: Send + Sync {
     fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
         let _ = (bridge, url, max_bytes);
         Err("this network's files are not fetched".to_string())
+    }
+    /// Show the other side of `external_room_id` that a user of ours is typing (`send#BridgeTyping`, a network that
+    /// has a typing indicator: business RCS). Nothing is kept or retried. The default sends nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the indicator was not sent; the caller logs it and goes on.
+    fn typing(&self, bridge: &BridgeInfo, external_room_id: &str) -> Result<(), String> {
+        let _ = (bridge, external_room_id);
+        Ok(())
+    }
+    /// Delete a content the adapter made at the network for a send (`ChatBridgeDelivery.providerContentId`: a Twilio
+    /// Content resource of a rich message), once its message is done or by the daily sweep (`clean#ProviderContent`).
+    /// One the network no longer has is deleted. The default has none to delete.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it was not deleted: it is kept for the next sweep.
+    fn delete_content(&self, bridge: &BridgeInfo, content_id: &str) -> Result<(), String> {
+        let _ = (bridge, content_id);
+        Ok(())
+    }
+    /// The contents the adapter made at its network for sends before `before_millis`, as the network lists them (ours by
+    /// their name), for the daily sweep to delete those no delivery keeps (`clean#ProviderContent`). The default has
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// Returns why they could not be read; the sweep logs it and goes on.
+    fn orphan_contents(&self, bridge: &BridgeInfo, before_millis: i64) -> Result<Vec<String>, String> {
+        let _ = (bridge, before_millis);
+        Ok(Vec::new())
     }
     /// What the network's provider knows of an outside number (a paid number lookup: its line type, carrier and caller
     /// name), for the spam filter (`ChatBridgeServices.lookup#BridgeNumber`, plans/Comms-Messaging.md §18.3 phase 11).
@@ -451,6 +539,29 @@ fn bridge_info(row: &EntityValue) -> BridgeInfo {
         name: text_of(row, "name").unwrap_or_default(),
         config,
     }
+}
+
+/// The bridge `bridge_id` as its adapter sees it (`configJson` read and parsed), with its status: for an adapter's
+/// own thread (a network's push connection), which reads its bridge again between its waits. None when there is no
+/// such bridge.
+///
+/// # Errors
+///
+/// When the row cannot be read.
+pub fn bridge_row(facade: &EntityFacade, bridge_id: &str) -> Result<Option<(BridgeInfo, String)>, LibError> {
+    Ok(facade
+        .find(BRIDGE)?
+        .eq("chatBridgeId", Value::string(bridge_id))
+        .disable_authz()
+        .one()?
+        .map(|row| (bridge_info(&row), text_of(&row, "statusId").unwrap_or_default())))
+}
+
+/// Keep a bridge's status from an adapter's own thread: connected, or not connected with `error` as its last error. A
+/// disabled bridge stays disabled; the same connected status again writes nothing.
+pub fn note_status(facade: &EntityFacade, bridge_id: &str, connected: bool, error: Option<&str>) {
+    let status = if connected { "CbsConnected" } else { "CbsNotConnected" };
+    set_status(facade, bridge_id, status, error, now_millis());
 }
 
 /// The adapter of a bridge: its `adapterName`, else its network's enumeration code.
@@ -623,6 +734,7 @@ fn get_bridge_capabilities(
             ("encryption", Value::string(caps.encryption.as_str())),
             ("groupTexts", Value::Bool(caps.group_max > 0)),
             ("groupMax", Value::I64(i64::from(caps.group_max))),
+            ("mediaMaxBytes", Value::I64(caps.media_max_bytes)),
             ("adapter", Value::Bool(adapter.is_some())),
         ]
         .into_iter()
@@ -707,6 +819,8 @@ struct WorkerState {
     started_bridges: HashSet<String>,
     sends: HashMap<String, VecDeque<i64>>,
     cleaned: Option<i64>,
+    /// When the provider's contents were last swept ([`provider::sweep_contents`]).
+    contents_cleaned: Option<i64>,
 }
 
 fn worker(factory: &ExecutionContextFactory) -> Arc<Worker> {
@@ -929,7 +1043,7 @@ pub fn round(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64)
         ) {
             tracing::error!("the chat bridges' waiting input could not be worked: {error}");
         }
-        clean(&worker, facade, now);
+        clean(factory, &worker, facade, now);
         // the queued webhooks refused since the last line, logged even once refusals stop
         edge::log_refused(factory, now);
     }
@@ -1009,6 +1123,7 @@ fn lifecycle(
     if started {
         return;
     }
+    let keeps_status = adapter.as_ref().is_some_and(|adapter| adapter.keeps_status());
     let outcome = match adapter {
         None => Err(format!(
             "No chat bridge adapter {} in this build",
@@ -1026,7 +1141,10 @@ fn lifecycle(
     match outcome {
         Ok(()) => {
             lock(&worker.state).started_bridges.insert(info.chat_bridge_id.clone());
-            set_status(facade, &info.chat_bridge_id, "CbsConnected", None, now);
+            // an adapter that keeps the status itself writes the real outcome of its connection
+            if !keeps_status {
+                set_status(facade, &info.chat_bridge_id, "CbsConnected", None, now);
+            }
         }
         // the same failure again (each round tries) is not logged or written again
         Err(error) if status == "CbsNotConnected" && last_error == Some(error.as_str()) => {}
@@ -1068,8 +1186,9 @@ fn set_status(facade: &EntityFacade, bridge_id: &str, status: &str, error: Optio
     }
 }
 
-/// Remove the inbound batches done more than 30 days ago, once an hour.
-fn clean(worker: &Worker, facade: &EntityFacade, now: i64) {
+/// Remove the inbound batches done more than 30 days ago, once an hour, and the provider's contents sends left, once a
+/// day.
+fn clean(factory: &ExecutionContextFactory, worker: &Worker, facade: &EntityFacade, now: i64) {
     {
         let mut state = lock(&worker.state);
         if state.cleaned.is_some_and(|at| now - at < 3_600_000) {
@@ -1098,6 +1217,18 @@ fn clean(worker: &Worker, facade: &EntityFacade, now: i64) {
     });
     if let Err(error) = result {
         tracing::error!("Could not remove the old refused chat bridge webhooks: {error}");
+    }
+    // the provider's contents a send left (a receipt that never came), once a day
+    let due = {
+        let mut state = lock(&worker.state);
+        let due = !state.contents_cleaned.is_some_and(|at| now - at < 86_400_000);
+        if due {
+            state.contents_cleaned = Some(now);
+        }
+        due
+    };
+    if due {
+        provider::sweep_contents(factory, facade, now);
     }
 }
 
@@ -1329,6 +1460,26 @@ fn deliver_head(
         );
         return Ok(Step::Retry);
     };
+    // its files refused (too large for a text, too many, none taken): its words alone, when it has some (phase 20)
+    let outcome = match words_instead(&request, &outcome) {
+        Some(words) => {
+            tracing::info!(
+                "delivery {delivery_id}: the adapter {} refused its files ({outcome:?}); its words go alone",
+                adapter.name()
+            );
+            match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.deliver(info, &words))) {
+                Ok(again) => again,
+                Err(_) => {
+                    tracing::error!(
+                        "the chat bridge adapter {} failed on delivery {delivery_id}",
+                        adapter.name()
+                    );
+                    return Ok(Step::Retry);
+                }
+            }
+        }
+        None => outcome,
+    };
     let attempt = attempts + 1;
     let step = match outcome {
         DeliveryOutcome::Accepted { remote_event_id } => {
@@ -1501,10 +1652,38 @@ fn request_of(
             }),
         _ => None,
     };
+    let rich = match kind {
+        DeliveryKind::Message => content.get("rich").filter(|rich| rich.is_object()).cloned(),
+        _ => None,
+    };
+    // a location with both coordinates, for an adapter that sends a place (phase 20)
+    let location = match kind {
+        DeliveryKind::Message => content
+            .get("location")
+            .filter(|place| place.get("latitude").and_then(serde_json::Value::as_f64).is_some())
+            .filter(|place| place.get("longitude").and_then(serde_json::Value::as_f64).is_some())
+            .cloned(),
+        _ => None,
+    };
     let sender_name = sender_name(facade, event)?;
     let attachments = match kind {
         DeliveryKind::Message => attachments_of(facade, &room_id, int_of(row, "eventSeq").unwrap_or(0))?,
         _ => Vec::new(),
+    };
+    // a sticker goes as its picture alone; its words ("Sticker 👍") only where there is no picture to send (phase 20)
+    let sticker_picture = kind == DeliveryKind::Message
+        && content.get("sticker").is_some_and(|sticker| sticker.is_object())
+        && !attachments.is_empty();
+    let (text, html) = if sticker_picture {
+        (None, None)
+    } else {
+        (text_of(event, "bodyText"), html)
+    };
+    // the words sent alone if its files are refused
+    let text_form = if attachments.is_empty() {
+        None
+    } else {
+        text_of(event, "bodyText")
     };
     Ok(Ok(DeliveryRequest {
         chat_bridge_delivery_id: text_of(row, "chatBridgeDeliveryId").unwrap_or_default(),
@@ -1514,13 +1693,16 @@ fn request_of(
         external_room_id: text_of(mapping, "externalRoomId").unwrap_or_default(),
         external_thread_id: text_of(mapping, "externalThreadId"),
         kind,
-        text: text_of(event, "bodyText"),
+        text,
         html,
         sender_name,
         sender_user_id: text_of(event, "senderUserId"),
         attachments,
         target_remote_id,
         reaction_key,
+        rich,
+        location,
+        text_form,
         attempt: 0,
     }))
 }
@@ -1595,6 +1777,19 @@ pub(super) fn sender_name(facade: &EntityFacade, event: &EntityValue) -> Result<
     let Some(actor) = text_of(event, "senderActorId") else {
         return Ok(None);
     };
+    // a room's text member (plans/Comms-Messaging.md §18.3 phase 18): the name the room gave them, the room's alone
+    if let Some(room) = text_of(event, "chatRoomId") {
+        let member = facade
+            .find(MAPPING)?
+            .eq("chatRoomId", Value::string(&room))
+            .eq("memberChatActorId", Value::string(&actor))
+            .condition(Condition::is_null("thruDate"))
+            .disable_authz()
+            .one()?;
+        if let Some(name) = member.and_then(|row| text_of(&row, "memberName")) {
+            return Ok(Some(name));
+        }
+    }
     let external = facade
         .find(ACTOR)?
         .eq("chatActorId", Value::string(&actor))
@@ -1717,8 +1912,8 @@ fn push_state(room_id: &str, seq: i64) {
 #[path = "chat_bridge_web.rs"]
 mod web;
 pub use web::{
-    media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook,
-    webhook_public_url, FetchedMedia, MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
+    delivery_file, media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms,
+    webhook, webhook_public_url, FetchedMedia, MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
 };
 
 #[path = "chat_bridge_edge.rs"]
@@ -1727,6 +1922,10 @@ pub use edge::{
     fill_webhook_keys, media_urls, refused_webhooks, sweep_edge_media, MediaUrls, KIND_MEDIA, KIND_WEBHOOK,
     MEDIA_RETRY_MILLIS, REFUSED, REPLICA_SET,
 };
+
+#[path = "chat_bridge_provider.rs"]
+mod provider;
+pub use provider::{CONTENT_SWEEP_AGE_MILLIS, TYPING_EVERY_MILLIS};
 
 #[cfg(test)]
 #[path = "chat_bridge_tests.rs"]

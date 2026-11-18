@@ -97,7 +97,7 @@ pub(crate) fn valid_host(host: &str) -> bool {
 }
 
 fn property(name: &str) -> String {
-    normal_name(&moqui_lib::env::get_prop_or_env(name))
+    normal_name(&moqui_core::context::conf_env::setting_or_property(name))
 }
 
 /// The names this node answers, each with what makes it one (its own host, a terminate host, a site, the SMTP host, the
@@ -109,12 +109,15 @@ fn answered_names(factory: &ExecutionContextFactory, set_up: &[NameRow]) -> BTre
             names.entry(name).or_default().insert(why);
         }
     };
-    add(property("webapp_http_host"), "This node's host".to_string());
+    add(
+        property("webapp-list/webapp[webroot]@http-host"),
+        "This node's host".to_string(),
+    );
     for host in moqui_core::screen::public_site_hosts(factory) {
         add(normal_name(&host), "A site's host".to_string());
     }
-    add(property("smtp_hostname"), "The SMTP host".to_string());
-    add(property("xmpp_domain"), "The XMPP domain".to_string());
+    add(property("smtp-server@hostname"), "The SMTP host".to_string());
+    add(property("xmpp-server@domain"), "The XMPP domain".to_string());
     match terminate_hosts(factory) {
         Ok(hosts) => {
             for (host, node) in hosts {
@@ -249,7 +252,7 @@ fn get_certificates(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacad
         ),
         (
             "directoryUrl".to_string(),
-            Value::string(moqui_lib::env::get_prop_or_env("acme_directory_url").trim()),
+            Value::string(moqui_core::context::conf_env::setting("acme@directory-url")),
         ),
         ("stagingUrl".to_string(), Value::string(STAGING_URL)),
         (
@@ -265,7 +268,7 @@ fn setup_acme_name(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade)
     if !Acme::of(&factory).has_https() {
         return refuse(
             "httpsOff",
-            "This node has no HTTPS listener (webapp_https_listen_port is off), so it cannot answer the authority's \
+            "This node has no HTTPS listener (the webroot webapp's https-listen-port is off), so it cannot answer the authority's \
              challenge",
         );
     }
@@ -278,7 +281,7 @@ fn setup_acme_name(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade)
     }
     let mut directory_url = text(parameters, "directoryUrl");
     if directory_url.is_empty() {
-        directory_url = moqui_lib::env::get_prop_or_env("acme_directory_url").trim().to_string();
+        directory_url = moqui_core::context::conf_env::setting("acme@directory-url");
     }
     if !directory_url.starts_with("https://") {
         return refuse("badDirectory", "The authority's directory URL starts with https://");

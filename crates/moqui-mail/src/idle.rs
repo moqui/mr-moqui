@@ -15,7 +15,7 @@
 //! IMAP IDLE on the Inbox of each active account, so new mail shows at once instead of at the next sync job.
 //!
 //! A worker thread per account, at most `email-client` `idle-max` (8) of them in a server; the others rely on the job. The host
-//! starts the pool after boot ([`start`]); the scheduler's tick (every `scheduled_job_check_time`) starts a worker
+//! starts the pool after boot ([`start`]); the scheduler's tick (every `service-facade@scheduled-job-check-time`) starts a worker
 //! for an account that became active and stops one whose account was paused, removed or changed. A worker signs in,
 //! selects INBOX and waits in IDLE, renewed every ten minutes; when the server reports EXISTS, EXPUNGE or a flag change
 //! it runs an Inbox sync (`sync#EmailAccount` with `inboxOnly`), as it does when the Inbox, selected again after each

@@ -18,7 +18,7 @@
 //! and say so ([`changed`]), and the host's edge link opens or closes the port's listener within seconds, telling how
 //! it went ([`set_states`], [`states`]).
 //!
-//! The conf's own tunnel ports are apart (`edge_ssh_tunnel_port`, `edge_xmpp_port`, `edge_xmpp_tls_port`), and a row
+//! The conf's own tunnel ports are apart (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`), and a row
 //! may not take one of them, nor another port of this node's own listeners ([`reserved`]).
 
 use std::collections::BTreeMap;
@@ -41,52 +41,56 @@ pub const KINDS: [&str; 4] = ["ssh", "xmpp", "xmpps", SMTP];
 
 /// The kind of a front node's mail port (plans/Edge-Node2.md §4.7, E19): port 25 passed to an edge cluster's mail edge,
 /// a member of the pairing's pool by the client's address, behind a PROXY v2 header naming the client. Only on a front
-/// node (`node_role=front`): a node with the edge set takes mail itself.
+/// node (`moqui_conf__instance__node_role=front`): a node with the edge set takes mail itself.
 pub const SMTP: &str = "smtp";
 
 /// The listeners of the edge set, which a front node never starts (`super::front_refuses`): on a front their usual
 /// ports are free for a row, so its port 25 can go to an edge cluster.
 const FRONT_NEVER: [&str; 10] = [
-    "smtp_listen_port",
-    "edge_mail_relay_port",
-    "xmpp_port",
-    "xmpp_tls_port",
-    "sip_port",
-    "sip_tls_port",
-    "turn_port",
-    "turn_tls_port",
-    "rtc_media_port",
-    "rtc_media_tcp_port",
+    "smtp-server@listen-port",
+    "mail-delivery@relay-port",
+    "xmpp-server@port",
+    "xmpp-server@tls-port",
+    "sip-server@port",
+    "sip-server@tls-port",
+    "media-server/turn-server@port",
+    "media-server/turn-server@tls-port",
+    "media-server@port",
+    "media-server@tcp-port",
 ];
 
-/// The properties of this node's own listeners, whose ports no row may take, each with its port when the property is
-/// unset (0 for none): a row never takes a service's usual port, set or not.
+/// The settings of this node's own listeners (a conf selector, or a property not yet moved to the conf), whose ports
+/// no row may take, each with its port when it is unset (0 for none): a row never takes a service's usual port, set or
+/// not.
 const OWN_PORTS: [(&str, u16); 18] = [
-    ("webapp_http_port", 80),
-    ("webapp_https_port", 443),
-    ("webapp_https_listen_port", 443),
-    ("cluster_https_port", 0),
-    ("smtp_listen_port", 25),
-    ("edge_mail_relay_port", 10025),
-    ("ssh_port", 22),
-    ("xmpp_port", 5222),
-    ("xmpp_tls_port", 5223),
-    ("sip_port", 5060),
-    ("sip_tls_port", 5061),
-    ("turn_port", 3478),
-    ("turn_tls_port", 5349),
-    ("rtc_media_port", 10000),
-    ("rtc_media_tcp_port", 0),
-    ("edge_ssh_tunnel_port", 0),
-    ("edge_xmpp_port", 0),
-    ("edge_xmpp_tls_port", 0),
+    ("webapp-list/webapp[webroot]@http-port", 80),
+    ("webapp-list/webapp[webroot]@https-port", 443),
+    ("webapp-list/webapp[webroot]@https-listen-port", 443),
+    ("cluster-member@https-port", 0),
+    ("smtp-server@listen-port", 25),
+    ("mail-delivery@relay-port", 10025),
+    ("ssh-server@port", 22),
+    ("xmpp-server@port", 5222),
+    ("xmpp-server@tls-port", 5223),
+    ("sip-server@port", 5060),
+    ("sip-server@tls-port", 5061),
+    ("media-server/turn-server@port", 3478),
+    ("media-server/turn-server@tls-port", 5349),
+    ("media-server@port", 10000),
+    ("media-server@tcp-port", 0),
+    ("edge@ssh-tunnel-port", 0),
+    ("edge@xmpp-port", 0),
+    ("edge@xmpp-tls-port", 0),
 ];
 
 /// Other ports a mail server's clients and peers use (submission, SMTPS, XMPP federation), which no row may take.
 const WELL_KNOWN: [(u16, &str); 3] = [(465, "SMTPS"), (587, "mail submission"), (5269, "XMPP federation")];
 
 /// The port ranges of this node's own sockets, with their defaults: the SIP engine's RTP and the TURN relays.
-const OWN_RANGES: [(&str, &str); 2] = [("sip_rtp_ports", "20000-20999"), ("turn_relay_ports", "49152-65535")];
+const OWN_RANGES: [(&str, &str); 2] = [
+    ("sip-server@rtp-ports", "20000-20999"),
+    ("media-server/turn-server@relay-ports", "49152-65535"),
+];
 
 /// A port row: connections to `port` go down the link of the pairing `paired_node_id` as a tunnel of `tunnel_kind`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -171,7 +175,7 @@ pub fn list(facade: &EntityFacade, paired_node_id: Option<&str>) -> Result<Vec<E
 /// its default), a mail or XMPP port, or a range of its own sockets. On a front node (`front`) the edge set's
 /// listeners and ranges are none of its own ([`FRONT_NEVER`]).
 pub fn reserved(port: u16, front: bool) -> Option<String> {
-    reserved_in(port, front, moqui_lib::env::get_prop_or_env)
+    reserved_in(port, front, crate::context::conf_env::setting_or_property)
 }
 
 /// [`reserved`] with the properties `property` gives.
@@ -238,7 +242,7 @@ pub fn add(
     let front = super::settings(factory).role == super::NodeRole::Front;
     if kind == SMTP && !front {
         return Err(Error::new(
-            "an smtp port is a front node's (node_role front, plans/Edge-Node2.md §4.7): a node with the edge set takes \
+            "an smtp port is a front node's (instance@node-role front, plans/Edge-Node2.md §4.7): a node with the edge set takes \
              mail on its own SMTP listener",
         ));
     }

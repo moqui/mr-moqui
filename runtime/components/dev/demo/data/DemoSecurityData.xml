@@ -83,6 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentAdmin" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentSkillAuthor" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatBridgeAdmin" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatStickerAdmin" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="VoiceAdmin" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="PushHealthAdmin" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="GIT_CI_ADMIN" fromDate="0" thruDate="1265184000000"/>

@@ -2,7 +2,7 @@
 //
 // Call queues (plans/archive/Comms-Framework.md §5.3, §5.4, V5): the services of org.moqui.call.CallQueueServices. A call enters a
 // queue from a number routed to it (PnrQueue), an IVR option or a transfer (enter): a CallQueueEntry, waiting. The SIP
-// engine plays the caller hold music and asks tick#QueueCall every few seconds (call_queue_tick_seconds), which offers the
+// engine plays the caller hold music and asks tick#QueueCall every few seconds (calls/queue@tick-seconds), which offers the
 // waiting calls in order to the queue's free agents by its strategy (the agent idle longest, round robin, or all at
 // once), each offer ringing the agents' tabs and phones as any call does (Calls.js ringStep: a CallUserLog row as queue
 // agent, missed when the offer rings out); the first answer wins (Calls.js), and the entry is answered. An agent logged
@@ -48,7 +48,7 @@ const blank = (value) => value == null || String(value).trim() === ''
 const clamp = (value, low, high) => Math.min(Math.max(value, low), high)
 const intOr = (value, fallback) => (blank(value) || Number.isNaN(Number(value)) ? fallback : Math.round(Number(value)))
 const limit = (queue, key) => clamp(intOr(queue[key], LIMITS[key][0]), LIMITS[key][1], LIMITS[key][2])
-const tickSeconds = () => clamp(intOr(System.getProperty('call_queue_tick_seconds'), 5), 1, 30)
+const tickSeconds = () => clamp(intOr(ec.factory.getConfValue('calls/queue@tick-seconds'), 5), 1, 30)
 const atOf = (p) => (blank(p.atMs) ? nowMs() : Number(p.atMs))
 
 function calls(op, parameters) {

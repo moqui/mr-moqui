@@ -75,7 +75,12 @@ pub(crate) static STREAM: HostClass = HostClass {
 /// An uploaded file holding `text`, as a method returns it: the test harness's `uploadedFile`, for the services that
 /// take a `FileItem` without a web request.
 pub fn text_upload(field_name: &str, file_name: &str, content_type: &str, text: &str) -> Ret {
-    let file = UploadedFile::in_memory(field_name, file_name, content_type, text.as_bytes().to_vec());
+    bytes_upload(field_name, file_name, content_type, text.as_bytes().to_vec())
+}
+
+/// An uploaded file holding `bytes`, for the test kit's `uploadedFile` of a binary file (a picture).
+pub fn bytes_upload(field_name: &str, file_name: &str, content_type: &str, bytes: Vec<u8>) -> Ret {
+    let file = UploadedFile::in_memory(field_name, file_name, content_type, bytes);
     Ret::Object(HostObject::new(file), &UPLOAD)
 }
 

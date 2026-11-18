@@ -85,42 +85,48 @@ fn a_port_row_goes_to_one_active_pairing_and_the_link_is_told() {
 #[test]
 fn a_port_of_this_nodes_own_listeners_is_no_rows() {
     let properties = |name: &str| match name {
-        "edge_ssh_tunnel_port" => "2222".to_string(),
-        "webapp_https_listen_port" => " 443 ".to_string(),
+        "edge@ssh-tunnel-port" => "2222".to_string(),
+        "webapp-list/webapp[webroot]@https-listen-port" => " 443 ".to_string(),
         _ => String::new(),
     };
     let reserved = |port: u16| reserved_in(port, false, properties);
-    assert_eq!(reserved(2222).as_deref(), Some("edge_ssh_tunnel_port"));
+    assert_eq!(reserved(2222).as_deref(), Some("edge@ssh-tunnel-port"));
     assert_eq!(
         reserved(443).as_deref(),
-        Some("webapp_https_port"),
+        Some("webapp-list/webapp[webroot]@https-port"),
         "set or not, the usual port"
     );
     // the usual ports of services whose properties are unset, and the mail relay beside an edge node
-    assert_eq!(reserved(25).as_deref(), Some("smtp_listen_port"));
-    assert_eq!(reserved(5060).as_deref(), Some("sip_port"));
-    assert_eq!(reserved(3478).as_deref(), Some("turn_port"));
-    assert_eq!(reserved(10025).as_deref(), Some("edge_mail_relay_port"));
+    assert_eq!(reserved(25).as_deref(), Some("smtp-server@listen-port"));
+    assert_eq!(reserved(5060).as_deref(), Some("sip-server@port"));
+    assert_eq!(reserved(3478).as_deref(), Some("media-server/turn-server@port"));
+    assert_eq!(reserved(10025).as_deref(), Some("mail-delivery@relay-port"));
     assert_eq!(reserved(587).as_deref(), Some("mail submission"));
     // the media ranges
-    assert!(reserved(20500).is_some_and(|what| what.starts_with("sip_rtp_ports")));
-    assert!(reserved(50000).is_some_and(|what| what.starts_with("turn_relay_ports")));
+    assert!(reserved(20500).is_some_and(|what| what.starts_with("sip-server@rtp-ports")));
+    assert!(reserved(50000).is_some_and(|what| what.starts_with("media-server/turn-server@relay-ports")));
     assert_eq!(reserved(47022), None);
 }
 
 #[test]
 fn a_front_node_takes_smtp_rows_and_its_edge_set_ports_are_free() {
     let properties = |name: &str| match name {
-        "smtp_listen_port" => "25".to_string(),
+        "smtp-server@listen-port" => "25".to_string(),
         _ => String::new(),
     };
     // a front node starts none of the edge set's listeners: their ports, set or usual, and ranges are free for a row
     for port in [25, 5060, 5222, 3478, 10025, 20500, 50000] {
         assert_eq!(reserved_in(port, true, properties), None, "{port}");
     }
-    assert_eq!(reserved_in(443, true, properties).as_deref(), Some("webapp_https_port"));
+    assert_eq!(
+        reserved_in(443, true, properties).as_deref(),
+        Some("webapp-list/webapp[webroot]@https-port")
+    );
     assert_eq!(reserved_in(587, true, properties).as_deref(), Some("mail submission"));
-    assert_eq!(reserved_in(25, false, properties).as_deref(), Some("smtp_listen_port"));
+    assert_eq!(
+        reserved_in(25, false, properties).as_deref(),
+        Some("smtp-server@listen-port")
+    );
 
     // an smtp row is a front node's only
     let (ctx, facade) = open();

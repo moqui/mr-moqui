@@ -26,7 +26,7 @@
 //! - **An inbound call** goes by the number called ([`number_owner`]): the server's own `PhoneNumber`, else the
 //!   pairing that claims the number (a number of its trunks, or one with a fallback; a second pairing's copy of it is
 //!   held back as a replica conflict, E16), else the owner of the trunk it came on.
-//! - **Phones** go by the domain they register to ([`realm_owner`]): the server's `sip_domain` (the registrar's own
+//! - **Phones** go by the domain they register to ([`realm_owner`]): the server's `sip-server@domain` (the registrar's own
 //!   realm) is the server's, the domain of a pairing's Configure (`sipDomain`) is that pairing's ([`pairing_domains`]),
 //!   and a domain two pairings name is refused. On a dedicated edge node the registrar's own realm is the one
 //!   pairing's while only one is paired (E8).

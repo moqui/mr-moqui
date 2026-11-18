@@ -13,7 +13,7 @@
  */
 
 //! A front node, and the nodes that dial it (plans/Edge-Node2.md §4.7, E19 part A). Every node is a real server in the
-//! test's own process. `node_role` is a process property each server reads as it starts and keeps, so the order of the
+//! test's own process. `instance@node-role` is a process property each server reads as it starts and keeps, so the order of the
 //! starts decides each one's role; the edge link hook the services reach is the last one started.
 //!
 //! - **Regression.** A front node starts none of the edge set's services though they are configured, offers web access
@@ -161,9 +161,12 @@ fn host(name: &str, mode: &str) -> EdgeHostInfo {
 /// A front node: HTTPS on `port`, a link key of its own, a certificate for `localhost` and `names`; `properties` more.
 fn front_properties(port: &str, key: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("node_role", "front".to_string()),
-        ("webapp_https_listen_port", port.to_string()),
-        ("edge_link_key", key.to_string()),
+        ("moqui_conf__instance__node_role", "front".to_string()),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+            port.to_string(),
+        ),
+        ("moqui_conf__edge__link_key", key.to_string()),
     ]
 }
 
@@ -182,7 +185,11 @@ fn a_front_node_has_the_front_set_only() {
     let port_text = port.to_string();
     let mut properties = front_properties(&port_text, &new_key().unwrap());
     // the edge set's services, set up as if this were an edge node: none starts on a front
-    for name in ["rtc_media_port", "sip_port", "smtp_listen_port"] {
+    for name in [
+        "moqui_conf__media_server__port",
+        "moqui_conf__sip_server__port",
+        "moqui_conf__smtp_server__listen_port",
+    ] {
         properties.push((name, crate::common::free_port().to_string()));
     }
     let front = crate::common::start_with_files(
@@ -308,7 +315,10 @@ fn an_edge_node_dials_its_front_and_forwards_its_local_nodes_names() {
         "edge-front-dial-local",
         None,
         EDGE_CONF,
-        &[("webapp_https_listen_port", &local_port)],
+        &[(
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+            &local_port,
+        )],
         &files(&[("cert/default.crt", &local_cert.0), ("cert/default.key", &local_cert.1)]),
     );
     let front_cert = issue(&authority, &["localhost", ERP]);
@@ -332,9 +342,12 @@ fn an_edge_node_dials_its_front_and_forwards_its_local_nodes_names() {
         "edge-front-dial-edge",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
-            ("edge_link_key", &new_key().unwrap()),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
+            ("moqui_conf__edge__link_key", &new_key().unwrap()),
             (moqui_core::edge::FRONT_URL, &front_url),
             (moqui_core::edge::FRONT_KEY, &edge_pairing.key),
             (moqui_core::edge::FRONT_PIN, &edge_pairing.pin),
@@ -425,9 +438,12 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
         "edge-front-two-edge",
         EDGE_CONF,
         &[
-            ("node_role", "edge"),
-            ("webapp_https_listen_port", &edge_port_text),
-            ("edge_link_key", &new_key().unwrap()),
+            ("moqui_conf__instance__node_role", "edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
+            ("moqui_conf__edge__link_key", &new_key().unwrap()),
         ],
         &files(&[("cert/default.crt", &edge_cert.0), ("cert/default.key", &edge_cert.1)]),
     );
@@ -441,9 +457,9 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
         "edge-front-two-local",
         EDGE_CONF,
         &[
-            ("node_role", ""),
+            ("moqui_conf__instance__node_role", ""),
             // the edge node's port is still a property of this process
-            ("webapp_https_listen_port", "off"),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "off"),
             (moqui_core::edge::NODE_URL, &edge_url),
             (moqui_core::edge::NODE_KEY, &to_edge.key),
             (moqui_core::edge::NODE_PIN, &to_edge.pin),
@@ -514,9 +530,11 @@ fn a_local_node_with_two_pairings_routes_web_by_the_front_and_work_by_the_edge()
     // unpairing the front revokes it there and forgets it here; the edge pairing stays
     link.unpair_front().unwrap();
     assert!(link.front_status().is_none());
-    assert!(moqui_lib::env::get_prop_or_env(moqui_core::edge::FRONT_URL)
-        .trim()
-        .is_empty());
+    assert!(
+        moqui_lib::env::get_prop_or_env(&moqui_core::context::conf_env::env_name_of(moqui_core::edge::FRONT_URL))
+            .trim()
+            .is_empty()
+    );
     assert!(!client_field(&front.server, WEB_NODE, "revokedDate").is_empty());
     let status = link.status();
     assert_eq!(status.state, LinkState::Linked, "{status:?}");
@@ -611,8 +629,11 @@ fn acceptance_a_front_node_balances_a_local_cluster_with_web_protection() {
     }
     let authority = authority();
     let cluster_port = crate::common::free_port().to_string();
-    let first =
-        crate::common::start_with_properties("edge-front-cluster-1", None, &[("cluster_https_port", &cluster_port)]);
+    let first = crate::common::start_with_properties(
+        "edge-front-cluster-1",
+        None,
+        &[("moqui_conf__cluster_member__https_port", &cluster_port)],
+    );
     let second = crate::common::start_member("edge-front-cluster-2", &first.cluster_dir, &[]);
     // the front last: its hook is the one the services reach
     let front_cert = issue(&authority, &["localhost", ERP]);
@@ -630,7 +651,10 @@ fn acceptance_a_front_node_balances_a_local_cluster_with_web_protection() {
     let second_id = moqui_core::cluster::instance_id(second.0.factory()).unwrap();
     let paired = pair_node(&rt, &front, &url, &node, &authority.root);
     // what the members' .env would say: pooled behind a front, a new session is written before its response
-    moqui_lib::env::set_property(moqui_core::edge::FRONT_URL, url.clone());
+    moqui_lib::env::set_property(
+        &moqui_core::context::conf_env::env_name_of(moqui_core::edge::FRONT_URL),
+        url.clone(),
+    );
     // the first member links on the key; the second is admitted as a member the first one lists
     let (first_dialer, stop_first) = front_member(&rt, &url, &paired, &first.server, &first.runtime);
     wait_status(&first_dialer, CHECK, "the first member linked", |status| {

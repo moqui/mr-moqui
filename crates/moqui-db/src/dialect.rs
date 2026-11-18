@@ -211,7 +211,7 @@ pub(crate) fn legacy_names(conf: &MNode) -> Result<bool, Error> {
         .first_named("entity-facade")
         .and_then(|node| node.attribute("sql-name-style"))
         .unwrap_or_else(|| "java".to_string());
-    match moqui_lib::env::expand(&raw)?.as_str() {
+    match raw.as_str() {
         "java" => Ok(false),
         "legacy" => Ok(true),
         other => Err(Error::new(format!(

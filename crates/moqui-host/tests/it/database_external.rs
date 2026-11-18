@@ -132,20 +132,20 @@ fn field(item: &Value, key: &str) -> Value {
     }
 }
 
-/// Sets `instance_purpose` and puts the old one back when dropped, a panic included.
+/// Sets `instance@purpose` and puts the old one back when dropped, a panic included.
 struct Purpose(String);
 
 impl Purpose {
     fn set(purpose: &str) -> Self {
-        let old = moqui_lib::env::get_property("instance_purpose").unwrap_or_default();
-        moqui_lib::env::set_property("instance_purpose", purpose);
+        let old = moqui_lib::env::get_property("moqui_conf__instance__purpose").unwrap_or_default();
+        moqui_lib::env::set_property("moqui_conf__instance__purpose", purpose);
         Self(old)
     }
 }
 
 impl Drop for Purpose {
     fn drop(&mut self) {
-        moqui_lib::env::set_property("instance_purpose", self.0.clone());
+        moqui_lib::env::set_property("moqui_conf__instance__purpose", self.0.clone());
     }
 }
 

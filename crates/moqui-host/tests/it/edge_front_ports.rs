@@ -13,14 +13,14 @@
  */
 
 //! A front node before an edge cluster (plans/Edge-Node2.md §4.7, E19 part B): its TCP ports and the edge members'
-//! link names. Every node is a real server in the test's own process; `node_role` and the other properties are process
+//! link names. Every node is a real server in the test's own process; `instance@node-role` and the other properties are process
 //! properties each server reads as it starts, so the order of the starts decides each one's settings.
 //!
 //! - **SMTP through the front.** An `EdgePort` row of kind `smtp` on the front sends each connection to a member of the
 //!   edge pool, a PROXY header naming the client first; the member's SMTP listener takes the client from it (its
 //!   allow-list sees the client, not the front), while a direct client's PROXY header is never read. A node with the
 //!   edge set refuses an `smtp` row.
-//! - **Link names.** Each edge member names its own `edge_link_url` in its front link's Hello; the front keeps it as a
+//! - **Link names.** Each edge member names its own `edge@link-url` in its front link's Hello; the front keeps it as a
 //!   link name of that member and passes its connections through untouched to it alone, picked by the server name
 //!   before the ALPN. A local node pairs with and links to an edge member through the front; another member's name goes
 //!   to that member only, and is refused while it is down. Only a link name is picked before the ALPN: a link to an
@@ -67,9 +67,9 @@ fn start_front(label: &str, port: u16, cert: &(String, String)) -> Gate {
         label,
         None,
         &[
-            ("node_role", "front"),
-            ("webapp_https_listen_port", &port),
-            ("edge_link_key", &key),
+            ("moqui_conf__instance__node_role", "front"),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
+            ("moqui_conf__edge__link_key", &key),
         ],
         &[("cert/default.crt", &cert.0), ("cert/default.key", &cert.1)],
     )
@@ -156,12 +156,18 @@ fn a_front_passes_smtp_to_an_edge_member_with_the_clients_address() {
         "front-smtp-edge",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port),
-            ("edge_link_key", &new_key().unwrap()),
-            ("smtp_listen_port", "0"),
-            ("smtp_allowed_addresses", "127.0.0.2"),
-            ("edge_link_url", &format!("https://edge1.example.test:{front_port}")),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port,
+            ),
+            ("moqui_conf__edge__link_key", &new_key().unwrap()),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.2"),
+            (
+                "moqui_conf__edge__link_url",
+                &format!("https://edge1.example.test:{front_port}"),
+            ),
             (moqui_core::edge::FRONT_URL, &front_url),
             (moqui_core::edge::FRONT_KEY, &paired.key),
             (moqui_core::edge::FRONT_PIN, &paired.pin),
@@ -322,11 +328,14 @@ fn an_edge_members_link_name_passes_through_the_front_to_it_alone() {
         "front-names-edge1",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &first_port),
-            ("cluster_https_port", &cluster_port),
-            ("edge_link_key", &link_key),
-            ("edge_link_url", &link_urls[0]),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &first_port,
+            ),
+            ("moqui_conf__cluster_member__https_port", &cluster_port),
+            ("moqui_conf__edge__link_key", &link_key),
+            ("moqui_conf__edge__link_url", &link_urls[0]),
         ],
         &files(&[("cert/default.crt", &certs[0].0), ("cert/default.key", &certs[0].1)]),
     );
@@ -336,8 +345,11 @@ fn an_edge_members_link_name_passes_through_the_front_to_it_alone() {
         &first.cluster_dir,
         EDGE_CONF,
         &[
-            ("webapp_https_listen_port", &second_port),
-            ("edge_link_url", &link_urls[1]),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &second_port,
+            ),
+            ("moqui_conf__edge__link_url", &link_urls[1]),
         ],
         &files(&[("cert/default.crt", &certs[1].0), ("cert/default.key", &certs[1].1)]),
     );
@@ -456,10 +468,16 @@ fn a_front_keeps_its_own_link_name_and_takes_links_at_other_passthrough_hosts() 
         "front-own-front",
         None,
         &[
-            ("node_role", "front"),
-            ("webapp_https_listen_port", &front_port.to_string()),
-            ("edge_link_key", &key),
-            ("edge_link_url", &format!("https://link.front.test:{front_port}")),
+            ("moqui_conf__instance__node_role", "front"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &front_port.to_string(),
+            ),
+            ("moqui_conf__edge__link_key", &key),
+            (
+                "moqui_conf__edge__link_url",
+                &format!("https://link.front.test:{front_port}"),
+            ),
         ],
         &[("cert/default.crt", &front_cert.0), ("cert/default.key", &front_cert.1)],
     );
@@ -620,7 +638,10 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
     let local1 = crate::common::start_with_properties(
         "full-local-1",
         None,
-        &[("node_role", ""), ("cluster_https_port", &local_cluster_port)],
+        &[
+            ("moqui_conf__instance__node_role", ""),
+            ("moqui_conf__cluster_member__https_port", &local_cluster_port),
+        ],
     );
     let local2 = crate::common::start_member("full-local-2", &local1.cluster_dir, &[]);
 
@@ -631,9 +652,9 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         "full-edge-db",
         EDGE_CONF,
         &[
-            ("node_role", ""),
-            ("cluster_https_port", &edge_cluster_port),
-            ("webapp_https_listen_port", "off"),
+            ("moqui_conf__instance__node_role", ""),
+            ("moqui_conf__cluster_member__https_port", &edge_cluster_port),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "off"),
         ],
         &files(&[]),
     );
@@ -647,10 +668,13 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         &edge_db.cluster_dir,
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_ports[0].to_string()),
-            ("edge_link_key", &link_key),
-            ("edge_link_url", &edge_urls[0]),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_ports[0].to_string(),
+            ),
+            ("moqui_conf__edge__link_key", &link_key),
+            ("moqui_conf__edge__link_url", &edge_urls[0]),
         ],
         &edge_files,
     ));
@@ -666,8 +690,11 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         &edge_db.cluster_dir,
         EDGE_CONF,
         &[
-            ("webapp_https_listen_port", &edge_ports[1].to_string()),
-            ("edge_link_url", &edge_urls[1]),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_ports[1].to_string(),
+            ),
+            ("moqui_conf__edge__link_url", &edge_urls[1]),
         ],
         &edge_files,
     ));
@@ -694,9 +721,12 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
         "full-front",
         "",
         &[
-            ("node_role", "front"),
-            ("webapp_https_listen_port", &front_port.to_string()),
-            ("edge_link_key", &new_key().unwrap()),
+            ("moqui_conf__instance__node_role", "front"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &front_port.to_string(),
+            ),
+            ("moqui_conf__edge__link_key", &new_key().unwrap()),
         ],
         &[("cert/default.crt", &front_cert.0), ("cert/default.key", &front_cert.1)],
     );
@@ -755,7 +785,10 @@ fn acceptance_the_full_stack_keeps_a_site_up_with_a_node_below_the_front_stopped
     );
 
     // the local members link to both edge members: the first through the front at its link name, the second directly
-    moqui_lib::env::set_property(moqui_core::edge::NODE_URL, front_url.clone());
+    moqui_lib::env::set_property(
+        &moqui_core::context::conf_env::env_name_of(moqui_core::edge::NODE_URL),
+        front_url.clone(),
+    );
     let mut dialers = vec![
         Some(local_member(&rt, &front_url, &to_edge, &local1.server, &local1.runtime)),
         Some(local_member(&rt, &front_url, &to_edge, &local2.0, &local2.1 .0)),

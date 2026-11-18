@@ -78,7 +78,7 @@ own `/qapps`), never both:
   `device-mode="shared"`.
 - **Sign-in** by password as on the desktop. **SSO** opens the system browser (an Android `VIEW` intent) and comes back
   as `org.moqui.mobile:/sso`, an intent filter of the activity, which the server allows by default
-  (`webapp_app_redirect_uris`).
+  (`webapp-list/webapp[webroot]@app-redirect-uris`).
 - **Requests** are moqui-client's, in Rust, with TLS checked by Android's trust manager (rustls-platform-verifier). They
   do not go through Android's network security config: plain `http://` is refused but to this device
   (`account::base_url`), so a development server is reached through `adb reverse tcp:8080 tcp:8080` as
@@ -226,7 +226,7 @@ The Kotlin rules (`CallRules`: the ring's time, the join watchdog, which `ringEn
 over the lock screen) have JVM unit tests: `./gradlew :app:testUniversalDebugUnitTest` in `gen/android`, with the
 environment of `scripts/android-env.sh`.
 
-A real call to ring: another user starts it on the local server (with `rtc_media_port` set, so it has a media node),
+A real call to ring: another user starts it on the local server (with `media-server@port` set, so it has a media node),
 for example `curl -u joe.developer:moqui -H 'X-Requested-With: XMLHttpRequest' -X POST
 http://localhost:8080/apps/BasicComms/Calls/startCall -d calleeUserIdList=EX_JOHN_DOE -d video=false`, then the ring
 above with its `callSessionId`; with the app in the foreground the `/notws` ring reaches the shell too.
@@ -327,7 +327,10 @@ and `contact_names`.
   asks, after a dialog that says why; the names never ask (a room list opened is not a use), and the app does not ask
   again by itself: the notification check's Contacts row asks on a tap, or opens the app's settings once Android no
   longer asks. Contacts allowed later (the question, or Android's settings while the app was away) name the rooms again
-  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`).
+  with no reload (`moqui.chat.contactsChanged`, told by `PhoneBook.check`). The phone's contacts name a person's rooms
+  only; they group nothing (people across networks, [Comms](../tools/Comms.md#people-across-networks)). In a person's
+  room the composer's network button opens their ways as a sheet from the bottom, and the People tab's card fills the
+  details pane, its Add a full-screen dialog.
 
 ## Chat notifications
 
@@ -371,6 +374,12 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
   Reply's mutable intent cannot have filled in. A tap opens the room at the message
   (`org.moqui.mobile:/room?account=...&chatRoomId=...&eventSeq=...&sig=...`): the activity is exported, so the link is
   signed by Rust (`Native.roomLink`, an HMAC with the app's own link key) and another app's opens nothing.
+- **A room's invite link** (plans/Comms-Messaging.md §18.3 phase 17). A link or QR code opens the room's join page in
+  the phone's browser; on Android the page's "Open in the MR Moqui app" is `org.moqui.mobile:/join?host=<host>&token=<token>`
+  (a `BROWSABLE` intent filter, `src/join.rs`). A web page makes it, so it is not signed, and it only opens a page: the
+  app opens `/join/<token>` in its account on that host (the current one when it is there, else the first), where the
+  person presses Join. With no account on that host the shell says so and adds none. Android App Links are not used:
+  each server has its own host.
 - **Clear and ack.** The server's `clear` (the room was read on another device) removes the room's notification, and
   the summary only when no other room's shows; a read in the app removes it too, Mark all read every room's of the
   account (the page's `notifyClear` reaches
@@ -383,6 +392,13 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
   received, a stop since, the calling account for the phone's dialer and the contacts; each item that is off has a Fix that opens its system setting (battery optimization
   asks in place). "Send a test notification" asks the server for one (`/qapps/testClientPush`, `send#TestPush`, once a
   device in 10 seconds) and shows the time its own push took to arrive (its ack id among the recent ones).
+- **Reminders** (plans/Comms-Messaging.md phase 15). A message reminder comes as a `notification` push (topic
+  `ChatReminder`, its own tag `chat-reminder-<id>`): this app shows its title ("Reminder: Ann in Team") in the Other
+  channel and a tap opens the app, not the message. Its body (the message's start, in a plain room) and the link to the
+  message wait for the app's next change.
+- **Send later.** A long press on Send opens Send later, with a short vibration. In an encrypted room the app holds the
+  message and sends it at its time only while its WebView runs; closed, it sends it when it next opens Chat (the
+  message is then marked sent late for the sender).
 - **Stopped.** A force-stopped app gets no push until it is opened again; the app says once, at the next open, that it
   was stopped (Android 11+, `ApplicationExitInfo` `REASON_USER_REQUESTED`, which some makers also give for a swipe from
   the recent apps, so the notice says "stopped", not "force-stopped").
@@ -394,11 +410,60 @@ adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind debugCha
     "'{\"kind\":\"message\",\"account\":\"chat.example.com-0123456789ab\",\"chatRoomId\":\"100\",\"eventSeq\":5,\"roomName\":\"Team\",\"senderName\":\"Ann\",\"snippet\":\"Hi\"}'"
 ```
 
+## Cards and buttons
+
+A message's suggestion buttons (a card's, or a text's chips, plans/Comms-Messaging.md §18.3 phase 13) are one row under
+the bubble that scrolls sideways on a phone, and a card is at most 85 % of the screen's width; a carousel scrolls
+sideways with snap on every width. A call button opens the dialer (`tel:`). The rest is Chat's
+([Comms](../tools/Comms.md#cards)).
+
+## Add to calendar
+
+A chat event's Add to calendar (plans/Comms-Messaging.md §18.3 phase 19), with no app that keeps calendars, is
+`moquiDesktop.calendarInsert({title, start, end, allDay, timeZone, place, description})` (the `calendar_insert` command,
+`CalendarIntent.kt`): the phone's calendar app opens on a new event filled in (`ACTION_INSERT`), and the person saves it
+there, so the app needs no calendar permission. It answers whether a calendar app took it; when none does (or in an APK
+before it), Chat downloads the event's `.ics` file instead.
+
+## Location and maps
+
+A chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20) is the WebView's
+`navigator.geolocation`: the manifest has `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`, and the patched wry
+`RustWebChromeClient` asks for them at the first use (refused, Chat says how to allow it and offers to enter the place).
+The app never reads the position in the background. Open in maps hands a `geo:` URI to Android
+(`moquiDesktop.openExternal`, which takes `geo:` beside http, https, mailto, tel and sip), so the person's maps app
+opens at the place.
+
+## Screen security
+
+`moquiDesktop.secureScreen(reason, on)` (the `secure_screen` command, `ScreenSecurity.kt`) turns Android's `FLAG_SECURE`
+on for a reason, and off once no reason holds it: no screenshot, no screen recording and a blank recent-apps thumbnail.
+Chat's view-once viewer holds `viewOnce` while it is open (plans/Comms-Messaging.md §18.3 phase 16); the reasons are a
+set, so a screen-security setting of the app or of a room can hold its own. Phase 21's are `room:<chatRoomId>`, held by
+Chat while an encrypted room is shown with Settings, Chat, Privacy on "in encrypted rooms" or the room's own Block
+screenshots here, and `app:<account>` (the page's storage scope), from "everywhere in the app": WebrootChat.js applies it
+when the shell loads and Chat opens, and the `CHAT_SCREEN_SECURITY` preference applier on each change, on and off at
+once. Each account holds its own: any account set to everywhere keeps the flag on, and turning it off in that account
+takes away only that account's reason. The `app:` reasons are remembered on the phone (`ScreenSecurity.kt`, its
+SharedPreferences, one forgotten when it is turned off), so from the next start the flag is on before the first frame,
+the splash and the account list included.
+
+### One-time codes
+
+A chat push of a text with a one-time code carries `otp {code}` (plans/Comms-Messaging.md §18.3 phase 21, §7.2 rule
+10). `ChatNotifications.showRoom` then adds Copy code: a `COPY` broadcast to `ChatActionReceiver` with the code in the
+action's data, which puts it on the clipboard (`ClipDescription.EXTRA_IS_SENSITIVE` on Android 13 and later, a "Code
+copied" toast before it). The notification is `VISIBILITY_PRIVATE`, its public version "A code from …", so the lock screen
+shows no code. An APK before this change shows the message without the button. It answers whether the flag is on; the
+desktop app has no such member, and the viewer says a screenshot cannot be stopped there. The app's store deletes
+disappearing messages at their time as the desktop's does ([Desktop-Client](Desktop-Client.md)).
+
 ## Known gaps (MT1)
 
 What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans/Mobile-Desktop.md#android-track-md6)).
 
 - The counts and presence (`setCounts`, `setPresence`) do nothing.
+- A message reminder shows its title only and opens the app, not the message (above, Reminders).
 - UnifiedPush is not checked with a distributor: the emulator has none, and its opening (the account's keys) is the
   Rust tests'. A real distributor (ntfy) delivering to a phone is not tried yet. A chat push has no sender avatar (a
   picture would need a fetch the push path does not make).
@@ -412,9 +477,9 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
 
 ## Tests
 
-- `cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test`: the page check, where a navigation goes, the
+- `cd crates/moqui-mobile && cargo test`: the page check, where a navigation goes, the
   sealed key store, the schemes' redirect and `fetch` handling, the build's conf, the bridge's split by origin.
-- `cd crates/moqui-client-tauri && CARGO_TARGET_DIR=../../target cargo test`: the schemes' answer, with no network.
+- `cd crates/moqui-client-tauri && cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
 - `./gradlew :app:testUniversalDebugUnitTest` in `gen/android` (`ANDROID_HOME` set): the Kotlin rules' JVM tests
   (`CallRules`: the ring's time, the audio route, the screen at the ear, picture-in-picture, the service's types, the

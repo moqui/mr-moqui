@@ -161,13 +161,12 @@ impl SessionTable {
     }
 }
 
-/// An attribute of the `webroot` webapp's `session-config` in the merged conf, `${}` expanded and trimmed.
+/// An attribute of the `webroot` webapp's `session-config` in the merged conf, trimmed.
 fn session_config_attr(conf: &MNode, name: &str) -> String {
     conf.first_named("webapp-list")
         .and_then(|list| list.first_named_attrs("webapp", &[("name", "webroot")]))
         .and_then(|webapp| webapp.first_named("session-config"))
         .and_then(|config| config.attribute(name))
-        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
         .map(|value| value.trim().to_string())
         .unwrap_or_default()
 }
@@ -543,11 +542,11 @@ pub fn write_new_first() {
     let _ = flush_bound(pooled);
 }
 
-/// How long a [`pooled`] answer is kept before `edge_node_url` is read again.
+/// How long a [`pooled`] answer is kept before `edge/node@url` is read again.
 const POOLED_READ_EVERY_MS: i64 = 10_000;
 
 /// Whether this node may be one member of a pool behind an edge node or a front node (plans/Edge-Node2.md §4.4, §4.7):
-/// it dials one (`edge_node_url` or `front_node_url`, read at most every [`POOLED_READ_EVERY_MS`]) and its cluster has
+/// it dials one (`edge/node@url` or `edge/front-node@url`, read at most every [`POOLED_READ_EVERY_MS`]) and its cluster has
 /// other live members (the heartbeat's list of peers, in memory). The edge node keeps a browser on the member its
 /// session cookie hashes to, and moves it when that member goes or is drained: so a new session is written before its
 /// response, as a new cookie can hash to another member than the one that made it ([`flush_bound`]), and a live copy
@@ -561,7 +560,7 @@ fn pooled(factory: &ExecutionContextFactory) -> bool {
         // pooled by an edge node, or by a front node (plans/Edge-Node2.md §4.7)
         let dials = [crate::edge::NODE_URL, crate::edge::FRONT_URL]
             .iter()
-            .any(|name| !moqui_lib::env::get_prop_or_env(name).trim().is_empty());
+            .any(|name| !crate::context::conf_env::setting(name).is_empty());
         DIALS.store(dials, Ordering::Release);
         READ_AT.store(now, Ordering::Release);
     }
@@ -3134,43 +3133,49 @@ fn is_session_id(id: &str) -> bool {
 
 fn sign_session(id: &str) -> Result<String, Error> {
     let key = cookie_key()?;
-    let mut mac =
-        SessionMac::new_from_slice(&key).map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+    let mut mac = SessionMac::new_from_slice(&key)
+        .map_err(|_| Error::new("the session cookie key cannot be used as an HMAC key"))?;
     mac.update(id.as_bytes());
     Ok(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
 }
 
 fn mac_matches(id: &str, tag: &[u8]) -> Result<bool, Error> {
     let key = cookie_key()?;
-    let mut mac =
-        SessionMac::new_from_slice(&key).map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+    let mut mac = SessionMac::new_from_slice(&key)
+        .map_err(|_| Error::new("the session cookie key cannot be used as an HMAC key"))?;
     mac.update(id.as_bytes());
     // verify_slice compares the tag in constant time.
     Ok(mac.verify_slice(tag).is_ok())
 }
 
-/// A key for another signature, derived from `session_cookie_key`: HMAC-SHA256 of `label` under it, so a value signed
+/// A key for another signature, derived from the session cookie key ([`COOKIE_KEY`]): HMAC-SHA256 of `label` under it, so a value signed
 /// with it is never a valid session tag (the MCP server's `requestState`, `moqui_llm::mcp::state`).
 ///
 /// # Errors
 ///
-/// Returns an error when `session_cookie_key` is not set or not standard base64.
+/// Returns an error when the session cookie key is not set or not standard base64.
 pub fn derived_cookie_key(label: &str) -> Result<Vec<u8>, Error> {
     let key = cookie_key()?;
-    let mut mac =
-        SessionMac::new_from_slice(&key).map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+    let mut mac = SessionMac::new_from_slice(&key)
+        .map_err(|_| Error::new("the session cookie key cannot be used as an HMAC key"))?;
     mac.update(label.as_bytes());
     Ok(mac.finalize().into_bytes().to_vec())
 }
 
+/// The session cookie's HMAC key: the webroot webapp's `session-config` `cookie-key`, generated at the first start
+/// (plans/archive/Conf-Paths.md §6.3).
+pub const COOKIE_KEY: &str = "webapp-list/webapp[webroot]/session-config@cookie-key";
+
 fn cookie_key() -> Result<Vec<u8>, Error> {
-    let raw = moqui_lib::env::get_prop_or_env("session_cookie_key");
+    let raw = crate::context::conf_env::setting(COOKIE_KEY);
     if raw.is_empty() {
-        return Err(Error::new("session_cookie_key is not set"));
+        return Err(Error::new(
+            "the session cookie key (session-config cookie-key) is not set",
+        ));
     }
     STANDARD
         .decode(raw.trim().as_bytes())
-        .map_err(|_| Error::new("session_cookie_key is not standard base64"))
+        .map_err(|_| Error::new("the session cookie key (session-config cookie-key) is not standard base64"))
 }
 
 /// The `attributes` column, one compact JSON object.
@@ -3187,7 +3192,7 @@ fn parse_attributes(text: &str) -> Result<BTreeMap<String, Json>, Error> {
     }
 }
 
-/// Process-wide lock for tests that set `session_cookie_key` or other webapp properties.
+/// Process-wide lock for tests that set `webapp-list/webapp[webroot]/session-config@cookie-key` or other webapp properties.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub fn cookie_property_lock() -> MutexGuard<'static, ()> {

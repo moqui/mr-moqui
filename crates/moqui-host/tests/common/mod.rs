@@ -347,9 +347,9 @@ pub fn start_token_route(label: &str) -> Gate {
 pub fn start_with_conf(label: &str, extra_conf: &str, properties: &[(&str, &str)]) -> Gate {
     let mut gate = start_seeded(label, false, None, extra_conf, &[], &[], &[]);
     for (name, value) in properties {
-        moqui_lib::env::set_property(name, (*value).to_string());
+        moqui_lib::env::set_property(&property_name(name), (*value).to_string());
     }
-    gate._properties = PropertyReset(properties.iter().map(|(name, _)| (*name).to_string()).collect());
+    gate._properties = PropertyReset(properties.iter().map(|(name, _)| property_name(name)).collect());
     gate
 }
 
@@ -427,7 +427,7 @@ pub fn start_with_links(
 }
 
 /// [`start_with_files`] with symlinks too: a component the seed template does not carry, linked in (such as a dev
-/// component, with `instance_purpose` dev among the properties).
+/// component, with `instance@purpose` dev among the properties).
 #[allow(dead_code)]
 pub fn start_with_files_and_links(
     label: &str,
@@ -467,6 +467,16 @@ pub fn start_with_conf_files_and_links(
     )
 }
 
+/// The process property a test's name sets: a conf selector (`edge/node@url`, as the edge consts are) is set by its
+/// environment name, as an override is (plans/archive/Conf-Paths.md §1); a property by its own name.
+pub fn property_name(name: &str) -> String {
+    if name.contains('@') {
+        moqui_core::context::conf_env::env_name_of(name)
+    } else {
+        name.to_string()
+    }
+}
+
 /// Clears the properties a gate set, before the gate gives up the lock.
 #[derive(Default)]
 pub struct PropertyReset(Vec<String>);
@@ -474,7 +484,27 @@ pub struct PropertyReset(Vec<String>);
 impl PropertyReset {
     /// Clears these properties when it drops.
     pub fn of(names: &[&str]) -> Self {
-        Self(names.iter().map(|name| (*name).to_string()).collect())
+        Self(names.iter().map(|name| property_name(name)).collect())
+    }
+}
+
+impl PropertyReset {
+    /// Clears this property too when it drops.
+    fn add(&mut self, name: &str) {
+        self.0.push(property_name(name));
+    }
+}
+
+/// The conf secrets the gate's boot generated into its `runtime/.env` (`moqui_conf__...`, plans/archive/Conf-Paths.md §3), as
+/// process properties until the gate drops: a member started in this process takes them, as a cluster's members share
+/// one `.env` (conf/local-cluster/README.md); each runtime would otherwise generate keys of its own.
+fn share_generated_secrets(runtime: &Path, reset: &mut PropertyReset) {
+    let text = std::fs::read_to_string(runtime.join(".env")).unwrap_or_default();
+    for (name, value) in moqui_lib::env::parse_dotenv(&text) {
+        if moqui_lib::node::path::env_segments(&name).is_some() && moqui_lib::env::get_property(&name).is_none() {
+            moqui_lib::env::set_property(&name, value);
+            reset.add(&name);
+        }
     }
 }
 
@@ -825,10 +855,10 @@ pub fn start_member_with_files(
 ) -> (moqui_host::Server, DirGuard) {
     assert_own_process();
     for (name, value) in properties {
-        moqui_lib::env::set_property(name, (*value).to_string());
+        moqui_lib::env::set_property(&property_name(name), (*value).to_string());
     }
     // the port it advertises to the gate, which an ephemeral `0` would not be
-    moqui_lib::env::set_property("cluster_https_port", free_port().to_string());
+    moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", free_port().to_string());
     let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
     let guard = DirGuard(runtime.clone());
     std::fs::create_dir_all(&runtime).unwrap();
@@ -886,9 +916,9 @@ fn start_seeded_under(
     links: &[(&str, &str)],
 ) -> Gate {
     assert_own_process();
-    let reset = PropertyReset::of(&properties.iter().map(|(name, _)| *name).collect::<Vec<_>>());
+    let mut reset = PropertyReset::of(&properties.iter().map(|(name, _)| *name).collect::<Vec<_>>());
     for (name, value) in properties {
-        moqui_lib::env::set_property(name, (*value).to_string());
+        moqui_lib::env::set_property(&property_name(name), (*value).to_string());
     }
     let template = template();
     let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
@@ -934,11 +964,15 @@ fn start_seeded_under(
 
     // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free; a gate whose
     // cluster has another member names a port of its own (`free_port`), which it advertises to that member
-    if !properties.iter().any(|(name, _)| *name == "cluster_https_port") {
-        moqui_lib::env::set_property("cluster_https_port", "0");
+    if !properties
+        .iter()
+        .any(|(name, _)| *name == "moqui_conf__cluster_member__https_port")
+    {
+        moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
     }
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
+    share_generated_secrets(&runtime, &mut reset);
     Gate {
         server,
         runtime: runtime.clone(),

@@ -261,22 +261,10 @@ pub(crate) fn directory(requested: Option<&str>, profile: &Profile, host_directo
         .unwrap_or_else(|| runtime.to_path_buf())
 }
 
-/// The names of the Moqui conf's properties, as the environment may carry them.
-pub(crate) fn conf_property_names(conf_text: &str) -> BTreeSet<String> {
-    let Ok(conf) = MNode::parse_text("moqui-conf", conf_text) else {
-        return BTreeSet::new();
-    };
-    conf.named_iter("default-property")
-        .filter_map(|node| node.attribute("name"))
-        .filter(|name| !name.is_empty())
-        .collect()
-}
-
-/// What a host session's program runs with (§7.3): the server's environment less the conf's properties, with the
+/// What a host session's program runs with (§7.3): the server's environment less the conf's names, with the
 /// terminal's own set and the profile's.
 pub(crate) struct EnvFor<'a> {
     pub server: Vec<(String, String)>,
-    pub properties: &'a BTreeSet<String>,
     pub session_id: &'a str,
     pub runtime: &'a Path,
     pub username: &'a str,
@@ -284,21 +272,12 @@ pub(crate) struct EnvFor<'a> {
 }
 
 pub(crate) fn environment(of: &EnvFor<'_>) -> Vec<(String, String)> {
-    let names: BTreeSet<String> = of
-        .properties
-        .iter()
-        .flat_map(|name| {
-            [
-                name.clone(),
-                name.replace('.', "_"),
-                name.to_ascii_uppercase().replace('.', "_"),
-            ]
-        })
-        .collect();
     let mut env: BTreeMap<String, String> = of
         .server
         .iter()
-        .filter(|(name, _)| !names.contains(name) && !name.starts_with("MOQUI_") && name != exec::EXEC_ENV)
+        // MOQUI_ in any case: the conf's own (MOQUI_CONF) and every conf attribute's environment name
+        // (moqui_conf__entity_facade__crypt_pass), which may hold a secret
+        .filter(|(name, _)| !name.to_ascii_uppercase().starts_with("MOQUI_") && name != exec::EXEC_ENV)
         .cloned()
         .collect();
     env.insert("TERM".to_string(), "xterm-256color".to_string());
@@ -402,7 +381,6 @@ impl Launch {
         resume: bool,
         size: (u16, u16),
     ) -> Self {
-        let conf = factory.conf_text();
         let runtime = factory.runtime_dir();
         let (argv, arg0) = argv(profile, resume);
         let directory = directory(
@@ -411,10 +389,8 @@ impl Launch {
             &factory.conf_setting("terminal", "host-directory"),
             runtime,
         );
-        let properties = conf_property_names(&conf);
         let env = environment(&EnvFor {
             server: std::env::vars().collect(),
-            properties: &properties,
             session_id,
             runtime,
             username,

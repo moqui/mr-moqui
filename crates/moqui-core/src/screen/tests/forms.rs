@@ -407,7 +407,10 @@ fn a_multipart_form_gives_parameters_and_the_uploaded_file() {
 fn the_upload_cap_is_webapp_max_upload_and_other_bodies_stop_at_webapp_max_body() {
     let site = Site::new("cap");
     let world = World::open("");
-    moqui_lib::env::set_property("webapp_max_upload", "2k");
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_upload",
+        "2k",
+    );
     let big = "x".repeat(3000);
     let parts = [("doc", big.as_str(), Some(("a.txt", "text/plain")))];
     let (content_type, body) = multipart(&parts);
@@ -415,16 +418,19 @@ fn the_upload_cap_is_webapp_max_upload_and_other_bodies_stop_at_webapp_max_body(
     post.set_header("content-type", content_type.clone());
     post.body = body;
     let response = serve_at(&world.factory, post, &site.root);
-    moqui_lib::env::clear_property("webapp_max_upload");
+    moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_upload");
     assert_eq!(response.status, 413, "{}", response.body_text());
 
-    // a form post has its own cap, webapp_max_body (default 10 MiB), even when uploads may be larger
-    moqui_lib::env::set_property("webapp_max_body", "1m");
+    // a form post has its own cap, webapp-list/webapp[webroot]/web-protection/requests@max-body (default 10 MiB), even when uploads may be larger
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_body",
+        "1m",
+    );
     let mut large = request("POST", "/save");
     large.set_header("content-type", "application/x-www-form-urlencoded");
     large.body = vec![b'a'; 1024 * 1024 + 1];
     let status = serve_at(&world.factory, large, &site.root).status;
-    moqui_lib::env::clear_property("webapp_max_body");
+    moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_body");
     assert_eq!(status, 413);
 }
 

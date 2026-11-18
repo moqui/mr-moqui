@@ -13,9 +13,9 @@
  */
 
 //! The embedded TURN server's sockets (plans/archive/Comms-Framework.md §6.5, W4; docs/interfaces/TURN.md), on the media node:
-//! UDP and TCP on `turn_port`, TLS on `turn_tls_port` and on 443 of `turn_tls443_host` (an address of its own, since the
+//! UDP and TCP on `media-server/turn-server@port`, TLS on `media-server/turn-server@tls-port` and on 443 of `media-server/turn-server@tls443-host` (an address of its own, since the
 //! HTTPS listener does not share its port), all off while their setting is empty, and the UDP relay sockets in
-//! `turn_relay_ports`. One thread owns the [`Turn`] and the UDP sockets, and waits on its bounded input queue when
+//! `media-server/turn-server@relay-ports`. One thread owns the [`Turn`] and the UDP sockets, and waits on its bounded input queue when
 //! there is nothing to do; the TCP and TLS listeners and each of their connections are tasks on the edge runtime
 //! ([`crate::edge::handle`]), which read a stream a message at a time for the server and write back what it sends. TLS
 //! uses the host's certificates (`runtime/cert`).
@@ -115,16 +115,22 @@ fn port(text: &str, name: &str) -> Result<Option<u16>, String> {
         .map_err(|_| format!("{name} {text} is not a port"))
 }
 
-/// The TURN settings, None while neither `turn_port` nor `turn_tls_port` nor `turn_tls443_host` is set.
+/// The TURN settings, None while neither `media-server/turn-server@port` nor `media-server/turn-server@tls-port` nor `media-server/turn-server@tls443-host` is set.
 pub(crate) fn settings(
     property: &dyn Fn(&str) -> String,
     media_bind: SocketAddr,
     media_public: SocketAddr,
     extra_peers: &[SocketAddr],
 ) -> Result<Option<TurnSettings>, String> {
-    let udp = port(&property("turn_port"), "turn_port")?;
-    let tls_port = port(&property("turn_tls_port"), "turn_tls_port")?;
-    let tls443 = property("turn_tls443_host");
+    let udp = port(
+        &property("media-server/turn-server@port"),
+        "media-server/turn-server@port",
+    )?;
+    let tls_port = port(
+        &property("media-server/turn-server@tls-port"),
+        "media-server/turn-server@tls-port",
+    )?;
+    let tls443 = property("media-server/turn-server@tls443-host");
     let tls443 = tls443.trim();
     let tls443: Option<IpAddr> = if tls443.is_empty() {
         None
@@ -132,21 +138,21 @@ pub(crate) fn settings(
         Some(
             tls443
                 .parse()
-                .map_err(|_| format!("turn_tls443_host {tls443} is not an address"))?,
+                .map_err(|_| format!("media-server/turn-server@tls443-host {tls443} is not an address"))?,
         )
     };
     if udp.is_none() && tls_port.is_none() && tls443.is_none() {
         return Ok(None);
     }
-    let bind = property("turn_host");
+    let bind = property("media-server/turn-server@host");
     let bind = if bind.trim().is_empty() {
         media_bind.ip()
     } else {
         bind.trim()
             .parse()
-            .map_err(|_| format!("turn_host {} is not an address", bind.trim()))?
+            .map_err(|_| format!("media-server/turn-server@host {} is not an address", bind.trim()))?
     };
-    let public_host = property("turn_public_host");
+    let public_host = property("media-server/turn-server@public-host");
     let public_host = if public_host.trim().is_empty() {
         media_public.ip().to_string()
     } else {
@@ -163,7 +169,7 @@ pub(crate) fn settings(
                 .map(|a| a.ip())
         })
         .unwrap_or(media_public.ip());
-    let range = property("turn_relay_ports");
+    let range = property("media-server/turn-server@relay-ports");
     let range = if range.trim().is_empty() {
         "49152-65535".to_string()
     } else {
@@ -171,21 +177,21 @@ pub(crate) fn settings(
     };
     let (low, high) = range
         .split_once('-')
-        .ok_or_else(|| format!("turn_relay_ports {range} is not a range low-high"))?;
+        .ok_or_else(|| format!("media-server/turn-server@relay-ports {range} is not a range low-high"))?;
     let relay_ports: (u16, u16) = (
         low.trim()
             .parse()
-            .map_err(|_| format!("turn_relay_ports {range} is not a range"))?,
+            .map_err(|_| format!("media-server/turn-server@relay-ports {range} is not a range"))?,
         high.trim()
             .parse()
-            .map_err(|_| format!("turn_relay_ports {range} is not a range"))?,
+            .map_err(|_| format!("media-server/turn-server@relay-ports {range} is not a range"))?,
     );
     if relay_ports.0 == 0 || relay_ports.0 > relay_ports.1 {
-        return Err(format!("turn_relay_ports {range} is not a range"));
+        return Err(format!("media-server/turn-server@relay-ports {range} is not a range"));
     }
-    let secret = property("turn_auth_secret");
+    let secret = property("media-server/turn-server@auth-secret");
     if secret.trim().is_empty() || secret.ends_with("CHANGEME") {
-        return Err("turn_auth_secret is not set".to_string());
+        return Err("media-server/turn-server@auth-secret is not set".to_string());
     }
     let number = |name: &str, default: u64| property(name).trim().parse::<u64>().unwrap_or(default);
     // the media port only, not every port of the media node's address
@@ -195,7 +201,7 @@ pub(crate) fn settings(
     }
     allowed_peers.extend_from_slice(extra_peers);
     // another media node: `address:port`, or an address alone on this node's media port
-    for extra in property("turn_allowed_peers")
+    for extra in property("media-server/turn-server@allowed-peers")
         .split(',')
         .map(str::trim)
         .filter(|p| !p.is_empty())
@@ -209,18 +215,18 @@ pub(crate) fn settings(
                     .ok()
                     .map(|ip| SocketAddr::new(ip, media_public.port()))
             })
-            .ok_or_else(|| format!("turn_allowed_peers {extra} is not an address"))?;
+            .ok_or_else(|| format!("media-server/turn-server@allowed-peers {extra} is not an address"))?;
         allowed_peers.push(peer);
     }
     let config = TurnConfig {
         realm: public_host.clone(),
         secret: secret.trim().as_bytes().to_vec(),
         allowed_peers,
-        max_allocations: usize::try_from(number("turn_max_allocations", 1_000)).unwrap_or(1_000),
+        max_allocations: usize::try_from(number("media-server/turn-server@max-allocations", 1_000)).unwrap_or(1_000),
         max_per_user: 2,
-        max_kbps: number("turn_max_kbps", 4_000),
+        max_kbps: number("media-server/turn-server@max-kbps", 4_000),
         // a node that takes links: its paired nodes' usernames name their pairings (E16)
-        pairings: moqui_core::edge::NodeRole::parse(&property("node_role")).takes_links(),
+        pairings: moqui_core::edge::NodeRole::parse(&property(moqui_core::edge::NODE_ROLE)).takes_links(),
     };
     Ok(Some(TurnSettings {
         bind,
@@ -338,7 +344,8 @@ pub(crate) fn start(runtime_dir: &Path, s: &TurnSettings) -> Result<TurnNode, St
     let mut bound = Bound::default();
     let udp = match s.port {
         Some(p) => {
-            let socket = UdpSocket::bind((s.bind, p)).map_err(|e| format!("turn_port {p} did not bind: {e}"))?;
+            let socket = UdpSocket::bind((s.bind, p))
+                .map_err(|e| format!("media-server/turn-server@port {p} did not bind: {e}"))?;
             socket.set_nonblocking(true).map_err(|e| e.to_string())?;
             bound.udp = socket.local_addr().ok();
             Some(socket)
@@ -359,19 +366,20 @@ pub(crate) fn start(runtime_dir: &Path, s: &TurnSettings) -> Result<TurnNode, St
     };
     let mut stream_listeners: Vec<(std::net::TcpListener, Option<TlsAcceptor>)> = Vec::new();
     if let Some(p) = s.port {
-        let l =
-            std::net::TcpListener::bind((s.bind, p)).map_err(|e| format!("turn_port {p} (TCP) did not bind: {e}"))?;
+        let l = std::net::TcpListener::bind((s.bind, p))
+            .map_err(|e| format!("media-server/turn-server@port {p} (TCP) did not bind: {e}"))?;
         bound.tcp = l.local_addr().ok();
         stream_listeners.push((l, None));
     }
     if let Some(p) = s.tls_port {
-        let l = std::net::TcpListener::bind((s.bind, p)).map_err(|e| format!("turn_tls_port {p} did not bind: {e}"))?;
+        let l = std::net::TcpListener::bind((s.bind, p))
+            .map_err(|e| format!("media-server/turn-server@tls-port {p} did not bind: {e}"))?;
         bound.tls = l.local_addr().ok();
         stream_listeners.push((l, tls_config.clone()));
     }
     if let Some(ip) = s.tls443 {
         let l = std::net::TcpListener::bind((ip, 443))
-            .map_err(|e| format!("turn_tls443_host {ip}:443 did not bind: {e}"))?;
+            .map_err(|e| format!("media-server/turn-server@tls443-host {ip}:443 did not bind: {e}"))?;
         bound.tls443 = l.local_addr().ok();
         stream_listeners.push((l, tls_config.clone()));
     }

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge node's MX delivery, the MTA in moqui (plans/archive/Edge-Node.md §5.4, E5b), when `edge_mail_mta` is `moqui`
+//! The edge node's MX delivery, the MTA in moqui (plans/archive/Edge-Node.md §5.4, E5b), when `mail-delivery@mta` is `moqui`
 //! (conf/edge/MoquiEdgeConf.xml sets it; empty or `postfix` keeps E5a's relay to the MTA beside the edge node).
 //!
 //! - **Recorded.** `deliver#EdgeOutboundMail` signs the message with the node's DKIM key (`super::auth`), queues it
@@ -25,18 +25,18 @@
 //!   its own thread. A try ends within 10 minutes (each command a minute at most), inside the row's 15-minute lease. A
 //!   panic is caught per row and per round. A domain's MX hosts are tried by preference (its address when it has no
 //!   MX; a null MX refuses), each host's addresses in turn, until one answers. The session is EHLO, STARTTLS when
-//!   offered (opportunistic: any certificate), MAIL FROM (the VERP sender of E5a when `edge_mail_bounce_domain` is
+//!   offered (opportunistic: any certificate), MAIL FROM (the VERP sender of E5a when `mail-delivery@bounce-domain` is
 //!   set), RCPT TO each recipient, DATA. Rows of a local node that is no longer paired fail, logged.
 //! - **TLS policy.** MTA-STS (RFC 8461): the `_mta-sts` TXT record names the policy's id; the policy (64 KiB at most) is
 //!   fetched over HTTPS and kept until its `max_age` (fetched again when the id changes). With `mode: enforce` only MX
 //!   hosts the policy names are used, and STARTTLS with a certificate valid for the host is required, else the try
-//!   waits. The recipient domains in `mail_mx_require_tls` (comma-separated, `*` for all; empty by default) require it
+//!   waits. The recipient domains in `mail-delivery@mx-require-tls` (comma-separated, `*` for all; empty by default) require it
 //!   too, whatever their policy: an MX that offers no STARTTLS, or whose handshake or certificate fails, gets nothing
-//!   in clear text; the try waits as for a 4xx and the message bounces after `mail_delivery_days` (SEC-MAIL-66). DANE
+//!   in clear text; the try waits as for a 4xx and the message bounces after `mail-delivery@days` (SEC-MAIL-66). DANE
 //!   is later work.
 //! - **Answers.** A 2xx after the data is sent; a 5xx (to RCPT, or to the data) refuses that recipient for good; a 4xx,
-//!   a host not reached or a lost connection waits for the next try: 5 minutes (`mail_delivery_retry_seconds`), twice
-//!   as long each time, to 4 hours, until `mail_delivery_days` (5) after the row was made, when the recipients still
+//!   a host not reached or a lost connection waits for the next try: 5 minutes (`mail-delivery@retry-seconds`), twice
+//!   as long each time, to 4 hours, until `mail-delivery@days` (5) after the row was made, when the recipients still
 //!   waiting are refused with the last reply. A try's answers are committed on the row first; its report is queued
 //!   after, in a transaction of its own, and one not queued is tried again each round (`reportPending`), never by
 //!   delivering again.
@@ -46,7 +46,7 @@
 //!   "bounced" when none did (back in the Outbox with the replies). No delivery status notification (RFC 3464) is made:
 //!   the local node's status is the report, for a refusal and for a give-up alike.
 //!
-//! `mail_mx_override` (testing and staging only) maps recipient domains to `host:port` (`example.net=127.0.0.1:2525`,
+//! `mail-delivery@mx-override` (testing and staging only) maps recipient domains to `host:port` (`example.net=127.0.0.1:2525`,
 //! `*` for any), skipping MX lookup and MTA-STS.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -107,11 +107,11 @@ pub enum Mta {
     Postfix,
 }
 
-/// `edge_mail_mta`: `moqui` for the MTA in moqui (conf/edge/MoquiEdgeConf.xml sets it), else E5a's relay to Postfix, so an
+/// `mail-delivery@mta`: `moqui` for the MTA in moqui (conf/edge/MoquiEdgeConf.xml sets it), else E5a's relay to Postfix, so an
 /// E5a deployment that never set it keeps its Postfix.
 #[must_use]
 pub fn mta() -> Mta {
-    if moqui_lib::env::get_prop_or_env("edge_mail_mta")
+    if moqui_core::context::conf_env::setting("mail-delivery@mta")
         .trim()
         .eq_ignore_ascii_case("moqui")
     {
@@ -121,11 +121,11 @@ pub fn mta() -> Mta {
     }
 }
 
-/// The name this node gives in EHLO: `smtp_hostname`, else `webapp_http_host`, else `localhost`.
+/// The name this node gives in EHLO: `smtp-server@hostname`, else the webroot webapp's `http-host`, else `localhost`.
 #[must_use]
 pub fn hostname() -> String {
-    for name in ["smtp_hostname", "webapp_http_host"] {
-        let value = moqui_lib::env::get_prop_or_env(name);
+    for name in ["smtp-server@hostname", "webapp-list/webapp[webroot]@http-host"] {
+        let value = moqui_core::context::conf_env::setting_or_property(name);
         if !value.trim().is_empty() {
             return value.trim().to_string();
         }
@@ -133,9 +133,8 @@ pub fn hostname() -> String {
     "localhost".to_string()
 }
 
-fn property_seconds(name: &str, default: f64) -> Duration {
-    let seconds = moqui_lib::env::get_prop_or_env(name)
-        .trim()
+fn setting_seconds(selector: &str, default: f64) -> Duration {
+    let seconds = moqui_core::context::conf_env::setting(selector)
         .parse::<f64>()
         .ok()
         .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
@@ -143,18 +142,18 @@ fn property_seconds(name: &str, default: f64) -> Duration {
     Duration::from_secs_f64(seconds)
 }
 
-/// The wait before try `attempt + 1`, after `attempt` tries: `mail_delivery_retry_seconds` (300), doubled each time, to
+/// The wait before try `attempt + 1`, after `attempt` tries: `mail-delivery@retry-seconds` (300), doubled each time, to
 /// 4 hours.
 fn retry_after(attempt: u32) -> Duration {
-    let first = property_seconds("mail_delivery_retry_seconds", 300.0);
+    let first = setting_seconds("mail-delivery@retry-seconds", 300.0);
     first
         .saturating_mul(1_u32 << attempt.saturating_sub(1).min(16))
         .min(MAX_RETRY.max(first))
 }
 
-/// How long a row is tried before its waiting recipients are refused: `mail_delivery_days` (5).
+/// How long a row is tried before its waiting recipients are refused: `mail-delivery@days` (5).
 fn give_up_after() -> Duration {
-    property_seconds("mail_delivery_days", 5.0) * 86_400
+    setting_seconds("mail-delivery@days", 5.0) * 86_400
 }
 
 fn millis(duration: Duration) -> i64 {
@@ -327,7 +326,7 @@ fn flight() -> &'static Mutex<Flight> {
 }
 
 /// Start the delivery thread on a node that takes links (a dedicated edge node, or an all-in-one node, plans/archive/Edge-Node.md
-/// §10) whose `edge_mail_mta` is `moqui`; once per factory. It holds the factory only for a round, so a stopped server
+/// §10) whose `mail-delivery@mta` is `moqui`; once per factory. It holds the factory only for a round, so a stopped server
 /// ends it. It delivers only the rows [`record`] made for a paired node's `mailOut` items: an all-in-one node's own
 /// mail goes out by its `EmailServer` as on a normal node, never through these rows, so it is not delivered twice.
 pub fn start(factory: &Arc<ExecutionContextFactory>) {
@@ -343,7 +342,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
         .name("moqui-mx".to_string())
         .spawn(move || run_loop(&weak));
     match spawned {
-        Ok(_) => tracing::info!("MX delivery started (edge_mail_mta moqui)"),
+        Ok(_) => tracing::info!("MX delivery started (mail-delivery@mta moqui)"),
         Err(err) => tracing::error!("MX delivery did not start: {err}"),
     }
 }
@@ -717,7 +716,7 @@ fn clip(text: &str, max: usize) -> String {
 }
 
 /// Record the answers of a try of `row` (its `attempts` tries before) in its own transaction first: the sent and the
-/// refused counted, the waiting left to wait (or, past `mail_delivery_days`, refused), a row with none left done. Then
+/// refused counted, the waiting left to wait (or, past `mail-delivery@days`, refused), a row with none left done. Then
 /// its report is queued ([`report`]); a report that fails stays marked and is queued at the next round, and the
 /// delivery is never run again for it.
 fn finish(
@@ -947,10 +946,10 @@ fn clean(factory: &ExecutionContextFactory) {
 
 // ---- one domain ----
 
-/// `mail_mx_override`: where mail to `domain` goes instead of its MX (`domain=host:port`, `*` for any), testing and
+/// `mail-delivery@mx-override`: where mail to `domain` goes instead of its MX (`domain=host:port`, `*` for any), testing and
 /// staging only.
 fn override_for(domain: &str) -> Option<(String, u16)> {
-    let setting = moqui_lib::env::get_prop_or_env("mail_mx_override");
+    let setting = moqui_core::context::conf_env::setting("mail-delivery@mx-override");
     let mut any = None;
     for entry in setting.split(',') {
         let Some((name, target)) = entry.trim().split_once('=') else {
@@ -974,11 +973,11 @@ fn override_for(domain: &str) -> Option<(String, u16)> {
     any
 }
 
-/// `mail_mx_require_tls`: whether mail to `domain` goes only over TLS with a certificate valid for the MX host, whatever
+/// `mail-delivery@mx-require-tls`: whether mail to `domain` goes only over TLS with a certificate valid for the MX host, whatever
 /// MTA-STS says (plans/Security-Review-Medium.md SEC-MAIL-66): the recipient domains listed, comma-separated, `*` for
 /// every one. Empty (the default) leaves the opportunistic STARTTLS of other domains as it is.
 fn tls_required(domain: &str) -> bool {
-    moqui_lib::env::get_prop_or_env("mail_mx_require_tls")
+    moqui_core::context::conf_env::setting("mail-delivery@mx-require-tls")
         .split(',')
         .map(|name| name.trim().trim_end_matches('.').to_ascii_lowercase())
         .any(|name| name == "*" || (!name.is_empty() && name == domain))
@@ -989,7 +988,7 @@ fn tls_required(domain: &str) -> bool {
 enum TlsRule {
     /// The domain's MTA-STS policy is `enforce`.
     MtaSts,
-    /// The domain is in `mail_mx_require_tls`.
+    /// The domain is in `mail-delivery@mx-require-tls`.
     Required,
 }
 
@@ -997,7 +996,7 @@ impl TlsRule {
     fn source(self) -> &'static str {
         match self {
             Self::MtaSts => "MTA-STS requires it",
-            Self::Required => "mail_mx_require_tls requires it",
+            Self::Required => "mail-delivery@mx-require-tls requires it",
         }
     }
 }
@@ -1008,7 +1007,7 @@ type Hosts = Vec<(String, Vec<IpAddr>, u16)>;
 /// The MX hosts of `domain` and their addresses, or the answer every recipient gets when there is none to try. An
 /// address that is not public (loopback, private, link-local, `moqui_lib::net::internal_address`) is never tried: a
 /// recipient domain's DNS would otherwise make the node deliver to, and report the replies of, a server inside its own
-/// network (SEC-OUT-04, SEC-MAIL-66). `mail_mx_override` may name one.
+/// network (SEC-OUT-04, SEC-MAIL-66). `mail-delivery@mx-override` may name one.
 fn hosts(domain: &str, policy: Option<&sts::Policy>) -> Result<Hosts, Answer> {
     if let Some((host, port)) = override_for(domain) {
         let ips = match host.parse::<IpAddr>() {
@@ -1136,7 +1135,7 @@ fn reply_text(err: &lettre::transport::smtp::Error) -> String {
 }
 
 /// Where one session goes: the MX host's name (for TLS), its address, whether TLS with a valid certificate is required
-/// (MTA-STS enforce, `mail_mx_require_tls`), and when the try must end.
+/// (MTA-STS enforce, `mail-delivery@mx-require-tls`), and when the try must end.
 struct Target<'a> {
     host: &'a str,
     address: SocketAddr,
@@ -1207,7 +1206,7 @@ fn session(
             connection = connect()?;
         }
     } else if let Some(rule) = secure {
-        // never in clear text: the try waits, and the message bounces after mail_delivery_days
+        // never in clear text: the try waits, and the message bounces after mail-delivery@days
         connection.abort();
         return Err(format!("no STARTTLS, and {}", rule.source()));
     }

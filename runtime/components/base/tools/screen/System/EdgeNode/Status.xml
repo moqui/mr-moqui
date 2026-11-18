@@ -19,16 +19,16 @@ along with this software (see the LICENSE.md file). If not, see
     oldest), and each replicated set's epoch, last batch acknowledged and changes waiting; Pause (pause#QueueDelivery)
     holds queue delivery both ways until Resume, and Resync (resync#Replication) sends every set whole again. Setup (§5.7,
     E10): what this node uses the edge node for: its host names there (get#EdgeOffer nodeHosts, while the link is up),
-    the system's and the accounts' mail through the EDGE mail server, the chat address (channels_public_url), the
-    PASS client's sites, XMPP (xmpp_domain through the edge node's tunnel ports, while the link is up) and calls (new
-    calls on the edge node's media node while its link-kept row is live, or off by edge_calls_enabled) and phones
+    the system's and the accounts' mail through the EDGE mail server, the chat address (channels@public-url), the
+    PASS client's sites, XMPP (xmpp-server@domain through the edge node's tunnel ports, while the link is up) and calls (new
+    calls on the edge node's media node while its link-kept row is live, or off by edge/node@calls-enabled) and phones
     (the trunks and phones through the edge node's SIP engine while its link-kept SipNode row is live, with its
-    trunks loaded and the numbers with a fallback, or off by edge_sip_enabled), with Set up
+    trunks loaded and the numbers with a fallback, or off by edge/node@sip-enabled), with Set up
     again, which opens the wizard at Discover. This node's cluster (plans/Edge-Node2.md §4.4, §4.10 On a local node;
     get#LocalCluster): every member links on its own with the pairing's key, and this box shows this member's instance
     id and state on its links, the pairing it is known by, and its cluster's members as its links tell the edge node;
     Drain and Resume (drain#EdgeMember with no pairing) drain this member, so the edge node sends it no new work and
-    /health answers 503, for a rolling upgrade or before stopping it. It shows while paired, and while edge_node_url is
+    /health answers 503, for a rolling upgrade or before stopping it. It shows while paired, and while edge/node@url is
     set with the link not running in this process. Edge cluster (plans/Edge-Node2.md §4.6; get#LinkStatus
     edgeMemberList), when the edge node is a cluster of more than one: this node's link to each member, with its state,
     address, round trip, last connect, links lost, and which one carries this node's work up; the Link box above is of
@@ -168,7 +168,7 @@ along with this software (see the LICENSE.md file). If not, see
             lastAckText: set.lastAckDate ? ec.l10n.format(set.lastAckDate, '') : L('Not yet')}))
         // this member and its cluster (plans/Edge-Node2.md §4.4): every member links, so each shows its own; also with the
         // link not running here, as long as this node is paired by its .env
-        const pairedByEnv = ['edge_node_url', 'front_node_url'].some((name) => !!String(System.getProperty(name) || '').trim())
+        const pairedByEnv = ['edge/node@url', 'edge/front-node@url'].some((name) => !!String(ec.factory.getConfValue(name) || '').trim())
         ownCluster = !notBuilt && link.takesLinks !== true && (paired || (notStarted && pairedByEnv))
         clusterError = ''
         let clusterOut = {}
@@ -203,7 +203,7 @@ along with this software (see the LICENSE.md file). If not, see
             let xmppText = hostsText
             // the edge node's SIP engine as its offer says it now (E10 phones): its trunks and the fallbacks it holds
             let sipOffer = null
-            const xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()
+            const xmppDomain = String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().replace(/\.$/, '').toLowerCase()
             if (state === 'linked') {
                 ec.message.pushErrors()
                 try {
@@ -229,7 +229,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
             // calls (E7, E10 calls): the edge node's media node row the link keeps, live, and this node's choice
-            const callsOff = ['false', 'n', 'no', '0', 'off'].includes(String(System.getProperty('edge_calls_enabled') || '').trim().toLowerCase())
+            const callsOff = ['false', 'n', 'no', '0', 'off'].includes(String(ec.factory.getConfValue('edge/node@calls-enabled') || '').trim().toLowerCase())
             const liveRows = Array.from(ec.entity.find('moqui.call.CallMediaNode')
                 .condition('heartbeatDate', '>=', new Date(Date.now() - 60000)).useCache(false).disableAuthz().list())
             const liveRow = liveRows.find((row) => row.edgeLinked === 'Y')
@@ -242,7 +242,7 @@ along with this software (see the LICENSE.md file). If not, see
                     (Array.from(link.turnUrls || []).length ? ', ' + L('with its TURN') : ', ' + L('no TURN'))
                 : L('Not live: the link keeps the edge node as media node while it is up')
             // phones (E8, E10 phones): the edge node's SipNode row the link keeps, live, and this node's choice
-            const sipOff = ['false', 'n', 'no', '0', 'off'].includes(String(System.getProperty('edge_sip_enabled') || '').trim().toLowerCase())
+            const sipOff = ['false', 'n', 'no', '0', 'off'].includes(String(ec.factory.getConfValue('edge/node@sip-enabled') || '').trim().toLowerCase())
             const sipRow = Array.from(ec.entity.find('moqui.call.SipNode').condition('edgeLinked', 'Y')
                 .condition('heartbeatDate', '>=', new Date(Date.now() - 60000)).useCache(false).disableAuthz().list())[0]
             const sipText = sipOff ? L('Off: the edge node gets no trunks or fallbacks, and its SIP engine takes no new call')
@@ -255,9 +255,9 @@ along with this software (see the LICENSE.md file). If not, see
             const system = ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', 'SYSTEM').disableAuthz().one()
             const accounts = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailServerId', 'EDGE').disableAuthz().count()
             const systemEdge = system?.smtpHost === 'edge:'
-            const chatUrl = String(System.getProperty('channels_public_url') || '')
-            const client = String(System.getProperty('pass_edge_client') || '') || 'edge'
-            const sites = String(System.getProperty('pass_client_' + client + '_sites') || '')
+            const chatUrl = String(ec.factory.getConfValue('channels@public-url') || '')
+            const client = String(ec.factory.getConfValue('edge/node@pass-client') || '') || 'edge'
+            const sites = String(ec.factory.getConfValue('pass-authority/client[' + client + ']@sites') || '')
             setup = {hostsText,
                 mailText: systemEdge || accounts ? (systemEdge ? L('The system') + (accounts ? ', ' : '') : '') +
                     (accounts ? ec.resource.expand('${n} accounts', '', {n: accounts}) : '') + ' ' + L('through the edge node') : L('Not through the edge node'),
@@ -382,7 +382,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="state"><default-field title="State">
                             <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text></render-mode>
                         </default-field></field>
-                        <field name="url"><default-field title="Address" tooltip="The member's edge_link_url, else the address this node paired with"><display/></default-field></field>
+                        <field name="url"><default-field title="Address" tooltip="The member's edge@link-url, else the address this node paired with"><display/></default-field></field>
                         <field name="rttText" align="right"><default-field title="Round trip"><display/></default-field></field>
                         <field name="lastConnectText"><default-field title="Last connect"><display/></default-field></field>
                         <field name="reconnectsText" align="right"><default-field title="Links lost" tooltip="Since this server started"><display/></default-field></field>
@@ -504,9 +504,9 @@ along with this software (see the LICENSE.md file). If not, see
                         text="Every member of this node's cluster links to the edge node on its own, with the pairing's key, and the edge node balances work over the live ones. It admits a new member only when a linked one lists it as live here. Drain a member before stopping or upgrading it."/>
                 <container style="q-pa-sm">
                     <form-single name="OwnMember" map="ownMember">
-                        <field name="instanceId"><default-field title="This node" tooltip="Its instance id: the instance_id property when set, else the one kept in runtime/db/instance_id"><display/></default-field></field>
+                        <field name="instanceId"><default-field title="This node" tooltip="Its instance id: the conf's instance@id when set, else the one kept in runtime/db/instance_id"><display/></default-field></field>
                         <field name="stateLabel"><default-field title="State on its links" tooltip="What this node tells the edge node: starting, live, draining or stopping. Only a live member gets new work"><display/></default-field></field>
-                        <field name="pairingId"><default-field title="Pairing" tooltip="The id the edge node knows this cluster by (edge_node_pairing in the .env the members share)"><display/></default-field></field>
+                        <field name="pairingId"><default-field title="Pairing" tooltip="The id the edge node knows this cluster by (edge/node@pairing in the .env the members share)"><display/></default-field></field>
                         <field-layout>
                             <field-row><field-ref name="instanceId"/><field-ref name="stateLabel"/></field-row>
                             <field-ref name="pairingId"/>

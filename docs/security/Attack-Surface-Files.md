@@ -94,7 +94,7 @@ Each service calls `get#DriveAccess`. The owner is level 3. A current `ResourceD
 
 ### Chunked uploads
 
-`org.moqui.edge.ClientSyncServices.upload#Chunk` (the `uploadChunk` transition that Compose and Chat include) takes one chunk of a file of the signed-in user. `uploadId` must match `^[A-Za-z0-9_.:-]{1,64}$`. A file is at most 25 MB. A chunk other than the last is at least `client_upload_min_chunk_bytes` (262144). A user holds at most `client_upload_max_count` (20) unfinished uploads and `client_upload_max_mb` (100) MB in all. Chunks are stored under `dbresource://upload/<userId>/<token>` and rows are found by `userId` and `uploadId`.
+`org.moqui.edge.ClientSyncServices.upload#Chunk` (the `uploadChunk` transition that Compose and Chat include) takes one chunk of a file of the signed-in user. `uploadId` must match `^[A-Za-z0-9_.:-]{1,64}$`. A file is at most 25 MB. A chunk other than the last is at least `client-sync@upload-min-chunk-bytes` (262144). A user holds at most `client-sync@upload-max-count` (20) unfinished uploads and `client-sync@upload-max-mb` (100) MB in all. Chunks are stored under `dbresource://upload/<userId>/<token>` and rows are found by `userId` and `uploadId`.
 
 ### The drive picker
 
@@ -104,7 +104,7 @@ Each service calls `get#DriveAccess`. The owner is level 3. A current `ResourceD
 
 The route is a row in [Attack-Surface-Routes.md](Attack-Surface-Routes.md). `ElFinderServices.run#Command` (`crates/moqui-dav/src/elfinder.rs`) implements `file`, `open`, `tree`, `parents`, `ls`, `get`, `mkdir`, `mkfile`, `rm`, `rename`, `upload` and `put`. `resourceRoot` and `volumeId` come from the request; with no `resourceRoot` the transition uses the `mantle.content.root` preference, else `dbresource://mantle/content`. A target is the volume id (3 characters) and the URL-safe Base64 of the path under the root. A path with a `..` segment or a segment holding `:` is `errFileNotFound`. `rm`, `rename` and `put` refuse the root. `rm` of a folder removes everything under it.
 
-In production (`instance_purpose` `production`) every command, the reads (`get`, `file`, `open`) included, answers "This resource root is not served on a production instance" unless the root starts with `dbresource://`, `content://` or `git://` (`Connector::root_refused`, before the command runs; SEC-FIL-08, fixed); `file:`, `runtime://`, `component://` and `classpath://` roots are served on a dev or test instance only. A `content://` root is an error unless a component installs a provider for that scheme. The `resources` transition is `read-only="true"`, and it runs the same commands for GET and POST ([CSRF](Attack-Surface-Web.md#csrf)).
+In production (`instance@purpose` `production`) every command, the reads (`get`, `file`, `open`) included, answers "This resource root is not served on a production instance" unless the root starts with `dbresource://`, `content://` or `git://` (`Connector::root_refused`, before the command runs; SEC-FIL-08, fixed); `file:`, `runtime://`, `component://` and `classpath://` roots are served on a dev or test instance only. A `content://` root is an error unless a component installs a provider for that scheme. The `resources` transition is `read-only="true"`, and it runs the same commands for GET and POST ([CSRF](Attack-Surface-Web.md#csrf)).
 
 ## Resource facade schemes
 

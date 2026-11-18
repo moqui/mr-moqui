@@ -59,7 +59,7 @@ mod utilities;
 mod web;
 
 pub(crate) use l10n::rounding_strategy_named;
-pub use upload::text_upload;
+pub use upload::{bytes_upload, text_upload};
 #[cfg(test)]
 pub(crate) use sri::{HOLD_EXPECTED as SRI_HOLD_EXPECTED, HOLD_SCRIPT as SRI_HOLD_SCRIPT};
 

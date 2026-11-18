@@ -15,9 +15,11 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- For moqui test runs of basic-comms only (docs/dev/JS-Test-Client.md): the server moqui test-client basic-comms starts to serve the specs
     holds call media on a free loopback port, so the client specs' calls have an SFU. A binary without the rtc feature
     logs that it has none, and the specs that need it (requires: ["rtc"]) skip. The BasicCommsTexts spec's call-context
-    provider: a test app root (test/screen/TextNamesApp.xml) and its service file. -->
+    provider: a test app root (test/screen/TextNamesApp.xml) and its service file. The BasicCommsPeople spec's contacts hook. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="rtc_media_port" value="0"/>
+    <!-- the BasicCommsPeople spec's contacts hook (chat's people, plans/Comms-Messaging.md §11.1) -->
+    <chat contact-service="moqui.basiccommstest.PeopleTestServices.find#ContactPeople"/>
+    <media-server port="0"/>
     <screen-facade>
         <screen location="component://webroot/screen/webroot/apps.xml">
             <subscreens-item name="textNamesTest" menu-title="Text names test" menu-index="99" location="component://basic-comms/test/screen/TextNamesApp.xml"/>
@@ -25,5 +27,6 @@ along with this software (see the LICENSE.md file). If not, see
     </screen-facade>
     <service-facade>
         <service-file location="component://basic-comms/test/service/moqui/basiccommstest/TextNamesServices.xml"/>
+        <service-file location="component://basic-comms/test/service/moqui/basiccommstest/PeopleTestServices.xml"/>
     </service-facade>
 </moqui-conf>

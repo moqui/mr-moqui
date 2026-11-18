@@ -114,7 +114,10 @@ null is kept. A reference that does not resolve is null with a warning, or a fai
 - Markup is checked in source (with each `${}` as a mark, so a finding has its line) and again in each render's output:
   no `<script>`, frame, plugin, `<form>`, `<base>`, `<noscript>`, `<math>`; no `<foreignObject>` or animation anywhere,
   and no `<style>` in an `<svg>`; no `on…` attribute, `srcdoc`, `action`, `form` or `formaction` (and the other `form…`
-  overrides) or `http-equiv`; no expression in a tag or attribute name. The check is a tokenizer's, not a tree
+  overrides) or `http-equiv`; a `<meta>` is a `charset`, a `name` of `viewport`, `description`, `keywords`, `author`,
+  `robots`, `googlebot`, `theme-color`, `color-scheme`, `application-name`, `generator` or `format-detection` (or a
+  `twitter:` one), an Open Graph `property` or an `itemprop` (never `name="referrer"`); no expression in a tag or
+  attribute name. The check is a tokenizer's, not a tree
   builder's, so what a browser would parse as markup inside an SVG is refused everywhere: no `<` in a `<style>` (CSS
   writes it `\3c`) and no tag in a `<title>` or `<textarea>`. Links (`<a href>`) take http, https, mailto, tel and
   relative URLs. What the page loads (`src`, `srcset`, `<link href>`, CSS `url()`, an SVG `fill`, `filter`, `mask`…

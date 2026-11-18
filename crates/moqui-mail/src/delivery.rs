@@ -28,7 +28,7 @@
 //! Delivery, once per account however many of its addresses were recipients:
 //!
 //! 1. The trace fields go on top: `Return-Path` (the envelope sender; any the message had is removed), a
-//!    `Delivered-To` per recipient address of the account, and `Received`. With `smtp_authserv_id` set only the
+//!    `Delivered-To` per recipient address of the account, and `Received`. With `smtp-server@authserv-id` set only the
 //!    `Authentication-Results` fields of the gateway (that authserv-id) are kept; the gateway's verdict is trusted and
 //!    nothing is verified again.
 //! 2. A message the account already received (the same Message-ID) is not stored again, so the gateway's retry after a
@@ -47,7 +47,7 @@
 //! trace field, and the recipients whose `NOTIFY` has `SUCCESS` and whose account stored the message get one "delivered"
 //! `multipart/report` (RFC 3464) to the envelope sender, from the null reverse path, through the outgoing server of the
 //! first such account. The notice goes only when the sender is authenticated ([`notice_authenticated`], SEC-MAIL-06):
-//! `smtp_authserv_id` is set and the trusted results show `spf=pass`, or `dmarc=pass` with its `header.from` aligned
+//! `smtp-server@authserv-id` is set and the trusted results show `spf=pass`, or `dmarc=pass` with its `header.from` aligned
 //! with the envelope sender's domain; otherwise it would be backscatter to an address anyone may write. A failure needs
 //! no DSN from here: the listener refuses at the time and the gateway reports it.
 
@@ -566,13 +566,17 @@ pub fn plus_separator(setting: &str) -> String {
 }
 
 /// What delivery trusts and the plus-addressing characters, from the conf's `smtp-server` as the listener reads them:
-/// for mail the listener of an edge node queued, delivered here.
+/// for mail the listener of an edge node queued, delivered here. Its `authserv-id`, when empty on an edge node or in
+/// internet mode, is its hostname ([`crate::mx::hostname`]).
 #[must_use]
 pub fn listener_options(factory: &moqui_core::context::ExecutionContextFactory) -> (Options, String) {
     let setting = |name: &str| factory.conf_setting("smtp-server", name);
     let authserv_id = match setting("authserv-id") {
         id if !id.is_empty() => id,
-        _ => moqui_lib::env::get_prop_or_env("smtp_authserv_id").trim().to_string(),
+        _ if factory.conf_flag("smtp-server", "internet", false) || moqui_core::edge::settings(factory).edge_node() => {
+            crate::mx::hostname()
+        }
+        _ => String::new(),
     };
     let options = Options {
         spam_headers: setting("spam-headers")
@@ -586,7 +590,7 @@ pub fn listener_options(factory: &moqui_core::context::ExecutionContextFactory) 
     (options, plus_separator(&setting("plus-separator")))
 }
 
-/// Why a node that receives mail without a listener of its own should set `smtp_authserv_id`, when it is empty
+/// Why a node that receives mail without a listener of its own should set `smtp-server` `authserv-id`, when it is empty
 /// (`authserv_id`): it is paired with an edge node (`paired`), whose mail it delivers here keeping every
 /// `Authentication-Results` as it came unless the edge node names an authserv-id of its own, or it syncs mail from an
 /// IMAP or POP3 server (`synced`, asked only when needed), whose fields an application trusts only under the
@@ -597,15 +601,15 @@ pub fn authserv_warning(authserv_id: &str, paired: bool, synced: impl FnOnce() -
     }
     if paired {
         return Some(
-            "smtp_authserv_id is empty on a node paired with an edge node: mail the edge node passes on without an \
-             authserv-id of its own keeps every Authentication-Results as it came, a forged one too; set it to the \
-             edge node's (its smtp_authserv_id, else its smtp_hostname)",
+            "smtp-server@authserv-id is empty on a node paired with an edge node: mail the edge node passes on \
+             without an authserv-id of its own keeps every Authentication-Results as it came, a forged one too; set it \
+             to the edge node's (its smtp-server@authserv-id, else its smtp-server@hostname)",
         );
     }
     if synced() {
         return Some(
-            "smtp_authserv_id is empty on a node that syncs mail from an IMAP or POP3 server: no Authentication-Results \
-             of the synced mail is told from a forged one; set it to the provider's authserv-id",
+            "smtp-server@authserv-id is empty on a node that syncs mail from an IMAP or POP3 server: no \
+             Authentication-Results of the synced mail is told from a forged one; set it to the provider's authserv-id",
         );
     }
     None

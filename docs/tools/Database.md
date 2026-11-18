@@ -291,7 +291,7 @@ both whatever calls them.
   - `VACUUM`, `CREATE INDEX CONCURRENTLY` and `CREATE DATABASE` run outside the transaction.
   - Transaction control (`COMMIT`, `BEGIN`, `SET TRANSACTION`, …) is refused in every mode.
   - On MySQL and MariaDB, DDL commits implicitly, and the confirmation says so.
-- **Production** (`instance_purpose` production): a run with changes also needs the database's name typed.
+- **Production** (`instance@purpose` production): a run with changes also needs the database's name typed.
 - **Limits:** 500 rows per query (at most 100,000), with Fetch more for a read-only query. The timeout is 5 minutes
   (at most an hour).
 - **Results:** each query gets a result tab. A plain query run read only can be sorted, filtered and fetched again;
@@ -552,7 +552,7 @@ cancel, table maintenance or entity sources.
   - `work-mem`, `maintenance-work-mem` and `effective-cache-size` (empty keeps Postgres's defaults).
   - Each is a size such as `64MB`, and applies when this process starts the cluster. Database › Settings shows the
     conf value beside the running one.
-- **`database_audit_days`** (property, 90): how long `DatabaseAudit` rows are kept. The `DatabaseAuditPurge` ServiceJob
+- **`tools@database-audit-days`** (property, 90): how long `DatabaseAudit` rows are kept. The `DatabaseAuditPurge` ServiceJob
   also removes expired SQL tokens.
 
 ```xml

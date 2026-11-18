@@ -47,6 +47,8 @@
 //! own `sendsPerMinute` wins), `allowInternalAddresses`; and `webhookUrl`, the URL the provider posts to, read only by
 //! [`moqui_core::service::chat_bridge::webhook_public_url`] (a signature over the URL) and [`callback_url`].
 
+pub mod rich;
+
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -59,6 +61,13 @@ use moqui_core::service::chat_bridge::{
 use moqui_lib::http::{Method, RestClient, RestResponse};
 use moqui_lib::object::{to_plain_string, Value};
 use serde_json::{json, Value as Json};
+
+pub use rich::Rich;
+
+/// The most pictures a rich message (a carousel's cards) carries.
+pub const RCS_MEDIA_COUNT: usize = 10;
+/// The most bytes a rich message's pictures are together (`maxRcsTotalBytes` overrides).
+pub const RCS_TOTAL_BYTES: i64 = 64 * 1024 * 1024;
 
 /// The most a file fetched from a provider may be, whatever a bridge says.
 pub const MEDIA_CAP: u64 = 20 * 1024 * 1024;
@@ -157,7 +166,7 @@ pub fn flag_of(config: &Json, key: &str) -> bool {
 }
 
 /// The URL the provider posts the bridge's webhooks to, for a send that names its status callback (Twilio's
-/// `StatusCallback`, Sinch's `callback_url`): the bridge's `webhookUrl`, else `channels_public_url` and
+/// `StatusCallback`, Sinch's `callback_url`): the bridge's `webhookUrl`, else `channels@public-url` and
 /// `/channels/{chatBridgeId}/webhook`. None when neither is set.
 pub fn callback_url(bridge: &BridgeInfo) -> Option<String> {
     let request = WebhookRequest {
@@ -185,6 +194,12 @@ pub struct Outgoing<'a> {
     /// An RCS send ([`Channel::Rcs`]) may go as SMS or MMS from our number when the phone takes no RCS: the bridge's
     /// `smsFallback` (true when not set). Always true for an SMS provider, where it means nothing.
     pub fallback: bool,
+    /// An RCS send's cards and suggestions ([`rich`]), its `text` the fallback; none for an SMS provider, which sends
+    /// the fallback and the first picture.
+    pub rich: Option<&'a Rich>,
+    /// A rich send's fallback picture (MMS): the index in [`Self::media_urls`] of its first, when that is within the
+    /// MMS limit (`maxMediaBytes`); none sends the fallback as text alone.
+    pub fallback_image: Option<usize>,
 }
 
 impl Outgoing<'_> {
@@ -346,6 +361,8 @@ pub struct InboundMedia {
 pub enum ReceiptStatus {
     Sent,
     Delivered,
+    /// Read on the phone (an RCS bridge's: Twilio's `read`, Sinch's `READ`).
+    Read,
     Unconfirmed,
     Failed,
 }
@@ -356,6 +373,7 @@ impl ReceiptStatus {
         match self {
             ReceiptStatus::Sent => "sent",
             ReceiptStatus::Delivered => "delivered",
+            ReceiptStatus::Read => "read",
             ReceiptStatus::Unconfirmed => "unconfirmed",
             ReceiptStatus::Failed => "failed",
         }
@@ -434,6 +452,11 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     fn channel(&self) -> Channel {
         Channel::Sms
     }
+    /// The most bytes of one picture of a rich message on its RCS channel (`maxRcsMediaBytes` overrides): Twilio's 16 MB
+    /// by default.
+    fn rcs_media_bytes(&self) -> i64 {
+        16 * 1024 * 1024
+    }
     /// The adapter name a `ChatBridge` selects it by (`adapterName`; Telnyx's is `sms`).
     fn adapter_name(&self) -> &'static str;
     /// An RCS provider's SMS adapter of the same provider (`sms-twilio` for `rcs-twilio`): a reply to a fallback text
@@ -502,7 +525,7 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
     }
     /// The event a webhook carries, for an edge node's queue: its id (a repeat has the same) and their number. None when
     /// the body cannot be read. For a provider that verifies on the local node it reads a body nobody verified yet (at
-    /// most `channels_edge_unverified_max_bytes`): read only the key.
+    /// most `channels/edge-limits@unverified-max-bytes`): read only the key.
     fn event_key(&self, request: &WebhookRequest) -> Option<WebhookEventKey>;
     /// The event a verified webhook carries; or the answer, when it is malformed (400).
     ///
@@ -553,6 +576,56 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
         None
     }
 
+    /// Show `theirs` that a user of ours is typing, from `ours` (an RCS provider's typing indicator), through `client`
+    /// (the guarded one; [`plain`] sends one request); nothing when the provider has none or the bridge lacks what it
+    /// needs. Nothing by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it was not sent.
+    fn send_typing(
+        &self,
+        client: &RestClient,
+        config: &Self::Config,
+        settings: &Settings,
+        ours: &str,
+        theirs: &str,
+    ) -> Result<(), String> {
+        let _ = (client, config, settings, ours, theirs);
+        Ok(())
+    }
+    /// The contents this provider made for sends before `before_millis` (ours by their name: Twilio's `moqui-...`
+    /// Contents), for the sweep of those no delivery keeps. None by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns why they could not be read.
+    fn orphan_contents(
+        &self,
+        client: &RestClient,
+        config: &Self::Config,
+        settings: &Settings,
+        before_millis: i64,
+    ) -> Result<Vec<String>, String> {
+        let _ = (client, config, settings, before_millis);
+        Ok(Vec::new())
+    }
+    /// Delete a content this provider made for a send (a Twilio Content resource, [`keep_content`]); one it no longer
+    /// has is deleted. Nothing by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it was not deleted.
+    fn delete_content(
+        &self,
+        client: &RestClient,
+        config: &Self::Config,
+        settings: &Settings,
+        content_id: &str,
+    ) -> Result<(), String> {
+        let _ = (client, config, settings, content_id);
+        Ok(())
+    }
     /// The request of the provider's paid number lookup of `number`, for the spam filter (plans/Comms-Messaging.md
     /// §18.3 phase 11); None, the default, when it has none.
     fn lookup_request(&self, config: &Self::Config, settings: &Settings, number: &str) -> Option<ApiRequest> {
@@ -614,9 +687,13 @@ impl<P: SmsProvider> SmsAdapter<P> {
 }
 
 /// Our number and the outside numbers, from a mapping's external room id: a pair's (`ours/theirs`) or a group text's
-/// (`ours/a,b,c`, plans/Comms-Messaging.md §9), at most [`NUMBERS_READ`] of them. None for anything else.
+/// (`ours/a,b,c`, plans/Comms-Messaging.md §9), at most [`NUMBERS_READ`] of them; a text member's (`ours/theirs#room`,
+/// [`member_of`]) is its pair. None for anything else.
 pub fn numbers_of(external_room_id: &str) -> Option<(String, Vec<String>)> {
-    let (ours, theirs) = external_room_id.split_once('/')?;
+    let numbers = external_room_id
+        .split_once('#')
+        .map_or(external_room_id, |(numbers, _)| numbers);
+    let (ours, theirs) = numbers.split_once('/')?;
     let valid = |number: &str| {
         number
             .strip_prefix('+')
@@ -625,6 +702,79 @@ pub fn numbers_of(external_room_id: &str) -> Option<(String, Vec<String>)> {
     let theirs: Vec<String> = theirs.split(',').map(str::to_string).collect();
     let fits = !theirs.is_empty() && theirs.len() <= NUMBERS_READ && theirs.iter().all(|number| valid(number));
     (valid(ours) && fits && !theirs.iter().any(|number| number == ours)).then(|| (ours.to_string(), theirs))
+}
+
+/// A text member's mapping (plans/Comms-Messaging.md §18.3 phase 18): our number, theirs and the room, from its external
+/// room id `ours/theirs#chatRoomId`. None for any other mapping.
+pub fn member_of(external_room_id: &str) -> Option<(String, String, String)> {
+    let (numbers, room) = external_room_id.split_once('#')?;
+    let room = room.trim();
+    if room.is_empty()
+        || room.len() > 64
+        || !room
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    {
+        return None;
+    }
+    let (ours, theirs) = pair_of(numbers)?;
+    Some((ours, theirs, room.to_string()))
+}
+
+/// What a text member gets of a room's message: `<sender>: <text>` (the sender's name cut to 30 characters, the whole cut
+/// to `max_text` characters, ending `…`), the photos, videos and sounds the bridge's MMS limits take, and a line for each
+/// other file, which a text member could not open from a link. No rich cards: their text is the fallback.
+pub fn member_request(request: &DeliveryRequest, max_text: usize, max_count: usize, max_bytes: i64) -> DeliveryRequest {
+    let name: String = request
+        .sender_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("?")
+        .chars()
+        .take(30)
+        .collect();
+    let mut lines: Vec<String> = Vec::new();
+    let mut kept = Vec::new();
+    let mut bytes = 0_i64;
+    for file in &request.attachments {
+        let media = file
+            .content_type
+            .as_deref()
+            .is_some_and(|kind| kind.starts_with("image/") || kind.starts_with("video/") || kind.starts_with("audio/"));
+        let size = file.file_size.unwrap_or(0);
+        if media && kept.len() < max_count && bytes + size <= max_bytes {
+            bytes += size;
+            kept.push(file.clone());
+        } else {
+            lines.push(format!(
+                "[{}: a file, not sent by text]",
+                file.file_name.as_deref().unwrap_or("a file")
+            ));
+        }
+    }
+    let body = request.text.as_deref().map(str::trim).unwrap_or_default();
+    let mut text = if body.is_empty() && !kept.is_empty() && lines.is_empty() {
+        format!("{name}:")
+    } else {
+        let words = [body.to_string()]
+            .into_iter()
+            .chain(lines)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{name}: {words}")
+    };
+    if text.chars().count() > max_text.max(2) {
+        text = text.chars().take(max_text.max(2) - 1).collect::<String>() + "…";
+    }
+    DeliveryRequest {
+        text: Some(text),
+        html: None,
+        rich: None,
+        attachments: kept,
+        ..request.clone()
+    }
 }
 
 /// Our number and theirs, from a mapping's external room id (`ours/theirs`); none for a group's.
@@ -692,6 +842,31 @@ pub fn form_encode(pairs: &[(String, String)]) -> String {
         .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
         .collect();
     parts.join("&")
+}
+
+/// Send `request`, whose answer is only its status (a typing indicator, a delete), through `client`: 2xx is done, and
+/// 404 too when `gone_is_done`.
+///
+/// # Errors
+///
+/// Returns the provider's answer, or why it was not reached.
+pub fn plain<P: SmsProvider>(
+    provider: &P,
+    client: &RestClient,
+    request: &ApiRequest,
+    gone_is_done: bool,
+) -> Result<(), String> {
+    let response = call(client, request).map_err(|error| error.message().to_string())?;
+    let status = response.status();
+    if (200..300).contains(&status) || (gone_is_done && status == 404) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} answered {status}: {}",
+            provider.name(),
+            provider.error_of(response.body()).text
+        ))
+    }
 }
 
 /// Send `request` through `client` (no answer kept but the response).
@@ -843,6 +1018,8 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
                 Channel::Rcs => Encryption::Transport,
             },
             group_max: u32::try_from(self.provider.group_max()).unwrap_or(u32::MAX),
+            // the MMS limit of the bridge's text, which the composer fits a photo under (phase 21)
+            media_max_bytes: self.settings(bridge).max_media_bytes,
         }
     }
 
@@ -888,7 +1065,57 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
         // the day's counts this send holds (check#SmsSend reserve, one a recipient), let go when it does not reach the
         // provider
         let mut reserved: Vec<BTreeMap<String, Value>> = Vec::new();
-        if in_room {
+        // a room's text member (plans/Comms-Messaging.md §18.3 phase 18): the room sends, whoever wrote, checked in room
+        // mode (the number carries room texts, the pair, the room's and all users' day), and the text names its sender
+        let member = in_room && member_of(&request.external_room_id).is_some();
+        let shaped;
+        let request = if member {
+            if request.kind != DeliveryKind::Message {
+                return failed("bridgeUnsupported", "A text member gets messages only");
+            }
+            let parameters = BTreeMap::from([
+                ("fromNumber".to_string(), Value::string(&ours)),
+                ("toNumber".to_string(), Value::string(&theirs[0])),
+                ("chatRoomId".to_string(), Value::string(&request.chat_room_id)),
+                ("reserve".to_string(), Value::Bool(true)),
+            ]);
+            match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
+                Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => reserved.push(BTreeMap::from([
+                    ("chatRoomId".to_string(), Value::string(&request.chat_room_id)),
+                    ("fromNumber".to_string(), Value::string(&ours)),
+                    // the adder's day it counted on too
+                    (
+                        "userId".to_string(),
+                        out.get("counterUserId").cloned().unwrap_or(Value::Null),
+                    ),
+                    (
+                        "counterDay".to_string(),
+                        out.get("counterDay").cloned().unwrap_or(Value::Null),
+                    ),
+                ])),
+                Ok(out) => {
+                    let text = |key: &str| out.get(key).map(to_plain_string).unwrap_or_default();
+                    return failed(&text("reasonCode"), text("message"));
+                }
+                Err(error) => {
+                    return DeliveryOutcome::Retry {
+                        error: format!("The send could not be checked: {error}"),
+                        not_connected: false,
+                    }
+                }
+            }
+            let settings = self.settings(bridge);
+            shaped = member_request(
+                request,
+                settings.max_text_length,
+                settings.max_media_count,
+                settings.max_media_bytes,
+            );
+            &shaped
+        } else {
+            request
+        };
+        if in_room && !member {
             // a text in a room goes from a user granted our number, never as the system
             let Some(user) = request.sender_user_id.as_deref().filter(|user| !user.is_empty()) else {
                 return failed("numberNotGranted", "A text goes from a user granted the number");
@@ -901,6 +1128,9 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
                     ("toNumber".to_string(), Value::string(to)),
                     ("userId".to_string(), Value::string(user)),
                     ("reserve".to_string(), Value::Bool(true)),
+                    // a pair room's text: refused while the number is a text member of a room on ours
+                    // (inRoomByText); a group text with them goes as ever, since its replies come to the group
+                    ("inRoom".to_string(), Value::Bool(theirs.len() == 1)),
                 ]);
                 let refusal = match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
                     Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {
@@ -978,6 +1208,41 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
         self.fetch(bridge, url, max_bytes)
     }
 
+    fn typing(&self, bridge: &BridgeInfo, external_room_id: &str) -> Result<(), String> {
+        if self.provider.channel() != Channel::Rcs || !typing_on(&bridge.config) {
+            return Ok(());
+        }
+        // a pair only: RBM has no groups; and no typing to a room's text member
+        if member_of(external_room_id).is_some() {
+            return Ok(());
+        }
+        let Some((ours, theirs)) = pair_of(external_room_id) else {
+            return Ok(());
+        };
+        // a STOP ends every contact, a typing indicator too; and none to a person we never sent a message
+        if opted_out(&ours, &theirs)? || !messaged(&bridge.chat_bridge_id, external_room_id)? {
+            return Ok(());
+        }
+        let settings = self.settings(bridge);
+        let config = self.provider.config(&bridge.config);
+        self.provider
+            .send_typing(self.client(settings.allow_internal), &config, &settings, &ours, &theirs)
+    }
+
+    fn delete_content(&self, bridge: &BridgeInfo, content_id: &str) -> Result<(), String> {
+        let settings = self.settings(bridge);
+        let config = self.provider.config(&bridge.config);
+        self.provider
+            .delete_content(self.client(settings.allow_internal), &config, &settings, content_id)
+    }
+
+    fn orphan_contents(&self, bridge: &BridgeInfo, before_millis: i64) -> Result<Vec<String>, String> {
+        let settings = self.settings(bridge);
+        let config = self.provider.config(&bridge.config);
+        self.provider
+            .orphan_contents(self.client(settings.allow_internal), &config, &settings, before_millis)
+    }
+
     fn lookup_number(&self, bridge: &BridgeInfo, number: &str) -> Result<Option<NumberLookup>, String> {
         self.lookup(bridge, number)
     }
@@ -1024,18 +1289,87 @@ impl<P: SmsProvider> SmsAdapter<P> {
                 format!("A text is at most {} characters", settings.max_text_length),
             );
         }
-        if request.attachments.len() > settings.max_media_count {
-            return failed(
-                "tooManyFiles",
-                format!("A text carries at most {} files", settings.max_media_count),
-            );
-        }
-        let total: i64 = request.attachments.iter().map(|file| file.file_size.unwrap_or(0)).sum();
-        if total > settings.max_media_bytes {
-            return failed(
-                "mediaTooLarge",
-                format!("A text's files are at most {} bytes in all", settings.max_media_bytes),
-            );
+        let rcs = self.provider.channel() == Channel::Rcs;
+        // a rich message (its files are its cards' pictures): the cards go only to an RCS provider; any other sends the
+        // fallback (the text) with only the first picture, so a carousel never fails for its count
+        let rich = request
+            .rich
+            .as_ref()
+            .and_then(|value| Rich::of(value, request.attachments.len()));
+        let trimmed;
+        let request = match &rich {
+            Some(rich) if !rcs => {
+                trimmed = DeliveryRequest {
+                    attachments: rich
+                        .first_image()
+                        .and_then(|index| request.attachments.get(index))
+                        .cloned()
+                        .into_iter()
+                        .collect(),
+                    ..request.clone()
+                };
+                &trimmed
+            }
+            _ => request,
+        };
+        let rich = rich.filter(|_| rcs);
+        // the fallback's picture (MMS): the first, when it is within the MMS limit; else the fallback is text alone
+        let mut fallback_image = None;
+        if let Some(rich) = &rich {
+            // each picture within the provider's RCS limit, all within a sane total; never the MMS total, which only the
+            // fallback's one picture meets
+            let per_file = number_of(&bridge.config, "maxRcsMediaBytes")
+                .filter(|n| *n > 0)
+                .unwrap_or_else(|| self.provider.rcs_media_bytes());
+            let all = number_of(&bridge.config, "maxRcsTotalBytes")
+                .filter(|n| *n > 0)
+                .unwrap_or(RCS_TOTAL_BYTES);
+            if request.attachments.len() > RCS_MEDIA_COUNT {
+                return failed(
+                    "tooManyFiles",
+                    format!("A rich message has at most {RCS_MEDIA_COUNT} pictures"),
+                );
+            }
+            if let Some(file) = request
+                .attachments
+                .iter()
+                .find(|file| file.file_size.unwrap_or(0) > per_file)
+            {
+                return failed(
+                    "mediaTooLarge",
+                    format!(
+                        "A card's picture is at most {per_file} bytes: {}",
+                        file.file_name.as_deref().unwrap_or("a picture")
+                    ),
+                );
+            }
+            let total: i64 = request.attachments.iter().map(|file| file.file_size.unwrap_or(0)).sum();
+            if total > all {
+                return failed(
+                    "mediaTooLarge",
+                    format!("A rich message's pictures are at most {all} bytes in all"),
+                );
+            }
+            fallback_image = rich.first_image().filter(|index| {
+                request
+                    .attachments
+                    .get(*index)
+                    .is_some_and(|file| file.file_size.unwrap_or(0) <= settings.max_media_bytes)
+            });
+        } else {
+            if request.attachments.len() > settings.max_media_count {
+                return failed(
+                    "tooManyFiles",
+                    format!("A text carries at most {} files", settings.max_media_count),
+                );
+            }
+            let total: i64 = request.attachments.iter().map(|file| file.file_size.unwrap_or(0)).sum();
+            if total > settings.max_media_bytes {
+                return failed(
+                    "mediaTooLarge",
+                    format!("A text's files are at most {} bytes in all", settings.max_media_bytes),
+                );
+            }
         }
         let now = jiff::Timestamp::now().as_millisecond();
         // by address, the edge node's on a paired local node: not sent until the files are there
@@ -1054,7 +1388,6 @@ impl<P: SmsProvider> SmsAdapter<P> {
         if words.is_none() && media_urls.is_empty() {
             return failed("empty", "A text has words or a file");
         }
-        let rcs = self.provider.channel() == Channel::Rcs;
         let out = Outgoing {
             bridge,
             request,
@@ -1063,6 +1396,8 @@ impl<P: SmsProvider> SmsAdapter<P> {
             text: words,
             media_urls: &media_urls,
             fallback: !rcs || sms_fallback(&bridge.config),
+            rich: rich.as_ref(),
+            fallback_image,
         };
         let config = self.provider.config(&bridge.config);
         let outcome = self
@@ -1139,7 +1474,14 @@ impl<P: SmsProvider> SmsAdapter<P> {
                 }
                 Handover::Unreadable => WebhookResponse::text(503, "the text was not taken; try again later"),
             },
-            SmsEvent::Receipt(receipt) => noted(bridge, &receipt),
+            SmsEvent::Receipt(receipt) => {
+                let (answer, content) = noted(bridge, &receipt);
+                // the message is done: the content made for its send goes (best effort; the daily sweep has the rest)
+                if let Some(content) = content {
+                    self.drop_content(bridge, &receipt.remote_event_id, &content);
+                }
+                answer
+            }
             SmsEvent::OptSignal(signal) => opted(bridge, &signal),
             SmsEvent::Path { remote_event_id, path } => {
                 let found = note_path(bridge, &[("remoteEventId", &remote_event_id)], path);
@@ -1237,6 +1579,27 @@ impl<P: SmsProvider> SmsAdapter<P> {
             return leave("notInWebhook", "and this is not the RCS bridge's own webhook");
         }
         Handover::To(target)
+    }
+
+    /// Delete `content`, made for the send of `remote_event_id`, now its message is done, and clear it from the delivery;
+    /// one not deleted is logged and stays for the sweep.
+    fn drop_content(&self, bridge: &BridgeInfo, remote_event_id: &str, content: &str) {
+        match ChatBridgeAdapter::delete_content(self, bridge, content) {
+            Ok(()) => {
+                if let Err(error) = clear_content(bridge, remote_event_id, content) {
+                    tracing::warn!(
+                        "{} bridge {}: content {content} was deleted and stays named on its delivery: {error}",
+                        self.provider.name(),
+                        bridge.chat_bridge_id
+                    );
+                }
+            }
+            Err(error) => tracing::warn!(
+                "{} bridge {}: content {content} was not deleted (the daily sweep tries again): {error}",
+                self.provider.name(),
+                bridge.chat_bridge_id
+            ),
+        }
     }
 
     fn fetch(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
@@ -1424,8 +1787,9 @@ fn received(bridge: &BridgeInfo, settings: &Settings, text: &Inbound) -> Webhook
 }
 
 /// A delivery receipt, to `ChatBridgeServices.note#DeliveryReceipt`: the message's state at its recipient. A group
-/// text's names the group's message (the delivery's remote id) and its one recipient.
-fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
+/// text's names the group's message (the delivery's remote id) and its one recipient. With the answer, the content made
+/// for the send ([`keep_content`]) when the receipt is final: its message is done with it.
+fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> (WebhookResponse, Option<String>) {
     let status = receipt.status.as_str();
     let mut parameters = BTreeMap::from([
         ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
@@ -1455,12 +1819,19 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
             if let Some(signal) = &receipt.opt_signal {
                 let answer = opted(bridge, signal);
                 if !(200..300).contains(&answer.status) {
-                    return answer;
+                    return (answer, None);
                 }
             }
-            WebhookResponse::json(
-                200,
-                &json!({"found": out.get("found") == Some(&Value::Bool(true)), "status": status}),
+            let content = out
+                .get("providerContentId")
+                .map(to_plain_string)
+                .filter(|content| !content.is_empty());
+            (
+                WebhookResponse::json(
+                    200,
+                    &json!({"found": out.get("found") == Some(&Value::Bool(true)), "status": status}),
+                ),
+                content,
             )
         }
         Err(error) => {
@@ -1469,9 +1840,166 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
                 bridge.chat_bridge_id,
                 receipt.remote_event_id
             );
-            WebhookResponse::text(503, "the receipt was not kept; try again later")
+            (
+                WebhookResponse::text(503, "the receipt was not kept; try again later"),
+                None,
+            )
         }
     }
+}
+
+/// Keep `content`, a content the provider made for the send of delivery `delivery_id` (a Twilio Content resource of a
+/// rich message), on the delivery (`ChatBridgeServices.note#DeliveryContent`, in a transaction of its own): its final
+/// receipt deletes it, else the daily sweep (`clean#ProviderContent`). Called before the send, so a send that never got
+/// through leaves it for the sweep.
+///
+/// # Errors
+///
+/// Returns why it was not kept.
+pub fn keep_content(bridge: &BridgeInfo, delivery_id: &str, content: &str) -> Result<(), String> {
+    if delivery_id.is_empty() {
+        return Err("a direct send has no delivery to keep its content on".to_string());
+    }
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("providerContentId".to_string(), Value::string(content)),
+    ]);
+    crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters).map(|_| ())
+}
+
+/// The content an earlier attempt kept on delivery `delivery_id` ([`keep_content`]), for a retry to send again or
+/// delete; none when there is none or it cannot be read.
+pub fn kept_content(delivery_id: &str) -> Option<String> {
+    if delivery_id.is_empty() {
+        return None;
+    }
+    let facade = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()?;
+    facade
+        .find("moqui.chat.ChatBridgeDelivery")
+        .and_then(|find| {
+            find.eq("chatBridgeDeliveryId", Value::string(delivery_id))
+                .use_cache(false)
+                .disable_authz()
+                .one()
+        })
+        .ok()
+        .flatten()
+        .and_then(|row| row.get("providerContentId").map(to_plain_string))
+        .filter(|content| !content.is_empty())
+}
+
+/// Clear `content` from delivery `delivery_id` once it is deleted.
+///
+/// # Errors
+///
+/// Returns why it was not cleared.
+pub fn clear_content_of(bridge: &BridgeInfo, delivery_id: &str, content: &str) -> Result<(), String> {
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("deletedContentId".to_string(), Value::string(content)),
+    ]);
+    crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters).map(|_| ())
+}
+
+/// Renew delivery `delivery_id`'s lease between the steps of a send of several calls (a Twilio Content, then the
+/// message), so a slow send is never taken for one cut off; one not renewed is logged.
+pub fn renew_lease(bridge: &BridgeInfo, delivery_id: &str) {
+    if delivery_id.is_empty() {
+        return;
+    }
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("renewLease".to_string(), Value::Bool(true)),
+    ]);
+    if let Err(error) = crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters) {
+        tracing::warn!("delivery {delivery_id}: its lease was not renewed: {error}");
+    }
+}
+
+/// Note on delivery `delivery_id` what the adapter changed of its send (`richRefused`: the provider refused its cards
+/// and their text went), shown in the message's Info; one not kept is logged.
+pub fn note_delivery(bridge: &BridgeInfo, delivery_id: &str, code: &str, text: &str) {
+    if delivery_id.is_empty() {
+        return;
+    }
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("noteCode".to_string(), Value::string(code)),
+        ("noteText".to_string(), Value::string(text)),
+    ]);
+    if let Err(error) = crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters) {
+        tracing::warn!("delivery {delivery_id}: its note {code} was not kept: {error}");
+    }
+}
+
+/// Whether a message of ours ever reached the network for the mapping `external_room_id` of bridge `bridge_id` (an
+/// accepted delivery): a typing indicator goes only to a person we wrote to.
+fn messaged(bridge_id: &str, external_room_id: &str) -> Result<bool, String> {
+    let Some(facade) = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
+        return Err("no entity facade to check the room".to_string());
+    };
+    let read = || -> Result<bool, moqui_lib::error::Error> {
+        let mappings = facade
+            .find("moqui.chat.ChatRoomBridge")?
+            .eq("chatBridgeId", Value::string(bridge_id))
+            .eq("externalRoomId", Value::string(external_room_id))
+            .disable_authz()
+            .list()?;
+        for mapping in mappings.values() {
+            let Some(id) = mapping.get("chatRoomBridgeId").map(to_plain_string) else {
+                continue;
+            };
+            let accepted = facade
+                .find("moqui.chat.ChatBridgeDelivery")?
+                .eq("chatRoomBridgeId", Value::string(&id))
+                .eq("statusEnumId", Value::string("CdsAccepted"))
+                .disable_authz()
+                .count()?;
+            if accepted > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    };
+    read().map_err(|error| format!("the room's messages were not read: {error}"))
+}
+
+/// Clear `content` from the delivery of `remote_event_id` once it is deleted.
+fn clear_content(bridge: &BridgeInfo, remote_event_id: &str, content: &str) -> Result<(), String> {
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("remoteEventId".to_string(), Value::string(remote_event_id)),
+        ("deletedContentId".to_string(), Value::string(content)),
+    ]);
+    crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters).map(|_| ())
+}
+
+/// An RCS bridge's `typingIndicators`: true unless it is false (or the text `false`).
+pub fn typing_on(config: &Json) -> bool {
+    !config
+        .get("typingIndicators")
+        .is_some_and(|value| value.as_bool() == Some(false) || value.as_str() == Some("false"))
+}
+
+/// Whether the person at `theirs` opted out of texts from `ours` (`SmsOptOut`).
+fn opted_out(ours: &str, theirs: &str) -> Result<bool, String> {
+    let Some(facade) = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
+        return Err("no entity facade to check the opt-out".to_string());
+    };
+    let row = facade
+        .find("moqui.call.SmsOptOut")
+        .and_then(|find| {
+            find.eq("phoneNumber", Value::string(ours))
+                .eq("otherNumber", Value::string(theirs))
+                .disable_authz()
+                .one()
+        })
+        .map_err(|error| format!("the opt-out was not read: {error}"))?;
+    Ok(row.is_some_and(|row| row.get("optedOut").map(to_plain_string).as_deref() == Some("Y")))
 }
 
 /// The way a sent message went, to `ChatBridgeServices.note#DeliveryPath` by `key` (its delivery's id, or its remote

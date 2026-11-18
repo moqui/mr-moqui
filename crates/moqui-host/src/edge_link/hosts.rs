@@ -78,7 +78,7 @@ pub(crate) struct Table {
     load: u64,
     routes: HashMap<String, Route>,
     /// The chat bridge ids each active pairing routes through this node, by node; empty when this node takes no
-    /// webhooks (no `channels` feature, or `channels_webhooks_enabled` not true).
+    /// webhooks (no `channels` feature, or `channels@webhooks-enabled` not true).
     chat: HashMap<String, Vec<String>>,
     /// The PASS sites (lower case) the active pairings' Configures name: the node, or `None` for a site two name.
     sites: HashMap<String, Option<String>>,
@@ -91,7 +91,7 @@ pub(crate) struct Table {
 
 /// Whether this node answers chat webhooks itself, as `crate::channels` adds its routes.
 fn takes_webhooks() -> bool {
-    cfg!(feature = "channels") && moqui_lib::env::get_prop_or_env("channels_webhooks_enabled").trim() == "true"
+    cfg!(feature = "channels") && moqui_core::context::conf_env::setting("channels@webhooks-enabled").trim() == "true"
 }
 
 /// What the active pairings' kept setups say, as a table with no routes: each node's chat bridges, the PASS sites by

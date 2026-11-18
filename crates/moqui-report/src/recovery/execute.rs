@@ -38,15 +38,15 @@ pub(crate) struct Adapter {
 /// The prefix of a process property an adapter may read without the conf's list.
 const PROPERTY_PREFIX: &str = "recovery_";
 /// The conf's list (comma-separated) of other process properties an adapter may read, secret ones among them.
-const PROPERTY_LIST: &str = "monitor_recovery_properties";
+const PROPERTY_LIST: &str = "telemetry/recovery@properties";
 
-/// Whether an adapter may read the process property `name`: one the conf's `monitor_recovery_properties` lists, or one
+/// Whether an adapter may read the process property `name`: one the conf's `telemetry/recovery@properties` lists, or one
 /// whose name starts with `recovery_` and, when its value is `sent` (a header or the URL), that the conf does not mark
 /// secret. A recovery administrator would otherwise send any property the process holds (a generated secret, a conf
 /// password) to a URL of their choosing (SEC-TLS-12). The HMAC key (`secretProperty`) is not sent, so a secret is
 /// what it should be.
 pub(crate) fn property_allowed(name: &str, sent: bool) -> Result<(), String> {
-    let listed = moqui_lib::env::get_prop_or_env(PROPERTY_LIST)
+    let listed = moqui_core::context::conf_env::setting(PROPERTY_LIST)
         .split(',')
         .any(|entry| entry.trim() == name);
     if listed {
@@ -63,7 +63,7 @@ pub(crate) fn property_allowed(name: &str, sent: bool) -> Result<(), String> {
         .unwrap_or(true);
     if sent && secret {
         return Err(format!(
-            "property {name} is a secret in the conf; list it in {PROPERTY_LIST} to send it"
+            "property {name} holds a secret by its name; list it in {PROPERTY_LIST} to send it"
         ));
     }
     Ok(())

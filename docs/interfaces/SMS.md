@@ -49,7 +49,7 @@ with a messaging bridge and no trunk texts.
 4. **The numbers.** System, Voice, Numbers: Texts through the bridge. A number's users (the user it rings, a ring group's
    members, its caller-ID grants) are the members of its pair rooms; only users granted the number (Caller IDs, or a ring
    group's number) send from it.
-5. **The server.** `channels_webhooks_enabled=true`; `channels_public_url` the https base the provider reaches this server
+5. **The server.** `moqui_conf__channels__webhooks_enabled=true`; `channels@public-url` the https base the provider reaches this server
    at (an MMS that goes out is refused, `mediaUnreachable`, without it); System, Voice, Fraud: the SMS limits (people's
    texts a day each and in all; the system's own texts a day; promotional texts a day per number) and the system's
    number (sign-in codes).
@@ -59,17 +59,17 @@ with a messaging bridge and no trunk texts.
 - The webhook URL in the portal is the edge node's: `https://<edge node>/channels/<chatBridgeId>/webhook`. The edge node
   checks the signature with the bridge's public key (replicated to it; the API key stays on the local node), answers 200
   once the text is queued, and the local node takes it when its link is up, once, without checking it again.
-- `channels_webhooks_enabled=true` is on the edge node (`conf/edge/MoquiEdgeConf.xml`). On the local node `channels_public_url` is
+- `moqui_conf__channels__webhooks_enabled=true` is on the edge node (`conf/edge/MoquiEdgeConf.xml`). On the local node `channels@public-url` is
   the edge node's address; the Edge Node wizard sets it.
 - MMS. Each file of a text that goes out is put on the edge node before the send, and the provider fetches it from
-  there (`/channels/<chatBridgeId>/media/<token>`, for `channels_media_minutes`). While the link is down the text waits.
+  there (`/channels/<chatBridgeId>/media/<token>`, for `channels@media-minutes`). While the link is down the text waits.
   Files of texts that come in are fetched by the local node from the provider, as without an edge node.
 - On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the server's own bridges and numbers and
   the local node's share the webhook route; each id and number belongs to one side, and the server refuses one the
   other side has.
 - With several local nodes on one edge node ([Run-Deploy](../Run-Deploy.md#several-local-nodes-on-one-edge-node)) a
   number belongs to the first local node whose copies have it (another's record for it is kept as a conflict), and
-  bridge ids may be the same on two: a local node whose ids may collide sets `channels_public_url` to one of its
+  bridge ids may be the same on two: a local node whose ids may collide sets `channels@public-url` to one of its
   terminate host names and gives that address in the portal ([Chat-Bridges](Chat-Bridges.md#administration)).
 
 ## The number pair's room
@@ -139,11 +139,61 @@ others: a group that has two of ours is ours, and a group MMS never goes to one 
 - **Start one.** Text a number with several numbers (`open#PairRoom` with `toNumber` comma-separated, each checked as
   a send), or several numbers picked in a new-chat picker.
 
+## Text members of a room
+
+An outside number in a private chat room by text (plans/Comms-Messaging.md §18.3 phase 18; `SmsRoom.js`,
+`SmsRoomServices`), as GroupMe's SMS members are: it gets each message of the room as a text, "Ann: …", and its replies
+post to the room as it.
+
+- **Numbers for room texts.** An administrator marks a number (System, Voice, Numbers: Room texts,
+  `PhoneNumber.roomTextsEnabled`). Mark numbers of their own for this. On a number colleagues share with customers,
+  adding a customer as a text member diverts every text that customer sends to that number from the shared pair room to
+  the room, and blocks the colleagues' sends to them from the pair room (`inRoomByText`) while they are a member; the add
+  dialog warns when the pair room was active. A moderator or owner of the room adds a member on one of their granted numbers
+  that is marked (`add#TextMember`), with their confirmation that the person agreed (`consentDate`), and the person gets
+  a welcome text that names the room and the adder and says "Reply STOP to leave".
+- **One room per outside number on each of our numbers** (decided by the user, plans/Comms-Messaging.md §19.1). A text
+  has no room in it, so while a number is a text member on one of ours, all of its pair texts to that number go to that
+  room (`receive#Sms`, before the spam filter, which does not judge them). A second room takes another marked number; with
+  none free, `noFreeNumber`: "This person is already a text member of <room> on this number; another number is needed."
+  A member of an archived room still takes the number (their texts go to the pair room meanwhile), so unarchiving never
+  makes two rooms for one person; the dialog says the room is archived. Two adds at once take the number's row lock in
+  turn, and should two mappings ever be found, the text goes to the pair room and the error is logged. While they are a
+  member, a text from the pair room of the two numbers is refused (`inRoomByText`), so a reply never lands somewhere
+  unexpected; a group text with them goes as ever, and calls still use the pair room.
+- **The mapping.** The member is an external actor of the number's bridge (its `ChatExternalUser` keeps the number, not
+  the adder's name for them, which is the room's own: `ChatRoomBridge.memberName`), and its mapping is a `ChatRoomBridge`
+  with `memberChatActorId` and the external room id `<ours>/<theirs>#<chatRoomId>`. It gets messages only (edits,
+  reactions, deletes, polls and calls stay in the room) and never its own member's; other members' replies reach it
+  ([Chat-Bridges](Chat-Bridges.md#text-members)).
+- **The adder's permissions.** The room's texts to a member go on the moderator who added them
+  (`ChatRoomBridge.addedByUserId`): their account, their grant of the number, their own international and premium
+  permissions (`VoiceUserSetting`, checked when they add the number too) and their day's limit (`smsMaxPerUserPerDay`,
+  `user:<id>`). When the adder is disabled, loses the grant or the permission, the member's texts stop
+  (`adderNotAllowed`, or the permission's reason) and the room's moderators get the `ChatTextMember` notification, once a
+  day for the member; a moderator who may text adds them again.
+- **Out.** The adapter sends `<sender>: <text>` (the sender's name cut to 30 characters, the whole to the bridge's
+  `maxTextLength`, ending "…"), photos, videos and sounds within the MMS limits, and a line for any other file. It checks
+  each in room mode (`check#SmsSend` with `chatRoomId`: no user's grant, the number still marked (`roomTextsOff`), the
+  pair not opted out, the destination class, the room's day and everyone's day), so a refusal fails that member's
+  delivery alone. No typing goes to a text member.
+- **STOP and HELP.** STOP is applied as for any text (the pair opts out) and also takes the member out: its mapping
+  ends, its member row is left, and the room says "<name> left by replying STOP". START opts back in and does not add
+  them back. HELP gets one answer a day, naming the room and the deployment (`chat@server-name`, when set). A member taken out of the room (People, Take out) has its mapping ended by a SECA
+  (`SmsRoom.secas.xml`); its texts go to the pair room again, as do texts to an archived room.
+- **Limits and cost.** Each message is a text to each text member. The add dialog and the composer say so. A room's
+  text counts in its adder's day (`smsMaxPerUserPerDay`), the room's and everyone's. VoicePolicy (System, Voice, Fraud):
+  `smsRoomMaxMembers` (10 a room), `smsRoomMaxPerDay` (500 texts a room a day, counted as `room:<chatRoomId>` and in
+  `smsMaxPerDay`), `smsRoomAddsPerDay` (20 adds a user a day, `roomAdds:<userId>`).
+- **Never** in an encrypted room, a direct, record, phone or public room, a private room every user may read
+  (`visibilityEnumId` other than `CrvMembers`), or one with disappearing messages, checked again under the room's lock; a room with
+  a text member cannot get a timer either, since it has a mapping in force.
+
 ## Texts that come in
 
-`POST /channels/{chatBridgeId}/webhook` (off unless `channels_webhooks_enabled`):
+`POST /channels/{chatBridgeId}/webhook` (off unless `channels@webhooks-enabled`):
 
-1. The host reads the raw body first, at most `channels_webhook_max_bytes` (256 KiB; a larger declared or sent body is
+1. The host reads the raw body first, at most `channels@webhook-max-bytes` (256 KiB; a larger declared or sent body is
    413), and hands it with the headers to the bridge's adapter on a request worker. An unknown bridge (or an id that is
    not one), one this build has no adapter for, and a disabled one to anyone but its provider get the answer of an
    unsigned request (401 `not signed`, counted for web protection), so bridge ids cannot be probed. A disabled bridge
@@ -176,6 +226,14 @@ others: a group that has two of ours is ours, and a group MMS never goes to one 
    the delivery (`deliveryFailed`, with the carrier's reason), which its sender may send again. A receipt never takes a
    delivered text back to sent. A receipt of a text Moqui did not send is answered and left.
 5. A failure of the server's own is 500, so the provider tries again; the batch was stored before (§4.1).
+6. A one-time code in a text that came in (plans/Comms-Messaging.md §18.3 phase 21; `ChatPrivacyServices
+   mark#OneTimeCode`, after the text is taken in): 4 to 8 digits within 40 characters of a keyword (`chat@otp-keywords`,
+   comma separated; English by default: code, verification, OTP, passcode, PIN, login, 2FA and the like), never part of a
+   phone number, price, date, time, year or link, and none when two are as near. The message keeps it (`content.otp`)
+   for its Copy, in the room and in the notification. When the code is the text's only candidate and every local member
+   of the room has "Delete a text's one-time code a day after it came" (`CHAT_OTP_DELETE`), the message disappears a day
+   after it came (phase 16's `expireDate`); Keep on it takes that back. The provider and the phone network keep their
+   own copies.
 
 ## Texts that go out
 
@@ -190,7 +248,7 @@ A user writes in the pair's room; the delivery layer sends it. Before the provid
 | `optedOut` | The person sent STOP to our number and not START since |
 | `consentRequired` | A promotional text (`send#SmsMessage` `isPromotional`) with no `sms-consent` provider saying yes, or one saying no or failing: an app root's (asked as the sender, of the apps they may open) or one a component registers in its conf (asked for every sender, the system included; [Comms](../tools/Comms.md)) |
 | `dailyLimit` | The sender's (`smsMaxPerUserPerDay`, 200) or all people's (`smsMaxPerDay`, 2000) texts of the day, counted in `SmsSendCount`; the system's own texts (sign-in codes) have a budget of their own (`smsSystemMaxPerDay`, 500, counted apart), so people's texts cannot use up what sign-in codes need. The check and the count are one step (`reserve`) under the lock of the day's count (all people's, or the system's), so sends at once cannot pass a limit together; a text that does not reach the provider (refused, retried, unreachable) is taken off again (`release#SmsSend`), and one whose answer was lost still counts. A promotional text also counts for its number (`smsMaxPromotionalPerNumber`, 1000, counted as `promo:<number>`); one with no user (a campaign's) counts there alone, not against the system's budget, so a campaign never uses up what sign-in codes need |
-| `textTooLong`, `tooManyFiles`, `mediaTooLarge`, `mediaUnreachable` | The bridge's limits, or no `channels_public_url` for a file |
+| `textTooLong`, `tooManyFiles`, `mediaTooLarge`, `mediaUnreachable` | The bridge's limits, or no `channels@public-url` for a file |
 
 The text goes to `POST /v2/messages` with the delivery's idempotency key in `Idempotency-Key`; Telnyx does not dedupe
 on it, so the adapter is not idempotent. Its outcome:
@@ -204,8 +262,8 @@ on it, so the adapter is not idempotent. Its outcome:
   own; its sender, a moderator or a bridge admin may send it again (`retry#Delivery`), and then it may arrive twice.
 
 Its files go as addresses the provider fetches: `GET /channels/{chatBridgeId}/media/{attachment}.{expiry}.{signature}`
-under `channels_public_url`, signed with HMAC-SHA-256 under `channels_media_key` (generated when unset), good for
-`channels_media_minutes` (60), for a file of a message with a delivery to that bridge only, sent as an attachment with
+under `channels@public-url`, signed with HMAC-SHA-256 under `channels@media-key` (generated when unset), good for
+`channels@media-minutes` (60), for a file of a message with a delivery to that bridge only, sent as an attachment with
 `nosniff`.
 
 Each text that reached the provider (accepted or uncertain) counts for the day of its sender and of the deployment.
@@ -271,7 +329,7 @@ applied first, as above, so an opt-out of a spammer still holds.
   `smsSpamLookupMaxPerDay` (100) are asked a day (`SmsSendCount` `lookup`, reserved in a transaction of its own so no
   lock is held through the provider's answer, and given back when the lookup fails), and a failure or a timeout (3 s)
   adds nothing. Telnyx's number lookup is not built.
-- **The purge.** With the property `chat_spam_purge_days` (MoquiDefaultConf.xml) above 0 (0, the default, keeps everything), the daily
+- **The purge.** With the property `chat@spam-purge-days` (MoquiDefaultConf.xml) above 0 (0, the default, keeps everything), the daily
   `clean#ChatRetention` deletes the texts older than that in each phone room that every current member has in Spam
   (`purge#SpamRooms`), each room on its own: one that fails is logged and the rest go on.
 - **Failure tolerance.** A judge that fails is logged and the text goes in unfiltered: an error never hides or loses a
@@ -294,7 +352,7 @@ sending profile's number, and Mantle answers the `sms-consent` hook from its con
 
 | Operation | SMS |
 | --- | --- |
-| Text, MMS files | yes, within the limits above |
+| Text, MMS files | yes, within the limits above; the bridge's `maxMediaBytes` is its `mediaMaxBytes` capability, which Chat's composer fits a compressed photo under (phase 21) |
 | Delivery receipts | yes (`receiptStatus`; a failed one fails the delivery) |
 | Edit, delete, reaction | no (refused before the change: `bridgeUnsupported`) |
 | Idempotent sends | no: a lost answer is uncertain |
@@ -317,7 +375,7 @@ the limits); this section is what differs.
    the number) instead of `From` our number. Leave the service's own status callback empty: each send names the
    bridge's webhook as its `StatusCallback`.
 3. **The webhook URL.** On the number (or the Messaging Service's Integration), "A message comes in": `POST
-   https://<server>/channels/<chatBridgeId>/webhook`, exactly as Moqui sees it: `channels_public_url` and that path,
+   https://<server>/channels/<chatBridgeId>/webhook`, exactly as Moqui sees it: `channels@public-url` and that path,
    or the bridge's `webhookUrl` when Twilio reaches the server at another address (a proxy). Twilio signs the URL it
    posts to, so a different scheme, host, path or query fails the signature (the default port may be named or not:
    both are tried). Twilio does not try a webhook again after a 5xx by default (only a connection that could not be
@@ -335,7 +393,7 @@ the limits); this section is what differs.
    | `apiKeySid`, `apiKeySecret` | The API key the API calls and file fetches use (Basic auth), both or neither |
    | `messagingServiceSid` | `MG...`: texts go from the service instead of from our number |
    | `conversationServiceSid` | `IS...`: the Conversations service group texts are kept in; else the account's default service |
-   | `webhookUrl` | The URL Twilio posts to, when it is not `channels_public_url` and the route's path |
+   | `webhookUrl` | The URL Twilio posts to, when it is not `channels@public-url` and the route's path |
    | `apiBaseUrl` | `https://api.twilio.com` |
    | `conversationsBaseUrl`, `mediaContentBaseUrl` | `https://conversations.twilio.com`, `https://mcs.us1.twilio.com`; https, as `apiBaseUrl` (http only for a test's fake, with `allowInternalAddresses` off production) |
    | `lookupsBaseUrl` | `https://lookups.twilio.com`: Lookup v2's line type for the spam filter (`GET /v2/PhoneNumbers/{number}?Fields=line_type_intelligence`, the API's Basic auth, paid per number; asked only with VoicePolicy `smsSpamLookup` on, above). Not yet tested with Twilio |

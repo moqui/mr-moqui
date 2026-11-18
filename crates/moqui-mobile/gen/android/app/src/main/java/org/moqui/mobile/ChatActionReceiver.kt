@@ -56,6 +56,22 @@ class ChatActionReceiver : BroadcastReceiver() {
                 }
             }
             MUTE -> ChatNotifications.mute(app, account, room)
+            // a code to the clipboard, marked sensitive so the keyboard's clipboard preview hides it (phase 21)
+            COPY -> {
+                val code = data.getQueryParameter(CODE)?.takeIf { isCode(it) } ?: return
+                val clipboard = app.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+                val clip = android.content.ClipData.newPlainText("code", code)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    clip.description.extras = android.os.PersistableBundle().apply {
+                        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                }
+                clipboard.setPrimaryClip(clip)
+                // Android 13 and later say so themselves
+                if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+                    android.widget.Toast.makeText(app, app.getString(R.string.chat_code_copied), android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -85,6 +101,11 @@ class ChatActionReceiver : BroadcastReceiver() {
         const val REPLY = "org.moqui.mobile.chat.REPLY"
         const val READ = "org.moqui.mobile.chat.READ"
         const val MUTE = "org.moqui.mobile.chat.MUTE"
+        const val COPY = "org.moqui.mobile.chat.COPY"
+        const val CODE = "code"
+
+        /** A one-time code as the server sends it: 4 to 8 digits. */
+        fun isCode(text: String): Boolean = text.length in 4..8 && text.all { it in '0'..'9' }
         const val ACCOUNT = "account"
         const val ROOM = "chatRoomId"
         const val EVENT_SEQ = "eventSeq"

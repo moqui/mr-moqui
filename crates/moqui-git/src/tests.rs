@@ -443,6 +443,16 @@ fn refs_logs_commits_and_diffs_read_any_revision() {
         ]
     );
     assert_eq!(refs.refs[1].commit.as_ref().map(|commit| commit.id), Some(head));
+    // a ref outside the branches and tags (a mirror's fetch staged before its gate) is neither listed nor read by name
+    assert!(store
+        .compare_and_set_ref("refs/moqui-incoming/main", None, head)
+        .unwrap());
+    assert_eq!(provider.refs("code", "refs/").unwrap().refs.len(), 2);
+    assert_eq!(
+        provider.resolve_commit("code", "refs/moqui-incoming/main").unwrap(),
+        None
+    );
+    assert_eq!(provider.resolve_commit("code", "refs/tags/v1").unwrap(), Some(head));
 
     let log = provider.log("code", "", &[], None, 50).unwrap();
     let summaries: Vec<&str> = log.commits.iter().map(|commit| commit.summary()).collect();

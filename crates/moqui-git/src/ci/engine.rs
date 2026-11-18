@@ -207,7 +207,7 @@ pub(crate) fn runner_server_url(pool: &EntityValue) -> Result<String, String> {
     }
     Err(format!(
         "the runners of pool {} would reach this server at {url}, over plain HTTP, where a job token is refused: set \
-         git-ci server-url (git_ci_server_url), the pool's serverUrl, or git-server public-url (git_public_url) to the \
+         git-ci server-url, the pool's serverUrl, or git-server public-url to the \
          https URL runners reach this server by",
         field(pool, "poolName").unwrap_or_default()
     ))

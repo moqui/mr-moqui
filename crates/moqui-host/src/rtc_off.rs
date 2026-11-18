@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Call media when this build has no `rtc` feature: nothing starts, a set `rtc_media_port` is an error in the log, and
+//! Call media when this build has no `rtc` feature: nothing starts, a set `media-server@port` is an error in the log, and
 //! the media hook points answer `notBuilt`.
 
 use std::sync::Arc;
@@ -22,8 +22,11 @@ use moqui_core::context::ExecutionContextFactory;
 pub(crate) struct RtcNode;
 
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
-    if !moqui_lib::env::get_prop_or_env("rtc_media_port").trim().is_empty() {
-        tracing::error!("rtc_media_port is set but this build has no call media (the rtc feature)");
+    if !moqui_core::context::conf_env::setting("media-server@port")
+        .trim()
+        .is_empty()
+    {
+        tracing::error!("media-server@port is set but this build has no call media (the rtc feature)");
     }
     moqui_core::startup::listener(factory, "Call media", moqui_core::startup::State::NotBuilt);
     moqui_core::startup::listener(factory, "TURN", moqui_core::startup::State::NotBuilt);

@@ -323,7 +323,7 @@ fn the_sip_domains_srv_records_name_the_edge_node_and_its_sip_ports() {
     for realm in ["203.0.113.5", "moqui"] {
         let rows = check(&[], &[], &sip(realm, 5060, 5061), &fixed);
         assert!(
-            rows.len() == 1 && rows[0].later && rows[0].note.contains("sip_domain"),
+            rows.len() == 1 && rows[0].later && rows[0].note.contains("sip-server@domain"),
             "{realm}: {rows:?}"
         );
     }

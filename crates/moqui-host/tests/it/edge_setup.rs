@@ -25,21 +25,21 @@
 //! - DNS: `check#EdgeDns` against fixed records, one host pointing elsewhere, and the XMPP client SRV records.
 //! - Test: `test#EdgeSetup`'s round trips on the queue answer for mail in, mail out and webhooks.
 //! - The wizard: with the dialer behind the services (the process's one edge link slot holds the edge node's hook, and
-//!   `node_role` is a process property, so both are set for the local node for that part), the Discover, Apply and
+//!   `instance@node-role` is a process property, so both are set for the local node for that part), the Discover, Apply and
 //!   Test steps and the status render, Discover's choices are kept, Apply applies, and the test passes. Then the XMPP
-//!   area: Discover offers it for this node's `xmpp_domain` and adds the domain to the passthrough names, Apply sends
+//!   area: Discover offers it for this node's `xmpp-server@domain` and adds the domain to the passthrough names, Apply sends
 //!   it (the edge node keeps it and has the name), and Test probes the tunnel ports (this node runs no XMPP server, so
 //!   those fail, saying so) and finds the name.
 //! - Calls: the edge node runs a media node and TURN (the process's one media socket: the local node, started first,
 //!   has none), on loopback and advertised as a documentation address. The offer names them and the Hello `calls`;
-//!   Discover offers calls, on by default; Apply writes `edge_calls_enabled` and the link-kept row, with lines for the
+//!   Discover offers calls, on by default; Apply writes `edge/node@calls-enabled` and the link-kept row, with lines for the
 //!   media address, the TURN secret and the row; Test finds the row live and preferred, `make#IceServers` signs the
 //!   edge node's TURN URLs with its secret, and that credential allocates on its TURN with a permission for the IP of
 //!   the media address. Calls off keeps the row as draining, which Test does not check, and Status says so.
 //! - Phones: the edge node runs a SIP engine (the process's one: the local node has none) on loopback. The offer and
 //!   the Hello name it, another local node active beside it (E16: taking nothing of its); once that node is revoked, a trunk
 //!   set up on the local node replicates and the edge node's engine loads it. Discover shows the trunk with its
-//!   numbers and the fallback summary; Apply writes `edge_sip_enabled`, with lines for the sets, the link-kept row, the
+//!   numbers and the fallback summary; Apply writes `edge/node@sip-enabled`, with lines for the sets, the link-kept row, the
 //!   realm and the fallbacks; Test finds the row live, the trunk loaded and the fallbacks there. Phones off sends both
 //!   sets empty, so the edge node's engine drops the trunk, which Test does not check, and Status says so; on again
 //!   brings it back. The DNS check takes the SIP domain's SRV records against fixed ones.
@@ -78,7 +78,7 @@ const OTHER: &str = "other-node";
 const BRIDGE: &str = "SETUP_BRIDGE";
 /// The address the edge node's media node advertises (documentation range, so Apply finds it public).
 const MEDIA_IP: &str = "203.0.113.5";
-/// The edge node's SIP realm (its sip_domain).
+/// The edge node's SIP realm (its sip-server@domain).
 const SIP_DOMAIN: &str = "sip.edge.example.test";
 const SIP_NUMBER: &str = "+15551230100";
 const SIP_PLAIN_NUMBER: &str = "+15551230101";
@@ -296,7 +296,7 @@ impl EdgeLink for DialerLink {
     }
 }
 
-/// The process as the local node for the wizard: the dialer behind the services and no `node_role`; put back as the
+/// The process as the local node for the wizard: the dialer behind the services and no `instance@node-role`; put back as the
 /// edge node's when dropped, also when the walk panics.
 struct LocalRole;
 
@@ -307,14 +307,14 @@ impl LocalRole {
             runtime: runtime.clone(),
             factory: Arc::clone(local.server.factory()),
         }));
-        moqui_lib::env::clear_property("node_role");
+        moqui_lib::env::clear_property("moqui_conf__instance__node_role");
         Self
     }
 }
 
 impl Drop for LocalRole {
     fn drop(&mut self) {
-        moqui_lib::env::set_property("node_role", "front_edge".to_string());
+        moqui_lib::env::set_property("moqui_conf__instance__node_role", "front_edge".to_string());
         moqui_core::edge::clear_edge_link();
     }
 }
@@ -357,8 +357,11 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
         let page = screens.test_render(path, parameters, Some("post"));
         page.error_messages.join(" | ")
     };
-    // the default form: no localhost (the default webapp_http_host), and the system's own server kept unless chosen
-    moqui_lib::env::set_property("webapp_http_host", "localhost".to_string());
+    // the default form: no localhost (the default webapp-list/webapp[webroot]@http-host), and the system's own server kept unless chosen
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_host",
+        "localhost".to_string(),
+    );
     let page = screens.test_render("EdgeNode/Pair/Discover", BTreeMap::new(), None);
     assert!(
         page.error_messages.is_empty(),
@@ -367,7 +370,7 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
         page.status()
     );
     let discover = page.text();
-    moqui_lib::env::clear_property("webapp_http_host");
+    moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__http_host");
     assert!(!discover.contains("value=\"localhost\""), "{discover}");
     assert!(
         discover.contains("erp.example.com"),
@@ -435,10 +438,10 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
     );
 }
 
-/// The XMPP area of the wizard on the local node, for its `xmpp_domain` (set as a property after the servers started,
+/// The XMPP area of the wizard on the local node, for its `xmpp-server@domain` (set as a property after the servers started,
 /// so the local node runs no XMPP server).
 fn xmpp_area(local: &Gate, edge: &Gate) {
-    moqui_lib::env::set_property("xmpp_domain", "chat.example.com".to_string());
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__domain", "chat.example.com".to_string());
     let factory = Arc::clone(local.server.factory());
     let context = factory.new_context();
     let _entered = context.enter();
@@ -518,7 +521,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     assert_eq!(tests["xmppWeb"]["ok"], "true", "{tests:?}");
     show("EdgeNode/Status", &["chat.example.com through ports"]);
     // web access off: the edge node has the name (a trailing dot is the same domain), so Discover and Apply take it
-    moqui_lib::env::set_property("xmpp_domain", "Chat.example.com.".to_string());
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__domain", "Chat.example.com.".to_string());
     assert_eq!(
         post("EdgeNode/Pair/Discover/chooseSetup", &[("xmppOn", Value::string("Y"))]),
         ""
@@ -539,7 +542,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
         "{applied:?}"
     );
     // and a domain the edge node does not have: Discover refuses, Apply applies the rest with a failed line
-    moqui_lib::env::set_property("xmpp_domain", "talk.example.com".to_string());
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__domain", "talk.example.com".to_string());
     let refused = post("EdgeNode/Pair/Discover/chooseSetup", &[("xmppOn", Value::string("Y"))]);
     assert!(refused.contains("turn web access on"), "{refused}");
     let applied = call(
@@ -555,8 +558,8 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
             .any(|line| line["ok"] == "false" && line["text"].contains("turn web access on")),
         "{lines:?}"
     );
-    // with no xmpp_domain, nothing is changed
-    moqui_lib::env::clear_property("xmpp_domain");
+    // with no xmpp-server@domain, nothing is changed
+    moqui_lib::env::clear_property("moqui_conf__xmpp_server__domain");
     let parameters = BTreeMap::from([("xmppOn".to_string(), Value::Bool(true))]);
     let refused = moqui_core::service::sync("org.moqui.edge.EdgeServices.apply#EdgeSetup", &parameters);
     let errors =
@@ -617,7 +620,7 @@ fn calls_area(local: &Gate, media: &str) {
     let row = |name: &str| field(local, "moqui.call.CallMediaNode", ("instanceId", &edge_id), name);
     assert_eq!((row("edgeLinked"), row("draining")), ("Y".to_string(), "N".to_string()));
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_calls_enabled=true"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__calls_enabled=true"), "{env}");
     let calls_lines = |out: BTreeMap<String, Value>| -> Vec<BTreeMap<String, String>> {
         list(out.get("lineList"))
             .into_iter()
@@ -666,7 +669,7 @@ fn calls_area(local: &Gate, media: &str) {
     let untouched = calls_lines(call(local, "org.moqui.edge.EdgeServices.apply#EdgeSetup", &[]));
     assert!(untouched.is_empty(), "{untouched:?}");
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_calls_enabled=true"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__calls_enabled=true"), "{env}");
     assert_eq!(row("draining"), "N");
     show(
         "EdgeNode/Status",
@@ -691,7 +694,7 @@ fn calls_area(local: &Gate, media: &str) {
     );
     assert_eq!((row("edgeLinked"), row("draining")), ("Y".to_string(), "Y".to_string()));
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_calls_enabled=false"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__calls_enabled=false"), "{env}");
     let tested = tests(call(
         local,
         "org.moqui.edge.EdgeServices.test#EdgeSetup",
@@ -869,7 +872,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
     );
     assert_eq!(post("EdgeNode/Pair/Apply/applySetup", &[]), "");
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_sip_enabled=true"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__sip_enabled=true"), "{env}");
     let sip_lines = |out: BTreeMap<String, Value>| -> Vec<BTreeMap<String, String>> {
         list(out.get("lineList"))
             .into_iter()
@@ -958,7 +961,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         );
     }
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
-    assert!(env.contains("edge_sip_enabled=false"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__sip_enabled=false"), "{env}");
     wait_until(
         Duration::from_secs(10),
         "the edge node's copies emptied and its engine without the trunk",
@@ -1015,7 +1018,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         "edge-setup-local",
         None,
         LOCAL_CONF,
-        &[("mail_dns_offline", "true")],
+        &[("moqui_conf__mail_delivery__dns_offline", "true")],
         &[],
     );
     let sales = to_plain_string(
@@ -1049,30 +1052,36 @@ fn a_local_node_is_attached_from_the_wizard() {
         "edge-setup-edge",
         EDGE_CONF,
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
-            ("smtp_listen_port", "0"),
-            ("smtp_hostname", "edge.example.net"),
-            ("edge_mail_mta", "moqui"),
-            ("edge_mail_bounce_domain", "bounce.example.net"),
-            ("channels_webhooks_enabled", "true"),
-            ("edge_public_addresses", "203.0.113.5, not-an-address"),
-            ("edge_xmpp_port", &xmpp_port.to_string()),
-            ("edge_xmpp_tls_port", &xmpp_tls_port.to_string()),
-            ("edge_xmpp_host", "127.0.0.1"),
-            ("rtc_media_port", &media_port.to_string()),
-            ("rtc_media_host", "127.0.0.1"),
-            ("rtc_public_address", &media),
-            ("turn_port", &turn_port.to_string()),
-            ("turn_host", "127.0.0.1"),
-            ("turn_public_host", "127.0.0.1"),
-            ("turn_relay_ports", "51310-51400"),
-            ("turn_auth_secret", "edge-setup-turn-secret"),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__hostname", "edge.example.net"),
+            ("moqui_conf__mail_delivery__mta", "moqui"),
+            ("mail-delivery@bounce-domain", "bounce.example.net"),
+            ("moqui_conf__channels__webhooks_enabled", "true"),
+            ("moqui_conf__edge__public_addresses", "203.0.113.5, not-an-address"),
+            ("moqui_conf__edge__xmpp_port", &xmpp_port.to_string()),
+            ("moqui_conf__edge__xmpp_tls_port", &xmpp_tls_port.to_string()),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
+            ("moqui_conf__media_server__port", &media_port.to_string()),
+            ("moqui_conf__media_server__host", "127.0.0.1"),
+            ("moqui_conf__media_server__public_address", &media),
+            ("moqui_conf__media_server__turn_server__port", &turn_port.to_string()),
+            ("moqui_conf__media_server__turn_server__host", "127.0.0.1"),
+            ("moqui_conf__media_server__turn_server__public_host", "127.0.0.1"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51310-51400"),
+            (
+                "moqui_conf__media_server__turn_server__auth_secret",
+                "edge-setup-turn-secret",
+            ),
             // its SIP engine, on loopback (the local node, started first, runs none)
-            ("sip_port", "0"),
-            ("sip_rtp_ports", "42700-42799"),
-            ("sip_registrar_enabled", "true"),
-            ("sip_domain", SIP_DOMAIN),
+            ("moqui_conf__sip_server__port", "0"),
+            ("moqui_conf__sip_server__rtp_ports", "42700-42799"),
+            ("moqui_conf__sip_server__registrar__enabled", "true"),
+            ("moqui_conf__sip_server__domain", SIP_DOMAIN),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -1344,11 +1353,17 @@ fn a_local_node_is_attached_from_the_wizard() {
         "EDGE"
     );
     let env = std::fs::read_to_string(&env_file).unwrap();
-    assert!(env.contains(&format!("channels_public_url={url}")), "{env}");
-    assert!(env.contains("pass_edge_client=edge"), "{env}");
-    assert!(env.contains("pass_client_edge_sites=SITE1"), "{env}");
     assert!(
-        env.contains("pass_client_edge_callback=https://forum.example.com/account/Sso"),
+        env.contains(&format!("moqui_conf__channels__public_url={url}")),
+        "{env}"
+    );
+    assert!(env.contains("moqui_conf__edge__node__pass_client=edge"), "{env}");
+    assert!(
+        env.contains("moqui_conf__pass_authority__client__EDGE__sites=SITE1"),
+        "{env}"
+    );
+    assert!(
+        env.contains("moqui_conf__pass_authority__client__EDGE__callback=https://forum.example.com/account/Sso"),
         "{env}"
     );
     assert_eq!(

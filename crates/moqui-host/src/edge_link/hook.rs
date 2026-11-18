@@ -13,18 +13,18 @@
  */
 
 //! The edge link as `moqui_core::edge` sees it ([`EdgeLink`]), installed when the HTTP listeners start: the local
-//! node's dialer (started when `edge_node_url` is set, and by pairing without a restart) and, on an edge node, its
+//! node's dialer (started when `edge/node@url` is set, and by pairing without a restart) and, on an edge node, its
 //! [`EdgeServer`] with its web front, SSH tunnel port and delegated calls; on both, the queue's metrics and retention.
-//! An all-in-one node (`node_role=all-in-one`, §10) starts what an edge node does and never dials; its own web, mail
+//! An all-in-one node (`moqui_conf__instance__node_role=all-in-one`, §10) starts what an edge node does and never dials; its own web, mail
 //! and XMPP stay a normal node's, and only its paired node's `EdgeHost` names go down the link. A node whose role has
-//! no front set (`node_role=edge`, plans/Edge-Node2.md §4.3) forwards no web access: its local nodes' names are reached
-//! through a front node. A front node (`node_role=front`, §4.7) has the front set alone: no queue, ports only as the
+//! no front set (`moqui_conf__instance__node_role=edge`, plans/Edge-Node2.md §4.3) forwards no web access: its local nodes' names are reached
+//! through a front node. A front node (`moqui_conf__instance__node_role=front`, §4.7) has the front set alone: no queue, ports only as the
 //! front's, and nothing of the edge set.
-//! Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to `runtime/.env` and sets them as properties;
+//! Pairing writes `edge/node@url`, `edge/node@key` and `edge/node@pin` to `runtime/.env` and sets them as properties;
 //! unpairing removes them (plans/archive/Edge-Node.md §5.1, §5.2, §5.3, §5.7).
 //!
 //! **The front pairing** (plans/Edge-Node2.md §4.7, E19). Pairing with a node whose Hello names the role `front` keeps
-//! it as a second pairing, `front_node_url`, `front_node_key`, `front_node_pin` and `front_node_id`, with a dialer of its
+//! it as a second pairing, `edge/front-node@url`, `edge/front-node@key`, `edge/front-node@pin` and `edge/front-node@id`, with a dialer of its
 //! own whose links carry web access and ports only ([`super::front`]). A local node may hold both: its web names on the
 //! front, its queue, delegated calls, replication, comms and PASS on its edge cluster. A node with the edge set
 //! (`front_edge`, `edge`, `all-in-one`) dials a front as well as taking links, and pairs with nothing else: its down
@@ -156,7 +156,9 @@ pub(crate) fn start(
     // the edge conf is read now, with the role this node started with (plans/archive/Edge-Node.md §5.2)
     let settings = moqui_core::edge::settings(factory);
     if settings.role != role {
-        tracing::warn!("node_role changed after this server read its edge conf; it keeps the role it started with");
+        tracing::warn!(
+            "instance@node-role changed after this server read its edge conf; it keeps the role it started with"
+        );
     }
     // the web protection, which also admits the SSH tunnel port's connections on an edge node
     let guard = Arc::clone(&down.app.guard);
@@ -168,7 +170,7 @@ pub(crate) fn start(
     };
     let server = match (takes_links, resolver) {
         (true, Some(resolver)) => {
-            let key = moqui_lib::env::get_prop_or_env(moqui_core::edge::LINK_KEY);
+            let key = moqui_core::context::conf_env::setting(moqui_core::edge::LINK_KEY);
             match Identity::from_key(&key, "moqui-edge-link") {
                 Ok(identity) => {
                     let mut config = EdgeConfig::from_properties(&instance_id(factory));
@@ -183,7 +185,7 @@ pub(crate) fn start(
                 }
                 Err(err) => {
                     tracing::error!(
-                        "node_role is {}, but {}: {err}; this node takes no links",
+                        "instance@node-role is {}, but {}: {err}; this node takes no links",
                         role.as_str(),
                         moqui_core::edge::LINK_KEY
                     );
@@ -193,8 +195,8 @@ pub(crate) fn start(
         }
         (true, None) => {
             tracing::error!(
-                "node_role is {}, but the HTTPS listener is off (no certificate in runtime/cert, or \
-                 webapp_https_listen_port=off): this node takes no links",
+                "instance@node-role is {}, but the HTTPS listener is off (no certificate in runtime/cert, or \
+                 https-listen-port off): this node takes no links",
                 role.as_str()
             );
             None
@@ -248,22 +250,22 @@ pub(crate) fn start(
         super::queue::maintain(factory, hook.shutdown.clone());
     }
     if takes_links
-        && !moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_URL)
+        && !moqui_core::context::conf_env::setting(moqui_core::edge::NODE_URL)
             .trim()
             .is_empty()
     {
         tracing::warn!(
-            "edge_node_url is set on an edge node (node_role={}): it does not dial an edge node itself; it dials only a \
-             front node (front_node_url)",
+            "edge/node@url is set on an edge node (instance@node-role {}): it does not dial an edge node itself; it dials only a \
+             front node (edge/front-node@url)",
             role.as_str()
         );
     }
     if !role.dials_front()
-        && !moqui_lib::env::get_prop_or_env(moqui_core::edge::FRONT_URL)
+        && !moqui_core::context::conf_env::setting(moqui_core::edge::FRONT_URL)
             .trim()
             .is_empty()
     {
-        tracing::warn!("front_node_url is set on a front node: a front node dials no other node");
+        tracing::warn!("edge/front-node@url is set on a front node: a front node dials no other node");
     }
     use moqui_core::startup::{integration, listener, State};
     match front_paired {
@@ -277,7 +279,7 @@ pub(crate) fn start(
                 }
             }
         }
-        None => integration(factory, "Front link", State::off("front_node_url is not set")),
+        None => integration(factory, "Front link", State::off("edge/front-node@url is not set")),
     }
     // the names an edge node gives its front, kept while it runs (plans/Edge-Node2.md §4.7)
     if takes_links && role.dials_front() && server.is_some() {
@@ -303,7 +305,7 @@ pub(crate) fn start(
             )),
         ),
         None if takes_links => integration(factory, "Edge link", State::failed("see the edge link error above")),
-        None => integration(factory, "Edge link", State::off("edge_node_url is not set")),
+        None => integration(factory, "Edge link", State::off("edge/node@url is not set")),
     }
     moqui_core::edge::install_edge_link(Arc::clone(&hook) as Arc<dyn EdgeLink>);
     if let Some((server, _)) = &server {
@@ -359,13 +361,13 @@ pub(crate) fn start(
                 listener(
                     factory,
                     super::TUNNEL_LISTENER,
-                    State::off("node_role edge has no ports: its front node takes them"),
+                    State::off("instance@node-role edge has no ports: its front node takes them"),
                 );
             } else if ports.is_empty() {
                 listener(
                     factory,
                     super::TUNNEL_LISTENER,
-                    State::off("edge_ssh_tunnel_port, edge_xmpp_port and edge_xmpp_tls_port are not set"),
+                    State::off("edge@ssh-tunnel-port, edge@xmpp-port and edge@xmpp-tls-port are not set"),
                 );
             } else if let Some(busy) = &busy {
                 listener(factory, super::TUNNEL_LISTENER, State::Skipped(busy.clone()));
@@ -417,7 +419,7 @@ pub(crate) fn start(
                 State::off(if takes_links {
                     "this node takes no links"
                 } else {
-                    "node_role is not set"
+                    "instance@node-role is not set"
                 }),
             );
             Started::default()
@@ -445,9 +447,9 @@ pub(crate) fn stopped(factory: &ExecutionContextFactory) {
     }
 }
 
-/// The page a terminate host shows while its node's link is down: the text at `edge_offline_page`, else the default.
+/// The page a terminate host shows while its node's link is down: the text at `edge@offline-page`, else the default.
 fn offline_page(factory: &ExecutionContextFactory) -> Arc<str> {
-    let location = moqui_lib::env::get_prop_or_env("edge_offline_page");
+    let location = moqui_core::context::conf_env::setting("edge@offline-page");
     let location = location.trim();
     if location.is_empty() {
         return Arc::from(super::web::DEFAULT_OFFLINE_PAGE);
@@ -455,14 +457,16 @@ fn offline_page(factory: &ExecutionContextFactory) -> Arc<str> {
     match factory.resource().location_text(location) {
         Ok(text) => Arc::from(text),
         Err(err) => {
-            tracing::error!("edge_offline_page {location} could not be read ({err}); the default page is used");
+            tracing::error!("edge@offline-page {location} could not be read ({err}); the default page is used");
             Arc::from(super::web::DEFAULT_OFFLINE_PAGE)
         }
     }
 }
 
 fn instance_id(factory: &ExecutionContextFactory) -> String {
-    moqui_core::cluster::instance_id(factory).unwrap_or_else(|| moqui_lib::env::get_prop_or_env("instance_id"))
+    moqui_core::cluster::instance_id(factory).unwrap_or_else(|| {
+        moqui_core::context::conf_env::setting_on(factory, moqui_core::context::conf_env::INSTANCE_ID)
+    })
 }
 
 struct Hook {
@@ -489,7 +493,7 @@ impl Hook {
 
     fn server(&self) -> Result<Arc<EdgeServer>, Error> {
         if !self.role.takes_links() {
-            return Err(Error::new("this is not an edge node (node_role is not set)"));
+            return Err(Error::new("this is not an edge node (instance@node-role is not set)"));
         }
         self.server
             .as_ref()
@@ -518,14 +522,14 @@ impl Hook {
                 config.members_file = Some(pairing.members_file(factory.runtime_dir()));
             }
         }
-        // edge_node_id (front_node_id) is the set of the other end's member ids, each learned on a link
+        // edge/node@id (edge/front-node@id) is the set of the other end's member ids, each learned on a link
         // (plans/Edge-Node2.md §4.6), which a ban goes up to (crate::guard_share); a node paired before E7 writes the
         // first to runtime/.env
         if config.on_pin.is_none() {
             if let Ok(env) = self.env_path() {
                 let property = pairing.id_property();
                 config.on_pin = Some(Arc::new(move |id: &str| {
-                    let current = moqui_lib::env::get_prop_or_env(property);
+                    let current = moqui_core::context::conf_env::setting_or_property(property);
                     let mut ids: Vec<String> = current
                         .split(',')
                         .map(str::trim)
@@ -534,14 +538,14 @@ impl Hook {
                         .collect();
                     if ids.is_empty() {
                         let set = [(property.to_string(), id.to_string())];
-                        if let Err(err) = moqui_lib::env::update_dotenv_file(&env, &set, &[]) {
+                        if let Err(err) = moqui_core::context::conf_env::keep_in_env(&env, &set, &[]) {
                             tracing::error!("{property} was not written to .env: {err}");
                         }
                     }
                     if !ids.iter().any(|known| known == id) {
                         ids.push(id.to_string());
                     }
-                    moqui_lib::env::set_property(property, ids.join(","));
+                    moqui_lib::env::set_property(&moqui_core::context::conf_env::env_name_of(property), ids.join(","));
                 }));
             }
         }
@@ -629,10 +633,8 @@ impl Hook {
         // a list kept from an earlier front pairing is not this one's
         super::members::forget_at(&Pairing::Front.members_file(factory.runtime_dir()));
         let set = pairing_properties(Pairing::Front, url, paired, instance);
-        moqui_lib::env::update_dotenv_file(&self.env_path()?, &set, &[])?;
-        for (name, value) in &set {
-            moqui_lib::env::set_property(name, value.clone());
-        }
+        // kept in runtime/.env and set as process properties of their environment names, so they hold at once
+        moqui_core::context::conf_env::keep_in_env(&self.env_path()?, &set, &[])?;
         tracing::info!(
             "Paired with the front node at {} (fingerprint {}); this node's key is {}",
             url.trim(),
@@ -666,10 +668,7 @@ impl Hook {
         let factory = self.factory()?;
         super::members::forget_at(&Pairing::Front.members_file(factory.runtime_dir()));
         let names = Pairing::Front.properties();
-        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], names)?;
-        for name in names {
-            moqui_lib::env::clear_property(name);
-        }
+        moqui_core::context::conf_env::keep_in_env(&self.env_path()?, &[], names)?;
         match told {
             Ok(()) => {
                 tracing::info!("Unpaired from the front node");
@@ -805,7 +804,7 @@ impl EdgeLink for Hook {
         config.connect_timeout = CALL_TIMEOUT;
         // a node with a role of its own pairs with a front node only (plans/Edge-Node2.md §4.7)
         config.only_front = self.role.takes_links();
-        let host = moqui_lib::env::get_prop_or_env("webapp_http_host");
+        let host = moqui_core::context::conf_env::setting("webapp-list/webapp[webroot]@http-host");
         if !host.trim().is_empty() {
             config.node_name = host.trim().to_string();
         }
@@ -821,10 +820,8 @@ impl EdgeLink for Hook {
         // a list kept from an earlier pairing is not this one's (plans/Edge-Node2.md §4.6)
         super::members::forget(factory.runtime_dir());
         let set = pairing_properties(Pairing::Edge, url, &paired, &instance);
-        moqui_lib::env::update_dotenv_file(&self.env_path()?, &set, &[])?;
-        for (name, value) in &set {
-            moqui_lib::env::set_property(name, value.clone());
-        }
+        // kept in runtime/.env and set as process properties of their environment names, so they hold at once
+        moqui_core::context::conf_env::keep_in_env(&self.env_path()?, &set, &[])?;
         tracing::info!(
             "Paired with the edge node at {} (fingerprint {}); this node's key is {}",
             url.trim(),
@@ -897,10 +894,7 @@ impl EdgeLink for Hook {
         let calls = moqui_core::edge::calls::CALLS_ENABLED;
         let sip = moqui_core::edge::sip::SIP_ENABLED;
         let names = [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, NODE_PAIRING, calls, sip];
-        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &names)?;
-        for name in names {
-            moqui_lib::env::clear_property(name);
-        }
+        moqui_core::context::conf_env::keep_in_env(&self.env_path()?, &[], &names)?;
         // nothing more goes to that edge node: replication stops noting writes, and the outbox fails, kept for
         // inspection, rather than going to whichever edge node this node pairs with next (plans/archive/Edge-Node.md §5.2)
         if let Some(facade) = self.factory()?.entity() {

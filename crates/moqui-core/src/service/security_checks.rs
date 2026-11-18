@@ -313,7 +313,6 @@ fn conf_ids(attribute: &str, element: &str, default_ids: &str) -> BTreeSet<Strin
         )
     })
     .unwrap_or_default();
-    let loaded = loaded.map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw));
     join_ids(loaded.as_deref(), default_ids, &added)
 }
 

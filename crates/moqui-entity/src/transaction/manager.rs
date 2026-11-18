@@ -1753,7 +1753,7 @@ fn conf_flag(raw: Option<String>, default: bool) -> bool {
     let Some(raw) = raw else {
         return default;
     };
-    let expanded = moqui_lib::env::expand(&raw).unwrap_or(raw);
+    let expanded = raw;
     match expanded.as_str() {
         "true" => true,
         "false" => false,

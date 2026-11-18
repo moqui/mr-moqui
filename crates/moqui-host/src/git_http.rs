@@ -18,10 +18,10 @@
 //! ([`page_request`]). The dumb protocol is not served. The request
 //! body streams into, and the response streams out of, a job of the git pool that runs
 //! `moqui_git::server::serve_http`, so a clone or push is not held in memory, takes no request worker
-//! from the screens, and is exempt from `webapp_request_timeout` (a gap of `git-server` `idle-timeout`, 120 seconds, in the
+//! from the screens, and is exempt from `webapp-list/webapp[webroot]/web-protection/requests@request-timeout` (a gap of `git-server` `idle-timeout`, 120 seconds, in the
 //! request body ends it). Bodies are limited by `git-server` `max-request` (64 MB, upload-pack) and `git-server` `max-push-size` (2 GB).
 //! Credentials are taken only over HTTPS (the listener, or `X-Forwarded-Proto` behind the proxy that
-//! `webapp_client_ip_header` names), from loopback, or with `git-server` `allow-http="true"`.
+//! `webapp-list/webapp[webroot]@client-ip-header` names), from loopback, or with `git-server` `allow-http="true"`.
 
 use std::net::SocketAddr;
 use std::pin::Pin;

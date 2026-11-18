@@ -19,7 +19,23 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="moqui-conf">
         <xs:complexType>
             <xs:sequence>
-                <xs:element minOccurs="0" maxOccurs="unbounded" ref="default-property"/>
+                <xs:element minOccurs="0" ref="instance"/>
+                <xs:element minOccurs="0" ref="comms"/>
+                <xs:element minOccurs="0" ref="demo"/>
+                <xs:element minOccurs="0" ref="acme"/>
+                <xs:element minOccurs="0" ref="client-sync"/>
+                <xs:element minOccurs="0" ref="chat"/>
+                <xs:element minOccurs="0" ref="channels"/>
+                <xs:element minOccurs="0" ref="push"/>
+                <xs:element minOccurs="0" ref="load-runner"/>
+                <xs:element minOccurs="0" ref="cluster-member"/>
+                <xs:element minOccurs="0" ref="xmpp-server"/>
+                <xs:element minOccurs="0" ref="sip-server"/>
+                <xs:element minOccurs="0" ref="calls"/>
+                <xs:element minOccurs="0" ref="media-server"/>
+                <xs:element minOccurs="0" ref="voicemail"/>
+                <xs:element minOccurs="0" ref="pass-authority"/>
+                <xs:element minOccurs="0" ref="database-backup"/>
                 <xs:element minOccurs="0" ref="tools"/>
                 <xs:element minOccurs="0" ref="cache-list"/>
                 <xs:element minOccurs="0" ref="telemetry"/>
@@ -42,6 +58,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="git-ci"/>
                 <xs:element minOccurs="0" ref="dav-server"/>
                 <xs:element minOccurs="0" ref="smtp-server"/>
+                <xs:element minOccurs="0" ref="mail-delivery"/>
                 <xs:element minOccurs="0" ref="edge"/>
                 <xs:element minOccurs="0" ref="logging"/>
                 <xs:element minOccurs="0" ref="client-conf"/>
@@ -60,17 +77,13 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="init-param">
         <xs:complexType>
             <xs:attribute name="name" type="xs:string" use="required"/>
-            <xs:attribute name="value" type="xs:string" use="required"/>
+            <xs:attribute name="value" type="xs:string"/>
+            <xs:attribute name="conf" type="xs:string"><xs:annotation><xs:documentation>A conf attribute by its selector
+                (search-facade/cluster@url) whose value the servlet or filter gets when value is empty, a secret one
+                too: the server reads it, so a script's handler is given a credential the conf keeps once (plans/archive/Conf-Paths.md
+                §1). Read when the webapp's servlets are built.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
-    <xs:element name="default-property">
-        <xs:complexType>
-            <xs:attribute name="name" type="xs:string" use="required"/>
-            <xs:attribute name="value" type="xs:string" use="required"/>
-            <xs:attribute name="is-secret" type="boolean" default="false"/>
-        </xs:complexType>
-    </xs:element>
-
     <xs:element name="tools">
         <xs:complexType>
             <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="tool-factory"/></xs:sequence>
@@ -87,6 +100,8 @@ along with this software (see the LICENSE.md file). If not, see
                 Comma-separated list of component names to load on start, used with on-start-load-types.
                 Does not run if empty-db-load runs.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="database-audit-days" type="xs:string" default="90"><xs:annotation><xs:documentation>The
+                days the DatabaseAudit rows of the Tools database screens are kept, at least 1.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-queue" type="xs:integer"><xs:annotation><xs:documentation>
                 The maximum size of the worker queue.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
@@ -257,6 +272,9 @@ along with this software (see the LICENSE.md file). If not, see
                 policy when allow-automatic is true, through its adapter (in-process, webhook or manual), one active
                 action per scope, and is verified against the policy's checks. No action reverses committed business
                 transactions.</xs:documentation></xs:annotation>
+            <xs:attribute name="properties" type="xs:string"><xs:annotation><xs:documentation>The other process
+                properties a recovery adapter may read, secret ones among them, comma separated (one whose name starts
+                with recovery_ needs no listing).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="enabled" type="boolean"><xs:annotation><xs:documentation>false stops new decisions. Default true.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allow-automatic" type="boolean"><xs:annotation><xs:documentation>true lets a policy in automatic mode run its actions without approval. Default false: automatic policies wait for approval as approval policies do.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="verify-minutes" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>How long after an action takes effect its checks are read before it is verified, when its policy does not say. Default 15.</xs:documentation></xs:annotation></xs:attribute>
@@ -288,7 +306,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="grpc-port" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>The gRPC
                 port; 0 is any free port. Default 4317.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="grpc-bind" type="xs:string"><xs:annotation><xs:documentation>The IP address the gRPC
-                receiver listens on. Default the HTTP listener's (webapp_http_bind).</xs:documentation></xs:annotation>
+                receiver listens on. Default the HTTP listener's (webapp-list/webapp[webroot]@http-bind).</xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="browser" minOccurs="0"><xs:complexType>
@@ -653,6 +671,7 @@ along with this software (see the LICENSE.md file). If not, see
                         Most web sessions kept in memory. Over it, the sessions used longest ago are written and dropped,
                         and reload from HttpSession when they come back. 0 keeps every session. No Java counterpart.
                     </xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="cookie-key" type="xs:string"><xs:annotation><xs:documentation>The HMAC key of the session cookie, 32 random bytes in base64: at CHANGEME generated at the first start into runtime/.env (moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key), and the same on every member of a cluster. A secret, read at boot.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="endpoint">
                     <xs:annotation><xs:documentation>Add a WebSocket Endpoint</xs:documentation></xs:annotation>
@@ -693,6 +712,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="https-enabled" default="false" type="xs:string"/>
             <xs:attribute name="https-port" type="xs:string"/>
             <xs:attribute name="https-host" type="xs:string"/>
+            <xs:attribute name="app-redirect-uris" type="xs:string"><xs:annotation><xs:documentation>The redirect URIs
+                the desktop and mobile apps' sign-in may return to, comma or space separated; empty for the apps' own.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="app-loopback-redirect" type="xs:string" default="true"><xs:annotation><xs:documentation>Whether
+                an app's sign-in may also return to a loopback address (http://127.0.0.1:port), as a desktop app
+                does.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="http-port" type="xs:string"/>
             <xs:attribute name="http-host" type="xs:string"/>
             <xs:attribute name="handle-cors" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>
@@ -728,6 +752,12 @@ along with this software (see the LICENSE.md file). If not, see
                 per-client parts of web-protection are on by default. Empty, the header is believed from any peer
                 (first hop), as before. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="https-listen-port" type="xs:string"><xs:annotation><xs:documentation>The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, off none. https-port is the port clients see in generated URLs, which differs behind a reverse proxy.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="http-bind" type="xs:string"><xs:annotation><xs:documentation>The address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>The Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a listener must name, comma separated, or it is answered 421; empty takes any.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="http2" type="boolean" default="true"><xs:annotation><xs:documentation>HTTP/2 on the HTTPS listener, chosen by ALPN beside HTTP/1.1: true, or false for HTTP/1.1 only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="dev-marker-color" type="xs:string"><xs:annotation><xs:documentation>The color of the dev/test instance marker of the Quasar shell, a CSS color; empty turns it off.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="qvt-static-only" type="boolean" default="false"><xs:annotation><xs:documentation>true sends the qvt pages with the Vue build that has no template compiler, for a deployment whose pages are all server-static and whose CSP has no unsafe-eval.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="status-ips" type="xs:string"><xs:annotation><xs:documentation>
                 Comma separated addresses that may read /health and /metrics, besides loopback. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
@@ -752,23 +782,23 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element minOccurs="0" name="connections"><xs:complexType>
                     <xs:attribute name="max" type="xs:string"><xs:annotation><xs:documentation>
-                        Connections served at once, HTTP and HTTPS together (webapp_max_connections, 4096). Past it new
+                        Connections served at once, HTTP and HTTPS together (webapp-list/webapp[webroot]/web-protection/connections@max, 4096). Past it new
                         connections wait until one closes.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-per-client" type="xs:string"><xs:annotation><xs:documentation>
                         Connections from one client address at once (64); past it a new one is closed. Trusted proxies
                         and exempt clients are not counted.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="header-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds for the request head, the TLS handshake, and an idle kept-alive connection
-                        (webapp_header_timeout, 30); 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
+                        (webapp-list/webapp[webroot]/web-protection/connections@header-timeout, 30); 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="write-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds a write to a client may take nothing before the connection, or the WebSocket on it, is
-                        closed (webapp_write_timeout, 60); a write that moves any bytes starts it again. Also the
+                        closed (webapp-list/webapp[webroot]/web-protection/connections@write-timeout, 60); a write that moves any bytes starts it again. Also the
                         connections' TCP_USER_TIMEOUT on Linux. 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="shutdown-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds open connections may take to finish after a stop (webapp_shutdown_timeout, 30).</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds open connections may take to finish after a stop (webapp-list/webapp[webroot]/web-protection/connections@shutdown-timeout, 30).</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="http2-max-streams" type="xs:string"><xs:annotation><xs:documentation>
                         Requests one HTTP/2 connection of the HTTPS listener may have open at once
-                        (webapp_http2_max_streams, 100). An HTTP/2 connection with no request for header-timeout is
+                        (webapp-list/webapp[webroot]/web-protection/connections@http2-max-streams, 100). An HTTP/2 connection with no request for header-timeout is
                         closed with a GOAWAY.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="requests"><xs:complexType>
@@ -782,22 +812,23 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="max-headers" type="xs:string"><xs:annotation><xs:documentation>
                         Most header fields in a request (100); more is answered 431.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-body" type="xs:string"><xs:annotation><xs:documentation>
-                        Largest request body that is not multipart, bytes or with a k, m or g suffix (webapp_max_body,
+                        Largest request body that is not multipart, bytes or with a k, m or g suffix (webapp-list/webapp[webroot]/web-protection/requests@max-body,
                         10m); larger is answered 413.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-upload" type="xs:string"><xs:annotation><xs:documentation>
-                        Largest multipart/form-data body (webapp_max_upload, 2g). A request with no user (no session
+                        Largest multipart/form-data body (webapp-list/webapp[webroot]/web-protection/requests@max-upload, 2g). A request with no user (no session
                         signed in, no api_key or login_key, no Basic credentials that hold) takes max-body instead,
                         unless its path is one of anonymous-upload-paths.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="max-spool" type="xs:string"><xs:annotation><xs:documentation>The bytes the files of the uploads being read hold together, or with a k, m or g suffix; an upload past it is answered 503. 4 GiB by default.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="anonymous-upload-paths" type="xs:string"><xs:annotation><xs:documentation>
                         Path prefixes, comma separated, of the uploads taken without a user, such as a public share's
-                        file drop (webapp_anonymous_upload_paths, /s/); an upload there may be max-upload with no user.
+                        file drop (webapp-list/webapp[webroot]/web-protection/requests@anonymous-upload-paths, /s/); an upload there may be max-upload with no user.
                     </xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="body-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds for a whole request body that is not an upload (webapp_body_timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds for a whole request body that is not an upload (webapp-list/webapp[webroot]/web-protection/requests@body-timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="upload-idle-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds an upload may send nothing (webapp_upload_idle_timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds an upload may send nothing (webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="request-timeout" type="xs:string"><xs:annotation><xs:documentation>
-                        Seconds from the request head to the response head (webapp_request_timeout, 300); then 504.</xs:documentation></xs:annotation></xs:attribute>
+                        Seconds from the request head to the response head (webapp-list/webapp[webroot]/web-protection/requests@request-timeout, 300); then 504.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="overload"><xs:complexType>
                     <xs:attribute name="queue-timeout" type="xs:string"><xs:annotation><xs:documentation>
@@ -892,7 +923,7 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:complexType></xs:element>
             </xs:sequence>
             <xs:attribute name="enabled" type="xs:string"><xs:annotation><xs:documentation>
-                true or false for the per-client parts (webapp_web_protection); empty, on when the webapp has
+                true or false for the per-client parts (webapp-list/webapp[webroot]/web-protection@enabled); empty, on when the webapp has
                 trusted-proxies.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="client-ipv6-prefix" type="xs:string" default="64"><xs:annotation><xs:documentation>
                 IPv6 clients are counted by this many leading bits of their address.</xs:documentation></xs:annotation></xs:attribute>
@@ -1022,6 +1053,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>How long to disable the account (0 means no limit, ie forever)</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-store" type="boolean" default="true">
                 <xs:annotation><xs:documentation>Store records of login attempts?</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="initial-admin-enabled" type="boolean-expandable" default="false">
+                <xs:annotation><xs:documentation>The Login page's Create Initial Admin Account form and
+                    create#InitialAdminAccount, while no account exists but the seed ones.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-incorrect-password" type="boolean" default="false">
                 <xs:annotation><xs:documentation>Ignored: the password a login tried is never stored, as that is too much
                     security risk (UserLoginHistory.passwordUsed is removed). Kept so a Java conf that sets it is still
@@ -1100,6 +1134,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="blob-gc-prune-days" type="non-neg-int-expandable" default="14"><xs:annotation><xs:documentation>How many days a content blob nothing refers to is kept (gc#ContentBlobs). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-timeout" type="xs:string"><xs:annotation><xs:documentation>Seconds a script may run when no transaction limits it (a widget condition, a
                 transaction="ignore" service), on every thread; a transaction's own timeout replaces it, and 0 is no
                 limit. Empty, a script on a request worker is limited to the webapp's request-timeout and one on a
@@ -1222,6 +1257,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="boundary-comments" default="false" type="boolean"/>
             <xs:attribute name="default-paginate-rows" type="xs:string" default="20"/>
             <xs:attribute name="default-autocomplete-rows" type="xs:string" default="10"/>
+            <xs:attribute name="system-home-dashboard" type="xs:string"><xs:annotation><xs:documentation>The dashboard the System home shows as its Activity strip, by its definition id; empty for the shipped system-home.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tx-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A screen transition's transaction (and a screen's with begin-transaction) holds its writes in the transaction cache, as a service marked transaction="cache" does; false begins it as transaction="use". Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="stream-threshold" type="xs:string" default="65536"><xs:annotation><xs:documentation>
                 The bytes of an html or text screen render (html, html-print, text, csv, xml) kept before its response
                 is sent to the client as it is written, as a servlet response commits when its buffer fills. A smaller
@@ -1229,7 +1266,7 @@ along with this software (see the LICENSE.md file). If not, see
                 size).
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="check-interval-ms" type="xs:string"><xs:annotation><xs:documentation>
-                How often a screen file is checked for changes, in milliseconds; empty is never when instance_purpose is
+                How often a screen file is checked for changes, in milliseconds; empty is never when instance@purpose is
                 production and two seconds otherwise. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
@@ -1288,6 +1325,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="distributed-factory" type="xs:string"><xs:annotation><xs:documentation>
                 The name of the ToolFactory to use for the distributed async service ExecutorService implementation.
             </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tx-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A service whose definition has no transaction attribute begins its transaction with the transaction cache, as one marked transaction="cache" does (a service of XML actions or a script); false begins it as transaction="use". Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="scheduled-job-check-time" type="non-neg-int-expandable"><xs:annotation><xs:documentation>
                 How often to check for and run scheduled service jobs in seconds. Set to 0 (zero) to disable.
             </xs:documentation></xs:annotation></xs:attribute>
@@ -1434,8 +1472,8 @@ along with this software (see the LICENSE.md file). If not, see
             their attributes.</xs:documentation></xs:annotation>
         <xs:sequence>
             <xs:element name="endpoint" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
-                <xs:annotation><xs:documentation>A model server. The key is api-key (from a secret default-property) or
-                    the property or environment variable api-key-env names; no key sends no auth header (Ollama, LM
+                <xs:annotation><xs:documentation>A model server. The key is api-key (a secret, set in runtime/.env) or the
+                    environment variable api-key-env names; no key sends no auth header (Ollama, LM
                     Studio).</xs:documentation></xs:annotation>
                 <xs:sequence>
                     <xs:element name="header" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
@@ -1538,7 +1576,8 @@ along with this software (see the LICENSE.md file). If not, see
                     embed, or a component's own; fallback is used when that model is disabled or not configured.
                 </xs:documentation></xs:annotation>
                 <xs:attribute name="feature" type="xs:string" use="required"/>
-                <xs:attribute name="model" type="xs:string" use="required"/>
+                <xs:attribute name="model" type="xs:string"><xs:annotation><xs:documentation>Empty for the llm-facade
+                    default-model.</xs:documentation></xs:annotation></xs:attribute>
                 <xs:attribute name="fallback" type="xs:string"/>
                 <xs:attribute name="reasoning" type="xs:string" default="low"/>
             </xs:complexType></xs:element>
@@ -1630,6 +1669,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:attribute name="max-part-bytes" type="xs:string" default="65536"/>
                 <xs:attribute name="max-parts" type="xs:string" default="32"/>
                 <xs:attribute name="trust-forwarded-headers" type="boolean-expandable" default="false"/>
+                <xs:attribute name="agent-name" type="xs:string" default="Moqui"><xs:annotation><xs:documentation>The
+                    name, description and version in the agent card.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="agent-description" type="xs:string"/>
+                <xs:attribute name="agent-version" type="xs:string" default="1.0.0"/>
                 <xs:attribute name="client-enabled" type="boolean-expandable" default="true">
                     <xs:annotation><xs:documentation>The A2A client: delegate tools (a2a__name) to the remote agents of
                         AgentRemoteA2a rows (docs/ai/A2A.md).</xs:documentation></xs:annotation></xs:attribute>
@@ -1687,6 +1730,8 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:complexType></xs:element>
         </xs:sequence>
         <xs:attribute name="enabled" type="boolean-expandable" default="true"/>
+        <xs:attribute name="default-model" type="xs:string" default="default"><xs:annotation><xs:documentation>The model
+            of a bind that names none.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
 
     <!-- ===================== Entity Facade Conf Root ===================== -->
@@ -1695,7 +1740,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element name="decrypt-alt" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
                     <xs:annotation><xs:documentation>Alternate settings for decryption only; useful for migrating keys, supporting data imported from other systems, etc</xs:documentation></xs:annotation>
-                    <xs:attribute name="crypt-pass" type="xs:string"/>
+                    <xs:attribute name="crypt-pass" type="xs:string"><xs:annotation><xs:documentation>
+                        Left out, the entity-facade's crypt-pass, or with old="true" its crypt-pass-old.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="old" default="false" type="boolean"><xs:annotation><xs:documentation>
+                        With no crypt-pass of its own, take the entity-facade's crypt-pass-old: for values encrypted
+                        under the pass before the current one.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="crypt-salt" type="xs:string"/>
                     <xs:attribute name="crypt-iter" type="xs:string"/>
                     <xs:attribute name="crypt-algo" type="xs:string"/>
@@ -1713,13 +1762,22 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="dci-topic-factory" type="xs:string">
                 <xs:annotation><xs:documentation>Topic factory for distributed cache invalidate</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sequenced-id-prefix" type="xs:string"/>
+            <xs:attribute name="disable-fk-create" type="xs:string" default="false"><xs:annotation><xs:documentation>true
+                creates no foreign keys when tables are made or checked.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sql-name-style" type="xs:string">
-                <xs:annotation><xs:documentation>Rust only: java (default), or legacy to retain pre-compatibility quoted Rust table and column names. Supports property expansion.</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>Rust only: java (default), or legacy to retain pre-compatibility quoted Rust table and column names.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="default-group-name" type="name-plain"/>
             <xs:attribute name="database-time-zone" type="xs:string"/>
-            <xs:attribute name="database-locale" type="xs:string"/>
-            <xs:attribute name="crypt-pass" type="xs:string"/>
+            <xs:attribute name="database-locale" type="xs:string"><xs:annotation><xs:documentation>
+                Empty is the instance's default locale.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="crypt-pass" type="xs:string"><xs:annotation><xs:documentation>
+                The key of encrypted fields; empty turns field encryption off. A value ending in CHANGEME is generated at
+                the first start and kept in runtime/.env as moqui_conf__entity_facade__crypt_pass, which must be kept
+                with the database's backups.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="crypt-pass-old" type="xs:string"><xs:annotation><xs:documentation>
+                The pass before crypt-pass, for the decrypt-alt entries marked old: values encrypted under it still
+                read. A secret, never generated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="crypt-salt" type="xs:string"/>
             <xs:attribute name="crypt-iter" type="xs:string"/>
             <xs:attribute name="crypt-algo" type="xs:string"/>
@@ -1745,6 +1803,9 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="email-client">
         <xs:annotation><xs:documentation>The mail client (org.moqui.mail.EmailClientServices).</xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="oauth-provider"/></xs:sequence>
+            <xs:attribute name="contact-service" type="xs:string"><xs:annotation><xs:documentation>The service that
+                finds a user's contacts for the mail client's address completion, over the qapps theme's value.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>Comma separated hostnames and IPs poll#EmailServer and send#Email may connect
                 to; empty allows any host. smtp.example.com matches example.com; notexample.com does not.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="idle-enabled" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>IMAP IDLE on the Inbox of each active account, so new mail shows at once; false relies on the sync job only.</xs:documentation></xs:annotation></xs:attribute>
@@ -1760,6 +1821,18 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="tls-ca-file" type="xs:string"><xs:annotation><xs:documentation>A PEM file of more certificate authorities to trust, for a mail server with its own.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="oauth-redirect-uri" type="xs:string"><xs:annotation><xs:documentation>The callback the OAuth provider sends the browser back to, exactly as
                 registered there; empty for the webroot webapp's URL and /emailOAuth/callback.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="capture-sends" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Keep each send in memory instead of connecting, for specs (the MailCapture tool); ignored outside a moqui test run.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="oauth-provider">
+        <xs:annotation><xs:documentation>This deployment's OAuth client at a provider mail accounts sign in with
+            (docs/interfaces/Mail-OAuth.md), by the id an EmailOAuthProvider's confProviderId names; a provider without
+            both client-id and client-secret is not offered.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="id" type="xs:string" use="required"/>
+            <xs:attribute name="client-id" type="xs:string"/>
+            <xs:attribute name="client-secret" type="xs:string"><xs:annotation><xs:documentation>A secret: never written to a log or answered by a service.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tenant" type="xs:string"><xs:annotation><xs:documentation>Microsoft: common (work, school and personal accounts), organizations, consumers or a tenant id; empty for the provider row's tenant, else common.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -1983,6 +2056,324 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
 
+    <xs:element name="instance">
+        <xs:annotation><xs:documentation>This instance: its purpose, id, node role, and the locale and time zone of a
+            session with no user locale or zone.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="purpose" type="xs:string" default="production"><xs:annotation><xs:documentation>production,
+                dev or test: what the server varies its behavior by. Set it in the runtime conf or by its environment name
+                (moqui_conf__instance__purpose): a component's conf merges after the components are chosen for
+                it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="id" type="xs:string"><xs:annotation><xs:documentation>This server's id; empty for the one a
+                cluster member keeps in runtime/db/instance_id.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="node-role" type="xs:string"><xs:annotation><xs:documentation>Empty for a normal node, else
+                front, front_edge, edge or all-in-one (plans/Edge-Node2.md §4.3).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="default-locale" type="xs:string" default="en_US"/>
+            <xs:attribute name="default-time-zone" type="xs:string" default="UTC"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="acme">
+        <xs:annotation><xs:documentation>Certificates by ACME, set up in System › Certificates (plans/Edge-Node2.md
+            §4.8).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="directory-url" type="xs:string" default="https://acme-v02.api.letsencrypt.org/directory"><xs:annotation><xs:documentation>The authority's directory the Certificates screen fills in.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="directory-ca" type="xs:string"><xs:annotation><xs:documentation>A root (a PEM file, absolute or under the runtime) the authority's HTTPS is checked against in place of the system's.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="account-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env: the seed of the account's P-256 key.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="challenge-port" type="non-neg-int-expandable" default="443"><xs:annotation><xs:documentation>The port the set-up check connects to on the name, as the authority does.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="client-sync">
+        <xs:annotation><xs:documentation>A client that keeps data offline (plans/Mobile-Desktop.md MD5): how long its
+            change logs, request refs and chunked uploads are kept, and the uploads a user may have open.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="mail-change-keep-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="request-keep-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="upload-expire-hours" type="non-neg-int-expandable" default="24"/>
+            <xs:attribute name="upload-min-chunk-bytes" type="non-neg-int-expandable" default="262144"/>
+            <xs:attribute name="upload-max-count" type="non-neg-int-expandable" default="20"/>
+            <xs:attribute name="upload-max-mb" type="non-neg-int-expandable" default="100"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="chat">
+        <xs:annotation><xs:documentation>Chat: its devices and keys, attachments, retention, previews, the agent and
+            GroupMe settings, disappearing messages, the contacts hook, one-time codes, calendar events and stickers
+            (MoquiDefaultConf.xml says each).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="stickers" minOccurs="0"><xs:complexType>
+                    <xs:attribute name="root" type="xs:string" default="dbresource://chat-stickers"/>
+                    <xs:attribute name="max-bytes" type="non-neg-int-expandable" default="524288"/>
+                    <xs:attribute name="max-side" type="non-neg-int-expandable" default="512"/>
+                    <xs:attribute name="pack-max" type="non-neg-int-expandable" default="200"/>
+                    <xs:attribute name="server-packs-max" type="non-neg-int-expandable" default="50"/>
+                    <xs:attribute name="user-packs-max" type="non-neg-int-expandable" default="10"/>
+                    <xs:attribute name="user-pack-max" type="non-neg-int-expandable" default="100"/>
+                    <xs:attribute name="uploads-per-hour" type="non-neg-int-expandable" default="60"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="server-name" type="xs:string" default="localhost"/>
+            <xs:attribute name="store-key-secret" type="xs:string"/>
+            <xs:attribute name="to-device-retention-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="device-active-days" type="non-neg-int-expandable" default="90"/>
+            <xs:attribute name="device-auto-expire-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="spam-purge-days" type="non-neg-int-expandable" default="0"/>
+            <xs:attribute name="attachment-root" type="xs:string" default="dbresource://chat"/>
+            <xs:attribute name="attachment-max-bytes" type="non-neg-int-expandable" default="26214400"/>
+            <xs:attribute name="attachment-daily-bytes" type="non-neg-int-expandable" default="1073741824"/>
+            <xs:attribute name="changes-keep-days" type="non-neg-int-expandable" default="30"/>
+            <xs:attribute name="edit-window-minutes" type="non-neg-int-expandable" default="1440"/>
+            <xs:attribute name="link-previews" type="boolean-expandable" default="true"/>
+            <xs:attribute name="link-preview-service" type="xs:string"/>
+            <xs:attribute name="agent-entry-services" type="xs:string" default="org.moqui.agent.AgentServices.handle#ChatMessage"/>
+            <xs:attribute name="held-overdue-days" type="non-neg-int-expandable" default="7"/>
+            <xs:attribute name="schedule-user-per-run" type="non-neg-int-expandable" default="20"/>
+            <xs:attribute name="groupme-node-max" type="non-neg-int-expandable" default="50"/>
+            <xs:attribute name="groupme-self-service" type="boolean-expandable" default="true"/>
+            <xs:attribute name="view-once-days" type="non-neg-int-expandable" default="14"/>
+            <xs:attribute name="expiry-round-limit" type="non-neg-int-expandable" default="2000"/>
+            <xs:attribute name="contact-service" type="xs:string"/>
+            <xs:attribute name="otp-keywords" type="xs:string"/>
+            <xs:attribute name="calendar-uid-domain" type="xs:string" default="chat.moqui"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="channels">
+        <xs:annotation><xs:documentation>Texts and chat bridges' webhooks and files (docs/interfaces/SMS.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" name="edge-limits"><xs:complexType>
+                <xs:attribute name="webhooks-per-minute" type="non-neg-int-expandable" default="600"/>
+                <xs:attribute name="webhooks-per-client-minute" type="non-neg-int-expandable" default="120"/>
+                <xs:attribute name="unverified-max-bytes" type="non-neg-int-expandable" default="32768"/>
+                <xs:attribute name="unverified-waiting" type="non-neg-int-expandable" default="500"/>
+                <xs:attribute name="media-max-bytes" type="non-neg-int-expandable" default="5242880"/>
+                <xs:attribute name="media-node-megabytes" type="non-neg-int-expandable" default="256"/>
+            </xs:complexType></xs:element></xs:sequence>
+            <xs:attribute name="webhooks-enabled" type="boolean-expandable" default="false"/>
+            <xs:attribute name="webhook-max-bytes" type="non-neg-int-expandable" default="262144"/>
+            <xs:attribute name="public-url" type="xs:string"/>
+            <xs:attribute name="media-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="media-minutes" type="non-neg-int-expandable" default="60"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="push">
+        <xs:annotation><xs:documentation>Web Push to browsers and FCM to the mobile apps.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="web"><xs:complexType>
+                    <xs:attribute name="vapid-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="subject" type="xs:string" default="mailto:admin@localhost"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="fcm"><xs:complexType>
+                    <xs:attribute name="service-account" type="xs:string"><xs:annotation><xs:documentation>A secret: the service account key's JSON file path, or the JSON.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="project-id" type="xs:string"/>
+                    <xs:attribute name="base-url" type="xs:string"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="load-runner">
+        <xs:annotation><xs:documentation>Load runs from Tools: what a run may reach and how many run at once.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="targets" type="xs:string"><xs:annotation><xs:documentation>URL prefixes (and ssh://host:port entries) a run may reach beside this server and loopback, comma separated.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-runs" type="non-neg-int-expandable" default="1"/>
+            <xs:attribute name="max-users" type="non-neg-int-expandable" default="1000"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="cluster-member">
+        <xs:annotation><xs:documentation>This server as a cluster member: its TLS pair, cluster port and how peers reach it.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="tls-cert" type="xs:string"><xs:annotation><xs:documentation>A secret, generated with tls-key into runtime/.env; base64 DER.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="tls-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated with tls-cert; base64 DER.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="https-port" type="xs:string"><xs:annotation><xs:documentation>The cluster port; 8444 when empty, 0 an ephemeral one.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="base-url" type="xs:string"/>
+            <xs:attribute name="transport" type="xs:string"><xs:annotation><xs:documentation>Empty (the cluster port), ssh or notify.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="protocol" type="xs:string"><xs:annotation><xs:documentation>Empty or grpc, or rest.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="bind-address" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="xmpp-server">
+        <xs:annotation><xs:documentation>XMPP for local users (docs/interfaces/XMPP.md): off while domain is empty.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="upload"><xs:complexType>
+                    <xs:attribute name="url" type="xs:string"/>
+                    <xs:attribute name="max-bytes" type="xs:string" default="20971520"/>
+                    <xs:attribute name="seconds" type="xs:string" default="300"/>
+                    <xs:attribute name="unattached-hours" type="xs:string" default="24"/>
+                    <xs:attribute name="root" type="xs:string" default="dbresource://xmpp-upload"/>
+                    <xs:attribute name="secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="domain" type="xs:string"/>
+            <xs:attribute name="rooms-domain" type="xs:string"/>
+            <xs:attribute name="upload-domain" type="xs:string"/>
+            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="host" type="xs:string" default="0.0.0.0"/>
+            <xs:attribute name="tls-port" type="xs:string"/>
+            <xs:attribute name="tls-host" type="xs:string"/>
+            <xs:attribute name="s2s-port" type="xs:string"/>
+            <xs:attribute name="websocket-enabled" type="xs:string" default="false"/>
+            <xs:attribute name="resume-seconds" type="xs:string" default="300"/>
+            <xs:attribute name="fast-token-days" type="xs:string" default="14"/>
+            <xs:attribute name="pep-max-bytes" type="xs:string" default="20971520"/>
+            <xs:attribute name="block-max-jids" type="xs:string" default="1000"/>
+            <xs:attribute name="push-max-registrations" type="xs:string" default="50"/>
+            <xs:attribute name="turn-enabled" type="xs:string" default="false"/>
+            <xs:attribute name="turn-per-hour" type="xs:string" default="30"/>
+            <xs:attribute name="scram-decoy-key" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="sip-server">
+        <xs:annotation><xs:documentation>SIP: the trunks' and phones' engine (docs/interfaces/SIP.md), with its request limits and the registrar.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="limits"><xs:complexType>
+                    <xs:attribute name="request-rate" type="xs:string" default="20"/>
+                    <xs:attribute name="request-burst" type="xs:string" default="100"/>
+                    <xs:attribute name="max-transactions" type="xs:string" default="2000"/>
+                    <xs:attribute name="max-connections" type="xs:string" default="500"/>
+                    <xs:attribute name="max-connections-per-source" type="xs:string" default="100"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="registrar"><xs:complexType>
+                    <xs:attribute name="enabled" type="xs:string" default="false"/>
+                    <xs:attribute name="min-expires" type="xs:string" default="60"/>
+                    <xs:attribute name="max-expires" type="xs:string" default="3600"/>
+                    <xs:attribute name="default-expires" type="xs:string" default="600"/>
+                    <xs:attribute name="nat-expires" type="xs:string" default="60"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="host" type="xs:string" default="127.0.0.1"/>
+            <xs:attribute name="tls-port" type="xs:string"/>
+            <xs:attribute name="tls-host" type="xs:string"/>
+            <xs:attribute name="tls-ca-file" type="xs:string"/>
+            <xs:attribute name="rtp-ports" type="xs:string" default="20000-20999"/>
+            <xs:attribute name="rtp-host" type="xs:string"/>
+            <xs:attribute name="public-address" type="xs:string"/>
+            <xs:attribute name="domain" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="media-server">
+        <xs:annotation><xs:documentation>Call media (the rtc feature, docs/interfaces/WebRTC.md) and its TURN server (docs/interfaces/TURN.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="turn-server"><xs:complexType>
+                    <xs:attribute name="port" type="xs:string"/>
+                    <xs:attribute name="tls-port" type="xs:string"/>
+                    <xs:attribute name="tls443-host" type="xs:string"/>
+                    <xs:attribute name="host" type="xs:string"/>
+                    <xs:attribute name="public-host" type="xs:string"/>
+                    <xs:attribute name="relay-ports" type="xs:string" default="49152-65535"/>
+                    <xs:attribute name="credential-hours" type="xs:string" default="4"/>
+                    <xs:attribute name="external-urls" type="xs:string"/>
+                    <xs:attribute name="max-allocations" type="xs:string" default="1000"/>
+                    <xs:attribute name="max-kbps" type="xs:string" default="4000"/>
+                    <xs:attribute name="allowed-peers" type="xs:string"/>
+                    <xs:attribute name="auth-secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="host" type="xs:string" default="127.0.0.1"/>
+            <xs:attribute name="tcp-port" type="xs:string"/>
+            <xs:attribute name="public-address" type="xs:string"/>
+            <xs:attribute name="cascade-enabled" type="xs:string" default="false"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="calls">
+        <xs:annotation><xs:documentation>Calls: ringing, transfers, forwards, the queue, recording and captions (docs/interfaces/WebRTC.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" name="captions"><xs:complexType>
+                    <xs:attribute name="enabled" type="xs:string" default="false"/>
+                    <xs:attribute name="provider" type="xs:string" default="llm"/>
+                    <xs:attribute name="chunk-seconds" type="xs:string" default="5"/>
+                    <xs:attribute name="queue" type="xs:string" default="6"/>
+                    <xs:attribute name="workers" type="xs:string" default="2"/>
+                    <xs:attribute name="timeout-seconds" type="xs:string" default="20"/>
+                    <xs:attribute name="language" type="xs:string"/>
+                    <xs:attribute name="store" type="xs:string" default="false"/>
+                    <xs:attribute name="prompt-audio" type="xs:string"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="queue"><xs:complexType>
+                    <xs:attribute name="tick-seconds" type="xs:string" default="5"/>
+                    <xs:attribute name="prompt-location" type="xs:string"/>
+                </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="recording"><xs:complexType>
+                    <xs:attribute name="enabled" type="xs:string" default="false"/>
+                    <xs:attribute name="ack-required" type="xs:string" default="false"/>
+                    <xs:attribute name="policy-revision" type="xs:string" default="1"/>
+                    <xs:attribute name="retention-days" type="xs:string" default="90"/>
+                    <xs:attribute name="queue-frames" type="xs:string" default="4096"/>
+                    <xs:attribute name="segment-mb" type="xs:string" default="64"/>
+                    <xs:attribute name="segment-minutes" type="xs:string" default="30"/>
+                    <xs:attribute name="max-mb" type="xs:string" default="2048"/>
+                    <xs:attribute name="prompt-audio" type="xs:string"/>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="ring-seconds" type="xs:string" default="45"/>
+            <xs:attribute name="guest-joins-per-minute" type="xs:string" default="20"/>
+            <xs:attribute name="transfer-ring-seconds" type="xs:string" default="30"/>
+            <xs:attribute name="hold-music-location" type="xs:string"/>
+            <xs:attribute name="direct-path" type="xs:string" default="true"/>
+            <xs:attribute name="forward-ring-seconds" type="xs:string" default="30"/>
+            <xs:attribute name="forward-max-hops" type="xs:string" default="5"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="voicemail">
+        <xs:annotation><xs:documentation>Voicemail (docs/interfaces/Voicemail.md).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="max-seconds" type="xs:string" default="120"/>
+            <xs:attribute name="prompt-location" type="xs:string"/>
+            <xs:attribute name="trash-days" type="xs:string" default="30"/>
+            <xs:attribute name="transcribe" type="xs:string" default="false"/>
+            <xs:attribute name="transcribe-language" type="xs:string"/>
+            <xs:attribute name="pin-min-digits" type="xs:string" default="6"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="pass-authority">
+        <xs:annotation><xs:documentation>The PASS authority: its gRPC listener, the service that answers a call, the
+            verification template, the SSO flows, and each client by its id.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" name="client"><xs:complexType>
+                <xs:attribute name="id" type="xs:string" use="required"/>
+                <xs:attribute name="sites" type="xs:string"/>
+                <xs:attribute name="callback" type="xs:string"/>
+                <xs:attribute name="secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
+            </xs:complexType></xs:element></xs:sequence>
+            <xs:attribute name="grpc-enabled" type="xs:string" default="false"/>
+            <xs:attribute name="grpc-host" type="xs:string"/>
+            <xs:attribute name="grpc-port" type="xs:string" default="4317"/>
+            <xs:attribute name="grpc-insecure" type="xs:string" default="false"/>
+            <xs:attribute name="service" type="xs:string" default="mantle.pass.PassAuthorityServices.handle#Call"/>
+            <xs:attribute name="verification-template" type="xs:string"/>
+            <xs:attribute name="sso-flows" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="database-backup">
+        <xs:annotation><xs:documentation>Backups of the embedded database.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="scheduled" type="xs:string"/>
+            <xs:attribute name="dir" type="xs:string"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="comms">
+        <xs:annotation><xs:documentation>The basic-comms component's settings, set in its MoquiConf.xml.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="app-root" type="xs:string" default="/qapps/BasicComms"><xs:annotation><xs:documentation>Where
+                links to the Comms screens go in notifications, mail and push: an app that mounts the BasicComms screens
+                under its own root (IronStone BOSS: /qapps/Comms) sets it to that root.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="demo">
+        <xs:annotation><xs:documentation>The demo component's settings, set in its MoquiConf.xml.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="shared-user-ids" type="xs:string"><xs:annotation><xs:documentation>The users whose
+                password, sign-in factors, username and enabled state cannot be changed, comma separated: the shared
+                login of the Login screen's Test Login button.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="test-login" type="xs:string" default="false"><xs:annotation><xs:documentation>Whether the
+                Login screen offers the Test Login button, which a production instance otherwise leaves
+                out.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
     <xs:element name="smtp-server">
         <xs:annotation><xs:documentation>The inbound SMTP listener for hosted and shared mail accounts, behind the edge
             gateway (docs/interfaces/Mail-Inbound.md).</xs:documentation></xs:annotation>
@@ -2008,12 +2399,39 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="tls-key-file" type="xs:string"><xs:annotation><xs:documentation>The private key PEM file that goes with tls-cert-file.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="chunking" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>CHUNKING (RFC 3030): BDAT.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dsn" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>DSN (RFC 3461): RET, ENVID, NOTIFY and ORCPT are taken and kept, and NOTIFY=SUCCESS gets a "delivered" report when the sender is authenticated (authserv-id set, and spf=pass or dmarc=pass with header.from aligned with the envelope sender).</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="internet" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Take mail from the internet (port 25, the MTA in moqui; property smtp_internet): no allowed-addresses needed, STARTTLS on by default, per-address limits, and after the data SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own (forged ones removed), the Rspamd verdict when mail_rspamd_url is set, a DMARC reject policy refused with 550 and quarantine to Junk (RFC 9989: t=y lowers the policy, no pct; a passing ARC seal of mail_arc_trusted_sealers overrides it). Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="internet" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Take mail from the internet (port 25, the MTA in moqui): no allowed-addresses needed, STARTTLS on by default, per-address limits, and after the data SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own (forged ones removed), the Rspamd verdict when rspamd-url is set, a DMARC reject policy refused with 550 and quarantine to Junk (RFC 9989: t=y lowers the policy, no pct; a passing ARC seal of arc-trusted-sealers overrides it). Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-connections-per-ip" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>In internet mode, the most connections at once from one address.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="connections-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>In internet mode, the most new connections a minute from one address.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="internet-messages-per-hour" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>In internet mode, the most messages stored in an hour from one client address (IPv6 by its /64) and from one envelope sender, whichever is reached first; a MAIL past it is answered 451 4.7.1. A message counts once, whatever its recipients.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="internet-bytes-per-hour" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>In internet mode, the most bytes of messages stored in an hour from one client address and from one envelope sender, with a MAIL's SIZE counted; past it a MAIL is answered 451 4.7.1.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="rspamd-url" type="xs:string"><xs:annotation><xs:documentation>In internet mode, Rspamd's HTTP API (http://127.0.0.1:11333); the property mail_rspamd_url when empty, and no spam check when both are. Rspamd not reached fails open: the mail is taken as not spam, logged.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="rspamd-url" type="xs:string"><xs:annotation><xs:documentation>In internet mode, Rspamd's HTTP API (http://127.0.0.1:11333); no spam check when empty. Rspamd not reached fails open: the mail is taken as not spam, logged.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="arc-trusted-sealers" type="xs:string"><xs:annotation><xs:documentation>In internet mode, the domains whose passing ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), comma separated; empty for no ARC exception.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="mail-delivery">
+        <xs:annotation><xs:documentation>Mail delivery and DKIM (plans/archive/Edge-Node.md §5.4).</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence><xs:element minOccurs="0" ref="dkim"/></xs:sequence>
+            <xs:attribute name="mta" type="xs:string"><xs:annotation><xs:documentation>On an edge node: moqui for the MTA in moqui, empty or postfix for the relay to Postfix at relay-host and relay-port.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="relay-host" type="xs:string" default="127.0.0.1"><xs:annotation><xs:documentation>The Postfix beside an edge node.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="relay-port" type="non-neg-int-expandable" default="10025"/>
+            <xs:attribute name="bounce-domain" type="xs:string"><xs:annotation><xs:documentation>On an edge node, the
+                domain of the envelope sender of mail it sends out (bounce+item@domain), whose bounces the SMTP listener
+                takes back to the message; empty sends from the message's own sender.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="retry-seconds" type="non-neg-int-expandable" default="300"><xs:annotation><xs:documentation>The MTA's first retry wait, doubled each time to 4 hours.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="days" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>When a message not delivered goes back as a bounce.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="mx-require-tls" type="xs:string"><xs:annotation><xs:documentation>The recipient domains whose MX gets mail only over STARTTLS with a certificate valid for the host, comma separated, * for every domain; empty: STARTTLS when offered, any certificate, else clear text.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="mx-override" type="xs:string"><xs:annotation><xs:documentation>Testing and staging only: domain=host:port pairs, * for any, in place of the MX.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="dns-offline" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Testing only: make no DNS query.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="dkim">
+        <xs:annotation><xs:documentation>The node's DKIM signing.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="key" type="xs:string"><xs:annotation><xs:documentation>A secret: the private key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="selector" type="xs:string" default="moqui"/>
+            <xs:attribute name="domains" type="xs:string"><xs:annotation><xs:documentation>The domains signed for, comma separated; empty for the hosted and shared accounts' domains.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2023,11 +2441,31 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:sequence>
+                <xs:element minOccurs="0" name="node"><xs:annotation><xs:documentation>A local node's pairing with its
+                    edge node, written by pairing (key is a secret) and the Edge Apply wizard.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                    <xs:attribute name="url" type="xs:string"/>
+                    <xs:attribute name="key" type="xs:string"/>
+                    <xs:attribute name="pin" type="xs:string"/>
+                    <xs:attribute name="id" type="xs:string"/>
+                    <xs:attribute name="pairing" type="xs:string"/>
+                    <xs:attribute name="calls-enabled" type="xs:string"/>
+                    <xs:attribute name="sip-enabled" type="xs:string"/>
+                    <xs:attribute name="pass-client" type="xs:string"/>
+                    </xs:complexType></xs:element>
+                <xs:element minOccurs="0" name="front-node"><xs:annotation><xs:documentation>A pairing with a front
+                    node (plans/Edge-Node2.md §4.7), as node.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                    <xs:attribute name="url" type="xs:string"/>
+                    <xs:attribute name="key" type="xs:string"/>
+                    <xs:attribute name="pin" type="xs:string"/>
+                    <xs:attribute name="id" type="xs:string"/>
+                    </xs:complexType></xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="delegate">
-                    <xs:annotation><xs:documentation>A service an edge node (node_role=front_edge) runs on its local node
+                    <xs:annotation><xs:documentation>A service an edge node (moqui_conf__instance__node_role=front_edge) runs on its local node
                         instead of itself, for a synchronous call (an async call or a scheduled job runs where it was
                         queued): the call goes down the link at once and fails with "local node offline" while the link
-                        is down. An all-in-one node (node_role=all-in-one) delegates only a call for a paired node's
+                        is down. An all-in-one node (moqui_conf__instance__node_role=all-in-one) delegates only a call for a paired node's
                         item, to that node; the same service runs there for the server's own items. With the service's definition on the edge node, its authorization and authenticate are
                         checked there first. The local node runs it as the user _EDGE_, with authorization, and only
                         when its own conf lists it too. Credentials (auth parameters) are never
@@ -2044,7 +2482,7 @@ along with this software (see the LICENSE.md file). If not, see
                             as the SIP engine routing a call while the caller's phone rings. Past it the call fails as
                             the local node not answering in time.</xs:documentation>
                         </xs:annotation></xs:attribute>
-                    </xs:complexType>
+        </xs:complexType>
                 </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="queue-kind">
                     <xs:annotation><xs:documentation>The service that applies a queued item of this kind on its
@@ -2083,6 +2521,9 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:complexType>
                 </xs:element>
             </xs:sequence>
+            <xs:attribute name="public-addresses" type="xs:string"><xs:annotation><xs:documentation>An edge node's public
+                IP addresses, comma or space separated, which its offer gives the local node for its DNS records (every
+                member's on an edge cluster).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="queue-retention-days" type="non-neg-int-expandable" default="14">
                 <xs:annotation><xs:documentation>Days a delivered or failed item (from its delivery or failure) and a
                     receipt are kept; an item still waiting after that fails. Both nodes should keep the same period.
@@ -2104,6 +2545,16 @@ along with this software (see the LICENSE.md file). If not, see
                     from its edge node for now. 0 for no cap.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="link-key" type="xs:string"/>
+            <xs:attribute name="link-url" type="xs:string"/>
+            <xs:attribute name="offline-page" type="xs:string"/>
+            <xs:attribute name="ssh-tunnel-port" type="xs:string"/>
+            <xs:attribute name="ssh-tunnel-host" type="xs:string"/>
+            <xs:attribute name="smtp-tunnel-host" type="xs:string"/>
+            <xs:attribute name="xmpp-port" type="xs:string"/>
+            <xs:attribute name="xmpp-tls-port" type="xs:string"/>
+            <xs:attribute name="xmpp-host" type="xs:string"/>
+            <xs:attribute name="call-legs-per-pairing" type="xs:string"/>
             <xs:attribute name="replica-max-rows" type="non-neg-int-expandable" default="1000000">
                 <xs:annotation><xs:documentation>On a node that takes links, the replicated records it keeps for one
                     pairing at most, all its sets together (a pairing's EdgeClient.replicaMaxRows above 0 in place of
@@ -2164,7 +2615,7 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="ssh-tunnels" type="non-neg-int-expandable" default="256">
                 <xs:annotation><xs:documentation>SSH connections piped at once by the SSH tunnel port
-                    (edge_ssh_tunnel_port), and by each pairing's own SSH port (an EdgePort row); each also counts
+                    (edge@ssh-tunnel-port), and by each pairing's own SSH port (an EdgePort row); each also counts
                     toward a link's tunnels. At least 1.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
@@ -2172,10 +2623,12 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <xs:element name="logging">
-        <xs:annotation><xs:documentation>The log files moqui.log (all events) and moqui-error.log (warn and error).
-            The stderr level and color are the properties moqui_log_level and moqui_log_color, read before the conf.
+        <xs:annotation><xs:documentation>The log files moqui.log (all events) and moqui-error.log (warn and error),
+            and the log on stderr.
         </xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:attribute name="level" type="xs:string" default="info"><xs:annotation><xs:documentation>The stderr log: trace, debug, info, warn or error. Read before boot from -D and the environment only (moqui_conf__logging__level), then from the conf.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="color" type="xs:string" default="auto"><xs:annotation><xs:documentation>The stderr header color: auto (a terminal, and not NO_COLOR), always or never. Read as level is.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dir" type="xs:string" default="runtime://log"><xs:annotation><xs:documentation>A path or runtime:// location; empty writes no files.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-size-mb" type="non-neg-int-expandable" default="100"><xs:annotation><xs:documentation>A file rolls over to moqui.yyyy-MM-dd.N.log (UTC) at this size or when the day changes.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-files" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>Only this many of the newest rolled files of each kind are kept.</xs:documentation></xs:annotation></xs:attribute>
@@ -2193,8 +2646,30 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:sequence>
             <xs:attribute name="group-name" type="name-segmented" use="required"/>
             <xs:attribute name="database-conf-name" type="xs:string">
-                <xs:annotation><xs:documentation>This is only required for JDBC/SQL datasources.</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>The database-list entry of its server: postgres, mysql or mysql8;
+                    embedded, empty or h2 for the embedded Postgres cluster. Only required for JDBC/SQL
+                    datasources.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="host" type="xs:string"><xs:annotation><xs:documentation>The server's host name or
+                address, or a Unix socket directory for Postgres. For a group other than transactional, empty is the
+                transactional datasource's, as are port, user, password, sslmode and sslrootcert. The datasource's own
+                inline-jdbc xa-properties or jdbc-uri (a conf from Java) replace these
+                attributes.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="port" type="xs:string"><xs:annotation><xs:documentation>Empty is the server's
+                default port.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="database" type="xs:string"><xs:annotation><xs:documentation>The database on the
+                server; for a group other than transactional on the embedded cluster, its database
+                there.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="user" type="xs:string"/>
+            <xs:attribute name="password" type="xs:string"><xs:annotation><xs:documentation>A secret: set it in
+                runtime/.env or the environment (moqui_conf__entity_facade__datasource__TRANSACTIONAL__password).
+                </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sslmode" type="xs:string"><xs:annotation><xs:documentation>An external server is
+                reached over TLS: disable connects without it, require encrypts without checking the certificate,
+                verify-ca checks its authority, and empty or verify-full its authority and
+                name.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sslrootcert" type="xs:string"><xs:annotation><xs:documentation>A PEM file of the
+                authorities to trust in place of the public ones.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="schema-name" type="xs:string"/>
             <xs:attribute name="startup-add-missing" default="false" type="boolean-expandable"/>
             <xs:attribute name="runtime-add-missing" default="true" type="boolean-expandable"/>
@@ -2559,6 +3034,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:complexType>
                 </xs:element>
             </xs:sequence>
+            <xs:attribute name="enabled" type="xs:string"><xs:annotation><xs:documentation>Deploying a component from a git URL needs the sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true. Read at start.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="require-passed-run" type="xs:string" default="false"><xs:annotation><xs:documentation>true:
                 deploy#Component, update#Component and load#Component refuse to deploy a commit unless the request
                 carries an attestation, signed with attestation-secret, that the commit passed its environment's
@@ -2567,12 +3043,12 @@ along with this software (see the LICENSE.md file). If not, see
                 the commit the last attestation names.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="attestation-secret" type="xs:string"><xs:annotation><xs:documentation>The secret this
                 server issued to the source server (its environment's token), at least 32 characters; empty takes no
-                attested deploy. Set it from a property in runtime/.env (component_deploy_attestation_key).</xs:documentation></xs:annotation></xs:attribute>
+                attested deploy. Set it in runtime/.env (moqui_conf__component_deploy__attestation_secret).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-age-seconds" type="xs:string" default="300"><xs:annotation><xs:documentation>The
                 oldest attestation taken, by the time the source signed it.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="public-urls" type="xs:string"><xs:annotation><xs:documentation>This server's public
                 base URLs, separated by spaces or commas: an attestation's audience (the source environment's
-                targetUrl) must be one of them. Empty: the webroot webapp's URL when webapp_http_host is set; with
+                targetUrl) must be one of them. Empty: the webroot webapp's URL when webapp-list/webapp[webroot]@http-host is set; with
                 neither, every attestation is refused.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
@@ -2600,11 +3076,13 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ================= Development ================= -->
     <xs:element name="dev-reload">
         <xs:annotation><xs:documentation>The dev file watcher (plans/design-dev-aide.md 6.3): on a dev instance
-            (instance_purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component
+            (instance@purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component
             directory is watched, and a changed file reloads what it defines: its services, its screen, the ECA rule
             set of its kind, its REST API or skill; an entity, conf or Rust change logs that it needs a restart or a
             rebuild. On unless enabled is false. Not on any other purpose.</xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:attribute name="projects" type="xs:string" default="3"><xs:annotation><xs:documentation>How many projects
+                the dev tools' project cache keeps.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="enabled" type="xs:string" default="true"/>
             <xs:attribute name="debounce-ms" type="xs:string" default="300"><xs:annotation><xs:documentation>
                 How long after the last change in a burst the reload runs, so an editor's write and rename is one
@@ -2675,11 +3153,11 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="location" type="xs:string" use="required"/>
             <xs:attribute name="purpose" type="xs:string" use="optional"><xs:annotation><xs:documentation>
-                The instance purposes (instance_purpose) each component in the directory loads on, comma separated, such as dev; empty or
+                The instance purposes (instance@purpose) each component in the directory loads on, comma separated, such as dev; empty or
                 missing for every purpose. On another purpose each is left out with a WARN naming it. Read
-                when the components are discovered, before the default properties are applied: instance_purpose
-                comes from a -D option or environment variable, else runtime/.env, else the runtime conf's
-                default-property, never from a component's own conf. A component that loads on every purpose may
+                when the components are discovered: instance@purpose comes from a -D option or the environment
+                (moqui_conf__instance__purpose), else runtime/.env, else the runtime conf, never from a component's
+                own conf. A component that loads on every purpose may
                 not depend on one that loads only on some; it is left out with an error.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
@@ -2702,11 +3180,11 @@ along with this software (see the LICENSE.md file). If not, see
                 variable can turn it on for a run.
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="purpose" type="xs:string" use="optional"><xs:annotation><xs:documentation>
-                The instance purposes (instance_purpose) the component (in a component.xml, or on a component element that names it) loads on, comma separated, such as dev; empty or
+                The instance purposes (instance@purpose) the component (in a component.xml, or on a component element that names it) loads on, comma separated, such as dev; empty or
                 missing for every purpose. On another purpose it is left out with a WARN naming it. Read
-                when the components are discovered, before the default properties are applied: instance_purpose
-                comes from a -D option or environment variable, else runtime/.env, else the runtime conf's
-                default-property, never from a component's own conf. A component that loads on every purpose may
+                when the components are discovered: instance@purpose comes from a -D option or the environment
+                (moqui_conf__instance__purpose), else runtime/.env, else the runtime conf, never from a component's
+                own conf. A component that loads on every purpose may
                 not depend on one that loads only on some; it is left out with an error.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>

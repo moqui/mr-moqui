@@ -24,7 +24,7 @@ Usage: moqui [command] [args...]      moqui help [command]      moqui <command> 
 With no command, start the HTTP server.
 
 Server
-  (no command)     [options]                                Start the HTTP server (HTTP webapp_http_port, default 8080; HTTPS webapp_https_listen_port, default 8443)
+  (no command)     [options]                                Start the HTTP server (HTTP port default 8080, HTTPS 8443: moqui help serve)
   serve            [options]                                Start the HTTP server in the background, with no console log
   tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
 
@@ -42,6 +42,7 @@ Check
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
   embedded         info | list | diff | extract | checksum  The runtime and programs built into this binary
+  conf             env [--names] [text]                     Each conf attribute with the environment name that sets it
 
 Test
   test             [component ...] [options]                Run component JavaScript specs
@@ -54,17 +55,18 @@ Help
   version                                                   The version, package and features of this binary
 
 Server options
-  -p, --port N       HTTP port (webapp_http_port, default 8080). Also: port=N, -port=N, --port=N.
-  --https-port N     HTTPS port to listen on (webapp_https_listen_port, default 8443), or 'off'. Certificates
+  -p, --port N       HTTP port (the webroot webapp's http-port, default 8080). Also: port=N, -port=N, --port=N.
+  --https-port N     HTTPS port to listen on (the webroot webapp's https-listen-port, default 8443), or 'off'. Certificates
                      are looked up by domain in runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
                      Also: conf=FILE, -conf=FILE, --conf=FILE. Same as MOQUI_CONF for this run.
-  --no-run-es        Do not start OpenSearch (opensearch_run=false). Also: no-run-es, -no-run-es.
-  -D name=value      Set a conf property for this run. Repeatable. Use underscore names
-                     (entity_ds_db_conf), not dotted ones.
+  --no-run-es        Do not start OpenSearch (search-facade/cluster@run false). Also: no-run-es, -no-run-es.
+  -D name=value      Set a conf property for this run, or a conf attribute by its environment name
+                     (moqui_conf__ssh_server__port; moqui help conf). Repeatable. Use underscore names
+                     (moqui_conf__ssh_server__port), not dotted ones.
 
   moqui --port 8081 --conf conf/MoquiProductionConf.xml
-  moqui -p 8081 -D entity_ds_db_conf=postgres
+  moqui -p 8081 -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 
 Environment
   MOQUI_RUNTIME      Runtime directory (default: runtime in the working directory when it has a
@@ -81,9 +83,12 @@ Environment
                      <dir>/chromium (default: install in the runtime directory)
   MOQUI_EMBEDDED_SHA256_RUNTIME, _POSTGRES, _OPENSEARCH, _CHROMIUM
                      The checksum each part built in must have, checked at startup (moqui help embedded)
-  webapp_http_port   HTTP port (default 8080). webapp_https_listen_port defaults to 8443 and cluster_https_port
-                     to 8444. webapp_https_port is the HTTPS port in generated URLs (empty is 443).
-  entity_ds_db_conf  postgres, mysql, or mysql8 for an external server; otherwise embedded
+  moqui_conf__webapp_list__webapp__WEBROOT__http_port
+                     HTTP port (default 8080); __https_listen_port the HTTPS one (8443),
+                     moqui_conf__cluster_member__https_port the cluster's (8444); __https_port is the HTTPS port
+                     in generated URLs (empty is 443).
+  moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name
+                     postgres, mysql, or mysql8 for an external server; otherwise embedded (moqui help conf)
 
 Other conf properties are environment variables with underscore names.
 ";
@@ -109,7 +114,7 @@ moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--keys S
     the log. It asks for a login, as the browser does. F1 lists the keys; docs/ui/TUI.md has the rest.
 
   --path PATH        The first screen (default /apps).
-  --user NAME        Log in as NAME without a password. Only on an instance whose instance_purpose is dev.
+  --user NAME        Log in as NAME without a password. Only on an instance whose instance@purpose is dev.
   --serve            Also start the HTTP, SSH and cluster listeners, so the browser can work beside the TUI.
   --ascii            Plain ASCII for borders and symbols (also when TERM is linux or vt100).
   --no-color         Monochrome: reverse video and underline only (also when NO_COLOR is set).
@@ -167,7 +172,7 @@ moqui save-db <cluster-dir> <dump-file>
 Writes a custom-format dump of the embedded moqui database in that cluster directory. Starts the
 postmaster when it is not running, and stops a postmaster this command started. A postmaster that
 was already running keeps running. This is the embedded cluster only, not an external database
-selected by entity_ds_db_conf. The usual directory is runtime/db/embedded.
+selected by the transactional datasource's database-conf-name. The usual directory is runtime/db/embedded.
 ./moq save-db also copies OpenSearch data. This command does not.
 
   moqui save-db runtime/db/embedded runtime/save/before-upgrade/moqui.dump
@@ -507,7 +512,7 @@ Options:
   --wait seconds                  Poll until the server answers, for a server started in the background.
   --timeout seconds               What waitUntil, a WebSocket receive and a browser action wait by
                                   default (10).
-  --chromium path                 The browser, else moqui_chromium_path, else runtime/chromium (./moq
+  --chromium path                 The browser, else screen-facade/pdf@chromium-path, else runtime/chromium (./moq
                                   chromium-download), else an installed Chromium, then Google Chrome
                                   or Microsoft Edge.
   --headed                        A visible browser, for debugging.
@@ -704,6 +709,22 @@ start. Lines naming other files are skipped, so the file also serves sha256sum -
   moqui embedded unpack all
 ";
 
+const CONF: &str = "\
+moqui conf env [--names] [text]
+    Each attribute of the conf this runtime merges (MoquiDefaultConf.xml, the components' MoquiConf.xml, the
+    runtime conf), as NAME=value  # selector, and for one an environment name set, which one and from where.
+    NAME is the environment name that sets the attribute over every conf file: moqui_conf__, then each element
+    from the root, a keyed element's key value next (in capitals), and the attribute last, with __ between them
+    (plans/archive/Conf-Paths.md). Case and punctuation within a segment do not matter. Precedence: -D, then the
+    environment, then runtime/.env. A secret's value is masked.
+    --names  The names only, one per line
+    text     Only the attributes whose name or selector holds the text
+
+  moqui conf env ssh_server
+  moqui conf env --names
+  moqui_conf__ssh_server__port=2222 moqui
+";
+
 const VERSION: &str = "\
 moqui version
     The version, the package this binary was built as (lite, enterprise, maximal, or custom), and every
@@ -736,6 +757,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "autodoc" => Some(AUTODOC),
         "lsp" => Some(LSP),
         "embedded" => Some(EMBEDDED),
+        "conf" => Some(CONF),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "test-load" => Some(TEST_LOAD),
@@ -847,6 +869,11 @@ impl ServerOptions {
     }
 }
 
+/// The webroot webapp's `http-port` by its environment name, which `-p` sets (plans/archive/Conf-Paths.md §1).
+pub const HTTP_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_port";
+/// The webroot webapp's `https-listen-port` by its environment name, which `--https-port` sets.
+pub const HTTPS_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port";
+
 /// Parse server options. This does not start the server or set properties.
 ///
 /// # Errors
@@ -860,16 +887,16 @@ pub fn parse_server_args(args: &[impl AsRef<str>]) -> Result<ServerOptions, Erro
     while index < args.len() {
         let arg = args[index];
         if let Some(value) = equals_value(arg, "port") {
-            opts.push("webapp_http_port", parse_port(value)?.to_string());
+            opts.push(HTTP_PORT, parse_port(value)?.to_string());
         } else if arg == "-p" || arg == "--port" {
             let value = next_value(&args, index, arg, "a port number")?;
-            opts.push("webapp_http_port", parse_port(value)?.to_string());
+            opts.push(HTTP_PORT, parse_port(value)?.to_string());
             index += 1;
         } else if let Some(value) = equals_value(arg, "https-port") {
-            opts.push("webapp_https_listen_port", parse_https_port(value)?);
+            opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
         } else if arg == "--https-port" {
             let value = next_value(&args, index, arg, "a port number or off")?;
-            opts.push("webapp_https_listen_port", parse_https_port(value)?);
+            opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
             index += 1;
         } else if let Some(value) = equals_value(arg, "conf") {
             require_conf(value)?;
@@ -880,7 +907,7 @@ pub fn parse_server_args(args: &[impl AsRef<str>]) -> Result<ServerOptions, Erro
             opts.push("MOQUI_CONF", value);
             index += 1;
         } else if matches!(arg, "no-run-es" | "-no-run-es" | "--no-run-es") {
-            opts.push("opensearch_run", "false");
+            opts.push("moqui_conf__search_facade__cluster__run", "false");
         } else if arg == "-D" {
             let token = next_value(&args, index, arg, "name=value")?;
             let (name, value) = split_property(token)?;
@@ -925,14 +952,14 @@ fn require_conf(value: &str) -> Result<(), Error> {
     }
 }
 
-/// An explicit empty or non-numeric port is an error. An unset `webapp_http_port` still means 8080.
+/// An explicit empty or non-numeric port is an error. An unset `http-port` still means 8080.
 fn parse_port(raw: &str) -> Result<u16, Error> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err(Error::new("webapp_http_port is not a port"));
+        return Err(Error::new("http-port is not a port"));
     }
     raw.parse::<u16>()
-        .map_err(|_| Error::new(format!("webapp_http_port {raw} is not a port")))
+        .map_err(|_| Error::new(format!("http-port {raw} is not a port")))
 }
 
 /// A port, or `off` to turn the HTTPS listener off.
@@ -943,7 +970,7 @@ fn parse_https_port(raw: &str) -> Result<String, Error> {
     }
     raw.parse::<u16>()
         .map(|port| port.to_string())
-        .map_err(|_| Error::new(format!("webapp_https_listen_port {raw} is not a port or off")))
+        .map_err(|_| Error::new(format!("https-listen-port {raw} is not a port or off")))
 }
 
 fn split_property(token: &str) -> Result<(&str, &str), Error> {
@@ -998,6 +1025,7 @@ pub fn command_usage(command: &str) -> Error {
         }
         "help" => "moqui help [command]",
         "version" => "moqui version",
+        "conf" => "moqui conf env [--names] [text]",
         "embedded" => {
             "moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum [--env] [<part>...] \
              | unpack [<program>...]"

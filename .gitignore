@@ -1,4 +1,10 @@
 /target
+# Cargo's output of a crate built on its own (crates/moqui-mobile and crates/moqui-desktop are outside the workspace,
+# so cargo there writes crates/<crate>/target), and any other build output directory; the tracked-files test in
+# crates/moqui-devkit (tracked_files_tests.rs) refuses them if one is ever added anyway
+target/
+node_modules/
+.gradle/
 
 # common runtime additions that are runtime only (don't belong in git)
 /runtime/log

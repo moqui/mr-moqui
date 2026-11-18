@@ -91,8 +91,8 @@ function clean() {
         ec.entity.find("moqui.call.SipNode").condition("instanceId", "in", [NODE, NODE2]).deleteAll()
         ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", "in", [NODE, NODE2]).deleteAll()
     })
-    setProperty("call_recording_enabled", "false")
-    setProperty("call_recording_ack_required", "false")
+    setConf("calls/recording@enabled", "false")
+    setConf("calls/recording@ack-required", "false")
 }
 function nodesUp() {
     sys(() => {
@@ -304,8 +304,8 @@ feature("a transfer to an international number is refused under the fraud policy
 feature("a number transferred to hears the recording notice and acknowledges it by pressing 1", {
     when() {
         endAll()
-        setProperty("call_recording_enabled", "true")
-        setProperty("call_recording_ack_required", "true")
+        setConf("calls/recording@enabled", "true")
+        setConf("calls/recording@ack-required", "true")
         const call = outbound()
         const started = as(A, "org.moqui.call.CallRecordingServices.start#Recording", {callSessionId: call.callSessionId})
         const consult = transfer(call, "number", "+15550199977", "attended")
@@ -317,8 +317,8 @@ feature("a number transferred to hears the recording notice and acknowledges it 
         note(call.callSessionId, targetLegId, "dtmf", {digits: "1"})
         const acked = consent()
         const done = as(A, "complete#CallTransfer", {callTransferId: consult.callTransferId})
-        setProperty("call_recording_ack_required", "false")
-        setProperty("call_recording_enabled", "false")
+        setConf("calls/recording@ack-required", "false")
+        setConf("calls/recording@enabled", "false")
         return {started, noticed, acked, done, a: lastLeg(call.callSessionId, A)}
     },
     then({started, noticed, acked, done, a}) {
@@ -369,10 +369,10 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         const otherNode = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId})
         const meeting = as(A, "convert#CallToMeeting", {callSessionId: third.callSessionId})
         // with cascading media nodes (W7) it merges: its phone stays on its node, now a leg node of the first call
-        setProperty("rtc_cascade_enabled", "true")
+        setConf("media-server@cascade-enabled", "true")
         const acrossNodes = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId,
             revision: rev(first.callSessionId)})
-        setProperty("rtc_cascade_enabled", "false")
+        setConf("media-server@cascade-enabled", "false")
         return {added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting, acrossNodes,
             firstAfter: session(first.callSessionId), secondAfter: session(second.callSessionId), farFirst: leg(first.phoneLegId),
             aSecond: lastLeg(second.callSessionId, A), thirdAfter: session(third.callSessionId), farThird: leg(third.phoneLegId)}
@@ -410,7 +410,7 @@ feature("a person is added; a number is not added to an encrypted call; calls on
 feature("a desk phone's REFER is checked before the phone is answered: refused with an error (the engine answers 403), the same REFER to a domestic number taken (202)", {
     when() {
         endAll()
-        return withProperty("sip_registrar_enabled", "true", () => {
+        return withConf("sip-server/registrar@enabled", "true", () => {
             const made = as(A, "org.moqui.call.SipDeviceServices.create#SipDevice", {name: "Xfer desk"})
             const device = sys(() => ec.entity.find("moqui.call.SipDevice").condition("sipDeviceId", made.sipDeviceId).one())
             engine("org.moqui.call.SipDeviceServices.store#SipRegistration", {change: "added", sipRegistrationId: "xfer-refer-1",

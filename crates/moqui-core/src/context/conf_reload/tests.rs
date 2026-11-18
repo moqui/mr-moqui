@@ -16,12 +16,11 @@ use std::sync::Arc;
 
 use moqui_lib::node::MNode;
 
-use super::catalog::CATALOG;
+use crate::context::conf_schema::CATALOG;
 use super::{apply_conf, pending_restart, preview_conf, ConfReport, Outcome};
 use crate::context::ExecutionContextFactory;
 
 const RUNNING: &str = r#"<moqui-conf>
-    <default-property name="conf_reload_kept" value="kept"/>
     <webapp-list><webapp name="webroot" http-port="8080" http-host="localhost">
         <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
     </webapp></webapp-list>
@@ -148,10 +147,10 @@ fn an_added_element_waits_whole_when_part_of_it_needs_a_restart() {
     assert!(!factory.conf_text().contains("second"));
 }
 
-/// An element at the top of the conf the catalog does not know needs a restart; an appended list compares as a
-/// sequence.
+/// An element at the top of the conf the catalog does not know is a component's own and applies live; an appended
+/// list compares as a sequence and needs a restart.
 #[test]
-fn unknown_elements_and_appended_lists_need_a_restart() {
+fn a_components_element_applies_and_an_appended_list_needs_a_restart() {
     let factory = factory(RUNNING);
     let disk = disk(&factory);
     disk.append("future-facade").set_attribute("setting", "on");
@@ -161,7 +160,7 @@ fn unknown_elements_and_appended_lists_need_a_restart() {
         .set_attribute("location", "component://b/entity/B.xml");
     let report = preview_conf(&factory, &disk).unwrap();
     let unknown = change(&report, "future-facade", None);
-    assert_eq!((unknown.kind, unknown.outcome), ("added", Outcome::PendingRestart));
+    assert_eq!((unknown.kind, unknown.outcome), ("added", Outcome::WouldApply));
     let load = change(&report, "entity-facade/load-entity", None);
     assert_eq!((load.kind, load.class), ("changed", "restart"));
 }
@@ -201,162 +200,6 @@ fn a_setting_a_later_conf_overrides_is_no_change() {
     );
 }
 
-/// A new property is set as boot sets it, and a unit that reads it is reported; one the environment already set is
-/// left as it is.
-#[test]
-fn a_new_property_is_set_and_its_readers_are_reported() {
-    let name = format!("conf_reload_new_{}", std::process::id());
-    let factory = factory(RUNNING);
-    let disk = disk(&factory);
-    let property = MNode::new("default-property");
-    property.set_attribute("name", name.as_str());
-    property.set_attribute("value", "/qapps/Deployed");
-    disk.insert_node(0, property);
-    disk.first_named("webapp-list")
-        .and_then(|list| list.first_named("webapp"))
-        .unwrap()
-        .append("error-screen")
-        .set_attribute("screen-path", format!("${{{name}}}"));
-    let report = apply_conf(&factory, &disk).unwrap();
-    let set = change(&report, &format!("default-property[{name}]"), None);
-    assert_eq!(set.outcome, Outcome::Applied, "{:#?}", report.changes);
-    assert_eq!(moqui_lib::env::get_property(&name).as_deref(), Some("/qapps/Deployed"));
-    assert!(report.changes.iter().any(|change| change.kind == "property"));
-
-    let preset = format!("conf_reload_preset_{}", std::process::id());
-    moqui_lib::env::set_property(&preset, "from-env".to_string());
-    let again = MNode::parse_text("disk", &factory.conf_text()).unwrap();
-    let property = MNode::new("default-property");
-    property.set_attribute("name", preset.as_str());
-    property.set_attribute("value", "from-conf");
-    again.insert_node(0, property);
-    let report = apply_conf(&factory, &again).unwrap();
-    assert_eq!(
-        change(&report, &format!("default-property[{preset}]"), None).outcome,
-        Outcome::NoEffect
-    );
-    assert_eq!(moqui_lib::env::get_property(&preset).as_deref(), Some("from-env"));
-    moqui_lib::env::clear_property(&name);
-    moqui_lib::env::clear_property(&preset);
-}
-
-/// A property the process was set up with waits for a restart.
-#[test]
-fn a_fixed_property_waits_for_a_restart() {
-    let factory = factory(RUNNING);
-    let disk = disk(&factory);
-    let property = MNode::new("default-property");
-    property.set_attribute("name", "webapp_http_port");
-    property.set_attribute("value", "9999");
-    disk.insert_node(0, property);
-    let report = preview_conf(&factory, &disk).unwrap();
-    assert_eq!(
-        change(&report, "default-property[webapp_http_port]", None).outcome,
-        Outcome::PendingRestart
-    );
-}
-
-/// A changed value is set only while the property still has the value the conf set: once the environment changed it
-/// the change has no effect and the environment's value stays; while it has the conf's value the change is applied.
-#[test]
-fn a_changed_property_value_yields_to_the_environment() {
-    let name = format!("conf_reload_changed_{}", std::process::id());
-    let conf = RUNNING.replacen(
-        "<moqui-conf>",
-        &format!("<moqui-conf><default-property name=\"{name}\" value=\"boot\"/>"),
-        1,
-    );
-    let changed = |factory: &ExecutionContextFactory| {
-        let disk = disk(factory);
-        disk.children_named("default-property")
-            .into_iter()
-            .find(|node| node.attribute("name").as_deref() == Some(name.as_str()))
-            .unwrap()
-            .set_attribute("value", "changed");
-        disk
-    };
-    let unit = format!("default-property[{name}]");
-
-    let overridden = factory(&conf);
-    overridden.conf_properties().insert(name.clone(), "boot".to_string());
-    moqui_lib::env::set_property(&name, "from-env".to_string());
-    let report = apply_conf(&overridden, &changed(&overridden)).unwrap();
-    let found = change(&report, &unit, Some("value"));
-    assert_eq!(found.outcome, Outcome::NoEffect, "{:#?}", report.changes);
-    assert!(found.reason.contains("environment"), "{}", found.reason);
-    assert_eq!(moqui_lib::env::get_property(&name).as_deref(), Some("from-env"));
-
-    let from_conf = factory(&conf);
-    from_conf.conf_properties().insert(name.clone(), "boot".to_string());
-    moqui_lib::env::set_property(&name, "boot".to_string());
-    let report = apply_conf(&from_conf, &changed(&from_conf)).unwrap();
-    assert_eq!(
-        change(&report, &unit, Some("value")).outcome,
-        Outcome::Applied,
-        "{:#?}",
-        report.changes
-    );
-    assert_eq!(moqui_lib::env::get_property(&name).as_deref(), Some("changed"));
-    moqui_lib::env::clear_property(&name);
-}
-
-/// A property the conf no longer sets waits for a restart, which clears it; the running conf keeps it until then.
-#[test]
-fn a_removed_property_waits_for_a_restart() {
-    let factory = factory(RUNNING);
-    let disk = disk(&factory);
-    assert!(disk.remove_where(|node| {
-        node.name() == "default-property" && node.attribute("name").as_deref() == Some("conf_reload_kept")
-    }));
-    let report = apply_conf(&factory, &disk).unwrap();
-    let removed = change(&report, "default-property[conf_reload_kept]", None);
-    assert_eq!(
-        (removed.kind, removed.class, removed.outcome),
-        ("removed", "restart", Outcome::PendingRestart)
-    );
-    assert!(removed.reason.contains("next start"), "{}", removed.reason);
-    assert!(factory.conf_text().contains("conf_reload_kept"));
-}
-
-/// A new secret property at its `CHANGEME` default is generated as boot generates one, and saved to the runtime's
-/// `.env`, not the default.
-#[test]
-fn a_new_changeme_secret_is_generated_on_apply() {
-    use crate::context::tests::{repo_env_stamp, workspace_root, EnvGuard, TempRuntime};
-    let _lock = crate::user::session::cookie_property_lock();
-    let root = workspace_root();
-    let _env = EnvGuard::new(root.clone());
-    let before = repo_env_stamp(&root);
-    let temp = TempRuntime::new("conf-reload-secret");
-    let factory =
-        ExecutionContextFactory::boot_with_framework(temp.path(), root.join("runtime/components/base/framework"))
-            .unwrap();
-    let name = format!("conf_reload_new_pass_{}", std::process::id());
-    let disk = disk(&factory);
-    let property = MNode::new("default-property");
-    property.set_attribute("name", name.as_str());
-    property.set_attribute("value", "reload-secret-CHANGEME");
-    disk.insert_node(0, property);
-    let report = apply_conf(&factory, &disk).unwrap();
-    assert_eq!(
-        change(&report, &format!("default-property[{name}]"), None).outcome,
-        Outcome::Applied,
-        "{:#?}",
-        report.changes
-    );
-    let value = moqui_lib::env::get_property(&name).unwrap_or_default();
-    assert_eq!(value.len(), 44, "{value}");
-    assert!(!value.contains("CHANGEME"));
-    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    assert!(env_text.contains(&format!("{name}=")), "{env_text}");
-    assert!(!env_text.contains("reload-secret-CHANGEME"));
-    assert_eq!(repo_env_stamp(&root), before);
-    moqui_lib::env::clear_property(&name);
-    for name in factory.property_names() {
-        moqui_lib::env::clear_property(name);
-    }
-}
-
 /// Every element at the top of the default conf has a unit, so none is reported as needing a restart only because
 /// the catalog does not know it.
 #[test]
@@ -375,10 +218,72 @@ fn every_top_level_element_of_the_default_conf_has_a_unit() {
     }
 }
 
+/// A conf that still uses the retired properties, a `default-property` or an attribute with a `${}`, is refused whole
+/// with each named (plans/archive/Conf-Paths.md, phase 7); nothing of it is applied.
 #[test]
-fn a_property_reference_is_found_whole() {
-    assert!(super::diff::refers("${webapp_http_port}", "webapp_http_port"));
-    assert!(super::diff::refers("${webapp_http_port ?: '8080'}", "webapp_http_port"));
-    assert!(!super::diff::refers("${webapp_http_port_x}", "webapp_http_port"));
-    assert!(!super::diff::refers("webapp_http_port", "webapp_http_port"));
+fn a_conf_with_a_retired_property_is_refused() {
+    let factory = factory(RUNNING);
+    let with_property = disk(&factory);
+    let property = MNode::new("default-property");
+    property.set_attribute("name", "webapp_http_port");
+    property.set_attribute("value", "9999");
+    with_property.insert_node(0, property);
+    let err = apply_conf(&factory, &with_property).unwrap_err().to_string();
+    assert!(err.contains("default-property name=\"webapp_http_port\""), "{err}");
+    let with_expression = disk(&factory);
+    with_expression
+        .first_named("webapp-list")
+        .and_then(|list| list.first_named("webapp"))
+        .unwrap()
+        .set_attribute("http-host", "${webapp_http_host}");
+    let err = preview_conf(&factory, &with_expression).unwrap_err().to_string();
+    assert!(
+        err.contains("webapp-list/webapp[webroot]@http-host holds a ${}"),
+        "{err}"
+    );
+    assert!(
+        err.contains("moqui_conf__webapp_list__webapp__WEBROOT__http_host"),
+        "{err}"
+    );
+    assert_eq!(factory.conf_generation(), 0, "nothing applied");
+}
+
+/// A report never shows a secret, though overrides and generated secrets are in the running conf: an attribute the
+/// schema or its name marks secret is masked in a change's values and inside an element's text, and its change still
+/// counts. A component's own element is live: its readers read the conf on each use.
+#[test]
+fn a_report_masks_secrets_and_a_components_element_is_live() {
+    let factory = factory(r#"<moqui-conf><smtp-server password="old-pass"/></moqui-conf>"#);
+    let disk = disk(&factory);
+    disk.first_named("smtp-server")
+        .unwrap()
+        .set_attribute("password", "new-pass");
+    let pass = MNode::new("pass");
+    pass.set_attribute("backend-url", "https://authority.example");
+    pass.set_attribute("client-secret", "pass-client-secret");
+    disk.append_node(pass);
+    let report = preview_conf(&factory, &disk).unwrap();
+    let text = format!("{report:?}");
+    for secret in ["old-pass", "new-pass", "pass-client-secret"] {
+        assert!(!text.contains(secret), "{secret} in {text}");
+    }
+    let password = change(&report, "smtp-server", Some("password"));
+    assert_eq!(password.old.as_deref(), Some(super::view::MASKED));
+    assert_eq!(password.new.as_deref(), Some(super::view::MASKED));
+    let added = change(&report, "pass", None);
+    assert_eq!(added.class, "live");
+    assert!(added
+        .new
+        .as_deref()
+        .unwrap_or_default()
+        .contains("https://authority.example"));
+    let applied = apply_conf(&factory, &disk).unwrap();
+    assert!(applied.applied > 0);
+    assert_eq!(
+        factory
+            .conf_value("pass@backend-url")
+            .map(|found| found.value)
+            .as_deref(),
+        Some("https://authority.example")
+    );
 }

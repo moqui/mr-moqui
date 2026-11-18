@@ -49,63 +49,23 @@ pub fn secret_parameter(key: &str) -> bool {
 }
 
 /// Whether `System.getProperty` refuses the property `name` to a script (plans/Security-Review-Medium.md SEC-SCR-03): a
-/// `default-property` the conf marks `is-secret="true"` (`conf_secrets`), a name [`secret_parameter`] calls a secret's
+/// conf attribute's environment name (`moqui_conf__...`, in any case), a name [`secret_parameter`] calls a secret's
 /// (password, secret, token, credential, a `_key` ending), and a name that ends in `_pass` or `_pw` or holds `crypt`;
-/// each in lower case with `.` read as `_`, as the lookup reads a name both ways. A script that needs a secret uses a
-/// named host function (`System.isPropertySet`, `System.propertyMatches`, `System.secretCodeHash`), and one that sends
-/// a credential at another server (`pass_client_secret`) names it to `RestClient.addPropertyHeader`, which never gives
-/// it to the script.
-pub(crate) fn script_refused_property(name: &str, conf_secrets: &std::collections::BTreeSet<String>) -> bool {
+/// each in lower case with `.` read as `_`, as the lookup reads a name both ways. A script reads the conf by selector
+/// (`ec.factory.getConfValue`), which never gives it a secret; one that needs a secret uses a named host function
+/// (`ec.factory.isConfValueSet`, `System.propertyMatches`, `System.secretCodeHash`), and one that sends a credential at
+/// another server (mr-pass's `pass@client-secret`) names it to `RestClient.addPropertyHeader`, which never gives it to
+/// the script.
+pub(crate) fn script_refused_property(name: &str) -> bool {
     let lower = name.trim().to_ascii_lowercase();
     let under = lower.replace('.', "_");
-    conf_secret(name, conf_secrets)
+    // a conf attribute's environment name (plans/archive/Conf-Paths.md §4)
+    moqui_lib::node::path::env_segments(name.trim()).is_some()
         || secret_parameter(&lower)
         || secret_parameter(&under)
         || under.ends_with("_pass")
         || under.ends_with("_pw")
         || under.contains("crypt")
-}
-
-/// Whether the conf marks the property `name` `is-secret="true"`: one of this server's own keys (the crypt pass, the
-/// session key, the DKIM and cluster keys), as written or with `.` read as `_`.
-fn conf_secret(name: &str, conf_secrets: &std::collections::BTreeSet<String>) -> bool {
-    let under = name.trim().to_ascii_lowercase().replace('.', "_");
-    conf_secrets.contains(name.trim()) || conf_secrets.contains(&under)
-}
-
-/// The `default-property` names the current conf marks `is-secret="true"`, kept until a conf reload.
-struct ConfSecrets(std::collections::BTreeSet<String>);
-
-/// [`script_refused_property`] with the current factory's conf (none outside a context).
-pub(crate) fn script_refused_property_here(name: &str) -> bool {
-    with_conf_secrets(|secrets| script_refused_property(name, secrets))
-}
-
-/// Whether the current factory's conf marks the property `name` `is-secret="true"` (none outside a context): a key of
-/// this server, which `RestClient.addPropertyHeader` never sends.
-pub(crate) fn conf_secret_here(name: &str) -> bool {
-    with_conf_secrets(|secrets| conf_secret(name, secrets))
-}
-
-/// `check` on the `is-secret` property names of the current factory's conf (an empty set outside a context).
-fn with_conf_secrets<T>(check: impl FnOnce(&std::collections::BTreeSet<String>) -> T) -> T {
-    let secrets = crate::context::ExecutionContext::with_current(|ec| {
-        ec.factory().conf_derived(|factory| {
-            let names = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text())
-                .map(|conf| {
-                    conf.named_iter("default-property")
-                        .filter(|node| node.attribute("is-secret").as_deref() == Some("true"))
-                        .filter_map(|node| node.attribute("name"))
-                        .collect()
-                })
-                .unwrap_or_default();
-            ConfSecrets(names)
-        })
-    });
-    match secrets {
-        Some(secrets) => check(&secrets.0),
-        None => check(&std::collections::BTreeSet::new()),
-    }
 }
 
 pub(crate) fn server_address() -> &'static (String, String) {
@@ -167,9 +127,10 @@ mod tests {
     /// SEC-SCR-03: the names `System.getProperty` refuses to a script, and the setting names scripts read.
     #[test]
     fn scripts_read_no_secret_property() {
-        let conf: std::collections::BTreeSet<String> =
-            ["fcm_service_account", "cluster_tls_cert"].iter().map(|name| name.to_string()).collect();
         for name in [
+            // a conf attribute's environment name, whatever it holds: scripts read the conf by selector
+            "moqui_conf__entity_facade__crypt_pass",
+            "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__HTTP_PORT",
             "entity_ds_crypt_pass",
             "entity_ds_crypt_pass_old",
             "entity_ds_password",
@@ -178,24 +139,20 @@ mod tests {
             "entity.ds.crypt.pass",
             "xmpp_upload_secret",
             "git_lfs_token_key_previous",
-            "fcm_service_account",
-            "cluster_tls_cert",
             "AWS_SECRET_ACCESS_KEY",
             "GITHUB_TOKEN",
             "PGPASSWORD",
             "smtp_pw",
-            // the PASS frontend's credential at its authority: sent by RestClient.addPropertyHeader, never read
-            "pass_client_secret",
-            "PASS_CLIENT_SECRET",
+            // a credential at another server, by its name: sent by RestClient.addPropertyHeader, never read
+            "remote_client_secret",
+            "REMOTE_CLIENT_SECRET",
         ] {
-            assert!(super::script_refused_property(name, &conf), "{name}");
+            assert!(super::script_refused_property(name), "{name}");
         }
-        assert!(super::conf_secret("FCM.SERVICE.ACCOUNT", &conf));
-        assert!(!super::conf_secret("pass_client_secret", &conf));
         for name in [
-            "pass_backend_url",
-            "pass_client_id",
-            "pass_client_web_sites",
+            "remote_backend_url",
+            "remote_client_id",
+            "remote_client_web_sites",
             "instance_purpose",
             "webapp_http_host",
             "mail_change_keep_days",
@@ -204,7 +161,7 @@ mod tests {
             "embedded_db_backup_dir",
             "default_time_zone",
         ] {
-            assert!(!super::script_refused_property(name, &conf), "{name}");
+            assert!(!super::script_refused_property(name), "{name}");
         }
     }
 }

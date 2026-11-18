@@ -297,9 +297,9 @@ fn xmpp_clients_sign_in_chat_with_the_web_page_the_archive_upload_publish_and_re
         "xmpp",
         Some(DATA),
         &[
-            ("xmpp_domain", "moqui.local"),
-            ("xmpp_tls_port", "0"),
-            ("xmpp_tls_host", "127.0.0.1"),
+            ("moqui_conf__xmpp_server__domain", "moqui.local"),
+            ("moqui_conf__xmpp_server__tls_port", "0"),
+            ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -558,7 +558,10 @@ fn an_upload_put_is_checked_before_its_body_kept_to_its_size_and_deadline_and_pu
     let gate = crate::common::start_with_files(
         "xmpp-upload",
         Some(DATA),
-        &[("xmpp_domain", "moqui.local"), ("xmpp_upload_seconds", "2")],
+        &[
+            ("moqui_conf__xmpp_server__domain", "moqui.local"),
+            ("moqui_conf__xmpp_server__upload__seconds", "2"),
+        ],
         &[],
     );
     let http = gate.server.address();
@@ -593,7 +596,7 @@ fn an_upload_put_is_checked_before_its_body_kept_to_its_size_and_deadline_and_pu
         b"15\r\nhello world, and more\r\n0\r\n\r\n",
     );
     assert_eq!(status_within(&mut long, Duration::from_secs(5)), Some(413));
-    // a body that stops short past the deadline (xmpp_upload_seconds 2) is 408, and the slot stays open
+    // a body that stops short past the deadline (xmpp-server/upload@seconds 2) is 408, and the slot stays open
     let mut slow = put_open(http, &first, headers, b"hello");
     assert_eq!(status_within(&mut slow, Duration::from_secs(5)), Some(408));
 

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The edge link (plans/archive/Edge-Node.md §5.2, §5.3, §5.7) for the System app: on a local node its Edge Node screen
-    (check, pair, status, unpair), and on an edge node (node_role=front_edge) its Edge Clients screen (pairing codes, paired
+    (check, pair, status, unpair), and on an edge node (moqui_conf__instance__node_role=front_edge) its Edge Clients screen (pairing codes, paired
     local nodes, revoke, their public host names); the link's queue and replication on both. The bodies are Rust
     (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/, the edge
     feature, in Maximal and Enterprise). In a binary without it each service fails with "edge link not built into this
@@ -28,11 +28,11 @@ along with this software (see the LICENSE.md file). If not, see
             without the edge link, notStarted in one with it where no HTTP listener started it, as under moqui test),
             the edge node's URL, the link generation, the round trip of the last Ping on the up connection, when the link
             last came up, the last error, the links lost since start, and the edge node as its last Hello said, with the
-            pinned fingerprint. nodeRole is this node's node_role; on an edge node linkFingerprint is its own link key's
+            pinned fingerprint. nodeRole is this node's instance@node-role; on an edge node linkFingerprint is its own link key's
             fingerprint.</description>
         <out-parameters>
             <parameter name="nodeRole"/>
-            <parameter name="takesLinks" type="Boolean"><description>This node takes links: node_role is set (front,
+            <parameter name="takesLinks" type="Boolean"><description>This node takes links: instance@node-role is set (front,
                 front_edge, edge or all-in-one, plans/Edge-Node2.md §4.3).</description></parameter>
             <parameter name="state"/>
             <parameter name="url"/>
@@ -42,7 +42,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="lastError"/>
             <parameter name="reconnects" type="Long"/>
             <parameter name="linkFingerprint"><description>On an edge node, the fingerprint of its own link key
-                (edge_link_key; SHA-256 of the public key, hex), to compare with what a local node's check#EdgeNode
+                (edge@link-key; SHA-256 of the public key, hex), to compare with what a local node's check#EdgeNode
                 shows; empty on any other node. The key itself is never shown.</description></parameter>
             <parameter name="edgeName"/>
             <parameter name="fingerprint"/>
@@ -59,7 +59,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="edgeMemberList" type="List"><description>On a local node, its link to each member of its
                 edge cluster (plans/Edge-Node2.md §4.6), in instance id order; one for a single edge node. The fields
                 above are of the link that carries this node's work up (carriesWork), else of the first. instanceId is
-                empty until a link to the URL this node paired with came up; url is the member's edge_link_url, else that
+                empty until a link to the URL this node paired with came up; url is the member's edge@link-url, else that
                 URL; retired is a member gone from the edge cluster's list, not dialed again once its link
                 ends.</description>
                 <parameter name="member" type="Map">
@@ -73,11 +73,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="edgeRole"><description>The role the node at the other end of the link named in its Hello
                 (front, front_edge, edge, all-in-one); empty from a node before E19.</description></parameter>
             <parameter name="frontState"><description>When this node has a front pairing beside its edge pairing
-                (front_node_url, plans/Edge-Node2.md §4.7): that link's state, and its URL, the front node's name and
+                (edge/front-node@url, plans/Edge-Node2.md §4.7): that link's state, and its URL, the front node's name and
                 fingerprint, its last error and when it last came up. A node paired with a front alone shows it in the
                 fields above too.</description></parameter>
             <parameter name="frontOnly" type="Boolean"><description>This node is paired with a front node alone:
-                front_node_url set and edge_node_url not (plans/Edge-Node2.md §4.7). From the properties, so it holds
+                edge/front-node@url set and edge/node@url not (plans/Edge-Node2.md §4.7). From the properties, so it holds
                 before the front's link first comes up, while edgeRole is still empty.</description></parameter>
             <parameter name="frontUrl"/>
             <parameter name="frontName"/>
@@ -90,11 +90,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="EdgeCluster" type="rust" location="moqui_core::service::edge::get_edge_cluster"
             allow-remote="false" transaction="ignore">
         <description>On a node that takes links: the members of its cluster (plans/Edge-Node2.md §4.6) from their
-            moqui.server.ClusterMember rows, live or not, each with linkUrl (its edge_link_url, where local nodes dial
+            moqui.server.ClusterMember rows, live or not, each with linkUrl (its edge@link-url, where local nodes dial
             it; empty when it has none), heartbeatAgeMs (empty when no heartbeat was written) and version; thisMember is
             the one answering. Its Hello answer lists the live ones, with their linkUrl, to every local node that links.
             Where the link is not running (no HTTPS listener started it) the same from the rows and this node's
-            edge_link_url as it is now; on a node that takes no links, refused.</description>
+            edge@link-url as it is now; on a node that takes no links, refused.</description>
         <out-parameters>
             <parameter name="memberList" type="List"><parameter name="member" type="Map">
                 <parameter name="instanceId"/><parameter name="linkUrl"/>
@@ -108,10 +108,10 @@ along with this software (see the LICENSE.md file). If not, see
                     members' SIP engines, only that one registers them.</description></parameter>
             </parameter></parameter>
             <parameter name="frontList" type="List"><description>The front node this node is paired with
-                (front_node_url, plans/Edge-Node2.md §4.7), which every member of its cluster dials with the shared
+                (edge/front-node@url, plans/Edge-Node2.md §4.7), which every member of its cluster dials with the shared
                 .env: its link to each member of the front's cluster, else the one link, with the front's name and the
                 pinned fingerprint of its link key. Where the link is not running, or its front dialer is not, one row
-                from front_node_url and front_node_id (the front's member ids, comma-separated) with state
+                from edge/front-node@url and edge/front-node@id (the front's member ids, comma-separated) with state
                 notStarted. Empty with no front pairing.</description>
                 <parameter name="front" type="Map">
                     <parameter name="instanceId"/><parameter name="url"/><parameter name="state"/>
@@ -125,7 +125,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="EdgeNode" type="rust" location="moqui_core::service::edge::check_edge_node"
             allow-remote="false" transaction="ignore">
         <description>Connect to the edge node at url (https://host or https://host:port), check its web certificate by
-            WebPKI, and answer its name, the fingerprint of its link key (edge_link_key), versions and offer, without
+            WebPKI, and answer its name, the fingerprint of its link key (edge@link-key), versions and offer, without
             pairing: for the operator to confirm before pair#EdgeNode. compatible is false, with message, when the link
             protocol versions are more than one apart.</description>
         <in-parameters><parameter name="url" required="true"/></in-parameters>
@@ -149,7 +149,7 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" transaction="ignore">
         <description>Pair this local node with the edge node at url, using the one-use code its operator made: make this
             node's key, have the edge node pin it, pin the edge node's link key (refused when expectFingerprint, the
-            fingerprint check#EdgeNode showed, is given and differs), write edge_node_url, edge_node_key and edge_node_pin to
+            fingerprint check#EdgeNode showed, is given and differs), write edge/node@url, edge/node@key and edge/node@pin to
             runtime/.env, and bring the link up without a restart. keyFingerprint is this node's key as the edge node
             pinned it.</description>
         <in-parameters>
@@ -177,7 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="unpair" noun="EdgeNode" type="rust" location="moqui_core::service::edge::unpair_edge_node"
             allow-remote="false" transaction="ignore">
         <description>Tell the edge node to revoke this node's key (when the link is up), close the link and remove
-            edge_node_url, edge_node_key and edge_node_pin from runtime/.env. With front true, the front pairing's
+            edge/node@url, edge/node@key and edge/node@pin from runtime/.env. With front true, the front pairing's
             instead (front_node_*, plans/Edge-Node2.md §4.7); a node paired with a front alone unpairs it either way.</description>
         <in-parameters><parameter name="front" type="Boolean" default-value="false"/></in-parameters>
     </service>
@@ -374,7 +374,7 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" transaction="ignore">
         <description>On a local node: this member and its cluster as its links tell the edge node (plans/Edge-Node2.md
             §4.4; System › Edge Node): its instanceId and state on its links (starting, live or draining; drain#EdgeMember
-            with no pairing drains it), pairingId (edge_node_pairing, the id the edge node keys every member by), and each
+            with no pairing drains it), pairingId (edge/node@pairing, the id the edge node keys every member by), and each
             member of its cluster (moqui.server.ClusterMember) with its heartbeat's age (empty when none was written),
             whether it is live and its version, own for this one. Read from this node's database, so it answers with the
             link down too.</description>
@@ -501,7 +501,7 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false">
         <description>On an edge node: a TCP port whose connections go down an active paired local node's link, to its
             SSH server (tunnelKind ssh) or its XMPP server (xmpp for STARTTLS, xmpps for direct TLS); on a front node
-            (node_role front) also smtp, to the SMTP listener of a member of the pairing's pool with a PROXY header
+            (instance@node-role front) also smtp, to the SMTP listener of a member of the pairing's pool with a PROXY header
             naming the client (port 25 before an edge cluster, plans/Edge-Node2.md §4.7), refused on any other node. A
             port of this node's own listeners (its conf's tunnel ports included; on a front node not those of the edge
             set, which it never starts), and one another row has, are refused; the same row again is no change. The edge node listens on it within seconds (get#EdgePorts tells how it
@@ -678,12 +678,12 @@ along with this software (see the LICENSE.md file). If not, see
             tlsPort, this node's own tunnel ports or those of every XMPP domain, 0 while off, and needsNode, when this
             node named no XMPP domain in Configure and is not the only one linked, so the ports of every domain cannot
             find it), calls (available while its media node runs, mediaAddress, turnUrls, and enabled, this node's own
-            edge_calls_enabled), sip (available while its SIP engine runs, sipAddress and tlsAddress, domain, the realm
+            edge/node@calls-enabled), sip (available while its SIP engine runs, sipAddress and tlsAddress, domain, the realm
             this node's phones register in there (its Configure's sipDomain when it named one), registrar, trunks, the
             trunks its engine loaded from this node's copy with voiceTrunkId, name, state and error, fallbacks, the
-            numbers with a fallback in its copy, and enabled, this node's own edge_sip_enabled); otherNode and
+            numbers with a fallback in its copy, and enabled, this node's own edge/node@sip-enabled); otherNode and
             otherNodes are no longer set, notAvailable (areas not built yet: none now), addresses (the
-            edge node's public addresses, when it names them) and nodeHosts (this node's host names there now). edgeUrl is edge_node_url. Fails while the link is down.</description>
+            edge node's public addresses, when it names them) and nodeHosts (this node's host names there now). edgeUrl is edge/node@url. Fails while the link is down.</description>
         <out-parameters>
             <parameter name="offer" type="Map"/>
             <parameter name="edgeUrl"/>
@@ -699,22 +699,22 @@ along with this software (see the LICENSE.md file). If not, see
             EmailServer EDGE with smtpHost edge:, SYSTEM's smtpHost edge: when systemMail, and each of emailAccountIds
             (hosted or shared, with no incoming server of another provider) sending through the edge node; the host or
             server each replaced is kept (edgePriorSmtpHost, edgePriorServerId) and put back when the node unpairs. Chat:
-            channels_public_url in runtime/.env, the edge node's address. PASS: pass_edge_client and
+            channels@public-url in runtime/.env, the edge node's address. PASS: edge/node@pass-client and
             pass_client_(id)_sites and _callback in runtime/.env. Web: hostList (hostName, modeEnumId) is this node's
             whole list of names on the edge node; a name another node holds is refused there. XMPP (xmppOn): this node's
-            xmpp_domain goes to the edge node (kept in its setupJson), and with web access on it is added to hostList as
+            xmpp-server@domain goes to the edge node (kept in its setupJson), and with web access on it is added to hostList as
             passthrough when not listed, as uploads (https://domain) and /xmpp-websocket ride on web access; with web
             access off and the name not on the edge node, a failed xmpp line says so and the rest is applied. Refused
-            before any change when this node has no xmpp_domain or the edge node no tunnel port. Nothing is written
-            locally for XMPP; lines say when this node's xmpp_port or xmpp_tls_port (which Chat apps shows) differ
+            before any change when this node has no xmpp-server@domain or the edge node no tunnel port. Nothing is written
+            locally for XMPP; lines say when this node's xmpp-server@port or xmpp-server@tls-port (which Chat apps shows) differ
             from the edge node's ports, and when the edge node's ports cannot find this node's clients. Calls (callsOn given, and the edge node's media node offered; left out, nothing
-            changes; nothing is sent to the edge node): edge_calls_enabled true or false in runtime/.env, and the edge
+            changes; nothing is sent to the edge node): edge/node@calls-enabled true or false in runtime/.env, and the edge
             node's CallMediaNode row written again at once, draining while it is false (the link keeps it so after
             that, and never after unpairing), so new calls have their media on the edge node, or on this node's own
             media nodes while calls on the edge node go on (a failed line when it has none live, as no new call can
             start then); lines check the media address (public), the TURN secret the link's Hello handed this node,
             and the row (live, preferred). Phones (sipOn given, and the edge node's SIP engine offered; left out, nothing
-            changes; nothing is sent to the edge node): edge_sip_enabled true or false in runtime/.env; while it is
+            changes; nothing is sent to the edge node): edge/node@sip-enabled true or false in runtime/.env; while it is
             false the replicated sets voiceTrunks and voiceFallbacks go to the edge node empty, so its engine has no
             trunks and no fallback, and the edge node's link-kept SipNode row stays but takes no new call, and its
             registrar signs no phone in; lines give the two sets' replication (cursor, keys waiting), the row (live,
@@ -735,8 +735,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="passSites" type="List"/>
             <parameter name="passCallback"/>
             <parameter name="xmppOn" type="Boolean" default="false"/>
-            <parameter name="callsOn" type="Boolean"><description>Calls on or off; left out (as Discover does when it offered no calls) leaves edge_calls_enabled as it is</description></parameter>
-            <parameter name="sipOn" type="Boolean"><description>Phones on or off; left out (as Discover does when it offered no SIP engine) leaves edge_sip_enabled as it is</description></parameter>
+            <parameter name="callsOn" type="Boolean"><description>Calls on or off; left out (as Discover does when it offered no calls) leaves edge/node@calls-enabled as it is</description></parameter>
+            <parameter name="sipOn" type="Boolean"><description>Phones on or off; left out (as Discover does when it offered no SIP engine) leaves edge/node@sip-enabled as it is</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="lineList" type="List"/>
@@ -770,7 +770,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="dkimRecord"/>
             <parameter name="mailMta"><description>The edge node's MTA, moqui or postfix: with postfix Rspamd's key
                 signs, which the edge node does not know, so only that a DKIM record is there is checked</description></parameter>
-            <parameter name="xmppDomain"><description>This node's xmpp_domain when its clients come through the edge
+            <parameter name="xmppDomain"><description>This node's xmpp-server@domain when its clients come through the edge
                 node; empty for no XMPP records</description></parameter>
             <parameter name="xmppHosts" type="List"/>
             <parameter name="xmppPort" type="Integer"/>
@@ -779,7 +779,7 @@ along with this software (see the LICENSE.md file). If not, see
                 go through it</description></parameter>
             <parameter name="mediaAddress"><description>The edge node's media address (ip:port), which its TURN host
                 names by default</description></parameter>
-            <parameter name="sipDomain"><description>The edge node's SIP realm (its sip_domain) when phones go
+            <parameter name="sipDomain"><description>The edge node's SIP realm (its sip-server@domain) when phones go
                 through it; empty for no SIP records</description></parameter>
             <parameter name="sipHosts" type="List"/>
             <parameter name="sipPort" type="Integer"><description>The port of its SIP address for UDP and TCP; 0 when off</description></parameter>
@@ -801,14 +801,14 @@ along with this software (see the LICENSE.md file). If not, see
             checks that it takes the webhooks of chatBridgeIds (not checked with none); with passOn, the PASS client
             settings name passSites and the edge node has mr-pass; with xmppOn, a client stream through each tunnel port
             the edge node has on (check xmpp for STARTTLS, xmpps for direct TLS; not checked when off) reaches this
-            node's XMPP server, which must take tunneled connections of that kind, and xmpp_domain is one of this node's
+            node's XMPP server, which must take tunneled connections of that kind, and xmpp-server@domain is one of this node's
             host names there (xmppWeb); the TLS must present this node's own certificate for the domain; with callsOn
-            (not checked while edge_calls_enabled is false), the edge node's CallMediaNode row is kept by the link,
+            (not checked while edge/node@calls-enabled is false), the edge node's CallMediaNode row is kept by the link,
             live, with the Hello's media address and not draining, so Calls.js puts it first (callsNode),
             make#IceServers gives a probe leg the edge node's TURN URLs with a credential signed with the secret its
             link handed this node (iceServers), and that credential allocates on its TURN over UDP with a permission
             for the IP of its media address (a TURN permission is for an IP alone), then the allocation is deleted (turn, up to 3 seconds; not checked without TURN or
-            a UDP listener); with sipOn (not checked while edge_sip_enabled is false), the edge node's SipNode row is
+            a UDP listener); with sipOn (not checked while edge/node@sip-enabled is false), the edge node's SipNode row is
             kept by the link, live, with the Hello's addresses (sipNode), its engine has loaded every enabled trunk of
             this node, none failed (sipTrunks; not checked with none), and its copy has every number's fallback, with
             nothing waiting to replicate (sipFallbacks). No SIP request is sent: the edge node's engine answers OPTIONS

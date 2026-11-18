@@ -31,7 +31,7 @@ browser (mounting, Quasar menus and popups, dialogs, posts, the lazy libraries, 
 
 `/qapps/**` is one HTML page, `includes/WebrootVue.qvt.html.fancy`, made by the pre-actions of `qapps.xml`. The libraries load at the end
 of the body in this order: `vue/vue.global.prod.js`, `quasar/quasar.umd.prod.js`, `quasar/lang/<pack>.umd.prod.js`, `MoquiLib.js`,
-`MoquiL10n.js`, `WebrootChat.js`, `WebrootAssist.js`, `WebrootVue.qvt.render.js`, `WebrootVue.qvt.js`. Compiling templates in the browser needs `unsafe-eval` in a content security policy; the page has no
+`MoquiL10n.js`, `WebrootChat.js`, `WebrootChatExpiry.js`, `WebrootAssist.js`, `WebrootVue.qvt.render.js`, `WebrootVue.qvt.js`. Compiling templates in the browser needs `unsafe-eval` in a content security policy; the page has no
 inline script and no inline event handler, and the settings are a data block:
 
 ```html
@@ -47,13 +47,13 @@ inline script and no inline event handler, and the settings are a data block:
 | `locale`, `timeZone`, `quasarLang` | `en-US` style tag, zone name, and the key of the language pack in `Quasar.Lang` (`enUS`, `ptBR`, `zhCN`, `de`, ...) |
 | `darkMode`, `leftOpen`, `leftMini` | the preferences `QUASAR_DARK` (`true`, `false` or `"auto"`, which follows the system), `QUASAR_LEFT_OPEN` and `QUASAR_LEFT_MINI` (the drawer as a rail of app icons) |
 | `appearance` | what `org.moqui.ui.ShellServices.get#Appearance` builds (see Appearance): the theme's color schemes (`{id, description, light, dark, custom, version, fonts}`), the fonts (`{id, description, kind, family, stylesheet}`), the themes the user may choose (`themes`, `{id, description}`; see Themes), `screenThemeId` (the theme shown), `defaultSchemeId`, `schemeId` (the scheme shown), `policy`, the user's `THEME_*` values the policy allows, `keys`, `tokens` and the style sheets the page links (`links`) |
-| `devMarker` | the `webapp_dev_marker_color` conf property: the color of the small square a dev or test instance shows in the corner of the window; empty for none |
+| `devMarker` | the `webapp-list/webapp[webroot]@dev-marker-color` conf property: the color of the small square a dev or test instance shows in the corner of the window; empty for none |
 | `density`, `startApp` | `SHELL_DENSITY` (`comfortable` or `compact`) and `SHELL_START_APP`, the app the user may open that `/qapps` with no path opens (empty for the app list) |
 | `notificationEndpoint` | the path of the notification WebSocket, from `webapp_notification_endpoint`. Empty means no socket is opened. |
 | `navPlugins`, `accountPlugins` | theme values `STRT_HEADER_NAVBAR_COMP` and `STRT_HEADER_ACCOUNT_COMP`: URLs of components for the header |
 | `qz` | `{enabled}`: print through QZ Tray |
 | `assist` | whether Assist is on for the user (the `llm` feature built and enabled, and `AgentUse`); without it the drawer makes no request |
-| `qvt` | `{build, handles}`: the Vue build this page loaded (`compiler`, or `runtime` with `webapp_qvt_static_only=true`) and the `X-Moqui-Qvt` responses it handles (`merged-fragment`, `static-template`, and `bundled-qvue`: a `.qvue` loaded compiled, below) |
+| `qvt` | `{build, handles}`: the Vue build this page loaded (`compiler`, or `runtime` with `moqui_conf__webapp_list__webapp__WEBROOT__qvt_static_only=true`) and the `X-Moqui-Qvt` responses it handles (`merged-fragment`, `static-template`, and `bundled-qvue`: a `.qvue` loaded compiled, below) |
 | `userAccount`, `preferences` | the snapshot of the user for the `ec` of a server-static screen: `{partyId, emailAddress, userFullName}` (no password column) and the user's preferences by key |
 | `labels` | text the shell needs localized |
 | `quasar`, `currencies` | optional: Quasar configuration (brand, notify, loading bar), and `{USD: {symbol, fractionDigits}}` for `formatCurrency` |
@@ -1033,7 +1033,7 @@ minutes, so a late commit is not missed; a room joined since is a `membership` c
 
 A change replaces the earlier change of the same thing (a user's kind and room; a room's message) with a new number, so
 each feed holds one row per thing that changed. An agent's chat user and system users get no user changes. Changes older
-than `chat_changes_keep_days` (30) are purged daily (`clean#ChatChanges`). A thread reply is a new message and is in no
+than `chat@changes-keep-days` (30) are purged daily (`clean#ChatChanges`). A thread reply is a new message and is in no
 feed; when a reply is deleted its `redaction` change has the reply's `eventSeq` and its `threadRootEventSeq`, and the
 root's `threadReplyCount` and last reply change with it: read the root again (or the room's threads). The server side,
 and why it is split this way, is in `ChatServices.xml` (`record#UserChange`, `record#RoomChange`) and `ChatEntities.xml`
@@ -1239,8 +1239,8 @@ as a notification.
 | Safari on iOS and iPadOS 16.4+ | Only for the web app added to the Home Screen; a Safari tab has none, and the toggle says so |
 | Any browser without the Push API, or a server built without `web-push` | Desktop notifications only while a page is open |
 
-The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
-names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
+The server keeps its key in `push/web@vapid-key` (a generated conf secret, shared by the cluster through its `runtime/.env`) and
+names itself to the push services with `push/web@subject` (a `mailto:` or `https:` URL; set it in production).
 
 **Native apps (FCM, UnifiedPush).** The mobile app is not a browser and gets no Web Push. Signed in with its device key,
 it registers its Firebase Cloud Messaging token (`POST /qapps/registerClientPush` with `provider=fcm`, `token`, `appId`,
@@ -1274,11 +1274,11 @@ Push carries, never a message's body, and its data is cut to 3 KB. FCM answering
 leaves it. 429 and 5xx are tried twice more with a growing wait, never past a ring's end; after that, as with no access
 token, the rest of that send is not tried and no device is counted against, so an outage disables nothing.
 
-The server signs in to FCM as a Firebase project's service account: `fcm_service_account` is its JSON key file's path
-or the JSON itself (an `is-secret` default-property, from the environment or `runtime/.env`, not generated), and
-`fcm_project_id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
+The server signs in to FCM as a Firebase project's service account: `push/fcm@service-account` is its JSON key file's path
+or the JSON itself (a conf secret, set in the environment or `runtime/.env`, not generated), and
+`push/fcm@project-id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
 an access token, kept until five minutes before it expires. Unset, nothing goes to FCM and the log says so once.
-`fcm_base_url` replaces `https://fcm.googleapis.com`, for a test stand-in.
+`push/fcm@base-url` replaces `https://fcm.googleapis.com`, for a test stand-in.
 
 A call's ring and its end are sent once the call's transaction commits, and on do not disturb (the apps and the desk
 and soft phones alike) only to a user whose allowed list (Chat settings, `CHAT_DND_ALLOWED`) has the caller, or whom

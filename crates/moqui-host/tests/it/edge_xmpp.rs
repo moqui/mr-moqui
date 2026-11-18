@@ -14,9 +14,9 @@
 
 //! The XMPP tunnel (plans/archive/Edge-Node.md §5.4, E9): outside XMPP clients sign in through the edge node's tunnel ports
 //! and chat with each other on the local node, which ends their TLS. Both ends are real servers in the test's own
-//! process, as in `edge_web.rs`: the local node with `xmpp_domain` and a direct TLS port of its own, then the edge node
-//! (`node_role=front_edge`), which inherits those properties and still starts no XMPP server, with `edge_xmpp_port`
-//! (STARTTLS) and `edge_xmpp_tls_port` (direct TLS).
+//! process, as in `edge_web.rs`: the local node with `xmpp-server@domain` and a direct TLS port of its own, then the edge node
+//! (`moqui_conf__instance__node_role=front_edge`), which inherits those properties and still starts no XMPP server, with `edge@xmpp-port`
+//! (STARTTLS) and `edge@xmpp-tls-port` (direct TLS).
 //!
 //! Ann is tokio-xmpp over the direct TLS tunnel (SCRAM-SHA-256-PLUS with the local node's tls-exporter, so the TLS is
 //! the local node's); Ben is a raw stream over the STARTTLS tunnel, SASL2 with SCRAM-PLUS and Bind 2. Ann writes to
@@ -127,10 +127,13 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
         Some(DATA),
         "",
         &[
-            ("webapp_https_listen_port", &local_port),
-            ("xmpp_domain", "moqui.local"),
-            ("xmpp_tls_port", "0"),
-            ("xmpp_tls_host", "127.0.0.1"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &local_port,
+            ),
+            ("moqui_conf__xmpp_server__domain", "moqui.local"),
+            ("moqui_conf__xmpp_server__tls_port", "0"),
+            ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &local_cert), ("cert/default.key", &local_key)],
     );
@@ -146,16 +149,19 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
         tunnel_port.to_string(),
         tunnel_tls_port.to_string(),
     );
-    // the edge node shares the process's xmpp_domain and xmpp_tls_port, and starts no XMPP server for its role
+    // the edge node shares the process's xmpp-server@domain and xmpp-server@tls-port, and starts no XMPP server for its role
     let edge = crate::common::start_second_with(
         "edge-xmpp-edge",
         "",
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
-            ("edge_xmpp_port", &tunnel_text),
-            ("edge_xmpp_tls_port", &tunnel_tls_text),
-            ("edge_xmpp_host", "127.0.0.1"),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
+            ("moqui_conf__edge__xmpp_port", &tunnel_text),
+            ("moqui_conf__edge__xmpp_tls_port", &tunnel_tls_text),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );

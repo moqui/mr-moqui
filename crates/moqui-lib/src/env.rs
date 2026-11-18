@@ -59,6 +59,28 @@ pub fn get_property(name: &str) -> Option<String> {
     with_properties(|map| map.get(name).cloned()).filter(|value| !value.is_empty())
 }
 
+/// Every process property with a value, as `(name, value)`, in no order: what [`get_property`] can answer.
+#[must_use]
+pub fn property_entries() -> Vec<(String, String)> {
+    with_properties(|map| {
+        map.iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    })
+}
+
+/// Every loaded dotenv entry with a value, as `(name, value)`, in no order.
+#[must_use]
+pub fn dotenv_entries() -> Vec<(String, String)> {
+    with_dotenv(|map| {
+        map.iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    })
+}
+
 fn lookup_one(name: &str) -> Option<String> {
     let property = with_properties(|map| map.get(name).cloned());
     if let Some(value) = property {
@@ -363,7 +385,7 @@ fn is_expand_name(name: &str) -> bool {
 
 /// The environment variables a child process the server starts keeps from the server's own ([`limit_child_env`]): what
 /// finding a program, the user's home, the locale and the temporary directory need, and on Windows what any process
-/// needs to start. Secrets given to the server as environment variables (the database password, `session_cookie_key`,
+/// needs to start. Secrets given to the server as environment variables (the database password, `webapp-list/webapp[webroot]/session-config@cookie-key`,
 /// API keys) are not among them.
 pub const CHILD_ENV_NAMES: &[&str] = &[
     "PATH",
@@ -397,7 +419,10 @@ pub fn limit_child_env(command: &mut std::process::Command, more: &[&str]) {
     let prefixes: Vec<&str> = more.iter().filter_map(|name| name.strip_suffix('*')).collect();
     if !prefixes.is_empty() {
         for (name, value) in std::env::vars_os() {
-            if name.to_str().is_some_and(|name| prefixes.iter().any(|prefix| name.starts_with(prefix))) {
+            if name
+                .to_str()
+                .is_some_and(|name| prefixes.iter().any(|prefix| name.starts_with(prefix)))
+            {
                 command.env(name, value);
             }
         }

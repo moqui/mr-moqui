@@ -439,7 +439,7 @@ fn delete(client: &RestClient, config: &Config, out: &Outgoing<'_>, sid: &str) {
 fn hooked(client: &RestClient, config: &Config, out: &Outgoing<'_>, sid: &str) -> Result<(), DeliveryOutcome> {
     let Some(callback) = crate::sms::callback_url(out.bridge) else {
         tracing::warn!(
-            "SMS bridge {}: no webhook URL (channels_public_url or webhookUrl) for Twilio Conversation {sid}: its \
+            "SMS bridge {}: no webhook URL (channels@public-url or webhookUrl) for Twilio Conversation {sid}: its \
              replies and receipts come only through the Conversations service's own webhook",
             out.bridge.chat_bridge_id
         );

@@ -39,7 +39,7 @@ const FOLDER: &str = "moqui.basic.email.EmailFolder";
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 const DAY: i64 = 86_400_000;
 
-/// The contact hooks the tests point the email_contact_service property and the theme value at: a contact is an address
+/// The contact hooks the tests point the email-client@contact-service setting and the theme value at: a contact is an address
 /// at friends.example.org (of alice), and one that fails.
 const STUBS: &str = r#"<services>
     <service verb="filter" noun="Contacts">
@@ -759,7 +759,10 @@ fn the_automatic_reply_goes_to_its_audience() {
 
     // the property wins over the theme; a hook that fails counts no one outside as a contact
     {
-        let _property = Property::set("email_contact_service", "test.MailStub.fail#Contacts");
+        let _property = Property::set(
+            "moqui_conf__email_client__contact_service",
+            "test.MailStub.fail#Contacts",
+        );
         assert_eq!(answered("EraContacts"), ["dave@acme.example.com"]);
         let failed = ok("filter#ContactAddresses", &[("emailAddressList", list(&["x@y.z"]))]);
         assert_eq!(failed.get("hookFailed"), Some(&Value::Bool(true)));

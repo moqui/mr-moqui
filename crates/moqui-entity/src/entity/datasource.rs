@@ -12,11 +12,14 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A `<datasource>` of the merged conf, read the way Java's `EntityDatasourceFactoryImpl` and
-//! `TransactionInternalBitronix` read it: the datasource's own `inline-jdbc` wins, else the
-//! `<database>`'s. The host turns the result into a `DbDriver`, and the pool settings into the core
-//! pool. `h2`, the Java default `entity_ds_db_conf`, and an empty name are the embedded Postgres
-//! cluster (`plans/archive/EmbeddedPostgres.md`); H2 has no driver here.
+//! A `<datasource>` of the merged conf. Its server and credentials are its own attributes (`host`, `port`,
+//! `database`, `user`, `password`, `sslmode`, `sslrootcert`; plans/archive/Conf-Paths.md §6.6), and a group other than
+//! `transactional` takes the transactional datasource's where it leaves one empty. A conf from Java gives them in the
+//! datasource's own `inline-jdbc` instead (`xa-properties`, or `jdbc-uri`), which then replaces the attributes, read the
+//! way Java's `EntityDatasourceFactoryImpl` and `TransactionInternalBitronix` read it. The pool settings come from the
+//! datasource's own `inline-jdbc`, else the `<database>`'s. The host turns the result into a
+//! `DbDriver`, and the pool settings into the core pool. `embedded`, an empty name and `h2` (Java's default) are the
+//! embedded Postgres cluster (`plans/archive/EmbeddedPostgres.md`); H2 has no driver here.
 
 use std::time::Duration;
 
@@ -55,16 +58,16 @@ pub fn datasource_factory(name: &str) -> Option<std::sync::Arc<dyn DatasourceFac
     moqui_lib::sync::read(factories()).get(name).cloned()
 }
 
-/// The `<datasource>` elements of the merged conf, `${}` left in their attributes.
+/// The `<datasource>` elements of the merged conf.
 pub fn datasource_nodes(conf: &MNode) -> Vec<MNode> {
     conf.first_named("entity-facade")
         .map(|entity| entity.children_named("datasource"))
         .unwrap_or_default()
 }
 
-/// A datasource attribute with `${}` expanded.
+/// A datasource attribute, trimmed.
 pub fn datasource_attribute(node: &MNode, name: &str) -> String {
-    expanded(node, name)
+    trimmed(node, name)
 }
 
 /// Which driver serves a datasource.
@@ -176,7 +179,7 @@ impl EmbeddedSettings {
     /// Names the datasource and the attribute whose value is not such a size.
     pub fn of(node: &MNode, group: &str) -> Result<Self, Error> {
         let read = |name: &str| -> Result<Option<String>, Error> {
-            let value = expanded(node, name);
+            let value = trimmed(node, name);
             if value.is_empty() {
                 return Ok(None);
             }
@@ -212,7 +215,7 @@ impl EmbeddedSettings {
             "maintenance-work-mem",
             "effective-cache-size",
         ] {
-            let value = expanded(node, name);
+            let value = trimmed(node, name);
             if !value.is_empty() {
                 tracing::debug!(
                     "Datasource {group} attribute {name} \"{value}\" is ignored: it sets the embedded cluster only"
@@ -263,7 +266,7 @@ fn size_text(bytes: u64) -> String {
     format!("{bytes}B")
 }
 
-/// One datasource, with `${}` expanded.
+/// One datasource.
 #[derive(Clone)]
 pub struct DatasourceConf {
     pub group: String,
@@ -353,16 +356,14 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         .into_iter()
         .find(|node| node.attribute_is("group-name", group))
         .ok_or_else(|| Error::new(format!("the conf has no datasource for group {group}")))?;
-    let conf_name = expanded(&datasource, "database-conf-name");
+    let conf_name = trimmed(&datasource, "database-conf-name");
     let kind = match conf_name.as_str() {
-        "" | "h2" => DatasourceKind::Embedded,
+        "" | "embedded" | "h2" => DatasourceKind::Embedded,
         "postgres" => DatasourceKind::Postgres,
         "mysql" | "mysql8" => DatasourceKind::Mysql,
-        other => {
-            return Err(Error::new(format!(
-                "database {other} for datasource {group} has no driver in this port (postgres, mysql, mysql8, or the embedded default)"
-            )))
-        }
+        other => return Err(Error::new(format!(
+            "database {other} for datasource {group} has no driver in this port (postgres, mysql, mysql8, or embedded)"
+        ))),
     };
     let dialect = if kind == DatasourceKind::Embedded {
         "postgres".to_string()
@@ -387,10 +388,10 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
     }
     // As Java's `EntityInfo`: `use-schemas="false"` puts no schema in front of the tables, so they are wherever the
     // connection puts them.
-    let schema = if expanded(&database_node, "use-schemas") == "false" {
+    let schema = if trimmed(&database_node, "use-schemas") == "false" {
         String::new()
     } else {
-        expanded(&datasource, "schema-name")
+        trimmed(&datasource, "schema-name")
     };
     let mut conf = DatasourceConf {
         group: group.to_string(),
@@ -408,19 +409,19 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         pool,
         isolation_level,
         // As Java's `EntityFacadeImpl` and `EntityDbMeta`.
-        startup_add_missing: match expanded(&datasource, "startup-add-missing").as_str() {
-            "" => expanded(&database_node, "default-startup-add-missing") == "true",
+        startup_add_missing: match trimmed(&datasource, "startup-add-missing").as_str() {
+            "" => trimmed(&database_node, "default-startup-add-missing") == "true",
             value => value == "true",
         },
-        runtime_add_missing: match expanded(&datasource, "runtime-add-missing").as_str() {
-            "" => expanded(&database_node, "default-runtime-add-missing") != "false",
+        runtime_add_missing: match trimmed(&datasource, "runtime-add-missing").as_str() {
+            "" => trimmed(&database_node, "default-runtime-add-missing") != "false",
             value => value != "false",
         },
-        runtime_add_fks: match expanded(&datasource, "runtime-add-fks").as_str() {
+        runtime_add_fks: match trimmed(&datasource, "runtime-add-fks").as_str() {
             "" => true,
             value => value == "true",
         },
-        pg_stat_statements: expanded(&datasource, "pg-stat-statements") == "true",
+        pg_stat_statements: trimmed(&datasource, "pg-stat-statements") == "true",
         preload_pg_stat_statements: false,
         embedded_settings: if kind == DatasourceKind::Embedded {
             EmbeddedSettings::of(&datasource, group)?
@@ -432,15 +433,34 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
     conf.preload_pg_stat_statements = conf.pg_stat_statements;
     if kind == DatasourceKind::Embedded {
         // Only the database: a group other than `transactional` has a database of its own in the embedded cluster,
-        // named by the datasource's own `databaseName` (the `database-list` one names the external server's).
-        conf.database = datasource
-            .first_named("inline-jdbc")
-            .and_then(|own| own.first_named("xa-properties"))
-            .map(|xa| expanded(&xa, "databaseName"))
-            .unwrap_or_default();
+        // named by the datasource's `database`, or its own `xa-properties` `databaseName`; the transactional one is the
+        // cluster's own
+        if group != "transactional" {
+            conf.database = Some(trimmed(&datasource, "database"))
+                .filter(|database| !database.is_empty())
+                .or_else(|| {
+                    datasource
+                        .first_named("inline-jdbc")
+                        .and_then(|own| own.first_named("xa-properties"))
+                        .map(|xa| trimmed(&xa, "databaseName"))
+                })
+                .unwrap_or_default();
+        }
     } else {
-        if let Some(inline) = &inline {
-            connection(&mut conf, inline)?;
+        let transactional = (group != "transactional")
+            .then(|| {
+                entity
+                    .children_named("datasource")
+                    .into_iter()
+                    .find(|node| node.attribute_is("group-name", "transactional"))
+            })
+            .flatten();
+        let own_connection = datasource
+            .first_named("inline-jdbc")
+            .filter(|own| own.first_named("xa-properties").is_some() || !trimmed(own, "jdbc-uri").is_empty());
+        match own_connection {
+            Some(own) => connection(&mut conf, &own)?,
+            None => attributes(&mut conf, &datasource, transactional.as_ref())?,
         }
         if conf.host.is_empty() {
             return Err(Error::new(format!(
@@ -465,9 +485,9 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
 /// is logged and does the same.
 fn isolation_level(group: &str, inline: Option<&MNode>, database: &MNode) -> Option<IsolationLevel> {
     let name = inline
-        .map(|node| expanded(node, "isolation-level"))
+        .map(|node| trimmed(node, "isolation-level"))
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| expanded(database, "default-isolation-level"));
+        .unwrap_or_else(|| trimmed(database, "default-isolation-level"));
     let level = IsolationLevel::from_conf(&name);
     if level.is_none() && !name.is_empty() && name != "None" {
         tracing::warn!("Datasource {group} isolation level {name} is not a level, leaving the server's default");
@@ -502,7 +522,7 @@ fn postgres_isolation_warning(group: &str, kind: DatasourceKind, level: Option<I
 /// seconds (Bitronix's default). `pool-reserve` is this port's, default 8.
 fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, Error> {
     let number = |name: &str, fallback: u32| -> Result<u32, Error> {
-        let raw = inline.map(|node| expanded(node, name)).unwrap_or_default();
+        let raw = inline.map(|node| trimmed(node, name)).unwrap_or_default();
         if raw.is_empty() {
             return Ok(fallback);
         }
@@ -510,9 +530,9 @@ fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, E
             .map_err(|_| Error::new(format!("inline-jdbc {name}=\"{raw}\" is not a whole number")))
     };
     let test_query = inline
-        .map(|node| expanded(node, "pool-test-query"))
+        .map(|node| trimmed(node, "pool-test-query"))
         .filter(|sql| !sql.is_empty())
-        .or_else(|| Some(expanded(database, "default-test-query")).filter(|sql| !sql.is_empty()));
+        .or_else(|| Some(trimmed(database, "default-test-query")).filter(|sql| !sql.is_empty()));
     let max = number("pool-maxsize", 50)?;
     Ok(PoolConfig {
         min: number("pool-minsize", 5)?.min(max),
@@ -527,7 +547,7 @@ fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, E
 
 /// The `inline-jdbc` `read-timeout`, in seconds; `None` when not given.
 fn read_timeout(inline: Option<&MNode>) -> Result<Option<Duration>, Error> {
-    let raw = inline.map(|node| expanded(node, "read-timeout")).unwrap_or_default();
+    let raw = inline.map(|node| trimmed(node, "read-timeout")).unwrap_or_default();
     if raw.is_empty() {
         return Ok(None);
     }
@@ -540,14 +560,38 @@ fn read_timeout(inline: Option<&MNode>) -> Result<Option<Duration>, Error> {
         })
 }
 
-/// Server, database and credentials from `xa-properties`, else from `jdbc-uri` and the
-/// `jdbc-username`/`jdbc-password` attributes.
+/// Server, database and credentials from the datasource's own attributes; for a group other than `transactional`
+/// each one it leaves empty but `database` is the `transactional` datasource's (`fallback`), so naming only a
+/// `database-conf-name` for the content puts it on the transactional server.
+fn attributes(conf: &mut DatasourceConf, datasource: &MNode, fallback: Option<&MNode>) -> Result<(), Error> {
+    let get = |name: &str| -> String {
+        let own = trimmed(datasource, name);
+        if own.is_empty() && name != "database" {
+            fallback.map(|node| trimmed(node, name)).unwrap_or_default()
+        } else {
+            own
+        }
+    };
+    conf.host = get("host");
+    conf.port = port(&get("port"))?;
+    conf.database = get("database");
+    conf.user = get("user");
+    conf.password = get("password");
+    let mode = get("sslmode");
+    conf.tls = tls_wanted(&mode);
+    conf.tls_verify = tls_verify(&mode);
+    conf.tls_root_cert = get("sslrootcert");
+    Ok(())
+}
+
+/// Server, database and credentials from a datasource's own `xa-properties`, else from its `jdbc-uri` and the
+/// `jdbc-username`/`jdbc-password` attributes: a conf from Java, in place of the datasource's attributes.
 fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
     if let Some(xa) = inline.first_named("xa-properties") {
         let get = |names: &[&str]| -> String {
             names
                 .iter()
-                .map(|name| expanded(&xa, name))
+                .map(|name| trimmed(&xa, name))
                 .find(|value| !value.is_empty())
                 .unwrap_or_default()
         };
@@ -566,12 +610,12 @@ fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
         }
         return Ok(());
     }
-    let uri = expanded(inline, "jdbc-uri");
+    let uri = trimmed(inline, "jdbc-uri");
     if !uri.is_empty() {
         jdbc_uri(conf, &uri)?;
     }
-    conf.user = expanded(inline, "jdbc-username");
-    conf.password = expanded(inline, "jdbc-password");
+    conf.user = trimmed(inline, "jdbc-username");
+    conf.password = trimmed(inline, "jdbc-password");
     Ok(())
 }
 
@@ -657,9 +701,9 @@ pub fn tls_verify(mode: &str) -> TlsVerify {
     }
 }
 
-fn expanded(node: &MNode, name: &str) -> String {
+fn trimmed(node: &MNode, name: &str) -> String {
     let raw = node.attribute(name).unwrap_or_default();
-    moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string()
+    raw.trim().to_string()
 }
 
 #[cfg(test)]

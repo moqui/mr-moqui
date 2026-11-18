@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The entity database a conf names (A3 of the plan): `entity_ds_db_conf=postgres` loads into that
+//! The entity database a conf names (A3 of the plan): `database-conf-name="postgres"` (by its environment name) loads into that
 //! server, here a second embedded cluster reached through its socket directory, and starts no
 //! postmaster in the cluster directory. It sets process properties, so it holds the serial lock.
 
@@ -38,12 +38,12 @@ fn an_external_postgres_from_the_conf_is_loaded_and_no_postmaster_starts() {
     let _serial = crate::common::serial();
     // The properties name this test's server, and no other test may start on it.
     let _properties = crate::common::PropertyReset::of(&[
-        "entity_ds_db_conf",
-        "entity_ds_host",
-        "entity_ds_port",
-        "entity_ds_user",
-        "entity_ds_password",
-        "entity_ds_database",
+        "moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name",
+        "moqui_conf__entity_facade__datasource__TRANSACTIONAL__host",
+        "moqui_conf__entity_facade__datasource__TRANSACTIONAL__port",
+        "moqui_conf__entity_facade__datasource__TRANSACTIONAL__user",
+        "moqui_conf__entity_facade__datasource__TRANSACTIONAL__password",
+        "moqui_conf__entity_facade__datasource__TRANSACTIONAL__database",
     ]);
     let server_dir = temp_dir("moqui-ext");
     let runtime = temp_dir("moqui-ext-rt");
@@ -59,12 +59,24 @@ fn an_external_postgres_from_the_conf_is_loaded_and_no_postmaster_starts() {
     let password = std::fs::read_to_string(server_dir.join("pgpass")).unwrap();
 
     for (name, value) in [
-        ("entity_ds_db_conf", "postgres"),
-        ("entity_ds_host", server.data_dir().to_str().unwrap()),
-        ("entity_ds_port", "5432"),
-        ("entity_ds_user", "postgres"),
-        ("entity_ds_password", password.trim()),
-        ("entity_ds_database", "moqui"),
+        (
+            "moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name",
+            "postgres",
+        ),
+        (
+            "moqui_conf__entity_facade__datasource__TRANSACTIONAL__host",
+            server.data_dir().to_str().unwrap(),
+        ),
+        ("moqui_conf__entity_facade__datasource__TRANSACTIONAL__port", "5432"),
+        ("moqui_conf__entity_facade__datasource__TRANSACTIONAL__user", "postgres"),
+        (
+            "moqui_conf__entity_facade__datasource__TRANSACTIONAL__password",
+            password.trim(),
+        ),
+        (
+            "moqui_conf__entity_facade__datasource__TRANSACTIONAL__database",
+            "moqui",
+        ),
     ] {
         moqui_lib::env::set_property(name, value.to_string());
     }

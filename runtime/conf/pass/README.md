@@ -19,13 +19,13 @@ imports: mr-pass's `docs/Deployment.md`.
 | Authority | `MoquiAuthorityConf.xml` | Maximal or Enterprise; mr-boss, which brings mr-mantle |
 
 Change the example names in both confs (the host, site id, client id and callback) to yours. A PASS server served by
-an edge node is the edge node itself, with `pass_backend_url=edge:` ([../edge/README.md](../edge/README.md)).
+an edge node is the edge node itself, with `moqui_conf__pass__backend_url=edge:` ([../edge/README.md](../edge/README.md)).
 
 ## `.env`
 
-- **PASS server**: `pass_client_secret`; `pass_backend_url` and `pass_client_id` when they differ from the conf's.
+- **PASS server**: `pass@client-secret`; `pass@backend-url` and `pass@client-id` when they differ from the conf's.
   The certificate for its public host goes in `cert/`.
-- **Authority**: `pass_client_<id>_secret` for each client, the same value as that PASS server's `pass_client_secret`.
+- **Authority**: `pass-authority/client[<id>]@secret` for each client, the same value as that PASS server's `pass@client-secret`.
 
 ## Commands
 

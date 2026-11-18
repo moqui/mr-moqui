@@ -168,7 +168,7 @@ along with this software (see the LICENSE.md file). If not, see
                 </columns>
             </form-list>
             <section name="NoNames" condition="!certificateList.length"><widgets>
-                <label type="p" text="This node answers no names yet: set webapp_http_host, put a certificate in runtime/cert, or set a name up with ACME." style="m-muted q-pa-sm q-mb-none"/>
+                <label type="p" text="This node answers no names yet: set webapp-list/webapp[webroot]@http-host, put a certificate in runtime/cert, or set a name up with ACME." style="m-muted q-pa-sm q-mb-none"/>
             </widgets></section>
         </box-body-nopad></container-box>
     </widgets>

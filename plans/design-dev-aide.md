@@ -228,10 +228,10 @@ loads in about 5 ms (Performance-Implementation), so relinking the whole model o
 - **Conf.** `MoquiDefaultConf.xml`'s `component-list` gains `<component-dir location="components/dev" purpose="dev"/>`
   after `component`. `purpose` (new, a comma list of instance purposes, empty for all) is also taken on `component`
   elements and on `component.xml`'s root; the dev-aide's `component.xml` says `purpose="dev"`.
-- **The purpose at discovery.** Discovery runs before the default properties are applied (`core/context/factory.rs`:
-  `component::discover`, then `apply_default_properties`), so it reads `instance_purpose` as the boot will set it: the
-  process (`-D` or the environment), else `runtime/.env`, else the merged runtime conf's `default-property`. A
-  component's own conf merges after discovery and cannot turn dev components on.
+- **The purpose at discovery.** Discovery reads `instance@purpose` of the default and runtime confs merged with the
+  environment's names applied (`core/context/component.rs`, `effective_instance_purpose`): `moqui_conf__instance__purpose`
+  from `-D` or the environment, else `runtime/.env`, else the runtime conf. A component's own conf merges after
+  discovery and cannot turn dev components on.
 - **Left out.** On another purpose, each component in a purpose-restricted directory, and each whose `component.xml`
   names other purposes, is left out with a WARN: `Excluding component dev-aide (runtime/components/dev/dev-aide): it
   loads only when instance_purpose is dev; this instance is production`. A `component` element naming such a component
@@ -2247,7 +2247,7 @@ For a repository whose agreement is on (docs/dev/Contributions.md; Dogfood §10)
 
 
 
-**P11, built** (Nov 14, 2026): F17 (`/sso/appLogin` takes any loopback redirect, `webapp_app_loopback_redirect`, and
+**P11, built** (Nov 14, 2026): F17 (`/sso/appLogin` takes any loopback redirect, `webapp-list/webapp[webroot]@app-loopback-redirect`, and
 with no `authFlowId` the server's own login after a sign-out), F18 (`/rest/s1/moqui/hosting/offer|repository|agreement`;
 `git-server offer-service` and `agreement-check-service`), Dogfood F9 (the hosting REST in `moqui.rest.xml`,
 `org.moqui.git.GitRestServices`, merge requests and runs by number, `git-server rest-write-check-service` with

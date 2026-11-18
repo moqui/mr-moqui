@@ -72,7 +72,7 @@ use crate::user::{now_millis, now_value, value_millis};
 
 const MEMBER: &str = "moqui.server.ClusterMember";
 const MESSAGE: &str = "moqui.server.ClusterMessage";
-/// The base URL every `cluster_transport=notify` member advertises. One post to it reaches all of them.
+/// The base URL every `moqui_conf__cluster_member__transport=notify` member advertises. One post to it reaches all of them.
 pub const NOTIFY_BASE_URL: &str = "pg-notify:";
 /// Maximum serialized topic envelope, shared by every cluster transport.
 pub const MAX_CLUSTER_BODY: usize = 16 * 1024 * 1024;
@@ -442,7 +442,9 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         cert_fp: fingerprints.cert,
         ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        edge_link_url: env::get_prop_or_env(EDGE_LINK_URL_PROPERTY).trim().to_string(),
+        edge_link_url: crate::context::conf_env::setting(EDGE_LINK_URL_PROPERTY)
+            .trim()
+            .to_string(),
     };
     write_member(&facade, &member)?;
     let state = ClusterState::of(factory);
@@ -632,7 +634,7 @@ pub struct MemberReport {
     pub heartbeat_age_ms: u64,
     pub live: bool,
     pub version: String,
-    /// Where a local node dials it, on a member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6).
+    /// Where a local node dials it, on a member of an edge cluster (`edge@link-url`, plans/Edge-Node2.md §4.6).
     pub edge_link_url: String,
 }
 
@@ -830,20 +832,20 @@ struct Member {
     ssh_fp: String,
     /// The moqui binary's version, which an edge node reports its pool's members with (plans/Edge-Node2.md §4.4).
     version: String,
-    /// Where a local node dials this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6), read at
-    /// start as `cluster_base_url` is. Empty on any other node.
+    /// Where a local node dials this member of an edge cluster (`edge@link-url`, plans/Edge-Node2.md §4.6), read at
+    /// start as `cluster-member@base-url` is. Empty on any other node.
     edge_link_url: String,
 }
 
 /// The property that names where a local node dials this member of an edge cluster (plans/Edge-Node2.md §4.6).
-pub const EDGE_LINK_URL_PROPERTY: &str = "edge_link_url";
+pub const EDGE_LINK_URL_PROPERTY: &str = "edge@link-url";
 
-/// `instance_id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
+/// The conf's `instance` `id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
 /// written to `runtime/.env`, which `plans/archive/Cluster.md` says to copy between members: two members with one id would
 /// each take the other's member row for its own.
 /// Nor is it set as a property, which another factory in this process would then take for its own.
 fn ensure_instance_id(factory: &ExecutionContextFactory) -> Result<String, Error> {
-    let current = env::get_prop_or_env("instance_id");
+    let current = crate::context::conf_env::setting_on(factory, crate::context::conf_env::INSTANCE_ID);
     if !current.is_empty() {
         return Ok(current);
     }
@@ -865,10 +867,15 @@ fn ensure_instance_id(factory: &ExecutionContextFactory) -> Result<String, Error
 }
 
 fn configured_fingerprints() -> Result<Fingerprints, Error> {
-    let session_key = require_configured("session_cookie_key")?;
-    let cert_b64 = require_configured("cluster_tls_cert")?;
-    let _key = require_configured("cluster_tls_key")?;
-    let der = decode_der("cluster_tls_cert", &cert_b64)?;
+    let session_key = crate::context::conf_env::setting(crate::user::session::COOKIE_KEY);
+    if session_key.is_empty() || session_key.ends_with("CHANGEME") {
+        return Err(Error::new(
+            "the session cookie key (session-config cookie-key) is not configured",
+        ));
+    }
+    let cert_b64 = require_configured("cluster-member@tls-cert")?;
+    let _key = require_configured("cluster-member@tls-key")?;
+    let der = decode_der("cluster-member@tls-cert", &cert_b64)?;
     Ok(Fingerprints {
         session: sha256_hex(session_key.as_bytes()),
         cert: sha256_hex(&der),
@@ -876,7 +883,7 @@ fn configured_fingerprints() -> Result<Fingerprints, Error> {
 }
 
 fn require_configured(name: &str) -> Result<String, Error> {
-    let value = env::get_prop_or_env(name);
+    let value = crate::context::conf_env::setting(name);
     if value.is_empty() || value.ends_with("CHANGEME") {
         return Err(Error::new(format!("{name} is not configured")));
     }
@@ -899,16 +906,16 @@ pub const SSH_FINGERPRINT_PROPERTY: &str = "cluster_ssh_host_key_fingerprint";
 pub const SSH_ADDRESS_PROPERTY: &str = "cluster_ssh_address";
 
 fn cluster_base_url() -> Result<String, Error> {
-    let configured = env::get_prop_or_env("cluster_base_url");
+    let configured = crate::context::conf_env::setting("cluster-member@base-url");
     let url = if !configured.is_empty() {
         configured
-    } else if env::get_prop_or_env("cluster_transport") == "notify" {
+    } else if crate::context::conf_env::setting("cluster-member@transport") == "notify" {
         NOTIFY_BASE_URL.to_string()
-    } else if env::get_prop_or_env("cluster_transport") == "ssh" {
+    } else if crate::context::conf_env::setting("cluster-member@transport") == "ssh" {
         let address = env::get_prop_or_env(SSH_ADDRESS_PROPERTY);
         if address.is_empty() {
             return Err(Error::new(
-                "cluster_transport is ssh but the SSH server is not listening; set ssh_port",
+                "cluster-member@transport is ssh but the SSH server is not listening; set ssh-server@port",
             ));
         }
         format!("ssh://{address}")
@@ -919,11 +926,12 @@ fn cluster_base_url() -> Result<String, Error> {
 }
 
 fn cluster_port() -> Result<u16, Error> {
-    let raw = env::get_prop_or_env("cluster_https_port");
+    let raw = crate::context::conf_env::setting("cluster-member@https-port");
     if raw.is_empty() {
         return Ok(DEFAULT_PORT);
     }
-    raw.parse().map_err(|_| Error::new("cluster_https_port is not a port"))
+    raw.parse()
+        .map_err(|_| Error::new("cluster-member@https-port is not a port"))
 }
 
 fn trim_base(url: &str) -> String {
@@ -955,10 +963,14 @@ fn reject_peer_mismatch(
             continue;
         }
         if member.session_fp != fingerprints.session {
-            return Err(Error::new("session_cookie_key does not match a live cluster member"));
+            return Err(Error::new(
+                "the session cookie key (session-config cookie-key) does not match a live cluster member",
+            ));
         }
         if member.cert_fp != fingerprints.cert {
-            return Err(Error::new("cluster_tls_cert does not match a live cluster member"));
+            return Err(Error::new(
+                "cluster-member@tls-cert does not match a live cluster member",
+            ));
         }
     }
     Ok(())
@@ -966,7 +978,7 @@ fn reject_peer_mismatch(
 
 /// Warn when a live member's SSH host key is another than this member's. Behind one name (a load balancer, an edge
 /// node's pool and its SSH tunnel) a client may reach any member, and after a failover another one, so the members
-/// share `ssh_host_key`, as they share `git_lfs_token_key` (which no member row shows): with another key a client is
+/// share `ssh-server@host-key`, as they share `git-server@lfs-token-key` (which no member row shows): with another key a client is
 /// told the host key changed. Only a warning: a cluster whose members are reached each by its own name may keep its own.
 fn warn_ssh_key_mismatch(facade: &EntityFacade, factory: &ExecutionContextFactory, instance_id: &str) {
     let ours = env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY);
@@ -976,9 +988,9 @@ fn warn_ssh_key_mismatch(facade: &EntityFacade, factory: &ExecutionContextFactor
     let others = ssh_key_differs(&members, instance_id, &ours, db_now(facade), window_millis(factory));
     if !others.is_empty() {
         tracing::warn!(
-            "ssh_host_key differs from the live cluster members {}: behind a load balancer or an edge node's pool a git \
-             client reaching another member is told the host key changed; give every member the same ssh_host_key \
-             (and git_lfs_token_key)",
+            "ssh-server@host-key differs from the live cluster members {}: behind a load balancer or an edge node's pool \
+             a git client reaching another member is told the host key changed; give every member the same \
+             ssh-server@host-key (and git-server@lfs-token-key)",
             others.join(", ")
         );
     }
@@ -1566,7 +1578,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
 }
 
 /// The database server's time in epoch milliseconds, else this host's.
-pub(crate) fn db_now(facade: &EntityFacade) -> i64 {
+pub fn db_now(facade: &EntityFacade) -> i64 {
     // the statement the database's dialect takes (Oracle FROM DUAL, DB2 and Derby VALUES)
     let read = facade
         .with_group(MEMBER, |_, dialect, _, tx| {
@@ -1616,7 +1628,7 @@ fn warn_loopback_peers(state: &ClusterState) {
     if loopback(&own) || peers.iter().any(|url| loopback(url)) {
         state.loopback_warned.store(true, Ordering::Relaxed);
         tracing::error!(
-            "a cluster member has a loopback cluster_base_url ({own}, peers {peers:?}); set cluster_base_url on each \
+            "a cluster member has a loopback cluster-member@base-url ({own}, peers {peers:?}); set cluster-member@base-url on each \
              member to an address the others can reach"
         );
     }

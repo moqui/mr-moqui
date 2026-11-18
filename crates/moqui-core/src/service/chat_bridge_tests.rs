@@ -58,6 +58,7 @@ struct Sent {
     text: Option<String>,
     target: Option<String>,
     thread: Option<String>,
+    rich: Option<serde_json::Value>,
 }
 
 #[derive(Default)]
@@ -66,6 +67,8 @@ struct Network {
     by_key: HashMap<String, String>,
     next: u64,
     script: VecDeque<Inject>,
+    /// The rooms (external ids) a typing indicator was asked for.
+    typed: Vec<String>,
 }
 
 /// An in-memory network: it dedupes by idempotency key when `idempotent`.
@@ -87,6 +90,7 @@ impl TestAdapter {
                 sends_per_minute: 0,
                 encryption: Encryption::BridgeDecrypted,
                 group_max: 0,
+                media_max_bytes: 0,
             },
             network: Mutex::new(Network::default()),
         })
@@ -98,6 +102,10 @@ impl TestAdapter {
 
     fn sent(&self) -> Vec<Sent> {
         self.network.lock().unwrap().sent.clone()
+    }
+
+    fn typed(&self) -> Vec<String> {
+        self.network.lock().unwrap().typed.clone()
     }
 }
 
@@ -145,6 +153,7 @@ impl ChatBridgeAdapter for TestAdapter {
                     text: request.text.clone(),
                     target: request.target_remote_id.clone(),
                     thread: request.external_thread_id.clone(),
+                    rich: request.rich.clone(),
                 });
                 id
             }
@@ -155,6 +164,16 @@ impl ChatBridgeAdapter for TestAdapter {
         }
         DeliveryOutcome::Accepted {
             remote_event_id: remote_id,
+        }
+    }
+
+    /// The network that edits (the bed's `a`) has a typing indicator that fails; the other's works.
+    fn typing(&self, _bridge: &BridgeInfo, external_room_id: &str) -> Result<(), String> {
+        self.network.lock().unwrap().typed.push(external_room_id.to_string());
+        if self.caps.idempotent {
+            Err("the network's typing indicator is away".to_string())
+        } else {
+            Ok(())
         }
     }
 }
@@ -1189,6 +1208,66 @@ fn a_webhooks_replay_window_is_at_most_half_the_time_its_signature_is_held() {
     assert_eq!(super::web::window_within(300_000, 0, 0), 300_000);
 }
 
+#[test]
+fn a_rich_message_goes_to_the_adapter_with_its_fallback_as_its_text() {
+    let bed = bed("rich", true);
+    let _entered = bed.ctx.enter();
+    login("alice");
+    let rich = json!({"kind": "text", "text": "Your table is ready", "suggestions": [
+        {"type": "reply", "text": "On my way", "postback": "table:yes"},
+        {"type": "url", "text": "Menu", "url": "https://example.test/menu"}]});
+    let out = ok(
+        "org.moqui.chat.ChatRichServices.send#Rich",
+        &[
+            ("chatRoomId", text(&bed.room)),
+            ("rich", moqui_lib::json::from_json(&rich)),
+        ],
+    );
+    let seq = out_number(&out, "eventSeq");
+    bed.round(0);
+    let sent = bed.b.sent();
+    let last = sent.last().expect("sent to the bridge");
+    assert_eq!(
+        last.text.as_deref(),
+        Some("Your table is ready\n\nMenu: https://example.test/menu\nReply: On my way"),
+        "the fallback, for a network with no cards"
+    );
+    let given = last.rich.as_ref().expect("the cards go with it");
+    assert_eq!(given["kind"], "text");
+    assert_eq!(
+        given["suggestions"][0]["postback"], "user:On my way",
+        "a member's postback is its words"
+    );
+    // an edit or a reaction carries none; a plain message none
+    bed.send("<p>plain</p>");
+    bed.round(0);
+    assert!(bed.b.sent().last().unwrap().rich.is_none());
+    assert_eq!(bed.deliveries_of(seq), 2);
+}
+
+#[test]
+fn a_rooms_typing_goes_to_each_bridge_at_most_once_in_15_seconds_and_one_failing_skips_none() {
+    let bed = bed("typing", true);
+    let _entered = bed.ctx.enter();
+    let typing = |at: i64| {
+        let _authz = bed.ctx.disable_authz();
+        ok(
+            &format!("{BRIDGES}.send#BridgeTyping"),
+            &[("chatRoomId", text(&bed.room)), ("nowMillis", Value::I64(at))],
+        )
+    };
+    let start = now();
+    let first = typing(start);
+    assert_eq!(out_number(&first, "sent"), 2, "both bridges are asked");
+    assert_eq!(bed.a.typed().len(), 1, "a's indicator failed and was logged");
+    assert_eq!(bed.b.typed().len(), 1, "and b's went all the same");
+    let again = typing(start + 5_000);
+    assert_eq!(again.get("throttled"), Some(&Value::Bool(true)));
+    assert_eq!(bed.b.typed().len(), 1);
+    typing(start + super::TYPING_EVERY_MILLIS + 1);
+    assert_eq!(bed.b.typed().len(), 2, "past the window it goes again");
+}
+
 /// The spam filter's number lookup (plans/Comms-Messaging.md §18.3 phase 11): a bridge whose adapter has none, and a
 /// bridge not found, answer notSupported, never an error, so the text it judges goes on.
 #[test]
@@ -1202,4 +1281,60 @@ fn a_bridge_with_no_number_lookup_answers_not_supported() {
         );
         assert_eq!(out_text(&out, "reasonCode"), "notSupported", "{id}");
     }
+}
+
+/// A message whose files the adapter refuses (too large for a text, too many, none taken) goes as its words alone when
+/// it has some (a sticker's "Sticker 👍", plans/Comms-Messaging.md §18.3 phase 20); another failure, or no words, stays.
+#[test]
+fn a_refused_file_goes_as_the_messages_words() {
+    let request = super::DeliveryRequest {
+        chat_bridge_delivery_id: "D1".to_string(),
+        idempotency_key: "moqui-chat:D1".to_string(),
+        chat_room_id: "R1".to_string(),
+        event_seq: 1,
+        external_room_id: "+15550001111/+15550002222".to_string(),
+        external_thread_id: None,
+        kind: super::DeliveryKind::Message,
+        text: None,
+        html: None,
+        sender_name: None,
+        sender_user_id: Some("alice".to_string()),
+        attachments: vec![super::DeliveryAttachment {
+            chat_attachment_id: "A1".to_string(),
+            file_name: Some("sticker.webp".to_string()),
+            content_type: Some("image/webp".to_string()),
+            file_size: Some(900_000),
+        }],
+        target_remote_id: None,
+        reaction_key: None,
+        rich: None,
+        location: None,
+        text_form: Some("Sticker 👍".to_string()),
+        attempt: 1,
+    };
+    let refused = |reason: &str| super::DeliveryOutcome::Failed {
+        reason_code: reason.to_string(),
+        error: "no".to_string(),
+    };
+    for reason in ["mediaTooLarge", "tooManyFiles", "mmsNotSetUp"] {
+        let words = super::words_instead(&request, &refused(reason)).expect(reason);
+        assert_eq!(words.text.as_deref(), Some("Sticker 👍"));
+        assert!(words.attachments.is_empty());
+    }
+    assert!(
+        super::words_instead(&request, &refused("optedOut")).is_none(),
+        "another refusal stays"
+    );
+    let silent = super::DeliveryRequest {
+        text_form: None,
+        ..request.clone()
+    };
+    assert!(
+        super::words_instead(&silent, &refused("mediaTooLarge")).is_none(),
+        "no words: it stays refused"
+    );
+    let accepted = super::DeliveryOutcome::Accepted {
+        remote_event_id: "x".to_string(),
+    };
+    assert!(super::words_instead(&request, &accepted).is_none());
 }

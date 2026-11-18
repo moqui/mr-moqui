@@ -58,6 +58,7 @@ pub mod chromium;
 pub use moqui_drivers as db;
 #[cfg(feature = "git")]
 mod ci_run;
+mod conf_cmd;
 mod detach;
 mod devtools_cmd;
 #[cfg(feature = "tui")]
@@ -294,7 +295,7 @@ impl Server {
         self.address
     }
 
-    /// The SSH server's address, when `ssh_port` is set and this build has the `ssh` feature.
+    /// The SSH server's address, when `ssh-server@port` is set and this build has the `ssh` feature.
     #[must_use]
     pub fn ssh_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "ssh")]
@@ -306,7 +307,7 @@ impl Server {
         None
     }
 
-    /// The inbound SMTP listener's address, when this build has the `inbound-smtp` feature and `smtp_listen_port` is set.
+    /// The inbound SMTP listener's address, when this build has the `inbound-smtp` feature and `smtp-server@listen-port` is set.
     #[must_use]
     pub fn smtp_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "inbound-smtp")]
@@ -320,7 +321,7 @@ impl Server {
         }
     }
 
-    /// The call media socket's address, when this build has the `rtc` feature and `rtc_media_port` is set.
+    /// The call media socket's address, when this build has the `rtc` feature and `media-server@port` is set.
     #[must_use]
     pub fn rtc_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "rtc")]
@@ -334,8 +335,8 @@ impl Server {
         }
     }
 
-    /// The SIP listener's address (UDP and TCP, else TLS), when this build has the `sip` feature and `sip_port` or
-    /// `sip_tls_port` is set.
+    /// The SIP listener's address (UDP and TCP, else TLS), when this build has the `sip` feature and `sip-server@port` or
+    /// `sip-server@tls-port` is set.
     #[must_use]
     pub fn sip_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "sip")]
@@ -349,8 +350,8 @@ impl Server {
         }
     }
 
-    /// The XMPP listeners' addresses (STARTTLS, direct TLS), when this build has the `xmpp` feature and `xmpp_domain`
-    /// with `xmpp_port` or `xmpp_tls_port` is set.
+    /// The XMPP listeners' addresses (STARTTLS, direct TLS), when this build has the `xmpp` feature and `xmpp-server@domain`
+    /// with `xmpp-server@port` or `xmpp-server@tls-port` is set.
     #[must_use]
     pub fn xmpp_addresses(&self) -> (Option<std::net::SocketAddr>, Option<std::net::SocketAddr>) {
         #[cfg(feature = "xmpp")]
@@ -368,7 +369,7 @@ impl Server {
 
     /// The host's gRPC listener's address (`grpc_listen`), when this build has the `grpc` feature and a service on it
     /// is on: the OTLP/gRPC receiver (`<telemetry><receiver grpc-enabled="true">`) or the PASS authority
-    /// (`pass_authority_grpc_enabled=true`).
+    /// (`moqui_conf__pass_authority__grpc_enabled=true`).
     #[must_use]
     pub fn grpc_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "grpc")]
@@ -382,7 +383,7 @@ impl Server {
         }
     }
 
-    /// The public HTTPS listener, when one is running (`webapp_https_listen_port`, certificates in `runtime/cert`).
+    /// The public HTTPS listener, when one is running (`webapp-list/webapp[webroot]@https-listen-port`, certificates in `runtime/cert`).
     #[must_use]
     pub fn https_address(&self) -> Option<std::net::SocketAddr> {
         self.https_address
@@ -396,7 +397,7 @@ impl Server {
         self.in_process.as_ref()
     }
 
-    /// The cluster HTTPS listener. Empty `cluster_https_port` binds 8444. `0` is ephemeral, and this
+    /// The cluster HTTPS listener. Empty `cluster-member@https-port` binds 8444. `0` is ephemeral, and this
     /// is the address the kernel chose.
     #[must_use]
     pub fn cluster_address(&self) -> std::net::SocketAddr {
@@ -476,7 +477,7 @@ pub fn start_server(
 }
 
 /// Start the server in the calling program on the runtime at `runtime_dir`, as `moqui` run does: the listeners from
-/// the properties (`webapp_http_port`, `webapp_http_bind`, `cluster_https_port` and the rest, which the caller sets
+/// the properties (`webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind`, `cluster-member@https-port` and the rest, which the caller sets
 /// with [`moqui_lib::env::set_property`] first), the embedded cluster in `db/embedded`, and the framework from
 /// `MOQUI_FRAMEWORK` or beside the runtime. For a program that hosts the node itself, such as the desktop app
 /// (plans/Mobile-Desktop.md, configuration 2). Drop the returned server to stop it and the postmaster.
@@ -767,6 +768,10 @@ where
             embedded_files::dispatch(rest)?;
             Ok(None)
         }
+        [command, rest @ ..] if command == "conf" => {
+            conf_cmd::dispatch(rest)?;
+            Ok(None)
+        }
         [command, rest @ ..] if command == "check" => {
             devtools_cmd::dispatch_check(rest)?;
             Ok(None)
@@ -968,7 +973,7 @@ fn dispatch_load(flags: &LoadFlags) -> Result<LoadReport, moqui_lib::error::Erro
     load_data(&runtime, &framework, &cluster, flags)
 }
 
-/// Open the log files in `moqui_log_dir` and say where they are.
+/// Open the log files in `logging@dir` and say where they are.
 fn log_files_attached(factory: &moqui_core::context::ExecutionContextFactory) {
     match logging::attach_files(factory.runtime_dir(), Some(factory)) {
         Some(dir) => tracing::info!("Writing log files moqui.log and moqui-error.log in {}", dir.display()),
@@ -1473,7 +1478,7 @@ fn serve_thread(
             return Err(err);
         }
     };
-    let address = match listen_address(&bind) {
+    let address = match listen_address(&bind, &moqui_core::context::conf_env::webroot_setting) {
         Ok(address) => address,
         Err(err) => {
             ready.fail(&err);
@@ -1527,7 +1532,7 @@ fn serve_thread(
         } else {
             tracing::warn!(
                 "Dev AIDE is loaded and the HTTP listener on {} is not bound to the loopback address: anyone who \
-                 can sign in with a Dev AIDE permission can run code as this server's user. Set webapp_http_bind=127.0.0.1, \
+                 can sign in with a Dev AIDE permission can run code as this server's user. Set the webroot webapp's http-bind to 127.0.0.1, \
                  or dev-aide shared=\"true\" for a team dev server",
                 address.unwrap_or(unbound)
             );
@@ -1548,8 +1553,15 @@ fn serve_thread(
         .as_ref()
         .ok_or_else(|| moqui_lib::error::Error::new("http server has no runtime"))?;
     // After the boot, as for the HTTP port: conf defaults and runtime/.env are read there.
-    let https = match address.map(|address| tls::plan(&runtime_dir, address.ip(), matches!(bind, ListenBind::Property)))
-    {
+    let listen_port = moqui_core::context::conf_env::webroot_setting("https-listen-port");
+    let https = match address.map(|address| {
+        tls::plan(
+            &runtime_dir,
+            address.ip(),
+            matches!(bind, ListenBind::Property),
+            &listen_port,
+        )
+    }) {
         None => None,
         Some(Ok(https)) => https,
         Some(Err(err)) => {
@@ -1592,22 +1604,27 @@ fn serve_thread(
 }
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-fn listen_address(bind: &ListenBind) -> Result<Option<std::net::SocketAddr>, moqui_lib::error::Error> {
+/// The HTTP listener's address: the webroot webapp's `http-port` and `http-bind`, read by `webroot` (an attribute name to
+/// its value) from the running conf, or from the merged conf before the factory is built (the port check).
+fn listen_address(
+    bind: &ListenBind,
+    webroot: &dyn Fn(&str) -> String,
+) -> Result<Option<std::net::SocketAddr>, moqui_lib::error::Error> {
     match bind {
         ListenBind::None => Ok(None),
         ListenBind::Address(address) => Ok(Some(*address)),
         ListenBind::Property => {
-            let port = http::http_port(&moqui_lib::env::get_prop_or_env("webapp_http_port"))?;
-            // webapp_http_bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
-            // webapp_http_host stays the host name of the URLs the server writes
-            let host = moqui_lib::env::get_prop_or_env("webapp_http_bind");
+            let port = http::http_port(&webroot("http-port"))?;
+            // http-bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
+            // http-host stays the host name of the URLs the server writes
+            let host = webroot("http-bind");
             let ip = if host.trim().is_empty() {
                 std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
             } else if host.trim() == "localhost" {
                 std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
             } else {
                 host.trim().parse().map_err(|_| {
-                    moqui_lib::error::Error::new(format!("webapp_http_bind {host} is not an IP address"))
+                    moqui_lib::error::Error::new(format!("the webroot webapp's http-bind {host} is not an IP address"))
                 })?
             };
             Ok(Some(std::net::SocketAddr::new(ip, port)))
@@ -1798,7 +1815,7 @@ fn boot_server_factory(
         .start_request_pool()
         .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
     tracing::info!("Request pool started");
-    // Empty cluster_https_port listens on 8444. 0 is ephemeral for tests.
+    // Empty cluster-member@https-port listens on 8444. 0 is ephemeral for tests.
     moqui_core::notify::install();
     // scripts' calls to a PASS authority over gRPC (plans/archive/Edge-Node.md §5.5), with or without listeners
     let pass_sender = install_pass_sender();
@@ -1827,7 +1844,7 @@ fn boot_server_factory(
             db: Some(db),
         });
     }
-    // The SSH server binds before the member row is written: with cluster_transport=ssh the row carries its address
+    // The SSH server binds before the member row is written: with moqui_conf__cluster_member__transport=ssh the row carries its address
     // and host key.
     let cluster_posts = Arc::new(std::sync::Mutex::new(Vec::new()));
     #[cfg(feature = "ssh")]
@@ -1842,7 +1859,7 @@ fn boot_server_factory(
         None => moqui_core::startup::listener(
             &factory,
             "SSH",
-            moqui_core::startup::State::off("ssh_port is not set, or ssh-server enabled is false"),
+            moqui_core::startup::State::off("ssh-server@port is not set, or ssh-server@enabled is false"),
         ),
     }
     // One sender for every transport: a peer's base URL picks HTTPS, SSH, or Postgres NOTIFY.
@@ -1884,13 +1901,15 @@ fn boot_server_factory(
     moqui_core::service::chat_bridge::start(&factory);
     // the chat push worker (plans/Comms-Messaging.md §7.3), the same way: its first round takes what a crash left
     moqui_core::service::chat_push::start(&factory);
+    // the chat expiry worker (plans/Comms-Messaging.md §18.3 phase 16): disappearing messages at their time
+    moqui_core::service::chat_expiry::start(&factory);
     moqui_core::startup::integration(
         &factory,
         "Cluster notify",
         if notify_listener.is_some() {
             moqui_core::startup::State::on("Postgres LISTEN")
         } else {
-            moqui_core::startup::State::off("cluster_transport is not notify")
+            moqui_core::startup::State::off("cluster-member@transport is not notify")
         },
     );
     let cluster_edge = match &listeners {
@@ -1906,11 +1925,11 @@ fn boot_server_factory(
     llm::screens::install(&factory);
     #[cfg(feature = "print")]
     ipp::install();
-    // call media (rtc_media_port), after the cluster so the node registers under its instance id
+    // call media (media-server@port), after the cluster so the node registers under its instance id
     let rtc = rtc::start(&factory);
-    // phone calls (sip_port, sip_tls_port), beside the call media they join
+    // phone calls (sip-server@port, sip-server@tls-port), beside the call media they join
     let sip = sip::start(&factory);
-    // XMPP for local users (xmpp_domain): its listeners, and the chat pushes to its sessions
+    // XMPP for local users (xmpp-server@domain): its listeners, and the chat pushes to its sessions
     let xmpp = xmpp::start(&factory);
     // last, so mail is taken only once everything it runs is up
     let smtpd = start_smtp(&factory);
@@ -2014,8 +2033,8 @@ type SmtpSlot = NoSmtp;
 #[cfg(not(feature = "inbound-smtp"))]
 struct NoSmtp;
 
-/// The inbound SMTP listener when `smtp_listen_port` is set. A listener that cannot start is logged and the server
-/// starts without it; an empty or bad `smtp_allowed_addresses` never starts one.
+/// The inbound SMTP listener when `smtp-server@listen-port` is set. A listener that cannot start is logged and the server
+/// starts without it; an empty or bad `smtp-server@allowed-addresses` never starts one.
 #[cfg(feature = "inbound-smtp")]
 fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> SmtpSlot {
     use moqui_core::startup::{listener, State};
@@ -2024,8 +2043,10 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
         return None;
     }
     // a front node's port 25 is a TCP port to its pool, never this listener (plans/Edge-Node2.md §4.7)
-    let configured = !moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty();
-    if moqui_core::edge::front_refuses(factory, "smtp_listen_port", configured) {
+    let configured = !moqui_core::context::conf_env::setting("smtp-server@listen-port")
+        .trim()
+        .is_empty();
+    if moqui_core::edge::front_refuses(factory, "smtp-server@listen-port", configured) {
         listener(factory, smtp::LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
         return None;
     }
@@ -2035,7 +2056,11 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
             Some(server)
         }
         Ok(None) => {
-            listener(factory, smtp::LISTENER, State::off("smtp_listen_port is not set"));
+            listener(
+                factory,
+                smtp::LISTENER,
+                State::off("smtp-server@listen-port is not set"),
+            );
             None
         }
         Err(err) => {
@@ -2048,8 +2073,13 @@ fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFact
 
 #[cfg(not(feature = "inbound-smtp"))]
 fn start_smtp(_factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> SmtpSlot {
-    if !moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty() {
-        tracing::error!("smtp_listen_port is set but this build has no SMTP listener (the inbound-smtp feature)");
+    if !moqui_core::context::conf_env::setting("smtp-server@listen-port")
+        .trim()
+        .is_empty()
+    {
+        tracing::error!(
+            "smtp-server@listen-port is set but this build has no SMTP listener (the inbound-smtp feature)"
+        );
     }
     NoSmtp
 }
@@ -2212,7 +2242,7 @@ fn startup_load_flags(conf_text: &str) -> Result<LoadFlags, moqui_lib::error::Er
         .and_then(|tools| tools.attribute("empty-db-load"))
         .unwrap_or_default();
     Ok(LoadFlags {
-        data_types: Some(split_csv(&moqui_lib::env::expand(&types)?)),
+        data_types: Some(split_csv(&types)),
         ..LoadFlags::default()
     })
 }

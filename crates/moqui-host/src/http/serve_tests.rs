@@ -378,7 +378,7 @@ impl CloneForRetry for http::Request<axum::body::Body> {
     }
 }
 
-/// SEC-CLI-01: with `webapp_allowed_hosts` a listener answers only for its own names, so a page that rebinds another
+/// SEC-CLI-01: with `webapp-list/webapp[webroot]@allowed-hosts` a listener answers only for its own names, so a page that rebinds another
 /// name to 127.0.0.1 is refused; a request that did not come straight to a listener (in process, the edge link) is not
 /// asked, and with no list every name is served.
 #[test]

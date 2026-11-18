@@ -20,14 +20,14 @@
                  Found on the host (git at a public site's page URL still answers on a public-site host)
     An error screen the root does not have is webroot.xml's. A link made in a request to a host a root-screen names
     uses that host (with the webapp's scheme and port), unless its root refuses the framework's routes; one made on a
-    refuse host or outside a request (mail, a job) uses webapp_http_host.
+    refuse host or outside a request (mail, a job) uses webapp-list/webapp[webroot]@http-host.
     The session cookie is the host's alone: a person signs in to each host. PASS sites share accounts through PASS's
     Account and its SSO.
 
     Each host needs a DNS record and a certificate for its name (runtime/cert, docs/Run-Deploy.md, Certificates); behind
     an edge node each is an EdgeHost of the pairing (System › Edge Node). -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true"/>
 
     <webapp-list>
         <webapp name="webroot">

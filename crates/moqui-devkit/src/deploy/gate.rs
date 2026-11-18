@@ -39,7 +39,7 @@ pub struct GateConf {
     /// `max-age-seconds`, in milliseconds.
     pub max_age_millis: i64,
     /// This server's public base URLs an attestation's audience must be one of: `public-urls`, else the webroot
-    /// webapp's URL when `webapp_http_host` is set; empty when it cannot tell, and then every attestation is refused.
+    /// webapp's URL when `webapp-list/webapp[webroot]@http-host` is set; empty when it cannot tell, and then every attestation is refused.
     pub public_urls: Vec<String>,
     /// The `allow` entries; none takes no attested deploy.
     pub allows: Vec<Allow>,
@@ -70,7 +70,7 @@ impl GateConf {
             .filter(|url| !url.is_empty())
             .map(str::to_string)
             .collect();
-        if public_urls.is_empty() && !moqui_lib::env::get_prop_or_env("webapp_http_host").trim().is_empty() {
+        if public_urls.is_empty() && !factory.webapp_setting("webroot", "http-host").is_empty() {
             let root = factory.webapp_root_url("webroot");
             if !root.is_empty() {
                 public_urls.push(root);
@@ -119,7 +119,7 @@ pub(crate) fn same_url(url: &str) -> String {
     }
 }
 
-/// The `allow` entries of the conf's `component-deploy`, `${}` expanded; one that leaves out its component, URL or
+/// The `allow` entries of the conf's `component-deploy`; one that leaves out its component, URL or
 /// branch is left out, logged.
 fn allows(conf_text: &str) -> Vec<Allow> {
     let Ok(conf) = moqui_lib::node::MNode::parse_shared("moqui-conf", conf_text) else {
@@ -130,7 +130,7 @@ fn allows(conf_text: &str) -> Vec<Allow> {
     };
     let attribute = |node: &moqui_lib::node::MNode, name: &str| {
         let raw = node.attribute(name).unwrap_or_default();
-        moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string()
+        raw.trim().to_string()
     };
     let mut out = Vec::new();
     for node in element.children_named("allow") {

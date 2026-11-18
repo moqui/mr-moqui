@@ -381,21 +381,24 @@ mod mail {
             let first_url = format!("https://localhost:{first_port}");
             let (first_port_text, cluster_port) = (first_port.to_string(), crate::common::free_port().to_string());
             let mail = [
-                ("smtp_listen_port", "0"),
-                ("smtp_allowed_addresses", "127.0.0.1"),
-                ("smtp_hostname", "edge.example.com"),
-                ("edge_mail_mta", "postfix"),
+                ("moqui_conf__smtp_server__listen_port", "0"),
+                ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+                ("moqui_conf__smtp_server__hostname", "edge.example.com"),
+                ("moqui_conf__mail_delivery__mta", "postfix"),
             ];
             let files = [
                 ("cert/default.crt", cert.0.as_str()),
                 ("cert/default.key", cert.1.as_str()),
             ];
             let mut properties = vec![
-                ("node_role", "front_edge"),
-                ("webapp_https_listen_port", first_port_text.as_str()),
-                ("edge_link_url", first_url.as_str()),
-                ("edge_link_key", link_key.as_str()),
-                ("cluster_https_port", cluster_port.as_str()),
+                ("moqui_conf__instance__node_role", "front_edge"),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    first_port_text.as_str(),
+                ),
+                ("moqui_conf__edge__link_url", first_url.as_str()),
+                ("moqui_conf__edge__link_key", link_key.as_str()),
+                ("moqui_conf__cluster_member__https_port", cluster_port.as_str()),
             ];
             properties.extend_from_slice(&mail);
             let first = crate::common::start_second_with(&format!("{label}-edge1"), EDGE_CONF, &properties, &files);
@@ -404,10 +407,13 @@ mod mail {
             let second_port = crate::common::free_port();
             let (second_port_text, second_url) = (second_port.to_string(), format!("https://localhost:{second_port}"));
             let mut properties = vec![
-                ("node_role", "front_edge"),
-                ("webapp_https_listen_port", second_port_text.as_str()),
-                ("edge_link_url", second_url.as_str()),
-                ("edge_link_key", link_key.as_str()),
+                ("moqui_conf__instance__node_role", "front_edge"),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    second_port_text.as_str(),
+                ),
+                ("moqui_conf__edge__link_url", second_url.as_str()),
+                ("moqui_conf__edge__link_key", link_key.as_str()),
             ];
             properties.extend_from_slice(&mail);
             let second = crate::common::start_member_with_files(

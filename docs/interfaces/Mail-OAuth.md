@@ -11,13 +11,13 @@ Oct 19, 2026.
 
 Each provider needs the deployment's own OAuth client. Nothing is shared: no client id or secret ships with the framework.
 
-| Property (or environment variable) | |
+| Conf setting (set by its environment name in `runtime/.env` or the environment) | |
 | --- | --- |
-| `email_oauth_redirect_uri` | The callback registered at both providers, exactly. Empty: the `webroot` webapp's URL from the conf (`webapp_http_host`, `webapp_https_enabled`, the ports) and `/emailOAuth/callback`, such as `https://erp.example.com/emailOAuth/callback`. It is never taken from a request. |
-| `email_oauth_google_client_id`, `email_oauth_google_client_secret` | The Google client. |
-| `email_oauth_microsoft_client_id`, `email_oauth_microsoft_client_secret` | The Microsoft client. |
-| `email_oauth_microsoft_tenant` | `common` (the default: work, school and personal accounts), `organizations`, `consumers` or a tenant id. |
-| `entity_ds_crypt_pass` | Must be the deployment's own: the refresh tokens (and a client secret kept on the `EmailOAuthProvider` row instead of a property) are encrypted with it. A server with no field encryption refuses to store a sign-in. |
+| `email-client@oauth-redirect-uri` | The callback registered at both providers, exactly. Empty: the `webroot` webapp's URL from the conf (`webapp-list/webapp[webroot]@http-host`, `webapp-list/webapp[webroot]@https-enabled`, the ports) and `/emailOAuth/callback`, such as `https://erp.example.com/emailOAuth/callback`. It is never taken from a request. |
+| `email-client/oauth-provider[google]@client-id`, `email-client/oauth-provider[google]@client-secret` | The Google client. |
+| `email-client/oauth-provider[microsoft]@client-id`, `email-client/oauth-provider[microsoft]@client-secret` | The Microsoft client. |
+| `email-client/oauth-provider[microsoft]@tenant` | `common` (the default: work, school and personal accounts), `organizations`, `consumers` or a tenant id. |
+| `moqui_conf__entity_facade__crypt_pass` | Must be the deployment's own: the refresh tokens (and a client secret kept on the `EmailOAuthProvider` row instead of the conf) are encrypted with it. A server with no field encryption refuses to store a sign-in. |
 
 A provider whose client id or secret is missing, or whose row is `disabled`, is not offered: `discover#EmailServer` answers
 `oauthConfigured` false and `start#OAuthSignIn` refuses it. `get#OAuthProviders` lists the providers, whether each is set up,
@@ -30,7 +30,9 @@ encrypted field); a property wins over the row.
    authorized domain of the redirect URI), the **audience**, and under **Data access** the scopes `https://mail.google.com/`,
    `openid` and `.../auth/userinfo.email`.
 2. **Clients**, create an OAuth client of type **Web application** with the redirect URI above as an authorized redirect URI.
-3. Set `email_oauth_google_client_id` and `email_oauth_google_client_secret`.
+3. Set `email-client/oauth-provider[google]@client-id` and `email-client/oauth-provider[google]@client-secret`: in
+   `runtime/.env` or the environment, `moqui_conf__email_client__oauth_provider__GOOGLE__client_id` and
+   `moqui_conf__email_client__oauth_provider__GOOGLE__client_secret`.
 
 What Google requires (checked Oct 19, 2026 against Google's documentation):
 
@@ -52,7 +54,7 @@ What Google requires (checked Oct 19, 2026 against Google's documentation):
 
 1. In the Microsoft Entra admin center, **App registrations**, register an app. **Supported account types**: "Accounts in any
    organizational directory and personal Microsoft accounts" for the `common` tenant (work, school and Outlook.com); a single
-   organization may register for its own directory only and set `email_oauth_microsoft_tenant` to its tenant id.
+   organization may register for its own directory only and set `email-client/oauth-provider[microsoft]@tenant` to its tenant id.
 2. **Authentication**: a **Web** platform with the redirect URI above.
 3. **Certificates & secrets**: a client secret (it expires, at most after 24 months: rotate it before then).
 4. **API permissions**: the delegated permissions `IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access`, `openid`, `email` and
@@ -60,7 +62,9 @@ What Google requires (checked Oct 19, 2026 against Google's documentation):
    `https://outlook.office.com/IMAP.AccessAsUser.All` and `https://outlook.office.com/SMTP.Send`, with `offline_access` for the
    refresh token; an account whose server is POP3 also asks for `https://outlook.office.com/POP.AccessAsUser.All` (the provider's
    `popScope`), which must be granted, and its refreshes ask for it too.
-5. Set `email_oauth_microsoft_client_id` and `email_oauth_microsoft_client_secret`.
+5. Set `email-client/oauth-provider[microsoft]@client-id` and `email-client/oauth-provider[microsoft]@client-secret`: in
+   `runtime/.env` or the environment, `moqui_conf__email_client__oauth_provider__MICROSOFT__client_id` and
+   `moqui_conf__email_client__oauth_provider__MICROSOFT__client_secret`.
 
 What Microsoft requires (from Microsoft's "Authenticate an IMAP, POP or SMTP connection using OAuth"; the dates below to
 verify against the Message Center when deploying):

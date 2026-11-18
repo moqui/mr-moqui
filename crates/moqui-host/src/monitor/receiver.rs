@@ -123,7 +123,11 @@ pub(crate) fn enqueue(
     if !telemetry.accepting() {
         return Err((503, "telemetry is disabled".into()));
     }
-    let decoded = decode(&factory.extension(|_| Decoder::default())).map_err(|e| (400, e.to_string()))?;
+    let decoded =
+        decode(&factory.extension(|factory| {
+            Decoder::receiving(moqui_core::telemetry::for_factory(factory).resource().service_name)
+        }))
+        .map_err(|e| (400, e.to_string()))?;
     telemetry.note_dropped(decoded.rejected);
     // The queue counts each record it cannot take.
     telemetry

@@ -41,14 +41,14 @@ function recordAttempt(p) {
    secret on its direct listener, or the edge link's identity); only its sites are checked then. Server code only. */
 function clientRegistered(clientId, clientSecret, siteId, verified) {
     const sites = String(
-        System.getProperty('pass_client_' + clientId + '_sites') || '',
+        ec.factory.getConfValue('pass-authority/client[' + clientId + ']@sites') || '',
     ).split(',')
     return (
         !!clientId &&
         (verified === true ||
             // compared by digest on the server; the secret never reaches the script (SEC-SCR-03)
             System.propertyMatches(
-                'pass_client_' + clientId + '_secret',
+                'pass-authority/client[' + clientId + ']@secret',
                 clientSecret == null ? '' : String(clientSecret),
             )) &&
         (siteId == null || sites.includes(siteId))
@@ -146,7 +146,7 @@ function beginRegistration(p) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.emailAddress || ''))
         fail('Unprocessable', 'A valid email address is required')
     const email = p.emailAddress.trim().toLowerCase(),
-        template = System.getProperty('pass_verification_template')
+        template = ec.factory.getConfValue('pass-authority@verification-template')
     if (!template) fail('Unavailable', 'Verification mail is not configured')
     const old = ec.entity
         .find('moqui.security.UserAccount')
@@ -420,8 +420,8 @@ function ssoHandoff(p, lock) {
 }
 function prepareSso(p) {
     registeredClient(p)
-    const callback = System.getProperty(
-        'pass_client_' + p.clientId + '_callback',
+    const callback = ec.factory.getConfValue(
+        'pass-authority/client[' + p.clientId + ']@callback',
     )
     if (
         !callback ||
@@ -430,7 +430,7 @@ function prepareSso(p) {
     )
         fail('Unavailable', 'SSO callback is not registered')
     if (
-        !String(System.getProperty('pass_sso_flows') || '')
+        !String(ec.factory.getConfValue('pass-authority@sso-flows') || '')
             .split(',')
             .includes(p.authFlowId)
     )

@@ -58,7 +58,7 @@ const NAME: &str = "Dev reload";
 pub fn start(factory: &Arc<ExecutionContextFactory>) -> bool {
     use moqui_core::startup::{integration, State};
     if !moqui_core::devtools::is_dev_instance() {
-        integration(factory, NAME, State::off("instance_purpose is not dev"));
+        integration(factory, NAME, State::off("instance@purpose is not dev"));
         return false;
     }
     if !factory.conf_flag("dev-reload", "enabled", true) {

@@ -59,7 +59,7 @@ const defaultDays = 14
 // person it is for: it is never sent again from here, only closed.
 const signInTemplates = () =>
     ["PASSWORD_RESET", "SINGLE_USE_CODE", "ADDED_EMAIL_AUTHC_FACTOR", "EMAIL_AUTHC_FACTOR_SENT", "ACCOUNT_SIGN_IN"].concat(
-        [text(System.getProperty("pass_verification_template"))].filter(Boolean)
+        [text(ec.factory.getConfValue("pass-authority@verification-template"))].filter(Boolean)
     )
 
 const states = {

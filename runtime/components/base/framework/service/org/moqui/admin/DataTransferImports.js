@@ -19,7 +19,7 @@ const {text, lineText, plain, refused} = lib
 const defaultDays = 90
 const rangeDays = 366
 const perSource = 200
-const zone = () => text(System.getProperty("default_time_zone")) || "UTC"
+const zone = () => text(ec.factory.getConfValue("instance@default-time-zone")) || "UTC"
 const zoned = value => (value == null ? "" : ec.l10n.format(Number(value), "yyyy-MM-dd HH:mm", null, zone()))
 const stateTexts = {
     staged: "Staged",

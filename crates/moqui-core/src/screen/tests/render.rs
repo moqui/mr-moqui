@@ -628,12 +628,15 @@ fn a_screen_request_records_the_session_the_visitor_and_the_user() {
     struct ClearKey;
     impl Drop for ClearKey {
         fn drop(&mut self) {
-            moqui_lib::env::clear_property("session_cookie_key");
+            moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key");
         }
     }
 
     let _lock = crate::user::session::cookie_property_lock();
-    moqui_lib::env::set_property("session_cookie_key", STANDARD.encode([0x09_u8; 32]));
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        STANDARD.encode([0x09_u8; 32]),
+    );
     let _clear = ClearKey;
     let context = ExecutionContextFactory::test_context();
     let entered = context.enter();

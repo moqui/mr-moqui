@@ -368,8 +368,11 @@ impl Domains {
         let files_a = owned("A");
         let files_a: Vec<(&str, &str)> = files_a.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
         let pass_properties = [
-            ("pass_authority_service", "edgetest.DomainServices.handle#Call"),
-            ("channels_webhooks_enabled", "true"),
+            (
+                "moqui_conf__pass_authority__service",
+                "edgetest.DomainServices.handle#Call",
+            ),
+            ("moqui_conf__channels__webhooks_enabled", "true"),
         ];
         let local_a =
             crate::common::start_with_conf_files(&format!("{label}-a"), None, CONF, &pass_properties, &files_a);
@@ -409,12 +412,15 @@ impl Domains {
             &format!("{label}-edge"),
             EDGE_CONF,
             &[
-                ("node_role", "front_edge"),
-                ("webapp_https_listen_port", &edge_port_text),
-                ("smtp_listen_port", "0"),
-                ("smtp_allowed_addresses", "127.0.0.1"),
-                ("smtp_hostname", "edge.example.com"),
-                ("edge_mail_mta", "postfix"),
+                ("moqui_conf__instance__node_role", "front_edge"),
+                (
+                    "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                    &edge_port_text,
+                ),
+                ("moqui_conf__smtp_server__listen_port", "0"),
+                ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+                ("moqui_conf__smtp_server__hostname", "edge.example.com"),
+                ("moqui_conf__mail_delivery__mta", "postfix"),
             ],
             &files_edge,
         );

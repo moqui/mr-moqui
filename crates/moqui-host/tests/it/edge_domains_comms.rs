@@ -16,7 +16,7 @@
 //! domains on one pair of ports, each to the pairing whose domain it names (the TLS server name on the direct TLS
 //! port, the stream's `to` on the STARTTLS port), and a port of one pairing (an `EdgePort` row) to that pairing only.
 //!
-//! Both ends are real servers in the test's own process, as in `edge_xmpp.rs`: a local node with `xmpp_domain` and
+//! Both ends are real servers in the test's own process, as in `edge_xmpp.rs`: a local node with `xmpp-server@domain` and
 //! its own XMPP server, linked as `local-x`, and a second pairing `local-y`, linked by a dialer that serves no tunnels
 //! (any tunnel to it is refused), so a connection that reaches the local node's XMPP server went down `local-x`'s link.
 
@@ -117,10 +117,13 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
         None,
         "",
         &[
-            ("webapp_https_listen_port", &local_port),
-            ("xmpp_domain", "moqui.local"),
-            ("xmpp_tls_port", "0"),
-            ("xmpp_tls_host", "127.0.0.1"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &local_port,
+            ),
+            ("moqui_conf__xmpp_server__domain", "moqui.local"),
+            ("moqui_conf__xmpp_server__tls_port", "0"),
+            ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &local_cert), ("cert/default.key", &local_key)],
     );
@@ -133,14 +136,17 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
         "edge-domains-edge",
         "",
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port.to_string()),
-            ("edge_xmpp_port", &tunnel_port.to_string()),
-            ("edge_xmpp_tls_port", &tunnel_tls_port.to_string()),
-            ("edge_xmpp_host", "127.0.0.1"),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port.to_string(),
+            ),
+            ("moqui_conf__edge__xmpp_port", &tunnel_port.to_string()),
+            ("moqui_conf__edge__xmpp_tls_port", &tunnel_tls_port.to_string()),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
             // narrow media ranges, so a free port is not one of them (a port row may not take this node's own)
-            ("turn_relay_ports", "51310-51320"),
-            ("sip_rtp_ports", "42690-42699"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51310-51320"),
+            ("moqui_conf__sip_server__rtp_ports", "42690-42699"),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );
@@ -307,10 +313,13 @@ fn two_local_nodes_comms_stay_apart() {
         None,
         "",
         &[
-            ("webapp_https_listen_port", &local_port),
-            ("xmpp_domain", "moqui.local"),
-            ("xmpp_tls_port", "0"),
-            ("xmpp_tls_host", "127.0.0.1"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &local_port,
+            ),
+            ("moqui_conf__xmpp_server__domain", "moqui.local"),
+            ("moqui_conf__xmpp_server__tls_port", "0"),
+            ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &local_cert), ("cert/default.key", &local_key)],
     );
@@ -325,19 +334,22 @@ fn two_local_nodes_comms_stay_apart() {
         "edge-domains-acc-edge",
         "",
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port.to_string()),
-            ("edge_xmpp_port", &tunnel_port.to_string()),
-            ("edge_xmpp_tls_port", &tunnel_tls_port.to_string()),
-            ("edge_xmpp_host", "127.0.0.1"),
-            ("rtc_media_port", &media_port.to_string()),
-            ("rtc_media_host", "127.0.0.1"),
-            ("rtc_public_address", &media),
-            ("turn_port", &turn_port.to_string()),
-            ("turn_host", "127.0.0.1"),
-            ("turn_public_host", "127.0.0.1"),
-            ("turn_relay_ports", "51410-51500"),
-            ("turn_auth_secret", EDGE_SECRET),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port.to_string(),
+            ),
+            ("moqui_conf__edge__xmpp_port", &tunnel_port.to_string()),
+            ("moqui_conf__edge__xmpp_tls_port", &tunnel_tls_port.to_string()),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
+            ("moqui_conf__media_server__port", &media_port.to_string()),
+            ("moqui_conf__media_server__host", "127.0.0.1"),
+            ("moqui_conf__media_server__public_address", &media),
+            ("moqui_conf__media_server__turn_server__port", &turn_port.to_string()),
+            ("moqui_conf__media_server__turn_server__host", "127.0.0.1"),
+            ("moqui_conf__media_server__turn_server__public_host", "127.0.0.1"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51410-51500"),
+            ("moqui_conf__media_server__turn_server__auth_secret", EDGE_SECRET),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );
@@ -431,7 +443,7 @@ fn two_local_nodes_comms_stay_apart() {
         "local-y's domain"
     );
 
-    // revoking local-x ends its TURN access, with no new turn_auth_secret, and its domain there; local-y goes on
+    // revoking local-x ends its TURN access, with no new media-server/turn-server@auth-secret, and its domain there; local-y goes on
     call(&edge, "revoke#EdgeClient", &[("pairedNodeId", "local-x")]).unwrap();
     wait_until(Duration::from_secs(8), "local-x's TURN credential refused", || {
         probe(&x_user, &x_credential).is_err()

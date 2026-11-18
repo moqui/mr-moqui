@@ -13,7 +13,7 @@
  */
 
 //! A phone leg's media (plans/archive/Comms-Framework.md §5.1, §6.5; the M0 hook points in `rtc/media.rs`): its RTP socket
-//! from the `sip_rtp_ports` range and one thread, on a 20 ms tick, between that socket and the call's SFU room.
+//! from the `sip-server@rtp-ports` range and one thread, on a 20 ms tick, between that socket and the call's SFU room.
 //!
 //! - **In.** The phone's RTP is decoded (G.711, G.722 or Opus) and resampled to 48 kHz by
 //!   [`moqui_sip::media::PhoneMedia`], and each frame is pushed into the leg's [`PcmSource`]: the browsers hear it as
@@ -126,17 +126,17 @@ impl PortRange {
         let (low, high) = text
             .trim()
             .split_once('-')
-            .ok_or_else(|| format!("sip_rtp_ports {text} is not a range like 20000-20999"))?;
+            .ok_or_else(|| format!("sip-server@rtp-ports {text} is not a range like 20000-20999"))?;
         let low: u16 = low
             .trim()
             .parse()
-            .map_err(|_| format!("sip_rtp_ports {text}: {low} is not a port"))?;
+            .map_err(|_| format!("sip-server@rtp-ports {text}: {low} is not a port"))?;
         let high: u16 = high
             .trim()
             .parse()
-            .map_err(|_| format!("sip_rtp_ports {text}: {high} is not a port"))?;
+            .map_err(|_| format!("sip-server@rtp-ports {text}: {high} is not a port"))?;
         if low == 0 || high < low {
-            return Err(format!("sip_rtp_ports {text} is empty"));
+            return Err(format!("sip-server@rtp-ports {text} is empty"));
         }
         Ok(PortRange {
             host,

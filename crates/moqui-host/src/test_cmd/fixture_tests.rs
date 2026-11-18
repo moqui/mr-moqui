@@ -40,11 +40,11 @@ fn runtime() -> PathBuf {
     std::fs::canonicalize(root).unwrap()
 }
 
-/// The instance `MoquiConf.xml`, which sets `instance_purpose`.
+/// The instance `MoquiConf.xml`, which sets the `instance` `purpose`.
 fn set_purpose(runtime: &Path, purpose: &str) {
     std::fs::write(
         runtime.join("MoquiConf.xml"),
-        format!(r#"<moqui-conf><default-property name="instance_purpose" value="{purpose}"/></moqui-conf>"#),
+        format!(r#"<moqui-conf><instance purpose="{purpose}"/></moqui-conf>"#),
     )
     .unwrap();
 }
@@ -66,7 +66,7 @@ fn the_snapshot_key_follows_the_components_that_load() {
     let dev = data_hash(&first, &framework()).unwrap();
     assert_eq!(dev, data_hash(&second, &framework()).unwrap());
     // a purpose set for the whole process (moqui test sets dev for a dev component's specs) wins over the conf
-    if moqui_lib::env::get_prop_or_env("instance_purpose").is_empty() {
+    if moqui_lib::env::get_prop_or_env("moqui_conf__instance__purpose").is_empty() {
         set_purpose(&runtime, "production");
         assert_ne!(dev, data_hash(&first, &framework()).unwrap());
     }
@@ -159,7 +159,7 @@ fn a_runs_end_prunes_the_snapshots_no_run_has_used_for_an_hour() {
     let _ = std::fs::remove_dir_all(&save);
 }
 
-/// The loader's `.env` (its generated `entity_ds_crypt_pass`) goes with the snapshot and into each runtime that restores
+/// The loader's `.env` (its generated `moqui_conf__entity_facade__crypt_pass`) goes with the snapshot and into each runtime that restores
 /// it, so every worker reads the encrypted demo data with the loader's key.
 #[test]
 fn a_snapshot_carries_the_loaders_runtime_env() {

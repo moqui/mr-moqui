@@ -79,7 +79,7 @@ function build(ec, sri, options) {
         density: density, startApp: startApp,
         notificationEndpoint: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) || '',
         // calls (js/WebrootCall.js): the Comms app the call links and transitions are under, for a signed-in user with the socket
-        calls: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) ? { appRoot: (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '') } : null,
+        calls: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) ? { appRoot: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms').replace(/\/+$/, '') } : null,
         // the account menu's Terminal, when the host serves the browser terminal (the /termws endpoint)
         terminalUrl: (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) ? '/qapps/Terminal' : '',
         navPlugins: sri.getThemeValues('STRT_HEADER_NAVBAR_COMP'), accountPlugins: sri.getThemeValues('STRT_HEADER_ACCOUNT_COMP'),
@@ -88,8 +88,8 @@ function build(ec, sri, options) {
         assist: !!(ec.user.userId && ec.llm && ec.llm.isEnabled() && ec.user.hasPermission('AgentUse')),
         userAccount: { partyId: account.partyId || '', emailAddress: account.emailAddress || '', userFullName: account.userFullName || '' },
         appearance: appearance,
-        // the dev/test instance marker (the webapp_dev_marker_color conf property): the shell draws a small square in the corner
-        devMarker: System.getProperty('webapp_dev_marker_color') || '',
+        // the dev/test instance marker (the webroot webapp's dev-marker-color): the shell draws a small square in the corner
+        devMarker: ec.factory.getConfValue('webapp-list/webapp[webroot]@dev-marker-color') || '',
         preferences: preferences, moquiVersion: ec.factory.moquiVersion, quasar: quasarConfig,
         avatarUrl: avatarList.length ? String(avatarList[0]) : '',
         qvt: { build: staticOnly ? 'runtime' : 'compiler', handles: staticOnly ? ['static-template'] : ['merged-fragment', 'static-template'] },

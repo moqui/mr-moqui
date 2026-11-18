@@ -11,7 +11,7 @@
  *   - the pure parts (tested under node): the state reconciliation of a program that changes under the user's edits
  *     (persistedState, reconcileUserEdits), what a canvas read answers (rows of a screen list through the read proxy),
  *     the problems a render reports, chart configurations for Chart.js 4, the paths a canvas may open;
- *   - the renderer: Vue 3 render functions (no template, so a webapp_qvt_static_only page and a CSP without unsafe-eval
+ *   - the renderer: Vue 3 render functions (no template, so a webapp-list/webapp[webroot]@qvt-static-only page and a CSP without unsafe-eval
  *     run it), a port of the Java prototype's AssistOpenUi.js (state reconciliation, action routing, the streaming parse,
  *     evaluation) without its regex repair layer: what lang-core does not parse is reported, never rewritten. The
  *     components are drawn with the shell's widgets (m-text-line, m-date-time, m-date-period, m-chart, m-markdown,

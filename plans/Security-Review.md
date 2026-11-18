@@ -9,7 +9,7 @@ and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-R
 saying how. The Low findings that were confirmed in code were then fixed in batches the same day, each entry's **Fix**
 in [Security-Review-Low](Security-Review-Low.md) saying how, and two batches of the owner's decisions on the ones they
 left were carried out after them, and on 2026-11-17 the ones fixed in part were finished: of the 215 Low and Info
-findings 149 are fixed and 5 deferred, none refuted, and 61 (21 Low, 40 Info) are as reported. What is left is under
+findings 158 are fixed and 5 deferred, none refuted, and 52 (12 Low, 40 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
 A third round began 2026-11-17: it reads the code the first two did not reach (the "not reached" of the
@@ -200,8 +200,8 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    approval, parsers of untrusted input, the mobile app's native code, and the helper-read parts of the PASS services.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones (2026-11-16).
    Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the 169 Low and 46
-   Info findings, 149 are fixed (143 Low, 6 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
-   are in part); 21 Low and 40 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
+   Info findings, 158 are fixed (152 Low, 6 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
+   are in part); 12 Low and 40 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
    of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10, SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11,
    SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13. The second (2026-11-17) finished 7: SEC-MAIL-06,
    SEC-MAIL-07, SEC-CLU-02, SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and SEC-PSS-23. A third (2026-11-17) finished the five
@@ -211,7 +211,8 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    A fifth (2026-11-17): SEC-BOS-08, SEC-GIT-13, SEC-FIL-05, SEC-SCR-10, SEC-MAIL-05 and SEC-OUT-14.
    A sixth (2026-11-17): SEC-CLU-06, SEC-PFS-64, SEC-BAP-05, SEC-SCR-09, SEC-RTE-16, SEC-FIL-06 and SEC-PFS-02, and
    four found already fixed by an earlier fix when checked: SEC-DAT-07 (SEC-OUT-06), SEC-RTE-10 (SEC-WEB-11),
-   SEC-DEV-03 (SEC-WEB-04) and SEC-MAIL-67 (SEC-MAIL-01).
+   SEC-DEV-03 (SEC-WEB-04) and SEC-MAIL-67 (SEC-MAIL-01). A seventh (2026-11-17): SEC-TLS-14, SEC-TLS-15, SEC-DEV-02,
+   SEC-RTE-15, SEC-FIL-63, SEC-PSS-62, SEC-GIT-12, SEC-PSS-45 and SEC-CLI-02.
 
    Deferred, each for an owner's decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its own), and
    SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop and Tauri clients, waiting for the desktop build machine).
@@ -312,7 +313,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-12 | `runtime/components/base/webroot/screen/webroot.xml:83`, `:104` | Anonymous reads through `/listViewColumns` and `/statusBar` | Low | fixed |
 | SEC-RTE-13 | `crates/moqui-core/src/screen/url.rs:499` | Answers that tell an anonymous caller what exists | Low | fixed |
 | SEC-RTE-14 | `crates/moqui-core/src/service/rest.rs:731` | Service REST entity lists have no upper bound | Low | fixed |
-| SEC-RTE-15 | `crates/moqui-core/src/script/host/user.rs:120` | `getPreferences` builds a JavaScript regular expression from the request | Low | reported (to check) |
+| SEC-RTE-15 | `crates/moqui-core/src/script/host/user.rs:120` | `getPreferences` builds a JavaScript regular expression from the request | Low | fixed |
 | SEC-RTE-16 | `crates/moqui-core/src/screen/token_route.rs:300`-`365` | A refused token-route token is not counted | Low | fixed |
 | SEC-RTE-17 | `runtime/components/base/webroot/screen/webroot/Login.xml:191`-`193`, `:249`-`256` | The Login page verifies a password on every render and offers a one-click admin sign-in | Low | fixed |
 | SEC-RTE-18 | `runtime/components/base/webroot/screen/webroot/PublicShell.xml:24` | `/PublicShell` takes `tokenRoute` from a JSON body | Info | reported (to check) |
@@ -356,8 +357,8 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | SEC-TLS-08 | `crates/moqui-devkit/src/deploy/git.rs:210-234` | The production internal-address check of a deploy URL is bypassed by user info, and fails open | Low | fixed |
 | SEC-TLS-09 | `runtime/components/base/tools/screen/Tools/Service/ServiceRun.xml:26-29` | Secrets written to the server log by Tools and Instance | Low | fixed |
 | SEC-TLS-10 | `runtime/components/base/framework/service/org/moqui/dev/InstanceServices.xml:816`, `:842` | `create#DatabaseMySQL` quotes the password for standard SQL only | Low | fixed |
-| SEC-TLS-14 | `crates/moqui-core/src/telemetry/ingest.rs:878-891`, `crates/moqui-report/src/regression/mod.rs:144-157`, `:276-281`, `crates/moqui-report/src/annotations.rs:60-75` | (telemetry reader) An ingest key's sender can pose as this server's own service and move the regression detector and recovery | Low | reported (likely) |
-| SEC-TLS-15 | `crates/moqui-report/src/annotations.rs:19-31`, `crates/moqui-host/src/monitor/receiver.rs:224-243` | (telemetry reader) An ingest key owned by an administrator writes business annotations for any organization | Low | reported (likely) |
+| SEC-TLS-14 | `crates/moqui-core/src/telemetry/ingest.rs:878-891`, `crates/moqui-report/src/regression/mod.rs:144-157`, `:276-281`, `crates/moqui-report/src/annotations.rs:60-75` | (telemetry reader) An ingest key's sender can pose as this server's own service and move the regression detector and recovery | Low | fixed |
+| SEC-TLS-15 | `crates/moqui-report/src/annotations.rs:19-31`, `crates/moqui-host/src/monitor/receiver.rs:224-243` | (telemetry reader) An ingest key owned by an administrator writes business annotations for any organization | Low | fixed |
 | SEC-TLS-16 | `runtime/components/base/tools/screen/System/Monitor/Settings.xml:17-20` | (telemetry reader) `Settings/revertAll` runs on a GET with no token | Low | fixed |
 | SEC-TLS-17 | `crates/moqui-host/src/monitor/receiver.rs:53-78`, `crates/moqui-host/src/monitor/grpc.rs:95-109` | (telemetry reader) The ingest routes do not count failed keys, and gRPC decodes before it authenticates | Low | fixed |
 | SEC-TLS-18 | `crates/moqui-host/src/http.rs:1398`, `:1456` | (telemetry reader) Request spans keep the raw session id and unredacted query values for every `SYSTEM_APP` reader | Info | fixed |
@@ -400,7 +401,7 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 | SEC-GIT-09 | `crates/moqui-host/src/git_http.rs:293-298` | A loopback socket peer counts as a secure transport | Low | fixed |
 | SEC-GIT-10 | `crates/moqui-git/src/service/review.rs:81-97` | `fork#GitRepository` uses the new `repositoryId` as a directory name without checking it | Low | fixed |
 | SEC-GIT-11 | `crates/moqui-git/src/service/hosting.rs:631-665` | `delete#GitRef` deletes any ref, a merge request's head included | Low | fixed |
-| SEC-GIT-12 | `crates/moqui-git/src/browse.rs:140-150`, `:102-106` | A revision that is a full ref name reads any ref of the store but a hidden merge request's head | Low | reported (likely) |
+| SEC-GIT-12 | `crates/moqui-git/src/browse.rs:140-150`, `:102-106` | A revision that is a full ref name reads any ref of the store but a hidden merge request's head | Low | fixed |
 | SEC-GIT-13 | `GitReviewServices.xml:508`, `:520-535` | Approvals stay when a merge request's target changes | Low | fixed |
 | SEC-GIT-14 | `crates/moqui-core/src/user/authz.rs:502-504` | The services' repository checks pass when `AT_GIT_REPOSITORY` authorization is off | Low | fixed |
 | SEC-GIT-15 | `crates/moqui-git/src/storage.rs:160-171` | `delete#GitRepository` leaves the repository's push mirror rows | Low | fixed |
@@ -486,7 +487,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-06 | `FileServices.xml:2834-2870`, `:1250` | Anonymous file drop has no size, count or type limit of its own | Low | fixed |
 | SEC-FIL-07 | `FileServices.xml:307,341` | Three `FileServices` parameters name a server path and are not checked in the service | Low | fixed |
 | SEC-FIL-62 | crates/moqui-host/src/command/shell.rs:87 | The admin shell's `service`, `entity`, `cache` and `js` commands leave no audit record | Low | fixed |
-| SEC-FIL-63 | crates/moqui-host/src/command/shell.rs:185 | Admin shell error text and C1 controls reach the administrator's terminal unescaped | Low | reported (likely) |
+| SEC-FIL-63 | crates/moqui-host/src/command/shell.rs:185 | Admin shell error text and C1 controls reach the administrator's terminal unescaped | Low | fixed |
 | SEC-FIL-67 | crates/moqui-dav/src/pim/rrule.rs:35 | Calendar and contact objects have no parser limit of their own; the bound is the 256 MiB DAV body | Low | fixed |
 | SEC-FIL-09 | `runtime/components/addon/mr-boss/screen/PublicShare.xml:28,56` | `PublicShare.xml` `open` and `upload` name no method | Info | reported (confirmed in code) |
 | SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | reported (confirmed in code) |
@@ -661,8 +662,8 @@ Map file: [Attack-Surface-Apps-PASS-Commerce.md](../docs/security/Attack-Surface
 | SEC-PSS-28 | `request/SupportPortal.js:767-804`, `request/Channels.js:720-763`, `request/RequestServices.xml:887-921` | The public case form takes the typed email as the sender | Low | fixed |
 | SEC-PSS-43 | `service/mantle/forum/Forum.js` redeemInvitation (starts 2323) | Redeeming an invitation reactivates a member the site's staff suspended or removed | Low | fixed |
 | SEC-PSS-44 | `service/mantle/party/ConsentServices.xml` create#UnsubscribeToken (starts 1289), resolve#UnsubscribeToken (1428), apply#UnsubscribePreferences (1506) | A list link's token does not expire by default, is not single use, has no lookup limit and also subscribes | Low | fixed |
-| SEC-PSS-45 | `service/mantle/public/AccountHub.js:360-368` | PASS's one-click unsubscribe is not a confirmed unsubscribe on a list that asks confirmation | Low | reported (likely; a helper reader's item, not checked by the slice's reviewer) |
-| SEC-PSS-62 | crates/moqui-core/src/script/theme/markup.rs:124 (DENIED_ELEMENTS), :175 (DENIED_ATTRIBUTES), :628 (check_url, navigation) | A theme may hold a `<meta>` element and links to any host | Low | reported (to check) |
+| SEC-PSS-45 | `service/mantle/public/AccountHub.js:360-368` | PASS's one-click unsubscribe is not a confirmed unsubscribe on a list that asks confirmation | Low | fixed |
+| SEC-PSS-62 | crates/moqui-core/src/script/theme/markup.rs:124 (DENIED_ELEMENTS), :175 (DENIED_ATTRIBUTES), :628 (check_url, navigation) | A theme may hold a `<meta>` element and links to any host | Low | fixed |
 | SEC-PSS-65 | runtime/components/addon/mr-mantle/service/mantle/party/PortalMedia.js:20 | `PortalMedia.sniff` reads the whole staged upload into memory to compare eight bytes | Low | fixed |
 | SEC-PSS-66 | runtime/components/addon/mr-mantle/service/mantle/party/ExternalAccess.js:386 | `check()` skips the organization comparison when its caller names none, and the intake form's check names none | Low | fixed |
 | SEC-PSS-67 | runtime/components/addon/mr-mantle/service/mantle/party/ShopCustomer.js:587, :751, :779 | Shop's address and card setup operations have no per-requester limit | Low | fixed |
@@ -725,7 +726,7 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
 | SEC-CLI-01 | crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116 | The sidecar's loopback web listener is open to every local user and has no Host check seen | Medium | fixed |
-| SEC-CLI-02 | runtime/components/base/webroot/screen/webroot/sw.js:28 | The service worker keeps any same-origin GET that has a `v` parameter, cache first, with no expiry | Low | reported (to check) |
+| SEC-CLI-02 | runtime/components/base/webroot/screen/webroot/sw.js:28 | The service worker keeps any same-origin GET that has a `v` parameter, cache first, with no expiry | Low | fixed |
 | SEC-CLI-03 | crates/moqui-desktop/src/lib.rs:234 | The main window's navigation check in node modes passes every scheme but five | Low | deferred |
 | SEC-CLI-04 | crates/moqui-client-tauri/src/scheme.rs:319, crates/moqui-desktop/src/node/scheme.rs:195, crates/moqui-core/src/context/factory.rs:93 | In the apps the server's default CSP is dropped whole, `form-action` and `frame-ancestors` with it | Low | deferred |
 | SEC-CLI-05 | crates/moqui-desktop/src/bridge.rs:288, crates/moqui-desktop/src/os/mod.rs:214 | A node page can set where OS mail and call links open, and it is kept across runs | Low | deferred |
@@ -783,7 +784,7 @@ Map file: [Attack-Surface-Dev.md](../docs/security/Attack-Surface-Dev.md). Revie
 | SEC-DEV-01 | runtime/components/dev/dev-aide/src/entities.rs:98-131 | export#Records returns any entity's records to every Dev AIDE tier, including the stored tokens get#Credentials keeps for ADMIN | Medium | fixed |
 | SEC-DEV-05 | crates/moqui-core/src/service/mail_capture.rs:176-232 | MailCapture.enable() has no test-run gate, unlike HttpFixtures | Medium | fixed |
 | SEC-DEV-06 | runtime/components/dev/demo/data/DemoSecurityData.xml:21-59 | The demo lock-down leaves many ADMIN grants and permissions in place that were added after it | Medium | fixed |
-| SEC-DEV-02 | runtime/components/dev/dev-aide/src/services.rs:87-117 and 58-82 | eval#Condition runs a caller-supplied expression at the view tier | Low | reported (to check) |
+| SEC-DEV-02 | runtime/components/dev/dev-aide/src/services.rs:87-117 and 58-82 | eval#Condition runs a caller-supplied expression at the view tier | Low | fixed |
 | SEC-DEV-03 | runtime/components/dev/dev-aide/screen/DevAide/Workspace.xml (transition `restart`, last transition of the file) | State-changing Dev AIDE transitions have no method attribute, so a parameterless GET runs them | Low | fixed |
 | SEC-DEV-04 | runtime/components/dev/dev-aide/src/confine.rs:28 | The file deny list covers six runtime names; conf, save, sftp and install are readable at the view tier, and store#Root accepts any other host directory | Low | fixed |
 | SEC-DEV-07 | runtime/components/dev/dev-aide/src/services.rs:338-447 | The extend tier is code execution as the server, wider than its description | Info | reported (confirmed in code) |

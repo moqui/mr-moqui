@@ -13,7 +13,7 @@
  */
 
 //! The MX delivery's pieces: the MTA-STS policy and its MX patterns (and enforce in a session), the retry schedule, a
-//! null MX, A and AAAA answers that fail, and one session with a fake MX on 127.0.0.1 (through `mail_mx_override`):
+//! null MX, A and AAAA answers that fail, and one session with a fake MX on 127.0.0.1 (through `mail-delivery@mx-override`):
 //! each recipient's answer, sent, refused for good or tried again. With the entity facade: a try's answers committed
 //! when its report cannot be queued (and not delivered again), and the reports, partial and final.
 
@@ -142,7 +142,7 @@ fn mx_session(stream: TcpStream, taken: &Mutex<Vec<String>>) {
     }
 }
 
-/// Held by a test while it sets and uses the process-wide `mail_mx_override`.
+/// Held by a test while it sets and uses the process-wide `mail-delivery@mx-override`.
 static OVERRIDE: Mutex<()> = Mutex::new(());
 
 #[test]
@@ -151,7 +151,7 @@ fn a_session_answers_each_recipient_and_a_host_not_reached_waits() {
     let (port, taken) = fake_mx();
     let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     moqui_lib::env::set_property(
-        "mail_mx_override",
+        "moqui_conf__mail_delivery__mx_override",
         format!("mx-unit.test=127.0.0.1:{port},mx-closed.test=127.0.0.1:{closed}"),
     );
     let raw = b"From: a@example.com\r\nTo: ok@mx-unit.test\r\nSubject: Hi\r\n\r\nHello\r\n";
@@ -198,28 +198,31 @@ fn a_session_answers_each_recipient_and_a_host_not_reached_waits() {
     );
 }
 
-/// SEC-MAIL-66: a recipient domain in `mail_mx_require_tls` gets nothing in clear text from an MX that offers no
-/// STARTTLS (the try waits, to bounce after `mail_delivery_days`); a domain not listed is still delivered to it, as
+/// SEC-MAIL-66: a recipient domain in `mail-delivery@mx-require-tls` gets nothing in clear text from an MX that offers no
+/// STARTTLS (the try waits, to bounce after `mail-delivery@days`); a domain not listed is still delivered to it, as
 /// before. `*` lists every domain.
 #[test]
 fn a_domain_that_requires_tls_gets_no_clear_text_and_another_still_does() {
     let _override = OVERRIDE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (port, taken) = fake_mx();
     moqui_lib::env::set_property(
-        "mail_mx_override",
+        "moqui_conf__mail_delivery__mx_override",
         format!("tls-required.test=127.0.0.1:{port},tls-free.test=127.0.0.1:{port}"),
     );
-    moqui_lib::env::set_property("mail_mx_require_tls", "other.test, TLS-Required.test.".to_string());
+    moqui_lib::env::set_property(
+        "moqui_conf__mail_delivery__mx_require_tls",
+        "other.test, TLS-Required.test.".to_string(),
+    );
     let raw = b"From: a@example.com\r\nSubject: Hi\r\n\r\nHello\r\n";
     let deadline = Instant::now() + Duration::from_secs(30);
     let to = |domain: &str| deliver_domain(domain, "a@example.com", &[format!("ok@{domain}")], raw, deadline);
     let required = to("tls-required.test");
     let free = to("tls-free.test");
-    moqui_lib::env::set_property("mail_mx_require_tls", "*".to_string());
+    moqui_lib::env::set_property("moqui_conf__mail_delivery__mx_require_tls", "*".to_string());
     let all = to("tls-free.test");
-    moqui_lib::env::set_property("mail_mx_require_tls", String::new());
+    moqui_lib::env::set_property("moqui_conf__mail_delivery__mx_require_tls", String::new());
     assert!(
-        matches!(&required[0].1, Answer::Later(reply) if reply.contains("no STARTTLS, and mail_mx_require_tls requires it")),
+        matches!(&required[0].1, Answer::Later(reply) if reply.contains("no STARTTLS, and mail-delivery@mx-require-tls requires it")),
         "{required:?}"
     );
     assert!(

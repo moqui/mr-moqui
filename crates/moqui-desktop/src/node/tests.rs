@@ -89,11 +89,23 @@ fn both_modes_listen_on_loopback_only() {
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value.as_str())
     };
-    assert_eq!(get("webapp_http_bind"), Some("127.0.0.1"));
-    assert_eq!(get("webapp_http_port"), Some("51234"));
-    assert_eq!(get("webapp_https_listen_port"), Some("off"));
-    assert_eq!(get("cluster_bind_address"), Some("127.0.0.1"));
-    assert_eq!(get("webapp_allowed_hosts"), Some("127.0.0.1:51234,localhost:51234"));
+    assert_eq!(
+        get("moqui_conf__webapp_list__webapp__WEBROOT__http_bind"),
+        Some("127.0.0.1")
+    );
+    assert_eq!(
+        get("moqui_conf__webapp_list__webapp__WEBROOT__http_port"),
+        Some("51234")
+    );
+    assert_eq!(
+        get("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port"),
+        Some("off")
+    );
+    assert_eq!(get("moqui_conf__cluster_member__bind_address"), Some("127.0.0.1"));
+    assert_eq!(
+        get("moqui_conf__webapp_list__webapp__WEBROOT__allowed_hosts"),
+        Some("127.0.0.1:51234,localhost:51234")
+    );
 }
 
 #[test]
@@ -104,11 +116,20 @@ fn the_dev_tools_follow_the_variable_then_the_purpose_file_and_are_off_by_defaul
     assert!(dev_purpose(Some("dev"), None));
     assert!(!dev_purpose(Some("production"), Some("dev")), "the variable is taken first");
     assert!(dev_purpose(Some(" "), Some("dev")), "an empty variable is passed over");
-    assert_eq!(purpose_properties(true), vec![("instance_purpose", "dev".to_string())]);
-    assert!(purpose_properties(false).is_empty(), "off leaves the conf's own purpose");
+    assert_eq!(
+        purpose_properties(true),
+        vec![("moqui_conf__instance__purpose", "dev".to_string())]
+    );
+    assert!(
+        purpose_properties(false).is_empty(),
+        "off leaves the conf's own purpose"
+    );
     assert_eq!(
         setup_properties(),
-        vec![("initial_admin_enabled", "true".to_string())],
+        vec![(
+            "moqui_conf__user_facade__login__initial_admin_enabled",
+            "true".to_string()
+        )],
         "the first run offers the first administrator"
     );
 

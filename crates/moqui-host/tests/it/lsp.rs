@@ -70,7 +70,7 @@ fn the_language_server_answers_on_the_example_component() {
         ("components/addon/my-site/entity/MySiteEntities.xml", ENTITIES),
         ("components/addon/my-site/service/mysite/Widgets.xml", SERVICES),
     ];
-    let gate = start_with_files("lsp", None, &[("instance_purpose", "dev")], &files);
+    let gate = start_with_files("lsp", None, &[("moqui_conf__instance__purpose", "dev")], &files);
     let factory = Arc::clone(gate.server.factory());
     let index = Box::new(MemoryIndex::build(&factory));
     let mut server = Server::new(Backend::Local { factory, index });

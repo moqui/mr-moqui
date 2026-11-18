@@ -28,7 +28,7 @@ struct Key;
 
 impl Drop for Key {
     fn drop(&mut self) {
-        moqui_lib::env::clear_property("session_cookie_key");
+        moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key");
         reset_session();
     }
 }
@@ -43,7 +43,7 @@ fn setup() -> (
     let lock = cookie_property_lock();
     reset_session();
     moqui_lib::env::set_property(
-        "session_cookie_key",
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
         base64::engine::general_purpose::STANDARD.encode([7_u8; 32]),
     );
     let ctx = ExecutionContextFactory::test_context();

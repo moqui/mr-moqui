@@ -107,64 +107,64 @@ const TARGETS: [Target; 9] = [
     Target {
         key: "smtp.listener",
         external: false,
-        hosts: &["smtp_listen_host"],
-        ports: &["smtp_listen_port"],
+        hosts: &["smtp-server@listen-host"],
+        ports: &["smtp-server@listen-port"],
         default_port: "",
     },
     Target {
         key: "ssh.listener",
         external: false,
-        hosts: &["ssh_host"],
-        ports: &["ssh_port"],
+        hosts: &["ssh-server@host"],
+        ports: &["ssh-server@port"],
         default_port: "",
     },
     Target {
         key: "xmpp.listener",
         external: false,
-        hosts: &["xmpp_host"],
-        ports: &["xmpp_port"],
+        hosts: &["xmpp-server@host"],
+        ports: &["xmpp-server@port"],
         default_port: "",
     },
     Target {
         key: "sip.listener",
         external: false,
-        hosts: &["sip_host"],
-        ports: &["sip_port"],
+        hosts: &["sip-server@host"],
+        ports: &["sip-server@port"],
         default_port: "",
     },
     Target {
         key: "turn.listener",
         external: false,
-        hosts: &["turn_host", "rtc_media_host"],
-        ports: &["turn_port"],
+        hosts: &["media-server/turn-server@host", "media-server@host"],
+        ports: &["media-server/turn-server@port"],
         default_port: "",
     },
     Target {
         key: "web.public",
         external: true,
-        hosts: &["webapp_http_host"],
+        hosts: &["webapp-list/webapp[webroot]@http-host"],
         ports: &[],
         default_port: "",
     },
     Target {
         key: "ssh.public",
         external: true,
-        hosts: &["ssh_public_host", "webapp_http_host"],
-        ports: &["ssh_public_port", "ssh_port"],
+        hosts: &["ssh-server@public-host", "webapp-list/webapp[webroot]@http-host"],
+        ports: &["ssh-server@public-port", "ssh-server@port"],
         default_port: "",
     },
     Target {
         key: "turn.public",
         external: true,
-        hosts: &["turn_public_host"],
-        ports: &["turn_port"],
+        hosts: &["media-server/turn-server@public-host"],
+        ports: &["media-server/turn-server@port"],
         default_port: "",
     },
     Target {
         key: "xmpp.public",
         external: true,
-        hosts: &["xmpp_domain"],
-        ports: &["xmpp_port"],
+        hosts: &["xmpp-server@domain"],
+        ports: &["xmpp-server@port"],
         default_port: "",
     },
 ];
@@ -273,7 +273,7 @@ fn get_protocol_facts(
 }
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    crate::context::conf_env::setting_or_property(name).trim().to_string()
 }
 
 fn first_property(names: &[&str]) -> String {
@@ -289,11 +289,11 @@ fn first_property(names: &[&str]) -> String {
 fn target_address(target: &Target) -> Result<(String, u16), &'static str> {
     let mut host = first_property(target.hosts);
     let port_text = if target.key == "web.public" {
-        let https = property("webapp_https_enabled") == "true";
+        let https = property("webapp-list/webapp[webroot]@https-enabled") == "true";
         match first_property(if https {
-            &["webapp_https_port"]
+            &["webapp-list/webapp[webroot]@https-port"]
         } else {
-            &["webapp_http_port"]
+            &["webapp-list/webapp[webroot]@http-port"]
         }) {
             port if port.is_empty() => if https { "443" } else { "80" }.to_string(),
             port => port,
@@ -442,8 +442,8 @@ mod tests {
     fn a_listener_that_is_off_failed_or_not_built_reads_apart() {
         assert_eq!(state_parts(&State::On("tcp 127.0.0.1:2525".into())).0, "on");
         assert_eq!(
-            state_parts(&State::off("smtp_listen_port is not set")),
-            ("off", "smtp_listen_port is not set")
+            state_parts(&State::off("smtp-server@listen-port is not set")),
+            ("off", "smtp-server@listen-port is not set")
         );
         assert_eq!(state_parts(&State::failed("bind")).0, "failed");
         assert_eq!(state_parts(&State::Skipped("busy".into())).0, "skipped");

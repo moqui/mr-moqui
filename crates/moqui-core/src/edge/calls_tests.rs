@@ -17,17 +17,17 @@ use super::*;
 #[test]
 fn calls_are_on_unless_the_setting_turns_them_off() {
     // the only test reading the setting, so setting it here races with nothing
-    moqui_lib::env::clear_property(CALLS_ENABLED);
+    moqui_lib::env::clear_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED));
     assert!(calls_enabled(), "on by default, as E7 behaves");
     for off in ["false", "N", "no", "0", " off "] {
-        moqui_lib::env::set_property(CALLS_ENABLED, off.to_string());
+        moqui_lib::env::set_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED), off.to_string());
         assert!(!calls_enabled(), "{off}");
     }
     for on in ["true", "Y", "yes", "1"] {
-        moqui_lib::env::set_property(CALLS_ENABLED, on.to_string());
+        moqui_lib::env::set_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED), on.to_string());
         assert!(calls_enabled(), "{on}");
     }
-    moqui_lib::env::clear_property(CALLS_ENABLED);
+    moqui_lib::env::clear_property(&crate::context::conf_env::env_name_of(CALLS_ENABLED));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn a_media_address_outside_browsers_cannot_reach_is_named() {
         "[fe80::1]:10000",
     ] {
         let problem = media_address_problem(local).unwrap_or_default();
-        assert!(problem.contains("rtc_public_address"), "{local}: {problem}");
+        assert!(problem.contains("media-server@public-address"), "{local}: {problem}");
     }
     assert!(media_address_problem("edge.example.net")
         .unwrap()
@@ -58,7 +58,7 @@ fn a_link_that_is_down_or_without_media_names_no_media_node() {
     assert!(linked_media_node(&status).unwrap_err().contains("unpaired"));
     status.state = crate::edge::LinkState::Linked;
     status.peer.instance_id = "edge-1".to_string();
-    assert!(linked_media_node(&status).unwrap_err().contains("rtc_media_port"));
+    assert!(linked_media_node(&status).unwrap_err().contains("media-server@port"));
     status.peer.media_address = "203.0.113.5:10000".to_string();
     assert_eq!(linked_media_node(&status).unwrap().instance_id, "edge-1");
 }

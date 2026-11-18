@@ -20,7 +20,7 @@
 //!   - [`ALPN_PAIR`] (`moqui-edge-pair/1`): checking and pairing, on the listener's web certificate, which the local node
 //!     checks by WebPKI. Over it the edge node tells the fingerprint of its **link key**.
 //!   - [`ALPN`] (`moqui-edge/1`): the up and down connections, on a self-signed certificate made from the edge node's
-//!     long-lived link key (`edge_link_key`), which the local node pinned at pairing (`edge_node_pin`). A renewed web
+//!     long-lived link key (`edge@link-key`), which the local node pinned at pairing (`edge/node@pin`). A renewed web
 //!     certificate does not touch the link.
 //!
 //!   Each local node has a key of its own, pinned by the edge node at pairing (`moqui.edge.EdgeClient.keyFingerprint`).
@@ -45,7 +45,7 @@
 //! - **Liveness.** HTTP/2 PINGs every 15 s keep NAT mappings open; a lost link is dialed again with a backoff from 1 s to
 //!   30 s ([`dial`]); a refused node waits up to 10 minutes.
 //! - **Edge clusters** (plans/Edge-Node2.md §4.6). Every edge member's Hello answer and Ping answer list its cluster's
-//!   live members with their own link addresses (`edge_link_url`); a local node links to each, keeps the list
+//!   live members with their own link addresses (`edge@link-url`); a local node links to each, keeps the list
 //!   ([`members`]) and sends its own work up one of those links.
 //!
 //! The parts take explicit configuration ([`LocalConfig`], [`PairConfig`], [`EdgeConfig`]) read from properties once,
@@ -124,10 +124,10 @@ pub(crate) const TUNNEL_HEADER: &str = "x-moqui-tunnel";
 pub(crate) const TUNNEL_HTTPS: &str = "https";
 /// A connection to the edge node's SSH tunnel port, piped to the local node's SSH server.
 pub(crate) const TUNNEL_SSH: &str = "ssh";
-/// A connection to the edge node's XMPP port (`edge_xmpp_port`, 5222): an XMPP client stream with STARTTLS, which the
+/// A connection to the edge node's XMPP port (`edge@xmpp-port`, 5222): an XMPP client stream with STARTTLS, which the
 /// local node's XMPP server serves and ends the TLS of.
 pub(crate) const TUNNEL_XMPP: &str = "xmpp";
-/// A connection to the edge node's direct TLS XMPP port (`edge_xmpp_tls_port`, 5223, XEP-0368), likewise.
+/// A connection to the edge node's direct TLS XMPP port (`edge@xmpp-tls-port`, 5223, XEP-0368), likewise.
 pub(crate) const TUNNEL_XMPPS: &str = "xmpps";
 /// A connection to a front node's SMTP port (an `EdgePort` row, plans/Edge-Node2.md §4.7): a PROXY v2 header with the
 /// client's address, then the client's SMTP, which the edge member's own SMTP listener serves (its mail edge).
@@ -198,8 +198,8 @@ pub(crate) async fn read_answer<S: AsyncRead + Unpin>(stream: &mut S) -> std::io
 /// Ok when the edge member's Hello names an id this node can take: a node id, not this node's own (`own`), and, on a
 /// link dialed for a member of its edge cluster's list (`expected`), that member's (plans/Edge-Node2.md §4.6), else
 /// what to tell the operator. Any member of the edge cluster may be named on a link to the URL this node paired with:
-/// every member presents the link key this node pinned (`edge_link_key` is in the cluster's shared `.env`), and the
-/// id is learned then (`edge_node_id` becomes the set of them). Whether it is a live member of this node's own cluster
+/// every member presents the link key this node pinned (`edge@link-key` is in the cluster's shared `.env`), and the
+/// id is learned then (`edge/node@id` becomes the set of them). Whether it is a live member of this node's own cluster
 /// is checked apart, with the database: an edge node that took another media node's id would get that node's call
 /// signaling and media row (plans/archive/Edge-Node.md §5.4).
 pub(crate) fn check_edge_member(expected: Option<&str>, seen: &str, own: &str) -> Result<(), String> {
@@ -225,7 +225,7 @@ pub(crate) fn check_edge_member(expected: Option<&str>, seen: &str, own: &str) -
 /// wrong (plans/Edge-Node2.md §4.6). `None` when it reached that member, or was dialed for none.
 pub(crate) fn misdirected(expected: Option<&str>, seen: &str) -> Option<String> {
     expected.filter(|expected| *expected != seen).map(|expected| {
-        format!("the edge member dialed as {expected} names itself {seen}: its edge_link_url reaches another member")
+        format!("the edge member dialed as {expected} names itself {seen}: its edge@link-url reaches another member")
     })
 }
 
@@ -436,10 +436,10 @@ pub(crate) type LocalLinkClient = proto::local_link_client::LocalLinkClient<H2Ch
 pub struct EdgeConfig {
     /// This node's instance id, in its Hello.
     pub instance_id: String,
-    /// The name local nodes show for this edge node: `webapp_http_host`, else the instance id.
+    /// The name local nodes show for this edge node: `webapp-list/webapp[webroot]@http-host`, else the instance id.
     pub name: String,
     pub capabilities: Vec<String>,
-    /// The public host names this edge node answers for: `webapp_http_host` for now; E2 and later set more.
+    /// The public host names this edge node answers for: `webapp-list/webapp[webroot]@http-host` for now; E2 and later set more.
     pub public_names: Vec<String>,
     /// HTTP/2 PING interval, and how long an unanswered one waits.
     pub keepalive: Duration,
@@ -453,15 +453,15 @@ pub struct EdgeConfig {
     /// The Pair calls one address may make in `pair_window`.
     pub pair_attempts: u32,
     pub pair_window: Duration,
-    /// The port that pipes SSH down a link (`edge_ssh_tunnel_port` on `edge_ssh_tunnel_host`), none when empty: to
+    /// The port that pipes SSH down a link (`edge@ssh-tunnel-port` on `edge@ssh-tunnel-host`), none when empty: to
     /// the one node linked. A port per pairing is an `EdgePort` row (E16, `tunnel.rs`).
     pub ssh_tunnel: Option<std::net::SocketAddr>,
-    /// The ports that pipe XMPP clients down a link: STARTTLS (`edge_xmpp_port`) and direct TLS
-    /// (`edge_xmpp_tls_port`), both on `edge_xmpp_host`; each none when empty. Each connection goes to the pairing
+    /// The ports that pipe XMPP clients down a link: STARTTLS (`edge@xmpp-port`) and direct TLS
+    /// (`edge@xmpp-tls-port`), both on `edge@xmpp-host`; each none when empty. Each connection goes to the pairing
     /// whose XMPP domain it names (E16, `tunnel.rs`).
     pub xmpp_tunnel: Option<std::net::SocketAddr>,
     pub xmpp_tls_tunnel: Option<std::net::SocketAddr>,
-    /// The page a terminate host answers with while its node's link is down (`edge_offline_page`, else the default).
+    /// The page a terminate host answers with while its node's link is down (`edge@offline-page`, else the default).
     pub offline_page: std::sync::Arc<str>,
     /// How long opening a tunnel, or a member's connection taking a forwarded request, may take.
     pub open_timeout: Duration,
@@ -476,19 +476,21 @@ pub struct EdgeConfig {
     /// (`<edge ssh-tunnels>`).
     pub max_ssh_tunnels: usize,
     /// This node has the front set (plans/Edge-Node2.md §4.3): it passes passthrough hosts' connections down links. An
-    /// edge node behind a front node (`node_role=edge`) does not.
+    /// edge node behind a front node (`moqui_conf__instance__node_role=edge`) does not.
     pub front: bool,
     /// This node has the edge set (plans/Edge-Node2.md §4.3): the queue, delegated calls, replication, call signaling
-    /// and PASS go over its links. A front node (`node_role=front`) has none of them and refuses each.
+    /// and PASS go over its links. A front node (`moqui_conf__instance__node_role=front`) has none of them and refuses each.
     pub edge: bool,
-    /// Where local nodes dial this member of an edge cluster (`edge_link_url`, plans/Edge-Node2.md §4.6); empty when
+    /// Where local nodes dial this member of an edge cluster (`edge@link-url`, plans/Edge-Node2.md §4.6); empty when
     /// they dial only the URL they paired with.
     pub link_url: String,
 }
 
 impl EdgeConfig {
     pub(crate) fn from_properties(instance_id: &str) -> Self {
-        let host = moqui_lib::env::get_prop_or_env("webapp_http_host").trim().to_string();
+        let host = moqui_core::context::conf_env::setting("webapp-list/webapp[webroot]@http-host")
+            .trim()
+            .to_string();
         Self {
             instance_id: instance_id.to_string(),
             name: if host.is_empty() {
@@ -515,7 +517,7 @@ impl EdgeConfig {
             max_ssh_tunnels: moqui_core::edge::conf::DEFAULT_SSH_TUNNELS,
             front: moqui_core::edge::node_role_kind().has_front(),
             edge: moqui_core::edge::node_role_kind().has_edge(),
-            link_url: moqui_lib::env::get_prop_or_env(moqui_core::cluster::EDGE_LINK_URL_PROPERTY)
+            link_url: moqui_core::context::conf_env::setting(moqui_core::cluster::EDGE_LINK_URL_PROPERTY)
                 .trim()
                 .to_string(),
         }
@@ -524,9 +526,9 @@ impl EdgeConfig {
 
 /// The tunnel ports: the port property, the host property, and what the tunnel is for its errors.
 const TUNNEL_PORTS: [(&str, &str, &str); 3] = [
-    ("edge_ssh_tunnel_port", "edge_ssh_tunnel_host", "the SSH tunnel"),
-    ("edge_xmpp_port", "edge_xmpp_host", "the XMPP tunnel"),
-    ("edge_xmpp_tls_port", "edge_xmpp_host", "the XMPP direct TLS tunnel"),
+    ("edge@ssh-tunnel-port", "edge@ssh-tunnel-host", "the SSH tunnel"),
+    ("edge@xmpp-port", "edge@xmpp-host", "the XMPP tunnel"),
+    ("edge@xmpp-tls-port", "edge@xmpp-host", "the XMPP direct TLS tunnel"),
 ];
 
 /// The startup report's name for the tunnel listeners.
@@ -546,7 +548,7 @@ fn tunnel_bind(port_name: &str, host_name: &str, what: &str) -> Option<std::net:
 
 /// [`tunnel_bind`] without the log: None while the port is empty, else the address or why the tunnel is off.
 fn tunnel_address(port_name: &str, host_name: &str, what: &str) -> Option<Result<std::net::SocketAddr, String>> {
-    let port = moqui_lib::env::get_prop_or_env(port_name);
+    let port = moqui_core::context::conf_env::setting_or_property(port_name);
     let port = port.trim();
     if port.is_empty() {
         return None;
@@ -554,7 +556,7 @@ fn tunnel_address(port_name: &str, host_name: &str, what: &str) -> Option<Result
     let Ok(port) = port.parse::<u16>() else {
         return Some(Err(format!("{port_name} {port} is not a port; {what} is off")));
     };
-    let host = moqui_lib::env::get_prop_or_env(host_name);
+    let host = moqui_core::context::conf_env::setting_or_property(host_name);
     let ip = match host.trim() {
         "" => std::net::IpAddr::from([0, 0, 0, 0]),
         host => match host.parse() {
@@ -587,7 +589,7 @@ pub(crate) fn tunnel_targets() -> Vec<crate::port_check::Target> {
         .collect()
 }
 
-/// A paired local node's link settings: from `edge_node_url`, `edge_node_key` and `edge_node_pin`, or from a test.
+/// A paired local node's link settings: from `edge/node@url`, `edge/node@key` and `edge/node@pin`, or from a test.
 /// Keeps an edge node's instance id once a first link pinned it ([`LocalConfig::on_pin`]).
 pub type OnPin = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -599,10 +601,10 @@ pub struct LocalConfig {
     pub key: String,
     /// SHA-256 of the edge node's link key, hex.
     pub pin: String,
-    /// The edge node's instance ids (`edge_node_id`, comma separated): the one pairing pinned, and the members of its
+    /// The edge node's instance ids (`edge/node@id`, comma separated): the one pairing pinned, and the members of its
     /// cluster learned since (plans/Edge-Node2.md §4.6). Empty for a node paired before E7.
     pub edge_id: String,
-    /// Told each edge member id a link learns (the hook keeps `edge_node_id` the set of them, and writes the first to
+    /// Told each edge member id a link learns (the hook keeps `edge/node@id` the set of them, and writes the first to
     /// `runtime/.env` when pairing wrote none); none keeps them only for the dialer's life.
     pub on_pin: Option<OnPin>,
     /// This node's instance id: the member its links name (plans/Edge-Node2.md §4.4). The edge node keys its rows by
@@ -636,7 +638,7 @@ pub struct LocalConfig {
     /// the down connection takes no queued item, delegated call or PASS call. A link whose Hello names another role
     /// than the pairing expects is refused, so pair again.
     pub front: bool,
-    /// On the front pairing of a node that takes links (plans/Edge-Node2.md §4.7): its own `edge_link_url`, which its
+    /// On the front pairing of a node that takes links (plans/Edge-Node2.md §4.7): its own `edge@link-url`, which its
     /// Hello names, so the front passes that name's connections (its local nodes' links) through to this member.
     pub link_url: String,
 }
@@ -666,9 +668,13 @@ impl LocalConfig {
         }
     }
 
-    /// From the properties, or `None` when `edge_node_url` is not set (this node is not paired).
+    /// From the properties, or `None` when `edge/node@url` is not set (this node is not paired).
     pub(crate) fn from_properties(instance_id: &str) -> Option<Self> {
-        let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+        let get = |name: &str| {
+            moqui_core::context::conf_env::setting_or_property(name)
+                .trim()
+                .to_string()
+        };
         let url = get(moqui_core::edge::NODE_URL);
         if url.is_empty() {
             return None;
@@ -680,17 +686,21 @@ impl LocalConfig {
             instance_id,
         );
         config.edge_id = get(moqui_core::edge::NODE_ID);
-        let host = get("webapp_http_host");
+        let host = get("webapp-list/webapp[webroot]@http-host");
         if !host.is_empty() {
             config.node_name = host;
         }
         Some(config)
     }
 
-    /// The front pairing's from the properties (`front_node_url`, `front_node_key`, `front_node_pin`,
-    /// `front_node_id`; plans/Edge-Node2.md §4.7), or `None` when `front_node_url` is not set.
+    /// The front pairing's from the properties (`edge/front-node@url`, `edge/front-node@key`, `edge/front-node@pin`,
+    /// `edge/front-node@id`; plans/Edge-Node2.md §4.7), or `None` when `edge/front-node@url` is not set.
     pub(crate) fn front_from_properties(instance_id: &str) -> Option<Self> {
-        let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+        let get = |name: &str| {
+            moqui_core::context::conf_env::setting_or_property(name)
+                .trim()
+                .to_string()
+        };
         let url = get(moqui_core::edge::FRONT_URL);
         if url.is_empty() {
             return None;
@@ -704,7 +714,7 @@ impl LocalConfig {
         config.edge_id = get(moqui_core::edge::FRONT_ID);
         config.front = true;
         config.link_url = get(moqui_core::cluster::EDGE_LINK_URL_PROPERTY);
-        let host = get("webapp_http_host");
+        let host = get("webapp-list/webapp[webroot]@http-host");
         if !host.is_empty() {
             config.node_name = host;
         }

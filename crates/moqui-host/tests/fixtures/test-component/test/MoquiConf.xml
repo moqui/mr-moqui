@@ -2,7 +2,7 @@
 <!-- Merged after the component's own MoquiConf.xml in moqui test runs only, the in-process specs and the server of
     moqui test --serve (Dependent.spec.js and test/client/Served.spec.js check it). -->
 <moqui-conf>
-    <default-property name="moqui_test_fixture_conf" value="test"/>
+    <moqui-test-fixture test-conf="test"/>
     <webapp-list>
         <webapp name="webroot">
             <response-header type="screen-render" name="X-Moqui-Test-Conf" value="moqui-test-fixture"/>

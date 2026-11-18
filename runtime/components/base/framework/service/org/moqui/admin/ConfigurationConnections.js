@@ -37,7 +37,7 @@ const MANAGE = "ADMIN_CONNECTION_MANAGE"
 const has = permission => ec.user.hasPermission(permission)
 const yes = value => value === true || value === "true" || value === "Y"
 const no = value => value === false || value === "false" || value === "N"
-const production = () => text(System.getProperty("instance_purpose")) === "production"
+const production = () => text(ec.factory.getConfValue("instance@purpose")) === "production"
 // whether the sender reaches internal addresses for a row: Y, or not N on an instance that is not production (the
 // senders' rule, moqui_core::outbound::deny_private_network)
 const privateAllowed = row => row?.allowPrivateNetwork === "Y" || (row?.allowPrivateNetwork !== "N" && !production())
@@ -1056,9 +1056,11 @@ function sendTestMessage(server) {
     return {check: "Message", ok: true, text: "A test message was sent to your own address"}
 }
 
+// the deployment's client in the conf (email-client/oauth-provider[confProviderId]); the secret only said to be set
 const oauthConfigured = provider => {
-    const prefix = text(provider.propertyPrefix)
-    return !!prefix && !!text(System.getProperty(prefix + "_client_id")) && System.isPropertySet(prefix + "_client_secret")
+    const id = text(provider.confProviderId)
+    const at = "email-client/oauth-provider[" + id + "]@"
+    return !!id && !!text(ec.factory.getConfValue(at + "client-id")) && ec.factory.isConfValueSet(at + "client-secret")
 }
 const mailOAuthDefinition = {
     adapterKey: "mailOAuth",

@@ -86,13 +86,13 @@ impl std::fmt::Debug for PairConfig {
     }
 }
 
-/// What pairing made and pinned: the values for `edge_node_url`, `edge_node_key` and `edge_node_pin`.
+/// What pairing made and pinned: the values for `edge/node@url`, `edge/node@key` and `edge/node@pin`.
 #[derive(Clone)]
 pub struct Paired {
     pub edge: EdgeInfo,
-    /// The edge node's link key fingerprint (`edge_node_pin`).
+    /// The edge node's link key fingerprint (`edge/node@pin`).
     pub pin: String,
-    /// This node's new private key, base64 PKCS#8 DER (`edge_node_key`).
+    /// This node's new private key, base64 PKCS#8 DER (`edge/node@key`).
     pub key: String,
     /// This node's public key fingerprint, as the edge node pinned it.
     pub key_fingerprint: String,
@@ -140,7 +140,7 @@ pub(crate) fn parse_url(url: &str) -> Result<EdgeUrl, String> {
     })
 }
 
-/// A new key for this node, base64 PKCS#8 DER: the value of `edge_node_key`.
+/// A new key for this node, base64 PKCS#8 DER: the value of `edge/node@key`.
 pub fn new_key() -> Result<String, String> {
     let key = rcgen::KeyPair::generate().map_err(|err| format!("could not make a key: {err}"))?;
     Ok(STANDARD.encode(key.serialize_der()))
@@ -170,7 +170,7 @@ const ED25519_PKCS8_HEAD: [u8; 16] = [
 ];
 
 impl Identity {
-    /// From `edge_node_key` (base64 PKCS#8 DER) or `edge_link_key` (that, or the base64 32-byte seed of an Ed25519 key,
+    /// From `edge/node@key` (base64 PKCS#8 DER) or `edge@link-key` (that, or the base64 32-byte seed of an Ed25519 key,
     /// as a generated secret is); the certificate names `instance_id`.
     pub(crate) fn from_key(key: &str, instance_id: &str) -> Result<Self, String> {
         let raw = STANDARD
@@ -378,7 +378,7 @@ pub async fn check(
 /// Why a node with a role of its own does not pair with a node of `role` (plans/Edge-Node2.md §4.7).
 pub(crate) fn not_front(role: &str) -> String {
     format!(
-        "this node takes links (node_role is set), so it pairs only with a front node, and that node's role is {}",
+        "this node takes links (instance@node-role is set), so it pairs only with a front node, and that node's role is {}",
         if role.is_empty() { "not front" } else { role }
     )
 }

@@ -145,7 +145,7 @@ along with this software (see the LICENSE.md file). If not, see
             GitRepository; bare: a remote GitRepository mirror on disk; clone: a working clone, by the git command, in a
             component directory), write its files to .staging-name beside where they go, and answer what deploying
             would do, as preview#ComponentLoad does. Needs the sealed COMPONENT_DEPLOY permission, and on a production
-            instance component_deploy_enabled=true.</description>
+            instance moqui_conf__component_deploy__enabled=true.</description>
         <in-parameters>
             <parameter name="url" required="true"/>
             <parameter name="branch" default-value="main"/>

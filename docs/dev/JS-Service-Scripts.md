@@ -120,7 +120,7 @@ returns a map, which `putAll` sets in the context so that the declared out-param
   the last statement gives back an object of them, a name or a function.
 - A `let`, a `var`, a loop or any other call at the top level keeps the file out: it is evaluated again on each
   `ec.resource.script` call. So module-level state never lasts past the run, and a per-call cache belongs in the call.
-- The `script_module_cache` property set to `false` turns the keeping off.
+- The `resource-facade@script-module-cache` property set to `false` turns the keeping off.
 - A file's text is read again when the file changes (checked every two seconds; never in production).
 
 `<script location="..."/>` in actions runs a file the same way and discards its value.
@@ -256,7 +256,7 @@ the same runtime, nested.
 | Limit | | When passed |
 |---|---|---|
 | Heap | 64 MiB for each thread's runtime | `Error: out of memory` |
-| Time | The transaction's time remaining, or the service's `transaction-timeout`. Outside a transaction: `script-timeout` of `resource-facade` in the conf, else on a request thread the request timeout (`webapp_request_timeout`, 300 s), else none (a job or service worker) | `Error: interrupted` |
+| Time | The transaction's time remaining, or the service's `transaction-timeout`. Outside a transaction: `script-timeout` of `resource-facade` in the conf, else on a request thread the request timeout (`webapp-list/webapp[webroot]/web-protection/requests@request-timeout`, 300 s), else none (a job or service worker) | `Error: interrupted` |
 | Nesting | 64 scripts deep | "scripts are nested too deeply" |
 | Native stack | Half the thread's stack, as the framework declares it to the engine (`script::declare_thread_stack`), for the outermost script and the scripts it nests: 4 MiB on a request worker (8 MiB), 1 MiB on a service or job worker (2 MiB; 4 MiB in Debug, whose workers have 8 MiB for its larger frames), on the main thread of `moqui load` and `moqui test`, half the stack limit (`ulimit -s`) less the arguments, the environment and 1 MiB, so about 3.5 MiB at the default 8 MiB (not declared when the limit is `unlimited` or under 3 MiB). 1 MiB on a thread not declared | "scripts are nested too deeply for the thread's stack", or the engine's "stack overflow" |
 | Value nesting | 200 levels of arrays and objects in a value that crosses to the framework | "value is cyclic or nested too deeply" |

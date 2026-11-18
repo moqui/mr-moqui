@@ -53,7 +53,7 @@ pub struct Expected {
     /// the edge node does not know).
     pub mta: String,
     pub xmpp: XmppExpected,
-    /// The host names of the edge node's TURN URLs (`turn_public_host` there), each checked for A and AAAA as the
+    /// The host names of the edge node's TURN URLs (`media-server/turn-server@public-host` there), each checked for A and AAAA as the
     /// host names are, against [`Expected::addresses`] and the address of its media node ([`Expected::media_ip`]).
     pub turn_hosts: Vec<String>,
     /// The address of the edge node's media node, which its TURN host defaults to.
@@ -61,7 +61,7 @@ pub struct Expected {
     pub sip: SipExpected,
 }
 
-/// The SIP records: the edge node's SIP domain (its `sip_domain`, the realm phones register to), whose SRV records
+/// The SIP records: the edge node's SIP domain (its `sip-server@domain`, the realm phones register to), whose SRV records
 /// (RFC 3263) name the edge node and its SIP ports (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8). None when `domain`
 /// is empty; a port of 0 is off, and its records are not listed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -82,9 +82,9 @@ pub struct XmppExpected {
     pub domain: String,
     /// The edge node's names an SRV target may be; the first is the one to set.
     pub hosts: Vec<String>,
-    /// `edge_xmpp_port` (STARTTLS), for `_xmpp-client._tcp`.
+    /// `edge@xmpp-port` (STARTTLS), for `_xmpp-client._tcp`.
     pub port: u16,
-    /// `edge_xmpp_tls_port` (direct TLS), for `_xmpps-client._tcp`.
+    /// `edge@xmpp-tls-port` (direct TLS), for `_xmpps-client._tcp`.
     pub tls_port: u16,
 }
 
@@ -344,7 +344,7 @@ pub fn check(domains: &[String], host_names: &[String], expected: &Expected, loo
 }
 
 /// The SRV records of the SIP domain: `_sips._tcp` with the TLS port, `_sip._udp` and `_sip._tcp` with the other, each
-/// port that is on. A domain that is no DNS name (an address, or `moqui`, the realm when `sip_domain` is not set) has
+/// port that is on. A domain that is no DNS name (an address, or `moqui`, the realm when `sip-server@domain` is not set) has
 /// none to check; a row says so.
 fn sip_rows(domain: &str, sip: &SipExpected, lookup: &dyn Lookup) -> Vec<DnsRow> {
     if domain.parse::<IpAddr>().is_ok() || !domain.contains('.') {
@@ -353,7 +353,7 @@ fn sip_rows(domain: &str, sip: &SipExpected, lookup: &dyn Lookup) -> Vec<DnsRow>
             name: domain.to_string(),
             ok: true,
             note: "The edge node's SIP domain is no DNS name, so phones and trunks reach it by its address: set \
-                   sip_domain there for SRV records"
+                   sip-server@domain there for SRV records"
                 .to_string(),
             later: true,
             ..DnsRow::default()
@@ -401,7 +401,7 @@ fn address_row(host: &str, addresses: &[IpAddr], lookup: &dyn Lookup) -> DnsRow 
             }
             ips.ok = checked && ok;
             if addresses.is_empty() {
-                ips.note = "The edge node's addresses are not known: set edge_public_addresses there".to_string();
+                ips.note = "The edge node's addresses are not known: set edge@public-addresses there".to_string();
             } else if !ips.ok && !found.is_empty() {
                 ips.note = "An address that is not the edge node's, or a family it lists with none".to_string();
             }

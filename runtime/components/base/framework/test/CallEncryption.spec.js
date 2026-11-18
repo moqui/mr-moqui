@@ -210,14 +210,14 @@ feature("a leg binds its media only once it names its device; a reconnect is a n
 
 feature("an encrypted call refuses recording, captions, a number, desk phones, forwarded numbers and a merge, which a plain call passes with the same parameters", {
     when() {
-        setProperty("call_recording_enabled", "true")
-        setProperty("call_recording_ack_required", "false")
+        setConf("calls/recording@enabled", "true")
+        setConf("calls/recording@ack-required", "false")
         const recordEncrypted = as(A, "org.moqui.call.CallRecordingServices.start#Recording", {callSessionId: encrypted})
         const stateEncrypted = as(A, "org.moqui.call.CallRecordingServices.get#RecordingState", {callSessionId: encrypted})
         const recordPlain = as(A, "org.moqui.call.CallRecordingServices.start#Recording", {callSessionId: plain})
         as(A, "org.moqui.call.CallRecordingServices.stop#Recording", {callSessionId: plain, callRecordingId: recordPlain.callRecordingId})
-        setProperty("call_recording_enabled", "false")
-        const captions = withProperty("call_captions_enabled", "true", () => ({
+        setConf("calls/recording@enabled", "false")
+        const captions = withConf("calls/captions@enabled", "true", () => ({
             encrypted: as(A, "org.moqui.call.CallCaptionServices.start#Captions", {callSessionId: encrypted}),
             plain: as(A, "org.moqui.call.CallCaptionServices.start#Captions", {callSessionId: plain}),
         }))

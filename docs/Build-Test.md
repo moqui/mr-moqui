@@ -12,6 +12,8 @@ JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of
   [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
   [desktop app](#desktop-app), the [Android app](#android-app)
 - [The moq script](#the-moq-script)
+- [Validation](#validation): [before a commit](#before-a-commit), [reading the results](#reading-the-results),
+  [before a release](#before-a-release)
 - [Rust tests and lints](#rust-tests-and-lints)
 - [Component specs](#component-specs): [running](#running), [files and order](#files-and-order),
   [a spec file](#a-spec-file) (the API is in [JS-Testkit](dev/JS-Testkit.md)), [agent evaluation](#agent-evaluation)
@@ -149,14 +151,14 @@ build, with no features of its own.
 | `print` | host | Network printing over IPP (`moqui-cups`) | | yes | yes |
 | `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes |
 | `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([JS-Test-Client](dev/JS-Test-Client.md)), and `moqui test-load`, a component's `test/load` scripts ([Load-Runner](tools/Load-Runner.md)), and the server side of Tools › Load; the two commands open no database and bind no listener of their own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes |
-| `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | yes | yes |
-| `rtc` | host (`moqui-rtc`) | Calls: the media socket and its SFU on str0m, and the call signaling on `/notws` ([WebRTC](interfaces/WebRTC.md)); the media socket starts only when `rtc_media_port` is set, and the call services run in every build (without it they refuse with `mediaUnavailable`). In Debug too | | yes | yes |
-| `speech-local` | host | Local speech to text for call captions (Whisper on candle, [WebRTC](interfaces/WebRTC.md#captions)): not built yet, so off in every package; with or without it `call_captions_provider=local` answers "not built in". Captions go through the `llm` feature's `transcribe` model meanwhile | | | |
-| `sip` | host (`moqui-sip`; includes `rtc`) | Phone calls over SIP trunks: the SIP engine on rsipstack, its trunk registration and the RTP of phone legs, joined to the call media ([SIP](interfaces/SIP.md)); it starts only when `sip_port` or `sip_tls_port` is set, and the voice services run in every build (without it `get#VoiceCapabilities` says not supported). In Debug too | | yes | yes |
-| `channels` | host (`moqui-channels`) | Business messaging channels: the `sms` chat bridge adapter, SMS and MMS on the Telnyx Messaging API v2 ([SMS](interfaces/SMS.md)). The `/channels/` webhook and media routes are in every build with `axum` and answer only when `channels_webhooks_enabled` is true; without this feature no adapter answers them and an SMS bridge stays not connected. | | yes | yes |
-| `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp_domain` is set. In Debug too | | yes | yes |
-| `grpc` | host (includes `telemetry`, `axum`) | gRPC on tonic: the cluster's protocol on the cluster port (`cluster_protocol`, [Cluster](../plans/archive/Cluster.md)); the host's gRPC listener: the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/archive/Edge-Node.md) §5.5) | yes | yes | yes |
-| `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/archive/Edge-Node.md)): a local node's dialer when `edge_node_url` is set, and on an edge node (`node_role=front_edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `pass_authority_grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
+| `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp-server@listen-port` is set | | yes | yes |
+| `rtc` | host (`moqui-rtc`) | Calls: the media socket and its SFU on str0m, and the call signaling on `/notws` ([WebRTC](interfaces/WebRTC.md)); the media socket starts only when `media-server@port` is set, and the call services run in every build (without it they refuse with `mediaUnavailable`). In Debug too | | yes | yes |
+| `speech-local` | host | Local speech to text for call captions (Whisper on candle, [WebRTC](interfaces/WebRTC.md#captions)): not built yet, so off in every package; with or without it `moqui_conf__calls__captions__provider=local` answers "not built in". Captions go through the `llm` feature's `transcribe` model meanwhile | | | |
+| `sip` | host (`moqui-sip`; includes `rtc`) | Phone calls over SIP trunks: the SIP engine on rsipstack, its trunk registration and the RTP of phone legs, joined to the call media ([SIP](interfaces/SIP.md)); it starts only when `sip-server@port` or `sip-server@tls-port` is set, and the voice services run in every build (without it `get#VoiceCapabilities` says not supported). In Debug too | | yes | yes |
+| `channels` | host (`moqui-channels`) | Business messaging channels: the `sms` chat bridge adapter, SMS and MMS on the Telnyx Messaging API v2 ([SMS](interfaces/SMS.md)). The `/channels/` webhook and media routes are in every build with `axum` and answer only when `channels@webhooks-enabled` is true; without this feature no adapter answers them and an SMS bridge stays not connected. | | yes | yes |
+| `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp-server@domain` is set. In Debug too | | yes | yes |
+| `grpc` | host (includes `telemetry`, `axum`) | gRPC on tonic: the cluster's protocol on the cluster port (`cluster-member@protocol`, [Cluster](../plans/archive/Cluster.md)); the host's gRPC listener: the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/archive/Edge-Node.md) §5.5) | yes | yes | yes |
+| `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/archive/Edge-Node.md)): a local node's dialer when `edge/node@url` is set, and on an edge node (`moqui_conf__instance__node_role=front_edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `moqui_conf__pass_authority__grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
 | `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the components/dev crates of `runtime/components/dev`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
@@ -185,16 +187,16 @@ The definitions still load, so components, screens and service files are the sam
 - A service whose Rust implementation belongs to a missing feature fails when called, with
   `service <name>: <feature> is not built into this host` in the message facade (`rust_services::missing_feature`).
 - The host integrations report through the framework's existing messages: SFTP and SSO calls say no client is
-  installed, network printing says it is not installed, and `cluster_transport=ssh` cannot start without the SSH
+  installed, network printing says it is not installed, and `moqui_conf__cluster_member__transport=ssh` cannot start without the SSH
   server. A cluster peer that advertises `ssh://` gets an error naming the missing feature. Without `grpc` the
-  cluster port speaks only HTTP/1.1, which every member still takes, and `cluster_protocol=grpc` fails at startup.
+  cluster port speaks only HTTP/1.1, which every member still takes, and `moqui_conf__cluster_member__protocol=grpc` fails at startup.
 - An `xlsx` render fails with `xlsx is not built into this host`; an elFinder thumbnail is left out; a `git://`
   location has no provider, and `/git/...` is not routed.
 - gitECA rules are still read and checked; nothing runs them, since there are no git events.
 - Without `edge`, the `org.moqui.edge.EdgeServices` that need the link (pairing, clients, hosts, ping) fail with
   `edge link not built into this host` (`get#LinkStatus` answers state `notBuilt`), and `ec.service.passAuthority`
   throws `gRPC not built into this host`, so mr-pass takes REST.
-- Without `embedded-postgres`, `entity_ds_db_conf` must name an external `postgres` or `mysql` database, the sim
+- Without `embedded-postgres`, the transactional datasource's `database-conf-name` must name an external `postgres` or `mysql` database, the sim
   overlay is not available, and `save-db`, `load-save`, and `moqui test --db fresh` (which makes scratch embedded
   databases) report that this build has no embedded Postgres. `moqui test --db none` still runs specs that set
   `database: false`.
@@ -476,7 +478,7 @@ adb reverse tcp:8080 tcp:8080                # ./moq run on this machine as the 
 
 `./moq android` (but `init`) first stages the client's shell into `target/mobile-shell`, the same step and layout as
 the desktop bundle's (`stage_client_shell`), which the app embeds as its Tauri assets. The app's host logic is tested on
-the desktop: `cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test` (a placeholder page stands in for an
+the desktop: `cd crates/moqui-mobile && cargo test` (a placeholder page stands in for an
 unstaged shell), and the Tauri glue it shares with the desktop app in `crates/moqui-client-tauri` the same way. How the
 app works on Android is [Mobile-Client](ui/Mobile-Client.md).
 
@@ -549,14 +551,16 @@ The `./moq` script runs the built binaries in place and replaces the Java Moqui 
 of the database, clean, OpenSearch, Chromium for PDF, git across all repositories, and component get, create and zip.
 It needs only bash (3.2 or newer), so it works on a fresh checkout on Linux, macOS, or Windows (Git Bash; `moq.cmd` from PowerShell or cmd). `./moq` with no arguments lists
 the tasks, and `./moq help <task>` describes one. Task names match by partial parts, ignoring case, so `./moq r-p` and
-`./moq runProduction` both mean `run-production`.
+`./moq runProduction` both mean `run-production`. The `moq` file holds the task table and finds the repository; the
+tasks are in `scripts/moq/`, one file an area (`build.sh`, `test.sh`, `components.sh`, ...), each with its tasks, their
+help and their helpers, and `scripts/moq-test.sh` tests them all.
 
 ```sh
 ./moq build                    # Maximal with the dev tools, target/release/moqui (--lite, --debug, --enterprise for
                                # the others), linking any component crates in runtime/components/addon; tasks that
                                # run moqui build a missing binary themselves
 ./moq run                      # target/release/moqui with runtime/conf/MoquiDevConf.xml; --lite uses target/lite/moqui
-./moq run -p 8081 -D entity_ds_db_conf=postgres
+./moq run -p 8081 -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 ./moq run lint --screens       # moqui's own commands, with the same conf
 ./moq load                     # all data types; ./moq load seed seed-initial install
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
@@ -572,10 +576,84 @@ sudo scripts/call-network.sh   # calls on shaped networks (tc netem in namespace
 ./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
 ./moq git-status               # or any git command in every repo: ./moq git pull
 ./moq completion --install     # tab completion for bash or zsh
+./moq claude-code              # an agent harness's setup: AGENTS.md and .agents/skills where it looks (./moq help
+                               # lists the setups: claude-code, claude-desktop)
 ```
 
 The everyday tasks with their Gradle counterparts, and the runtime, conf and deployment detail, are in
 [Run-Deploy](Run-Deploy.md#everyday-commands).
+
+## Validation
+
+What to run depends on what changed. The checks of a commit are the regression suite's and the lints, the same as CI's
+`check` pipeline (`ci.xml`: `cargo lint`, `cargo lint-min`, `scripts/check-packages.sh` and `./moq test-framework` on
+every push and merge request), so a commit that passes them here passes there. Acceptance and load tests are not part of
+a commit; they are a release's ([The two suites](#the-two-suites)).
+
+### Before a commit
+
+Look at what changed in every repository the work touched (mr-moqui and each component repository under
+`runtime/components/<set>/`: `./moq git-status`), and run each row that applies. A change of several kinds runs each of
+its rows; a check named twice runs once.
+
+| What changed | Run |
+|---|---|
+| Rust in a workspace crate (`crates/*`, a component's `src/`) | `cargo lint` (clippy on the workspace, warnings denied); `cargo lint-min` (the host and every crate it links built with no default features, so feature-gated code and its off stubs are checked); `cargo test -p <crate>` for each crate touched while working; then `./moq test-framework` |
+| Feature-gated code (`#[cfg(feature = ...)]`), a crate's `[features]` or dependencies, `Cargo.toml` or `Cargo.lock` | also `scripts/check-packages.sh` (clippy on each package's feature set) |
+| A crate outside the workspace (`moqui-desktop`, `moqui-mobile`, `moqui-client-tauri`) or the Android targets | the tests in its README (the desktop's need `target/moqui-app`, which `./moq build` writes); `scripts/check-android.sh` for the Android targets |
+| Something a golden or generated file holds: a host member (`moqui-host.d.ts`), a proto, the bundled screens, a typegen fixture | the file rewritten by its variable and its diff read: `UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`, `MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib the_checked_in_code_is_what_the_proto_generates`, `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled` |
+| The framework's components (`runtime/components/base`, `runtime/components/dev`), the conf (`MoquiDefaultConf.xml`, the XSDs, `runtime/conf/**`), `moq` or `scripts/` | `./moq test-framework` (its cargo run holds the conf tests: every runtime conf parsed, merged and checked against the XSD) |
+| An application (`runtime/components/addon/*`, `runtime/components/test`) | `./moq test-apps`; for a changed screen `moqui lint --screens` with a report file (`./moq run lint --screens <file>`), its idiom count not grown |
+| An acceptance test you added or changed | that test (`./moq accept <component> --spec Name`), then its component's acceptance suite |
+| Docs only (`docs/`, `plans/`, READMEs) | no build or test; the relative links still resolve |
+
+While working, run less: the specs of what you touch (`./moq test <component> --spec ...`) and `cargo test -p <crate>`
+for the crate you are in. The rows above are for the commit. Not part of a commit, unless the user asks: `./moq
+test-all` (a release's, or CI's on main), `./moq accept-all`, `cargo test-slow`, an acceptance suite you did not
+change, and load tests.
+
+Format only the files you changed (`rustfmt --edition 2021 --config-path rustfmt.toml <file>`; JavaScript and XML with
+the repository's Prettier config), then read `git diff -U0` for hunks that are not yours. Never `cargo fmt` a whole
+crate: the tree is not rustfmt-clean, and the change gets lost among unrelated rewraps.
+
+### Reading the results
+
+- **A failing test binary stops `cargo test`,** and the `cargo test --workspace` step of `./moq test-framework` with it,
+  so the crates after it did not run. `cargo test --workspace --no-fail-fast` runs them all and lists every failure.
+- **Tests that fail only under load.** The edge, XMPP and call tests bind ports and wait on timers; in a full parallel
+  run one can time out or meet a port another took. Run it alone (`cargo test -p moqui-host --test it -- <module>::<name>`),
+  twice. One that passes alone is flaky under load: say so in the report and go on. One that fails alone is a
+  regression.
+- **A spec that fails only in a full `moqui test` run,** never alone: the components' specs share one database, and an
+  earlier spec left rows behind. Take the order from the full run's log, check that the whole prefix fails
+  (`./moq test --nobuild --db snapshot --spec "<prefix>,<Target>"`), then bisect it. Fix it in the spec that left the
+  rows (its `cleanupSpec`), or narrow the failing spec's checks to its own data.
+- **`--nobuild` runs the binary already built.** After a Rust change a spec run with `--nobuild` tests the old code:
+  a new Rust service shows as `no service named ...`. Build first (`./moq build`, or leave out `--nobuild`).
+- **A component repository behind mr-moqui** fails many tests at once with a missing service or screen after a
+  framework rename. Pull the component repositories with mr-moqui (`./moq git pull`, or `git pull --ff-only` in each
+  under `runtime/components/<set>/`).
+
+### Before a release
+
+On a clean tree, every repository at the release's commits (`./moq git-status`; `./moq component-get` for the
+components `addons.xml` names), in this order:
+
+1. The lints of the whole tree: `cargo lint`, `cargo lint-min`, `scripts/check-packages.sh`.
+2. The whole regression suite: `./moq test-all` (`./moq test-framework`, then `./moq test-apps`).
+3. Every acceptance test: `./moq accept-all --junit <dir>`, the component suites and the Rust ignored and opt-in tests
+   (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`, `cargo test-slow`'s modules). A test that fails on two runs
+   in a row is fixed or deleted before the release.
+4. The client apps that ship with it: the desktop and mobile tests and `scripts/check-android.sh` (their READMEs), and
+   the soak tests their plans name for a release.
+5. Optionally, load: the load scripts of the components that have them (`./moq test-load <component> --script <Name>`)
+   against a release build with production-like data ([Load-Runner](tools/Load-Runner.md)), compared with the last
+   release's results.
+6. The release build and archive, as CI's `release` pipeline makes them: `./moq build --release`, `./moq archive`, and
+   `moqui embedded checksum` for the parts built in ([Run-Deploy](Run-Deploy.md)).
+7. For an upgrade, the target runtime's conf: boot it once (a conf with a retired `default-property` or a `${}` in an
+   attribute refuses to start, naming each), and check its names with `moqui conf env`
+   ([Run-Deploy, Settings and the environment](Run-Deploy.md#settings-and-the-environment)).
 
 ## Rust tests and lints
 
@@ -586,7 +664,7 @@ cargo lint-min                         # clippy on the host with no features
 scripts/check-packages.sh              # clippy on each package's feature set
 
 # The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
-# moqui_chromium_path, or an installed Chromium or Chrome): acceptance tests of the framework, run by ./moq accept-all
+# screen-facade/pdf@chromium-path, or an installed Chromium or Chrome): acceptance tests of the framework, run by ./moq accept-all
 cargo test -p moqui-host --test gate3
 ```
 
@@ -805,8 +883,8 @@ moqui test tools --agents --llm-profile local-qwen --feature "approval" --db sna
 `--spec` picks agent spec files by name (without `.agent.js`), `--feature` tasks by name, and `--db` works as for the
 specs. A live profile is a model of the conf, such as the commented `local-qwen` example of `MoquiDefaultConf.xml` (Qwen
 in LM Studio at `http://127.0.0.1:1234`): copy it into the runtime's conf, or set the default endpoint's
-`llm_openai_url` and `llm_openai_model` and use `--llm-profile default`. The dev conf has `claude-haiku` (Claude Haiku
-5.5 on the Claude API), live once `llm_anthropic_api_key` is set in `runtime/.env`: `--llm-profile claude-haiku`. The
+`llm-facade/endpoint[default]@url` and `llm-facade/model[default]@name` and use `--llm-profile default`. The dev conf has `claude-haiku` (Claude Haiku
+5.5 on the Claude API), live once `llm-facade/endpoint[anthropic]@api-key` is set in `runtime/.env`: `--llm-profile claude-haiku`. The
 tests boot on a scratch runtime with no `.env`; a live run takes the `llm_*` entries of the real one (an endpoint's key)
 and nothing else of it.
 

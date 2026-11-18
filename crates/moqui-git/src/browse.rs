@@ -21,7 +21,7 @@ use gix::objs::Kind;
 use gix::ObjectId;
 
 use super::diff::{self, FileChange, FileDiff};
-use super::hosting::MAX_COMPARE_FILES;
+use super::hosting::{MAX_COMPARE_COUNTED_FILES, MAX_COMPARE_FILES};
 use super::ops::{self, CommitDetails, TagDetails};
 use super::revwalk::{self, Walk};
 use super::GitProvider;
@@ -108,8 +108,9 @@ impl GitProvider {
         let store = repo.store.as_ref();
         let mut refs = Vec::new();
         for (name, target) in store.list_refs(prefix)? {
-            // the heads of merge requests are not branches or tags: get#MergeRequest gives each
-            if name.starts_with(super::reach::MERGE_REQUEST_REFS) {
+            // only branches and tags: the heads of merge requests are get#MergeRequest's, and the other refs of a store
+            // are its own (a mirror's fetch staged under refs/moqui-incoming/ before its gate passes it: SEC-GIT-12)
+            if !(name.starts_with("refs/heads/") || name.starts_with("refs/tags/")) {
                 continue;
             }
             let tag = match store.find(&target)? {
@@ -138,7 +139,9 @@ impl GitProvider {
     /// The commit a revision names (see [`ops::resolve_revision`]), with tags peeled. A revision that is an object
     /// id, or the start of one, names a commit only when a ref the repository's readers read reaches it
     /// ([`super::reach`]): its store may hold the commits of other repositories of its fork network and the heads of
-    /// hidden merge requests. The head ref of a hidden merge request names nothing either.
+    /// hidden merge requests. The head ref of a hidden merge request names nothing either, nor a full ref name outside
+    /// the branches, the tags and the merge request heads: the store's own refs (a mirror's fetch staged under
+    /// `refs/moqui-incoming/` before its gate passes it) are no reader's (SEC-GIT-12).
     pub(crate) fn resolve_commit(&self, repository_id: &str, revision: &str) -> Result<Option<ObjectId>, Error> {
         let repo = self.repo(repository_id)?;
         let store = repo.store.as_ref();
@@ -146,6 +149,12 @@ impl GitProvider {
         let by_name = if revision.is_empty() || revision == "HEAD" {
             store.read_ref(&ops::branch_ref(&repo.definition.branch))?
         } else if revision.starts_with("refs/") {
+            if !(revision.starts_with("refs/heads/")
+                || revision.starts_with("refs/tags/")
+                || revision.starts_with(super::reach::MERGE_REQUEST_REFS))
+            {
+                return Ok(None);
+            }
             match store.read_ref(revision)? {
                 Some(_)
                     if revision.starts_with(super::reach::MERGE_REQUEST_REFS)
@@ -286,17 +295,23 @@ impl GitProvider {
             return Ok(None);
         };
         let mut diffs = Vec::new();
-        // as a comparison: the first files are diffed (`git-server` `commit-max-diff-files`, 300), the rest only listed
-        // (as too large to show)
-        let most = Some(crate::number_setting("commit-max-diff-files", MAX_COMPARE_FILES))
-            .filter(|most| *most > 0)
-            .unwrap_or(MAX_COMPARE_FILES);
+        // as a comparison: the first files are diffed (`git-server` `commit-max-diff-files`, 300), the next ones up to
+        // MAX_COMPARE_COUNTED_FILES counted (their hunks without lines), the rest only listed (as too large to show)
+        let most = commit_max_diff_files();
         for change in diff::commit_changes(store, &ops::read_commit(store, &id)?)? {
             if path.is_some_and(|path| path != change.path) {
                 continue;
             }
             let file = if diffs.len() < most {
                 diff::file_diff(store, &change)?
+            } else if diffs.len() < MAX_COMPARE_COUNTED_FILES.max(most) {
+                let mut file = diff::file_diff(store, &change)?;
+                if let Some(text) = &mut file.diff {
+                    for hunk in &mut text.hunks {
+                        hunk.lines.clear();
+                    }
+                }
+                file
             } else {
                 FileDiff {
                     binary: false,
@@ -396,4 +411,11 @@ fn changed_path(store: &dyn super::store::GitStore, commit: &ops::CommitInfo, pa
         None => None,
     };
     Ok(here != before)
+}
+
+/// The most files a commit's diff gives the lines of (`git-server` `commit-max-diff-files`, 300).
+pub(crate) fn commit_max_diff_files() -> usize {
+    Some(crate::number_setting("commit-max-diff-files", MAX_COMPARE_FILES))
+        .filter(|most| *most > 0)
+        .unwrap_or(MAX_COMPARE_FILES)
 }

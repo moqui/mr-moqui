@@ -5,49 +5,36 @@
     https://github.com/moqui/moqui-framework/blob/master/framework/src/main/resources/MoquiDefaultConf.xml -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
 
-    <default-property name="instance_purpose" value="dev"/>
+    <instance purpose="dev"/>
     <!-- A front-end dev server on another port of this machine (Vite, a second app) may call the server with the
         session cookie: localhost and 127.0.0.1 on any port and either scheme, and no other site (SEC-WEB-10). Name
         another origin here when a dev server runs elsewhere; `*` would let any site read the responses, and never
         comes with credentials. -->
-    <default-property name="webapp_allow_origins" value="localhost,127.0.0.1"/>
-    <default-property name="entity_empty_db_load" value="all"/>
+    <webapp-list><webapp name="webroot" allow-origins="localhost,127.0.0.1"/></webapp-list>
+    <tools empty-db-load="all"/>
     <!-- the first administrator's form on an empty database (off by default, MoquiDefaultConf.xml) -->
-    <default-property name="initial_admin_enabled" value="true"/>
-    <default-property name="entity_lock_track" value="true"/>
-    <!-- The built-in SSH server on localhost (ssh_host defaults to 127.0.0.1): the apps in the terminal over SSH for
+    <user-facade><login initial-admin-enabled="true"/></user-facade>
+    <transaction-facade use-lock-track="true"/>
+    <!-- The built-in SSH server on localhost (its host defaults to 127.0.0.1): the apps in the terminal over SSH for
         every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/ui/TUI.md "Over SSH" -->
-    <default-property name="ssh_port" value="2222"/>
+    <ssh-server port="2222"/>
 
-    <!-- A local model server (OpenAI-compatible, LM Studio's port) for the default llm-facade endpoint; set the model -->
-    <default-property name="llm_openai_url" value="http://127.0.0.1:1234"/>
-    <default-property name="llm_openai_model" value=""/>
-    <!-- Claude on the Claude API (platform.claude.com), the llm-facade's claude-haiku below: its key, and the model the
-        dev instance's features use. Set both in runtime/.env (never here), as
-            llm_anthropic_api_key=sk-ant-...
-            llm_dev_model=claude-haiku
-        llm_dev_model is a model id of the llm-facade; default is the local model above. -->
-    <default-property name="llm_anthropic_api_key" value=""/>
-    <default-property name="llm_dev_model" value="default"/>
 
-    <!-- minimal overrides for testing on local mysql8:
-    <default-property name="entity_ds_db_conf" value="mysql8"/>
-    <default-property name="entity_ds_user" value="root"/>
-    <default-property name="entity_ds_password" value="moquiroot"/>
-    <default-property name="entity_ds_sslmode" value="disable"/>
-    -->
-    <!-- minimal overrides for testing on local postgres (docker run -d -e POSTGRES_USER=moqui
-        -e POSTGRES_PASSWORD=moqui -e POSTGRES_DB=moqui -p 127.0.0.1:5432:5432 postgres:18):
-    <default-property name="entity_ds_db_conf" value="postgres"/>
-    <default-property name="entity_ds_user" value="moqui"/>
-    <default-property name="entity_ds_password" value="moqui"/>
-    <default-property name="entity_ds_sslmode" value="disable"/>
-    -->
-    <!-- with either, the content database (docs/Run-Deploy.md "Content database") apart, in the database moqui_content
-        on the same server, which must exist (for the postgres above: createdb -h 127.0.0.1 -U moqui moqui_content);
-        the value is the entity_ds_db_conf one. Without it the content shares the external transactional database:
-    <default-property name="content_ds_db_conf" value="postgres"/>
-    -->
+    <!-- An external database for testing, in runtime/.env (or the environment), on local mysql8:
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=mysql8
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__user=root
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=moquiroot
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslmode=disable
+        or on local postgres (docker run -d -e POSTGRES_USER=moqui -e POSTGRES_PASSWORD=moqui -e POSTGRES_DB=moqui
+        -p 127.0.0.1:5432:5432 postgres:18):
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__user=moqui
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=moqui
+            moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslmode=disable
+        With either, the content database (docs/Run-Deploy.md "Content database") apart, in the database moqui_content
+        on the same server, which must exist (for the postgres above: createdb -h 127.0.0.1 -U moqui moqui_content), by
+        the transactional one's database-conf-name; without it the content shares the external transactional database:
+            moqui_conf__entity_facade__datasource__CONTENT__database_conf_name=postgres -->
 
     <cache-list warm-on-start="false">
         <!-- Development Mode - expires artifact cache entries; don't use these for production, load testing, etc -->
@@ -76,7 +63,7 @@
     </cache-list>
 
     <!-- For development, record more: screen content as spans, and entity frame times as metrics. Screens, transitions
-        and services have both by default. Set telemetry_sample_ratio=1 to keep every span, not only those of error and
+        and services have both by default. Set moqui_conf__telemetry__sample_ratio=1 to keep every span, not only those of error and
         slow traces. -->
     <telemetry>
         <artifact type="AT_XML_SCREEN_CONTENT" spans="true" metrics="true"/>
@@ -99,13 +86,19 @@
         <screen-text-output type="html" mime-type="text/html" macro-template-location="framework/template/screen/ScreenHtml.js"/>
     </screen-facade>
 
+    <!-- The default endpoint is a local model server on this machine (OpenAI-compatible, LM Studio's port); set its
+        model's name (moqui_conf__llm_facade__model__DEFAULT__name). Or Claude on the Claude API (platform.claude.com),
+        the claude-haiku model below, for the dev instance's features: its key and the default model in runtime/.env
+        (never here), as
+            moqui_conf__llm_facade__endpoint__ANTHROPIC__api_key=sk-ant-...
+            moqui_conf__llm_facade__default_model=claude-haiku
+        default-model is a model id of the llm-facade, the model of every feature bound to none. -->
     <llm-facade>
-        <!-- The default endpoint is on this machine -->
-        <endpoint id="default" local="true"/>
-        <!-- Claude Haiku 5.5 on the Claude API, native Messages (llm_anthropic_api_key above). Thinking is adaptive and on
+        <endpoint id="default" url="http://127.0.0.1:1234" local="true"/>
+        <!-- Claude Haiku 5.5 on the Claude API, native Messages. Thinking is adaptive and on
             unless turned off; effort is the reasoning level (Haiku's own default is medium). context-window keeps a
             conversation under 200k tokens; prompts over 100k cost five times as much. Prices are per million tokens. -->
-        <endpoint id="anthropic" protocol="anthropic-messages" url="https://api.anthropic.com" api-key="${llm_anthropic_api_key}"/>
+        <endpoint id="anthropic" protocol="anthropic-messages" url="https://api.anthropic.com" api-key=""/>
         <model id="claude-haiku" endpoint="anthropic" name="claude-haiku-5-5" tier="fast" context-window="200000"
                 max-output="16000" price-input="0.10" price-output="0.50">
             <reasoning level="none">{"thinking":{"type":"disabled"},"output_config":{"effort":"low"}}</reasoning>
@@ -113,12 +106,6 @@
             <reasoning level="medium">{"output_config":{"effort":"medium"}}</reasoning>
             <reasoning level="high">{"output_config":{"effort":"high"}}</reasoning>
         </model>
-        <!-- the framework's features on the model llm_dev_model names (the default conf binds them to the local model) -->
-        <bind feature="assist" model="${llm_dev_model}" reasoning="low"/>
-        <bind feature="title" model="${llm_dev_model}" reasoning="none"/>
-        <bind feature="summarize" model="${llm_dev_model}" reasoning="none"/>
-        <bind feature="classify" model="${llm_dev_model}" reasoning="none"/>
-        <bind feature="ai-field" model="${llm_dev_model}" reasoning="low"/>
         <!-- Example settings for Qwen in LM Studio, with the content of calls kept for testing:
         <model id="default" endpoint="default" name="qwen3.8-27b-imatrix-nvfp4-mtp" tier="balanced" context-window="32768"
                 max-output="6144" prompt-variant="small" result-cap-chars="4000" list-limit="10" reasoning-replay="none"

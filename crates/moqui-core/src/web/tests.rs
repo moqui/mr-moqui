@@ -388,13 +388,13 @@ fn view_email_message_sends_the_png_and_marks_a_sent_message_by_its_key() {
     impl Drop for ClearStack {
         fn drop(&mut self) {
             crate::script::clear_context_stack();
-            moqui_lib::env::clear_property("session_cookie_key");
+            moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key");
         }
     }
 
     let _key_lock = crate::user::session::cookie_property_lock();
     moqui_lib::env::set_property(
-        "session_cookie_key",
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0x0b_u8; 32]),
     );
     let ctx = crate::context::ExecutionContextFactory::test_context_with_conf(
@@ -641,7 +641,7 @@ fn a_users_download_has_an_inert_type_and_the_sandbox() {
     assert!(!super::is_inert_content_type("application/json"));
 }
 
-/// SEC-RTE-07: a multipart body that may pass `webapp_max_body` has an anonymous cap of `webapp_max_body`, but on the
+/// SEC-RTE-07: a multipart body that may pass `webapp-list/webapp[webroot]/web-protection/requests@max-body` has an anonymous cap of `webapp-list/webapp[webroot]/web-protection/requests@max-body`, but on the
 /// paths that take uploads with no user, which a climbing path does not reach.
 #[test]
 fn an_anonymous_upload_stops_at_the_body_limit_but_on_the_open_paths() {

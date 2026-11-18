@@ -4,12 +4,11 @@
     these elements again wins. The security data (data/DemoSecurityData.xml) and the SECAs (service/Demo.secas.xml)
     are the other half; README.md lists what stays open. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <!-- The users whose password, sign-in factors, username and enabled state cannot be changed (comma-separated
-        userIds; refuse#SharedAccountChange): the shared login of the Login screen's Test Login button. -->
-    <default-property name="demo_shared_user_ids" value="EX_JOHN_DOE"/>
-    <!-- The Login screen's Test Login button, which a production instance otherwise leaves out (SEC-RTE-17;
+    <!-- shared-user-ids: the users whose password, sign-in factors, username and enabled state cannot be changed
+        (comma-separated userIds; refuse#SharedAccountChange): the shared login of the Login screen's Test Login button. -->
+    <!-- test-login: the Login screen's Test Login button, which a production instance otherwise leaves out (SEC-RTE-17;
         UserServices.get#TestLoginOffered): a visitor signs in as the shared login with one click. -->
-    <default-property name="demo_test_login" value="true"/>
+    <demo shared-user-ids="EX_JOHN_DOE" test-login="true"/>
 
     <!-- The sharp tools, replaced and left out of the menus. VIEW-only authorization does not stop SpeedTest or the
         Data Load check, which run as the screen renders; the others are stubbed as well so no one tries them.
@@ -39,8 +38,8 @@
         </screen>
     </screen-facade>
 
-    <!-- The servers a demo visitor does not need, off whatever ssh_port, mcp_enabled, a2a_enabled and
-        llm_gateway_enabled say: the MCP server and client, A2A both ways, the LLM gateway, SSH (the admin shell, SFTP,
+    <!-- The servers a demo visitor does not need, off whatever ssh-server@port, llm-facade/mcp@server-enabled, llm-facade/a2a@enabled and
+        llm-facade/gateway@enabled say: the MCP server and client, A2A both ways, the LLM gateway, SSH (the admin shell, SFTP,
         git) and WebDAV. The browser terminal (/termws) and /notws stay on: the terminal shows the same screens, checked
         as the user. -->
     <llm-facade>

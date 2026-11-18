@@ -6,7 +6,7 @@
 // user's rules read in order (anonymous and selective rejection, selective acceptance and forwarding, do not disturb,
 // always-forward, busy, then their ring with a simultaneous ring to their mobile, then no answer), or the ring group's
 // strategy (all at once, in order, round robin) and its fallback, each under its schedule's hours and holidays in the
-// schedule's time zone. A forward to another user or group splices their plan in, bounded by call_forward_max_hops; a
+// schedule's time zone. A forward to another user or group splices their plan in, bounded by calls@forward-max-hops; a
 // forward to one of this deployment's own numbers routes inside, never through the phone network; a forward back to the
 // caller is skipped. A forward to an outside number is a phone leg of the user's (VoiceServices forwardCheck and
 // dialForward: the full fraud policy and the user's permission to forward to that class of destination). The SIP
@@ -72,12 +72,12 @@ const yes = (value) => value === true || value === 'Y' || value === 'true'
 const blank = (value) => value == null || String(value).trim() === ''
 const clamp = (value, low, high) => Math.min(Math.max(value, low), high)
 const property = (name, fallback) => {
-  const value = System.getProperty(name)
+  const value = String(name).includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)
   return value == null || String(value).trim() === '' ? fallback : String(value).trim()
 }
-const maxHops = () => clamp(Math.round(Number(property('call_forward_max_hops', '5'))) || 5, 1, 10)
-const forwardSeconds = () => clamp(Math.round(Number(property('call_forward_ring_seconds', '30'))) || 30, 10, 120)
-const callRingSeconds = () => Math.max(10, Number(property('call_ring_seconds', '45')) || 45)
+const maxHops = () => clamp(Math.round(Number(property('calls@forward-max-hops', '5'))) || 5, 1, 10)
+const forwardSeconds = () => clamp(Math.round(Number(property('calls@forward-ring-seconds', '30'))) || 30, 10, 120)
+const callRingSeconds = () => Math.max(10, Number(property('calls@ring-seconds', '45')) || 45)
 
 function calls(op, parameters) {
   return ec.resource.script(CALLS).execute(op, parameters) || {}
@@ -257,7 +257,7 @@ function enabledUser(userId) {
   return !!account && account.disabled !== 'Y'
 }
 
-/** How long a user's ring step rings: their box's rings (6 seconds each), else call_ring_seconds, as voicemail does. */
+/** How long a user's ring step rings: their box's rings (6 seconds each), else calls@ring-seconds, as voicemail does. */
 function userRingSeconds(userId) {
   const box = one(BOX, { userId })
   const rings = box && box.rings ? clamp(Number(box.rings), 1, MAX_RINGS) : 0
@@ -313,7 +313,7 @@ function numberSteps(raw, ownerUserId, ctx, byAdmin) {
     seconds: forwardSeconds(), role: 'forward' }]
 }
 
-/** One more forward: refused (null) past call_forward_max_hops. */
+/** One more forward: refused (null) past calls@forward-max-hops. */
 function hop(ctx, what, build) {
   if (ctx.hops + 1 > maxHops()) {
     trace(ctx, `${what} skipped: more than ${maxHops()} forwards`)

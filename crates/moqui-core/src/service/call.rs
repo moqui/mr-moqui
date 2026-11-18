@@ -672,7 +672,7 @@ fn sync_input(
 }
 
 /// The transaction a call of `def` begins, before the call's own options: the definition's, or, with the
-/// `service_tx_cache` property on, `cache` for a service whose definition and call say nothing of the transaction or
+/// `service-facade@tx-cache` property on, `cache` for a service whose definition and call say nothing of the transaction or
 /// its cache (plans/Profiling3.md S1, D3). A transaction a call joins keeps its own mode either way. Only a service of
 /// XML actions or a script holds by default: a Rust or native service manages its own statements (the git server's
 /// pushes, the artifact index), and an entity-auto one is a single statement. A call that asks for a new transaction
@@ -681,7 +681,7 @@ fn sync_input(
 fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttribute {
     static DEFAULT_CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let default_cache =
-        *DEFAULT_CACHE.get_or_init(|| moqui_lib::env::get_prop_or_env("service_tx_cache") == "true");
+        *DEFAULT_CACHE.get_or_init(|| crate::context::conf_env::setting("service-facade@tx-cache") == "true");
     if default_cache
         && !def.transaction_declared
         && !def.no_tx_cache

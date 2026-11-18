@@ -15,7 +15,7 @@
 //! The PASS authority's operations over gRPC (plans/archive/Edge-Node.md §5.5), the part that needs no network:
 //! - on the authority, [`serve`] and [`serve_download`] run one call of the host's `PassAuthority` service: they check
 //!   the client, bind the authority session an account flow carries as its handle, and run the authority service
-//!   (`pass_authority_service`, Mantle's `mantle.pass.PassAuthorityServices.handle#Call` by default), the same function
+//!   (`pass-authority@service`, Mantle's `mantle.pass.PassAuthorityServices.handle#Call` by default), the same function
 //!   Mantle's REST servlet calls after its own checks;
 //! - on a PASS frontend, the [`PassSender`] the host installs carries scripts' calls to an authority
 //!   (`ec.service.passAuthority(endpoint)`): a direct gRPC endpoint, or the edge link. With none installed (Lite and Dev
@@ -23,7 +23,7 @@
 //!
 //! The input and the result are JSON (decision 7). The client is a registered PASS client: by its secret on the direct
 //! listener, checked by the framework's own check (`org.moqui.public.AccountServices.check#Client`, the one the REST
-//! servlet uses), or the edge node on its link, by the id `pass_edge_client` (default `edge`) and with no secret. The
+//! servlet uses), or the edge node on its link, by the id `edge/node@pass-client` (default `edge`) and with no secret. The
 //! visitor's address is data for rate limits only.
 
 use std::collections::BTreeMap;
@@ -41,11 +41,11 @@ use crate::resource::source::ByteSource;
 /// What a script's call to a gRPC authority fails with when the host has no gRPC client (Lite, Dev).
 pub const NOT_BUILT: &str = "gRPC not built into this host";
 /// The property naming the service that runs an operation on the authority.
-pub const SERVICE_PROPERTY: &str = "pass_authority_service";
+pub const SERVICE_PROPERTY: &str = "pass-authority@service";
 /// The authority service when [`SERVICE_PROPERTY`] is empty: Mantle's.
 pub const DEFAULT_SERVICE: &str = "mantle.pass.PassAuthorityServices.handle#Call";
-/// The property naming the PASS client the edge node is on its link (`pass_client_<id>_sites` lists its sites).
-pub const EDGE_CLIENT_PROPERTY: &str = "pass_edge_client";
+/// The property naming the PASS client the edge node is on its link (`pass-authority/client[<id>]@sites` lists its sites).
+pub const EDGE_CLIENT_PROPERTY: &str = "edge/node@pass-client";
 /// The edge node's client id when [`EDGE_CLIENT_PROPERTY`] is empty.
 pub const DEFAULT_EDGE_CLIENT: &str = "edge";
 /// The largest file an upload carries, as the REST API's multipart limit.
@@ -70,7 +70,7 @@ pub struct Call {
     pub operation_id: String,
     /// The authority session of an account flow in progress.
     pub session_handle: String,
-    /// The registered client, on the direct listener; the sender fills it from `pass_client_id`.
+    /// The registered client, on the direct listener; the sender fills it from `pass@client-id`.
     pub client_id: String,
 }
 
@@ -305,7 +305,7 @@ pub struct Served {
 }
 
 /// Sends calls to a PASS authority on the host's gRPC: `endpoint` is `grpc://host:port` or `grpcs://host:port` (the
-/// authority's gRPC listener, the client named by `pass_client_id` with `pass_client_secret`), or `edge:` (on an edge
+/// authority's gRPC listener, the client named by `pass@client-id` with `pass@client-secret`), or `edge:` (on an edge
 /// node, its local node down the link). A transport failure is an error; the authority's refusal is a [`PassError`].
 pub trait PassSender: Send + Sync {
     fn call(&self, endpoint: &str, call: Call) -> Result<Reply, Error>;
@@ -347,9 +347,9 @@ pub enum Client {
 }
 
 impl Client {
-    /// The edge node's client id on this node: `pass_edge_client`, else `edge`.
+    /// The edge node's client id on this node: `edge/node@pass-client`, else `edge`.
     pub fn edge_client_id() -> String {
-        let id = moqui_lib::env::get_prop_or_env(EDGE_CLIENT_PROPERTY);
+        let id = crate::context::conf_env::setting(EDGE_CLIENT_PROPERTY);
         match id.trim() {
             "" => DEFAULT_EDGE_CLIENT.to_string(),
             id => id.to_string(),
@@ -380,7 +380,7 @@ pub fn check_client(id: &str, secret: &str) -> Result<String, Refused> {
 /// good only for those.
 const CLIENT_ATTRIBUTE: &str = "passClientId";
 const SITE_ATTRIBUTE: &str = "passSiteId";
-/// The label of the key a handle is signed with, derived from `session_cookie_key`, so a handle's MAC is never a
+/// The label of the key a handle is signed with, derived from `webapp-list/webapp[webroot]/session-config@cookie-key`, so a handle's MAC is never a
 /// session cookie's, as the MCP requestState's is not.
 const HANDLE_LABEL: &str = "moqui pass authority session handle v1";
 /// The prefix of a handle, which makes it no `moqui.session` cookie value even in form.
@@ -390,7 +390,7 @@ fn handle_mac(id: &str) -> Result<hmac::Hmac<sha2::Sha256>, Error> {
     use hmac::{KeyInit as _, Mac as _};
     let key = crate::user::session::derived_cookie_key(HANDLE_LABEL).map_err(|err| Error::new(err.message()))?;
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&key)
-        .map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+        .map_err(|_| Error::new("the session cookie key cannot be used as an HMAC key"))?;
     mac.update(id.as_bytes());
     Ok(mac)
 }
@@ -588,7 +588,7 @@ fn run(call: &Call, client: &Client, file: Option<UploadFile>) -> Result<Outcome
             crate::web::multipart::UploadedFile::in_memory("file", &file.filename, &file.content_type, file.bytes);
         parameters.insert("file".to_string(), upload.into_value());
     }
-    let service = moqui_lib::env::get_prop_or_env(SERVICE_PROPERTY);
+    let service = crate::context::conf_env::setting(SERVICE_PROPERTY);
     let service = match service.trim() {
         "" => DEFAULT_SERVICE,
         name => name,

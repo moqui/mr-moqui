@@ -13,7 +13,7 @@
  */
 
 //! Who may open a command or host session, and from where (plans/Terminal-Fancy.md §8). They are for a dev instance
-//! (`instance_purpose` dev) and a user with the kind's permission: `SSH_SHELL` for the command line, `TERMINAL_HOST`
+//! (`instance@purpose` dev) and a user with the kind's permission: `SSH_SHELL` for the command line, `TERMINAL_HOST`
 //! for a program on the server's operating system (D6). From the server's own machine (a loopback peer, no
 //! forwarding header, the server's own loopback origin; or the Desktop app's node in process) nothing more is asked.
 //! From anywhere else `terminal` `remote` must be on, the request secure, and the user's sign-in recent (D7). Both are

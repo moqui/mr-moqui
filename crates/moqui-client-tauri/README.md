@@ -22,6 +22,6 @@ How the client works is [docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client
 ## Test
 
 ```sh
-cd crates/moqui-client-tauri && cp ../../Cargo.lock . && CARGO_TARGET_DIR=../../target cargo test
+cd crates/moqui-client-tauri && cp ../../Cargo.lock . && cargo test
 scripts/check-android.sh    # clippy for both Android targets, this crate among them
 ```

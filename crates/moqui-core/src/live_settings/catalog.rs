@@ -389,7 +389,7 @@ impl Source {
         match self {
             Self::Conf => "conf",
             Self::Default => "default",
-            Self::Env => "env moqui_log_level",
+            Self::Env => "conf logging level",
             Self::Started => "as started",
             Self::None => "none",
         }
@@ -404,7 +404,7 @@ pub fn on_disk(factory: &ExecutionContextFactory, entry: &Entry) -> (String, Sou
     match entry.key.as_str() {
         LOG_LEVEL => {
             let level = log_filter::level_name(log_filter::disk().level).to_string();
-            let source = if moqui_lib::env::get_prop_or_env("moqui_log_level").trim().is_empty() {
+            let source = if crate::context::conf_env::setting(log_filter::LEVEL).is_empty() {
                 Source::Default
             } else {
                 Source::Env
@@ -524,8 +524,5 @@ fn conf_names(conf_text: &str, base: &str, selector: Option<&str>, attr: &str) -
         };
         node = found;
     }
-    node.attribute(attr).is_some_and(|value| {
-        let value = moqui_lib::env::expand(&value).unwrap_or(value);
-        !value.trim().is_empty()
-    })
+    node.attribute(attr).is_some_and(|value| !value.trim().is_empty())
 }

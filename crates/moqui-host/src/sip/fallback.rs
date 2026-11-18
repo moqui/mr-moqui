@@ -82,9 +82,9 @@ impl ForwardCount {
     }
 }
 
-/// The longest message, `voicemail_max_seconds` (10 to 600, 120 by default), as `Voicemail.js` reads it.
+/// The longest message, `voicemail@max-seconds` (10 to 600, 120 by default), as `Voicemail.js` reads it.
 fn max_seconds() -> u64 {
-    moqui_lib::env::get_prop_or_env("voicemail_max_seconds")
+    moqui_core::context::conf_env::setting("voicemail@max-seconds")
         .trim()
         .parse::<u64>()
         .unwrap_or(120)

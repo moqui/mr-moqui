@@ -16,13 +16,13 @@
 //! - the OTLP/gRPC receiver (`crate::monitor::grpc`, plans/archive/Monitoring.md), when
 //!   `<telemetry><receiver grpc-enabled>`;
 //! - the PASS authority for direct clients (`crate::pass_authority`, plans/archive/Edge-Node.md §5.5), when
-//!   `pass_authority_grpc_enabled=true` (the `edge` feature; in Maximal and Enterprise).
+//!   `moqui_conf__pass_authority__grpc_enabled=true` (the `edge` feature; in Maximal and Enterprise).
 //!
 //! It opens when either is on. With the receiver on, it listens where the receiver is configured (`grpc-bind`,
-//! `grpc-port`, 4317), and the PASS authority shares that port; else on `pass_authority_grpc_host` (the HTTP listener's
-//! address) and `pass_authority_grpc_port` (4317). With the HTTPS listener's certificates it serves TLS (ALPN h2), else
+//! `grpc-port`, 4317), and the PASS authority shares that port; else on `pass-authority@grpc-host` (the HTTP listener's
+//! address) and `pass-authority@grpc-port` (4317). With the HTTPS listener's certificates it serves TLS (ALPN h2), else
 //! plain h2c; then the PASS authority, whose clients send their secrets, is left off (an error logged) unless the
-//! address is loopback or `pass_authority_grpc_insecure=true`. The edge guard admits each connection as it does for HTTP.
+//! address is loopback or `moqui_conf__pass_authority__grpc_insecure=true`. The edge guard admits each connection as it does for HTTP.
 
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -54,7 +54,7 @@ pub(crate) fn bind_address_by(
         crate::pass_authority::direct_enabled() && pass_allowed(otlp.unwrap_or_else(|| pass_address(http)), tls, false);
     match (otlp, pass) {
         (Some(otlp), true) => {
-            let port = moqui_lib::env::get_prop_or_env(crate::pass_authority::PORT_PROPERTY);
+            let port = moqui_core::context::conf_env::setting(crate::pass_authority::PORT_PROPERTY);
             if !port.trim().is_empty() && port.trim() != otlp.port().to_string() {
                 tracing::warn!(
                     "{} is {} but the OTLP/gRPC receiver listens on {otlp}; the PASS authority shares its port",
@@ -71,10 +71,10 @@ pub(crate) fn bind_address_by(
 }
 
 /// Whether the PASS authority may serve on `bind`: with TLS, on a loopback address, or with
-/// `pass_authority_grpc_insecure=true`; else a client's secret would cross the network in clear, so it is left off
+/// `moqui_conf__pass_authority__grpc_insecure=true`; else a client's secret would cross the network in clear, so it is left off
 /// (logged when `log`).
 fn pass_allowed(bind: SocketAddr, tls: bool, log: bool) -> bool {
-    let insecure = moqui_lib::env::get_prop_or_env(crate::pass_authority::INSECURE_PROPERTY).trim() == "true";
+    let insecure = moqui_core::context::conf_env::setting(crate::pass_authority::INSECURE_PROPERTY).trim() == "true";
     if tls || bind.ip().is_loopback() || insecure {
         return true;
     }
@@ -88,9 +88,9 @@ fn pass_allowed(bind: SocketAddr, tls: bool, log: bool) -> bool {
     false
 }
 
-/// `pass_authority_grpc_host` (the HTTP listener's address when empty) and `pass_authority_grpc_port` (4317).
+/// `pass-authority@grpc-host` (the HTTP listener's address when empty) and `pass-authority@grpc-port` (4317).
 fn pass_address(http: SocketAddr) -> SocketAddr {
-    let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+    let get = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
     let port = match get(crate::pass_authority::PORT_PROPERTY).as_str() {
         "" => 4317,
         text => text.parse().unwrap_or_else(|_| {
@@ -143,7 +143,7 @@ fn service_routes(factory: &Arc<ExecutionContextFactory>, pass: bool) -> (tonic:
 }
 
 /// The same services for the HTTPS listener, which carries a gRPC call over HTTP/2 to them (`crate::http::serve`):
-/// that is always TLS, so the PASS authority's are there whenever `pass_authority_grpc_enabled=true`, with their names
+/// that is always TLS, so the PASS authority's are there whenever `moqui_conf__pass_authority__grpc_enabled=true`, with their names
 /// for the startup report. `None` when no service is on. The gRPC listener's own port stays, opened by the same settings.
 pub(crate) fn web_routes(factory: &Arc<ExecutionContextFactory>) -> Option<(tonic::service::Routes, String)> {
     let (routes, names) = service_routes(factory, crate::pass_authority::direct_enabled());

@@ -206,7 +206,7 @@ is kept as a conflict that Edge Clients shows, as E12 does for the server's own 
   map the host table keeps and Configure, pairing, revoking and the host services load again); a site no pairing
   names goes to the only active pairing, and is refused with several. A site two pairings name (concurrent
   Configures) is logged and refused. The
-  PASS client id per pairing is each local node's own `pass_edge_client`: each authority is its own database, so the
+  PASS client id per pairing is each local node's own `edge/node@pass-client`: each authority is its own database, so the
   ids never meet, and the offer still suggests `edge`.
 - **Claims** (`edge/claims.rs`). `check_setup_claims` takes the pairing and refuses, on any node that takes links, an
   XMPP or SIP domain or a PASS site (a new `ClaimKind::PassSite`) another active pairing named first, with the generic

@@ -2700,10 +2700,10 @@ pub(crate) fn check_condition(condition: &Condition) -> Result<bool, Error> {
 }
 
 /// How a screen render or transition begins its transaction: with the transaction cache (`cache`), a screen operation
-/// being where a transaction starts, unless the `screen_tx_cache` property is `false` (read once).
+/// being where a transaction starts, unless the `screen-facade` `tx-cache` is `false` (read once).
 fn screen_attribute() -> crate::transaction::TransactionAttribute {
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let cache = *CACHE.get_or_init(|| moqui_lib::env::get_prop_or_env("screen_tx_cache") != "false");
+    let cache = *CACHE.get_or_init(|| crate::context::conf_env::setting("screen-facade@tx-cache") != "false");
     if cache {
         crate::transaction::TransactionAttribute::Cache
     } else {

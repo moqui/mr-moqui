@@ -18,7 +18,8 @@
 //!
 //! ```text
 //! __moquiTestHost.parallel(n, source, argsJson, transaction, timeoutSeconds) -> '{"results": [...], "errors": [...]}'
-//! __moquiTestHost.uploadedFile(fileName, text, contentType?) -> an uploaded file
+//! __moquiTestHost.uploadedFile(fileName, text, contentType?, binary?) -> an uploaded file (binary: each character
+//!                                                                     a byte, 0 to 255)
 //! __moquiTestHost.setProperty(name, value | null) -> the property as it was, or null
 //! __moquiTestHost.call(name, argsJson) -> the client host's answer (moqui test-client)
 //! __moquiTestHost.settle(promise) -> {status: "fulfilled" | "rejected", value}
@@ -46,7 +47,7 @@ pub(super) static TEST_HOST: HostClass = HostClass {
         host_method!(
             "__moquiTestHost",
             "uploadedFile",
-            [Text, Text, OptNullableText],
+            [Text, Text, OptNullableText, OptBool],
             None,
             leaf,
             uploaded_file
@@ -58,6 +59,14 @@ pub(super) static TEST_HOST: HostClass = HostClass {
             None,
             leaf,
             set_property
+        ),
+        host_method!(
+            "__moquiTestHost",
+            "setConf",
+            [Text, OptNullableText],
+            None,
+            leaf,
+            set_conf
         ),
         host_method!(
             "__moquiTestHost",
@@ -120,6 +129,20 @@ fn uploaded_file(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let file_name = call.text(0).unwrap_or_default();
     let text = call.text(1).unwrap_or_default();
     let content_type = call.text(2).unwrap_or("text/plain");
+    // a picture or another binary file: each character's code a byte (a code over 255 is an error)
+    if call.bool(3).unwrap_or(false) {
+        let bytes = text
+            .chars()
+            .map(|c| u8::try_from(u32::from(c)))
+            .collect::<Result<Vec<u8>, _>>()
+            .map_err(|_| HostError::message("A binary uploadedFile has characters 0 to 255 only".to_string()))?;
+        return Ok(moqui_core::script::host::bytes_upload(
+            "contentFile",
+            file_name,
+            content_type,
+            bytes,
+        ));
+    }
     Ok(moqui_core::script::host::text_upload(
         "contentFile",
         file_name,
@@ -139,6 +162,21 @@ fn set_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
         None => moqui_lib::env::clear_property(&name),
     }
     Ok(before.into())
+}
+
+/// `setConf(selector, value)`: the running conf's attribute at the selector, over the conf files, as its environment
+/// name would set it (`null` puts back what the files and the environment give); what that name held before as a
+/// process property, or `null`. Under `setConf` and `withConf` (server.js), which keep what to put back when the spec
+/// ends, as for properties (plans/archive/Conf-Paths.md §4).
+fn set_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let selector = call.text(0).unwrap_or_default().to_string();
+    let value = call.text(1).map(str::to_string);
+    let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
+        .ok_or_else(|| HostError::message("setConf needs an execution context"))?;
+    factory
+        .set_conf_value(&selector, value.as_deref(), false)
+        .map(Ret::from)
+        .map_err(|err| HostError::message(err.message()))
 }
 
 /// `sandboxBody(source, names)`: the source as the body of `runInContext`'s function on an engine without `with`

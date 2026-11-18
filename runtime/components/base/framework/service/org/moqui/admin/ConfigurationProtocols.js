@@ -11,14 +11,15 @@
 // - notStarted: turned on, in a process that opened no listeners (a command-line run), so nothing is known of it;
 // - ready: running.
 // The facts come from the server (get#ProtocolFacts: the build's features, the startup report's entries, a fixed list of
-// nonsecret conf attributes) and from the conf's properties; nothing here is entered by an administrator, and the conf
+// nonsecret conf attributes) and from the process properties; nothing here is entered by an administrator, and the conf
 // stays the deployment's (the settings a protocol runs with are shown read only by get#EffectiveSettings, each registered
 // in a Protocols group).
 //
 // SMTP reception takes mail from the edge gateway alone and trusts the gateway's verdict, so it is trusted only while all
-// of this holds: it listens; smtp_allowed_addresses names addresses, none of them a range of every address; an allowed
-// address can reach the address it is bound to; and smtp_authserv_id is set, so a forged Authentication-Results field is not
-// kept beside the gateway's. A listener that takes mail from the internet (smtp_internet) trusts no gateway: it is never
+// of this holds: it listens; smtp-server@allowed-addresses names addresses, none of them a range of every address; an
+// allowed address can reach the address it is bound to; and smtp-server@authserv-id is set, so a forged
+// Authentication-Results field is not kept beside the gateway's. A listener that takes mail from the internet
+// (smtp-server@internet) trusts no gateway: it is never
 // reported as trusted reception, only as checking mail itself.
 //
 // test#Protocol runs one check of a protocol's list: its configuration (nothing is sent), its listener (one TCP connection
@@ -76,15 +77,15 @@ function serverFacts() {
         ),
         serverStarted: out.serverStarted === true,
         packageName: text(out.packageName),
-        prop: name => text(System.getProperty(name)),
-        // a conf attribute as the server reads it, else the property the shipped conf sets it from
-        conf: (attribute, propertyName) =>
-            Object.hasOwn(conf, attribute) ? text(conf[attribute]) : text(System.getProperty(propertyName))
+        // a conf attribute by its selector, else a property not yet in the conf
+        prop: name => text(name.includes("@") ? ec.factory.getConfValue(name) : System.getProperty(name)),
+        // a conf attribute as the server reads it (element/@attribute)
+        conf: attribute => text(conf[attribute])
     }
 }
 
 // ===== SMTP trust =====
-// An entry of smtp_allowed_addresses: an address or a range (CIDR). {ok, every: a range of every address, loopback: it holds
+// An entry of smtp-server@allowed-addresses: an address or a range (CIDR). {ok, every: a range of every address, loopback: it holds
 // this machine's own address}.
 function allowedNet(entry) {
     const found = /^\[?([0-9a-fA-F:.]+)\]?(?:\/(\d{1,3}))?$/.exec(entry)
@@ -125,22 +126,22 @@ function smtpTrust(configured) {
             text: "It takes mail from the internet and checks it itself: no gateway's verdict is trusted"
         }
     const nets = allowed.map(allowedNet)
-    if (!allowed.length) problems.push("smtp_allowed_addresses is empty: no gateway may deliver, and the listener does not start")
-    else if (nets.some(net => !net.ok)) problems.push("smtp_allowed_addresses has an entry that is no address or range")
+    if (!allowed.length) problems.push("smtp-server@allowed-addresses is empty: no gateway may deliver, and the listener does not start")
+    else if (nets.some(net => !net.ok)) problems.push("smtp-server@allowed-addresses has an entry that is no address or range")
     else {
         if (nets.some(net => net.every))
             problems.push(
-                "smtp_allowed_addresses allows every address, or a range too wide to be a gateway's: anyone in it who connects could write the gateway's verdict"
+                "smtp-server@allowed-addresses allows every address, or a range too wide to be a gateway's: anyone in it who connects could write the gateway's verdict"
             )
         // with the PROXY protocol too: the proxy itself connects from an address that must be allowed
         if (loopbackHost(text(configured.listenHost)) && !nets.some(net => net.loopback))
             problems.push(
-                "The listener is bound to this machine only (smtp_listen_host) and no allowed address is on it: the gateway cannot connect"
+                "The listener is bound to this machine only (smtp-server@listen-host) and no allowed address is on it: the gateway cannot connect"
             )
     }
     if (!text(configured.authservId) && !configured.edgeNode)
         problems.push(
-            "smtp_authserv_id is empty: every Authentication-Results field is kept as it came, a forged one beside the gateway's"
+            "smtp-server@authserv-id is empty: every Authentication-Results field is kept as it came, a forged one beside the gateway's"
         )
     if (problems.length) return {trusted: false, state: "mismatch", problems, text: problems[0]}
     if (!configured.listening)
@@ -154,14 +155,12 @@ function smtpTrust(configured) {
 }
 const smtpConfigured = (facts, listening) => ({
     listening,
-    allowedAddresses: facts.conf("smtp-server/@allowed-addresses", "smtp_allowed_addresses"),
-    authservId: facts.conf("smtp-server/@authserv-id", "smtp_authserv_id"),
-    listenHost: facts.conf("smtp-server/@listen-host", "smtp_listen_host"),
-    proxyProtocol: yes(facts.conf("smtp-server/@proxy-protocol", "")),
-    internet: text(facts.conf("smtp-server/@internet", ""))
-        ? yes(facts.conf("smtp-server/@internet", ""))
-        : yes(facts.prop("smtp_internet")),
-    edgeNode: ["front", "front_edge", "edge"].includes(text(facts.prop("node_role")).toLowerCase())
+    allowedAddresses: facts.conf("smtp-server/@allowed-addresses"),
+    authservId: facts.conf("smtp-server/@authserv-id"),
+    listenHost: facts.conf("smtp-server/@listen-host"),
+    proxyProtocol: yes(facts.conf("smtp-server/@proxy-protocol")),
+    internet: yes(facts.conf("smtp-server/@internet")),
+    edgeNode: ["front", "front_edge", "edge"].includes(text(ec.factory.getConfValue("instance@node-role")).toLowerCase())
 })
 
 // The mail relays, each EmailServer no EmailAccount owns (ConfigurationConnections.js), SYSTEM among them: what outgoing
@@ -205,8 +204,8 @@ const protocols = [
         entry: "SMTP",
         settingGroup: "Protocols: mail reception",
         on: facts => ({
-            on: !!facts.conf("smtp-server/@listen-port", "smtp_listen_port"),
-            reason: "smtp_listen_port is not set"
+            on: !!facts.conf("smtp-server/@listen-port"),
+            reason: "smtp-server@listen-port is not set"
         }),
         checks: ["configuration", "listener"],
         listenerTarget: "smtp.listener"
@@ -237,8 +236,8 @@ const protocols = [
         entry: "SSH",
         settingGroup: "Protocols: SSH and Git",
         on: facts => ({
-            on: facts.conf("ssh-server/@enabled", "") !== "false" && !!facts.conf("ssh-server/@port", "ssh_port"),
-            reason: "ssh_port is not set, or ssh-server enabled is false"
+            on: facts.conf("ssh-server/@enabled") !== "false" && !!facts.conf("ssh-server/@port"),
+            reason: "ssh-server@port is not set, or ssh-server@enabled is false"
         }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "ssh.listener",
@@ -260,7 +259,7 @@ const protocols = [
         feature: "xmpp",
         entry: "XMPP",
         settingGroup: "Protocols: chat",
-        on: facts => ({on: set(facts, "xmpp_domain"), reason: "xmpp_domain is not set"}),
+        on: facts => ({on: set(facts, "xmpp-server@domain"), reason: "xmpp-server@domain is not set"}),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "xmpp.listener",
         publicTarget: "xmpp.public"
@@ -272,7 +271,7 @@ const protocols = [
         feature: "rtc",
         entry: "Call media",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: set(facts, "rtc_media_port"), reason: "rtc_media_port is not set"}),
+        on: facts => ({on: set(facts, "media-server@port"), reason: "media-server@port is not set"}),
         checks: ["configuration"]
     },
     {
@@ -283,8 +282,8 @@ const protocols = [
         entry: "TURN",
         settingGroup: "Protocols: calls",
         on: facts => ({
-            on: set(facts, "turn_port") || set(facts, "turn_tls_port") || set(facts, "turn_external_urls"),
-            reason: "turn_port, turn_tls_port and turn_external_urls are not set"
+            on: set(facts, "media-server/turn-server@port") || set(facts, "media-server/turn-server@tls-port") || set(facts, "media-server/turn-server@external-urls"),
+            reason: "media-server/turn-server@port, media-server/turn-server@tls-port and media-server/turn-server@external-urls are not set"
         }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "turn.listener",
@@ -299,8 +298,8 @@ const protocols = [
         settingGroup: "Protocols: phone",
         ownerKey: "voice",
         on: facts => ({
-            on: set(facts, "sip_port") || set(facts, "sip_tls_port"),
-            reason: "sip_port and sip_tls_port are not set"
+            on: set(facts, "sip-server@port") || set(facts, "sip-server@tls-port"),
+            reason: "sip-server@port and sip-server@tls-port are not set"
         }),
         checks: ["configuration", "listener"],
         listenerTarget: "sip.listener"
@@ -312,7 +311,7 @@ const protocols = [
         feature: "rtc",
         entry: "Call recording",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: yes(facts.prop("call_recording_enabled")), reason: "call_recording_enabled is not true"})
+        on: facts => ({on: yes(facts.prop("calls/recording@enabled")), reason: "calls/recording@enabled is not true"})
     },
     {
         protocolKey: "captions",
@@ -321,7 +320,7 @@ const protocols = [
         feature: "rtc",
         entry: "Call captions",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: yes(facts.prop("call_captions_enabled")), reason: "call_captions_enabled is not true"})
+        on: facts => ({on: yes(facts.prop("calls/captions@enabled")), reason: "calls/captions@enabled is not true"})
     },
     {
         protocolKey: "speechLocal",

@@ -102,7 +102,9 @@ generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)
 ## 3. Tests
 
 Keep tests out of the code file. The source then stays readable, a test change does not churn the source's diff, and
-a reader (or an agent) loading the code does not load its tests too.
+a reader (or an agent) loading the code does not load its tests too. A test that runs the `git` CLI or `ssh` isolates it
+from the desktop's credential helpers and prompts, and a disposable runtime goes under `target/`
+([testing skill](../../.agents/skills/testing/SKILL.md)).
 
 - **Unit tests** go in a sibling file, wired at the end of the module:
 
@@ -140,10 +142,12 @@ a reader (or an agent) loading the code does not load its tests too.
 
 - **Behaviour.** A cleanup does not change behaviour. If a change does change what a caller sees, say so in the commit
   message. An error returned instead of a panic is such a change, and a wanted one.
-- **Checks.** After a change run `cargo lint` (clippy on the workspace, warnings denied), `cargo lint-min` when
-  `moqui-host` changed, and `cargo test -p <crate>` for each crate touched. The workspace already denies Clippy's
-  default set; pedantic, nursery and restriction lints stay off. Do not add lints to `[workspace.lints]` that the code
-  does not already pass.
+- **Checks.** While working, `cargo test -p <crate>` for each crate touched. Before a commit `cargo lint` (clippy on the
+  workspace, warnings denied) and `cargo lint-min` (the host and every crate it links with no default features, which
+  is where an item only a feature uses shows as dead), `scripts/check-packages.sh` when feature gates, features or
+  dependencies changed, and `./moq test-framework` ([Build-Test, Before a commit](../Build-Test.md#before-a-commit)).
+  CI runs the same on every push. The workspace already denies Clippy's default set; pedantic, nursery and restriction
+  lints stay off. Do not add lints to `[workspace.lints]` that the code does not already pass.
 - **Toolchain.** Use one toolchain and incremental development builds so the cache stays warm
   ([building skill](../../.agents/skills/building/SKILL.md)).
 - **Formatting.** `max_width = 120`, edition 2021 (`rustfmt.toml`). Format only the files you changed:
@@ -344,6 +348,11 @@ are shared on purpose:
 - **Errors.** `Option` when there is nothing to say, `Result` when the caller needs to know why, a panic only for bugs.
   Many functions return `Result<_, String>`; leave that unless you are already changing the function, and do not add
   `anyhow` or `thiserror`.
+- **A service's failure is in the message facade,** not an `Err`: a failing service body records its error and cause
+  chain there, rolls back and returns, as Java's `ServiceCallSyncImpl.callSingle` does; only a failure before the call
+  (an unknown service, authentication, authorization, a semaphore) is an `Err`. Code that calls a service checks the
+  message facade (`has_error()`). This is Moqui's error design for business logic, kept apart from the language's: do
+  not turn it into `Err` propagation as a cleanup.
 
 ## 8. Where MR Moqui departs from Google
 
@@ -373,5 +382,6 @@ Do not "fix" these:
   `tests/it`; goldens rewritten by their variable, and the diff read.
 - No panic reachable from input; each `expect` says why its value is there.
 - No `&Arc<T>` that only reads, no clone a borrow would do, no local lock helper, no new `unsafe`.
-- `cargo lint`, `cargo lint-min` if the host changed, `cargo test -p <crate>`; only your files formatted.
+- `cargo lint` and `cargo lint-min`, `scripts/check-packages.sh` for a feature or dependency change, `cargo test -p
+  <crate>`, then `./moq test-framework`; goldens rewritten by their variable; only your files formatted.
 - Behaviour changes named in the commit message.

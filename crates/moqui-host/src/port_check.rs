@@ -117,7 +117,7 @@ fn conf_setting(conf: &MNode, path: &str, name: &str) -> String {
         node = node.and_then(|node| node.first_named(step));
     }
     node.and_then(|node| node.attribute(name))
-        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string())
+        .map(|raw| raw.trim().to_string())
         .unwrap_or_default()
 }
 
@@ -137,30 +137,32 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
         required: true,
     };
     // a node reached in process only has no HTTP, HTTPS, cluster or gRPC port
-    let http = crate::listen_address(bind)?;
+    let webroot = |name: &str| {
+        moqui_core::context::conf_env::conf_attribute(
+            conf,
+            &format!("{}@{name}", moqui_core::context::conf_env::WEBROOT),
+        )
+    };
+    let http = crate::listen_address(bind, &webroot)?;
     #[cfg_attr(not(feature = "grpc"), allow(unused_variables))]
     let mut https = false;
     if let Some(http) = http {
-        targets.push(required("HTTP", "webapp_http_port", http.ip().to_string(), http.port()));
-        if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property))? {
+        targets.push(required("HTTP", "http-port", http.ip().to_string(), http.port()));
+        let listen_port = webroot("https-listen-port");
+        if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property), &listen_port)? {
             https = true;
-            targets.push(required(
-                "HTTPS",
-                "webapp_https_listen_port",
-                http.ip().to_string(),
-                port,
-            ));
+            targets.push(required("HTTPS", "https-listen-port", http.ip().to_string(), port));
         }
         targets.push(required(
             "Cluster",
-            "cluster_https_port",
+            "cluster-member@https-port",
             crate::cluster_edge::bind_address()?.to_string(),
-            crate::cluster_edge::listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?,
+            crate::cluster_edge::listen_port(&moqui_core::context::conf_env::setting("cluster-member@https-port"))?,
         ));
     }
     #[cfg(feature = "ssh")]
     if let Some((host, port)) = crate::ssh::server::listen_target(conf)? {
-        targets.push(required("SSH", "ssh_port", host, port));
+        targets.push(required("SSH", "ssh-server@port", host, port));
     }
     // the optional listeners: a setting that does not parse is left to the listener's own start to report
     #[cfg(feature = "grpc")]
@@ -180,7 +182,7 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
     if let Ok(Some((host, port))) = crate::smtp::listen_target_by(&|name| conf_setting(conf, "smtp-server", name)) {
         targets.push(Target::optional(
             crate::smtp::LISTENER,
-            "smtp_listen_port",
+            "smtp-server@listen-port",
             host,
             port,
             Proto::Tcp,

@@ -71,8 +71,14 @@ Most of MR-Moqui is a port of the Java framework as it exists when the port begi
 4. **Print HTML is its own render mode.** `html-print` (print CSS and `@page`, also selected by the old `xsl-fo` name) is printed to PDF by one long-lived external Chromium; `/fop/<path>` sends a screen as PDF. Plan: [Architecture-Proposal](plans/archive/Architecture-Proposal.md) (Tool components and print).
 5. **Cluster coordination uses the shared database.** Members find each other in a table; cache invalidation and notifications fan out over gRPC on client-certificate TLS (HTTP/1.1 POST as the alternative); no Hazelcast or Redis. Plan: [Cluster](plans/archive/Cluster.md).
 6. **Sessions live in the database** (`moqui.server.HttpSession`, through the entity cache), with an optional guarantee mode so a load balancer without stickiness can fail over. Plan: [Architecture-Proposal](plans/archive/Architecture-Proposal.md) (Sessions and login).
-7. **Keys are configuration, and unset secrets are generated.** Secrets are `default-property`s set by conf file or environment, never database rows; one still at its `CHANGEME` default is generated and saved to `runtime/.env`, which is loaded at startup like environment variables. Plan: [MimoReview](plans/archive/MimoReview.md) (Decisions 1–3).
+7. **Keys are configuration, and unset secrets are generated.** Secrets are conf attributes, set by conf file or environment, never database rows; one still at its `CHANGEME` default is generated and saved to `runtime/.env`, which is loaded at startup like environment variables. Plan: [MimoReview](plans/archive/MimoReview.md) (Decisions 1–3).
 8. **Feed registration commits with the entity change.** Search document keys are registered in the entity transaction; assembly and indexing run after commit, and an index failure does not roll back the change. Plan: [SearchFacade](plans/archive/SearchFacade.md).
+9. **Settings by conf path.** Every setting is an attribute of a conf element with its default written there; Moqui
+   Java's `default-property` entries and the `${name}` references to them are gone. Any attribute is set from the
+   environment by a name built from its XML path (`moqui_conf__webapp_list__webapp__WEBROOT__http_port`), and named
+   elsewhere by the same path as a selector (`webapp-list/webapp[webroot]@http-port`); a component declares a
+   top-level element of its own. Guide: [Run-Deploy](docs/Run-Deploy.md#settings-and-the-environment); plan:
+   [Conf-Paths](plans/archive/Conf-Paths.md).
 
 ## Native components
 
@@ -91,7 +97,9 @@ Reference guides for built features are in [`docs/`](docs/), by tier and area wi
 ## Build, Test, and Run
 
 Building from source, the build packages and their features, the `./moq` tasks, and the Rust tests and component specs
-are in [`docs/Build-Test.md`](docs/Build-Test.md). Running and deploying (the runtime directory and conf lookup, HTTPS
+are in [`docs/Build-Test.md`](docs/Build-Test.md), with the checks to run before a commit (for Rust: `cargo lint`,
+`cargo lint-min` and `./moq test-framework`, as CI does on every push) and before a release in its
+[Validation](docs/Build-Test.md#validation) section. Running and deploying (the runtime directory and conf lookup, HTTPS
 certificates and ports, production archives, clusters, and PASS and team topologies) are in
 [`docs/Run-Deploy.md`](docs/Run-Deploy.md); Podman and systemd are in [`podman/README.md`](podman/README.md).
 

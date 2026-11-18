@@ -765,15 +765,17 @@ pub(crate) fn proppatch(href: &str, body: Option<&Element>) -> DavResponse {
 
 // ---------- helpers ----------
 
-/// The address devices reach this server at: `dav-server` `public-url`, else the `dav_public_url` property, else the
-/// scheme, host and port of the web request in progress (the address the user reached the screen at), else the
+/// The address devices reach this server at: `dav-server@public-url`, else the scheme, host and port of the web request in progress (the address the user reached the screen at), else the
 /// webapp's host and port properties (as the git clone addresses).
 pub fn public_base_url(factory: &ExecutionContextFactory) -> String {
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
-    let mut configured = factory.conf_setting("dav-server", "public-url").trim().to_string();
-    if configured.is_empty() {
-        configured = property("dav_public_url");
-    }
+    let property = |name: &str| {
+        moqui_core::context::conf_env::setting_or_property(name)
+            .trim()
+            .to_string()
+    };
+    let configured = moqui_core::context::conf_env::setting_on(factory, "dav-server@public-url")
+        .trim()
+        .to_string();
     if !configured.is_empty() {
         return configured.trim_end_matches('/').to_string();
     }
@@ -785,15 +787,15 @@ pub fn public_base_url(factory: &ExecutionContextFactory) -> String {
             }
         }
     }
-    let host = Some(property("webapp_http_host"))
+    let host = Some(property("webapp-list/webapp[webroot]@http-host"))
         .filter(|host| !host.is_empty())
         .unwrap_or_else(|| "localhost".to_string());
-    let (scheme, port, default) = if property("webapp_https_enabled") == "true" {
-        ("https", property("webapp_https_port"), "443")
+    let (scheme, port, default) = if property("webapp-list/webapp[webroot]@https-enabled") == "true" {
+        ("https", property("webapp-list/webapp[webroot]@https-port"), "443")
     } else {
         (
             "http",
-            moqui_core::web::http_url_port(&property("webapp_http_port")),
+            moqui_core::web::http_url_port(&property("webapp-list/webapp[webroot]@http-port")),
             "80",
         )
     };

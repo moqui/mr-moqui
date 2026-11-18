@@ -2,7 +2,7 @@
 
 Examples of Rust in an MR Moqui component, kept with the framework and added to over time, and the screen archetype
 gallery of the IronStone BOSS style guide (`screen/Gallery.xml`, at `/qapps/gallery` once signed in). It is a dev
-component: it loads when `instance_purpose` is `dev` (`./moq run` and `./moq test`), not on a production instance.
+component: it loads when `instance@purpose` is `dev` (`./moq run` and `./moq test`), not on a production instance.
 
 ## Turning it off
 

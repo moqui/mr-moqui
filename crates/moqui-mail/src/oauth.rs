@@ -18,7 +18,7 @@
 //!
 //! 1. `start#OAuthSignIn` keeps a pending sign-in in the user's session (state, PKCE verifier, nonce, the user, the
 //!    account or the address being set up; ten minutes) and answers the provider's authorization URL. The redirect URI
-//!    is the deployment's (`email_oauth_redirect_uri`, else the conf's webroot URL), never the request's.
+//!    is the deployment's (`email-client` `oauth-redirect-uri`, else the conf's webroot URL), never the request's.
 //! 2. The provider sends the browser back to the webroot transition `/emailOAuth/callback`, which calls
 //!    `complete#OAuthSignIn`: the state is taken once (a second use, another session or user, or a late one is
 //!    refused), the code is exchanged with the verifier, the granted scopes and the ID token (audience, issuer, expiry,
@@ -152,18 +152,20 @@ fn comma_list(text: &str) -> Vec<String> {
 
 impl Provider {
     fn from_row(row: &EntityValue, name: String) -> Self {
-        let prefix = field_text(row, "propertyPrefix");
-        let property = |suffix: &str| {
-            if prefix.is_empty() {
+        // the deployment's client in the conf: email-client/oauth-provider[confProviderId]
+        let conf_id = field_text(row, "confProviderId");
+        let conf = |attribute: &str| {
+            if conf_id.trim().is_empty() {
                 String::new()
             } else {
-                moqui_lib::env::get_prop_or_env(&format!("{prefix}_{suffix}"))
-                    .trim()
-                    .to_string()
+                moqui_core::context::conf_env::setting(&format!(
+                    "email-client/oauth-provider[{}]@{attribute}",
+                    conf_id.trim()
+                ))
             }
         };
         let pick = |own: String, field: &str| if own.is_empty() { field_text(row, field) } else { own };
-        let mut client_secret = pick(property("client_secret"), "clientSecret");
+        let mut client_secret = pick(conf("client-secret"), "clientSecret");
         let id = field_text(row, "oauthProviderEnumId");
         if client_secret == DECRYPT_FAILED {
             tracing::error!(
@@ -171,7 +173,7 @@ impl Provider {
             );
             client_secret.clear();
         }
-        let tenant = match pick(property("tenant"), "tenant") {
+        let tenant = match pick(conf("tenant"), "tenant") {
             tenant if tenant.is_empty() => "common".to_string(),
             tenant => tenant,
         };
@@ -179,7 +181,7 @@ impl Provider {
         Self {
             name: if name.is_empty() { id.clone() } else { name },
             id,
-            client_id: pick(property("client_id"), "clientId"),
+            client_id: pick(conf("client-id"), "clientId"),
             client_secret,
             authorize_url: fill("authorizeUrl"),
             token_url: fill("tokenUrl"),
@@ -286,15 +288,11 @@ pub(super) fn load_providers(facade: &EntityFacade) -> Result<Vec<Provider>, Lib
         .collect())
 }
 
-/// The redirect URI registered at the providers: the conf's `email-client` `oauth-redirect-uri`
-/// (`email_oauth_redirect_uri`), else the webroot webapp's URL from the conf with `/emailOAuth/callback`. Never from a
-/// request.
+/// The redirect URI registered at the providers: the conf's `email-client` `oauth-redirect-uri`, else the webroot
+/// webapp's URL from the conf with `/emailOAuth/callback`. Never from a request.
 pub(super) fn redirect_uri() -> String {
-    let mut configured = super::client_setting("oauth-redirect-uri");
-    if configured.is_empty() {
-        configured = moqui_lib::env::get_prop_or_env("email_oauth_redirect_uri");
-    }
-    if !configured.trim().is_empty() {
+    let configured = moqui_core::context::conf_env::setting("email-client@oauth-redirect-uri");
+    if !configured.is_empty() {
         return configured.trim().to_string();
     }
     let root = ExecutionContext::with_current(|ec| ec.factory().webapp_root_url("webroot")).unwrap_or_default();
@@ -710,7 +708,7 @@ pub(super) fn access_token(
 fn undecryptable(server_id: &str) -> TokenError {
     tracing::error!("Email server {server_id}: the stored OAuth refresh token cannot be decrypted");
     TokenError::Unavailable(format!(
-        "The sign-in of email server {server_id} cannot be decrypted (entity_ds_crypt_pass changed?)"
+        "The sign-in of email server {server_id} cannot be decrypted (entity-facade@crypt-pass changed?)"
     ))
 }
 
@@ -1390,10 +1388,10 @@ fn finish_pending(parameters: &BTreeMap<String, Value>, facade: &EntityFacade, p
         };
     }
     if facade.crypt().is_none() {
-        tracing::error!("Email sign-in refused: field encryption (entity_ds_crypt_pass) is not configured");
+        tracing::error!("Email sign-in refused: field encryption (entity-facade@crypt-pass) is not configured");
         return failed(
             "storeFailed",
-            "This server does not encrypt stored secrets (entity_ds_crypt_pass), so the sign-in is not kept.",
+            "This server does not encrypt stored secrets (entity-facade@crypt-pass), so the sign-in is not kept.",
         );
     }
     let stored = if pending.account.is_empty() {

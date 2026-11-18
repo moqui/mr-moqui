@@ -83,9 +83,9 @@ Tools › Load (`/apps/tools/Load`; the "Load testing" links on the Tools home) 
 | This server over HTTP | Requests to this server's own URL. The default |
 | Another server | Requests to a URL the target rule allows ([Security](#security)). "Accept an invalid certificate" is offered here, and shown on the run |
 
-**Limits.** One running load per instance (`load_runner_max_runs`, 1) and 1,000 users a run in all
-(`load_runner_max_users`): two loads at once spoil each other's numbers, and each user is a thread with its own engine
-in the server's process. An instance short of memory sets a lower `load_runner_max_users`.
+**Limits.** One running load per instance (`load-runner@max-runs`, 1) and 1,000 users a run in all
+(`load-runner@max-users`): two loads at once spoil each other's numbers, and each user is a thread with its own engine
+in the server's process. An instance short of memory sets a lower `load-runner@max-users`.
 
 **While it runs.**
 
@@ -287,13 +287,13 @@ every other one is dropped. A run against another server has none: the target's 
   `allow-remote="false"` does not refuse it, as it does not refuse the user's own screens. A call that leaves the
   context changed (authorization or entity ECA rules off, another user) is an error, and the context is replaced; a
   transaction left open is rolled back and is an error.
-- **Targets.** A run reaches this server, loopback, and the URL prefixes of the `load_runner_targets` property
+- **Targets.** A run reaches this server, loopback, and the URL prefixes of the `load-runner@targets` property
   (comma- or space-separated); a dev instance reaches any URL. Otherwise a holder could aim the server at another site,
   a request forgery and denial of service tool. Plain `http` to another machine is refused unless an entry names it,
   since a login crosses in the clear: a prefix carries its scheme, and this server's own http URL counts only on a
   loopback host. A prefix is matched on the path a request is really sent to, after `..` and `.` segments are
   resolved. An `ssh.connect` reaches this server's own SSH listener (the default of a run against this server),
-  loopback, and the `ssh://host:port` entries of `load_runner_targets` (port 22 when it names none), and declares
+  loopback, and the `ssh://host:port` entries of `load-runner@targets` (port 22 when it names none), and declares
   `uses: ["ssh"]`; a dev instance reaches any host. A host key not pinned is taken from loopback, or anywhere when the
   run is insecure.
 - **Secrets.** A `secret` param is held in memory for the run, never written to the result, the snapshot or a log

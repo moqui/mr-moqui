@@ -51,15 +51,18 @@ fn the_search_store_starts_and_stops_a_local_opensearch() {
     );
 
     let _serial = crate::common::serial();
-    let _properties = crate::common::PropertyReset::of(&["search_backend", "elasticsearch_url"]);
+    let _properties = crate::common::PropertyReset::of(&[
+        "moqui_conf__search_facade__backend",
+        "moqui_conf__search_facade__cluster__url",
+    ]);
     let runtime = temp_dir("moqui-rt-os-start");
     let cluster_dir = temp_dir("moqui-pg-os-start");
     let _guards = (DirGuard(runtime.clone()), DirGuard(cluster_dir.clone()));
     std::fs::create_dir_all(&runtime).unwrap();
     std::os::unix::fs::symlink(&install, runtime.join("opensearch")).unwrap();
     for (name, value) in [
-        ("search_backend", "opensearch"),
-        ("elasticsearch_url", "http://127.0.0.1:9200"),
+        ("moqui_conf__search_facade__backend", "opensearch"),
+        ("moqui_conf__search_facade__cluster__url", "http://127.0.0.1:9200"),
     ] {
         moqui_lib::env::set_property(name, value.to_string());
     }

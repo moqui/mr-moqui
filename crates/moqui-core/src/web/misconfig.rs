@@ -31,18 +31,11 @@ fn webroot(conf: &MNode) -> MNode {
         .expect("webroot")
 }
 
-/// A webroot attribute as shipped. `${name}` is that file's `default-property`, not the process environment.
+/// A webroot attribute as shipped, written literally (plans/archive/Conf-Paths.md §5).
 fn shipped_attr(conf: &MNode, name: &str) -> String {
-    let raw = webroot(conf)
+    webroot(conf)
         .attribute(name)
-        .unwrap_or_else(|| panic!("webroot has no {name}"));
-    let Some(property) = raw.strip_prefix("${").and_then(|body| body.strip_suffix('}')) else {
-        return raw;
-    };
-    conf.first_named_attrs("default-property", &[("name", property.trim())])
-        .unwrap_or_else(|| panic!("no default-property {property} for webroot {name}"))
-        .attribute("value")
-        .unwrap_or_default()
+        .unwrap_or_else(|| panic!("webroot has no {name}"))
 }
 
 #[test]
@@ -164,7 +157,7 @@ fn client_ip_ignores_x_forwarded_for_when_the_header_is_empty() {
     let _lock = crate::user::session::cookie_property_lock();
     assert!(
         super::client_addressing().header().is_empty(),
-        "webapp_client_ip_header is set; this proof needs the shipped empty header"
+        "the webroot webapp's client-ip-header is set; this proof needs the shipped empty header"
     );
     let mut request = super::WebRequest::new("GET", "/status");
     request.peer_ip = "203.0.113.9".to_string();
@@ -187,7 +180,10 @@ fn loopback_forms_canonicalize_to_one_address() {
 #[test]
 fn an_empty_origin_is_allowed_and_the_same_site_matches_scheme_host_and_port() {
     let _lock = crate::user::session::cookie_property_lock();
-    let _allow = hold_property("webapp_allow_origins", "not-this-test.example");
+    let _allow = hold_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__allow_origins",
+        "not-this-test.example",
+    );
     let own = [super::origin::SiteOrigin::parse("http://localhost:8080").expect("origin")];
     let allowed = |origin: Option<&str>| super::origin::origin_allowed_by(None, origin, &own);
     assert!(allowed(None));

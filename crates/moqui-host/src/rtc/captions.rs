@@ -22,10 +22,10 @@
 //!
 //! - every frame goes into an [`AudioRoom`] and every 20 ms the room ticks;
 //! - each leg's own audio ([`AudioRoom::leg_audio`]) is gated by its level ([`SPEECH_DBOV`]) and cut into chunks at a
-//!   pause ([`PAUSE`]) or at `call_captions_chunk_seconds` (5); a chunk with less than [`MIN_SPEECH`] of speech, and
+//!   pause ([`PAUSE`]) or at `calls/captions@chunk-seconds` (5); a chunk with less than [`MIN_SPEECH`] of speech, and
 //!   silence, makes nothing;
-//! - a chunk is resampled to 16 kHz and WAV-encoded, and waits in a bounded queue (`call_captions_queue`, 6) for one
-//!   of `call_captions_workers` (2) jobs on the service pool, each given `call_captions_timeout_seconds` (20); the
+//! - a chunk is resampled to 16 kHz and WAV-encoded, and waits in a bounded queue (`calls/captions@queue`, 6) for one
+//!   of `calls/captions@workers` (2) jobs on the service pool, each given `calls/captions@timeout-seconds` (20); the
 //!   node's calls together run at most half the pool's workers ([`Permits`]), so a provider that hangs cannot take it;
 //! - the results go out in the order the chunks were cut (so in each speaker's order), as `rtc` frames to every leg of
 //!   the call through the driver ([`super::Command::ToRoom`]): `{rtc: 'caption', leg, participant, name, seq, text}`.
@@ -38,8 +38,8 @@
 //! ([`stop`]: `state: 'off'`) or when the call's room closes.
 //!
 //! The transcriber is a trait ([`Transcriber`]): the `moqui-llm` endpoint ([`moqui_core::llm_hooks::transcribe`]), or
-//! `speech-local` (`call_captions_provider=local`, not built yet, see `crate::speech_local`). With
-//! `call_captions_store=true` each caption is kept as a `CallTranscript` row (`store#CallTranscript`); by default
+//! `speech-local` (`moqui_conf__calls__captions__provider=local`, not built yet, see `crate::speech_local`). With
+//! `moqui_conf__calls__captions__store=true` each caption is kept as a `CallTranscript` row (`store#CallTranscript`); by default
 //! nothing is stored. Speakers are named by `get#CaptionSpeaker`. On an edge node (plans/archive/Edge-Node.md §5.4) those two
 //! run on its local node (delegated), and so does transcription (`transcribe#CaptionAudio`, [`DelegatedTranscriber`]),
 //! where the call's rows and the agent runtime's quota are.
@@ -115,14 +115,14 @@ impl Settings {
                 .parse::<u64>()
                 .map_or(default, |value| value.clamp(low, high))
         };
-        let language = property("call_captions_language").trim().to_string();
+        let language = property("calls/captions@language").trim().to_string();
         Settings {
-            max_chunk: Duration::from_secs(number("call_captions_chunk_seconds", 1, 30, 5)),
-            queue: number("call_captions_queue", 1, 100, base.queue as u64) as usize,
-            workers: number("call_captions_workers", 1, 16, base.workers as u64) as usize,
-            timeout: Duration::from_secs(number("call_captions_timeout_seconds", 1, 300, 20)),
-            store: property("call_captions_store").trim() == "true",
-            provider: match property("call_captions_provider").trim() {
+            max_chunk: Duration::from_secs(number("calls/captions@chunk-seconds", 1, 30, 5)),
+            queue: number("calls/captions@queue", 1, 100, base.queue as u64) as usize,
+            workers: number("calls/captions@workers", 1, 16, base.workers as u64) as usize,
+            timeout: Duration::from_secs(number("calls/captions@timeout-seconds", 1, 300, 20)),
+            store: property("calls/captions@store").trim() == "true",
+            provider: match property("calls/captions@provider").trim() {
                 "local" => "local".to_string(),
                 _ => "llm".to_string(),
             },
@@ -667,7 +667,7 @@ fn to_room(room: &str, frame: Json) {
 /// closes. Already running, the notice goes out again. A start that fails tells the legs captions are unavailable,
 /// with the reason, and takes the notice down.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options: StartOptions) {
-    let settings = Settings::from_properties(&moqui_lib::env::get_prop_or_env);
+    let settings = Settings::from_properties(&moqui_core::context::conf_env::setting_or_property);
     let notice = json!({"rtc": "captions", "state": "on", "provider": options.provider_label, "local": options.local});
     // the table stays locked while the notice is sent, so a stop that follows sends its "off" after it
     let mut table = lock(calls_running());

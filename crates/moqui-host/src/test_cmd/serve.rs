@@ -36,8 +36,25 @@ pub(super) struct Setup {
 }
 
 /// The listeners besides HTTP that bind a fixed port by default or by the conf (the cluster on 8444, the dev conf's SSH
-/// on 2222). The server of a test run binds a free port for each instead, so it starts beside a running server.
-const OTHER_PORTS: [&str; 3] = ["cluster_https_port", "ssh_port", "webapp_https_listen_port"];
+/// on 2222), each a property or a conf selector. The server of a test run binds a free port for each instead, so it
+/// starts beside a running server.
+const OTHER_PORTS: [&str; 3] = [
+    "cluster-member@https-port",
+    "ssh-server@port",
+    "webapp-list/webapp[webroot]@https-listen-port",
+];
+
+/// The name that sets a port of [`OTHER_PORTS`]: a selector's environment name, else the property.
+fn port_name(name: &str) -> String {
+    if name.contains('@') {
+        moqui_lib::node::path::AttrPath::parse(name)
+            .ok()
+            .and_then(|path| path.env_name())
+            .unwrap_or_default()
+    } else {
+        name.to_string()
+    }
+}
 
 impl Setup {
     /// Watch standard input from the start, so a client that dies during the specs gets no server, and note the ports
@@ -47,7 +64,7 @@ impl Setup {
             stdin_closed: watch_stdin(),
             user_ports: OTHER_PORTS
                 .into_iter()
-                .filter(|name| !moqui_lib::env::get_prop_or_env(name).is_empty())
+                .filter(|name| !moqui_lib::env::get_prop_or_env(&port_name(name)).is_empty())
                 .collect(),
         }
     }
@@ -161,14 +178,22 @@ fn serve_on(
         println!("Not serving: standard input closed");
         return Ok(());
     }
+    // a selector's port as the conf files set it (the dev conf's ssh-server port), or an override
+    let conf = moqui_core::context::load_merged_conf(framework, runtime).ok();
     for name in OTHER_PORTS {
-        let set = moqui_lib::env::get_prop_or_env(name);
+        let set = if name.contains('@') {
+            conf.as_ref()
+                .map(|conf| moqui_core::context::conf_env::conf_attribute(conf, name))
+                .unwrap_or_default()
+        } else {
+            moqui_lib::env::get_prop_or_env(name)
+        };
         // an empty cluster port is 8444; the others are off while empty
-        if !setup.user_ports.contains(&name) && (name == "cluster_https_port" || !set.is_empty()) {
+        if !setup.user_ports.contains(&name) && (name == "cluster-member@https-port" || !set.is_empty()) {
             if !set.is_empty() && set != "0" {
                 tracing::info!("{name} is {set} in the conf; the test server binds a free port instead");
             }
-            moqui_lib::env::set_property(name, "0");
+            moqui_lib::env::set_property(&port_name(name), "0");
         }
     }
     // a client spec's requests name their own loopback address (test_client: one per spec)

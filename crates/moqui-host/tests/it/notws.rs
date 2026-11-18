@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Notification socket and one cluster cache post, and the origin check of the socket. `cluster_https_port=0` is an ephemeral bind. When the user's last
+//! Notification socket and one cluster cache post, and the origin check of the socket. `moqui_conf__cluster_member__https_port=0` is an ephemeral bind. When the user's last
 //! socket closes, the user's offline presence is published (after the 20 second grace a reload gets).
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
@@ -140,7 +140,7 @@ fn notws_push_and_one_cluster_invalidation() {
     load_data(&runtime, &framework, &cluster_dir, &demo_flags).unwrap();
 
     // 0 binds an ephemeral cluster port. Empty would listen on 8444. This does not touch the repo .env.
-    moqui_lib::env::set_property("cluster_https_port", "0");
+    moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
     let server = start_server(
         &runtime,
         &framework,

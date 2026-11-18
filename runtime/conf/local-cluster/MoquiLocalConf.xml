@@ -8,37 +8,38 @@
     Use the Enterprise package (--enterprise): it has no embedded Postgres, so a member cannot start on a database of its
     own by mistake. With an edge node in the load balancer's place, the members run MoquiPooledConf.xml. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-    <default-property name="instance_purpose" value="production"/>
+    <instance purpose="production"/>
 
     <!-- The shared database: Postgres, or MySQL (mysql8) with the default cluster transport. The rest in .env, the same
-        on every member: entity_ds_host, entity_ds_port, entity_ds_database, entity_ds_user, entity_ds_password, and
-        entity_ds_sslmode and entity_ds_sslrootcert for its TLS. The content database shares it unless
-        content_ds_db_conf names another (docs/Run-Deploy.md, Content database). -->
-    <default-property name="entity_ds_db_conf" value="postgres"/>
+        on every member: the transactional datasource's host, port,
+        database, user and password, and sslmode and sslrootcert for its TLS
+        (moqui_conf__entity_facade__datasource__TRANSACTIONAL__host and the rest). The content database shares it unless
+        the content datasource's database-conf-name names another (docs/Run-Deploy.md, Content database). -->
 
-    <!-- The same secrets on every member: session_cookie_key, cluster_tls_cert, cluster_tls_key and entity_ds_crypt_pass,
-        and for git hosting ssh_host_key and git_lfs_token_key, as the load balancer sends a client's SSH connections
+    <!-- The same secrets on every member: webapp-list/webapp[webroot]/session-config@cookie-key, cluster-member@tls-cert, cluster-member@tls-key and moqui_conf__entity_facade__crypt_pass,
+        and for git hosting ssh-server@host-key and git-server@lfs-token-key, as the load balancer sends a client's SSH connections
         and LFS requests to any member (a member with another SSH host key warns at startup).
         The first member's first start generates them into its .env; copy that whole .env to each other member before its
         first start. A start fails when a live member has another session key or certificate. Each member keeps its own
         instance id in runtime/db/instance_id, not in .env, so copying .env is safe.
-        Per member in .env: cluster_base_url, https://(this member's private address):8444, which the other members
+        Per member in .env: cluster-member@base-url, https://(this member's private address):8444, which the other members
         reach (empty is https://127.0.0.1:8444, an error once other members are live). Open 8444 between the members
         only. -->
 
     <!-- How peers reach this member: empty for its cluster port (TLS with the cluster certificate, client certificate
         required), notify for Postgres LISTEN/NOTIFY on the shared database when members cannot connect to each other
-        (Postgres only), ssh through its SSH server (ssh_port; a build with the ssh feature). cluster_protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1
+        (Postgres only), ssh through its SSH server (ssh-server@port; a build with the ssh feature). cluster-member@protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1
         only; members on different settings or builds still reach each other. -->
-    <default-property name="cluster_transport" value=""/>
-    <default-property name="cluster_protocol" value=""/>
+    <cluster-member transport="" protocol=""/>
 
-    <!-- The load balancer (.env): webapp_trusted_proxies, its address ranges, which also turns on web protection by
-        client address (each member counts its own limits); webapp_client_ip_header, the header it sets
-        (X-Forwarded-For, X-Real-IP, CF-Connecting-IP or CloudFront-Viewer-Address). Leave webapp_https_port empty
+    <!-- The load balancer (.env): webapp-list/webapp[webroot]@trusted-proxies, its address ranges, which also turns on web protection by
+        client address (each member counts its own limits); webapp-list/webapp[webroot]@client-ip-header, the header it sets
+        (X-Forwarded-For, X-Real-IP, CF-Connecting-IP or CloudFront-Viewer-Address). Leave webapp-list/webapp[webroot]@https-port empty
         when it serves 443. -->
 
-    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <entity-facade query-stats="true">
+        <datasource group-name="transactional" database-conf-name="postgres"/>
+    </entity-facade>
 
     <!-- A load balancer that does not keep a client on one member: write each session change before the response, so the
         next request on another member sees it. With sticky sessions this can go. -->

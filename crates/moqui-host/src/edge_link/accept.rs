@@ -86,7 +86,7 @@ use crate::tls_pin::{hex, public_key_sha256, Pin, PinVerifier};
 /// What a front node answers a call of the edge set's: the queue, replication, a delegated call, PASS
 /// (plans/Edge-Node2.md §4.7).
 pub(crate) const FRONT_REFUSES: &str =
-    "this is a front node (node_role front): it has no queue, replication, delegated calls, calls or PASS";
+    "this is a front node (instance@node-role front): it has no queue, replication, delegated calls, calls or PASS";
 
 /// The HTTPS listener's hand-off to the link on an edge node.
 pub(crate) struct Acceptor {
@@ -979,15 +979,15 @@ impl EdgeServer {
 
     /// The secret this node's embedded TURN checks the credentials of local node `node` with, while it runs: for that
     /// node's Hello answer only, so it signs the credentials of this node's TURN URLs (E7). It is the pairing's own
-    /// (plans/Edge-Node2.md §4.1, E16), derived from `turn_auth_secret`, the pairing's id and `salt` (its key's
+    /// (plans/Edge-Node2.md §4.1, E16), derived from `media-server/turn-server@auth-secret`, the pairing's id and `salt` (its key's
     /// fingerprint and when it paired, `moqui_core::edge::media::pairing_turn_salt`), never the shared secret: the
     /// TURN server takes it only while the pairing is active and has that salt, so revoking a pairing ends its TURN
-    /// access with no new `turn_auth_secret`, and pairing it again gives it a new secret. Empty without TURN.
+    /// access with no new `media-server/turn-server@auth-secret`, and pairing it again gives it a new secret. Empty without TURN.
     fn turn_secret(&self, node: &str, salt: &str) -> String {
         if self.media().is_none_or(|advert| advert.turn_urls.is_empty()) {
             return String::new();
         }
-        let secret = moqui_lib::env::get_prop_or_env("turn_auth_secret");
+        let secret = moqui_core::context::conf_env::setting("media-server/turn-server@auth-secret");
         let secret = secret.trim();
         if secret.is_empty() || secret.ends_with("CHANGEME") || node.is_empty() {
             return String::new();

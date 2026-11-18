@@ -19,7 +19,7 @@
 //! [`fallback_check`]).
 //!
 //! **Phones off.** E8 replicates the trunks (`voiceTrunks`) and each number's fallback (`voiceFallbacks`) to the
-//! edge node, whose engine registers the trunks from its copy. With `edge_sip_enabled=false` in `runtime/.env` the
+//! edge node, whose engine registers the trunks from its copy. With `moqui_conf__edge__node__sip_enabled=false` in `runtime/.env` the
 //! link sends both sets empty (a full send with no records, so the edge node's copy is emptied and its engine loads
 //! again with no trunks and answers no number), and `Voice.js` `voiceNodes` and `SipDevices.js` `edgeSipNode` leave
 //! out the edge node's link-kept `SipNode` row, which stays: no new call goes to the edge node's engine, and its
@@ -43,7 +43,7 @@ use crate::entity::EntityFacade;
 
 /// The local setting (`runtime/.env`) that turns phones through the edge node off: on unless it is `false`, `n`,
 /// `no`, `0` or `off`. Apply writes it; unpairing removes it.
-pub const SIP_ENABLED: &str = "edge_sip_enabled";
+pub const SIP_ENABLED: &str = "edge/node@sip-enabled";
 /// The replicated sets of E8 (MoquiDefaultConf.xml `<edge>`): the trunks and the policy, and each number's fallback.
 pub const TRUNKS_SET: &str = "voiceTrunks";
 pub const FALLBACKS_SET: &str = "voiceFallbacks";
@@ -61,7 +61,7 @@ const EDGE_CLIENT: &str = "moqui.edge.EdgeClient";
 /// Whether phones go through the edge node ([`SIP_ENABLED`]).
 pub fn sip_enabled() -> bool {
     !matches!(
-        moqui_lib::env::get_prop_or_env(SIP_ENABLED)
+        crate::context::conf_env::setting(SIP_ENABLED)
             .trim()
             .to_ascii_lowercase()
             .as_str(),
@@ -480,7 +480,7 @@ pub fn apply(
         lines.push(SetupLine::new(
             "sip",
             true,
-            "The edge node's registrar is off (sip_registrar_enabled there), so outside phones do not register to it",
+            "The edge node's registrar is off (sip-server/registrar@enabled there), so outside phones do not register to it",
         ));
     }
     lines.push(match coverage(facade) {
@@ -561,7 +561,7 @@ pub fn pairing_domains(facade: &EntityFacade) -> Result<Vec<(String, String)>, E
 
 /// The realm the phones of the pairing `node` register in on this edge node, and whether its registrar takes them,
 /// as its Hello and offer tell that pairing (E16): the `sipDomain` of its last Configure when it named one; else, on
-/// a dedicated edge node, the registrar's own realm (`sip_domain`), and on an all-in-one node none, as the server's
+/// a dedicated edge node, the registrar's own realm (`sip-server@domain`), and on an all-in-one node none, as the server's
 /// own realm is the server's. The domain is the one the SIP engine's registrar takes now
 /// ([`super::media::applied_sip_domain`]), or with `kept` the one kept from the last Configure, which the engine
 /// takes within seconds. `None` while this node runs no SIP engine. A read that fails is logged and taken as no
@@ -623,7 +623,7 @@ pub fn linked_sip_node(status: &super::LinkStatus) -> Result<&EdgeInfo, String> 
     if status.peer.instance_id.is_empty()
         || (status.peer.sip_address.is_empty() && status.peer.sip_tls_address.is_empty())
     {
-        return Err("The edge node runs no SIP engine (sip_port, sip_tls_port)".to_string());
+        return Err("The edge node runs no SIP engine (sip-server@port, sip-server@tls-port)".to_string());
     }
     Ok(&status.peer)
 }

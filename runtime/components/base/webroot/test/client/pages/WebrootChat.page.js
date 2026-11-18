@@ -1023,6 +1023,14 @@ test("the E2EE label's edges: a members-only record room is plain, a text with a
     const inbound = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "xmpp", networkName: "XMPP", outbound: false }] });
     assert.deepEqual([inbound.state, inbound.hint], ["bridged", ""], "nothing goes out through it");
     assert.equal(label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: false }] }).hint, "", "a text room that sends nothing out");
+    // a network its adapter says has no E2EE (GroupMe, Comms-Messaging phase 14), as get#RoomBridges gives it, says so
+    const groupme = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ chatBridgeId: "GM1", name: "GroupMe of Ann", network: "groupme",
+        networkName: "GroupMe", statusId: "CbsConnected", connected: true, directionEnumId: "CrbBoth", outbound: true, encryption: "NoneByNetwork" }] });
+    assert.deepEqual([groupme.state, groupme.lock, groupme.hint], ["bridged", false, "GroupMe message"]);
+    assert.equal(groupme.banner, "Not end-to-end encrypted. GroupMe has no end-to-end encryption, and the bridge reads messages to pass them on.");
+    // None alone (an adapter that said nothing, or none in this build) is the plain bridged label
+    const unknown = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "telegram", networkName: "Telegram", outbound: true, encryption: "None" }] });
+    assert.equal(unknown.banner, "Not end-to-end encrypted on this server. The bridge reads messages to pass them on.");
 });
 
 test("people's checks (§6.1 rule 3): a verified identity or every device verified; a new identity is not verified; Verify asks another person first", () => {
@@ -1129,6 +1137,16 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     assert.deepEqual(sentAs("mms"), ["MMS: the phone did not take RCS"]);
     assert.deepEqual(sentAs(null), [], "not known yet, or an SMS bridge's");
     assert.deepEqual(["rcs", "sms", "mms", null].map((path) => chat.pathName({ path })), ["", "SMS", "MMS", ""]);
+    // and what can read it, by the way it went (§16.5), the provider named; read past delivered (§18.3 phase 13)
+    const viaTwilio = (path, receipt) => event({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "RCS", state: "accepted", receipt: receipt || "delivered", path, adapterName: "rcs-twilio" }] } });
+    const lineOf = (item, key) => chat.messageInfoLines(chat.messageInfo(item, members, { me: "ann" }), when).filter((line) => line.key === key).map((line) => line.text);
+    assert.deepEqual(lineOf(viaTwilio("rcs"), "encryption"), ["Encrypted in transit only. Twilio, Google, carriers and this server can read it."]);
+    assert.deepEqual(lineOf(viaTwilio(null), "encryption"), ["Encrypted in transit only. Twilio, Google, carriers and this server can read it."], "not known yet: RCS's");
+    assert.deepEqual(lineOf(viaTwilio("sms"), "encryption"), ["The phone did not support RCS. This message went as SMS."]);
+    assert.deepEqual(lineOf(viaTwilio("rcs", "read"), "delivered"), ["Read: the network's receipt says so"]);
+    assert.deepEqual(lineOf(rcs("rcs"), "encryption").length, 1, "an RCS path with no adapter named: the provider");
+    assert.deepEqual(["rcs-twilio", "sms-sinch", "sms", "rcs-telnyx", "xmpp", null].map((name) => chat.providerName(name)), ["Twilio", "Sinch", "Telnyx", "Telnyx", "", ""]);
     // a thread: Sent and Delivered only, it has no read markers
     const reply = event({ eventSeq: 7, sentDate: 2000, senderUserId: "ann", threadRootEventSeq: 5, delivery: bridged.delivery });
     const thread = chat.messageInfo(reply, members, { me: "ann" });
@@ -1141,6 +1159,35 @@ test("Info (Comms-Messaging §4, COM-UI-008): Sent, a bridged message's delivery
     // a message that came in from a network says where from
     const inbound = chat.messageInfo(event({ eventSeq: 5, senderUserId: null, senderExternal: { network: "sms", networkName: "SMS" } }), members, { me: "ann" });
     assert.equal(chat.messageInfoLines(inbound, when).find((line) => line.key === "from").text, "SMS");
+});
+
+test("an RCS room's label (§16.5): in transit only from the brand's verified agent, its provider named, never a lock, in place of the SMS banner", () => {
+    const rcs = chat.e2eeLabel({ roomTypeEnumId: "CrtExternal", bridges: [{ network: "rcs", networkName: "RCS", adapterName: "rcs-sinch", encryption: "Transport" }] });
+    assert.deepEqual([rcs.state, rcs.lock, rcs.icon, rcs.badge, rcs.hint], ["rcs", false, "sym_o_lock_open", "sym_o_verified", "RCS message"]);
+    assert.equal(rcs.text, "RCS Business - not end-to-end encrypted");
+    assert.equal(rcs.banner, "Encrypted in transit only. Sinch, Google, carriers and this server can read it.");
+    assert.ok(chat.e2eeLabel({ bridgeNetworks: [{ network: "rcs" }] }).banner.startsWith("Encrypted in transit only. The provider,"), "a row with no adapter named");
+    assert.equal(chat.e2eeLabel({ roomTypeEnumId: "CrtExternal" }).state, "sms", "an SMS room keeps its banner");
+    // only an RCS bridge that sends out; another bridge of the room is said too
+    assert.equal(chat.e2eeLabel({ roomTypeEnumId: "CrtExternal", bridges: [{ network: "rcs", outbound: false }] }).state, "sms", "an inbound-only RCS bridge");
+    const both = chat.e2eeLabel({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "rcs", adapterName: "rcs-twilio" }, { network: "matrix", networkName: "Matrix" }] });
+    assert.equal(both.state, "rcs");
+    assert.ok(both.banner.startsWith("Encrypted in transit only. Twilio,") && both.banner.endsWith("The bridge reads messages to pass them on."), both.banner);
+    // a card the provider refused went as its text, and Info says so
+    const refused = chat.messageInfoLines(chat.messageInfo({ eventSeq: 5, sentDate: 1000, senderUserId: "ann", delivery: { state: "accepted", destinations: [
+        { networkName: "RCS", state: "accepted", receipt: "delivered", path: "rcs", adapterName: "rcs-twilio", note: "richRefused" }] } }, [], { me: "ann" }), String);
+    assert.deepEqual(refused.filter((line) => line.key === "deliveryNote").map((line) => line.text), ["The provider refused the card; its text went instead."]);
+});
+
+test("a rich message's text form (§18.3 phase 13) is the server's (ChatRich.js): words, each card, links and calls, then the replies", () => {
+    assert.equal(chat.richFallback({ kind: "text", text: "Table for two?", suggestions: [{ type: "reply", text: "Yes" }, { type: "reply", text: "No" }] }),
+        "Table for two?\n\nReply: Yes, No");
+    assert.equal(chat.richFallback({ kind: "card", cards: [{ title: "Your order shipped", description: "Arrives Tuesday", suggestions: [
+        { type: "reply", text: "Thanks" }, { type: "url", text: "Track", url: "https://example.test/track/7" }, { type: "dial", text: "Call us", phone: "+15550109999" }] }] }),
+        "Your order shipped\nArrives Tuesday\nTrack: https://example.test/track/7\nCall us: +15550109999\nReply: Thanks");
+    assert.equal(chat.richFallback({ kind: "carousel", cards: [{ title: "Jacket", description: "Light", suggestions: [{ type: "reply", text: "Save" }] },
+        { description: "Roomy", suggestions: [{ type: "reply", text: "Save" }] }] }), "1. Jacket\nLight\nReply: Save\n\n2. Roomy\nReply: Save");
+    assert.equal(chat.richFallback({ kind: "card", cards: [{ description: "Words only", suggestions: [] }] }), "Words only");
 });
 
 test("before a send (§6.1 rule 3): a verified person's device not verified is a problem unless let through for the room by its key; one verified by emoji passes; a changed identity until let through by its master key", async () => {
@@ -1241,4 +1288,600 @@ test("the mail lines are asked once for the page within five minutes, by room; a
     await chat.mailLines(url, request);
     assert.equal(asked, 3);
     chat.mailCache = null;
+});
+
+// ---- one person across networks (plans/Comms-Messaging.md §11.1, phase 22) ----
+const personState = () => ({
+    personList: [
+        { personKey: "p:9", name: "Jane", nameFrom: "mine", userId: null, addresses: [{ addressKey: "tel:+15550001", kind: "tel", label: "+15550001" }],
+            rooms: [{ chatRoomId: "S1", network: "sms" }],
+            ways: [{ kind: "room", network: "sms", chatRoomId: "S1", number: "+15550001", fromNumber: "+15559999", best: true },
+                { kind: "text", network: "sms", number: "+15550002", fromNumber: "+15559999", blocked: true },
+                { kind: "room", network: "rcs", chatRoomId: "R1", number: "+15550001", fromNumber: "+15558888", reasonCode: "optedOut" },
+                { kind: "mail", network: "mail", address: "jane@example.org", url: "/qapps/BasicComms/Inbox/Compose?to=jane%40example.org" }] },
+        { personKey: "a:user:bob", name: "Bob Builder", nameFrom: "user", userId: "bob", addresses: [],
+            rooms: [{ chatRoomId: "D1", network: "moqui", encrypted: true }, { chatRoomId: "S2", network: "sms" }],
+            ways: [{ kind: "room", network: "moqui", chatRoomId: "D1", encrypted: true, best: true }, { kind: "room", network: "sms", chatRoomId: "S2", number: "+15550003" }] },
+        { personKey: "a:tel:+15550004", name: "Pat Contact", nameFrom: "contact", userId: null, rooms: [{ chatRoomId: "S3", network: "sms" }], ways: [] },
+    ],
+    roomPersonMap: { S1: "p:9", D1: "a:user:bob", S2: "a:user:bob", S3: "a:tel:+15550004" },
+});
+
+test("a person's ways: the server's order, the best first, each with its network and label; a blocked or opted-out way not usable", () => {
+    const ways = chat.waysOf(personState().personList[0], "S1", null);
+    assert.deepEqual(ways.map((way) => way.network + ":" + way.kind), ["sms:room", "sms:text", "rcs:room", "mail:mail"]);
+    assert.ok(ways[0].best && ways[0].current, "the room open now");
+    assert.equal(ways[0].label.state, "sms");
+    assert.match(ways[0].detail, /\+15550001 · from \+15559999/);
+    assert.equal(ways[1].usable, false);
+    assert.equal(ways[1].reason, "Blocked");
+    assert.equal(ways[2].usable, false);
+    assert.equal(ways[2].label.state, "rcs");
+    assert.equal(ways[3].label.state, "mail");
+    // a new direct chat's label: encrypted only when the server said so
+    assert.equal(chat.wayLabel({ kind: "direct", network: "moqui" }, true).lock, true);
+    assert.equal(chat.wayLabel({ kind: "direct", network: "moqui" }, null).lock, false);
+    assert.equal(chat.wayLabel({ kind: "room", network: "groupme" }).lock, false);
+});
+
+test("a person's name over a room's: mine and a user's name where they apply, the app's contact only where the phone has none", () => {
+    const state = personState();
+    const saved = chat.contactNamesOf;
+    chat.contactNamesOf = { "+15550004": "Pat (phone)" };
+    const rooms = [{ chatRoomId: "S1", roomTypeEnumId: "CrtExternal", roomName: "+15550001", displayName: "+15550001" },
+        { chatRoomId: "D1", roomTypeEnumId: "CrtDirect", displayName: "Bob B." }, { chatRoomId: "S2", roomTypeEnumId: "CrtExternal", roomName: "+15550003", displayName: "+15550003" },
+        { chatRoomId: "S3", roomTypeEnumId: "CrtExternal", roomName: "+15550004", displayName: "Pat (phone)" }];
+    chat.applyPeople(rooms, state);
+    assert.deepEqual(rooms.map((room) => room.displayName), ["Jane", "Bob B.", "Bob Builder", "Pat (phone)"]);
+    chat.contactNamesOf = saved;
+    assert.equal(chat.personOf("S2", state).personKey, "a:user:bob");
+    assert.equal(chat.personOf("X", state), null);
+});
+
+test("a way opens its room, makes a direct chat or a text, or goes to the Inbox; a move out of an encrypted room is said; the nudge", async () => {
+    const posted = [];
+    const post = (name, params) => { posted.push(name + ":" + JSON.stringify(params)); return Promise.resolve({ chatRoomId: "NEW", encrypted: true }); };
+    assert.deepEqual(await chat.openWay({ kind: "room", chatRoomId: "S1" }, post), { chatRoomId: "S1", encrypted: false });
+    // a made direct chat's encryption is the server's answer, not a guess
+    assert.deepEqual(await chat.openWay({ kind: "direct", network: "moqui", userId: "bob" }, post), { chatRoomId: "NEW", encrypted: true });
+    assert.deepEqual(await chat.openWay({ kind: "text", network: "sms", number: "+15550002", fromNumber: "+15559999" }, post), { chatRoomId: "NEW", encrypted: false });
+    assert.deepEqual(posted, ['createDirect:{"userIds":"bob"}', 'textRoom:{"textTo":"+15550002","textFrom":"+15559999"}'], "no encrypted flag: the server decides");
+    assert.deepEqual(await chat.openWay({ kind: "mail", url: "/qapps/BasicComms/Inbox/Compose?to=x" }, post), { url: "/qapps/BasicComms/Inbox/Compose?to=x" });
+    let refused = false;
+    await chat.openWay({ kind: "text" }, post).catch(() => { refused = true; });
+    assert.ok(refused, "a way with nothing to open is refused");
+    assert.match(chat.moveNote(true, false, "sms"), /Moved to SMS: not end-to-end encrypted/);
+    assert.equal(chat.moveNote(true, true, "moqui"), null);
+    assert.equal(chat.moveNote(false, false, "sms"), null);
+    // a moved draft never overwrites the room's own: both, the room's first, a blank line between
+    assert.equal(chat.joinDrafts("<p>theirs</p>", "<p>mine</p>"), "<p>theirs</p><p><br></p><p>mine</p>");
+    assert.equal(chat.joinDrafts("", "<p>mine</p>"), "<p>mine</p>");
+    assert.equal(chat.joinDrafts("<p>theirs</p>", "<p></p>"), "<p>theirs</p>");
+    const state = personState();
+    const bob = state.personList[1];
+    assert.equal(chat.nudgeWay(Object.assign({}, bob, { reachable: false }), { chatRoomId: "S2" }, false), null, "no nudge to a user I may not reach");
+    assert.equal(chat.nudgeWay(bob, { chatRoomId: "S2" }, false).chatRoomId, "D1", "Bob's SMS room offers his Moqui chat");
+    assert.equal(chat.nudgeWay(bob, { chatRoomId: "D1" }, false), null, "not in the Moqui chat itself");
+    assert.equal(chat.nudgeWay(bob, { chatRoomId: "S2" }, true), null, "closed for the room");
+    assert.equal(chat.nudgeWay(state.personList[0], { chatRoomId: "S1" }, false), null, "an outside person has none");
+});
+
+test("the people are asked once for the page and shared; a change asks again; the person components compile", async () => {
+    chat.peopleCache = null;
+    let asked = 0;
+    const request = () => { asked++; return Promise.resolve({ json: personState() }); };
+    const url = "/apps/BasicComms/Chat/people";
+    await chat.people(url, request);
+    await chat.people(url, request);
+    assert.equal(asked, 1);
+    chat.peopleChanged();
+    const state = await chat.people(url, request);
+    assert.equal(asked, 2);
+    assert.equal(state.personList.length, 3);
+    // the contacts away (the hook skipped or failed): kept 30 seconds, not five minutes
+    chat.peopleChanged();
+    const away = () => { asked++; return Promise.resolve({ json: Object.assign(personState(), { contactsSkipped: true }) }); };
+    assert.equal((await chat.people(url, away)).contactsAway, true);
+    assert.equal(chat.peopleCache.maxAge, 30000);
+    chat.peopleCache.at -= 30001;
+    await chat.people(url, request);
+    assert.equal(asked, 4, "asked again after 30 seconds");
+    chat.peopleCache = null;
+    chat.peopleState = null;
+    ["m-chat-networks", "m-chat-person"].forEach((name) => {
+        const comp = moqui.qvt.components[name];
+        assert.ok(comp && comp.template, name);
+        const errors = [];
+        compiler.compile(comp.template, { mode: "function", onError: (err) => errors.push(err.message) });
+        assert.deepEqual(errors, [], name);
+    });
+    const card = moqui.qvt.components["m-chat-person"];
+    assert.equal(card.computed.typed.call({ addText: "jane@example.org" }), "email:jane@example.org");
+    assert.equal(card.computed.typed.call({ addText: "+1 555 000 1234" }), "tel:+1 555 000 1234");
+    assert.equal(card.computed.typed.call({ addText: "Jane" }), null);
+});
+
+// Disappearing messages (plans/Comms-Messaging.md §18.3 phase 16; WebrootChatExpiry.js)
+test("disappearing messages: the timer in words, the server's clock, what is due, and the page's own expired signal", async () => {
+    const expiry = chat.expiry;
+    assert.deepEqual(expiry.options().map((option) => option.value), [0, 30, 300, 3600, 28800, 86400, 604800, 2419200]);
+    assert.equal(expiry.label(0), "Off");
+    assert.equal(expiry.label(28800), "8 hours");
+    assert.equal(expiry.label(172800), "2 days", "a value the dialog does not offer, by its largest unit");
+    assert.equal(expiry.short(30), "30s");
+    assert.equal(expiry.short(604800), "1w");
+    assert.equal(expiry.short(0), "");
+    assert.equal(expiry.left(61000, 0), "2m", "rounded up");
+    assert.equal(expiry.left(5 * 3600000, 0), "5h");
+    assert.equal(expiry.left(0, 5000), "0s");
+    // localized through t, the units as keys
+    const t = (key) => ({ "8 hours": "8 Stunden", "{count}m": "{count} Min.", "{count} days": "{count} Tage" })[key] || key;
+    assert.equal(expiry.label(28800, t), "8 Stunden");
+    assert.equal(expiry.label(172800, t), "2 Tage");
+    assert.equal(expiry.short(300, t), "5 Min.");
+    assert.equal(expiry.left(61000, 0, t), "2 Min.");
+    assert.equal(expiry.options(t)[4].label, "8 Stunden");
+    // a device 10 minutes slow goes by the server's clock; a late or kept answer does not move it back
+    expiry.resetClock();
+    const local = Date.now();
+    expiry.learn(local + 600000, local);
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5);
+    expiry.learn(local - 3600000, local);
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5, "the largest of the last offsets");
+    expiry.seen({ serverNow: local - 7200000, offline: { gapBefore: false } }, "RY");
+    assert.ok(Math.abs(expiry.now(local) - (local + 600000)) < 5, "an answer kept on the device is no clock");
+    const events = [{ eventSeq: 1, expireDate: 100 }, { eventSeq: 2, expireDate: 300 }, { eventSeq: 3 }];
+    assert.deepEqual(expiry.due(events, 200), [1]);
+    assert.equal(expiry.nextDue(events, 200), 300);
+    assert.equal(expiry.nextDue(events, 400), null);
+    // the page's timer: a due event is signalled as the server's push is, and its decrypted copy goes
+    expiry.resetClock();
+    chat.opened["RX:7"] = { content: { body: "secret" } };
+    const signals = [];
+    const off = chat.on("expired", (done) => signals.push(done));
+    expiry.seen({ room: { chatRoomId: "RX", messageTimerSeconds: 60 }, serverNow: Date.now(),
+        eventList: [{ eventSeq: 7, expireDate: Date.now() + 20 }, { eventSeq: 8, expireDate: Date.now() + 600000 }] }, "RX");
+    assert.equal(expiry.timerOf("RX"), 60);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    off();
+    assert.equal(signals.length, 1);
+    assert.deepEqual(signals[0].eventSeqList, [7]);
+    assert.equal(chat.opened["RX:7"], undefined, "the decrypted copy left the page");
+    assert.deepEqual(Object.keys(expiry.held.RX), ["8"]);
+    // the server's push: what it names and what is due by its time leave the page's timer
+    const pushed = chat.reduce({ typing: {}, unread: {}, reads: {}, openRooms: {}, presence: {} },
+        { topic: "chatRoom:RX", message: { kind: "expired", chatRoomId: "RX", before: Date.now() + 700000, eventSeqList: [8] } }, "ann", 1);
+    assert.deepEqual(pushed, { kind: "expired", chatRoomId: "RX", eventSeqList: [8], before: pushed.before });
+    chat.emit("expired", pushed);
+    assert.equal(expiry.held.RX, undefined);
+    // no app host: screenshots cannot be stopped here
+    assert.equal(expiry.canSecure(), false);
+    assert.equal(await expiry.secureScreen("viewOnce", true), false);
+    expiry.resetClock();
+});
+
+// ---- scheduled sends and reminders (plans/Comms-Messaging.md phase 15) ----
+
+test("the times offered: Remind me in 20 minutes, an hour and tomorrow at 9; Send later's Monday morning only from a Friday or Saturday", () => {
+    // a Friday 15:30:20 and a Wednesday 15:30, in the user's zone (UTC here)
+    moqui.l10n.setTimeZone("UTC");
+    try {
+    const friday = Date.UTC(2026, 10, 20, 15, 30, 20);
+    const wednesday = Date.UTC(2026, 10, 18, 15, 30);
+    const remind = chat.whenChoices("remind", friday);
+    assert.deepEqual(remind.map((choice) => choice.key), ["minutes20", "hour", "tomorrow"]);
+    assert.equal(remind[0].at, Date.UTC(2026, 10, 20, 15, 51), "a whole minute, never before the 20 minutes");
+    assert.equal(remind[1].at, Date.UTC(2026, 10, 20, 16, 31));
+    assert.equal(remind[2].at, Date.UTC(2026, 10, 21, 9, 0));
+    const later = chat.whenChoices("send", friday);
+    assert.deepEqual(later.map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon", "monday"]);
+    assert.equal(later[3].at, Date.UTC(2026, 10, 23, 8, 0));
+    assert.deepEqual(chat.whenChoices("send", wednesday).map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon"]);
+    assert.equal(chat.whenChoices("send", Date.UTC(2026, 10, 21, 10, 0)).slice(-1)[0].at, Date.UTC(2026, 10, 23, 8, 0), "from a Saturday");
+    assert.ok(remind.concat(later).every((choice) => chat.timeAllowed(choice.at, friday)));
+    assert.equal(chat.timeAllowed(friday + 30000, friday), false, "less than a minute ahead");
+    assert.equal(chat.timeAllowed(friday - 60000, friday), false);
+    assert.equal(chat.timeAllowed(friday + 367 * 86400000, friday), false, "more than a year ahead");
+    assert.equal(chat.timeAllowed(NaN, friday), false);
+    } finally {
+        moqui.l10n.setTimeZone(null);
+    }
+});
+
+test("a room's scheduled line, a message's reminder and this device's held messages due", () => {
+    const list = [{ chatScheduledMessageId: "S1", chatRoomId: "R1", status: "scheduled", sendDate: 5000 },
+        { chatScheduledMessageId: "S2", chatRoomId: "R1", status: "scheduled", sendDate: 3000, held: true, heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S3", chatRoomId: "R1", status: "failed", sendDate: 1000, reasonCode: "notMember" },
+        { chatScheduledMessageId: "S4", chatRoomId: "R1", status: "scheduled", sendDate: 2000, held: true, heldByDeviceId: "DEV2", deviceGone: true },
+        { chatScheduledMessageId: "S5", chatRoomId: "R1", status: "sent", sentLate: true, held: true, heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S6", chatRoomId: "R2", status: "scheduled", sendDate: 1000, held: true, heldByDeviceId: "DEV1" }];
+    assert.deepEqual(chat.scheduledLine(list, "R1"), { waiting: 2, failed: 2, late: 1, next: 3000, total: 5 });
+    assert.deepEqual(chat.scheduledLine(list, "R3"), { waiting: 0, failed: 0, late: 0, next: null, total: 0 });
+    assert.deepEqual(chat.dueHeld(list, "DEV1", 3000).map((row) => row.chatScheduledMessageId), ["S2", "S6"]);
+    assert.deepEqual(chat.dueHeld(list, "DEV1", 2999).map((row) => row.chatScheduledMessageId), ["S6"]);
+    assert.deepEqual(chat.dueHeld(list, "DEV2", 9000), [], "a device gone sends nothing");
+    assert.deepEqual(chat.dueHeld(list, null, 9000), []);
+    const reminders = [{ chatMessageReminderId: "M1", chatRoomId: "R1", eventSeq: 4, remindDate: 9000 }];
+    assert.equal(chat.reminderOf(reminders, "R1", "4").chatMessageReminderId, "M1");
+    assert.equal(chat.reminderOf(reminders, "R1", 5), null);
+    assert.equal(chat.reminderOf(reminders, "R2", 4), null);
+});
+
+test("a held draft is stored sealed, never as its text, opened again by its device, and dropped", async () => {
+    const seal = (text) => Promise.resolve({ v: 1, iv: "aXY", data: btoa(text.split("").reverse().join("")) });
+    const open = (sealed) => Promise.resolve(atob(sealed.data).split("").reverse().join(""));
+    const draft = { body: "<p>The secret plan</p>", replyToEventSeq: 7, threadRootEventSeq: null };
+    await chat.keepHeld("S9", draft, seal);
+    const stored = localStorage.getItem(chat.heldKey());
+    assert.ok(stored && !stored.includes("secret"), "only the sealed draft is stored");
+    assert.equal(chat.hasHeld("S9"), true);
+    assert.deepEqual(await chat.openHeld("S9", open), draft);
+    assert.equal(await chat.openHeld("S8", open), null, "none of another device's");
+    chat.dropHeld("S9");
+    assert.equal(chat.hasHeld("S9"), false);
+    assert.equal(localStorage.getItem(chat.heldKey()), null);
+    let refused = false;
+    try { await chat.keepHeld("S7", draft, () => Promise.reject(new Error("no key"))); } catch (err) { refused = true; }
+    assert.ok(refused, "a draft that cannot be sealed is not kept");
+    assert.equal(chat.hasHeld("S7"), false);
+});
+
+test("a schedule push to the user is answered so Chat reads the lists again", () => {
+    const state = freshState();
+    assert.deepEqual(chat.reduce(state, push("chatUser:ann", { kind: "schedule", chatRoomId: "R1", what: "reminder" }), "ann", 1),
+        { kind: "schedule", chatRoomId: "R1", what: "reminder" });
+});
+
+test("the times offered follow the user's zone, not the device's: tomorrow and Monday are the user's", () => {
+    moqui.l10n.setTimeZone("Pacific/Auckland");
+    try {
+        // Friday 2026-11-20 at 20:00 in Auckland (UTC+13) is 07:00 UTC that day
+        const now = Date.UTC(2026, 10, 20, 7, 0);
+        const later = chat.whenChoices("send", now);
+        assert.deepEqual(later.map((choice) => choice.key), ["hour", "tomorrowMorning", "tomorrowAfternoon", "monday"], "a Friday there");
+        assert.equal(later[1].at, Date.UTC(2026, 10, 20, 19, 0), "Saturday 08:00 in Auckland");
+        assert.equal(later[3].at, Date.UTC(2026, 10, 22, 19, 0), "Monday 08:00 in Auckland");
+        assert.equal(chat.whenChoices("remind", now)[2].at, Date.UTC(2026, 10, 20, 20, 0), "tomorrow at 9:00 there");
+        assert.equal(chat.wallTime("2026-11-21T08:30"), Date.UTC(2026, 10, 20, 19, 30), "a picked time is read in the user's zone");
+        assert.ok(Number.isNaN(chat.wallTime("tomorrow")));
+    } finally {
+        moqui.l10n.setTimeZone(null);
+    }
+});
+
+test("the drafts this device no longer holds waiting are dropped on a read of the schedule", () => {
+    chat.writeHeld({ S1: { v: 1 }, S2: { v: 1 }, S3: { v: 1 }, S4: { v: 1 } });
+    const dropped = chat.pruneHeld([{ chatScheduledMessageId: "S1", held: true, status: "scheduled", heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S2", held: true, status: "cancelled", heldByDeviceId: "DEV1" },
+        { chatScheduledMessageId: "S3", held: true, status: "scheduled", heldByDeviceId: "DEV2" }], "DEV1");
+    assert.deepEqual(dropped.sort(), ["S2", "S3", "S4"]);
+    assert.deepEqual(Object.keys(chat.readHeld()), ["S1"]);
+    chat.dropHeld("S1");
+});
+
+test("a draft sealed under this device's store key opens again here only, and a changed one does not open", async () => {
+    if (!(globalThis.crypto && globalThis.crypto.subtle)) return;
+    const was = { vue: moqui.webrootVue, fetch: globalThis.fetch };
+    const asked = [];
+    const pointer = moqui.scopedKey("moqui.crypto.device.sealer");
+    moqui.webrootVue = { userId: "sealer" };
+    localStorage.setItem(pointer, JSON.stringify({ deviceId: "SD1", user_id: "@sealer:example" }));
+    globalThis.fetch = (to, init) => {
+        asked.push(to);
+        const body = JSON.parse((init && init.body) || "{}");
+        return Promise.resolve({ ok: true, status: 200, headers: { get: () => null },
+            text: () => Promise.resolve(JSON.stringify({ storeKey: "store-key-of-" + body.deviceId })) });
+    };
+    try {
+        const sealed = await moqui.crypto.sealLocal("<p>The plan</p>");
+        assert.ok(sealed.v === 1 && sealed.iv && sealed.data && !JSON.stringify(sealed).includes("plan"));
+        assert.equal(await moqui.crypto.openLocal(sealed), "<p>The plan</p>");
+        assert.ok(asked.length && asked.every((to) => /\/ChatKeys\/storeKey$/.test(to)));
+        let changed = false;
+        try { await moqui.crypto.openLocal(Object.assign({}, sealed, { data: "AAAA" + sealed.data.slice(4) })); } catch (err) { changed = true; }
+        assert.ok(changed, "a changed draft does not open");
+        localStorage.setItem(pointer, JSON.stringify({ deviceId: "SD2", user_id: "@sealer:example" }));
+        let other = false;
+        try { await moqui.crypto.openLocal(sealed); } catch (err) { other = true; }
+        assert.ok(other, "another device's key does not open it");
+    } finally {
+        localStorage.removeItem(pointer);
+        moqui.webrootVue = was.vue;
+        globalThis.fetch = was.fetch;
+    }
+});
+
+test("a held message's send: claimed, sealed and sent with its claim checked; a lost report, a lost draft, a refusal counted, a review, a cancel meanwhile", async () => {
+    const was = { request: moqui.request, crypto: moqui.crypto, seal: chat.sealMessage };
+    const url = (name) => "/apps/BasicComms/Chat/" + name;
+    let answers = {};
+    let asked = [];
+    moqui.request = (to, options) => {
+        const name = to.split("/").pop();
+        asked.push({ name, params: (options && options.params) || {} });
+        const answer = answers[name];
+        return answer && answer.reject ? Promise.reject(answer.reject) : Promise.resolve({ json: answer || {} });
+    };
+    moqui.crypto = { thisDeviceId: () => "DEV1", openLocal: (sealed) => Promise.resolve(atob(sealed.data)) };
+    let sealError = null;
+    chat.sealMessage = (roomId, members, html) => (sealError ? Promise.reject(sealError)
+        : Promise.resolve({ encryptedJson: JSON.stringify({ sealed: html, to: members }), mentionUserIds: "" }));
+    const row = { chatScheduledMessageId: "H1", chatRoomId: "R9", held: true, heldByDeviceId: "DEV1", status: "scheduled", sendDate: 1 };
+    const keep = () => chat.keepHeld("H1", { body: "<p>Later</p>", replyToEventSeq: null, threadRootEventSeq: null },
+        (text) => Promise.resolve({ v: 1, iv: "x", data: btoa(text) }));
+    const names = () => asked.map((call) => call.name);
+    try {
+        await keep();
+        answers = { claimHeld: { claimed: true, clientRef: "sched:H1" }, room: { memberList: [{ userId: "ann" }, { userId: "bob" }] }, sendHeld: { eventSeq: 12 } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { sent: true, sentLate: false });
+        assert.deepEqual(names(), ["claimHeld", "room", "sendHeld"]);
+        assert.equal(asked[2].params.deviceId, "DEV1");
+        assert.deepEqual(JSON.parse(asked[2].params.encryptedJson).to, ["ann", "bob"]);
+        assert.equal(chat.hasHeld("H1"), false, "the draft goes once it is sent");
+        // the report was lost: the claim finds it sent
+        await keep();
+        answers = { claimHeld: { sent: true } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { sent: true });
+        assert.equal(chat.hasHeld("H1"), false);
+        // no draft here: reported lost
+        asked = [];
+        answers = { completeHeld: {} };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { lost: true });
+        assert.equal(asked[0].params.draftLost, true);
+        // a refusal of the send: one try, reported with its reason; the fifth fails it
+        await keep();
+        asked = [];
+        answers = { claimHeld: { claimed: true, clientRef: "sched:H1" }, room: { memberList: [] },
+            sendHeld: { reject: { status: 400, json: { reasonCode: "sendRefused", errors: "No" } } }, reportHeld: { failed: false } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { retry: true });
+        assert.equal(asked.find((call) => call.name === "reportHeld").params.reasonCode, "sendRefused");
+        answers.reportHeld = { failed: true };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { failed: true });
+        assert.equal(chat.hasHeld("H1"), true, "the draft stays until the list drops it");
+        // a verified person's new device: a review, not a try
+        asked = [];
+        sealError = { reasonCode: "verifiedUserProblem", problems: [{ userId: "bob" }] };
+        answers.reportHeld = {};
+        const review = await chat.sendHeld(row, url, false);
+        assert.equal(review.review, true);
+        assert.equal(review.error.reasonCode, "verifiedUserProblem");
+        assert.equal(asked.find((call) => call.name === "reportHeld").params.review, "true");
+        sealError = null;
+        // cancelled meanwhile: nothing went from here
+        answers.sendHeld = { reject: { status: 400, json: { reasonCode: "notClaimed" } } };
+        assert.deepEqual(await chat.sendHeld(row, url, false), { waiting: true, reasonCode: "notClaimed" });
+        // no answer: rejects, the row and the draft stay
+        answers.claimHeld = { reject: { status: 0 } };
+        let rejected = false;
+        try { await chat.sendHeld(row, url, false); } catch (err) { rejected = true; }
+        assert.ok(rejected);
+        assert.equal(chat.hasHeld("H1"), true);
+        // another device's row: nothing asked
+        asked = [];
+        assert.deepEqual(await chat.sendHeld(Object.assign({}, row, { heldByDeviceId: "DEV2" }), url, false), { waiting: true });
+        assert.equal(asked.length, 0);
+    } finally {
+        chat.dropHeld("H1");
+        moqui.request = was.request;
+        moqui.crypto = was.crypto;
+        chat.sealMessage = was.seal;
+    }
+});
+
+// ---- invite links and text members (Comms-Messaging §18.3 phases 17 and 18; js/WebrootChatJoin.js) ----
+
+test("an invite link's expiry and uses read as words, its state follows them, and its URL is on this origin", () => {
+    const invites = chat.invites;
+    const now = 1000000000;
+    assert.equal(invites.expiryText(null, now), "No end");
+    assert.equal(invites.expiryText(now - 1, now), "Expired");
+    assert.equal(invites.expiryText(now + 10 * 60000, now), "Ends in 10 min");
+    assert.equal(invites.expiryText(now + 5 * 3600000, now), "Ends in 5 h");
+    assert.equal(invites.expiryText(now + 7 * 86400000, now), "Ends in 7 days");
+    assert.equal(invites.usesText(3, null), "3 used");
+    assert.equal(invites.usesText(3, 10), "3 of 10 used");
+    assert.equal(invites.linkState({ expiryDate: now - 1 }, now), "expired");
+    assert.equal(invites.linkState({ maxUses: 5, useCount: 5 }, now), "usedUp");
+    assert.equal(invites.linkState({ maxUses: 5, useCount: 4, expiryDate: null }, now), "ok");
+    assert.equal(invites.urlOf("/join/abc", "https://chat.example.com/"), "https://chat.example.com/join/abc");
+    assert.deepEqual(invites.EXPIRY_CHOICES.map((choice) => choice.value), [1, 24, 168, 720, 0]);
+});
+
+test("the membership lines of a join by link, an add by text and a leave by STOP; others are left to the room", () => {
+    const invites = chat.invites;
+    assert.equal(invites.membershipLine({ action: "join", via: "link" }, "Ann", "Bo"), "Ann joined by an invite link");
+    assert.equal(invites.membershipLine({ action: "add", via: "text" }, "Dee", "Bo"), "Bo added Dee by text");
+    assert.equal(invites.membershipLine({ action: "leave", via: "stop" }, "Dee", null), "Dee left by replying STOP");
+    assert.equal(invites.membershipLine({ action: "join" }, "Ann", null), null);
+    assert.equal(invites.membershipLine(null, "Ann", null), null);
+});
+
+test("a room's text members: the composer's cost line, the add dialog's note, the one-room limit and a member's state", () => {
+    const texts = chat.texts;
+    assert.equal(texts.costLine(0), "");
+    assert.equal(texts.costLine(1), "Also sent as a text to 1 number");
+    assert.equal(texts.costLine(3), "Also sent as a text to 3 numbers");
+    assert.ok(texts.costNote(3).includes("With 3 text members, one message is 3 texts"));
+    assert.equal(texts.takenText("Choir"), "This person is already a text member of Choir on this number; another number is needed.");
+    assert.ok(texts.takenText("Choir", true).includes("Choir, which is archived"));
+    assert.ok(texts.pairWarning().includes("comes to this room instead of that conversation"));
+    assert.equal(texts.stateText({}), "");
+    assert.equal(texts.stateText({ optedOut: true, lastFailure: "x" }), "Replied STOP: gets no texts");
+    assert.equal(texts.stateText({ roomTextsOff: true }), "Texts off: the number no longer carries room texts");
+    assert.equal(texts.stateText({ lastFailure: "dailyLimit" }), "The last text was not sent (dailyLimit)");
+    assert.equal(texts.stateText({ welcomeReasonCode: "retry" }), "The welcome text was not sent (retry)");
+    assert.equal(texts.stateText({ welcomeReasonCode: "uncertain", welcomeDate: 5 }), "");
+});
+
+test("a joinRequests push to a room's moderators passes through the store with its count", () => {
+    const state = freshState();
+    assert.deepEqual(chat.reduce(state, push("chatRoom:R1", { kind: "joinRequests", chatRoomId: "R1", pendingCount: 3 }), "ann", 1),
+        { kind: "joinRequests", chatRoomId: "R1", pendingCount: 3 });
+});
+
+test("the join components compile, and WebrootVue.qvt.js registers them", () => {
+    for (const name of ["m-chat-invites", "m-chat-join-requests", "m-chat-text-members"]) {
+        const comp = moqui.qvt.components[name];
+        assert.ok(comp && comp.template, name);
+        const errors = [];
+        compiler.compile(comp.template, { mode: "function", onError: (err) => errors.push(err.message) });
+        assert.deepEqual(errors, [], name);
+    }
+});
+
+test("an event's times: a wall clock in its zone, the box's start and end, the viewer's zone note, the reminders still ahead, the counts", () => {
+    const cal = chat.cal;
+    const start = Date.UTC(2030, 10, 23, 21, 0);
+    const event = { title: "Picnic", start, end: start + 7200000, timeZone: "America/Denver", allDay: false, going: 2, maybe: 0, no: 1 };
+    try {
+        moqui.l10n.setTimeZone("America/New_York");
+        assert.equal(cal.wallIn("2030-11-23", "14:00", "America/Denver"), start);
+        assert.equal(cal.wallIn("2030-07-04", "14:00", "America/Denver"), Date.UTC(2030, 6, 4, 20, 0), "summer time");
+        assert.equal(cal.zoneNote(event), "14:00 in America/Denver");
+        moqui.l10n.setTimeZone("America/Denver");
+        assert.equal(cal.zoneNote(event), "", "the same wall clock: no note");
+        assert.deepEqual(cal.boxFields(event), { startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "16:00" });
+        assert.deepEqual(cal.boxTimes({ timeZone: "America/Denver", allDay: false, startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "16:00" }),
+            { start, end: start + 7200000 });
+        assert.deepEqual(cal.boxTimes({ timeZone: "America/Denver", allDay: true, startDay: "2030-11-24", endDay: "2030-11-24" }),
+            { start: Date.UTC(2030, 10, 24, 7), end: Date.UTC(2030, 10, 25, 7) }, "a whole day: midnight to midnight there");
+        assert.equal(cal.boxTimes({ timeZone: "America/Denver", allDay: false, startDay: "2030-11-23", startTime: "14:00", endDay: "2030-11-23", endTime: "13:00" }), null);
+        assert.deepEqual(cal.remindChoices(event, start - 30 * 60000).map((one) => one.minutes), [0, 15], "only those still ahead");
+        assert.deepEqual(cal.remindChoices(event, start - 3 * 86400000).map((one) => one.minutes), [0, 15, 60, 1440]);
+        assert.equal(cal.countLine(event), "2 going · 1 can't go");
+        assert.equal(cal.countLine({ going: 0, maybe: 0, no: 0 }), "No answers yet");
+        assert.equal(cal.canAnswer(event, start), true);
+        assert.equal(cal.canAnswer(event, start + 7200000), false, "over");
+        assert.equal(cal.canAnswer(Object.assign({}, event, { cancelled: true }), start), false);
+        assert.equal(cal.myAnswer(Object.assign({}, event, { mine: { answer: "maybe" } })), "maybe");
+        assert.ok(cal.when(event).length > 0);
+    } finally {
+        moqui.l10n.setTimeZone(null);
+    }
+});
+
+test("a place typed or pasted: coordinates, degrees, a geo: URI, three maps links, an address; its words as the server's, its links, out of range refused", () => {
+    const place = chat.place;
+    assert.deepEqual(place.parse("40.7452, -111.875"), { latitude: 40.7452, longitude: -111.875 });
+    assert.deepEqual(place.parse("40°44'42.8\"N 111°52'30.0\"W"), { latitude: 40.745222, longitude: -111.875 });
+    assert.deepEqual(place.parse("geo:45.5,-122.6?q=45.5,-122.6(The shop)"), { latitude: 45.5, longitude: -122.6 });
+    assert.deepEqual(place.parse("geo:0,0?q=1+Main+St"), { address: "1 Main St" });
+    assert.deepEqual(place.parse("https://www.openstreetmap.org/?mlat=45.5&mlon=-122.6#map=17/45.5/-122.6"), { latitude: 45.5, longitude: -122.6 });
+    assert.deepEqual(place.parse("https://www.google.com/maps/place/Cafe/@45.5231,-122.6765,17z"), { latitude: 45.5231, longitude: -122.6765 });
+    assert.deepEqual(place.parse("https://maps.apple.com/?ll=45.5,-122.6&q=Cafe"), { latitude: 45.5, longitude: -122.6 });
+    assert.equal(place.parse("https://example.com/somewhere"), null, "a link with no coordinates is no place");
+    assert.deepEqual(place.parse("  600 E 900 S,  Salt Lake City "), { address: "600 E 900 S, Salt Lake City" });
+    assert.equal(place.parse("91, 10"), null, "coordinates out of range: no place");
+    assert.equal(place.parse(""), null);
+    // the words the server makes for the same place (ChatLocation.js fallbackText, the ChatLocation spec)
+    assert.equal(place.fallback({ latitude: 40.74521, longitude: -111.875, label: "Liberty Park", address: "600 E 900 S, Salt Lake City" }),
+        "Location: Liberty Park, 600 E 900 S, Salt Lake City\nhttps://www.openstreetmap.org/?mlat=40.745210&mlon=-111.875000#map=17/40.745210/-111.875000");
+    assert.equal(place.fallback({ address: "10 Downing St, London" }),
+        "Location: 10 Downing St, London\nhttps://www.openstreetmap.org/search?query=10%20Downing%20St%2C%20London");
+    assert.equal(place.geoUri({ latitude: 45.5, longitude: -122.6, label: "Joe's & Co" }), "geo:45.500000,-122.600000?q=45.500000,-122.600000(Joe's%20%26%20Co)");
+    assert.equal(place.geoUri({ address: "1 Main St" }), "geo:0,0?q=1%20Main%20St");
+    assert.equal(place.coordinatesText({ latitude: 45.5, longitude: -122.6, accuracy: 12.4 }), "45.5, -122.6 ± 12 m");
+    assert.equal(place.clean({ latitude: 200, longitude: 0 }), null, "a decrypted place out of range is dropped");
+    assert.deepEqual(place.clean({ latitude: "1.5", longitude: 2, source: "x" }), { latitude: 1.5, longitude: 2, source: "typed" });
+});
+
+test("stickers found by emoji or words across packs, and the ones sent last kept newest first", () => {
+    const packs = [{ chatStickerPackId: "P1", stickers: [{ chatStickerId: "S1", emoji: "👍", altText: "thumbs up" }, { chatStickerId: "S2", emoji: "🎉", altText: "party" }] },
+        { chatStickerPackId: "P2", stickers: [{ chatStickerId: "S3", emoji: "👍", altText: "Okay" }] }];
+    assert.deepEqual(chat.stickers.search(packs, "👍").map((one) => one.chatStickerId), ["S1", "S3"]);
+    assert.deepEqual(chat.stickers.search(packs, "PARTY").map((one) => one.chatStickerId), ["S2"]);
+    assert.equal(chat.stickers.search(packs, "").length, 3);
+    chat.stickers.remember("ann", "S2");
+    chat.stickers.remember("ann", "S1");
+    assert.deepEqual(chat.stickers.remember("ann", "S2"), ["S2", "S1"]);
+    assert.deepEqual(chat.stickers.recent("ann").slice(0, 2), ["S2", "S1"]);
+    assert.equal(chat.stickers.clean({ chatStickerId: "S1", width: 9000, emoji: "👍" }).width, 512);
+});
+
+test("screen security: the whole app, an encrypted room by the setting, any room by the member's own switch; a code's line", () => {
+    const screen = chat.screen;
+    assert.equal(screen.wanted("app", { encrypted: false }, null), true);
+    assert.equal(screen.wanted("encrypted", { encrypted: true }, null), true);
+    assert.equal(screen.wanted("encrypted", { encrypted: false }, null), false);
+    assert.equal(screen.wanted("off", { encrypted: true }, null), false);
+    assert.equal(screen.wanted("off", { encrypted: true }, { screenSecure: "Y" }), true);
+    assert.equal(chat.otp.line({ otp: { code: "482913" } }), "Code 482913");
+    assert.equal(chat.otp.line({}), "");
+});
+
+test("a photo goes smaller: 2048 px as a JPEG from 4000 x 3000, stepped under a limit; a small PNG, a GIF and a video as they are", async () => {
+    const photos = chat.photos;
+    const canvas = document.createElement("canvas");
+    canvas.width = 4000;
+    canvas.height = 3000;
+    const context = canvas.getContext("2d");
+    // noise, so the JPEG has something to make smaller
+    const image = context.createImageData(4000, 3000);
+    for (let i = 0; i < image.data.length; i += 4) {
+        image.data[i] = (i * 7919) % 256; image.data[i + 1] = (i * 104729) % 256; image.data[i + 2] = (i * 31) % 256; image.data[i + 3] = 255;
+    }
+    context.putImageData(image, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
+    const photo = new File([blob], "IMG_0001.JPG", { type: "image/jpeg" });
+    const small = await photos.compress(photo, {});
+    assert.equal(small.type, "image/jpeg");
+    assert.equal(small.name, "IMG_0001.jpg");
+    assert.ok(small.size < photo.size, small.size + " < " + photo.size);
+    const bitmap = await createImageBitmap(small);
+    assert.equal(Math.max(bitmap.width, bitmap.height), 2048);
+    const limit = Math.floor(small.size / 2);
+    const fitted = await photos.compress(photo, { maxBytes: limit });
+    assert.ok(fitted.size <= limit || fitted.size < small.size, fitted.size + " under " + limit);
+    // a small JPEG drawn again comes out no smaller, and is still the one sent: its metadata goes
+    const tiny = document.createElement("canvas");
+    tiny.width = 40; tiny.height = 30;
+    const jpeg = new File([await new Promise((resolve) => tiny.toBlob(resolve, "image/jpeg", 0.3))], "small.jpg", { type: "image/jpeg" });
+    const redrawn = await photos.compress(jpeg, {});
+    assert.notEqual(redrawn, jpeg, "drawn again, though no smaller");
+    assert.equal(redrawn.type, "image/jpeg");
+    // a small PNG with a text chunk (a GPS note) stays a PNG, drawn again without the chunk
+    const bytes = new Uint8Array(await (await new Promise((resolve) => tiny.toBlob(resolve, "image/png"))).arrayBuffer());
+    const crcTable = Array.from({ length: 256 }, (n, c) => { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+    const crc = (data) => { let c = 0xffffffff; for (const b of data) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+    const text = new TextEncoder().encode("tEXtGPS\u000040.7452,-111.875");
+    const chunk = new Uint8Array(12 + text.length - 4);
+    new DataView(chunk.buffer).setUint32(0, text.length - 4);
+    chunk.set(text, 4);
+    new DataView(chunk.buffer).setUint32(4 + text.length, crc(text));
+    const iend = bytes.length - 12;
+    const tagged = new Uint8Array(bytes.length + chunk.length);
+    tagged.set(bytes.subarray(0, iend), 0);
+    tagged.set(chunk, iend);
+    tagged.set(bytes.subarray(iend), iend + chunk.length);
+    const png = new File([tagged], "shot.png", { type: "image/png" });
+    const has = (array, word) => new TextDecoder("latin1").decode(array).includes(word);
+    assert.ok(has(tagged, "tEXtGPS"), "the test's PNG has its chunk");
+    const stripped = await photos.compress(png, {});
+    assert.equal(stripped.type, "image/png");
+    assert.ok(!has(new Uint8Array(await stripped.arrayBuffer()), "GPS"), "the chunk is gone");
+    assert.equal(photos.budget(1048576, 4), 262144);
+    assert.equal(photos.budget(0, 4), 0);
+    assert.equal(photos.compressible(new File(["x"], "a.gif", { type: "image/gif" })), false);
+    assert.equal(photos.compressible(new File(["x"], "a.mp4", { type: "video/mp4" })), false);
+    // a file the browser cannot read goes as it is
+    const broken = new File(["not a picture"], "x.jpg", { type: "image/jpeg" });
+    assert.equal(await photos.compress(broken, {}), broken);
+    assert.deepEqual(photos.steps(0).length, 1);
+});
+
+test("the whole app's screen security applies at once both ways, as this account's own reason", async () => {
+    const calls = [];
+    const was = { desktop: globalThis.moquiDesktop, scope: moqui.storageScope };
+    globalThis.moquiDesktop = { secureScreen: (reason, on) => { calls.push([reason, on]); return Promise.resolve(on); } };
+    moqui.storageScope = "acct-1";
+    try {
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "app");
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "encrypted");
+        moqui.applyPreference("CHAT_SCREEN_SECURITY", "");
+        await Promise.resolve();
+        assert.deepEqual(calls, [["app:acct-1", true], ["app:acct-1", false], ["app:acct-1", false]]);
+    } finally {
+        globalThis.moquiDesktop = was.desktop;
+        moqui.storageScope = was.scope;
+    }
 });

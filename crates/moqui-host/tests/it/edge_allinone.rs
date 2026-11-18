@@ -16,7 +16,7 @@
 //! calls, numbers and XMPP domain that is also the edge node of a local node with no listening port. The server runs
 //! in a child process of this test binary (the test `edge_allinone::server_process`), on a database of its own, as
 //! `edge_call.rs`'s edge node does: the media driver, the notification socket's bindings, the SIP engine, the XMPP
-//! server and the fixed DNS records are process globals, and `node_role` is a process property. The child answers
+//! server and the fixed DNS records are process globals, and `instance@node-role` is a process property. The child answers
 //! commands on its stdin (a service call as a user, a find, a direct write that skips the services' checks), so the
 //! test reads and changes the server's own data as it does the local node's. The local node runs in the test's
 //! process, pairs with the server, and its link is a dialer the test drives.
@@ -115,8 +115,11 @@ fn server_process() {
     let label = setup["label"].as_str().unwrap().to_string();
     let conf = setup["conf"].as_str().unwrap_or_default().to_string();
     let mut properties: Vec<(String, String)> = vec![
-        ("node_role".to_string(), "all-in-one".to_string()),
-        ("webapp_https_listen_port".to_string(), port),
+        ("moqui_conf__instance__node_role".to_string(), "all-in-one".to_string()),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port".to_string(),
+            port,
+        ),
     ];
     if let Some(map) = setup["properties"].as_object() {
         properties.extend(
@@ -294,7 +297,7 @@ struct Starting {
 }
 
 impl Server {
-    /// Start the server's process with these properties (beside `node_role=all-in-one` and its HTTPS port) and conf.
+    /// Start the server's process with these properties (beside `moqui_conf__instance__node_role=all-in-one` and its HTTPS port) and conf.
     fn spawn(label: &str, conf: &str, properties: &[(&str, &str)]) -> Starting {
         let (root, cert, key) = certs();
         let https_port = crate::common::free_port();
@@ -776,18 +779,23 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
         "aio-mail-server",
         CONF,
         &[
-            ("smtp_listen_port", "0"),
-            ("smtp_allowed_addresses", "127.0.0.1"),
-            ("smtp_hostname", "mx.server.example"),
-            ("edge_mail_mta", "moqui"),
-            ("edge_mail_bounce_domain", "bounce.server.example"),
-            ("mail_mx_override", &mx_override),
-            ("mail_delivery_retry_seconds", "0.2"),
-            ("mail_dns_offline", "true"),
+            ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
+            ("moqui_conf__smtp_server__hostname", "mx.server.example"),
+            ("moqui_conf__mail_delivery__mta", "moqui"),
+            ("mail-delivery@bounce-domain", "bounce.server.example"),
+            ("moqui_conf__mail_delivery__mx_override", &mx_override),
+            ("moqui_conf__mail_delivery__retry_seconds", "0.2"),
+            ("moqui_conf__mail_delivery__dns_offline", "true"),
         ],
     );
-    let local =
-        crate::common::start_with_conf_files("aio-mail-local", None, CONF, &[("mail_dns_offline", "true")], &[]);
+    let local = crate::common::start_with_conf_files(
+        "aio-mail-local",
+        None,
+        CONF,
+        &[("moqui_conf__mail_delivery__dns_offline", "true")],
+        &[],
+    );
     let server = starting.ready();
     let smtp_at = server.address("smtp");
     let account = |kind: &str, address: &str| {
@@ -1078,22 +1086,22 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
         "aio-own-server",
         CONF,
         &[
-            ("channels_webhooks_enabled", "true"),
-            ("channels_media_key", "an-all-in-one-test-key"),
-            ("smtp_hostname", "mx.server.example"),
-            ("edge_mail_bounce_domain", "bounce.server.example"),
-            ("xmpp_domain", XMPP_DOMAIN),
-            ("xmpp_port", "0"),
-            ("xmpp_host", "127.0.0.1"),
-            ("edge_xmpp_port", &tunnel_port),
-            ("edge_xmpp_host", "127.0.0.1"),
+            ("moqui_conf__channels__webhooks_enabled", "true"),
+            ("moqui_conf__channels__media_key", "an-all-in-one-test-key"),
+            ("moqui_conf__smtp_server__hostname", "mx.server.example"),
+            ("mail-delivery@bounce-domain", "bounce.server.example"),
+            ("moqui_conf__xmpp_server__domain", XMPP_DOMAIN),
+            ("moqui_conf__xmpp_server__port", "0"),
+            ("moqui_conf__xmpp_server__host", "127.0.0.1"),
+            ("moqui_conf__edge__xmpp_port", &tunnel_port),
+            ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
         ],
     );
     let local = crate::common::start_with_conf_files(
         "aio-own-local",
         None,
         CONF,
-        &[("channels_webhooks_enabled", "true")],
+        &[("moqui_conf__channels__webhooks_enabled", "true")],
         &[],
     );
     let server = starting.ready();
@@ -1362,19 +1370,22 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
         "aio-call-server",
         CONF,
         &[
-            ("rtc_media_port", "0"),
-            ("turn_port", "0"),
-            ("turn_relay_ports", "51400-51500"),
-            ("turn_auth_secret", "all-in-one-turn-secret"),
-            ("call_recording_enabled", "true"),
+            ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__media_server__turn_server__port", "0"),
+            ("moqui_conf__media_server__turn_server__relay_ports", "51400-51500"),
+            (
+                "moqui_conf__media_server__turn_server__auth_secret",
+                "all-in-one-turn-secret",
+            ),
+            ("moqui_conf__calls__recording__enabled", "true"),
         ],
     );
     let local = crate::common::start_with_properties(
         "aio-call-local",
         None,
         &[
-            ("turn_auth_secret", "desk-turn-secret"),
-            ("call_recording_enabled", "true"),
+            ("moqui_conf__media_server__turn_server__auth_secret", "desk-turn-secret"),
+            ("moqui_conf__calls__recording__enabled", "true"),
         ],
     );
     let server = starting.ready();
@@ -1718,14 +1729,18 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
         "aio-sip-server",
         CONF,
         &[
-            ("rtc_media_port", "0"),
-            ("sip_port", "0"),
-            ("sip_rtp_ports", "42700-42799"),
-            ("sip_registrar_enabled", "true"),
-            ("sip_domain", SERVER_DOMAIN),
+            ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__sip_server__port", "0"),
+            ("moqui_conf__sip_server__rtp_ports", "42700-42799"),
+            ("moqui_conf__sip_server__registrar__enabled", "true"),
+            ("moqui_conf__sip_server__domain", SERVER_DOMAIN),
         ],
     );
-    let local = crate::common::start_with_properties("aio-sip-local", None, &[("sip_domain", LOCAL_DOMAIN)]);
+    let local = crate::common::start_with_properties(
+        "aio-sip-local",
+        None,
+        &[("moqui_conf__sip_server__domain", LOCAL_DOMAIN)],
+    );
     let server = starting.ready();
     let sip_at = server.address("sip");
     assert!(local.server.sip_address().is_none(), "the local node has no SIP engine");

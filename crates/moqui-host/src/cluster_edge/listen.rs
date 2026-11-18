@@ -14,7 +14,7 @@
 
 //! The cluster listener (plans/archive/Cluster.md), on the host's runtime (`crate::edge::handle`): TLS with the shared
 //! cluster certificate, which the client must present too, then by ALPN gRPC on HTTP/2 (`moqui.cluster.v1.Cluster`,
-//! in a build with `grpc` and unless `cluster_protocol=rest`) or `POST /cluster/{topic}` on HTTP/1.1. Every message is
+//! in a build with `grpc` and unless `moqui_conf__cluster_member__protocol=rest`) or `POST /cluster/{topic}` on HTTP/1.1. Every message is
 //! applied through [`super::apply_topic`] on a blocking thread.
 //!
 //! Limits: [`MAX_CONNECTIONS`] at once, at most [`PER_SOURCE`] of them from one source (an IPv6 /64 is one), so one
@@ -75,7 +75,7 @@ pub(crate) fn listen(
 ) -> Result<ClusterEdge, HostError> {
     let material = super::load_material()?;
     let config = super::server_config(&material)?;
-    let port = super::listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?;
+    let port = super::listen_port(&moqui_core::context::conf_env::setting("cluster-member@https-port"))?;
     let bind = SocketAddr::from((super::bind_address()?, port));
     let apply_posts = Arc::clone(&posts);
     let members = Members::default();

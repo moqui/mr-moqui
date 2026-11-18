@@ -14,14 +14,14 @@
 
 //! The PASS authority over gRPC (plans/archive/Edge-Node.md §5.5): `moqui.pass.v1.PassAuthority`, generated from
 //! `proto/pass.proto` ([`proto`]), what mr-pass calls in place of the authority's REST routes. It is served
-//! - **direct**, on the host's gRPC listener (`crate::grpc_listen`) when `pass_authority_grpc_enabled=true`: a call names
+//! - **direct**, on the host's gRPC listener (`crate::grpc_listen`) when `moqui_conf__pass_authority__grpc_enabled=true`: a call names
 //!   a registered client in the `x-pass-client` metadata (or its `client_id`) with its secret in
 //!   `x-pass-client-secret`, which the framework's client check (the REST servlet's) accepts before anything runs;
 //! - **on the link**, on a local node's down connection (`edge_link::down`), for its edge node only and never for a
-//!   forwarded request: the link's mutual TLS is the client's identity, its client id `pass_edge_client` (`edge`).
+//!   forwarded request: the link's mutual TLS is the client's identity, its client id `edge/node@pass-client` (`edge`).
 //!
 //! Each call runs on the request pool through `moqui_core::pass_authority`, which runs the authority service
-//! (`pass_authority_service`, Mantle's `handle#Call`) with the visitor's address as data only. [`client`] is the other
+//! (`pass-authority@service`, Mantle's `handle#Call`) with the visitor's address as data only. [`client`] is the other
 //! end, the sender behind scripts' `ec.service.passAuthority(endpoint)`.
 
 use std::collections::HashMap;
@@ -43,13 +43,13 @@ mod client;
 pub(crate) mod proto;
 
 /// `true` opens the host's gRPC listener for direct PASS clients.
-pub(crate) const ENABLED_PROPERTY: &str = "pass_authority_grpc_enabled";
+pub(crate) const ENABLED_PROPERTY: &str = "pass-authority@grpc-enabled";
 /// The listener's port when the OTLP receiver is not on it too (it then shares the receiver's): 4317 by default.
-pub(crate) const PORT_PROPERTY: &str = "pass_authority_grpc_port";
+pub(crate) const PORT_PROPERTY: &str = "pass-authority@grpc-port";
 /// The listener's address when the OTLP receiver is not on it: the HTTP listener's by default.
-pub(crate) const HOST_PROPERTY: &str = "pass_authority_grpc_host";
+pub(crate) const HOST_PROPERTY: &str = "pass-authority@grpc-host";
 /// `true` serves direct clients on plain h2c at an address that is not loopback (their secrets in clear).
-pub(crate) const INSECURE_PROPERTY: &str = "pass_authority_grpc_insecure";
+pub(crate) const INSECURE_PROPERTY: &str = "pass-authority@grpc-insecure";
 /// The path prefix of the service's calls, which a local node's down connection takes from its edge node.
 pub(crate) const PATH_PREFIX: &str = "/moqui.pass.v1.PassAuthority/";
 /// The metadata that names a direct client, and its secret: the REST API's headers.
@@ -72,9 +72,9 @@ const HELD_WAIT: Duration = Duration::from_secs(5);
 /// A download's chunk.
 const CHUNK: usize = 64 * 1024;
 
-/// Whether the host's gRPC listener serves direct PASS clients (`pass_authority_grpc_enabled`).
+/// Whether the host's gRPC listener serves direct PASS clients (`pass-authority@grpc-enabled`).
 pub(crate) fn direct_enabled() -> bool {
-    moqui_lib::env::get_prop_or_env(ENABLED_PROPERTY).trim() == "true"
+    moqui_core::context::conf_env::setting(ENABLED_PROPERTY).trim() == "true"
 }
 
 /// `routes` with the direct service added when it is enabled.

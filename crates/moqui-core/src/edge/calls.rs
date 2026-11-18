@@ -19,7 +19,7 @@
 //! ([`super::EdgeLink::turn_probe`]).
 //!
 //! **Calls off.** E7 keeps the row from the link and `Calls.js` `liveMediaNodes` puts it first, so a paired node's new
-//! calls have their media on the edge node. With `edge_calls_enabled=false` in `runtime/.env` the link keeps the row
+//! calls have their media on the edge node. With `moqui_conf__edge__node__calls_enabled=false` in `runtime/.env` the link keeps the row
 //! as `draining`: `Calls.js` gives a draining node no new call, and calls already on the edge node go on (the row
 //! stays live, so `expire#Calls` does not end them and the delegated media events are still taken).
 
@@ -35,7 +35,7 @@ use crate::entity::EntityFacade;
 
 /// The local setting (`runtime/.env`) that turns the edge node's media node off for new calls: on unless it is
 /// `false`, `n`, `no`, `0` or `off`. Apply writes it; unpairing removes it.
-pub const CALLS_ENABLED: &str = "edge_calls_enabled";
+pub const CALLS_ENABLED: &str = "edge/node@calls-enabled";
 /// A media node's row is live while its heartbeat is this recent (`MEDIA_NODE_STALE_MS` in `Calls.js`).
 pub const STALE_MS: i64 = 60_000;
 /// The leg of the Test step's TURN credential: no leg of a call, and new each run.
@@ -49,7 +49,7 @@ const MAKE_ICE_SERVERS: &str = "org.moqui.call.CallServices.make#IceServers";
 /// Whether new calls may have their media on the edge node ([`CALLS_ENABLED`]).
 pub fn calls_enabled() -> bool {
     !matches!(
-        moqui_lib::env::get_prop_or_env(CALLS_ENABLED)
+        crate::context::conf_env::setting(CALLS_ENABLED)
             .trim()
             .to_ascii_lowercase()
             .as_str(),
@@ -275,7 +275,7 @@ pub fn media_address_problem(address: &str) -> Option<String> {
     local.then(|| {
         format!(
             "{ip} is not a public address, so browsers outside its network cannot reach the edge node's media: set \
-             rtc_public_address there"
+             media-server@public-address there"
         )
     })
 }
@@ -389,7 +389,7 @@ pub fn apply(
                 "calls",
                 false,
                 "This node has no live media node of its own, so no new call can start while calls are off: run one \
-                 (rtc_media_port) or turn calls on",
+                 (media-server@port) or turn calls on",
             )),
             Ok(_) => {}
             Err(err) => lines.push(SetupLine::new(
@@ -412,7 +412,7 @@ pub fn apply(
         SetupLine::new(
             "calls",
             false,
-            "The edge node runs no TURN (turn_port), so browsers behind strict firewalls may not connect",
+            "The edge node runs no TURN (media-server/turn-server@port), so browsers behind strict firewalls may not connect",
         )
     } else if super::media::turn_secret(factory, &edge.instance_id).is_some() {
         SetupLine::new(
@@ -428,7 +428,7 @@ pub fn apply(
             "calls",
             false,
             "The edge node's link handed this node no TURN secret, so its TURN refuses this node's browsers: set \
-             turn_auth_secret there and restart it",
+             media-server/turn-server@auth-secret there and restart it",
         )
     });
     let (ok, text) = row_check(facade, edge, crate::user::now_millis());
@@ -493,7 +493,7 @@ pub fn linked_media_node(status: &LinkStatus) -> Result<&EdgeInfo, String> {
         return Err(format!("The link is {}", status.state.as_str()));
     }
     if status.peer.instance_id.is_empty() || status.peer.media_address.is_empty() {
-        return Err("The edge node runs no media node (rtc_media_port)".to_string());
+        return Err("The edge node runs no media node (media-server@port)".to_string());
     }
     Ok(&status.peer)
 }

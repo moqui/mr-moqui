@@ -15,7 +15,7 @@
 //! Who may create the first administrator while no account exists (`create#InitialAdminAccount`, SEC-WEB-08,
 //! SEC-CLI-01): a request from this machine (a loopback peer, straight to the listener, through no proxy), or one that
 //! gives the one-time setup secret this server printed in its startup log. The secret is made once per server and
-//! held in memory only, so a restart makes a new one. None of it is offered unless `initial_admin_enabled` is true
+//! held in memory only, so a restart makes a new one. None of it is offered unless `user-facade/login@initial-admin-enabled` is true
 //! (`get#InitialAdminNeeded`; false in the default conf, true in the dev conf).
 
 use std::collections::BTreeMap;
@@ -83,7 +83,7 @@ pub fn initial_admin_allowed(given: &str) -> bool {
 }
 
 /// At startup, while no account exists, write the setup secret to the log with where it is used, so the operator (who
-/// reads the log) can create the first administrator from another machine. With `initial_admin_enabled` off it writes
+/// reads the log) can create the first administrator from another machine. With `user-facade/login@initial-admin-enabled` off it writes
 /// how to turn it on instead, and no secret. Nothing is written once an account exists.
 pub fn log_initial_admin_setup(factory: &Arc<ExecutionContextFactory>) {
     let ctx = factory.new_context();
@@ -101,8 +101,9 @@ pub fn log_initial_admin_setup(factory: &Arc<ExecutionContextFactory>) {
     };
     if flag("disabled") {
         tracing::warn!(
-            "No user account exists yet. To create the first administrator at /Login, set initial_admin_enabled=true \
-             (in .env or the environment) and restart; take it out again once the administrator is made."
+            "No user account exists yet. To create the first administrator at /Login, set \
+             moqui_conf__user_facade__login__initial_admin_enabled=true (in .env or the environment) and restart; take it \
+             out again once the administrator is made."
         );
         return;
     }

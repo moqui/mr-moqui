@@ -2,11 +2,11 @@
 
 MR Moqui runs as one process. It can use the embedded Postgres it ships, and it terminates HTTPS itself from certificates in the runtime `cert/` directory (the old nginx-proxy file names still work). These files are the Podman image and four stacks, plus a systemd unit that runs the binary with no container. Choosing a deployment, its properties, upgrades and clusters are in [docs/Run-Deploy.md](../docs/Run-Deploy.md).
 
-There is no nginx-proxy container. Nothing here publishes port 80 or 443. HTTP is 8080 and HTTPS is 8443, so a rootless Podman can bind them. Put a certificate in the data volume's `cert/` directory, then set `webapp_https_enabled=true` and `webapp_https_port=8443`. Until a certificate is there the HTTPS port is not listening; production does not mint one, and forcing the listen port with an empty `cert/` makes startup fail.
+There is no nginx-proxy container. Nothing here publishes port 80 or 443. HTTP is 8080 and HTTPS is 8443, so a rootless Podman can bind them. Put a certificate in the data volume's `cert/` directory, then set `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true` and `moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443`. Until a certificate is there the HTTPS port is not listening; production does not mint one, and forcing the listen port with an empty `cert/` makes startup fail.
 
 ## Image
 
-The image is the Maximal package: embedded Postgres and the MySQL driver, no dev tools. Debian 13 supplies glibc (the binary needs 2.38 or newer) and the libraries embedded Postgres loads, including `libxml2.so.2`. Chromium is not in the image. PDF stays unavailable until `moqui_chromium_path` points at one.
+The image is the Maximal package: embedded Postgres and the MySQL driver, no dev tools. Debian 13 supplies glibc (the binary needs 2.38 or newer) and the libraries embedded Postgres loads, including `libxml2.so.2`. Chromium is not in the image. PDF stays unavailable until `screen-facade/pdf@chromium-path` points at one.
 
 ```sh
 podman/build.sh            # ./moq build --release, then the image localhost/moqui:latest
@@ -53,13 +53,13 @@ podman compose -f podman/moqui-compose.yml up -d
 podman exec moqui-moqui-1 curl -fsS http://127.0.0.1:8080/health
 ```
 
-`/health` answers `{"ready":true}` only for loopback and for addresses in `webapp_status_ips` (default `127.0.0.1`). The check above runs inside the container, so it is loopback. A curl from the host to the published port is seen as the Podman bridge address and gets 404 until that address is added to `webapp_status_ips`.
+`/health` answers `{"ready":true}` only for loopback and for addresses in `webapp-list/webapp[webroot]@status-ips` (default `127.0.0.1`). The check above runs inside the container, so it is loopback. A curl from the host to the published port is seen as the Podman bridge address and gets 404 until that address is added to `webapp-list/webapp[webroot]@status-ips`.
 
 `podman/.env` supplies `MOQUI_DB_NAME`, `MOQUI_DB_USER`, `MOQUI_DB_PASSWORD`, and `MOQUI_DB_ROOT_PASSWORD`. The name and user default to `moqui`; the passwords have no default, and an external-database stack refuses to start until `MOQUI_DB_PASSWORD` (and, for MySQL, `MOQUI_DB_ROOT_PASSWORD`) is set. The database ports are not published; each file has a commented `ports` line that publishes Postgres `5432` or MySQL `3306` on `127.0.0.1` when you need to reach it from the host. OpenSearch is not published.
 
-An empty `entity_ds_sslmode` means verified TLS. The database containers do not serve a certificate this client can verify, so the external stacks set `entity_ds_sslmode=disable` on the compose network. For a real server with TLS, set `verify-full` and `entity_ds_sslrootcert` to its CA file.
+An empty the datasource's `sslmode` means verified TLS. The database containers do not serve a certificate this client can verify, so the external stacks set `moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslmode=disable` on the compose network. For a real server with TLS, set `verify-full` and the datasource's `sslrootcert` to its CA file.
 
-OpenSearch's client checks certificates and has no setting for a private CA. The image's HTTPS certificate is self-signed, so these stacks turn the security plugin off and use `http://opensearch:9200` inside the compose network. `opensearch_run=false` keeps the server from launching a copy under `runtime/opensearch`. OpenSearch runs as uid 1000 and refuses to start as root, so it cannot chown a new volume. Docker Compose, the usual `podman compose` provider, also drops Podman's `:U` volume flag, so the files do not use it. A one-shot `opensearch-init` container (Debian, as root) chowns the data volume to 1000 before OpenSearch starts. The host also needs the same sysctl Docker requires, or the OpenSearch process refuses to start:
+OpenSearch's client checks certificates and has no setting for a private CA. The image's HTTPS certificate is self-signed, so these stacks turn the security plugin off and use `http://opensearch:9200` inside the compose network. `moqui_conf__search_facade__cluster__run=false` keeps the server from launching a copy under `runtime/opensearch`. OpenSearch runs as uid 1000 and refuses to start as root, so it cannot chown a new volume. Docker Compose, the usual `podman compose` provider, also drops Podman's `:U` volume flag, so the files do not use it. A one-shot `opensearch-init` container (Debian, as root) chowns the data volume to 1000 before OpenSearch starts. The host also needs the same sysctl Docker requires, or the OpenSearch process refuses to start:
 
 ```sh
 sudo sysctl -w vm.max_map_count=262144
@@ -67,7 +67,7 @@ sudo sysctl -w vm.max_map_count=262144
 
 `bootstrap.memory_lock` is off. Rootless Podman usually cannot grant `IPC_LOCK`.
 
-The first start creates the tables and, on an empty database, loads the seed, seed-initial and install data (`entity_empty_db_load`). To load more later, such as the data of a component added to the image, use a one-off container while the server is stopped (a second process cannot open an embedded data directory the server already holds):
+The first start creates the tables and, on an empty database, loads the seed, seed-initial and install data (`tools@empty-db-load`). To load more later, such as the data of a component added to the image, use a one-off container while the server is stopped (a second process cannot open an embedded data directory the server already holds):
 
 ```sh
 podman compose -f podman/moqui-compose.yml run --rm moqui load types=seed,seed-initial,install

@@ -71,7 +71,7 @@
                         confirmation="Revert all ${overrideList.length} overrides to their on-disk values on every running instance?"/>
             </container>
         </container>
-        <label text="On-disk values come from the merged conf (MoquiDefaultConf, the components' MoquiConf, the runtime conf) and moqui_log_level; change them there and deploy. A change here is in memory, expires on its own, and is gone on restart. An instance that starts later has the on-disk values only." type="p"/>
+        <label text="On-disk values come from the merged conf (MoquiDefaultConf, the components' MoquiConf, the runtime conf) and logging@level; change them there and deploy. A change here is in memory, expires on its own, and is gone on restart. An instance that starts later has the on-disk values only." type="p"/>
         <section name="ReadOnly" condition="!settingsAllowed"><widgets>
             <label text="Changing these settings needs the MONITOR_SETTINGS permission." type="p"/>
         </widgets></section>

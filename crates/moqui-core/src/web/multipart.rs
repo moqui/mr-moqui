@@ -361,7 +361,7 @@ pub struct Spool {
     pub max_total: u64,
 }
 
-/// The default of `webapp_max_spool`: twice the default largest upload.
+/// The default of `webapp-list/webapp[webroot]/web-protection/requests@max-spool`: twice the default largest upload.
 const DEFAULT_MAX_SPOOL: u64 = 4 * 1024 * 1024 * 1024;
 
 /// The bytes in spool files now, over every request of the process ([`Spool::max_total`]).
@@ -369,10 +369,11 @@ static SPOOLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 
 impl Spool {
     /// `runtime/tmp/upload` of `runtime_dir`: 256 KiB of a file in memory, fields of up to 1 MiB, and all spool files
-    /// together at most `webapp_max_spool` (bytes, or with a `k`, `m` or `g` suffix; 4 GiB by default).
+    /// together at most the webroot webapp's `web-protection` `requests` `max-spool` (bytes, or with a `k`, `m` or `g`
+    /// suffix; 4 GiB by default).
     #[must_use]
     pub fn under(runtime_dir: &Path) -> Self {
-        let max_total = super::parse_size(&moqui_lib::env::get_prop_or_env("webapp_max_spool"))
+        let max_total = super::parse_size(&super::protection_setting(None, "requests", "max-spool"))
             .map_or(DEFAULT_MAX_SPOOL, |size| size as u64);
         Self {
             dir: runtime_dir.join("tmp").join("upload"),

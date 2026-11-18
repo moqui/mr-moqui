@@ -31,7 +31,7 @@ fn pair(host: &str, port: &str) -> Option<(String, String)> {
 }
 
 /// Clone URLs behind an edge node name its SSH tunnel's host and port when neither public setting is set; the public
-/// settings win; with no edge node the server's own port and webapp_http_host, as before.
+/// settings win; with no edge node the server's own port and webapp-list/webapp[webroot]@http-host, as before.
 #[test]
 fn an_ssh_clone_url_names_the_edge_nodes_tunnel_behind_one() {
     assert_eq!(

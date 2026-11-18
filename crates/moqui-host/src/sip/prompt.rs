@@ -15,7 +15,7 @@
 //! A call's notices to a phone leg (docs/interfaces/SIP.md, "Notices"): what a browser sees as an `rtc` frame (the
 //! recording, captions) a phone hears as a prompt. The voice services ask for one with `send#SipControl` (action
 //! `prompt`, from `VoiceServices.notify#PhoneLeg`); each is a tone pattern of its own, then the deployment's recorded
-//! audio when a property names a WAV file (`call_recording_prompt_audio`, `call_captions_prompt_audio`).
+//! audio when a property names a WAV file (`calls/recording@prompt-audio`, `calls/captions@prompt-audio`).
 
 use std::sync::Arc;
 
@@ -63,8 +63,8 @@ impl Notice {
     /// The property that names its recorded audio.
     pub(crate) fn audio_property(self) -> &'static str {
         match self {
-            Notice::Recording | Notice::RecordingAck => "call_recording_prompt_audio",
-            Notice::Captions => "call_captions_prompt_audio",
+            Notice::Recording | Notice::RecordingAck => "calls/recording@prompt-audio",
+            Notice::Captions => "calls/captions@prompt-audio",
         }
     }
 }

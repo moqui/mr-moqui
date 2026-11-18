@@ -813,7 +813,7 @@ fn a_repository_that_is_not_a_component_is_not_deployable_here() {
     assert!(received.lock().unwrap().is_empty());
 }
 
-/// Call `name` as `user` inside a transaction with the transaction cache on (as `service_tx_cache` makes an
+/// Call `name` as `user` inside a transaction with the transaction cache on (as `service-facade@tx-cache` makes an
 /// operation's transaction once an XML service runs in it), so its entity writes are held until the commit.
 fn call_cached(fixture: &Fixture, user: &str, name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
     let _entered = fixture.context.enter();

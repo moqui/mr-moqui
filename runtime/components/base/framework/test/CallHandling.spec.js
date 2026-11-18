@@ -295,7 +295,7 @@ feature("business hours and holidays are read in the schedule's time zone at the
     }
 })
 
-feature("forward loops are bounded: no forward back to a user already in the plan, at most call_forward_max_hops forwards, none to the caller", {
+feature("forward loops are bounded: no forward back to a user already in the plan, at most calls@forward-max-hops forwards, none to the caller", {
     when() {
         // A forwards to B and B back to A: B rings
         rule(A, {kindEnumId: "ChrAlways", targetTypeEnumId: "ChtUser", targetId: B})

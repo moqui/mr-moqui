@@ -100,7 +100,7 @@ pub struct ClientArgs {
     pub log_level: Option<String>,
     /// `--serve`: start each suite's declared server as a child `moqui test ... --serve` and run against it.
     pub serve: bool,
-    /// `--chromium path`: the browser, else `moqui_chromium_path`, else the first found ([`crate::chromium::find_test_browser`]).
+    /// `--chromium path`: the browser, else `screen-facade/pdf@chromium-path`, else the first found ([`crate::chromium::find_test_browser`]).
     pub chromium: Option<String>,
     /// `--headed`: a visible browser, for debugging.
     pub headed: bool,

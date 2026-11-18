@@ -91,6 +91,17 @@ spec({
             }
             ec.entity.find("moqui.call.PhoneNumberUser").condition("phoneNumber", OURS).deleteAll()
             ec.entity.find("moqui.call.PhoneNumber").condition("phoneNumber", OURS).deleteAll()
+            // the text member's rows (its room stays: a plain private room)
+            ec.entity.find("moqui.chat.ChatBridgeDelivery").condition("chatBridgeId", BRIDGE).deleteAll()
+            ec.entity.find("moqui.chat.ChatRoomBridge").condition("chatBridgeId", BRIDGE).deleteAll()
+            for (const external of ec.entity.find("moqui.chat.ChatExternalUser").condition("chatBridgeId", BRIDGE).list()) {
+                const actorIds = Array.from(ec.entity.find("moqui.chat.ChatActor").condition("chatExternalUserId", external.chatExternalUserId).list()).map((row) => row.chatActorId)
+                if (actorIds.length) {
+                    ec.entity.find("moqui.chat.ChatRoomMember").condition("chatActorId", "in", actorIds).deleteAll()
+                    ec.entity.find("moqui.chat.ChatActor").condition("chatActorId", "in", actorIds).deleteAll()
+                }
+                external.delete()
+            }
             ec.entity.find("moqui.chat.ChatBridge").condition("chatBridgeId", BRIDGE).deleteAll()
         })
     }
@@ -251,5 +262,32 @@ feature("Chat blocks a phone room's number from its menu, lists it under Spam & 
         after.filtered == null
         reported.messageInfos.length == 1
         afterReport.filtered == "blocked"
+    }
+})
+
+feature("Chat's text members: a moderator adds a number on a number for room texts, lists and renames it; a stranger reaches none of it", {
+    when() {
+        sys(() => ec.entity.find("moqui.call.PhoneNumber").condition("phoneNumber", OURS).updateAll({roomTextsEnabled: "Y"}))
+        ec.user.internalLoginUser("basic.comms.texter")
+        const room = sys(() => ec.service.sync().name("org.moqui.chat.ChatServices.create#Room").parameters({roomTypeEnumId: "CrtPrivate", roomName: "Texts spec group"}).call().chatRoomId)
+        const choices = JSON.parse(render("Chat/textMemberChoices", {chatRoomId: room, phoneNumber: "+15552224009"}).output || "{}")
+        const added = JSON.parse(render("Chat/addTextMember", {chatRoomId: room, phoneNumber: "+15552224009", memberName: "Dana", consent: "true"}, "post").output || "{}")
+        const renamed = JSON.parse(render("Chat/renameTextMember", {chatRoomId: room, chatActorId: added.chatActorId, memberName: "Dana P"}, "post").output || "{}")
+        const listed = JSON.parse(render("Chat/textMembers", {chatRoomId: room}).output || "{}")
+        ec.user.internalLoginUser("basic.comms.text.stranger")
+        const stranger = JSON.parse(render("Chat/textMembers", {chatRoomId: room}).output || "{}")
+        sys(() => ec.entity.find("moqui.call.PhoneNumber").condition("phoneNumber", OURS).updateAll({roomTextsEnabled: null}))
+        return {choices, added, renamed, listed, stranger}
+    },
+    then({choices, added, renamed, listed, stranger}) {
+        choices.numberList.length == 1
+        choices.numberList[0].free == true
+        added.ourNumber == OURS
+        renamed.memberName == "Dana P"
+        listed.memberList.length == 1
+        listed.memberList[0].memberName == "Dana P"
+        listed.memberList[0].phoneNumber == "+15552224009"
+        listed.canAdd == true
+        stranger.memberList == null
     }
 })

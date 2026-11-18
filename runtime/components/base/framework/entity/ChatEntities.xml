@@ -46,6 +46,9 @@ along with this software (see the LICENSE.md file). If not, see
             with commas, so the room of a set of users is found and reused</description></field>
         <field name="retentionDays" type="number-integer"><description>How many days the room keeps its events; empty for
             always. The daily job clean#ChatRetention deletes the older ones.</description></field>
+        <field name="messageTimerSeconds" type="number-integer"><description>Disappearing messages (plans/Comms-Messaging.md
+            §18.3 phase 16; ChatExpiryServices): a new message goes this many seconds after it is sent (30 to 2419200, 4
+            weeks), on the server and on every device; empty is off. set#RoomTimer sets it.</description></field>
         <field name="createdByUserId" type="id"/>
         <field name="createdDate" type="date-time"/>
         <field name="archivedDate" type="date-time"><description>An archived room is read only</description></field>
@@ -69,6 +72,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="agentsReadExternal" type="text-indicator"><description>Y: the room's agent members get the messages of
             external actors too (the room's explicit policy; an encrypted room never). Empty or N: agents get only local
             users' messages.</description></field>
+        <field name="directoryListed" type="text-indicator"><description>Y: a private room its owner lists in Browse, by its
+            name, topic and member count, where a user may ask to join it (ChatInviteServices request#Join,
+            plans/Comms-Messaging.md §18.3 phase 17). Its messages stay its members'.</description></field>
         <relationship type="one" title="ChatRoomType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="roomTypeEnumId"/></relationship>
         <relationship type="one" title="ChatRoomVisibility" related="moqui.basic.Enumeration" short-alias="visibility">
@@ -130,6 +136,8 @@ along with this software (see the LICENSE.md file). If not, see
             person, or the room). find#Rooms lists it only under its filter spam, it counts and notifies nothing, and no
             event of it is pushed to the member. Empty: in sight.</description></field>
         <field name="filterDate" type="date-time"/>
+        <field name="removedByUserId" type="id"><description>Who took the member out (remove#Member by another member): such a
+            person comes back by an invite link only through a join request (plans/Comms-Messaging.md §18.3 phase 17)</description></field>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one" related="moqui.chat.ChatActor" short-alias="actor"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
@@ -162,7 +170,8 @@ along with this software (see the LICENSE.md file). If not, see
             A message (CetMessage) has its content in contentJson: {body (safe HTML), mentions [userId], attachments
             [{chatAttachmentId, attachmentSeq, fileName, contentType, fileSize}], records [{entity, id}], forwardOf (a
             forwarded message: {senderUserId, senderName, sentDate, body, bodyText}, made by the server), poll ({question}:
-            the poll's rows are ChatPoll)}; replyToEventSeq
+            the poll's rows are ChatPoll), rich (a card, a carousel or a text with suggestion buttons, its body the fallback:
+            ChatRichServices), postback ({data, toEventSeq}: a message answering a suggestion)}; replyToEventSeq
             quotes another, threadRootEventSeq puts it in that message's thread. An edit (CetEdit, editsEventSeq the
             message, contentJson the new body and mentions), a reaction (CetReaction, relatesToEventSeq the message,
             contentJson {key}), a redaction (CetRedaction, relatesToEventSeq the message or reaction it removes), a pin
@@ -198,6 +207,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="clientRef" type="text-medium"><description>The sender's reference of the message, ^[A-Za-z0-9_.:-]{1,64}$</description></field>
         <field name="linkPreviewJson" type="text-very-long"><description>The previews of the message's links, a JSON list of
             {url, title, description, siteName} (fetch#LinkPreviews), or {"removed": true} once the sender removed them</description></field>
+        <field name="expireDate" type="date-time"><description>When the event goes (phase 16, ChatExpiryServices.expire#DueMessages):
+            a message's sentDate plus its room's timer, a view-once message's at the latest chat@view-once-days after it is
+            sent; an edit, reaction, redaction or pin of a message has the message's. Empty: never.</description></field>
+        <field name="viewOnce" type="text-indicator"><description>Y: a view-once photo or video (open#ViewOnce)</description></field>
+        <field name="megolmSessionId" type="text-medium"><description>An encrypted event's Megolm session (content.encrypted.session_id),
+            so the expiry knows when the key backup of a session may go</description></field>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one-nofk" title="Sender" related="moqui.security.UserAccount" short-alias="sender">
             <key-map field-name="senderUserId" related="userId"/></relationship>
@@ -211,6 +226,8 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CHAT_EVENT_UNREAD"><index-field name="chatRoomId"/><index-field name="eventTypeEnumId"/><index-field name="eventSeq"/></index>
         <index name="CHAT_EVENT_CLIENT_REF"><index-field name="chatRoomId"/><index-field name="senderUserId"/><index-field name="clientRef"/></index>
         <index name="CHAT_EVENT_THREAD_LAST"><index-field name="chatRoomId"/><index-field name="threadLastDate"/></index>
+        <index name="CHAT_EVENT_EXPIRE"><index-field name="expireDate"/></index>
+        <index name="CHAT_EVENT_SESSION"><index-field name="chatRoomId"/><index-field name="megolmSessionId"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Chat Event Type" enumTypeId="ChatEventType"/>
             <moqui.basic.Enumeration description="Message" enumId="CetMessage" enumCode="message" enumTypeId="ChatEventType" sequenceNum="1"/>
@@ -288,6 +305,36 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <index name="CHAT_ATTACH_EVENT"><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
     </entity>
+    <view-entity entity-name="ChatEventDueRoom" package="moqui.chat">
+        <description>The rooms with events due (phase 16, expire#DueMessages): find with expireDate up to now, select
+            chatRoomId and firstDue (grouped by room), so a round takes rooms, not one room's rows.</description>
+        <member-entity entity-alias="CE" entity-name="moqui.chat.ChatEvent"/>
+        <alias entity-alias="CE" name="chatRoomId"/>
+        <alias entity-alias="CE" name="expireDate"/><!-- filter only -->
+        <alias entity-alias="CE" name="firstDue" field="expireDate" function="min"/>
+    </view-entity>
+    <entity entity-name="ChatExpirySession" package="moqui.chat" use="transactional" cache="never">
+        <description>A Megolm session of an encrypted room whose last message went (phase 16) while the session could still be
+            in use: its key backup (ChatKeyBackupSession) goes at dueDate, its newest use plus the room's rotation period and a
+            margin, unless an event of the room uses it again.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="sessionId" type="text-medium" is-pk="true"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <field name="dueDate" type="date-time"/>
+        <index name="CHAT_EXPIRY_SESSION_DUE"><index-field name="dueDate"/></index>
+    </entity>
+    <entity entity-name="ChatViewOnceOpen" package="moqui.chat" use="transactional" cache="never">
+        <description>A recipient's open of a view-once message (plans/Comms-Messaging.md §18.3 phase 16; open#ViewOnce): the
+            file is served to them for 2 minutes after openedDate, at most 3 times (downloadCount). The rows go with the
+            message.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="openedDate" type="date-time"/>
+        <field name="downloadCount" type="number-integer"/>
+        <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
 
     <entity entity-name="ChatPoll" package="moqui.chat" use="transactional" cache="never">
         <description>A poll: a message (CetMessage, content.poll) whose options are ChatPollOption and whose votes are
@@ -354,6 +401,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
         <relationship type="one-nofk" related="moqui.chat.ChatLinkPreview" short-alias="preview">
             <key-map field-name="urlHash"/></relationship>
+        <index name="CHAT_LINK_HASH"><index-field name="urlHash"/></index>
     </entity>
     <view-entity entity-name="ChatEventLinkPreview" package="moqui.chat">
         <description>A room's links with their cached previews, for find#RoomLinks' search by URL or title: every link, and
@@ -380,6 +428,64 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CHAT_USER_BLOCKED"><index-field name="blockedUserId"/></index>
     </entity>
 
+    <entity entity-name="ChatInviteLink" package="moqui.chat" use="transactional" cache="never">
+        <description>A room's invite link, /join/&lt;token&gt; (plans/Comms-Messaging.md §18.3 phase 17,
+            org.moqui.chat.ChatInviteServices): a private room's moderators make them, any member of a public room. The token
+            is found by its hash (tokenHash); its text is kept encrypted, so the room's moderators can copy it and show its QR
+            code again. A link takes people while it is not revoked, not past expiryDate (empty: never), not used up
+            (maxUses, empty: no limit; a join or a request is a use) and its maker may still make one. approvalRequired Y: a
+            join is a join request.</description>
+        <field name="chatInviteLinkId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="tokenHash" type="text-medium"/>
+        <field name="tokenText" type="text-medium" encrypt="true"/>
+        <field name="label" type="text-medium"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expiryDate" type="date-time"/>
+        <field name="maxUses" type="number-integer"/>
+        <field name="useCount" type="number-integer" default="0"/>
+        <field name="approvalRequired" type="text-indicator"/>
+        <field name="revokedDate" type="date-time"/>
+        <field name="revokedByUserId" type="id"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one-nofk" title="CreatedBy" related="moqui.security.UserAccount" short-alias="createdBy">
+            <key-map field-name="createdByUserId" related="userId"/></relationship>
+        <index name="CHAT_INVITE_TOKEN" unique="true"><index-field name="tokenHash"/></index>
+        <index name="CHAT_INVITE_ROOM"><index-field name="chatRoomId"/><index-field name="revokedDate"/></index>
+    </entity>
+
+    <entity entity-name="ChatJoinRequest" package="moqui.chat" use="transactional" cache="never">
+        <description>A person's request to join a room (plans/Comms-Messaging.md §18.3 phase 17): from an invite link with
+            approval (chatInviteLinkId), from a person taken out of the room coming back by a link, or from Browse (a listed
+            private room). The room's moderators and owners approve or deny it. A pending request older than 30 days is
+            expired.</description>
+        <field name="chatJoinRequestId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="chatInviteLinkId" type="id"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="note" type="text-medium"/>
+        <field name="requestedDate" type="date-time"/>
+        <field name="decidedDate" type="date-time"/>
+        <field name="decidedByUserId" type="id"/>
+        <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="ChatJoinRequestStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="CHAT_JOIN_REQ_ROOM"><index-field name="chatRoomId"/><index-field name="statusEnumId"/></index>
+        <index name="CHAT_JOIN_REQ_USER"><index-field name="userId"/><index-field name="statusEnumId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Join Request Status" enumTypeId="ChatJoinRequestStatus"/>
+            <moqui.basic.Enumeration description="Pending" enumId="CjrPending" enumCode="pending" enumTypeId="ChatJoinRequestStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Approved" enumId="CjrApproved" enumCode="approved" enumTypeId="ChatJoinRequestStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Denied" enumId="CjrDenied" enumCode="denied" enumTypeId="ChatJoinRequestStatus" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Cancelled" enumId="CjrCancelled" enumCode="cancelled" enumTypeId="ChatJoinRequestStatus" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Expired" enumId="CjrExpired" enumCode="expired" enumTypeId="ChatJoinRequestStatus" sequenceNum="5"/>
+        </seed-data>
+    </entity>
+
     <entity entity-name="ChatRoomChange" package="moqui.chat" use="transactional" cache="never">
         <description>A message of a room changed after it was sent: an edit, a reaction or its removal, a redaction, a pin,
             or a change with no event of its own (its link previews, its poll; push#Update). Numbered per room (changeSeq,
@@ -389,7 +495,7 @@ along with this software (see the LICENSE.md file). If not, see
             (eventSeq), with a new changeSeq. changeJson is {cause, causeEventSeq, redacted, threadRootEventSeq}
             (record#RoomChange). get#RoomChanges (the Chat screen's roomChanges) reads it after a cursor; get#UserChanges
             answers each room's lastChangeSeq in its heads. Retention removes the changes of the events it deletes, and
-            clean#ChatChanges those older than chat_changes_keep_days.</description>
+            clean#ChatChanges those older than chat@changes-keep-days.</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="changeSeq" type="number-integer" is-pk="true"/>
         <field name="eventSeq" type="number-integer"><description>The message that changed</description></field>
@@ -423,7 +529,7 @@ along with this software (see the LICENSE.md file). If not, see
             get#UserChanges answers give each room's lastEventSeq and lastChangeSeq. A change replaces the user's earlier
             change of the same kind and room, with a new changeSeq, so the feed holds one row per thing that changed, not
             one per write. changeJson is the kind's detail (record#UserChange). Agents' chat users get no changes.
-            clean#ChatChanges removes changes older than chat_changes_keep_days.</description>
+            clean#ChatChanges removes changes older than chat@changes-keep-days.</description>
         <field name="userId" type="id" is-pk="true"/>
         <field name="changeSeq" type="number-integer" is-pk="true"/>
         <field name="changeKindEnumId" type="id"/>
@@ -508,7 +614,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="ChatBridge" package="moqui.chat" use="transactional" cache="never">
         <description>A connector account or federated network: one row each. typeEnumId is the network; adapterName picks the
             ChatBridgeAdapter registered through moqui_core::extension that serves it (empty: the network's code; an SMS
-            bridge's names its provider's adapter: sms for Telnyx; an RCS bridge, CbtRcs, rcs-twilio or rcs-sinch). configJson
+            bridge's names its provider's adapter: sms for Telnyx; an RCS bridge, CbtRcs, rcs-twilio or rcs-sinch; a GroupMe bridge,
+            CbtGroupMe, groupme: one person's account, its configJson's ownerUserId, org.moqui.chat.GroupMeServices). configJson
             holds the provider account's settings and secrets, encrypted; inboundTokenHash is the SHA-256 (hex) of the token
             an adapter gives ingest#Event. statusId: CbsConnected, CbsNotConnected (its rooms show "not connected" and keep
             their local timeline), CbsDisabled (no deliveries, no input). sendsPerMinute caps the deliveries a node sends to
@@ -530,7 +637,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastErrorText" type="text-long"/>
         <field name="lastErrorDate" type="date-time"/>
         <field name="sendsPerMinute" type="number-integer"/>
+        <field name="ownerUserId" type="id"><description>A bridge that is one person's account (GroupMe): that local user,
+            the same as its configJson's ownerUserId, kept plain so their own bridge is found without reading every
+            bridge's configuration</description></field>
+        <field name="retryDate" type="date-time"><description>An adapter's own connection (GroupMe's push channel) tries
+            again from then: a refused token, or failures in a row. Whichever node holds the connection reads it, so a
+            hand-over keeps the wait</description></field>
         <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one" title="ChatBridgeType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="typeEnumId"/></relationship>
         <relationship type="one" title="ChatBridge" related="moqui.basic.StatusItem" short-alias="status">
@@ -549,6 +664,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Microsoft Teams" enumId="CbtTeams" enumCode="teams" enumTypeId="ChatBridgeType" sequenceNum="10"/>
             <moqui.basic.Enumeration description="Discord" enumId="CbtDiscord" enumCode="discord" enumTypeId="ChatBridgeType" sequenceNum="11"/>
             <moqui.basic.Enumeration description="RCS" enumId="CbtRcs" enumCode="rcs" enumTypeId="ChatBridgeType" sequenceNum="12"/>
+            <moqui.basic.Enumeration description="GroupMe" enumId="CbtGroupMe" enumCode="groupme" enumTypeId="ChatBridgeType" sequenceNum="13"/>
 
             <moqui.basic.StatusType description="Chat Bridge" statusTypeId="ChatBridge"/>
             <moqui.basic.StatusItem statusId="CbsConnected" statusTypeId="ChatBridge" sequenceNum="1" description="Connected"/>
@@ -576,12 +692,28 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
         <field name="filedDate" type="date-time"/>
+        <field name="syncCursor" type="text-medium"><description>An adapter's catch-up (GroupMe): the network's id of the
+            message up to which every message of the room was taken, advanced only past a page taken whole, so a stopped
+            catch-up resumes there</description></field>
+        <field name="memberChatActorId" type="id"><description>A text member's mapping (plans/Comms-Messaging.md §18.3 phase
+            18, org.moqui.call.SmsRoomServices): the external actor of the outside number it is for. Its externalRoomId is
+            ours/theirs#chatRoomId. It gets the room's messages only, never its own member's, and is left out of the room's
+            bridges and capabilities (get#RoomBridges, check#BridgeSupport).</description></field>
+        <field name="memberName" type="text-medium"><description>A text member's name in this room, as its adder gave it; the
+            room's alone (the shared ChatExternalUser keeps the number)</description></field>
+        <field name="addedByUserId" type="id"/>
+        <field name="consentDate" type="date-time"><description>When the adder confirmed the person agreed to get the room's
+            texts</description></field>
+        <field name="welcomeDate" type="date-time"/>
+        <field name="welcomeReasonCode" type="text-short"><description>Why the welcome text was not sent</description></field>
+        <field name="helpReplyDate" type="date-time"><description>The last reply to a HELP of the text member (one a day)</description></field>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
         <relationship type="one" title="ChatBridgeDirection" related="moqui.basic.Enumeration" short-alias="direction">
             <key-map field-name="directionEnumId"/></relationship>
         <index name="CHAT_ROOM_BRIDGE_ROOM"><index-field name="chatRoomId"/><index-field name="thruDate"/></index>
         <index name="CHAT_ROOM_BRIDGE_EXT"><index-field name="chatBridgeId"/><index-field name="externalRoomId"/></index>
+        <index name="CHAT_ROOM_BRIDGE_MEMBER"><index-field name="memberChatActorId"/><index-field name="thruDate"/></index>
         <index name="CHAT_ROOM_BRIDGE_THREAD"><index-field name="chatBridgeId"/><index-field name="externalThreadId"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Chat Bridge Direction" enumTypeId="ChatBridgeDirection"/>

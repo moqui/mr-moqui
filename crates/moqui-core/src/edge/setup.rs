@@ -42,7 +42,7 @@ pub const SYSTEM_SERVER_ID: &str = "SYSTEM";
 /// The `smtpHost` of a server whose mail the local node queues for its edge node (plans/archive/Edge-Node.md §5.4, E5a).
 pub const EDGE_SMTP_HOST: &str = "edge:";
 /// The local node's address for chat providers and MMS files, which on a paired node is the edge node's (E6).
-pub const CHAT_PUBLIC_URL: &str = "channels_public_url";
+pub const CHAT_PUBLIC_URL: &str = "channels@public-url";
 /// The most names of each kind a Configure carries.
 pub const MAX_NAMES: usize = 64;
 /// The areas an edge node does not offer yet: none since phones have their area ([`SipOffer`]), as XMPP and calls
@@ -93,9 +93,9 @@ pub struct XmppOffer {
     /// A tunnel port is on.
     pub available: bool,
     /// The STARTTLS port for this node's clients: its own (an `EdgePort` row), else the one of every domain
-    /// (`edge_xmpp_port`); 0 while off.
+    /// (`edge@xmpp-port`); 0 while off.
     pub port: u16,
-    /// The direct TLS port, the same way (`edge_xmpp_tls_port`); 0 while off.
+    /// The direct TLS port, the same way (`edge@xmpp-tls-port`); 0 while off.
     pub tls_port: u16,
     /// No longer set (E16): no port goes to another node by a setting.
     pub other_node: bool,
@@ -127,7 +127,7 @@ pub struct SipOffer {
     /// For UDP and TCP, and for TLS, `host:port`; empty when that listener is off.
     pub sip_address: String,
     pub tls_address: String,
-    /// The realm its registrar challenges phones with (`sip_domain`), and whether the registrar is on.
+    /// The realm its registrar challenges phones with (`sip-server@domain`), and whether the registrar is on.
     pub domain: String,
     pub registrar: bool,
     /// The trunks its engine has loaded now, with their state.
@@ -145,7 +145,7 @@ pub struct SshOffer {
     pub available: bool,
     /// The edge node's public name.
     pub host: String,
-    /// This node's own port (an `EdgePort` row), else `edge_ssh_tunnel_port` while it is the one active pairing; 0
+    /// This node's own port (an `EdgePort` row), else `edge@ssh-tunnel-port` while it is the one active pairing; 0
     /// while off.
     pub port: u16,
 }
@@ -163,10 +163,10 @@ pub fn remember_ssh(factory: &ExecutionContextFactory, ssh: &SshOffer) {
 }
 
 /// The host and port git clients reach this node's SSH server at through its edge node, as last offered, while this
-/// node is paired (`edge_node_url` or `front_node_url` set): what clone URLs name when `ssh_public_host` and
-/// `ssh_public_port` are not set (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
+/// node is paired (`edge/node@url` or `edge/front-node@url` set): what clone URLs name when `ssh-server@public-host` and
+/// `ssh-server@public-port` are not set (docs/interfaces/Git-Hosting.md, Behind a front or edge node).
 pub fn ssh_address(factory: &ExecutionContextFactory) -> Option<(String, u16)> {
-    let paired = |name: &str| !moqui_lib::env::get_prop_or_env(name).trim().is_empty();
+    let paired = |name: &str| !crate::context::conf_env::setting_or_property(name).is_empty();
     if !paired(super::NODE_URL) && !paired(super::FRONT_URL) {
         return None;
     }
@@ -189,7 +189,7 @@ pub struct EdgeOffer {
     pub ssh: SshOffer,
     /// Areas not built yet: none now.
     pub not_available: Vec<String>,
-    /// The edge node's public addresses, when it names them (`edge_public_addresses`).
+    /// The edge node's public addresses, when it names them (`edge@public-addresses`).
     pub addresses: Vec<String>,
     /// The asking node's host names on the edge node now.
     pub node_hosts: Vec<EdgeHostInfo>,
@@ -204,7 +204,7 @@ pub struct EdgeSetup {
     pub mail_domains: Vec<String>,
     pub chat_bridge_ids: Vec<String>,
     pub pass_sites: Vec<String>,
-    /// The local node's XMPP domain (`xmpp_domain`), when its clients come through the edge node's tunnel ports;
+    /// The local node's XMPP domain (`xmpp-server@domain`), when its clients come through the edge node's tunnel ports;
     /// empty when not. Its `rooms.` and `upload.` names are the domain's and are not sent.
     pub xmpp_domain: String,
 }
@@ -277,10 +277,10 @@ pub fn is_reserved(name: &str, reserved: &[String]) -> bool {
     })
 }
 
-/// Whether this local node is paired with an edge node now: `edge_node_url` is set, or this process's link
+/// Whether this local node is paired with an edge node now: `edge/node@url` is set, or this process's link
 /// replicates (its dialer runs). Mail for `edge:` is queued only then.
 pub fn is_paired(facade: &EntityFacade) -> bool {
-    !moqui_lib::env::get_prop_or_env(super::NODE_URL).trim().is_empty() || super::replica::replica(facade).is_some()
+    !crate::context::conf_env::setting(super::NODE_URL).trim().is_empty() || super::replica::replica(facade).is_some()
 }
 
 /// Whether `id` can be a record id the setup names (a chat bridge, a PASS site, a PASS client): 1 to 63 bytes of
@@ -381,7 +381,7 @@ pub fn check_setup(setup: &EdgeSetup) -> Result<EdgeSetup, Error> {
 /// What the local node chose in the wizard, for [`apply_local`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalChoices {
-    /// The edge node's address (`edge_node_url`), the chat address when the offer names none.
+    /// The edge node's address (`edge/node@url`), the chat address when the offer names none.
     pub edge_url: String,
     pub mail: Option<MailChoice>,
     /// The chat bridges whose webhooks go to the edge node; `None` leaves chat as it is.
@@ -428,7 +428,7 @@ impl SetupLine {
 ///   hosted or shared account sends through it (its own server, when it owns one with no incoming store, gets
 ///   `edge:`; else the account names [`EDGE_SERVER_ID`]). An account that syncs from another provider is left.
 /// - chat: [`CHAT_PUBLIC_URL`] in `env_file`, the edge node's address.
-/// - PASS: `pass_edge_client` and `pass_client_<id>_sites` and `_callback` in `env_file`.
+/// - PASS: `edge/node@pass-client` and `pass-authority/client[<id>]@sites` and `@callback` in `env_file`.
 ///
 /// An area that is `None` is left as it is. `env_file` is the server's `runtime/.env`.
 pub fn apply_local(
@@ -457,7 +457,7 @@ pub fn apply_local(
             lines.push(SetupLine::new(
                 "chat",
                 false,
-                "The edge node names no web address for webhooks, so channels_public_url is left",
+                "The edge node names no web address for webhooks, so channels@public-url is left",
             ));
         }
     }
@@ -513,8 +513,8 @@ fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) 
         Err(why) => return SetupLine::new("pass", false, why),
     };
     let (client, callback) = (client.as_str(), callback.as_str());
-    let sites_name = format!("pass_client_{client}_sites");
-    let callback_name = format!("pass_client_{client}_callback");
+    let sites_name = format!("pass-authority/client[{client}]@sites");
+    let callback_name = format!("pass-authority/client[{client}]@callback");
     let sites_text = sites.join(",");
     set_env(
         "pass",
@@ -528,22 +528,35 @@ fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) 
     )
 }
 
-/// Write `set` to the dotenv file; the line says so, or why not. A process property of the same name wins over the
-/// file, so a value that does not read back is named.
+/// Write `set` to the dotenv file; the line says so, or why not. A name of a conf attribute (a selector, with an `@`)
+/// is kept under its environment name and set as the process property of that name, so it holds at once for every
+/// reader ([`crate::context::conf_env::keep_in_env`]); a property is written by its name. A process property or
+/// environment variable set at start wins over the file, so a value that does not read back is named.
 pub(crate) fn set_env(area: &str, env_file: &std::path::Path, set: &[(&str, &str)], done: &str) -> SetupLine {
+    // an environment variable of a selector's name, which the next start takes over the file
+    let from_environment: Vec<&str> = set
+        .iter()
+        .filter(|(name, value)| {
+            name.contains('@')
+                && std::env::var(crate::context::conf_env::env_name_of(name))
+                    .is_ok_and(|given| !given.is_empty() && given.trim() != value.trim())
+        })
+        .map(|(name, _)| *name)
+        .collect();
     let pairs: Vec<(String, String)> = set
         .iter()
         .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
         .collect();
-    if let Err(err) = moqui_lib::env::update_dotenv_file(env_file, &pairs, &[]) {
+    if let Err(err) = crate::context::conf_env::keep_in_env(env_file, &pairs, &[]) {
         tracing::error!("Edge setup: {area} settings were not written: {err}");
         return SetupLine::new(area, false, format!("The settings were not written: {err}"));
     }
-    let overridden: Vec<&str> = set
+    let mut overridden: Vec<&str> = set
         .iter()
-        .filter(|(name, value)| moqui_lib::env::get_prop_or_env(name).trim() != value.trim())
+        .filter(|(name, value)| crate::context::conf_env::setting_or_property(name).trim() != value.trim())
         .map(|(name, _)| *name)
         .collect();
+    overridden.extend(from_environment);
     if overridden.is_empty() {
         tracing::info!("Edge setup: {done}");
         SetupLine::new(area, true, done)
@@ -968,13 +981,14 @@ fn echo_allowed(node: &str) -> bool {
 /// Whether this edge node can send its local nodes' mail: with the MTA in moqui its DKIM key is there; with Postfix
 /// beside it the relay port answers.
 fn mta_ready() -> (bool, String) {
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
-    if property("edge_mail_mta") == "moqui" {
-        let key = property("mail_dkim_key");
+    let setting = crate::context::conf_env::setting;
+    if setting("mail-delivery@mta") == "moqui" {
+        let key = setting("mail-delivery/dkim@key");
         if key.is_empty() || key == "CHANGEME" {
             return (
                 false,
-                "The edge node has no DKIM key yet (mail_dkim_key): read its offer again, which makes one".to_string(),
+                "The edge node has no DKIM key yet (mail-delivery/dkim@key): read its offer again, which makes one"
+                    .to_string(),
             );
         }
         return (
@@ -982,11 +996,11 @@ fn mta_ready() -> (bool, String) {
             "The edge node takes this node's mail and sends it, DKIM-signed, to each domain's MX".to_string(),
         );
     }
-    let host = match property("edge_mail_relay_host") {
+    let host = match setting("mail-delivery@relay-host") {
         host if host.is_empty() => "127.0.0.1".to_string(),
         host => host,
     };
-    let port = property("edge_mail_relay_port").parse::<u16>().unwrap_or(10025);
+    let port = setting("mail-delivery@relay-port").parse::<u16>().unwrap_or(10025);
     let reached = format!("{host}:{port}")
         .parse::<std::net::SocketAddr>()
         .ok()
@@ -1006,7 +1020,7 @@ fn mta_ready() -> (bool, String) {
 
 fn property_on(name: &str) -> bool {
     matches!(
-        moqui_lib::env::get_prop_or_env(name)
+        crate::context::conf_env::setting_or_property(name)
             .trim()
             .to_ascii_lowercase()
             .as_str(),
@@ -1020,10 +1034,13 @@ fn edge_check(facade: &EntityFacade, node: &str, check: &EchoCheck) -> Result<Ec
     match check.check.as_str() {
         "link" => answer(true, "The edge node took the item and answered".to_string()),
         "mailIn" => {
-            if moqui_lib::env::get_prop_or_env("smtp_listen_port").trim().is_empty() {
+            if crate::context::conf_env::setting("smtp-server@listen-port")
+                .trim()
+                .is_empty()
+            {
                 return answer(
                     false,
-                    "The edge node's SMTP listener is off: set smtp_listen_port there".to_string(),
+                    "The edge node's SMTP listener is off: set smtp-server@listen-port there".to_string(),
                 );
             }
             let address = check.address.trim().to_ascii_lowercase();
@@ -1055,10 +1072,10 @@ fn edge_check(facade: &EntityFacade, node: &str, check: &EchoCheck) -> Result<Ec
             answer(ok, message)
         }
         "webhook" => {
-            if !property_on("channels_webhooks_enabled") {
+            if !property_on("channels@webhooks-enabled") {
                 return answer(
                     false,
-                    "The edge node takes no webhooks: set channels_webhooks_enabled there".to_string(),
+                    "The edge node takes no webhooks: set channels@webhooks-enabled there".to_string(),
                 );
             }
             let copies = super::replica::list_values(facade, Some(node), "chatBridges", None, 10_000)?;

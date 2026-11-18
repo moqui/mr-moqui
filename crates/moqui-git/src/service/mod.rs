@@ -691,17 +691,25 @@ fn get_commit_diff(
     let _hidden = hidden_guard(parameters);
     let revision = text(parameters, "commitId").unwrap_or_default();
     let path = text(parameters, "path");
+    let most = crate::browse::commit_max_diff_files();
     match provider.commit_diffs(&id, &revision, path.as_deref()) {
         Ok(Some(diffs)) => Ok(out([(
             "fileDiffList",
             Value::List(
                 diffs
                     .iter()
-                    .map(|(change, diff)| {
+                    .enumerate()
+                    .map(|(position, (change, diff))| {
                         let mut value = change_value(change, Some(diff));
+                        // past the first files a file is counted, not shown (its hunks have no lines)
+                        let full = path.is_some() || position < most;
                         if let (Value::Map(entries), Some(text)) = (&mut value, &diff.diff) {
-                            entries.insert("unifiedDiff".to_string(), Value::string(text.unified()));
-                            entries.insert("html".to_string(), Value::string(text.render_html()));
+                            if full {
+                                entries.insert("unifiedDiff".to_string(), Value::string(text.unified()));
+                                entries.insert("html".to_string(), Value::string(text.render_html()));
+                            } else {
+                                entries.insert("diffOmitted".to_string(), Value::Bool(true));
+                            }
                         }
                         value
                     })
@@ -757,7 +765,7 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
 /// with the current user's username, as the SSH server logs in Moqui users, and `repositoryPath`. The SSH host and
 /// port are `public-host` and `public-port` when either is set; else, on a node paired with an edge node whose offer
 /// names an SSH tunnel to it, that tunnel's host and port (`moqui_core::edge::setup::ssh_address`); else
-/// `webapp_http_host` and the server's own port.
+/// `webapp-list/webapp[webroot]@http-host` and the server's own port.
 fn get_clone_urls(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -788,19 +796,9 @@ fn get_clone_urls(
 /// The host and port SSH clone URLs name, from the `ssh-server` settings and an edge node's tunnel; none while the SSH
 /// server is off ([`get_clone_urls`], the hosting offer).
 pub(crate) fn ssh_host_port() -> Option<(String, String)> {
-    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
-    // an `ssh-server` attribute, else its property
-    let ssh_setting = |name: &str, property_name: &str| {
-        let configured =
-            ExecutionContext::with_current(|ec| ec.factory().conf_setting("ssh-server", name)).unwrap_or_default();
-        if configured.is_empty() {
-            property(property_name)
-        } else {
-            configured
-        }
-    };
-    let public_host = ssh_setting("public-host", "ssh_public_host");
-    let public_port = ssh_setting("public-port", "ssh_public_port");
+    let ssh_setting = |name: &str| moqui_core::context::conf_env::setting(&format!("ssh-server@{name}"));
+    let public_host = ssh_setting("public-host");
+    let public_port = ssh_setting("public-port");
     // behind an edge node, with neither public setting: the edge node's SSH tunnel, as its offer named it
     let edge = (public_host.is_empty() && public_port.is_empty())
         .then(|| ExecutionContext::with_current(|ec| moqui_core::edge::setup::ssh_address(ec.factory())).flatten())
@@ -811,9 +809,9 @@ pub(crate) fn ssh_host_port() -> Option<(String, String)> {
         public_host,
         public_port,
         edge,
-        http_host: property("webapp_http_host"),
-        host: ssh_setting("host", "ssh_host"),
-        port: ssh_setting("port", "ssh_port"),
+        http_host: moqui_core::context::conf_env::webroot_setting("http-host"),
+        host: ssh_setting("host"),
+        port: ssh_setting("port"),
     }
     .host_and_port()
 }

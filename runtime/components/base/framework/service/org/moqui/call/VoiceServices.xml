@@ -106,7 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="VoiceCapabilities">
         <description>Whether phone calls can be made here (plans/archive/Comms-Framework.md §3.1):
-            supported (the binary has the sip feature), configured (this server's sip_port or sip_tls_port is set and a trunk is
+            supported (the binary has the sip feature), configured (this server's sip-server@port or sip-server@tls-port is set and a trunk is
             set up) and active (a SIP server is up in the cluster and a trunk has not failed), each on its own; reasonCode
             notBuilt, notConfigured, noTrunk, noSipServer or trunkFailed when not active. emergencyReady says whether the current
             user can call emergency services from here, and emergencyReasonCode and emergencyMissing what is missing
@@ -268,7 +268,7 @@ along with this software (see the LICENSE.md file). If not, see
             that joins later): a call's notice to an answered phone leg, played by the SIP engine of the call's node
             (send#SipControl, action prompt): notice recording (the recording tone), recordingAck (the recording tone twice:
             press 1 to acknowledge) or captions (two rising tones), each followed by the deployment's prompt audio when
-            call_recording_prompt_audio or call_captions_prompt_audio names one. Any other leg is skipped (notified false).</description>
+            calls/recording@prompt-audio or calls/captions@prompt-audio names one. Any other leg is skipped (notified false).</description>
         <in-parameters>
             <parameter name="callLegId" required="true"/>
             <parameter name="notice" required="true"/>
@@ -386,6 +386,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="routeId"/>
             <parameter name="emergencyLocationId"/>
             <parameter name="description"/>
+            <parameter name="roomTextsEnabled"><description>Y: the number may carry rooms' text members (plans/Comms-Messaging.md
+                §18.3 phase 18); left as it is when not given</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="phoneNumber"/>
@@ -516,6 +518,9 @@ along with this software (see the LICENSE.md file). If not, see
                 SMS bridge: one on an RCS bridge is refused, reasonCode systemNumber)</description></parameter>
             <parameter name="smsMaxPromotionalPerNumber"><description>Promotional texts one of our numbers sends a day (a
                 campaign's, apart from the system's own budget)</description></parameter>
+            <parameter name="smsRoomMaxMembers"><description>Text members a room has at most (plans/Comms-Messaging.md §18.3 phase 18)</description></parameter>
+            <parameter name="smsRoomMaxPerDay"><description>Texts a room sends its text members a day</description></parameter>
+            <parameter name="smsRoomAddsPerDay"><description>Text members one user adds a day</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="policy" type="Map"/>

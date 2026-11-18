@@ -1,0 +1,89 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- ChatJoin (ChatJoin.xml), in the public shell: a room's invite link (Comms-Messaging §18.3 phase 17). $root.context is what
+    the token check answered: roomName, memberCount, roomKind, approval, encrypted, verifiedOnly, signedIn, and for a signed-in
+    person member, pending, makerName, roomUrl. Its transitions are under the route's path ($root.basePath). -->
+<template><div class="row justify-center q-pa-md m-chat-join-screen">
+    <q-card flat bordered class="q-pa-md" style="width:420px;max-width:100%">
+        <div class="column items-center q-gutter-y-sm text-center">
+            <q-avatar size="64px" rounded class="m-tonal text-primary text-h5">{{initial}}</q-avatar>
+            <div class="text-h6 m-chat-join-name">{{room.roomName}}</div>
+            <div class="text-caption m-muted">{{membersText}}<span v-if="room.makerName"> · {{fill(t('{name} shared this link'), { name: room.makerName })}}</span></div>
+        </div>
+        <q-banner v-if="room.encrypted" dense rounded class="text-caption m-tonal q-mt-md">
+            <template v-slot:avatar><q-icon name="sym_o_lock" color="positive"></q-icon></template>
+            {{t('End-to-end encrypted: you read the messages sent after you join, on a device set up for encrypted chat.')}}
+            <span v-if="room.verifiedOnly">{{t('This room sends its messages only to verified devices: a member verifies your device first.')}}</span></q-banner>
+        <div class="q-mt-md">
+            <template v-if="done === 'requested' || room.pending">
+                <div class="text-body2 text-center m-chat-join-asked">{{t('Your request is with the room\'s moderators. You will hear when they decide.')}}</div>
+            </template>
+            <template v-else-if="room.member || done === 'joined' || done === 'member'">
+                <q-btn unelevated no-caps color="primary" class="full-width" :label="t('Open the room')" @click="openRoom"></q-btn>
+            </template>
+            <template v-else-if="!room.signedIn">
+                <div class="text-body2 text-center q-mb-sm">{{t('You need an account on this server to join. Ask the person who shared the link.')}}</div>
+                <q-btn unelevated no-caps color="primary" class="full-width m-chat-join-signin" :label="t('Sign in to join')" :loading="busy" @click="signIn"></q-btn>
+            </template>
+            <template v-else>
+                <q-input v-if="room.approval" v-model="note" dense outlined stack-label maxlength="200" :label="t('A note for the moderators (optional)')" class="q-mb-sm" name="joinNote"></q-input>
+                <div v-if="room.approval" class="text-caption m-muted q-mb-sm">{{t('A moderator lets you in.')}}</div>
+                <q-btn unelevated no-caps color="primary" class="full-width m-chat-join-go" :label="room.approval ? t('Ask to join') : t('Join')" :loading="busy" @click="join"></q-btn>
+            </template>
+            <div v-if="error" class="text-negative text-caption q-mt-sm text-center" role="alert">{{error}}</div>
+            <q-btn v-if="android" flat no-caps color="primary" class="full-width q-mt-sm m-chat-join-app" icon="sym_o_open_in_new" :label="t('Open in the MR Moqui app')" :href="appLink"></q-btn>
+        </div>
+    </q-card>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
+module.exports = {
+    name: 'ChatJoin',
+    data() { return { note: '', busy: false, done: null, error: null, roomUrl: null }; },
+    computed: {
+        room() { return this.$root.context || {}; },
+        initial() { return String(this.room.roomName || '?').trim().charAt(0).toUpperCase() || '?'; },
+        membersText() { return Number(this.room.memberCount) === 1 ? t('1 member') : fill(t('{count} members'), { count: this.room.memberCount || 0 }); },
+        token() { return String(this.$root.basePath || '').split('/').pop(); },
+        android() { return /Android/i.test(navigator.userAgent || ''); },
+        // the app opens this page in its account on this server; nothing is done until Join is pressed there
+        appLink() { return 'org.moqui.mobile:/join?host=' + encodeURIComponent(location.host) + '&token=' + encodeURIComponent(this.token); },
+    },
+    methods: {
+        t,
+        fill,
+        post(name, params) {
+            return moqui.request(this.$root.basePath + '/' + name, { method: 'POST', params: params || {} }).then((result) => result.json || {});
+        },
+        join() {
+            this.busy = true;
+            this.error = null;
+            this.post('join', { note: this.note || '' }).then((json) => {
+                if (json.errors || !json.outcome) { this.error = json.errors || t('You could not join'); return; }
+                this.done = json.outcome;
+                this.roomUrl = json.roomUrl || null;
+                if (json.outcome !== 'requested') this.openRoom();
+            }, () => { this.error = t('You could not join'); }).finally(() => { this.busy = false; });
+        },
+        signIn() {
+            this.busy = true;
+            this.post('signIn').then((json) => { if (json.loginUrl) location.href = json.loginUrl; else this.error = t('This link has expired or was not found.'); },
+                () => { this.error = t('This link has expired or was not found.'); }).finally(() => { this.busy = false; });
+        },
+        openRoom() { const url = this.roomUrl || this.room.roomUrl; if (url) location.href = url; },
+    },
+};
+</script>

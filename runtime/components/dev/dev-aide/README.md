@@ -69,9 +69,9 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   ([Git-Hosting](../../../../docs/interfaces/Git-Hosting.md#rest)), or the REST of the application that keeps the
   repository (Smithy). Steps: [Run-Deploy](../../../../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server).
 
-It gives its users code execution as the server's OS user, so it loads only when `instance_purpose` is dev:
+It gives its users code execution as the server's OS user, so it loads only when `instance@purpose` is dev:
 `runtime/components/dev` is a dev-only component directory, and its `component.xml` says `purpose="dev"`. Bind the server to
-127.0.0.1 (`webapp_http_bind=127.0.0.1`) unless it is a team dev server (`dev-aide shared="true"`).
+127.0.0.1 (`moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1`) unless it is a team dev server (`dev-aide shared="true"`).
 
 Who may use it (`data/DevAideSecurityData.xml`):
 

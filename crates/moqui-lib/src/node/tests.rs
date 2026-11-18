@@ -222,18 +222,9 @@ fn dev_conf_overlay_changes_the_sections_it_names() {
     let over = MNode::parse_file(root.join("runtime/conf/MoquiDevConf.xml")).unwrap();
     merge_dev_conf(&base, &over);
 
-    let purpose = base
-        .children_named("default-property")
-        .into_iter()
-        .find(|node| node.attribute_is("name", "instance_purpose"))
-        .unwrap();
-    assert_eq!(purpose.attribute("value").as_deref(), Some("dev"));
-    let locale = base
-        .children_named("default-property")
-        .into_iter()
-        .find(|node| node.attribute_is("name", "default_locale"))
-        .unwrap();
-    assert_eq!(locale.attribute("value").as_deref(), Some("en_US"));
+    let instance = base.first_named("instance").unwrap();
+    assert_eq!(instance.attribute("purpose").as_deref(), Some("dev"));
+    assert_eq!(instance.attribute("default-locale").as_deref(), Some("en_US"));
 
     let caches = base.first_named("cache-list").unwrap();
     assert_eq!(caches.attribute("warm-on-start").as_deref(), Some("false"));
@@ -268,6 +259,7 @@ fn mantle_udm_parses_when_the_sibling_tree_is_present() {
 
 fn merge_dev_conf(base: &MNode, over: &MNode) {
     base.merge_children_by_keys(over, "default-property", &["name"], None);
+    base.merge_single_child(over, "instance");
     base.merge_child_with_child_key(over, "cache-list", "cache", &["name"], None);
     if let (Some(stats), Some(override_stats)) = (base.first_named("server-stats"), over.first_named("server-stats")) {
         stats.copy_attributes_from(&override_stats);

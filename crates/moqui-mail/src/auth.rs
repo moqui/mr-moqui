@@ -18,9 +18,9 @@
 //! it too ("the same standards inside"): signed when it is sent ([`sign_for`]) and verified against the node's own key
 //! when it is delivered ([`verify_internal`]).
 //!
-//! The DKIM key is configuration, not rows: `mail_dkim_key` is the private key (base64 PKCS#8 DER, or PEM), a secret
+//! The DKIM key is configuration, not rows: `mail-delivery/dkim@key` is the private key (base64 PKCS#8 DER, or PEM), a secret
 //! generated into `runtime/.env` the first time it is needed (RSA-2048), as the other `CHANGEME` secrets are at the
-//! start; `mail_dkim_selector` (default `moqui`); `mail_dkim_domains` the domains it signs for (comma separated), else
+//! start; `mail-delivery/dkim@selector` (default `moqui`); `mail-delivery/dkim@domains` the domains it signs for (comma separated), else
 //! the domain of any hosted or shared account. [`dkim_record`] is the TXT record to publish at
 //! `<selector>._domainkey.<domain>`.
 
@@ -40,12 +40,12 @@ use moqui_lib::sync::lock;
 
 use super::dns::{self, Records};
 
-/// The private DKIM key property.
-pub const DKIM_KEY: &str = "mail_dkim_key";
-/// The DKIM selector property.
-pub const DKIM_SELECTOR: &str = "mail_dkim_selector";
+/// The private DKIM key, a secret conf attribute.
+pub const DKIM_KEY: &str = "mail-delivery/dkim@key";
+/// The DKIM selector.
+pub const DKIM_SELECTOR: &str = "mail-delivery/dkim@selector";
 /// The domains signed for.
-pub const DKIM_DOMAINS: &str = "mail_dkim_domains";
+pub const DKIM_DOMAINS: &str = "mail-delivery/dkim@domains";
 /// The header fields signed, as RFC 6376 section 5.4.1 recommends; one that is absent is signed as absent. From,
 /// Subject, To and Date are named twice (oversigned, section 8.15), so a second one added later breaks the signature.
 const SIGNED_FIELDS: [&str; 16] = [
@@ -67,7 +67,7 @@ const SIGNED_FIELDS: [&str; 16] = [
     "Content-Transfer-Encoding",
 ];
 
-/// The node's DKIM key, read from `mail_dkim_key`.
+/// The node's DKIM key, read from `mail-delivery/dkim@key`.
 pub struct DkimKey {
     /// The property text it came from: a change of the property is read again.
     text: String,
@@ -149,33 +149,33 @@ impl DkimKey {
     }
 }
 
-/// The DKIM selector: `mail_dkim_selector`, default `moqui`.
+/// The DKIM selector: `mail-delivery/dkim@selector`, default `moqui`.
 #[must_use]
 pub fn selector() -> String {
-    match moqui_lib::env::get_prop_or_env(DKIM_SELECTOR).trim() {
+    match moqui_core::context::conf_env::setting(DKIM_SELECTOR).as_str() {
         "" => "moqui".to_string(),
         selector => selector.to_ascii_lowercase(),
     }
 }
 
-/// The domains named in `mail_dkim_domains`, in lower case; empty for "the hosted accounts' domains".
+/// The domains named in `mail-delivery/dkim@domains`, in lower case; empty for "the hosted accounts' domains".
 #[must_use]
 pub fn configured_domains() -> Vec<String> {
-    moqui_lib::env::get_prop_or_env(DKIM_DOMAINS)
+    moqui_core::context::conf_env::setting(DKIM_DOMAINS)
         .split([',', ' '])
         .map(|domain| domain.trim().trim_end_matches('.').to_ascii_lowercase())
         .filter(|domain| !domain.is_empty())
         .collect()
 }
 
-/// Where a new `mail_dkim_key` is written: the server's `runtime/.env`, set by the host at its start
+/// Where a new `mail-delivery/dkim@key` is written: the server's `runtime/.env`, set by the host at its start
 /// ([`enable_key_generation`]). Without it (a unit test, a tool) no key is made.
 fn env_file() -> &'static Mutex<Option<std::path::PathBuf>> {
     static ENV_FILE: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
     &ENV_FILE
 }
 
-/// Let [`key`] make the node's DKIM key when `mail_dkim_key` is not set, written to `env_file` (`runtime/.env`). The
+/// Let [`key`] make the node's DKIM key when `mail-delivery/dkim@key` is not set, written to `env_file` (`runtime/.env`). The
 /// host calls it at its start; the first server of a process names the file.
 pub fn enable_key_generation(env_file_path: std::path::PathBuf) {
     let mut file = lock(env_file());
@@ -184,7 +184,7 @@ pub fn enable_key_generation(env_file_path: std::path::PathBuf) {
     }
 }
 
-/// The node's DKIM key, or none when `mail_dkim_key` is not set and this process makes none. When it is still
+/// The node's DKIM key, or none when `mail-delivery/dkim@key` is not set and this process makes none. When it is still
 /// `CHANGEME` or empty on a server, an RSA-2048 key is made and written to `runtime/.env`, once per process, as the
 /// other generated secrets are.
 ///
@@ -194,7 +194,7 @@ pub fn enable_key_generation(env_file_path: std::path::PathBuf) {
 pub fn key() -> Result<Option<Arc<DkimKey>>, String> {
     static KEY: Mutex<Option<Arc<DkimKey>>> = Mutex::new(None);
     let mut kept = lock(&KEY);
-    let mut text = moqui_lib::env::get_prop_or_env(DKIM_KEY).trim().to_string();
+    let mut text = moqui_core::context::conf_env::setting(DKIM_KEY);
     if let Some(key) = kept.as_ref().filter(|key| key.text == text) {
         return Ok(Some(Arc::clone(key)));
     }
@@ -203,14 +203,35 @@ pub fn key() -> Result<Option<Arc<DkimKey>>, String> {
             return Ok(None);
         };
         text = DkimKey::generate()?;
-        moqui_lib::env::update_dotenv_file(&env, &[(DKIM_KEY.to_string(), text.clone())], &[])
-            .map_err(|err| format!("a new {DKIM_KEY} was not written to {}: {err}", env.display()))?;
-        moqui_lib::env::set_property(DKIM_KEY, text.clone());
-        tracing::info!("Generated secret property {DKIM_KEY} (RSA-2048) into {}", env.display());
+        keep_new_key(&env, &text)?;
+        tracing::info!("Generated secret {DKIM_KEY} (RSA-2048) into {}", env.display());
     }
     let key = Arc::new(DkimKey::parse(&text)?);
     *kept = Some(Arc::clone(&key));
     Ok(Some(key))
+}
+
+/// Keep a new key: by the running factory's conf when this thread has one or the process booted one (written to its
+/// `runtime/.env` under the attribute's environment name, and set in its live conf), else in `env` and as a process
+/// property of that name, which [`moqui_core::context::conf_env::setting`] reads first.
+fn keep_new_key(env: &std::path::Path, text: &str) -> Result<(), String> {
+    use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+    let factory =
+        ExecutionContext::with_current(|ec| Arc::clone(ec.factory())).or_else(ExecutionContextFactory::running);
+    if let Some(factory) = factory.filter(|factory| factory.runtime_dir().join(".env") == env) {
+        return factory
+            .set_conf_value(DKIM_KEY, Some(text), true)
+            .map(|_| ())
+            .map_err(|err| format!("a new {DKIM_KEY} was not kept: {err}"));
+    }
+    let name = moqui_lib::node::path::AttrPath::parse(DKIM_KEY)
+        .ok()
+        .and_then(|path| path.env_name())
+        .unwrap_or_default();
+    moqui_lib::env::update_dotenv_file(env, &[(name.clone(), text.to_string())], &[])
+        .map_err(|err| format!("a new {DKIM_KEY} was not written to {}: {err}", env.display()))?;
+    moqui_lib::env::set_property(&name, text);
+    Ok(())
 }
 
 /// The TXT record to publish for the node's DKIM key at `<selector>._domainkey.<domain>`: `v=DKIM1; k=rsa; p=...`.
@@ -225,7 +246,7 @@ pub fn dkim_record() -> Result<String, String> {
     }
 }
 
-/// The domains of this node's hosted and shared accounts, the domains it signs for when `mail_dkim_domains` names
+/// The domains of this node's hosted and shared accounts, the domains it signs for when `mail-delivery/dkim@domains` names
 /// none, by the node's role:
 /// - a normal node: its own accounts';
 /// - a dedicated edge node: its copies of the local nodes' accounts;
@@ -402,7 +423,7 @@ pub fn from_address(raw: &[u8]) -> Option<String> {
     address.contains('@').then(|| address.to_string())
 }
 
-/// The domain to sign `raw` for: its From domain, when it is one of `mail_dkim_domains`, or with none named, one that
+/// The domain to sign `raw` for: its From domain, when it is one of `mail-delivery/dkim@domains`, or with none named, one that
 /// `hosted` says is a hosted or shared account's.
 #[must_use]
 pub fn signing_domain(raw: &[u8], hosted: impl Fn(&str) -> bool) -> Option<String> {
@@ -477,11 +498,11 @@ pub fn is_own_listener(port: u16) -> bool {
     lock(own_listeners()).contains(&port)
 }
 
-/// Whether `mail_dkim_key` is set (configured, or made earlier): a send by SMTP to another server is signed only then,
+/// Whether `mail-delivery/dkim@key` is set (configured, or made earlier): a send by SMTP to another server is signed only then,
 /// so a node never sends a signature of a key it has not published.
 #[must_use]
 pub fn key_configured() -> bool {
-    let text = moqui_lib::env::get_prop_or_env(DKIM_KEY);
+    let text = moqui_core::context::conf_env::setting(DKIM_KEY);
     let text = text.trim();
     !text.is_empty() && !text.ends_with("CHANGEME")
 }
@@ -560,7 +581,7 @@ const VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 /// (a panic) or take over 45 seconds are a temporary error ([`Verdict::temp_error`]), which the listener answers 451.
 ///
 /// DMARC is RFC 9989's: `t=y` lowers the policy one level, and there is no `pct`. A failure under `p=reject` or
-/// `p=quarantine` is overridden when a passing ARC chain was last sealed by one of `mail_arc_trusted_sealers` (a
+/// `p=quarantine` is overridden when a passing ARC chain was last sealed by one of `smtp-server@arc-trusted-sealers` (a
 /// mailing list or forwarder this node trusts); with that property empty there is no ARC exception.
 pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records: Option<Arc<Records>>) -> Verdict {
     let id = authserv_id.clone();
@@ -586,9 +607,9 @@ pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records
     }
 }
 
-/// The domains whose ARC seal is trusted to carry a DMARC pass across a forwarder (`mail_arc_trusted_sealers`).
+/// The domains whose ARC seal is trusted to carry a DMARC pass across a forwarder (`smtp-server@arc-trusted-sealers`).
 fn trusted_sealers() -> Vec<String> {
-    moqui_lib::env::get_prop_or_env("mail_arc_trusted_sealers")
+    moqui_core::context::conf_env::setting("smtp-server@arc-trusted-sealers")
         .split([',', ' '])
         .map(|domain| domain.trim().trim_end_matches('.').to_ascii_lowercase())
         .filter(|domain| !domain.is_empty())

@@ -20,7 +20,6 @@ use std::time::{Duration, SystemTime};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use moqui_lib::env;
-use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 use moqui_lib::sync;
 
@@ -31,12 +30,12 @@ use crate::notify::{self, TopicMessage};
 use crate::user::{now_millis, now_value, stamp_value};
 
 const PROPS: &[&str] = &[
-    "instance_id",
-    "session_cookie_key",
-    "cluster_tls_cert",
-    "cluster_tls_key",
-    "cluster_https_port",
-    "cluster_base_url",
+    "moqui_conf__instance__id",
+    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+    "moqui_conf__cluster_member__tls_cert",
+    "moqui_conf__cluster_member__tls_key",
+    "moqui_conf__cluster_member__https_port",
+    "moqui_conf__cluster_member__base_url",
 ];
 
 #[test]
@@ -254,12 +253,15 @@ impl Sender for Scripted {
 
 fn preset(instance_id: &str) {
     let (cert, key) = super::generate_cert_pair().expect("cert pair");
-    env::set_property("instance_id", instance_id);
-    env::set_property("session_cookie_key", "session-key-for-tests");
-    env::set_property("cluster_tls_cert", cert);
-    env::set_property("cluster_tls_key", key);
-    env::set_property("cluster_https_port", "");
-    env::set_property("cluster_base_url", "");
+    env::set_property("moqui_conf__instance__id", instance_id);
+    env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        "session-key-for-tests",
+    );
+    env::set_property("moqui_conf__cluster_member__tls_cert", cert);
+    env::set_property("moqui_conf__cluster_member__tls_key", key);
+    env::set_property("moqui_conf__cluster_member__https_port", "");
+    env::set_property("moqui_conf__cluster_member__base_url", "");
 }
 
 fn open_facade() -> (crate::context::ExecutionContext, EntityFacade) {
@@ -515,7 +517,7 @@ fn a_live_peer_with_a_different_fingerprint_fails_start() {
     let _clean = Clean;
     preset("inst-mismatch");
     let fingerprints = super::configured_fingerprints().unwrap();
-    let cert = env::get_prop_or_env("cluster_tls_cert");
+    let cert = env::get_prop_or_env("moqui_conf__cluster_member__tls_cert");
     let (ctx, facade) = open_facade();
     let _entered = ctx.enter();
     put_member(
@@ -528,7 +530,7 @@ fn a_live_peer_with_a_different_fingerprint_fails_start() {
     );
     let err = super::start(ctx.factory()).unwrap_err();
     let shown = format!("{err}");
-    assert!(shown.contains("session_cookie_key"));
+    assert!(shown.contains("session-config cookie-key"));
     assert!(!shown.contains("session-key-for-tests"));
     assert!(!shown.contains(&cert));
 
@@ -544,7 +546,7 @@ fn a_live_peer_with_a_different_fingerprint_fails_start() {
     );
     let err = super::start(ctx.factory()).unwrap_err();
     let shown = format!("{err}");
-    assert!(shown.contains("cluster_tls_cert"));
+    assert!(shown.contains("cluster-member@tls-cert"));
     assert!(!shown.contains(&cert));
     assert!(!shown.contains("session-key-for-tests"));
 }
@@ -855,15 +857,15 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     let _lock = lock();
     let _clean = Clean;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let _env = ConfGuard::new(root.clone());
+    let _env = ConfGuard;
     let _example = crate::testing::ExampleOff::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("cluster-cert");
     crate::context::layout::link_base_set(&root.join("runtime/components/base"), temp.path()).unwrap();
     let framework = root.join("runtime/components/base/framework");
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    let cert = env::get_prop_or_env("cluster_tls_cert");
-    let key = env::get_prop_or_env("cluster_tls_key");
+    let cert = env::get_prop_or_env("moqui_conf__cluster_member__tls_cert");
+    let key = env::get_prop_or_env("moqui_conf__cluster_member__tls_key");
     assert_one_line_der(&cert);
     assert_one_line_der(&key);
     assert_ne!(cert, key);
@@ -872,22 +874,18 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     factory.set_entity(crate::testing::open());
     super::start(&factory).unwrap();
     let instance = super::instance_id(&factory).unwrap();
-    assert!(env::get_prop_or_env("instance_id").is_empty());
+    assert!(env::get_prop_or_env("moqui_conf__instance__id").is_empty());
     assert_eq!(instance.len(), 36);
     assert!(instance.contains('-'));
-    let names = factory.property_names().to_vec();
     drop(factory);
-    for name in &names {
-        env::clear_property(name);
-    }
     env::clear_dotenv();
     let again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    assert_eq!(env::get_prop_or_env("cluster_tls_cert"), cert);
-    assert_eq!(env::get_prop_or_env("cluster_tls_key"), key);
+    assert_eq!(env::get_prop_or_env("moqui_conf__cluster_member__tls_cert"), cert);
+    assert_eq!(env::get_prop_or_env("moqui_conf__cluster_member__tls_key"), key);
     // The instance id is the instance's own, in runtime/db, not in the .env the members share.
     assert!(!std::fs::read_to_string(temp.path().join(".env"))
         .unwrap()
-        .contains("instance_id"));
+        .contains("moqui_conf__instance__id"));
     assert_eq!(
         std::fs::read_to_string(temp.path().join("db/instance_id"))
             .unwrap()
@@ -901,14 +899,14 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     assert_eq!(
         env_again
             .lines()
-            .filter(|line| line.starts_with("cluster_tls_cert="))
+            .filter(|line| line.starts_with("moqui_conf__cluster_member__tls_cert="))
             .count(),
         1
     );
     assert_eq!(
         env_again
             .lines()
-            .filter(|line| line.starts_with("cluster_tls_key="))
+            .filter(|line| line.starts_with("moqui_conf__cluster_member__tls_key="))
             .count(),
         1
     );
@@ -920,21 +918,18 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
         0
     );
     assert_consecutive_pair(&env_again);
-    for name in again.property_names() {
-        env::clear_property(name);
-    }
     env::clear_dotenv();
 
     let blocked = TempRuntime::new("cluster-half");
     crate::context::layout::link_base_set(&root.join("runtime/components/base"), blocked.path()).unwrap();
-    env::set_property("cluster_tls_cert", "configured-cert-value");
+    env::set_property("moqui_conf__cluster_member__tls_cert", "configured-cert-value");
     let err = match ExecutionContextFactory::boot_with_framework(blocked.path(), &framework) {
         Ok(_) => panic!("boot succeeded with a certificate and no key"),
         Err(err) => err,
     };
     let shown = format!("{err} {err:?}");
-    assert!(shown.contains("cluster_tls_cert"));
-    assert!(shown.contains("cluster_tls_key"));
+    assert!(shown.contains("cluster-member@tls-cert"));
+    assert!(shown.contains("cluster-member@tls-key"));
     assert!(!shown.contains("CHANGEME"));
     assert!(!shown.contains("configured-cert-value"));
     assert_eq!(repo_env_stamp(&root), before);
@@ -955,36 +950,16 @@ fn assert_consecutive_pair(text: &str) {
     let lines: Vec<&str> = text.lines().collect();
     let cert_at = lines
         .iter()
-        .position(|line| line.starts_with("cluster_tls_cert="))
+        .position(|line| line.starts_with("moqui_conf__cluster_member__tls_cert="))
         .unwrap();
-    assert!(lines[cert_at + 1].starts_with("cluster_tls_key="));
+    assert!(lines[cert_at + 1].starts_with("moqui_conf__cluster_member__tls_key="));
 }
 
-struct ConfGuard {
-    root: PathBuf,
-}
-
-impl ConfGuard {
-    fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-}
+/// Clears the `.env` table a boot test loaded.
+struct ConfGuard;
 
 impl Drop for ConfGuard {
     fn drop(&mut self) {
-        for relative in [
-            "runtime/components/base/framework/conf/MoquiDefaultConf.xml",
-            "runtime/conf/MoquiDevConf.xml",
-        ] {
-            let Ok(node) = MNode::parse_file(self.root.join(relative)) else {
-                continue;
-            };
-            for property in node.named_iter("default-property") {
-                if let Some(name) = property.attribute("name") {
-                    env::clear_property(&name);
-                }
-            }
-        }
         env::clear_dotenv();
     }
 }

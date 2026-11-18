@@ -13,12 +13,12 @@
  */
 
 //! The PASS authority over gRPC (plans/archive/Edge-Node.md §5.5, E4), with a stub authority service in a test component written
-//! into each runtime (`pass_authority_service`), so no Mantle is needed: Call, Download (several chunks) and Upload
+//! into each runtime (`pass-authority@service`), so no Mantle is needed: Call, Download (several chunks) and Upload
 //! round trips, and an account flow's session handle,
-//! - **direct**, on the local server's gRPC listener (`pass_authority_grpc_enabled`, plain h2c with no certificate), the
-//!   client named by `pass_client_id` with its secret; a wrong secret is refused before the authority runs;
+//! - **direct**, on the local server's gRPC listener (`pass-authority@grpc-enabled`, plain h2c with no certificate), the
+//!   client named by `pass@client-id` with its secret; a wrong secret is refused before the authority runs;
 //! - **on the link**, from the edge node down to its local node (`edge:`), where the link is the client
-//!   (`pass_edge_client`); with the link down a call fails at once with "local node offline".
+//!   (`edge/node@pass-client`); with the link down a call fails at once with "local node offline".
 //!
 //! Calls go through the scripts' binding (`ec.service.passAuthority`) in a test service, and an upload through the
 //! host's sender, which the binding wraps. A forwarded request never reaching the service is `edge_link::down`'s test.
@@ -467,14 +467,17 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
     }
     let big = big_file();
     let properties = [
-        ("pass_authority_grpc_enabled", "true"),
-        ("pass_authority_grpc_port", "0"),
-        ("pass_authority_service", "passtest.PassTestServices.handle#Call"),
-        ("pass_edge_client", "edgefront"),
-        ("pass_client_front_secret", "front-secret"),
-        ("pass_client_front_sites", SITE),
-        ("pass_client_id", "front"),
-        ("pass_client_secret", "front-secret"),
+        ("moqui_conf__pass_authority__grpc_enabled", "true"),
+        ("moqui_conf__pass_authority__grpc_port", "0"),
+        (
+            "moqui_conf__pass_authority__service",
+            "passtest.PassTestServices.handle#Call",
+        ),
+        ("moqui_conf__edge__node__pass_client", "edgefront"),
+        ("pass-authority/client[front]@secret", "front-secret"),
+        ("pass-authority/client[front]@sites", SITE),
+        ("moqui_conf__pass__client_id", "front"),
+        ("moqui_conf__pass__client_secret", "front-secret"),
     ];
     let local = crate::common::start_with_conf_files("edge-pass-local", None, "", &properties, &files(&big, &[]));
     let (root, cert, key) = certs();
@@ -484,8 +487,11 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
         "edge-pass-edge",
         "",
         &[
-            ("node_role", "front_edge"),
-            ("webapp_https_listen_port", &edge_port_text),
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &edge_port_text,
+            ),
         ],
         &files(&big, &[("cert/default.crt", &cert), ("cert/default.key", &key)]),
     );
@@ -501,7 +507,10 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
     let large = upload(&direct, vec![b'x'; 10 * 1024 * 1024 + 1]).unwrap();
     assert_eq!(large["error"]["status"], 422, "{large}");
     // a wrong secret is refused before the authority runs; the binding answers the REST adapter's 503
-    moqui_lib::env::set_property("pass_client_secret", "not-the-secret".to_string());
+    moqui_lib::env::set_property(
+        &crate::common::property_name("pass@client-secret"),
+        "not-the-secret".to_string(),
+    );
     let refused = upload(&direct, b"x".to_vec()).unwrap_err();
     assert!(refused.contains("Unauthenticated"), "{refused}");
     // an upload is refused on its call, before its file is read: a large one as soon
@@ -511,7 +520,10 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
     assert!(started.elapsed() < Duration::from_secs(5));
     let answer = client(&local, &direct, "call", "echo", serde_json::json!({}), "");
     assert_eq!(answer["error"]["code"], "Unavailable", "{answer}");
-    moqui_lib::env::set_property("pass_client_secret", "front-secret".to_string());
+    moqui_lib::env::set_property(
+        &crate::common::property_name("pass@client-secret"),
+        "front-secret".to_string(),
+    );
 
     // on the link: pair, link, and call down from the edge node
     let rt = tokio::runtime::Builder::new_multi_thread()

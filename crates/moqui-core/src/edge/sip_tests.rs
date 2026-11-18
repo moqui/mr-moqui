@@ -49,14 +49,14 @@ fn trunk(id: &str, state: &str, error: &str) -> SipTrunkState {
 /// and the row check's two answers.
 #[test]
 fn phones_are_on_unless_the_setting_turns_them_off_and_off_holds_back_the_trunks_and_fallbacks() {
-    moqui_lib::env::clear_property(SIP_ENABLED);
+    moqui_lib::env::clear_property(&crate::context::conf_env::env_name_of(SIP_ENABLED));
     assert!(sip_enabled(), "on by default, as E8 behaves");
     assert!(!withheld(TRUNKS_SET) && !withheld(FALLBACKS_SET));
     let now = 1_000_000;
     let (ok, text) = row_check(Some(&live_row(now)), &edge(), now);
     assert!(ok && text.contains("203.0.113.5:5060, 203.0.113.5:5061"), "{text}");
     for off in ["false", "N", "no", "0", " off "] {
-        moqui_lib::env::set_property(SIP_ENABLED, off.to_string());
+        moqui_lib::env::set_property(&crate::context::conf_env::env_name_of(SIP_ENABLED), off.to_string());
         assert!(!sip_enabled(), "{off}");
     }
     assert!(
@@ -67,10 +67,10 @@ fn phones_are_on_unless_the_setting_turns_them_off_and_off_holds_back_the_trunks
     let (ok, text) = row_check(Some(&live_row(now)), &edge(), now);
     assert!(ok && text.contains("takes no new call"), "{text}");
     for on in ["true", "Y", "yes", "1"] {
-        moqui_lib::env::set_property(SIP_ENABLED, on.to_string());
+        moqui_lib::env::set_property(&crate::context::conf_env::env_name_of(SIP_ENABLED), on.to_string());
         assert!(sip_enabled(), "{on}");
     }
-    moqui_lib::env::clear_property(SIP_ENABLED);
+    moqui_lib::env::clear_property(&crate::context::conf_env::env_name_of(SIP_ENABLED));
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn a_link_that_is_down_or_without_sip_names_no_sip_node() {
     assert!(linked_sip_node(&status).unwrap_err().contains("unpaired"));
     status.state = crate::edge::LinkState::Linked;
     status.peer.instance_id = "edge-1".to_string();
-    assert!(linked_sip_node(&status).unwrap_err().contains("sip_port"));
+    assert!(linked_sip_node(&status).unwrap_err().contains("sip-server@port"));
     status.peer.sip_tls_address = "203.0.113.5:5061".to_string();
     assert_eq!(linked_sip_node(&status).unwrap().instance_id, "edge-1");
 }

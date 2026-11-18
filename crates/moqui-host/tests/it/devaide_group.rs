@@ -425,10 +425,10 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         "dev-aide-group",
         Some(&data),
         &[
-            ("instance_purpose", "dev"),
-            ("dev_aide_site_component", "my-site"),
-            ("dev_aide_shared", "false"),
-            ("llm_gateway_enabled", "true"),
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+            ("moqui_conf__dev_aide__shared", "false"),
+            ("moqui_conf__llm_facade__gateway__enabled", "true"),
         ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
@@ -521,7 +521,9 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     let env_before = std::fs::read_to_string(&env_file).unwrap_or_default();
     std::fs::write(
         &env_file,
-        format!("{env_before}\nllm_openai_api_key=sk-own\nllm_openai_model=mine\n"),
+        format!(
+            "{env_before}\nmoqui_conf__llm_facade__endpoint__DEFAULT__api_key=sk-own\nmoqui_conf__llm_facade__model__DEFAULT__name=mine\n"
+        ),
     )
     .unwrap();
     let applied = call(
@@ -548,12 +550,15 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             .map(|(_, value)| value.clone())
             .unwrap_or_default()
     };
-    let gateway_key = env("llm_openai_api_key");
+    let gateway_key = env("moqui_conf__llm_facade__endpoint__DEFAULT__api_key");
     assert!(
         gateway_key.len() == 40 && gateway_key != app_key,
         "item 4: {gateway_key}"
     );
-    assert_eq!(env("llm_openai_url"), format!("{base}/llm"));
+    assert_eq!(
+        env("moqui_conf__llm_facade__endpoint__DEFAULT__url"),
+        format!("{base}/llm")
+    );
     {
         let context = factory.new_context();
         let _entered = context.enter();
@@ -1384,9 +1389,15 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             .find(|(have, _)| have == name)
             .map(|(_, value)| value.clone())
     };
-    assert_eq!(env("llm_openai_api_key").as_deref(), Some("sk-own"));
-    assert_eq!(env("llm_openai_model").as_deref(), Some("mine"));
-    assert_eq!(env("llm_openai_url"), None);
+    assert_eq!(
+        env("moqui_conf__llm_facade__endpoint__DEFAULT__api_key").as_deref(),
+        Some("sk-own")
+    );
+    assert_eq!(
+        env("moqui_conf__llm_facade__model__DEFAULT__name").as_deref(),
+        Some("mine")
+    );
+    assert_eq!(env("moqui_conf__llm_facade__endpoint__DEFAULT__url"), None);
     let context = factory.new_context();
     let _entered = context.enter();
     assert!(moqui_core::user::login_user_key_for(&gateway_key, "gateway").is_err());

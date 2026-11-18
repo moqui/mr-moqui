@@ -22,8 +22,8 @@ limits: [Run-Deploy](../../../docs/Run-Deploy.md#a-local-node-with-a-standby).
 
 ## `.env`
 
-- **Both machines, the same**: the first machine's whole `.env`, pairing's lines (`edge_node_url`, `edge_node_key`,
-  `edge_node_pin`, `edge_node_id`, `edge_node_pairing`) and `entity_ds_crypt_pass` among them. Copy it again after the
+- **Both machines, the same**: the first machine's whole `.env`, pairing's lines (`edge/node@url`, `edge/node@key`,
+  `edge/node@pin`, `edge/node@id`, `edge/node@pairing`) and `moqui_conf__entity_facade__crypt_pass` among them. Copy it again after the
   wizard or a setting changes.
 - **Each machine, its own**: `runtime/db/instance_id` and `runtime/db/edge_member_key`. Never copy `runtime/db`.
 

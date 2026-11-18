@@ -54,7 +54,7 @@ the drive's members and shares itself, as for the Files screens.
 | `dav-server` | Default | |
 |---|---|---|
 | `enabled` | true | false answers 404 under `/dav` |
-| `public-url` | the webapp host and port | the base the Sync settings show devices (also the `dav_public_url` property) |
+| `public-url` | the webapp host and port | the base the Sync settings show devices (also the `dav-server@public-url` property) |
 | `calendar-services`, `contact-services` | empty | the adapter classes; Mantle's `MoquiConf.xml` sets `mantle.work.CalendarDavServices` and `mantle.party.ContactDavServices` |
 | `account-password` | false | take the account password too |
 | `allow-http` | false | take credentials over plain HTTP |

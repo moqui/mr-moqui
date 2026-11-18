@@ -185,13 +185,26 @@ fn data_of(name: &str, location: &str, init_params: &BTreeMap<String, String>) -
     Value::Map(map)
 }
 
+/// The `init-param` entries of a servlet or filter: each one's `value`, or when that is empty the conf attribute its
+/// `conf` selector names (`search-facade/cluster@password`), read from the merged conf `node` is in.
 fn init_params(node: &MNode) -> BTreeMap<String, String> {
+    let mut conf = node.clone();
+    while let Some(parent) = conf.parent() {
+        conf = parent;
+    }
     node.children_named("init-param")
         .into_iter()
         .filter_map(|param| {
             let name = param.attribute("name")?;
             let raw = param.attribute("value").unwrap_or_default();
-            Some((name, moqui_lib::env::expand(&raw).unwrap_or(raw)))
+            let value = match param
+                .attribute("conf")
+                .filter(|selector| raw.is_empty() && !selector.is_empty())
+            {
+                Some(selector) => crate::context::conf_env::conf_attribute(&conf, &selector),
+                None => raw,
+            };
+            Some((name, value))
         })
         .collect()
 }
@@ -381,7 +394,6 @@ impl WebappScripts {
             };
             let size_of = |attribute: &str| {
                 node.attribute(attribute).and_then(|text| {
-                    let text = moqui_lib::env::expand(&text).unwrap_or(text);
                     let size = super::parse_size(&text);
                     if size.is_none() && !text.trim().is_empty() {
                         tracing::error!("Ignoring the {attribute} {text} of {label}: not a size");

@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="status">
         <actions>
             <!-- 127.*.*.* is IPv4 loopback (a client spec's own address on a test server is one of them); 0:0:0:0:0:0:0:1 and ::1 are IPv6 loopback forms for querying /status -->
-            <set field="allowed_ips" from="(System.getProperty('webapp_status_ips') ? System.getProperty('webapp_status_ips').replaceAll(/\s/g, '').split(',') : []).concat(['127.*.*.*','0:0:0:0:0:0:0:1','::1'])"/>
+            <set field="allowed_ips" from="(ec.factory.getConfValue('webapp-list/webapp[webroot]@status-ips') ? ec.factory.getConfValue('webapp-list/webapp[webroot]@status-ips').replaceAll(/\s/g, '').split(',') : []).concat(['127.*.*.*','0:0:0:0:0:0:0:1','::1'])"/>
             <if condition="WebUtilities.ipMatches(allowed_ips.join(','), ec.user.getClientIp())"><then>
                 <script>ec.web.sendJsonResponse(ec.factory.getStatusMap())</script>
             </then><else>

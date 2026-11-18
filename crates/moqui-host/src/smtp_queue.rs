@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The listener's edge mode (plans/archive/Edge-Node.md §5.4, E5a): on an edge node (`node_role=front_edge`) the mail is not stored
+//! The listener's edge mode (plans/archive/Edge-Node.md §5.4, E5a): on an edge node (`moqui_conf__instance__node_role=front_edge`) the mail is not stored
 //! here, where no accounts are, but queued for the local node that has them (`moqui_mail::edge_mail`).
 //!
 //! `RCPT TO` is answered from the local nodes' replicated set `mailRecipients`, held in memory as a
@@ -26,7 +26,7 @@
 //! the message as the item's content; each recipient is answered stored once the item is committed, and 451 when the
 //! queue refuses it.
 //!
-//! On an all-in-one node (`node_role=all-in-one`, plans/archive/Edge-Node.md §10, E12) the listener's backend is
+//! On an all-in-one node (`moqui_conf__instance__node_role=all-in-one`, plans/archive/Edge-Node.md §10, E12) the listener's backend is
 //! [`SplitBackend`], which decides by owner: `RCPT TO` is looked up in the server's own accounts first, then in the
 //! paired node's copies, whose account is tagged with its node (`node:<node>:<account>`) so the ids of two databases
 //! never meet in one session. An address both sides have is refused with 451 and logged as an error naming it:

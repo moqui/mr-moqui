@@ -204,8 +204,11 @@ fn verify_write(parameters: &Parameters, _facade: &EntityFacade) -> Out {
 
 // ---- what the server offers (F18) ----
 
+/// A conf attribute by its selector (it has an `@`), else a property.
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    moqui_core::context::conf_env::setting_or_property(name)
+        .trim()
+        .to_string()
 }
 
 fn conf(path: &str, name: &str) -> String {
@@ -233,7 +236,7 @@ fn get_hosting_offer(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
     let gateway = conf("llm-facade", "enabled") != "false" && conf("llm-facade/gateway", "enabled") == "true";
     // a login key needs an LlmApiClient naming it unless require-client is off (docs/ai/Gateway.md)
     let require_client = conf("llm-facade/gateway", "require-client") != "false";
-    let loopback = property("webapp_app_loopback_redirect") != "false";
+    let loopback = property("webapp-list/webapp[webroot]@app-loopback-redirect") != "false";
     let agreement_service = !crate::setting("agreement-check-service").is_empty();
     let offer = map([
         ("baseUrl", Value::string(&base)),

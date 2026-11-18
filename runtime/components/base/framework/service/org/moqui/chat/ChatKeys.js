@@ -6,7 +6,7 @@
 // services at /_matrix/client/v3/keys/upload, keys/query, keys/claim, sendToDevice and the to-device part of /sync.
 //
 // - **Identity.** A device belongs to a user (moqui.chat.ChatDevice, keyed by userId and deviceId). In the payloads a user
-//   is a Matrix user ID, @<localpart>:<chat_server_name>, the localpart the userId with Matrix's escaping of other
+//   is a Matrix user ID, @<localpart>:<chat@server-name>, the localpart the userId with Matrix's escaping of other
 //   character sets (an upper-case letter is _ and the lower-case letter, _ is __, any other byte =xx), so it parses as a
 //   conforming ID and maps back.
 // - **Rules.** Only the signed-in user's own devices are written: the device a request names is theirs and not revoked, or
@@ -83,7 +83,7 @@ const find = (entity) => ec.entity.find(entity).disableAuthz()
 const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const blank = (value) => value == null || String(value).trim() === ''
-const property = (name) => String(System.getProperty(name) || '').trim()
+const property = (selector) => String(ec.factory.getConfValue(selector) || '').trim()
 const isObject = (value) => value != null && typeof value === 'object' && !Array.isArray(value)
 const chunks = (list, size) => {
   const out = []
@@ -109,9 +109,9 @@ const refuseReauth = () => refuse('reauthRequired', 'Confirm it is you: sign in 
 
 // ---- Matrix user IDs ----
 
-/** The server name in Matrix user IDs: chat_server_name, else localhost. Set it before the first device: a change makes every device new. */
+/** The server name in Matrix user IDs: chat@server-name, else localhost. Set it before the first device: a change makes every device new. */
 function serverName() {
-  return (property('chat_server_name') || 'localhost').toLowerCase()
+  return (property('chat@server-name') || 'localhost').toLowerCase()
 }
 
 const PLAIN = /^[a-z0-9.\-]$/
@@ -264,7 +264,7 @@ function deviceView(device) {
     hasKeys: !!device.ed25519Key, userAgent: device.userAgent || null, createdDate: ms(device.createdDate),
     lastSeenDate: ms(device.lastSeenDate), revokedDate: ms(device.revokedDate),
     revoked: !!device.revokedDate, automatic: device.madeAutomatically === 'Y',
-    // seen in the last chat_device_active_days: one in use (the set-up card lists only these)
+    // seen in the last chat@device-active-days: one in use (the set-up card lists only these)
     active: !device.revokedDate && ms(device.lastSeenDate) != null && ms(device.lastSeenDate) >= ms(ec.user.nowTimestamp) - activeDays() * 86400000,
   }
 }
@@ -273,7 +273,7 @@ function deviceView(device) {
 function createDevice(p) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in first')
-  // the devices in use count (seen in chat_device_active_days): browsers long gone do not hold a new one back
+  // the devices in use count (seen in chat@device-active-days): browsers long gone do not hold a new one back
   const since = new Date(ms(ec.user.nowTimestamp) - activeDays() * 86400000)
   if (find(DEVICE).condition('userId', me).condition('revokedDate', null).condition('lastSeenDate', '>=', since).count() >= MAX_DEVICES) {
     return refuse('tooManyDevices', 'Remove a device in Settings, My devices, before adding another')
@@ -343,7 +343,7 @@ function revokeRow(me, device) {
 
 /**
  * The passphrase my device's browser store is encrypted with (OlmMachine.initialize store_passphrase): derived, not stored
- * (derive#ChatStoreKey: HMAC-SHA-256 under the platform secret chat_store_key_secret of userId|deviceId|revision, 43
+ * (derive#ChatStoreKey: HMAC-SHA-256 under the platform secret chat@store-key-secret of userId|deviceId|revision, 43
  * characters of URL-safe base64), so no table or export holds it. Only for my own device that is not revoked. Never
  * logged.
  */
@@ -1226,9 +1226,9 @@ function setRoomVerifiedOnly(p) {
   return { verifiedDevicesOnly: on }
 }
 
-/** The cleanup job: messages waiting longer than chat_to_device_retention_days (default 30), and claimed one-time keys. */
+/** The cleanup job: messages waiting longer than chat@to-device-retention-days (default 30), and claimed one-time keys. */
 function clean(p) {
-  const days = Math.max(1, Number(property('chat_to_device_retention_days')) || 30)
+  const days = Math.max(1, Number(property('chat@to-device-retention-days')) || 30)
   const now = ms(ec.user.nowTimestamp)
   let messages = 0
   let keys = 0
@@ -1243,8 +1243,8 @@ function clean(p) {
     ec.logger.error(`Claimed one-time keys not cleaned: ${err && err.message ? err.message : err}`)
   }
   // devices Chat made by itself (a private window, a browser tried once), never verified and not seen for
-  // chat_device_auto_expire_days: revoked, each on its own, so others stop encrypting to them
-  const autoDays = Math.max(1, Number(property('chat_device_auto_expire_days')) || 30)
+  // chat@device-auto-expire-days: revoked, each on its own, so others stop encrypting to them
+  const autoDays = Math.max(1, Number(property('chat@device-auto-expire-days')) || 30)
   let devicesRevoked = 0
   let stale = []
   try {
@@ -1313,15 +1313,15 @@ function revokeAutomatic(p) {
 const DEFAULT_MAX_USERS = 50
 const DEFAULT_PER_HOUR = 600
 
-/** The days a device counts as in use after it was last seen (chat_device_active_days, default 90). */
+/** The days a device counts as in use after it was last seen (chat@device-active-days, default 90). */
 function activeDays() {
-  const days = Number(property('chat_device_active_days'))
+  const days = Number(property('chat@device-active-days'))
   return days > 0 ? days : 90
 }
 
 /**
  * Of userIds, the users with a crypto device in use: not revoked, with its identity keys uploaded, and seen (a key upload
- * or a sync) in the last chat_device_active_days. A device that has not synced for that long would never read a message.
+ * or a sync) in the last chat@device-active-days. A device that has not synced for that long would never read a message.
  */
 function usersWithDevices(userIds) {
   const ids = Array.from(new Set(userIds.filter((id) => id)))

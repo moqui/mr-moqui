@@ -15,7 +15,7 @@ BasicComms (`runtime/components/base/basic-comms`) is the framework's Comms app.
 - **Phone screens.** `Calls/Voicemail` (`voicemail`, `audio`, `mark`, `delete`, `restore`, `retryTranscript`, `callBack`) reaches `VoicemailServices` by `voicemailId`: a message of a box the user does not read is `notFound`. `Settings/Phone` (`settings`, `saveSettings`, `setPin`, `uploadGreeting`, `deleteGreeting`, `greeting`) acts on the user's own box only. `setPin` declares no `method`: the client posts the PIN in a body, and a GET with `pin` in the query works too. `secret_parameter` (`crates/moqui-core/src/context/identity.rs`), the one rule for what `ec.web.getRequestDetails`, the HTTP log's query and telemetry leave out, lists `password`, `secret`, `token`, `credential` and a few names, not `pin`, `ha1` or `response`, so a PIN sent in a query is kept in the HTTP log. `ha1` and `response` are parameters of in-server services only. `Settings/PhoneDevices` (`devices`, `add`, `newPassword`, `remove`) reaches `SipDeviceServices`: a device that is not the user's is `notFound` unless the caller holds `VoiceAdmin`. `Settings/CallHandling` (`handling`, `change`) maps `op` to one of seven `CallHandlingServices` services through a fixed table; a rule, list or schedule of another user is `notFound`. `Calls/Queues` (`setStatus`) changes only the caller's own agent status.
 - **Uploads and downloads.** Each download transition asks a service for a location by id, the service answers it only to a caller it allows, and `ec.web.sendResourceResponse` sends the file (`crates/moqui-core/src/web/mod.rs` `send_resource_response`). The content type comes from the stored file name. A user file is `private, no-store`. A file whose name has an active type (HTML, SVG, XML, JavaScript) is sent as an attachment even when inline is asked.
   - Chat files: `Chat/upload` and `Chat/attachment` ([Chat](#chat), its Files item).
-  - Files sent in chunks: `Chat` and `Inbox/Compose` include `uploadChunk` (POST) and `uploadStatus` (GET) from `template/UploadTransitions.xml`, which call `org.moqui.edge.ClientSyncServices.upload#Chunk` and `get#UploadStatus`. An upload is found by the current user's id and `uploadId`, so a user reaches only their own. The limits are in [Chunked uploads](Attack-Surface-Files.md#chunked-uploads). An upload with no chunk for `client_upload_expire_hours` (24) is removed by `clean#ClientUploads`.
+  - Files sent in chunks: `Chat` and `Inbox/Compose` include `uploadChunk` (POST) and `uploadStatus` (GET) from `template/UploadTransitions.xml`, which call `org.moqui.edge.ClientSyncServices.upload#Chunk` and `get#UploadStatus`. An upload is found by the current user's id and `uploadId`, so a user reaches only their own. The limits are in [Chunked uploads](Attack-Surface-Files.md#chunked-uploads). An upload with no chunk for `client-sync@upload-expire-hours` (24) is removed by `clean#ClientUploads`.
   - Recordings: `Calls/Recordings` `recordingFile` ([Call recording](#call-recording)).
   - Voicemail audio and greetings: `Calls/Voicemail` `audio`, `Settings/Phone` `greeting` and `uploadGreeting` ([Voicemail](#voicemail)).
   - Prompts, hold music and ring group greetings: System › Voice, below.
@@ -46,13 +46,13 @@ BasicComms (`runtime/components/base/basic-comms`) is the framework's Comms app.
 - **Members.** A member adds an enabled account to a room that is not direct (`add#Member`), and a user starts a direct room with one (`create#Room`), only when the apps' `chat-target` providers do not refuse it; a refused user is answered "User X not found", as one that does not exist, and an external user reaches only the people of their own rooms. A public room's mention of a non-member asks the same hook. A provider runs as its app by the user's own grant of the app, with that grant's entity filters, never by an inheritable grant of its caller: `add#Member` and `send#Message` are XMPP client services that `ALL_USERS` may always run (`XmppSecurityData.xml`), and under that grant mr-boss's `get#CallTarget` read every organization's people and answered no one as refused (DC-UI-043, fixed in `screen/shell.rs` `run_in_app`). The account added is not asked. Calls ask the apps' `call-target` providers ([SIP](#sip)).
 - **Acting as another user.** A parameter that names another user or actor (`get#RoomAccess.userId`, `send#Message.senderUserId` and `senderActorId`, `signal#Typing.userId`, `set#UserStatus.userId`, `get#UnreadCounts.userId`) is taken only when `ec.artifactExecution.authzDisabled()` is true. `create#Room` skips the record visibility check when authorization is disabled. The root transitions (`/setUserStatus`, `/chatTyping`, `/chatUnread`), the Chat screen's bridge transitions and `/notws` call chat services with authorization disabled; each builds its parameters from named fields and passes no `userId`.
 - **Message bodies.** A body is `allow-html="safe"` and at most 65,536 characters; an encrypted room's ciphertext is at most 131,072. `clientRef` matches `^[A-Za-z0-9_.:-]{1,64}$`. The cleaner is ammonia's defaults plus three `span` attributes (`crates/moqui-lib/src/safe_html.rs`). `send#Message`, `edit#Message` and a forward's copy clean the body with `moqui_lib::safe_html::clean_chat` (`StringUtilities.cleanChatHtml`): an `img` keeps its `src` only when it is `/richTextImage/<id>`, any other image loses it, and an image with no `src` is no body. The client matches: in an encrypted room `moqui.chat.clean` (a DOMPurify hook), and for a plain room's stored body and a forward `moqui.chat.ownImages`, drop any other image source, so a message stored before shows none (SEC-COM-02, fixed). The Chat screen shows the cleaned body with `v-html`; the default `Content-Security-Policy` of a screen render has no `img-src`.
-- **Agent members.** `add#Member` and `set#MemberRole` take an `agentRef`, a service name, from a moderator or owner of the room, only when it is one of `chat_agent_entry_services` (default `org.moqui.agent.AgentServices.handle#ChatMessage`). `deliver#AgentMessage` then calls the named service for each message of the room. The BasicComms `addMembers` and `setRole` transitions pass no `agentRef`. `send#Message` queues `deliver#AgentMessage` with `ec.service.async()`: the worker makes a fresh context, signs in the user that was current when it was queued (`service/pool.rs` `internal_login_queued_user`) and runs the call with authorization disabled for its whole length. So the agent's service runs as the message's sender (no user at all for a bridge's inbound message), with `authzDisabled()` true, and the chat services it calls take `senderUserId` and `userId` from it.
+- **Agent members.** `add#Member` and `set#MemberRole` take an `agentRef`, a service name, from a moderator or owner of the room, only when it is one of `chat@agent-entry-services` (default `org.moqui.agent.AgentServices.handle#ChatMessage`). `deliver#AgentMessage` then calls the named service for each message of the room. The BasicComms `addMembers` and `setRole` transitions pass no `agentRef`. `send#Message` queues `deliver#AgentMessage` with `ec.service.async()`: the worker makes a fresh context, signs in the user that was current when it was queued (`service/pool.rs` `internal_login_queued_user`) and runs the call with authorization disabled for its whole length. So the agent's service runs as the message's sender (no user at all for a bridge's inbound message), with `authzDisabled()` true, and the chat services it calls take `senderUserId` and `userId` from it.
 - **Record rooms.** `ChatScreenServices.lookup#Records` passes the request's `recordEntityName` and `recordId` untouched to the apps' `record-lookup` providers and reads back what they answer; the framework does not use them as entity names. `find#RecordRoom` uses the provider's `entity` when the record is visible, else the request's own string, as the room's key, and refuses a record a provider says is not visible; with no provider answer it calls `create#Room` with the caller's string. mr-boss's provider hands the name to `ironstone.shared.ChatterServices.get#RecordInfo`, which calls `mantle.party.CommunicationServices.get#RecordLinkInfo`.
-- **Files.** A member who may post uploads a file with the Chat screen's `upload` transition (`ChatScreenServices.upload#ChatFiles`, then `ChatServices.upload#Attachment` for each file in its own transaction). The file is kept at `dbresource://chat/<chatRoomId>/<chatAttachmentId>/<name>` (`chat_attachment_root` names another root). The name is the last path segment with control characters removed, at most 200 characters. The content type is the one the client declared. The service refuses a file over `chat_attachment_max_bytes` (25 MB) and a user's uploads over `chat_attachment_daily_bytes` (1 GB) in 24 hours. A file sent in chunks is at most 25 MB. A file never sent with a message is removed after 24 hours (`clean#PendingAttachments`). In an encrypted room the file is kept as `encrypted`, `application/octet-stream`. `send#Message` takes only files of that room that the sender uploaded and that no message has yet. The `attachment` transition (GET, `chatAttachmentId`) reads through `get#Attachment`: the room must be readable by the caller at the time of the read, and a file not yet sent is given only to its uploader. The file is sent as an attachment, or inline when `inline=true` and the stored type is png, jpeg, gif or webp. A file whose name has an active type is never inline.
-- **Link previews.** After a message or its edit commits, `fetch#LinkPreviews` (`authenticate="anonymous-all"`, registered on commit by `queue#LinkPreviews`) makes the server fetch up to 3 links of the body, so any user who can post makes the server send requests. The request, its address guard and its limits are a row in [Attack-Surface-Outbound.md](Attack-Surface-Outbound.md#requests-the-server-makes). No picture is fetched. A preview is cached in `ChatLinkPreview` for 24 hours (1 hour when it failed), by the SHA-256 of the URL. Previews are off when `chat_link_previews` is `false`, when the sender's preference `CHAT_LINK_PREVIEWS` is `N`, in an encrypted room, and for a bridge's external actor. No limit other than the 3 links a message bounds how often a user makes the server fetch.
+- **Files.** A member who may post uploads a file with the Chat screen's `upload` transition (`ChatScreenServices.upload#ChatFiles`, then `ChatServices.upload#Attachment` for each file in its own transaction). The file is kept at `dbresource://chat/<chatRoomId>/<chatAttachmentId>/<name>` (`chat@attachment-root` names another root). The name is the last path segment with control characters removed, at most 200 characters. The content type is the one the client declared. The service refuses a file over `chat@attachment-max-bytes` (25 MB) and a user's uploads over `chat@attachment-daily-bytes` (1 GB) in 24 hours. A file sent in chunks is at most 25 MB. A file never sent with a message is removed after 24 hours (`clean#PendingAttachments`). In an encrypted room the file is kept as `encrypted`, `application/octet-stream`. `send#Message` takes only files of that room that the sender uploaded and that no message has yet. The `attachment` transition (GET, `chatAttachmentId`) reads through `get#Attachment`: the room must be readable by the caller at the time of the read, and a file not yet sent is given only to its uploader. The file is sent as an attachment, or inline when `inline=true` and the stored type is png, jpeg, gif or webp. A file whose name has an active type is never inline.
+- **Link previews.** After a message or its edit commits, `fetch#LinkPreviews` (`authenticate="anonymous-all"`, registered on commit by `queue#LinkPreviews`) makes the server fetch up to 3 links of the body, so any user who can post makes the server send requests. The request, its address guard and its limits are a row in [Attack-Surface-Outbound.md](Attack-Surface-Outbound.md#requests-the-server-makes). No picture is fetched. A preview is cached in `ChatLinkPreview` for 24 hours (1 hour when it failed), by the SHA-256 of the URL. Previews are off when `chat@link-previews` is `false`, when the sender's preference `CHAT_LINK_PREVIEWS` is `N`, in an encrypted room, and for a bridge's external actor. No limit other than the 3 links a message bounds how often a user makes the server fetch.
 - **Presence.** `get#UserStatuses` (`authenticate="false"`, reached from `/userStatuses` with authorization disabled) answers, for up to 500 user ids of the caller's choice, each user's presence, status text, emoji, clear-at time, `inCall` and `lastActiveDate`. It checks no shared room. An external caller (`EXTERNAL_USER`) gets only their own. An id with no `UserStatus` row is answered as offline, the same as an id that is no account. Another user who is offline, or invisible, is answered with no `lastActiveDate` and `inCall` false, and the `userStatus` push to co-members carries `inCall` false for them (SEC-COM-06). The status text and emoji are still answered.
 - **Pushes.** Chat pushes are notifications that are not persisted, on the topics `chatRoom:<chatRoomId>` (to the room's member users), `chatUser:<userId>` and `userStatus` (to the user's room co-members). A `/notws` topic is only a filter: a notification is queued on the sockets of the users its `ROUTE_USER_IDS` name, so following another user's `chatRoom:<id>`, `chatUser:<userId>` or `rtc:<callSessionId>` topic delivers nothing.
-- **Device pushes** (plans/Comms-Messaging.md §7; `service/chat_push.rs`, `ChatPushServices.xml`). A message pushes to the devices of the room's members, and of a user it mentions who may read the room, by the room's level; no service takes a recipient from the caller (`append#Event` writes the job, `run#ChatPush`, `queue#ReadClear` and `filter#RingUsers` are `allow-remote="false"`). Each push is encrypted to its device's keys (RFC 8291) for every provider; the push service sees the device's token or endpoint, the time, a collapse key or Topic (an HMAC, keyed by `web_push_vapid_key`, of the registration, the room and the kind: no room id, and no link between two users' pushes of a room) and, for FCM, the registration id. A device that moves to another user drops what waits for it, and a send checks the device's user. An encrypted room's push has the room's name and the sender's name, never text; a user whose `CHAT_NOTIFY_PREVIEW` is N gets no snippet. An FCM device that gave no keys gets `{kind, pushId}` only for a chat push; a notification to it keeps its kind, topic and tag only, and a call's ring goes to Google as it was, with `callSessionId`, `chatRoomId` and `caller` readable (`fcm.rs`). By default a plain room's push carries a snippet of the body (140 characters), the room name and the sender, which a locked device may show; only `CHAT_NOTIFY_PREVIEW` `N` removes the snippet. The payload is written to `PushOutbox.payloadJson` (not an encrypted field) when the job is worked and kept until 7 days after the push is done. A deleted message is left out only when the payload is written: at the send the worker checks the time to live (4 weeks), the read marker, that the device is enabled and still the user's, and a native device's key, not that the event is not redacted, that the user is still a member or that the account may sign in, so a push held by do not disturb or waiting on its push service goes out as written. Redaction, retention and member removal do not name `PushOutbox`. One thread a node (`moqui-chat-push`) sends all chat pushes one after another, up to 500 a round, each a blocking POST with a 10 second timeout, internal addresses refused and no redirects; a 2xx answer is delivered, and an endpoint that never answers is tried 12 times. `store#WebPushSubscription` (`POST /WebPush/store`, any signed-in user) makes a row for each new endpoint (https with a host and no user part) and counts none, so a user's stored endpoints decide where, and how often, the server posts for each message of their rooms; a browser subscription is removed at logout and by nothing else that was found. `register#PushDevice` (`/qapps/registerClientPush`, a signed-in app holding a live device key of the user) holds a device key to one row; with provider `unifiedpush` its `token` is an https endpoint the server posts to in the same way. A VAPID token goes to whatever host an endpoint names, for UnifiedPush too when the key is set. `send#TestPush` (`/qapps/testClientPush`) queues a push for the caller's own device or the endpoint the caller names, one a device every 10 seconds, with no limit across a user's devices. `ack#Push` (`/qapps/ackClientPush`) counts only the caller's own push or device. `find#PushHealth` (System, Push Health) needs `PushHealthAdmin` (ADMIN) and returns no endpoint or key. A user's do not disturb allowed list (`store#DndAllowed`) is the user's own preference; it lets the people on it ring the user's phones through do not disturb.
+- **Device pushes** (plans/Comms-Messaging.md §7; `service/chat_push.rs`, `ChatPushServices.xml`). A message pushes to the devices of the room's members, and of a user it mentions who may read the room, by the room's level; no service takes a recipient from the caller (`append#Event` writes the job, `run#ChatPush`, `queue#ReadClear` and `filter#RingUsers` are `allow-remote="false"`). Each push is encrypted to its device's keys (RFC 8291) for every provider; the push service sees the device's token or endpoint, the time, a collapse key or Topic (an HMAC, keyed by `push/web@vapid-key`, of the registration, the room and the kind: no room id, and no link between two users' pushes of a room) and, for FCM, the registration id. A device that moves to another user drops what waits for it, and a send checks the device's user. An encrypted room's push has the room's name and the sender's name, never text; a user whose `CHAT_NOTIFY_PREVIEW` is N gets no snippet. An FCM device that gave no keys gets `{kind, pushId}` only for a chat push; a notification to it keeps its kind, topic and tag only, and a call's ring goes to Google as it was, with `callSessionId`, `chatRoomId` and `caller` readable (`fcm.rs`). By default a plain room's push carries a snippet of the body (140 characters), the room name and the sender, which a locked device may show; only `CHAT_NOTIFY_PREVIEW` `N` removes the snippet. The payload is written to `PushOutbox.payloadJson` (not an encrypted field) when the job is worked and kept until 7 days after the push is done. A deleted message is left out only when the payload is written: at the send the worker checks the time to live (4 weeks), the read marker, that the device is enabled and still the user's, and a native device's key, not that the event is not redacted, that the user is still a member or that the account may sign in, so a push held by do not disturb or waiting on its push service goes out as written. Redaction, retention and member removal do not name `PushOutbox`. One thread a node (`moqui-chat-push`) sends all chat pushes one after another, up to 500 a round, each a blocking POST with a 10 second timeout, internal addresses refused and no redirects; a 2xx answer is delivered, and an endpoint that never answers is tried 12 times. `store#WebPushSubscription` (`POST /WebPush/store`, any signed-in user) makes a row for each new endpoint (https with a host and no user part) and counts none, so a user's stored endpoints decide where, and how often, the server posts for each message of their rooms; a browser subscription is removed at logout and by nothing else that was found. `register#PushDevice` (`/qapps/registerClientPush`, a signed-in app holding a live device key of the user) holds a device key to one row; with provider `unifiedpush` its `token` is an https endpoint the server posts to in the same way. A VAPID token goes to whatever host an endpoint names, for UnifiedPush too when the key is set. `send#TestPush` (`/qapps/testClientPush`) queues a push for the caller's own device or the endpoint the caller names, one a device every 10 seconds, with no limit across a user's devices. `ack#Push` (`/qapps/ackClientPush`) counts only the caller's own push or device. `find#PushHealth` (System, Push Health) needs `PushHealthAdmin` (ADMIN) and returns no endpoint or key. A user's do not disturb allowed list (`store#DndAllowed`) is the user's own preference; it lets the people on it ring the user's phones through do not disturb.
 
 ## Call services
 
@@ -70,8 +70,8 @@ refused once the link is revoked or expired. The page's transitions are `joinGue
 `recordingState`, `ackRecording`, `withdrawRecording` and `leaveGuest`, all
 without the session token. `joinGuest` takes a name of up to 60 characters and gives a 40-character credential that
 lasts 4 hours (hash kept). basic-comms declares a per-client rate limit for it (`call-guest`: `POST /call/*/joinGuest`,
-10 a minute, burst 5), which applies only while per-client web protection is on (`webapp_trusted_proxies` set, or
-`webapp_web_protection` `true`; [Web protection](Attack-Surface-Web.md#web-protection)). On the default conf `joinGuest`
+10 a minute, burst 5), which applies only while per-client web protection is on (`webapp-list/webapp[webroot]@trusted-proxies` set, or
+`webapp-list/webapp[webroot]/web-protection@enabled` `true`; [Web protection](Attack-Surface-Web.md#web-protection)). On the default conf `joinGuest`
 has no per-client limit.
 
 - A guest's credential reaches only that call's signaling, on `GET /callws`. The guest page never puts it in a URL.
@@ -87,7 +87,7 @@ has no per-client limit.
   people in the call and to the link's owner.
 - A meeting takes at most 50 guests with an open guest leg, waiting or in the call (`callFull`). A guest who leaves,
   whose credential runs out or whose offered leg times out no longer counts (SEC-COM-05). A link takes at most
-  `call_guest_joins_per_minute` (20) joins a minute whatever the client (`tooManyJoins`).
+  `calls@guest-joins-per-minute` (20) joins a minute whatever the client (`tooManyJoins`).
 - `/callws` holds at most 64 sockets on a node that have not yet sent a credential, 4 of them from one client address,
   each for up to 5 seconds (SEC-COM-04). Another socket is answered 503. A socket refused for its first frame (none,
   not a credential, or one that does not work) counts as a failed sign-in of its client for web protection.
@@ -101,7 +101,7 @@ has no per-client limit.
 ## Call captions
 
 Call captions (W6, [WebRTC](../interfaces/WebRTC.md#captions)) send call audio out to a speech provider, so they are off
-unless `call_captions_enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
+unless `calls/captions@enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
 `stopCaptions`) need a signed-in user with an answered leg in the call; anyone else gets `notFound`. An end-to-end
 encrypted call is refused. Every leg, a late joiner's and a guest's too, gets the notice naming the provider before its
 audio is captioned. The provider is the `transcribe` model binding, reached through `moqui-llm`'s address guard (a
@@ -110,7 +110,7 @@ as an `LlmCall`. No screen transition names `org.moqui.call.SpeechServices.trans
 other services call them (captions, voicemail transcription, mr-mantle's process checks;
 [services and `allow-remote`](Attack-Surface-Web.md#services-and-allow-remote)).
 `transcribe#Audio` reads any `audioLocation` it is given, so its caller decides what may be sent out. Captions are not
-stored unless `call_captions_store` is `true`.
+stored unless `calls/captions@store` is `true`.
 `transcribe#CaptionAudio` takes only a participant of the call as the quota's user, caps a chunk at 4 MiB, and as
 `_edge_` takes only a call whose media is on the edge node. Each caption goes to every leg of the room, a guest's too,
 as `{rtc: 'caption', leg, participant, name, seq, text}`; the text is the provider's answer, trimmed only
@@ -119,14 +119,14 @@ of the node. The captions thread decodes every browser's Opus and has no `catch_
 `CallTranscript` row with `callSessionId` and `callLegId` and no `callRecordingId` (`store#CallTranscript`, which takes
 only a leg of that call). No service, screen or job reads those rows, and none deletes them: `CallTranscript` rows are
 deleted only by `callRecordingId` (a recording's) and by `voicemailId`. A reader of the entity (the database, entity
-REST for `ADMIN`) reaches them. `stop#Captions` is refused with `captionsOff` once `call_captions_enabled` is turned
+REST for `ADMIN`) reaches them. `stop#Captions` is refused with `captionsOff` once `calls/captions@enabled` is turned
 off, so captions already on then stop only with the call.
 
 ## Call media
 
-Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
+Off unless `media-server@port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `media-server@host` (127.0.0.1 by default); browsers are told `media-server@public-address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
 
-Cascading media nodes (`rtc_cascade_enabled`, off by default) add relay links between the media nodes of a call on the
+Cascading media nodes (`media-server@cascade-enabled`, off by default) add relay links between the media nodes of a call on the
 same UDP sockets: one str0m peer a room on each side, DTLS-SRTP like a browser leg, negotiated only by `rtc-signal`
 messages on the cluster's client-certificate HTTPS transport (kind `relay`), so only a cluster member opens one. The
 origin takes at most 8 links a room and 64 in all, and refuses more (`tooManyRelays`); a message of an older link is
@@ -134,7 +134,7 @@ dropped, a room that ended takes no new link, and a link not connected within 10
 to the origin only its own legs' tracks; the origin decides nothing a leg node asks beyond the layers it sends it. Any
 cluster member may open a link for any room id: the cluster's members are trusted alike.
 
-ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000, and 64 from one
+ICE-TCP (`media-server@tcp-port`, off unless set) takes TCP connections on the same address: at most 1,000, and 64 from one
 source address. A connection that sends
 nothing for 30 seconds is closed. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
@@ -165,7 +165,7 @@ key the server gives only to its signed-in user (see Chat keys).
 
 ## Call recording
 
-Off unless `call_recording_enabled` is true ([Call recording](../interfaces/Call-Recording.md)). It opens no port. An
+Off unless `calls/recording@enabled` is true ([Call recording](../interfaces/Call-Recording.md)). It opens no port. An
 admitted host of the call, or the owner of its call link (in the meeting or not), starts, pauses, resumes or stops it
 (`org.moqui.call.CallRecordingServices`, `CallRecordings.js` `isHost`); the recording's owner who is no longer a host
 also pauses, resumes and stops it. The call must be active, with a media node, and not end-to-end encrypted. Only the
@@ -197,19 +197,19 @@ spool path or a recording of a call whose media is not on it.
 ## TURN
 
 The embedded TURN server (`crates/moqui-rtc` `turn/`, host `rtc/turn.rs`) runs on the media node. Each listener is off
-unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_tls443_host`. TLS uses the
-`runtime/cert` certificates. Relays are UDP sockets in `turn_relay_ports`. The listeners bind `turn_host`, which is
-`rtc_media_host` when empty. The URLs given to clients name `turn_public_host`, the media node's public address when
+unless set: `media-server/turn-server@port` (UDP and TCP), `media-server/turn-server@tls-port` (TLS), and 443 on `media-server/turn-server@tls443-host`. TLS uses the
+`runtime/cert` certificates. Relays are UDP sockets in `media-server/turn-server@relay-ports`. The listeners bind `media-server/turn-server@host`, which is
+`media-server@host` when empty. The URLs given to clients name `media-server/turn-server@public-host`, the media node's public address when
 empty. Its rules:
 
-- **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `turn_auth_secret` (generated
+- **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `media-server/turn-server@auth-secret` (generated
   when unset; is-secret). They go only to an admitted leg (`get#IceServers`, `get#GuestIceServers`). An expired one
   is refused, and so is one of a leg that left (revoked by the media node, for 24 hours). On an edge node a local node's
   are `<expiry>:<legId>@<pairing>`, signed with that pairing's secret and taken only while it is active (E16). A credential
-  lasts `turn_credential_hours` (4; held to 1..24). `turn_external_urls` are handed out with the same username and a
+  lasts `media-server/turn-server@credential-hours` (4; held to 1..24). `media-server/turn-server@external-urls` are handed out with the same username and a
   credential under the same secret. A request with no credential is answered by `turn-server-proto` with a 401 and a
   nonce; a nonce lasts 600 seconds. An XMPP user's credential (`xmpp.<userId>`) is never revoked; it ends at its expiry.
-- **Relay peers** are only the media nodes' media ports (and `turn_allowed_peers`, by address and port). A permission
+- **Relay peers** are only the media nodes' media ports (and `media-server/turn-server@allowed-peers`, by address and port). A permission
   to any other address, or a channel to any other address or port, is dropped before the server sees it, and nothing
   is relayed to or from one, another port of a media node's address included. The exception is an XMPP user's own
   credential (`xmpp.<userId>`, from `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may
@@ -219,9 +219,9 @@ empty. Its rules:
   the media node's public
   address and its bind address when that is not a wildcard), nor the address a TURN listener is bound to
   (a relay there would come from the server itself, past a firewall that keeps the outside off those ports).
-  A public address of the host that is neither (the address behind `turn_public_host` when it differs from the media
+  A public address of the host that is neither (the address behind `media-server/turn-server@public-host` when it differs from the media
   address, another interface) is not refused.
-- **Limits:** two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way per
+- **Limits:** two allocations per credential, `media-server/turn-server@max-allocations` in all, and `media-server/turn-server@max-kbps` each way per
   allocation; excess data is dropped. A stream buffers at most 64 KiB without a whole message. No TCP relays to
   peers are offered.
   The two allocations are counted by the request's leg, over all of its usernames. A username is given to the server's
@@ -240,9 +240,9 @@ peer rule.
 ## SIP
 
 The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a media node, only in a binary with the
-`sip` feature (Maximal, Enterprise, Debug). Each listener is off unless set: `sip_port` (UDP and TCP on `sip_host`),
-`sip_tls_port` (TLS on `sip_tls_host`, the `runtime/cert` certificates). Each phone leg has a UDP RTP socket in
-`sip_rtp_ports` on `sip_rtp_host`. An exposed SIP listener is scanned within hours, so its rules are release gates
+`sip` feature (Maximal, Enterprise, Debug). Each listener is off unless set: `sip-server@port` (UDP and TCP on `sip-server@host`),
+`sip-server@tls-port` (TLS on `sip-server@tls-host`, the `runtime/cert` certificates). Each phone leg has a UDP RTP socket in
+`sip-server@rtp-ports` on `sip-server@rtp-host`. An exposed SIP listener is scanned within hours, so its rules are release gates
 ([SIP](../interfaces/SIP.md) "Fraud controls"):
 
 - **Who is answered.** An INVITE from a trunk's host (each address of its SRV targets, for a trunk set up by name
@@ -270,8 +270,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   A digest answer whose `uri` is not the Request-URI (`uri_matches`) is refused with 403 and not counted. The UDP socket also answers a STUN
   Binding request (the RFC 5626 keepalive) from any source with a Binding success that carries the source's address (32
   bytes for IPv4, 44 for IPv6). That answer is sent before the SIP stack sees the datagram, so it is given with the
-  registrar off, to a blocked source, and outside `sip_request_rate`. No other STUN message is answered.
-- **The registrar (V4).** Off unless `sip_registrar_enabled` is true, even with the listeners on. With it, a REGISTER
+  registrar off, to a blocked source, and outside `sip-server/limits@request-rate`. No other STUN message is answered.
+- **The registrar (V4).** Off unless `sip-server/registrar@enabled` is true, even with the listeners on. With it, a REGISTER
   and a phone's INVITE answer the same challenge with a desk or soft phone's credentials: a generated username and a
   22-character random password that is shown to its user once and never stored. Only its digest verifiers are kept
   (`SipDeviceVerifier.ha1`, encrypted, per algorithm and realm): SHA-256, and MD5 only for a device of the legacy
@@ -290,7 +290,7 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   keeps the Contact URI whole as text (bounded only by the 65,535 byte message) and uses it only as the INVITE's
   Request-URI; a REGISTER's `User-Agent` is cut to 200 characters without control characters. A REGISTER whose CSeq
   does not go up is refused. A device has at most 10 bindings, and expiry is held to
-  `sip_registrar_min_expires`..`sip_registrar_max_expires`. A phone's own call is placed as its user through the same
+  `sip-server/registrar@min-expires`..`sip-server/registrar@max-expires`. A phone's own call is placed as its user through the same
   checks as the browser's (`place#PhoneCall`: outbound permission, caller ID, international and premium, limits,
   emergency first), so a phone's credentials give no more than its user has. Plain RTP from a phone is taken from its
   SDP's address or the address it signals from (its NAT's), on any port until the first packet latches.
@@ -338,7 +338,7 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   engine checks the class and its calls at once again before the INVITE. A ring group's fallback number is set by a
   voice admin and checked against the deployment's policy. The caller ID of a forward is the number the call came in
   on, never one the caller supplied. A forward to one of this deployment's numbers is routed inside (no hairpin through
-  the trunk), a forward back to the caller's number is skipped, and a call takes at most `call_forward_max_hops`
+  the trunk), a forward back to the caller's number is skipped, and a call takes at most `calls@forward-max-hops`
   forwards, with a user or group already in its plan skipped, so rules cannot loop a call or fan it out without bound.
   Caller lists and rules are the user's own (another user's are "not found"); the rule's target is checked when it is
   saved and again when a call uses it.
@@ -360,7 +360,7 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   queue's fallback to a number is set by a voice admin and checked against the deployment's policy when it is saved
   and when a call uses it; a menu loop ends after 20 menus, and a queue's fallback chain after 10.
 - **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
-  allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default),
+  allowed algorithms. TLS to a trunk verifies its certificate against `sip-server@tls-ca-file` (the system bundle by default),
   for the trunk's host as set up, never an SRV target's name, so a changed SRV record cannot point a trunk at a server
   that does not hold the provider's certificate.
   `VoiceServices.get#EngineConfig` returns each enabled trunk's decrypted `password`, and
@@ -397,12 +397,12 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
 - **DTMF.** A telephone-event packet with a timestamp other than the last one is a new digit (`dtmf.rs`). The leg's
   worker sends each digit to the engine over an unbounded channel, and the engine spawns a task and calls
   `note#PhoneLeg` for each; there is no minimum gap between digits and no count a leg. The engine logs each digit of a
-  call at debug (`crates/moqui-host/src/sip/mod.rs`); the default level is info (`moqui_log_level`), and digits of a
+  call at debug (`crates/moqui-host/src/sip/mod.rs`); the default level is info (`logging@level`), and digits of a
   voicemail or IVR session return before that line, so a voicemail PIN typed on a phone is not logged even at debug.
 - **Floods.** rsipstack has no caps of its own, so the engine's transport inspector holds new requests to
-  `sip_request_rate` a second per source (`sip_request_burst` at once; 20 and 100 by default, an IPv6
-  source as its /64), drops them while `sip_max_transactions` (2,000) run, and closes TCP and TLS connections past
-  `sip_max_connections` (500), or past `sip_max_connections_per_source` (100) from one source, so one source cannot
+  `sip-server/limits@request-rate` a second per source (`sip-server/limits@request-burst` at once; 20 and 100 by default, an IPv6
+  source as its /64), drops them while `sip-server/limits@max-transactions` (2,000) run, and closes TCP and TLS connections past
+  `sip-server/limits@max-connections` (500), or past `sip-server/limits@max-connections-per-source` (100) from one source, so one source cannot
   hold the connections the registrar's phones keep open. What is over is dropped unanswered; requests in a dialog and responses pass, so calls
   going on are not cut. The inspector does not ask whether a dialog exists: a request is new when its To header does
   not hold the text `;tag=` (`ua.rs` `is_new_request`), so any request whose To carries a tag passes the rate and the
@@ -415,20 +415,20 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   valid request. A SIP message over a stream is at most 65,535 bytes.
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. A leg's RTP socket is read until it is empty each tick, with no count. The engine registers its node (`SipNode`) every 20 seconds.
-- **Settings that name addresses and audio.** `sip_public_address` is the address put in Contact headers and SDP, and
-  is required when a SIP host binds every address. `sip_domain` is the digest realm (`sip_public_address`, else `moqui`,
-  when empty). `voicemail_prompt_location`, `call_hold_music_location`, `call_recording_prompt_audio` and
-  `call_captions_prompt_audio` name resource locations (any scheme) whose files the engine reads and plays to callers.
+- **Settings that name addresses and audio.** `sip-server@public-address` is the address put in Contact headers and SDP, and
+  is required when a SIP host binds every address. `sip-server@domain` is the digest realm (`sip-server@public-address`, else `moqui`,
+  when empty). `voicemail@prompt-location`, `calls@hold-music-location`, `calls/recording@prompt-audio` and
+  `calls/captions@prompt-audio` name resource locations (any scheme) whose files the engine reads and plays to callers.
   They are empty by default.
 
 ## XMPP
 
 The XMPP server (`crates/moqui-xmpp`, host `src/xmpp/`, [XMPP](../interfaces/XMPP.md)) runs only in a binary with the
-`xmpp` feature (Maximal, Enterprise, Debug) and only when `xmpp_domain` is set. Each listener is off unless set:
-`xmpp_port` (STARTTLS, required before anything else) on `xmpp_host`, `xmpp_tls_port` (direct TLS) on
-`xmpp_tls_host`, and `/xmpp-websocket` with `xmpp_websocket_enabled`. Local users only: no server-to-server
-(`xmpp_s2s_port` is declared in the default conf and no code reads it). `xmpp_host` defaults to `0.0.0.0`, so `xmpp_port`
-listens on every IPv4 address once it is set. `xmpp_tls_host` is empty by default and then takes `xmpp_host`; an empty
+`xmpp` feature (Maximal, Enterprise, Debug) and only when `xmpp-server@domain` is set. Each listener is off unless set:
+`xmpp-server@port` (STARTTLS, required before anything else) on `xmpp-server@host`, `xmpp-server@tls-port` (direct TLS) on
+`xmpp-server@tls-host`, and `/xmpp-websocket` with `xmpp-server@websocket-enabled`. Local users only: no server-to-server
+(`xmpp-server@s2s-port` is declared in the default conf and no code reads it). `xmpp-server@host` defaults to `0.0.0.0`, so `xmpp-server@port`
+listens on every IPv4 address once it is set. `xmpp-server@tls-host` is empty by default and then takes `xmpp-server@host`; an empty
 host is `0.0.0.0`. A direct TLS handshake and a STARTTLS handshake each have 10 seconds. A connection with nothing read
 for 600 seconds is closed, and a write the client does not take for 60 seconds ends it.
 
@@ -436,9 +436,9 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   and cannot carry a second factor): SCRAM-SHA-256 and SCRAM-SHA-256-PLUS against the verifiers stored when the
   app password was made (salted, 10,000 iterations), with tls-exporter channel binding where the connection has its
   own TLS session and a downgrade (`y` where the server binds) refused; PLAIN over TLS only; FAST tokens (XEP-0484)
-  bound to the client's user-agent id, kept encrypted, expiring (`xmpp_fast_token_days`), and without channel binding
+  bound to the client's user-agent id, kept encrypted, expiring (`xmpp-server@fast-token-days`), and without channel binding
   refused unless their count grows; a token goes with the app password it was issued under. An unknown user gets a salt
-  derived from the name and `xmpp_scram_decoy_key` (is-secret, generated when unset), so the exchange does not tell it
+  derived from the name and `xmpp-server@scram-decoy-key` (is-secret, generated when unset), so the exchange does not tell it
   apart, and its salt stays the same across restarts and nodes. A disabled account cannot sign in.
   A session checks every minute (`check#Credential`) that its app password is not revoked, that the
   account is not disabled with no `disabledDateTime` and not past its `terminateDate`, and ends when not (SEC-COM-15).
@@ -492,13 +492,13 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   Stream management keeps at
   most 1,000 unacknowledged stanzas, with no byte bound, and 10 detached sessions a user; PEP 200 nodes a user and 256 items a node;
   uploads 60 slots a user an hour. A detached session is resumed only by a sign-in of the same user. It runs no
-  credential check (`conn.rs` `wait_detached` calls no `tick`), so for up to `xmpp_resume_seconds` (300, at most 3600)
+  credential check (`conn.rs` `wait_detached` calls no `tick`), so for up to `xmpp-server@resume-seconds` (300, at most 3600)
   a session of a revoked app password or a disabled account goes on taking pushes into its unacknowledged queue.
   One MAM query returns up to 250 messages, each with up to two more service calls; a MUC join asks up to 100.
   A PEP item is at most 262,144 characters, and `publish#PepItem` keeps one only while the user's PEP items stay within
-  `xmpp_pep_max_bytes` (20 MiB) of UTF-8 (`XmppPepItem.payloadBytes`, the replaced item not counted). `block#Jids` takes
-  500 JIDs a call and blocks none past `xmpp_block_max_jids` (1,000); `enable#Push` adds a row for each `pushJid` and
-  `node` and keeps none past `xmpp_push_max_registrations` (50, a replacement not counted). Past a cap the IQ is refused
+  `xmpp-server@pep-max-bytes` (20 MiB) of UTF-8 (`XmppPepItem.payloadBytes`, the replaced item not counted). `block#Jids` takes
+  500 JIDs a call and blocks none past `xmpp-server@block-max-jids` (1,000); `enable#Push` adds a row for each `pushJid` and
+  `node` and keeps none past `xmpp-server@push-max-registrations` (50, a replacement not counted). Past a cap the IQ is refused
   with `resource-constraint` (type wait); 0 is no cap. There is no per-session stanza rate limit; a session's stanzas are
   worked one at a time.
 - **Authorization** is the user's: most stanzas become a service call as the signed-in user, through
@@ -532,11 +532,11 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   when they share a room
   with the owner), `presence` the people the owner shares a room with,
   `whitelist` the owner.
-- **TURN for XMPP calls** (XEP-0215): off unless `xmpp_turn_enabled` is true; while off, external services are not
+- **TURN for XMPP calls** (XEP-0215): off unless `xmpp-server@turn-enabled` is true; while off, external services are not
   advertised and a request gets an empty list. On, a credential keyed to the user (`xmpp.<userId>`) may relay to public
   unicast addresses only, never loopback, private, link-local, shared or documentation ranges ([TURN](#turn)); it is a
   relay to the internet within the TURN quotas, as a public TURN service's is. An external user (`EXTERNAL_USER`) never
-  gets one, and a user at most `xmpp_turn_per_hour` (30) an hour (counted on the distributed cache
+  gets one, and a user at most `xmpp-server@turn-per-hour` (30) an hour (counted on the distributed cache
   `moqui.xmpp.turn.issued`); a refusal is the same empty list. The count is read and then written (a cache `get`,
   then `put`), and a user's sessions run on separate workers, so two that read the same count both pass: a user with n
   sessions can get up to about n credentials for each count, bounded by the user's connections (20 an address).
@@ -544,19 +544,19 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   count only, and goes nowhere until federation (C3b).
 - **Upload files** (XEP-0363; the route's row is in
   [Attack-Surface-Routes.md](Attack-Surface-Routes.md#host-routes-and-servlets)). An upload is stored at
-  `dbresource://xmpp-upload/<xmppUploadId>/<name>` (`xmpp_upload_root` names another root). The token is 32 random
-  characters for a slot, and for a chat file the first 40 letters and digits of `singleUseCodeHash(xmpp_upload_secret +
+  `dbresource://xmpp-upload/<xmppUploadId>/<name>` (`xmpp-server/upload@root` names another root). The token is 32 random
+  characters for a slot, and for a chat file the first 40 letters and digits of `singleUseCodeHash(xmpp-server/upload@secret +
   ':' + chatAttachmentId)`. The route takes any method: `OPTIONS` is 204, `PUT` writes, and every other method is
   answered as a read. A file that was put is served at its URL with no expiry: the read checks only the token's row,
   `completedDate` and that the location has bytes, and loads the whole file into memory on a request worker. The content
   type is the one the uploader gave the slot. A type that starts with `image/`, `audio/` or `video/` is served inline,
   except the exact text `image/svg+xml` (a type with a parameter or another case, such as `image/svg+xml;
   charset=utf-8`, is inline). Every answer has `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. A
-  user's slots are limited to 60 an hour and ten times `xmpp_upload_max_bytes` an hour, and uploads count toward no
+  user's slots are limited to 60 an hour and ten times `xmpp-server/upload@max-bytes` an hour, and uploads count toward no
   drive quota. `attach#Upload` makes a `ChatAttachment` of the room on the same stored file, with the uploader's file
   name and content type. It refuses an upload that is not the caller's own completed one, and the session then logs the
   upload by its file name at WARN, never the URL whose token reads it. `clean_XmppUploads_daily` (`XmppServices.clean#Uploads`) removes slots never
-  put within an hour, a completed upload no chat file has `xmpp_upload_unattached_hours` (24) after it was put (so a
+  put within an hour, a completed upload no chat file has `xmpp-server/upload@unattached-hours` (24) after it was put (so a
   file shared only inside an OMEMO message goes then), and expired FAST tokens. `ChatServices.clear#MessageContent` and `clean#PendingAttachments` remove each chat
   file through `ChatServices.remove#AttachmentFile`: a file under the upload root goes, with its `XmppUpload` rows, when
   no other `ChatAttachment` has its location, so a file put over XMPP goes with the last message that has it (deletion or
@@ -574,7 +574,7 @@ user's number that nobody answers, and on the access number (`PnrVoicemail`) whe
   then an hour). The source is a caller ID the caller can fake, so the box's limit is the one that holds: up to 480
   guesses a day (5 every 15 minutes), which tries every four-digit PIN in three weeks and every six-digit one in under
   six years, so a new PIN
-  has at least `voicemail_pin_min_digits` (6 by default) digits. A box that does not exist, has no PIN, or is blocked is refused in
+  has at least `voicemail@pin-min-digits` (6 by default) digits. A box that does not exist, has no PIN, or is blocked is refused in
   the same words after the same hash work and is counted the same way, so the answers say nothing of which boxes
   exist. Three refusals end the call, and a refusal whose answer says `blocked`
   ends it at once. Failures for a number with a box are counted on the box, failures for digits with no box on those
@@ -598,10 +598,10 @@ user's number that nobody answers, and on the access number (`PnrVoicemail`) whe
   unchecked.
 - **Mail out.** The email notice carries only a link unless the owner turns on the audio or the transcript in it; the
   screen warns that mail cannot be recalled. Transcription sends the audio to the speech provider only when
-  `voicemail_transcribe` is on.
-- **Limits.** A message is at most `voicemail_max_seconds` (120; at most 600), spooled to disk as it is recorded; one
+  `voicemail@transcribe` is on.
+- **Limits.** A message is at most `voicemail@max-seconds` (120; at most 600), spooled to disk as it is recorded; one
   under a second is dropped.
-  `voicemail_prompt_location` names a folder (any resource location) of prompts the engine plays; it is empty by
+  `voicemail@prompt-location` names a folder (any resource location) of prompts the engine plays; it is empty by
   default.
 
 ## Chat bridges
@@ -656,7 +656,7 @@ it (`crates/moqui-host/src/channels.rs`): `POST /channels/{bridge}/webhook` and 
 - **Texts that come in.** A text is taken only for a number whose `messagingBridgeId` is the webhook's bridge. A text
   from a number not seen before makes a pair room, a member row for each user the number reaches and a joined push
   unless the spam filter hid it; only new group rooms are counted (below). Its files (each up to
-  `maxInboundMediaBytes`, 5 MiB by default) are written under `chat_attachment_root` with no uploader, so no user's
+  `maxInboundMediaBytes`, 5 MiB by default) are written under `chat@attachment-root` with no uploader, so no user's
   daily upload quota counts them. An inbound text runs app providers as a staff user: `file#ExternalConversation`
   signs in the room's first enabled local member (`internalLoginUser`) and calls `call#Providers` with the hook
   `external-conversation` (`mutation: true`), and the spam filter calls the `call-context` hook the same way for a
@@ -737,7 +737,7 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - `Chat.qvue`, `Call.qvue` and `CallGuest.qvue` were not read: what the clients do with relayed call frames, guest names and a forwarded message's body (`v-html`) was not checked. Nor was how they show a caption's `text` and `name` (as text or as HTML), an external sender's `displayName`, a delivery's `error` or an RCS message's `metadata`. `ChatExternalUser.avatarUrl` is stored from a bridge's item (up to 1,024 characters, any scheme), and no service that was read returns it.
 - mr-boss's own people search (`ironstone.shared.ChatterServices.search#Users`) was not read. Its `get#CallTarget` (`chat-target`, `call-target`) refuses a user whose party the Comms grant's entity filters (`MANTLE_USER_ORG`) keep out.
 - `mantle.party.CommunicationServices.get#RecordLinkInfo`, which mr-boss's `record-lookup` provider reaches with the request's `recordEntityName`, was not read: whether it takes any entity name or a fixed list. `ChatServices.create#Room` for `CrtRecord` when no `record-lookup` provider answers (the caller's entity string) was not read.
-- Whether a guest who waits in the lobby longer than `call_ring_seconds` can still be admitted was not traced (`expire#Calls` closes an offered leg after that time).
+- Whether a guest who waits in the lobby longer than `calls@ring-seconds` can still be admitted was not traced (`expire#Calls` closes an offered leg after that time).
 - Whether `web-protection` matches `/call/*/joinGuest` against the token route's path as written was not read (the guard's matcher), and whether its `max-per-client` connection cap applies to `/callws` was not traced.
 - `docs/interfaces/Chat-Keys.md`, `WebRTC.md`, `SMS.md`, `Chat-Bridges.md` and `RCS.md` were not compared with the code statement by statement.
 - TURN: the `turn-server-proto` crate was not read (whether it compares MESSAGE-INTEGRITY in constant time, or answers an unauthenticated request with a reply larger than the request). stun-proto's `LongTermServerAuth` keeps a nonce per client address and never removes one, so UDP requests from many forged sources grow it. The rest of `turn_probe.rs` and the TURN tests were not read.
@@ -746,7 +746,7 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - SIP: whether rsipstack takes a server dialog's remote target from the INVITE's Contact (`get_or_create_server_invite`), what `InviteDialog::handle` checks of an in-dialog request besides its CSeq, and whether rsipstack sends a BYE to the Contact of a call that was answered and never ACKed (a forged trunk-address INVITE over UDP would then aim a request without credentials) were not read. How long rsipstack keeps a server transaction this side never answers, and whether `incoming_sender` or the transaction table has any bound, were not read.
 - SIP: `ua.rs` lines 1-379 and 1340-1424 (the REGISTER to a trunk, `send_request`), and the host's `leg.rs` outside the worker's loop, `ivr.rs`, `edge.rs`, `owners.rs`, `trunk_lock.rs`, `prompt.rs`, `audio.rs`, `voicemail.rs` and `phones.rs` were not read. Whether a leg sends RTP before it is answered was not read. What bounds the pool that runs a leg's `note#PhoneLeg` calls was not read. Whether the host keeps rsipstack's INFO lines (whole messages) out of the log was not read past the comment in `logging.rs` ("rsipstack at WARN").
 - Whether a span or an `ArtifactHit` records service parameters (a `pin` or `ha1` passed to a service) was not settled; a grep of `crates/moqui-core/src/service` found none.
-- SIP: `VoicemailServices.expire#VoicemailTrash` is `authenticate="anonymous-all"`, takes no input and deletes only trash past `voicemail_trash_days`. Which callers name it was not traced.
+- SIP: `VoicemailServices.expire#VoicemailTrash` is `authenticate="anonymous-all"`, takes no input and deletes only trash past `voicemail@trash-days`. Which callers name it was not traced.
 - SIP: `receive#DeviceCall` and `refer#Call` call `internalLoginUser` inside a request-pool job of the engine. Whether each job gets a fresh execution context was not traced.
 - SIP: opus-rs was not read: whether any packet reaches one of its unchecked indexes out of range was not settled. The WAV and Ogg readers of uploaded greetings and prompts (`crates/moqui-host/src/sip/audio.rs`, `prompt.rs`) were not read.
 - SIP: `CallHandling.js` `evaluate` builds any user's call plan with no ownership check. No screen or script under `runtime/components/base`, `addon` or `dev`, or in `crates`, names its service by grep; other callers were not traced. The bodies of `CallHandling.js` (plans and routing), `CallQueues.js`, `CallTransfers.js` and `Ivr.js` beyond their guards were not read.

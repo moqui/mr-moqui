@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Chat devices and keys (framework/entity/ChatKeyEntities.xml, org.moqui.chat.ChatKeyServices, C7 core): the cleanup job. -->
 <entity-facade-xml type="seed-initial">
-    <!-- To-device messages a device has not acknowledged in chat_to_device_retention_days, and one-time keys claimed over a
+    <!-- To-device messages a device has not acknowledged in chat@to-device-retention-days, and one-time keys claimed over a
         day ago. Each part is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_ChatToDevice_daily" description="Delete old to-device messages and claimed one-time keys"
             serviceName="org.moqui.chat.ChatKeyServices.clean#ChatToDevice" cronExpression="0 23 4 * * ?" paused="N"

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One-time codes and screen security (plans/Comms-Messaging.md §18.3 phase 21). A code is found only in an incoming text
+    from outside (Sms.js); its message keeps it as content.otp, its push carries it where the push carries the snippet, and
+    it may delete itself after a day (phase 16's expireDate) when every local member of the room asks. The logic is
+    ChatOtp.js beside this file. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="detect" noun="OneTimeCode" allow-remote="false">
+        <description>Internal: the one-time code of a text, or none: 4 to 8 digits on word boundaries (one space or dash inside
+            allowed, or after a "G-" style prefix) within 40 characters of a keyword (chat@otp-keywords, comma separated,
+            else English: code, verification, OTP, passcode, PIN, login, 2FA and the like), not part of a phone number, a
+            price or amount, a date or time, a year or a link; two candidates as near are none. strong: it is the text's only
+            candidate; deletable: strong, and within 20 characters of a core word (code, OTP, verification, passcode,
+            security code, one-time), which alone may delete its message after a day.</description>
+        <in-parameters><parameter name="text"/></in-parameters>
+        <out-parameters>
+            <parameter name="code"/>
+            <parameter name="strong" type="Boolean"/>
+            <parameter name="deletable" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatOtp.js').execute('detect', context))</script></actions>
+    </service>
+
+    <service verb="mark" noun="OneTimeCode" allow-remote="false">
+        <description>Internal (Sms.js, after an incoming text was taken in): the message's code kept as content.otp {code};
+            a deletable code's message (detect#OneTimeCode) disappears a day after it was sent (expireDate) when every local member of the room has
+            CHAT_OTP_DELETE Y. Nothing for a message that is no outside text or has no code. The update is pushed. Out: code,
+            expireDate.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="text"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="code"/>
+            <parameter name="expireDate" type="Long"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatOtp.js').execute('mark', context))</script></actions>
+    </service>
+
+    <service verb="keep" noun="CodeMessage">
+        <description>A member keeps a code's message that was to disappear after a day: its expireDate cleared and pushed.
+            Refused: not a member (notFound), no code (notFound), a room with a disappearing timer (roomTimer: the room's
+            timer is not one member's to take back). Out: kept, reasonCode.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="kept" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatOtp.js').execute('keep', context))</script></actions>
+    </service>
+
+    <service verb="set" noun="RoomScreenSecure">
+        <description>The caller's own choice to block screenshots while a room is open (ChatRoomMember.screenSecure), whatever
+            CHAT_SCREEN_SECURITY says; on false clears it. Refused for a room the caller is not in. Out: screenSecure.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="on" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="screenSecure" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatOtp.js').execute('roomScreen', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="ChatPrivacyPrefs">
+        <description>The current user's chat privacy settings: screenSecurity (CHAT_SCREEN_SECURITY: off, encrypted (while an
+            encrypted room is open) or app (the whole app), Android's FLAG_SECURE) and otpDelete (CHAT_OTP_DELETE, Y: a
+            text's one-time code disappears a day after it came, when everyone in its room asks the same). A setting not given
+            stays.</description>
+        <in-parameters>
+            <parameter name="screenSecurity"/>
+            <parameter name="otpDelete"/>
+            <parameter name="fromForm" type="Boolean" default="false"><description>The settings form: an empty otpDelete (its
+                check box off) is N</description></parameter>
+        </in-parameters>
+        <actions><script><![CDATA[
+            if (screenSecurity != null && screenSecurity !== '') {
+                if (!['off', 'encrypted', 'app'].includes(String(screenSecurity))) { ec.message.addError(ec.l10n.localize('Choose off, in encrypted rooms or everywhere')); return }
+                ec.user.setPreference('CHAT_SCREEN_SECURITY', String(screenSecurity))
+            }
+            if (fromForm || (otpDelete != null && otpDelete !== '')) ec.user.setPreference('CHAT_OTP_DELETE', otpDelete === 'Y' || otpDelete === 'true' || otpDelete === true ? 'Y' : 'N')
+        ]]></script></actions>
+    </service>
+</services>

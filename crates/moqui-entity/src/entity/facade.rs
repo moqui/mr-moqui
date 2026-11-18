@@ -467,7 +467,9 @@ impl EntityFacade {
         *slot = Some((primary, alts));
     }
 
-    /// Install the cipher from `entity-facade` and its `decrypt-alt` children, and `crypt-read-plain`.
+    /// Install the cipher from `entity-facade` and its `decrypt-alt` children, and `crypt-read-plain`. A `decrypt-alt`
+    /// with no `crypt-pass` takes the `entity-facade`'s, and one with `old="true"` its `crypt-pass-old`
+    /// (plans/archive/Conf-Paths.md §6.6); one whose pass is empty is left out.
     ///
     /// Attributes expand through [`moqui_lib::env`]. An empty `crypt-pass` leaves encryption off.
     pub fn crypt_from_conf(&self, conf: &MNode) -> Result<(), Error> {
@@ -477,16 +479,21 @@ impl EntityFacade {
             conf.first_named("entity-facade")
                 .ok_or_else(|| Error::new("conf has no entity-facade"))?
         };
-        let read_plain = moqui_lib::env::expand(&facade.attribute("crypt-read-plain").unwrap_or_default())?;
+        let read_plain = facade.attribute("crypt-read-plain").unwrap_or_default();
         self.set_crypt_read_plain(read_plain.trim() == "true");
-        let pass = moqui_lib::env::expand(&facade.attribute("crypt-pass").unwrap_or_default())?;
+        let pass = facade.attribute("crypt-pass").unwrap_or_default();
         if pass.is_empty() {
             return Ok(());
         }
-        let primary = crypt_config_from(&facade, pass)?;
+        let old_pass = facade.attribute("crypt-pass-old").unwrap_or_default();
+        let primary = crypt_config_from(&facade, pass.clone())?;
         let mut alts = Vec::new();
         for child in facade.named_iter("decrypt-alt") {
-            let alt_pass = moqui_lib::env::expand(&child.attribute("crypt-pass").unwrap_or_default())?;
+            let alt_pass = match child.attribute("crypt-pass") {
+                Some(own) => own,
+                None if child.attribute_is("old", "true") => old_pass.clone(),
+                None => pass.clone(),
+            };
             if alt_pass.is_empty() {
                 continue;
             }
@@ -812,7 +819,7 @@ impl std::ops::Deref for Definition<'_> {
 fn sequenced_id_prefix(conf: &MNode) -> Option<String> {
     let facade = conf.first_named("entity-facade")?;
     let raw = facade.attribute("sequenced-id-prefix")?;
-    Some(moqui_lib::env::expand(&raw).unwrap_or(raw)).filter(|prefix| !prefix.is_empty())
+    Some(raw).filter(|prefix| !prefix.is_empty())
 }
 
 /// `sequence-primary-use-uuid` of each `<datasource>`, expanded as Java's `setSystemExpandAttributes`.
@@ -907,9 +914,9 @@ fn load_entity_files(
 }
 
 fn crypt_config_from(node: &MNode, pass: String) -> Result<CryptConfig, Error> {
-    let salt = moqui_lib::env::expand(&node.attribute("crypt-salt").unwrap_or_default())?;
-    let algorithm = moqui_lib::env::expand(&node.attribute("crypt-algo").unwrap_or_default())?;
-    let iter_text = moqui_lib::env::expand(&node.attribute("crypt-iter").unwrap_or_default())?;
+    let salt = node.attribute("crypt-salt").unwrap_or_default();
+    let algorithm = node.attribute("crypt-algo").unwrap_or_default();
+    let iter_text = node.attribute("crypt-iter").unwrap_or_default();
     let iterations = iter_text
         .parse::<u32>()
         .map_err(|err| Error::new(format!("entity-facade crypt-iter {iter_text} is not a number")).with_source(err))?;

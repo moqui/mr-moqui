@@ -25,7 +25,7 @@ use serde_json::Value;
 
 pub use cdp::Problem;
 
-/// The browser of the smoke: the one `moqui test-client` finds (`moqui_chromium_path`, else `runtime/chromium`, else
+/// The browser of the smoke: the one `moqui test-client` finds (`screen-facade/pdf@chromium-path`, else `runtime/chromium`, else
 /// an installed Chromium, Google Chrome or Microsoft Edge). A missing binary fails the smoke.
 pub fn chromium_binary() -> PathBuf {
     match moqui_host::chromium::find_test_browser(Some(&super::repo_runtime()), "") {

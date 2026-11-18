@@ -17,7 +17,7 @@
 //! One `ScreenFacade` lives on each factory as an extension. Definitions sit in a `moqui_lib`
 //! `MCache` keyed by location. A cached definition is used while every file it was read from
 //! still has the modified time it had at load. The files are checked at most once per check
-//! interval (`screen-facade` `check-interval-ms`, default 2 s), and never when `instance_purpose` is
+//! interval (`screen-facade` `check-interval-ms`, default 2 s), and never when `instance@purpose` is
 //! `production`, as Java's `screen.location` cache returns a hit without looking at the file.
 //!
 //! Resolved paths (`ScreenUrlInfo`) are kept in a second cache, as Java's `screen.url`, while the

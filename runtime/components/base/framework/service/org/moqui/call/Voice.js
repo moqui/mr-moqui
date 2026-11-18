@@ -56,6 +56,8 @@ const DEFAULT_POLICY = {
   smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500, smsSystemNumber: null,
   // the promotional texts one of our numbers sends a day (a campaign's, apart from the system's budget)
   smsMaxPromotionalPerNumber: 1000,
+  // rooms' text members (plans/Comms-Messaging.md §18.3 phase 18): a room's members, its texts a day, a user's adds a day
+  smsRoomMaxMembers: 10, smsRoomMaxPerDay: 500, smsRoomAddsPerDay: 20,
 }
 const TRANSPORT_CODES = { VtrTls: 'tls', VtrTcp: 'tcp', VtrUdp: 'udp' }
 const MEDIA_CODES = { VmeSrtp: 'srtp', VmePlain: 'plain' }
@@ -115,7 +117,7 @@ function policy() {
   if (row) for (const key of Object.keys(DEFAULT_POLICY)) if (!blank(row[key])) out[key] = row[key]
   for (const key of ['maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay', 'maxCallsPerDay',
     'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay',
-    'smsMaxPromotionalPerNumber']) out[key] = Number(out[key])
+    'smsMaxPromotionalPerNumber', 'smsRoomMaxMembers', 'smsRoomMaxPerDay', 'smsRoomAddsPerDay']) out[key] = Number(out[key])
   out.homeCountryCode = String(out.homeCountryCode).replace(/\D/g, '') || '1'
   return out
 }
@@ -194,17 +196,17 @@ function liveSipNodes() {
 
 /**
  * Whether phones go through this node's edge node (the wizard's phones area, plans/archive/Edge-Node.md §5.7 "As built (E10,
- * phones)"): on unless edge_sip_enabled is false, n, no, 0 or off (moqui_core::edge::sip::sip_enabled).
+ * phones)"): on unless edge/node@sip-enabled is false, n, no, 0 or off (moqui_core::edge::sip::sip_enabled).
  */
 function edgeSipEnabled() {
-  return !['false', 'n', 'no', '0', 'off'].includes(String(System.getProperty('edge_sip_enabled') || '').trim().toLowerCase())
+  return !['false', 'n', 'no', '0', 'off'].includes(String(ec.factory.getConfValue('edge/node@sip-enabled') || '').trim().toLowerCase())
 }
 
 /**
  * The nodes a phone call can go to: a live SIP engine with a live media node that takes calls. The edge node's
  * (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8) takes phone calls also while its media row drains (the wizard's calls
- * off, edge_calls_enabled): its trunks and phones reach only it, and their media is there whatever the browsers do.
- * With phones off (edge_sip_enabled) its link-kept row stays but takes no new call.
+ * off, edge/node@calls-enabled): its trunks and phones reach only it, and their media is there whatever the browsers do.
+ * With phones off (edge/node@sip-enabled) its link-kept row stays but takes no new call.
  */
 function voiceNodes() {
   const sip = new Map(liveSipNodes().filter((n) => n.edgeLinked !== 'Y' || edgeSipEnabled()).map((n) => [n.instanceId, n]))
@@ -652,7 +654,7 @@ function sendDtmf(p) {
 
 /**
  * Puts the call's phones on hold, or takes them off: the engine re-INVITEs each (sendonly), plays it hold music (the
- * deployment's call_hold_music_location, else a tone pattern) and keeps its audio from the others (V5: CallLeg heldDate).
+ * deployment's calls@hold-music-location, else a tone pattern) and keeps its audio from the others (V5: CallLeg heldDate).
  */
 function holdOrResume(p, action) {
   const mine = myPhoneLegs(p.callSessionId)
@@ -732,9 +734,9 @@ function under(location, root) {
   return rest !== '' && !rest.split('/').some((part) => part === '' || part === '.' || part === '..')
 }
 
-/** How long the edge node rings a number it forwards to (call_forward_ring_seconds, 10 to 120). */
+/** How long the edge node rings a number it forwards to (calls@forward-ring-seconds, 10 to 120). */
 function forwardRingSeconds() {
-  const seconds = Number(String(System.getProperty('call_forward_ring_seconds') || '').trim() || 30)
+  const seconds = Number(String(ec.factory.getConfValue('calls@forward-ring-seconds') || '').trim() || 30)
   return Math.min(Math.max(Number.isNaN(seconds) ? 30 : Math.round(seconds), 10), 120)
 }
 
@@ -810,7 +812,7 @@ function queueCallAudio(location) {
  * writes them all every minute); a failure is logged and the change goes on. phoneNumber null: every number.
  */
 function fallbackChanged(phoneNumber) {
-  if (String(System.getProperty('edge_node_url') || '').trim() === '') return
+  if (String(ec.factory.getConfValue('edge/node@url') || '').trim() === '') return
   ec.message.pushErrors()
   try {
     refreshFallbacks({ phoneNumber })
@@ -869,7 +871,7 @@ function refreshFallbacks(p) {
     writtenCount++
   }
   // the edge node plays them while this node is away: on a paired node, each one there (a name is stamped, so once)
-  if (String(System.getProperty('edge_node_url') || '').trim() !== '') {
+  if (String(ec.factory.getConfValue('edge/node@url') || '').trim() !== '') {
     for (const location of greetings) if (under(location, GREETING_ROOT)) queueCallAudio(location)
   }
   return { writtenCount, removedCount }
@@ -979,14 +981,14 @@ function authFailure(p) {
 
 function capabilities() {
   const supported = !!ec.factory.hasFeature('sip')
-  const property = (name) => String(System.getProperty(name) || '').trim() !== ''
+  const property = (name) => String((name.includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)) || '').trim() !== ''
   const trunks = enabledTrunks()
-  const configured = supported && (property('sip_port') || property('sip_tls_port')) && trunks.length > 0
+  const configured = supported && (property('sip-server@port') || property('sip-server@tls-port')) && trunks.length > 0
   const nodes = voiceNodes()
   const working = trunks.filter((t) => t.statusId !== 'VtsFailed')
   const active = nodes.length > 0 && working.length > 0
   const reasonCode = active ? null : !supported && !nodes.length ? 'notBuilt' : !trunks.length ? 'noTrunk'
-    : !nodes.length ? (supported && !property('sip_port') && !property('sip_tls_port') ? 'notConfigured' : 'noSipServer') : 'trunkFailed'
+    : !nodes.length ? (supported && !property('sip-server@port') && !property('sip-server@tls-port') ? 'notConfigured' : 'noSipServer') : 'trunkFailed'
   const ready = readiness(ec.user.userId)
   return { supported, configured, active, reasonCode, emergencyReady: active && ready.ready,
     emergencyReasonCode: ready.missing[0] || (active ? null : 'voiceUnavailable'), emergencyMissing: ready.missing }
@@ -1129,6 +1131,7 @@ function findNumbers() {
           : n.routeTypeEnumId === 'PnrVoicemail' ? ec.l10n.localize('Voicemail access') : n.routeId,
       emergencyLocationId: n.emergencyLocationId, locationName: locations.get(n.emergencyLocationId) || null, description: n.description,
       messagingBridgeId: n.messagingBridgeId || null, messagingName: bridges.get(n.messagingBridgeId) || null,
+      roomTextsEnabled: n.roomTextsEnabled === 'Y' ? 'Y' : 'N',
     })),
   }
 }
@@ -1184,6 +1187,8 @@ function storeNumber(p) {
     emergencyLocationId: p.emergencyLocationId || null, description: p.description || null }
   // left as it is when not given (a caller from before C4-SMS)
   if (p.messagingBridgeId !== undefined) fields.messagingBridgeId = blank(p.messagingBridgeId) ? null : p.messagingBridgeId
+  // rooms' text members (plans/Comms-Messaging.md §18.3 phase 18): left as it is when not given
+  if (p.roomTextsEnabled !== undefined && p.roomTextsEnabled !== null) fields.roomTextsEnabled = flag(p.roomTextsEnabled) === 'Y' ? 'Y' : null
   const row = one(NUMBER, { phoneNumber })
   if (row) {
     row.setFields(fields, true, null, null)
@@ -1321,7 +1326,7 @@ function deleteLocation(p) {
 const POLICY_FIELDS = ['internationalEnabled', 'premiumEnabled', 'maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay',
   'maxCallsPerDay', 'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'homeCountryCode', 'emergencyNumbers',
   'premiumPrefixes', 'alertUserGroupId', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay', 'smsSystemNumber',
-  'smsMaxPromotionalPerNumber']
+  'smsMaxPromotionalPerNumber', 'smsRoomMaxMembers', 'smsRoomMaxPerDay', 'smsRoomAddsPerDay']
 
 function getPolicy() {
   const denied = notAdmin()
@@ -1346,7 +1351,7 @@ function updatePolicy(p) {
         return refuse('systemNumber', 'The system texts from a number on an SMS bridge; this number\'s texts go through RCS')
       }
       fields[key] = number
-    } else if (/^(max|auth|smsMax)/.test(key)) {
+    } else if (/^(max|auth|smsMax|smsRoom)/.test(key)) {
       const number = Number(p[key])
       if (!(Number.isInteger(number) && number >= 1)) return refuse('badPolicy', 'Limits are whole numbers of 1 or more')
       fields[key] = number

@@ -144,20 +144,20 @@ struct Driver<'a> {
     notices: RoomNotices,
     /// The call's media node of each room this node is a leg node of (W7).
     origins: HashMap<String, String>,
-    /// The most legs of one paired node's calls at once (`edge_call_legs_per_pairing`, E16); 0 for no cap.
+    /// The most legs of one paired node's calls at once (`edge@call-legs-per-pairing`, E16); 0 for no cap.
     pairing_legs: usize,
 }
 
-/// The default of `edge_call_legs_per_pairing`: the legs at once of one local node's calls on an edge node's media node.
+/// The default of `edge@call-legs-per-pairing`: the legs at once of one local node's calls on an edge node's media node.
 const PAIRING_LEGS: usize = 200;
 
-/// `edge_call_legs_per_pairing`: a number, else [`PAIRING_LEGS`]; 0 takes no cap.
+/// `edge@call-legs-per-pairing`: a number, else [`PAIRING_LEGS`]; 0 takes no cap.
 fn pairing_legs() -> usize {
-    let text = moqui_lib::env::get_prop_or_env("edge_call_legs_per_pairing");
+    let text = moqui_core::context::conf_env::setting("edge@call-legs-per-pairing");
     match text.trim() {
         "" => PAIRING_LEGS,
         text => text.parse().unwrap_or_else(|_| {
-            tracing::error!("edge_call_legs_per_pairing {text} is not a number; {PAIRING_LEGS} holds");
+            tracing::error!("edge@call-legs-per-pairing {text} is not a number; {PAIRING_LEGS} holds");
             PAIRING_LEGS
         }),
     }
@@ -670,7 +670,7 @@ impl Driver<'_> {
             .count();
         if held >= self.pairing_legs {
             tracing::warn!(
-                "Call media: local node {node} has {held} legs here, its most (edge_call_legs_per_pairing); a new one \
+                "Call media: local node {node} has {held} legs here, its most (edge@call-legs-per-pairing); a new one \
                  is refused"
             );
             return true;

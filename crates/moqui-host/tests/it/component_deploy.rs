@@ -35,9 +35,9 @@ const FILES: &[(&str, &str)] = &[
     (
         "MoquiConf.xml",
         r#"<moqui-conf>
-    <default-property name="hotdeploy_title" value="Hot Deploy"/>
+    <hotdeploy title="Hot Deploy"/>
     <screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
-        <subscreens-item name="hotdeploy" menu-title="${hotdeploy_title}" location="component://hotdeploy/screen/HotDeploy.xml"/>
+        <subscreens-item name="hotdeploy" menu-title="Hot Deploy" location="component://hotdeploy/screen/HotDeploy.xml"/>
     </screen></screen-facade>
     <webapp-list><webapp name="webroot"><token-route name="hot" screen-location="component://hotdeploy/screen/HotPublic.xml"
         token-service="hot.HotServices.check#HotToken" title="Hot link"/></webapp></webapp-list>
@@ -170,7 +170,7 @@ fn a_component_placed_on_a_running_server_loads_without_a_restart() {
         field(&factory, "moqui.basic.Enumeration", ("enumId", "HOT_ENUM"), "hotNote").as_deref(),
         Some("extended")
     );
-    // its service, its conf mount and its property
+    // its service, its conf mount and its own conf element
     let out = in_context(&factory, || {
         moqui_core::service::sync("hot.HotServices.count#Things", &BTreeMap::new()).unwrap()
     });
@@ -181,7 +181,10 @@ fn a_component_placed_on_a_running_server_loads_without_a_restart() {
         "{screens}"
     );
     assert_eq!(
-        moqui_lib::env::get_property("hotdeploy_title").as_deref(),
+        factory
+            .conf_value("hotdeploy@title")
+            .map(|found| found.value)
+            .as_deref(),
         Some("Hot Deploy")
     );
     assert_eq!(
@@ -296,7 +299,6 @@ fn a_component_placed_on_a_running_server_loads_without_a_restart() {
     );
     factory.replace_components(loaded.to_vec());
     assert!(factory.resource().get(root).is_ok_and(|found| found.exists()));
-    moqui_lib::env::clear_property("hotdeploy_title");
 }
 
 /// A working clone (`storage` clone) with a change not committed is left in place by a remove that is not confirmed,
@@ -401,7 +403,7 @@ fn a_staged_git_deploy_moves_into_place_and_loads() {
         Some(
             r#"<entity-facade-xml type="seed"><moqui.security.UserAccount userId="DEPLOY_NOBODY" username="deploy.nobody" disabled="N"/></entity-facade-xml>"#,
         ),
-        &[("component_deploy_enabled", "true")],
+        &[("moqui_conf__component_deploy__enabled", "true")],
     );
     let factory = Arc::clone(gate.server.factory());
     let deployed = gate.runtime.join("components/addon");

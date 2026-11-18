@@ -14,7 +14,7 @@
 
 //! The wizard's XMPP check on a local node (plans/archive/Edge-Node.md §5.7, the Test step, E10): this node's XMPP server
 //! takes tunneled connections of the kind (§5.4, E9), and a client connection to the edge node's tunnel port, on the
-//! host of `edge_node_url`, comes back to it through the link. The connection is opened as a client's would be
+//! host of `edge/node@url`, comes back to it through the link. The connection is opened as a client's would be
 //! (direct TLS with ALPN `xmpp-client`, or the stream in the clear, its features, then STARTTLS), and its TLS must
 //! present this node's own certificate for the domain (pinned to the whole certificate, from `runtime/cert`): only
 //! this node's server has its key, so a handshake that completes is the proof it came back here. Nothing more is
@@ -68,12 +68,12 @@ pub async fn xmpp_probe(
     port: u16,
     direct: bool,
 ) -> Result<String, String> {
-    let domain = moqui_lib::env::get_prop_or_env("xmpp_domain")
+    let domain = moqui_core::context::conf_env::setting("xmpp-server@domain")
         .trim()
         .trim_end_matches('.')
         .to_ascii_lowercase();
     if domain.is_empty() {
-        return Err("This node runs no XMPP server: set xmpp_domain".to_string());
+        return Err("This node runs no XMPP server: set xmpp-server@domain".to_string());
     }
     if !crate::xmpp::running(&factory, direct) {
         return Err(format!(

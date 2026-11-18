@@ -123,7 +123,7 @@
          applied to every running instance, expiring on their own and gone on restart. Changing needs MONITOR_SETTINGS. -->
     <service verb="list" noun="RuntimeSettings" type="rust" location="moqui_core::monitor::list_runtime_settings">
         <description>Every setting that can be changed for a while, with its on-disk value and source (conf, default, env
-            moqui_log_level, as started), its value now and its override; the active overrides; this instance and the
+            logging@level, as started), its value now and its override; the active overrides; this instance and the
             live members of its cluster.</description>
         <out-parameters><parameter name="settings" type="List"/><parameter name="overrides" type="List"/>
             <parameter name="instanceId"/><parameter name="memberCount" type="Integer"/>

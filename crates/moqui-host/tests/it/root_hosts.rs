@@ -112,7 +112,13 @@ fn a_wrapper_root_serves_its_host_by_its_framework_routes() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = start_with_conf_files("root-hosts", None, CONF, &[("webapp_handle_cors", "true")], &files());
+    let gate = start_with_conf_files(
+        "root-hosts",
+        None,
+        CONF,
+        &[("moqui_conf__webapp_list__webapp__WEBROOT__handle_cors", "true")],
+        &files(),
+    );
     let address = gate.server.address();
     let port = address.port();
 

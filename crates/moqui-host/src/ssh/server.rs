@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The built-in SSH server (`plans/archive/Ssh.md`): off unless `ssh_port` is set. It listens on `ssh_host` (default
-//! `127.0.0.1`) with the host key `ssh_host_key`, a secret property that is the base64 seed of an Ed25519 key
+//! The built-in SSH server (`plans/archive/Ssh.md`): off unless `ssh-server@port` is set. It listens on `ssh-server@host` (default
+//! `127.0.0.1`) with the host key `ssh-server@host-key`, a secret property that is the base64 seed of an Ed25519 key
 //! (generated into `runtime/.env` like the other `CHANGEME` secrets) or an OpenSSH private key.
 //!
 //! Any user may connect, as any user may log in over HTTP; every screen and service is still checked as the user.
@@ -129,27 +129,29 @@ struct Shared {
     git_any_account: bool,
 }
 
-/// The host key from `ssh_host_key`: an OpenSSH private key, or the base64 of a 32-byte Ed25519 seed.
+/// The host key from `ssh-server` `host-key`: an OpenSSH private key, or the base64 of a 32-byte Ed25519 seed.
 ///
 /// # Errors
 ///
-/// Returns an error when the property is empty, still the placeholder, or does not decode.
+/// Returns an error when the attribute is empty, still the placeholder, or does not decode.
 pub fn host_key(text: &str) -> Result<PrivateKey, Error> {
     let text = text.trim();
     if text.is_empty() || text.ends_with("CHANGEME") {
-        return Err(Error::new("ssh_host_key is not set; the SSH server needs a host key"));
+        return Err(Error::new(
+            "ssh-server@host-key is not set; the SSH server needs a host key",
+        ));
     }
     if text.starts_with("-----BEGIN") {
         return russh::keys::decode_secret_key(text, None)
-            .map_err(|err| Error::new(format!("ssh_host_key does not decode: {err}")));
+            .map_err(|err| Error::new(format!("ssh-server@host-key does not decode: {err}")));
     }
     use base64::Engine;
     let seed = base64::engine::general_purpose::STANDARD
         .decode(text)
-        .map_err(|err| Error::new(format!("ssh_host_key is not base64: {err}")))?;
+        .map_err(|err| Error::new(format!("ssh-server@host-key is not base64: {err}")))?;
     let seed: [u8; 32] = seed
         .try_into()
-        .map_err(|_| Error::new("ssh_host_key must be the base64 of 32 bytes, or an OpenSSH private key"))?;
+        .map_err(|_| Error::new("ssh-server@host-key must be the base64 of 32 bytes, or an OpenSSH private key"))?;
     let keypair = russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed);
     Ok(PrivateKey::from(keypair))
 }
@@ -161,7 +163,7 @@ pub(crate) fn listen_target(conf: &MNode) -> Result<Option<(String, u16)>, Error
     configured_target(&|name: &str| {
         node.as_ref()
             .and_then(|node| node.attribute(name))
-            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string())
+            .map(|raw| raw.trim().to_string())
             .unwrap_or_default()
     })
 }
@@ -182,17 +184,6 @@ fn listen_target_of(port_text: &str, host_text: &str) -> Result<Option<(String, 
     Ok(Some((host, port)))
 }
 
-/// An attribute of the conf's `ssh-server` (`attr`, expanded), or the property `property` when the conf leaves it out
-/// or it expands to nothing.
-fn setting(attr: &dyn Fn(&str) -> String, name: &str, property: &str) -> String {
-    let configured = attr(name);
-    if configured.is_empty() {
-        moqui_lib::env::get_prop_or_env(property).trim().to_string()
-    } else {
-        configured
-    }
-}
-
 /// [`listen_target_of`], or None when the conf's `ssh-server` `enabled` is false, whatever the port.
 fn conf_listen_target(enabled: bool, port_text: &str, host_text: &str) -> Result<Option<(String, u16)>, Error> {
     if !enabled {
@@ -201,17 +192,13 @@ fn conf_listen_target(enabled: bool, port_text: &str, host_text: &str) -> Result
     listen_target_of(port_text, host_text)
 }
 
-/// [`conf_listen_target`] by the conf's `ssh-server` attributes (`attr`, expanded) and the `ssh_port` and `ssh_host`
-/// properties; `enabled` is on unless it is `false`, as `conf_flag` reads it.
+/// [`conf_listen_target`] by the conf's `ssh-server` attributes (`attr`, expanded) `enabled`, `port` and `host`;
+/// `enabled` is on unless it is `false`, as `conf_flag` reads it.
 fn configured_target(attr: &dyn Fn(&str) -> String) -> Result<Option<(String, u16)>, Error> {
-    conf_listen_target(
-        attr("enabled") != "false",
-        &setting(attr, "port", "ssh_port"),
-        &setting(attr, "host", "ssh_host"),
-    )
+    conf_listen_target(attr("enabled") != "false", &attr("port"), &attr("host"))
 }
 
-/// Start the server when the conf's `ssh-server` `port` (`ssh_port`) is set (`0` binds an ephemeral port) and its
+/// Start the server when the conf's `ssh-server` `port` is set (`0` binds an ephemeral port) and its
 /// `enabled` is not false.
 ///
 /// # Errors
@@ -228,7 +215,7 @@ pub fn start(
     let Some((host, port)) = configured_target(&attr)? else {
         return Ok(None);
     };
-    let key = host_key(&setting(&attr, "host-key", "ssh_host_key"))?;
+    let key = host_key(&attr("host-key"))?;
     let root = match factory.conf_setting("ssh-server", "sftp-root").as_str() {
         "" => "runtime://sftp".to_string(),
         other => other.to_string(),

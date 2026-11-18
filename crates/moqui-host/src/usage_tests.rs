@@ -30,15 +30,15 @@ fn owned(args: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn usage_port_forms_set_webapp_http_port() {
-    assert_eq!(parse(&["--port", "8081"]).value("webapp_http_port"), Some("8081"));
-    assert_eq!(parse(&["--port=8081"]).value("webapp_http_port"), Some("8081"));
-    assert_eq!(parse(&["-port=8081"]).value("webapp_http_port"), Some("8081"));
-    assert_eq!(parse(&["port=8081"]).value("webapp_http_port"), Some("8081"));
-    assert_eq!(parse(&["-p", "9"]).value("webapp_http_port"), Some("9"));
-    assert_eq!(parse(&["--port", "0"]).value("webapp_http_port"), Some("0"));
-    assert_eq!(parse(&["port=08"]).value("webapp_http_port"), Some("8"));
-    assert_eq!(parse(&["--port", " 8081 "]).value("webapp_http_port"), Some("8081"));
+fn usage_port_forms_set_the_http_port() {
+    assert_eq!(parse(&["--port", "8081"]).value(super::HTTP_PORT), Some("8081"));
+    assert_eq!(parse(&["--port=8081"]).value(super::HTTP_PORT), Some("8081"));
+    assert_eq!(parse(&["-port=8081"]).value(super::HTTP_PORT), Some("8081"));
+    assert_eq!(parse(&["port=8081"]).value(super::HTTP_PORT), Some("8081"));
+    assert_eq!(parse(&["-p", "9"]).value(super::HTTP_PORT), Some("9"));
+    assert_eq!(parse(&["--port", "0"]).value(super::HTTP_PORT), Some("0"));
+    assert_eq!(parse(&["port=08"]).value(super::HTTP_PORT), Some("8"));
+    assert_eq!(parse(&["--port", " 8081 "]).value(super::HTTP_PORT), Some("8081"));
 }
 
 #[test]
@@ -47,11 +47,11 @@ fn usage_port_errors_name_the_problem() {
     assert!(missing.contains("--port needs a port number"), "{missing}");
     assert!(missing.contains("moqui help"), "{missing}");
     let nope = message(&["--port", "nope"]);
-    assert!(nope.contains("webapp_http_port nope is not a port"), "{nope}");
+    assert!(nope.contains("http-port nope is not a port"), "{nope}");
     let empty = message(&["port="]);
-    assert!(empty.contains("webapp_http_port is not a port"), "{empty}");
+    assert!(empty.contains("http-port is not a port"), "{empty}");
     let too_big = message(&["port=65536"]);
-    assert!(too_big.contains("webapp_http_port 65536 is not a port"), "{too_big}");
+    assert!(too_big.contains("http-port 65536 is not a port"), "{too_big}");
     let dashed = message(&["-p=8081"]);
     assert!(dashed.contains("unknown option '-p=8081'"), "{dashed}");
     let spaced = message(&["-port", "8081"]);
@@ -59,17 +59,17 @@ fn usage_port_errors_name_the_problem() {
 }
 
 #[test]
-fn usage_https_port_forms_set_webapp_https_listen_port() {
-    let listen = "webapp_https_listen_port";
+fn usage_https_port_forms_set_the_https_listen_port() {
+    let listen = super::HTTPS_LISTEN_PORT;
     assert_eq!(parse(&["--https-port", "9443"]).value(listen), Some("9443"));
     assert_eq!(parse(&["--https-port=9443"]).value(listen), Some("9443"));
     assert_eq!(parse(&["https-port=off"]).value(listen), Some("off"));
-    assert_eq!(parse(&["--https-port", "9443"]).value("webapp_https_port"), None);
-    let nope = message(&["--https-port", "false"]);
-    assert!(
-        nope.contains("webapp_https_listen_port false is not a port or off"),
-        "{nope}"
+    assert_eq!(
+        parse(&["--https-port", "9443"]).value("moqui_conf__webapp_list__webapp__WEBROOT__https_port"),
+        None
     );
+    let nope = message(&["--https-port", "false"]);
+    assert!(nope.contains("https-listen-port false is not a port or off"), "{nope}");
     let missing = message(&["--https-port"]);
     assert!(missing.contains("--https-port needs a port number or off"), "{missing}");
 }
@@ -103,9 +103,18 @@ fn usage_conf_forms_set_moqui_conf() {
 
 #[test]
 fn usage_no_run_es_sets_opensearch_run_false() {
-    assert_eq!(parse(&["no-run-es"]).value("opensearch_run"), Some("false"));
-    assert_eq!(parse(&["-no-run-es"]).value("opensearch_run"), Some("false"));
-    assert_eq!(parse(&["--no-run-es"]).value("opensearch_run"), Some("false"));
+    assert_eq!(
+        parse(&["no-run-es"]).value("moqui_conf__search_facade__cluster__run"),
+        Some("false")
+    );
+    assert_eq!(
+        parse(&["-no-run-es"]).value("moqui_conf__search_facade__cluster__run"),
+        Some("false")
+    );
+    assert_eq!(
+        parse(&["--no-run-es"]).value("moqui_conf__search_facade__cluster__run"),
+        Some("false")
+    );
 }
 
 #[test]
@@ -163,13 +172,23 @@ fn usage_threads_is_an_unknown_option() {
 #[test]
 fn usage_later_assignment_replaces_an_earlier_one() {
     let opts = parse(&["--port", "8081", "-p", "9", "port=8443"]);
-    assert_eq!(opts.value("webapp_http_port"), Some("8443"));
-    let cleared = parse(&["--port", "8081", "-D", "webapp_http_port="]);
-    assert_eq!(cleared.value("webapp_http_port"), Some(""));
-    let restored = parse(&["-D", "webapp_http_port=1", "--port", "8081"]);
-    assert_eq!(restored.value("webapp_http_port"), Some("8081"));
-    let search = parse(&["--no-run-es", "-D", "opensearch_run=true"]);
-    assert_eq!(search.value("opensearch_run"), Some("true"));
+    assert_eq!(opts.value(super::HTTP_PORT), Some("8443"));
+    let cleared = parse(&[
+        "--port",
+        "8081",
+        "-D",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_port=",
+    ]);
+    assert_eq!(cleared.value(super::HTTP_PORT), Some(""));
+    let restored = parse(&[
+        "-D",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_port=1",
+        "--port",
+        "8081",
+    ]);
+    assert_eq!(restored.value(super::HTTP_PORT), Some("8081"));
+    let search = parse(&["--no-run-es", "-D", "moqui_conf__search_facade__cluster__run=true"]);
+    assert_eq!(search.value("moqui_conf__search_facade__cluster__run"), Some("true"));
 }
 
 #[test]
@@ -183,11 +202,11 @@ fn usage_combined_server_options() {
         "-D",
         "entity_ds_db_conf=postgres",
     ]);
-    assert_eq!(opts.value("webapp_http_port"), Some("8081"));
+    assert_eq!(opts.value(super::HTTP_PORT), Some("8081"));
     assert_eq!(opts.value("MOQUI_CONF"), Some("conf/MoquiProductionConf.xml"));
-    assert_eq!(opts.value("opensearch_run"), Some("false"));
+    assert_eq!(opts.value("moqui_conf__search_facade__cluster__run"), Some("false"));
     assert_eq!(opts.value("entity_ds_db_conf"), Some("postgres"));
-    assert!(parse(&[]).value("webapp_http_port").is_none());
+    assert!(parse(&[]).value(super::HTTP_PORT).is_none());
 }
 
 #[test]
@@ -198,7 +217,7 @@ fn serve_is_a_command_and_its_options_are_the_servers() {
     assert!(page.contains("search log indexes"), "{page}");
     assert!(!is_server_invocation(&owned(&["serve"])));
     assert!(!is_server_invocation(&owned(&["serve", "--port", "8081"])));
-    assert_eq!(parse(&["--port", "8081"]).value("webapp_http_port"), Some("8081"));
+    assert_eq!(parse(&["--port", "8081"]).value(super::HTTP_PORT), Some("8081"));
     let unknown = message(&["--bogus"]);
     assert!(unknown.contains("unknown option '--bogus'"), "{unknown}");
     assert!(super::command_usage("serve")

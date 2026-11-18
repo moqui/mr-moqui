@@ -21,7 +21,7 @@
 //! column picker, a form post with the session token, Quasar menus and popups, the lazy Chart.js and Mermaid, and the pages and sort of a
 //! form-list. The server-static compatibility report, and the fixture's clean verdict in it, is `it::qvt_report`.
 //!
-//! The browser is `moqui_chromium_path`, else `runtime/chromium`, else an installed Chromium, Google Chrome or Edge. A missing binary fails.
+//! The browser is `screen-facade/pdf@chromium-path`, else `runtime/chromium`, else an installed Chromium, Google Chrome or Edge. A missing binary fails.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 
@@ -139,7 +139,7 @@ fn server_static_qvt_renders_in_chromium_with_its_actions_data() {
     static_list(&mut browser, &base);
 }
 
-/// With `webapp_qvt_static_only=true` the page loads Vue without its compiler, and a policy of `script-src 'self'` (no `unsafe-eval`, no inline
+/// With `moqui_conf__webapp_list__webapp__WEBROOT__qvt_static_only=true` the page loads Vue without its compiler, and a policy of `script-src 'self'` (no `unsafe-eval`, no inline
 /// script) holds: the shell and the components run their precompiled render functions and the static screen its server-compiled one.
 #[test]
 fn server_static_qvt_runs_on_the_runtime_build_under_a_policy_without_eval() {
@@ -151,7 +151,7 @@ fn server_static_qvt_runs_on_the_runtime_build_under_a_policy_without_eval() {
         r#"<webapp-list><webapp name="webroot">
             <response-header type="screen-render" name="Content-Security-Policy" value="frame-ancestors 'none'; form-action 'self'; script-src 'self'"/>
         </webapp></webapp-list>"#,
-        &[("webapp_qvt_static_only", "true")],
+        &[("moqui_conf__webapp_list__webapp__WEBROOT__qvt_static_only", "true")],
     );
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -3289,7 +3289,7 @@ mod assist {
         assert_clean(&mut browser, "a reload re-attaches");
     }
 
-    /// With `webapp_qvt_static_only=true` and a policy without `unsafe-eval` the drawer's components run their precompiled render
+    /// With `moqui_conf__webapp_list__webapp__WEBROOT__qvt_static_only=true` and a policy without `unsafe-eval` the drawer's components run their precompiled render
     /// functions: it opens, a run streams and its Markdown renders.
     #[test]
     fn the_assist_drawer_works_on_a_static_only_page_in_chromium() {
@@ -3298,7 +3298,7 @@ mod assist {
         }
         let (gate, _reset) = start(
             "browser-assist-static",
-            &[("webapp_qvt_static_only", "true")],
+            &[("moqui_conf__webapp_list__webapp__WEBROOT__qvt_static_only", "true")],
             r#"<webapp-list><webapp name="webroot">
                 <response-header type="screen-render" name="Content-Security-Policy" value="frame-ancestors 'none'; form-action 'self'; script-src 'self'"/>
             </webapp></webapp-list>"#,
@@ -4480,7 +4480,10 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide",
         Some(security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -4644,7 +4647,10 @@ fn a_pull_conflict_is_resolved_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-git",
         Some(security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -4848,7 +4854,10 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-browse",
         Some(security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -4999,7 +5008,10 @@ fn a_qvue_screen_is_designed_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-qvue",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5110,7 +5122,10 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-entity",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5374,7 +5389,10 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-screen",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5667,7 +5685,10 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-service",
         Some(&security),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );
@@ -5972,7 +5993,10 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     let gate = common::start_with_files_and_links(
         "browser-dev-change-set",
         Some(&data),
-        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
         &files,
         &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
     );

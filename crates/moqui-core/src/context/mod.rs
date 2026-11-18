@@ -21,7 +21,9 @@ mod background;
 mod cache;
 mod component;
 mod conf;
+pub mod conf_env;
 pub mod conf_reload;
+pub mod conf_schema;
 mod confcache;
 mod factory;
 pub(crate) mod identity;
@@ -40,8 +42,8 @@ pub use component::{
     component_entity_dirs, component_entity_dirs_of, discover_again, discover_components, read_component, ComponentInfo,
 };
 pub use conf::{
-    conf_files_of, load_merged_conf, merge_component_confs, merge_conf, merge_files, runtime_conf_file, ConfFile,
-    ConfRole,
+    conf_files_of, load_merged_conf, load_merged_conf_with, merge_component_confs, merge_component_confs_with,
+    merge_conf, merge_files, merge_files_with, runtime_conf_file, ConfFile, ConfRole,
 };
 pub use factory::{
     default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ContextGuard, ExecutionContext,

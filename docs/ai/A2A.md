@@ -22,15 +22,17 @@ The server is off by default; while it is off `/a2a` and `/.well-known/agent-car
 
 ```xml
 <llm-facade>
-    <a2a enabled="${a2a_enabled}" public-url="${a2a_public_url}" default-agent="assist" blocking-wait="120"
-            max-part-bytes="65536" max-parts="32" trust-forwarded-headers="false">
+    <a2a enabled="false" public-url="" default-agent="assist" blocking-wait="120"
+            max-part-bytes="65536" max-parts="32" trust-forwarded-headers="false" agent-name="Moqui"
+            agent-description="The agents of this Moqui server: they work its screens and data for you"
+            agent-version="1.0.0">
         <push allow-http="false" allow-hosts="" timeout="15" max-attempts="6"/>
-        <security api-key="true" bearer="true" oidc-issuer="${a2a_oidc_issuer}" oidc-audience="${a2a_oidc_audience}"/>
+        <security api-key="true" bearer="true" oidc-issuer="" oidc-audience=""/>
     </a2a>
 </llm-facade>
 ```
 
-- `a2a_enabled=true` turns it on. An agent is reached over A2A only when its `AgentDefinition` has `exposeA2a="Y"` and
+- `moqui_conf__llm_facade__a2a__enabled=true` turns it on. An agent is reached over A2A only when its `AgentDefinition` has `exposeA2a="Y"` and
   serves `a2a` (`surfaces`, for example `drawer,chat,tui,a2a`); the seed's `assist` agent does not, so an admin opts it
   in (System › LLM › Agents). `a2aSkillsJson` (an array of A2A `AgentSkill` objects) describes the agent's skills on the
   extended card; without it the card lists one skill for the agent.
@@ -160,8 +162,8 @@ older configs with their notifications, and delivered or failed notifications of
 
 ## Cards
 
-`GET /.well-known/agent-card.json` is public and minimal: name, description and version (`a2a_agent_name`,
-`a2a_agent_description`, `a2a_agent_version`), the JSON-RPC and HTTP+JSON interfaces at `<base>/a2a`, the security
+`GET /.well-known/agent-card.json` is public and minimal: name, description and version (`llm-facade/a2a@agent-name`,
+`llm-facade/a2a@agent-description`, `llm-facade/a2a@agent-version`), the JSON-RPC and HTTP+JSON interfaces at `<base>/a2a`, the security
 schemes (`bearer`, `basic`, `apiKey`, and `oidc` when configured) with their requirements, the capabilities (streaming,
 push notifications, the extended card) and one generic skill; it may be cached for five minutes. The extended card
 (authenticated) lists the skills of the agents the caller may use.

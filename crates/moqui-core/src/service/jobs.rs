@@ -31,7 +31,7 @@
 //! its run still holds the lock before it runs the service (`plans/archive/High-Level-Review.md` HL-026).
 //!
 //! A cron expression is read in the machine's time zone ([`job_time_zone`]), the zone the operating
-//! system reports. That is not the server zone `default_time_zone` names (UTC in MoquiDefaultConf).
+//! system reports. That is not the server zone `instance@default-time-zone` names (UTC in MoquiDefaultConf).
 //! The pass still skips a job only when the previous occurrence is strictly before the last run, so
 //! a last run at that occurrence still runs, as Java's `!lastSchedule.isBefore(lastRunDt)`.
 //!
@@ -123,7 +123,7 @@ pub fn current_job_name() -> Option<String> {
 }
 
 /// The time zone a ServiceJob cron expression is read in: the machine's zone, the one the operating
-/// system reports. It is not the server zone `default_time_zone` names.
+/// system reports. It is not the server zone `instance@default-time-zone` names.
 pub fn job_time_zone() -> jiff::tz::TimeZone {
     jiff::tz::TimeZone::system()
 }

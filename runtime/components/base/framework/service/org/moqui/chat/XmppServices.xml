@@ -20,12 +20,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     Rooms: a room's access is ChatServices.get#RoomAccess; an end-to-end encrypted room (C7, ChatRoom.encrypted) is not
     served over XMPP, whose server could neither read nor write its Megolm messages: get#RoomInfo says encrypted and the
-    session refuses it with that reason. An OMEMO message is kept as it came (store#EncryptedMessage): no bodyText, no
+    session refuses it with that reason. A room with disappearing messages (ChatRoom.messageTimerSeconds, phase 16) is
+    refused the same way (get#RoomInfo disappearing): an XMPP client keeps what it gets. An OMEMO message is kept as it came (store#EncryptedMessage): no bodyText, no
     snippet, search or mentions, no agent, and never in a bridged room.
     Files: a slot (create#UploadSlot) is put to /xmpp-upload/<token>/<name> on the HTTP listener (moqui-host), which
     serves it back at the same URL; the token is the capability to read it, as XEP-0363 has it. A message linking it
     gets it as a chat file (attach#Upload); a chat file sent to an XMPP client gets such a URL (get#AttachmentUrls), its
-    token derived from the file id and the property xmpp_upload_secret. -->
+    token derived from the file id and the property xmpp-server/upload@secret. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== Sign-in (internal) ========== -->
@@ -221,7 +222,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="RoomInfo">
         <description>A room the current user may read, for its XMPP view: the room (with encrypted, the C7 flag, when the
-            field is there), whether it is bridged, and its local members with their usernames and roles.</description>
+            field is there, and disappearing, a room with a timer), whether it is bridged, and its local members with their usernames and roles.</description>
         <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="room" type="Map"/><parameter name="bridged" type="Boolean"/>
@@ -235,7 +236,8 @@ along with this software (see the LICENSE.md file). If not, see
             let encrypted = false
             try { encrypted = row.encrypted === 'Y' || row.encrypted === true } catch (err) { encrypted = false }
             room = {chatRoomId: row.chatRoomId, roomTypeEnumId: row.roomTypeEnumId, roomName: row.roomName || access.room?.displayName || '',
-                topic: row.topic || '', visibilityEnumId: row.visibilityEnumId, encrypted: encrypted, archived: !!row.archivedDate}
+                topic: row.topic || '', visibilityEnumId: row.visibilityEnumId, encrypted: encrypted, archived: !!row.archivedDate,
+                disappearing: Number(row.messageTimerSeconds) > 0}
             bridged = ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null).disableAuthz().count() > 0
             const isDirect = row.roomTypeEnumId === 'CrtDirect'
             const members = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).disableAuthz().list())
@@ -256,7 +258,7 @@ along with this software (see the LICENSE.md file). If not, see
             read), else of the user's direct rooms (withUserId: the one with that user), merged by time. afterSeq and
             beforeSeq page by eventSeq (with afterRoomId and beforeRoomId in the user's own archive, where the date of
             that event is the bound); startDate and endDate (Unix milliseconds) limit by time; latest gives the last
-            limit messages. Each message as get#Timeline has it (edits applied, deleted ones left out), with clientRef
+            limit messages; a disappearing message (expireDate) is never in it. Each message as get#Timeline has it (edits applied, deleted ones left out), with clientRef
             for every sender and, for an OMEMO message, content.xmppEncrypted. complete says nothing is past the page in
             its direction; count is the total.</description>
         <in-parameters>
@@ -296,8 +298,9 @@ along with this software (see the LICENSE.md file). If not, see
             // a sender the user blocked in chat (ChatBlocks.js) is left out, as in get#Timeline
             const hidden = Array.from(ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockedBy', {userId: ec.user.userId}).userIdList || [])
             const base = () => {
+                // a disappearing message is in no XMPP history, a room's timer on or off (plans/Comms-Messaging.md §18.3 phase 16)
                 let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', 'in', rooms).condition('eventTypeEnumId', 'CetMessage')
-                        .condition('redactedDate', null).disableAuthz()
+                        .condition('redactedDate', null).condition('expireDate', null).disableAuthz()
                 if (hidden.length) find = find.condition(ec.entity.conditionFactory.makeCondition([ec.entity.conditionFactory.makeCondition('senderUserId', 'is-null', null),
                     ec.entity.conditionFactory.makeCondition('senderUserId', 'not-in', hidden)], 'or'))
                 if (startDate != null) find = find.condition('sentDate', '>=', new Date(Number(startDate)))
@@ -460,7 +463,7 @@ along with this software (see the LICENSE.md file). If not, see
             itemList = rows.reverse().map((row) => ({itemId: row.itemId, payloadXml: row.payloadXml}))
             if (bookmarks && (!itemIdList || !itemIdList.length)) {
                 const kept = new Set(itemList.map((item) => item.itemId))
-                const domain = System.getProperty('xmpp_rooms_domain') || ''
+                const domain = System.getProperty('xmpp_resolved_rooms_domain') || ''
                 const found = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameter('filter', 'rooms').call()
                 for (const room of (found.roomList || [])) {
                     if (!domain || room.encrypted) continue
@@ -499,7 +502,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Publish an item to one of the current user's PEP nodes, made on first publish with options
             (access_model, max_items; persist_items is always true). A node that exists keeps its options: a publish whose
             access_model or max_items differs is not made (preconditionFailed true, XEP-0060 §7.1.5). A user has at most
-            200 nodes, each with at most 256 items (the oldest go), and items of at most xmpp_pep_max_bytes (20 MiB) in
+            200 nodes, each with at most 256 items (the oldest go), and items of at most xmpp-server@pep-max-bytes (20 MiB) in
             all: past it the item is not kept (resourceConstraint true). Out the users to notify (notifyUserIdList, who
             may read it).</description>
         <in-parameters>
@@ -528,7 +531,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return bytes
             }
             const payloadBytes = utf8Bytes(String(payloadXml))
-            const maxBytes = Number(System.getProperty('xmpp_pep_max_bytes') || 20971520)
+            const maxBytes = Number(ec.factory.getConfValue('xmpp-server@pep-max-bytes') || 20971520)
             if (maxBytes > 0) {
                 const held = Array.from(ec.entity.find('moqui.xmpp.XmppPepItemBytes').condition('userId', me).disableAuthz().list())
                 const replaced = ec.entity.find('moqui.xmpp.XmppPepItem').condition({userId: me, node: node, itemId: itemId})
@@ -621,7 +624,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>jidList = Array.from(ec.entity.find('moqui.xmpp.XmppBlockedJid').condition('userId', ec.user.userId).disableAuthz().list()).map((row) => row.jid)</script></actions>
     </service>
     <service verb="block" noun="Jids">
-        <description>Block the JIDs of jidList (at most 500 a call). A user blocks at most xmpp_block_max_jids (1000):
+        <description>Block the JIDs of jidList (at most 500 a call). A user blocks at most xmpp-server@block-max-jids (1000):
             a call that would pass it blocks none (resourceConstraint true).</description>
         <in-parameters><parameter name="jidList" type="List" required="true"/></in-parameters>
         <out-parameters><parameter name="resourceConstraint" type="Boolean"/></out-parameters>
@@ -633,7 +636,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (text && text.length <= 250) asked.add(text)
             }
             // a user's block list is bounded (SEC-COM-20)
-            const most = Number(System.getProperty('xmpp_block_max_jids') || 1000)
+            const most = Number(ec.factory.getConfValue('xmpp-server@block-max-jids') || 1000)
             if (most > 0) {
                 const held = new Set(Array.from(ec.entity.find('moqui.xmpp.XmppBlockedJid').condition('userId', ec.user.userId)
                         .selectField('jid').disableAuthz().list()).map((row) => row.jid))
@@ -660,7 +663,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="enable" noun="Push">
         <description>Keep a client's push registration (XEP-0357): its app server and node, and its options (with the app
             server's secret), encrypted. The same app server and node replace the one before. A user has at most
-            xmpp_push_max_registrations (50): one more is not kept (resourceConstraint true).</description>
+            xmpp-server@push-max-registrations (50): one more is not kept (resourceConstraint true).</description>
         <in-parameters>
             <parameter name="pushJid" required="true"/><parameter name="node"/><parameter name="resource"/>
             <parameter name="options" type="Map"/>
@@ -672,7 +675,7 @@ along with this software (see the LICENSE.md file). If not, see
             const same = () => ec.entity.find('moqui.xmpp.XmppPushRegistration').condition('userId', me).condition('pushJid', pushJid)
                     .condition('node', node || null).disableAuthz()
             // a user's push registrations are bounded (SEC-COM-20); one that replaces another is not one more
-            const most = Number(System.getProperty('xmpp_push_max_registrations') || 50)
+            const most = Number(ec.factory.getConfValue('xmpp-server@push-max-registrations') || 50)
             const others = ec.entity.find('moqui.xmpp.XmppPushRegistration').condition('userId', me).disableAuthz().count() - same().count()
             if (most > 0 && others >= most) { resourceConstraint = true; return }
             same().deleteAll()
@@ -707,15 +710,15 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="create" noun="UploadSlot">
         <description>An upload slot (XEP-0363) for the current user: a token whose URL takes one PUT of fileSize bytes
-            (no more than xmpp_upload_max_bytes) within an hour. A user gets at most 60 slots an hour, asking for at most
-            ten times xmpp_upload_max_bytes in all. Out the token and the file name as it goes in the URL.</description>
+            (no more than xmpp-server/upload@max-bytes) within an hour. A user gets at most 60 slots an hour, asking for at most
+            ten times xmpp-server/upload@max-bytes in all. Out the token and the file name as it goes in the URL.</description>
         <in-parameters>
             <parameter name="fileName" required="true"/><parameter name="fileSize" type="Long" required="true"/>
             <parameter name="contentType"/>
         </in-parameters>
         <out-parameters><parameter name="token"/><parameter name="urlName"/></out-parameters>
         <actions><script><![CDATA[
-            const most = Number(System.getProperty('xmpp_upload_max_bytes') || 20971520)
+            const most = Number(System.getProperty('xmpp_resolved_upload_max_bytes') || 20971520)
             if (!(Number(fileSize) > 0) || Number(fileSize) > most) { ec.message.addError('The file is too large'); return }
             // at most so many slots of a user's in an hour, and so many bytes asked for in them
             const hourAgo = new Date(Number(ec.user.nowTimestamp) - 3600000)
@@ -729,7 +732,7 @@ along with this software (see the LICENSE.md file). If not, see
             token = ec.user.randomString(32)
             const row = ec.entity.makeValue('moqui.xmpp.XmppUpload')
             row.setSequencedIdPrimary()
-            const root = (System.getProperty('xmpp_upload_root') || 'dbresource://xmpp-upload').replace(/\/+$/, '')
+            const root = (ec.factory.getConfValue('xmpp-server/upload@root') || 'dbresource://xmpp-upload').replace(/\/+$/, '')
             row.setFields({tokenHash: ec.user.singleUseCodeHash(token), userId: ec.user.userId, fileName: name.slice(-200),
                 contentType: contentType || 'application/octet-stream', fileSize: Number(fileSize),
                 location: `${root}/${row.xmppUploadId}/${urlName}`, createdDate: ec.user.nowTimestamp}, true, null, null)
@@ -763,7 +766,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="AttachmentUrls">
         <description>The URLs an XMPP client fetches a message's files at, for a room the current user may read: the
             upload URL for a file put over XMPP, else one made for the chat file, its token derived from the file and the
-            secret xmpp_upload_secret (the same for every reader, so a message has one URL).</description>
+            secret xmpp-server/upload@secret (the same for every reader, so a message has one URL).</description>
         <in-parameters><parameter name="chatRoomId" required="true"/><parameter name="eventSeq" type="Integer" required="true"/></in-parameters>
         <out-parameters><parameter name="urlList" type="List"/></out-parameters>
         <actions><script><![CDATA[
@@ -771,13 +774,15 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError()) return
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
-            const base = String(System.getProperty('xmpp_upload_url') || '').replace(/\/+$/, '')
+            const base = String(System.getProperty('xmpp_resolved_upload_url') || '').replace(/\/+$/, '')
             // the secret never reaches the script: System.secretCodeHash keys the digest with it (SEC-SCR-03)
-            if (!base || !System.isPropertySet('xmpp_upload_secret')) return
+            if (!base || !ec.factory.isConfValueSet('xmpp-server/upload@secret')) return
+            // a view-once photo has no URL: it opens only in MR Moqui (plans/Comms-Messaging.md §18.3 phase 16)
+            if (ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('fileKind', {chatRoomId: chatRoomId, eventSeq: eventSeq}).viewOnce) return
             const files = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
                     .orderBy('chatAttachmentId').disableAuthz().list())
             for (const file of files) {
-                const token = String(System.secretCodeHash('xmpp_upload_secret', ':' + file.chatAttachmentId)).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
+                const token = String(System.secretCodeHash('xmpp-server/upload@secret', ':' + file.chatAttachmentId)).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
                 const tokenHash = ec.user.singleUseCodeHash(token)
                 if (!ec.entity.find('moqui.xmpp.XmppUpload').condition('tokenHash', tokenHash).disableAuthz().count()) {
                     const row = ec.entity.makeValue('moqui.xmpp.XmppUpload')
@@ -795,7 +800,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="clean" noun="Uploads" authenticate="anonymous-all">
         <description>Daily: upload slots never put within an hour go, with their files, and so do uploads put more than
-            xmpp_upload_unattached_hours (24) ago that no message of a room was given (no chat file has their file;
+            xmpp-server/upload@unattached-hours (24) ago that no message of a room was given (no chat file has their file;
             0 keeps them), and expired FAST tokens. Each on its own: one that cannot be removed is logged and the rest
             go on.</description>
         <actions><script><![CDATA[
@@ -812,7 +817,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             // a user's upload no message was given goes too, so uploads are not kept storage of their own (SEC-COM-20);
             // one a message has is a chat file of its room and goes with it (SEC-COM-14)
-            const hours = Number(System.getProperty('xmpp_upload_unattached_hours') || 24)
+            const hours = Number(ec.factory.getConfValue('xmpp-server/upload@unattached-hours') || 24)
             if (hours > 0) {
                 const before = new Date(Number(ec.user.nowTimestamp) - hours * 3600000)
                 for (const row of ec.entity.find('moqui.xmpp.XmppUpload').condition('chatAttachmentId', null).condition('completedDate', '<', before)
@@ -829,12 +834,12 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== The user's settings ========== -->
 
     <service verb="get" noun="ClientSettings">
-        <description>What the current user enters in an XMPP app (basic-comms Settings, Chat apps): enabled (xmpp_domain is
+        <description>What the current user enters in an XMPP app (basic-comms Settings, Chat apps): enabled (xmpp-server@domain is
             set), jid (the username in lower case, escaped as XEP-0106 has it, at the domain), server (the domain), port
-            (STARTTLS, xmpp_port) and tlsPort (direct TLS, xmpp_tls_port), each empty while off, and websocketUrl
-            (/xmpp-websocket with xmpp_websocket_enabled); and appPasswordList, the user's app passwords that XMPP takes
+            (STARTTLS, xmpp-server@port) and tlsPort (direct TLS, xmpp-server@tls-port), each empty while off, and websocketUrl
+            (/xmpp-websocket with xmpp-server@websocket-enabled); and appPasswordList, the user's app passwords that XMPP takes
             (UserServices.get#UserAppPasswords). Behind an edge node the ports are still this node's own: the edge
-            node's tunnel ports (edge_xmpp_port, edge_xmpp_tls_port) are given the same numbers (docs/interfaces/XMPP.md).</description>
+            node's tunnel ports (edge@xmpp-port, edge@xmpp-tls-port) are given the same numbers (docs/interfaces/XMPP.md).</description>
         <out-parameters>
             <parameter name="enabled" type="Boolean"/>
             <parameter name="jid"/><parameter name="server"/><parameter name="port"/><parameter name="tlsPort"/>
@@ -842,14 +847,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="appPasswordList" type="List"/>
         </out-parameters>
         <actions><script><![CDATA[
-            const prop = (name) => String(System.getProperty(name) || '').trim()
-            const domain = prop('xmpp_domain').toLowerCase()
+            const prop = (selector) => String(ec.factory.getConfValue(selector) || '').trim()
+            const domain = prop('xmpp-server@domain').toLowerCase()
             enabled = !!domain
             server = domain || null
-            port = enabled && prop('xmpp_port') ? prop('xmpp_port') : null
-            tlsPort = enabled && prop('xmpp_tls_port') ? prop('xmpp_tls_port') : null
-            const base = prop('xmpp_upload_url') || (domain ? 'https://' + domain : '')
-            websocketUrl = enabled && prop('xmpp_websocket_enabled') === 'true' && base ? base.replace(/^http/, 'ws') + '/xmpp-websocket' : null
+            port = enabled && prop('xmpp-server@port') ? prop('xmpp-server@port') : null
+            tlsPort = enabled && prop('xmpp-server@tls-port') ? prop('xmpp-server@tls-port') : null
+            const base = prop('xmpp-server/upload@url') || (domain ? 'https://' + domain : '')
+            websocketUrl = enabled && prop('xmpp-server@websocket-enabled') === 'true' && base ? base.replace(/^http/, 'ws') + '/xmpp-websocket' : null
             // XEP-0106: the characters a localpart cannot hold, escaped
             const escapes = {' ': '\\20', '"': '\\22', '&': '\\26', "'": '\\27', '/': '\\2f', ':': '\\3a', '<': '\\3c', '>': '\\3e', '@': '\\40', '\\': '\\5c'}
             const node = String(ec.user.username || '').toLowerCase().split('').map((ch) => escapes[ch] || ch).join('')
@@ -864,25 +869,25 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="IceServers">
         <description>External services (XEP-0215) for the current user's own Jingle calls: the TURN URLs of a live media node
-            and turn_external_urls, with a credential keyed to the user (make#IceServers with callLegId xmpp.(userId)),
+            and media-server/turn-server@external-urls, with a credential keyed to the user (make#IceServers with callLegId xmpp.(userId)),
             each as type, host, port, transport, username, password and expires. The embedded TURN server relays such a
-            credential to public addresses only (docs/interfaces/TURN.md). Empty, with reasonCode, while xmpp_turn_enabled
+            credential to public addresses only (docs/interfaces/TURN.md). Empty, with reasonCode, while xmpp-server@turn-enabled
             is not true (turnOff), for an external user (EXTERNAL_USER; a failed check counts as external: notAllowed), and
-            past xmpp_turn_per_hour (30) issues to the user in the hour (rateLimited); the session answers each the same.</description>
+            past xmpp-server@turn-per-hour (30) issues to the user in the hour (rateLimited); the session answers each the same.</description>
         <out-parameters><parameter name="serviceList" type="List"/><parameter name="reasonCode"/></out-parameters>
         <actions><script><![CDATA[
             serviceList = []
             reasonCode = null
-            if (String(System.getProperty('xmpp_turn_enabled') || '').trim() !== 'true') { reasonCode = 'turnOff'; return }
+            if (String(ec.factory.getConfValue('xmpp-server@turn-enabled') || '').trim() !== 'true') { reasonCode = 'turnOff'; return }
             const userId = ec.user.userId
             if (!userId) { reasonCode = 'notAllowed'; return }
             // never for an external user (an app's client contacts), whatever the switch says
             const external = ec.service.sync().name('org.moqui.chat.ChatServices.get#ExternalUsers').parameter('userIdList', [userId])
                     .disableAuthz().call()?.anyExternal !== false
             if (external) { reasonCode = 'notAllowed'; return }
-            // a credential is a relay for an hour or more: at most xmpp_turn_per_hour a user an hour (counted on the
+            // a credential is a relay for an hour or more: at most xmpp-server@turn-per-hour a user an hour (counted on the
             // distributed cache moqui.xmpp.turn.issued by user and hour)
-            const perHour = Math.max(1, Number(System.getProperty('xmpp_turn_per_hour') || 30) || 30)
+            const perHour = Math.max(1, Number(ec.factory.getConfValue('xmpp-server@turn-per-hour') || 30) || 30)
             const issued = ec.cache.getCache('moqui.xmpp.turn.issued')
             const hourKey = userId + ':' + Math.floor(Number(ec.user.nowTimestamp) / 3600000)
             const count = Number(issued.get(hourKey) || 0)

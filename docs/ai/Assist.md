@@ -634,7 +634,7 @@ conversation's owner), so the agent continues from where the user is.
 `runtime/components/base/webroot/screen/webroot/js/WebrootAssist.js` is `moqui.assist`; its tests are
 `test/client/WebrootAssist.spec.js` (`moqui test-client webroot --offline`). It loads on every `/qapps`
 page after `WebrootChat.js` and before `WebrootVue.qvt.js` (`qapps.xml`), so its components are in `moqui.qvtComponents`,
-which the client registers and `WebrootVue.qvt.render.js` precompiles (a `webapp_qvt_static_only` page runs it too); a part
+which the client registers and `WebrootVue.qvt.render.js` precompiles (a `webapp-list/webapp[webroot]@qvt-static-only` page runs it too); a part
 that loads later registers through `qvt.registerLate(name, def)`. The page's settings carry `assist` (the `llm` feature built
 and enabled and the user's `AgentUse`, from `qapps.xml`); without it the drawer makes no request at all. With it the root
 calls `moqui.assist.start(root)` once mounted, which reads `bootstrap` (the button shows when an agent answers), the tasks
@@ -797,11 +797,11 @@ update. The composer's id is on its textarea through `q-input`'s `for`.
 `moqui.assist.state` (its `convo` the store) and `moqui.assist.clientId` can be read from the page.
 
 **The Chromium smokes** are the `assist` module of `crates/moqui-host/tests/gate3_browser.rs` (`cargo test -p moqui-host
---test gate3_browser assist::`; the browser is `moqui_chromium_path`, for instance `moqui_chromium_path="/Applications/Google
+--test gate3_browser assist::`; the browser is `screen-facade/pdf@chromium-path`, for instance `moqui_conf__screen_facade__pdf__chromium_path="/Applications/Google
 Chrome.app/Contents/MacOS/Google Chrome"`, else the downloaded or an installed one), against the scripted fake provider
 (`fake::script` of the endpoint `gate-assist`) and a fixture component (`assistgate`: Edit saves an `EnumerationType`, Slow
 takes 5 s to render): a run streams (Mod+J, Enter, the text in pieces, the done line) and a reload in the middle of the next
-run re-attaches and ends with its text once; the drawer on a `webapp_qvt_static_only` page under a policy without
+run re-attaches and ends with its text once; the drawer on a `webapp-list/webapp[webroot]@qvt-static-only` page under a policy without
 `unsafe-eval`, with an answer whose images and raw HTML fetch and run nothing; a hand-off on the gallery's Contact
 (`example/screen/Gallery/Contact.xml`, a form whose save is refused with validation errors) reports the refused save and then
 saves; two tabs, where only the sender follows, the other shows "Following in another tab" and a chip, an approval shows in

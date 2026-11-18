@@ -74,13 +74,13 @@ fn authorized_http_with_real_store_and_optional_collector() {
     let os = std::env::var("MONITOR_PERF_OPENSEARCH_URL").ok();
     let collector = std::env::var("MONITOR_PERF_COLLECTOR_URL").unwrap_or_default();
     let prefix = format!("monitor_perf_{}_", std::process::id());
-    let mut properties = vec![("scheduled_job_check_time", "0")];
+    let mut properties = vec![("moqui_conf__service_facade__scheduled_job_check_time", "0")];
     if let Some(url) = &os {
         properties.extend([
-            ("search_backend", "opensearch"),
-            ("elasticsearch_url", url.as_str()),
-            ("elasticsearch_index_prefix", prefix.as_str()),
-            ("opensearch_run", "false"),
+            ("moqui_conf__search_facade__backend", "opensearch"),
+            ("moqui_conf__search_facade__cluster__url", url.as_str()),
+            ("moqui_conf__search_facade__cluster__index_prefix", prefix.as_str()),
+            ("moqui_conf__search_facade__cluster__run", "false"),
         ]);
     }
     let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");

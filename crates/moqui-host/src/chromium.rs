@@ -24,14 +24,16 @@ use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
 
-/// The property (or environment variable, or `runtime/.env` entry) that names the Chromium for PDF and the browser
-/// tests.
-pub const CHROMIUM_PATH: &str = "moqui_chromium_path";
+/// The conf attribute that names the Chromium for PDF and the browser tests, by its selector (in messages).
+pub const CHROMIUM_PATH: &str = "screen-facade/pdf@chromium-path";
 
-/// The browser `moqui_chromium_path` names, or empty.
+/// [`CHROMIUM_PATH`] by its environment name, which a test server it starts is given.
+pub const CHROMIUM_PATH_ENV: &str = "moqui_conf__screen_facade__pdf__chromium_path";
+
+/// The browser [`CHROMIUM_PATH`] names, or empty.
 #[must_use]
 pub fn configured_chromium() -> String {
-    moqui_lib::env::get_prop_or_env(CHROMIUM_PATH).trim().to_string()
+    moqui_core::context::conf_env::setting(CHROMIUM_PATH)
 }
 
 /// A Chromium or Chrome binary found, and where it was found.
@@ -200,7 +202,7 @@ fn is_chromium(path: &Path) -> bool {
 }
 
 /// Look at every place a Chromium may be, log each one found, and choose one for PDF: `configured` (the `pdf`
-/// `chromium-path`, `moqui_chromium_path`) when it names a file, else the first of [`found_binaries`]: the one of
+/// `chromium-path`, `screen-facade/pdf@chromium-path`) when it names a file, else the first of [`found_binaries`]: the one of
 /// [`downloaded_chromium`], then the one built in, then an installed Chromium, then an installed Google Chrome or
 /// Microsoft Edge.
 ///
@@ -233,7 +235,7 @@ pub fn find_chromium(runtime_dir: &Path, configured: &str) -> Result<PathBuf, St
     Err(reason)
 }
 
-/// The browser of `moqui test-client`: `configured` (`--chromium`) when it names a file, else `moqui_chromium_path`
+/// The browser of `moqui test-client`: `configured` (`--chromium`) when it names a file, else `screen-facade/pdf@chromium-path`
 /// when that does, else the first of [`found_binaries`], as for PDF.
 ///
 /// # Errors

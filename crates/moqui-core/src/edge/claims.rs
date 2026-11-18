@@ -26,7 +26,7 @@
 //! between two pairings; each address has one holder.
 //!
 //! The server's host names ([`own_host_names`]) are what a dedicated edge node already reserves (§5.7); an all-in-one
-//! node adds its `xmpp_domain` and `sip_domain`.
+//! node adds its `xmpp-server@domain` and `sip-server@domain`.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -45,11 +45,11 @@ pub enum ClaimKind {
     MailAddress,
     /// A `ChatBridge` by its `chatBridgeId`.
     ChatBridge,
-    /// An XMPP domain: the server's `xmpp_domain`, a paired node's Configure `xmppDomain`.
+    /// An XMPP domain: the server's `xmpp-server@domain`, a paired node's Configure `xmppDomain`.
     XmppDomain,
     /// A phone number in E.164: the server's `PhoneNumber`, a paired node's replicated `PhoneNumberFallback`.
     PhoneNumber,
-    /// A SIP device domain (registrar realm): the server's `sip_domain`, a paired node's Configure `sipDomain`.
+    /// A SIP device domain (registrar realm): the server's `sip-server@domain`, a paired node's Configure `sipDomain`.
     SipDomain,
     /// An mr-pass site whose authority is a paired node: a paired node's Configure `passSites` (E16).
     PassSite,
@@ -169,7 +169,7 @@ fn shared_between_pairings(kind: ClaimKind) -> bool {
 /// another holder has: on an all-in-one node the server ([`own_claim`]: a chat bridge, its XMPP domain, its SIP domain,
 /// and a mail domain the server holds whole), and on any such node another active pairing ([`pairing_claim`]: its XMPP
 /// or SIP domain, its PASS sites; the first claim holds). A mail domain is split by address (§10): the server holds
-/// one whole only as its own bounce domain (`edge_mail_bounce_domain`, or a subdomain of it), and one it merely has
+/// one whole only as its own bounce domain (`mail-delivery@bounce-domain`, or a subdomain of it), and one it merely has
 /// addresses in is kept and noted in [`SetupClaims::shared_domains`]; between pairings a domain is split the same way.
 /// An item whose check fails is refused, logged, as the node cannot tell.
 pub fn check_setup_claims(
@@ -230,7 +230,7 @@ pub fn check_setup_claims(
             _ => {}
         }
     }
-    let bounce = domain_property("edge_mail_bounce_domain");
+    let bounce = domain_property("mail-delivery@bounce-domain");
     if let serde_json::Value::Array(domains) = &mut setup["mailDomains"] {
         domains.retain(|domain| {
             let Some(name) = domain
@@ -330,7 +330,7 @@ pub fn url_host(url: &str) -> Option<String> {
 }
 
 fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+    crate::context::conf_env::setting_or_property(name).trim().to_string()
 }
 
 /// A domain property in its normal form: lower case, no trailing dot; empty when unset.
@@ -340,19 +340,23 @@ fn domain_property(name: &str) -> String {
 
 /// The server's own host names, which no paired node may claim, nor their subdomains (§5.7): its web host, its SMTP
 /// (MX) host, its bounce domain, the host of its chat address and its mr-pass sites' hosts; on an all-in-one node
-/// also its `xmpp_domain` and `sip_domain`, and the domains of its own receiving accounts ([`own_mail_domains`]), so
+/// also its `xmpp-server@domain` and `sip-server@domain`, and the domains of its own receiving accounts ([`own_mail_domains`]), so
 /// a paired node cannot take a mail domain's apex or its `mta-sts.` and `autoconfig.` hosts. The edge link adds the
 /// names its Hello gives. A mail domain split by address stays allowed in a setup's `mailDomains`.
 pub fn own_host_names(factory: &ExecutionContextFactory) -> Vec<String> {
-    let mut names: Vec<String> = ["webapp_http_host", "smtp_hostname", "edge_mail_bounce_domain"]
-        .iter()
-        .map(|name| property(name))
-        .collect();
+    let mut names: Vec<String> = [
+        "webapp-list/webapp[webroot]@http-host",
+        "smtp-server@hostname",
+        "mail-delivery@bounce-domain",
+    ]
+    .iter()
+    .map(|name| property(name))
+    .collect();
     names.extend(url_host(&property(super::setup::CHAT_PUBLIC_URL)));
     names.extend(crate::screen::public_site_hosts(factory));
     if super::settings(factory).all_in_one() {
-        names.push(domain_property("xmpp_domain"));
-        names.push(domain_property("sip_domain"));
+        names.push(domain_property("xmpp-server@domain"));
+        names.push(domain_property("sip-server@domain"));
         match factory.entity() {
             Some(facade) => match own_mail_domains(&facade) {
                 Ok(domains) => names.extend(domains),
@@ -424,7 +428,7 @@ fn text(row: &EntityValue, field: &str) -> String {
 
 /// What of the server's own holds `key` of `kind`, for [`claimed_message`] ("the server's EmailAccount 100010"), or
 /// `None` when the server holds no such item. A host name is held when it is one of [`own_host_names`] or a
-/// subdomain of one; an XMPP domain when it is the server's `xmpp_domain` or a subdomain (`rooms.`, `upload.`).
+/// subdomain of one; an XMPP domain when it is the server's `xmpp-server@domain` or a subdomain (`rooms.`, `upload.`).
 ///
 /// # Errors
 ///
@@ -456,7 +460,7 @@ pub fn own_claim(
             .one()?
             .map(|_| format!("the server's ChatBridge {key}"))),
         ClaimKind::XmppDomain => {
-            let own = domain_property("xmpp_domain");
+            let own = domain_property("xmpp-server@domain");
             let name = key.trim_end_matches('.').to_ascii_lowercase();
             Ok(super::setup::is_reserved(&name, std::slice::from_ref(&own))
                 .then(|| format!("the server's XMPP domain {own}")))
@@ -469,7 +473,7 @@ pub fn own_claim(
             .one()?
             .map(|_| format!("the server's PhoneNumber {key}"))),
         ClaimKind::SipDomain => {
-            let own = domain_property("sip_domain");
+            let own = domain_property("sip-server@domain");
             let name = key.trim_end_matches('.').to_ascii_lowercase();
             Ok((!own.is_empty() && name == own).then(|| format!("the server's SIP domain {own}")))
         }

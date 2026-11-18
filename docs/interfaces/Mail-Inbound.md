@@ -21,19 +21,19 @@ rustls for STARTTLS.
 
 ## What the deployment configures
 
-The listener starts with the server when `smtp_listen_port` is set. The settings are the attributes of the
-`smtp-server` element in `MoquiDefaultConf.xml`; the deployment ones are also properties (`smtp_listen_port` and so on,
+The listener starts with the server when `smtp-server@listen-port` is set. The settings are the attributes of the
+`smtp-server` element in `MoquiDefaultConf.xml`; the deployment ones are also properties (`smtp-server@listen-port` and so on,
 in the environment or `runtime/.env`), and the others are changed in a runtime or component conf, such as
 `<smtp-server max-message-size="52428800"/>`.
 
 | Property or attribute | Default | |
 | --- | --- | --- |
-| `smtp_listen_port` | empty (off) | The port the gateway delivers to, such as `2525`. Use a port above 1024: the gateway, not mr-moqui, has port 25. |
-| `smtp_listen_host` | `127.0.0.1` | The address to listen on: loopback for a gateway on the same host, the WireGuard or private address for a remote one. |
-| `smtp_allowed_addresses` | empty | The gateway's addresses, IPs and CIDRs separated by commas (`127.0.0.1`, `10.8.0.1`, `fd00::/8`). Every other address gets `554` at connect. **Empty does not start the listener**, so it never takes mail from everyone. |
-| `smtp-server` `proxy-protocol` | `false` | Each connection starts with a PROXY v1 or v2 header (a TCP proxy such as HAProxy in front of mr-moqui). The address the header names must be in `smtp_allowed_addresses` too, so list both the proxy's and the gateway's addresses. |
-| `smtp_hostname` | `webapp_http_host` | The name in the greeting and in the `Received` field. |
-| `smtp_authserv_id` | empty | The authserv-id the gateway writes in its `Authentication-Results` (Rspamd: the `authserv_id` of its milter headers, usually the gateway's host name). Only those fields are kept on the message; any other `Authentication-Results` (such as one a sender forged) is dropped. Empty keeps them all as they came. A warning says so at startup on a node whose listener takes mail from a gateway, on a local node paired with an edge node (mail the edge node passes on without an authserv-id of its own is kept as it came), and on a node that syncs mail from an IMAP or POP3 server (an application trusts the provider's fields only under the authserv-id named here); not on an edge node in internet mode, whose listener writes its own fields under `smtp_hostname` when this is empty. The example confs of edge and all-in-one nodes set the listener's `authserv-id` to `${smtp_authserv_id ?: smtp_hostname}`. |
+| `smtp-server@listen-port` | empty (off) | The port the gateway delivers to, such as `2525`. Use a port above 1024: the gateway, not mr-moqui, has port 25. |
+| `smtp-server@listen-host` | `127.0.0.1` | The address to listen on: loopback for a gateway on the same host, the WireGuard or private address for a remote one. |
+| `smtp-server@allowed-addresses` | empty | The gateway's addresses, IPs and CIDRs separated by commas (`127.0.0.1`, `10.8.0.1`, `fd00::/8`). Every other address gets `554` at connect. **Empty does not start the listener**, so it never takes mail from everyone. |
+| `smtp-server` `proxy-protocol` | `false` | Each connection starts with a PROXY v1 or v2 header (a TCP proxy such as HAProxy in front of mr-moqui). The address the header names must be in `smtp-server@allowed-addresses` too, so list both the proxy's and the gateway's addresses. |
+| `smtp-server@hostname` | `webapp-list/webapp[webroot]@http-host` | The name in the greeting and in the `Received` field. |
+| `smtp-server@authserv-id` | empty | The authserv-id the gateway writes in its `Authentication-Results` (Rspamd: the `authserv_id` of its milter headers, usually the gateway's host name). Only those fields are kept on the message; any other `Authentication-Results` (such as one a sender forged) is dropped. Empty keeps them all as they came. A warning says so at startup on a node whose listener takes mail from a gateway, on a local node paired with an edge node (mail the edge node passes on without an authserv-id of its own is kept as it came), and on a node that syncs mail from an IMAP or POP3 server (an application trusts the provider's fields only under the authserv-id named here); not on an edge node in internet mode, whose listener writes its own fields under `smtp-server@hostname` when this is empty. The example confs of edge and all-in-one nodes set the listener's `authserv-id` to `${smtp-server@authserv-id ?: smtp-server@hostname}`. |
 | `smtp-server` `spam-headers` | `X-Spam-Flag,X-Spam-Status,X-Spam` | The gateway's spam verdict fields. A message where one of them starts with `yes` or `true` (`X-Spam-Flag: YES`, `X-Spam-Status: Yes, score=7.2`) goes to the account's Junk folder. |
 | `smtp-server` `plus-separator` | `+` | The plus-addressing characters: `sales+news@example.com` goes to `sales@example.com`. Several characters are each a separator (`+-`); `none` turns it off. |
 | `smtp-server` `max-message-size` | `26214400` (25 MiB) | Bytes, advertised as `SIZE`. A larger message is refused with `552` (at `MAIL FROM` when its `SIZE` says so, else after its data). A message is held in memory while it is stored. |
@@ -42,9 +42,9 @@ in the environment or `runtime/.env`), and the others are changed in a runtime o
 | `smtp-server` `command-timeout` | `300` | Seconds for each command line and each chunk of data. |
 | `smtp-server` `session-timeout` | `1800` | Seconds for a whole connection. |
 | `smtp-server` `protocol` | `smtp` | `lmtp` for LMTP (RFC 2033): the gateway says `LHLO`, and after the data the listener answers once for each recipient, so a store that fails for one account is retried for that recipient only (see below). |
-| `smtp-server` `starttls` | `false` | Offer STARTTLS (RFC 3207). The certificate is the `smtp_tls_cert_file` pair, else the one in `runtime/cert` for the name the gateway asks for (SNI), else for `smtp_hostname`, else `default` (the layouts of the HTTPS listener: `<domain>.crt` and `.key`, certbot's `<domain>/fullchain.pem` and `privkey.pem`, mkcert's; renewals picked up without a restart). **With no certificate the listener does not start.** |
+| `smtp-server` `starttls` | `false` | Offer STARTTLS (RFC 3207). The certificate is the `smtp-server@tls-cert-file` pair, else the one in `runtime/cert` for the name the gateway asks for (SNI), else for `smtp-server@hostname`, else `default` (the layouts of the HTTPS listener: `<domain>.crt` and `.key`, certbot's `<domain>/fullchain.pem` and `privkey.pem`, mkcert's; renewals picked up without a restart). **With no certificate the listener does not start.** |
 | `smtp-server` `require-tls` | `false` | Refuse `MAIL` before STARTTLS with `530 5.7.0`, so mail never crosses the link in the clear. Needs `starttls`. |
-| `smtp_tls_cert_file`, `smtp_tls_key_file` | empty | The certificate (with its chain) and private key PEM files, absolute or under the runtime directory (`runtime://` works too); both or neither. Read again when they change. |
+| `smtp-server@tls-cert-file`, `smtp-server@tls-key-file` | empty | The certificate (with its chain) and private key PEM files, absolute or under the runtime directory (`runtime://` works too); both or neither. Read again when they change. |
 | `smtp-server` `chunking` | `true` | CHUNKING (RFC 3030): `BDAT n [LAST]`, the chunk taken as it is (no dot-stuffing). |
 | `smtp-server` `dsn` | `false` | DSN (RFC 3461): `RET` and `ENVID` on `MAIL`, `NOTIFY` and `ORCPT` on `RCPT`, checked (`501` when they do not parse) and kept. See [DSN](#dsn). |
 | `email-client` `mailbox-quota` | `10737418240` (10 GiB) | The bytes of mail an account keeps when its `EmailAccount.quotaBytes` is empty. See [Mailbox quota](#mailbox-quota). |
@@ -78,7 +78,7 @@ usually back through the gateway.
   section 5; the `remove` setting of Rspamd's `authentication-results` milter header), and the spam verdict fields that came
   from upstream. The listener trusts what the gateway writes and verifies nothing again.
 - A remote gateway (a small VPS for a site with port 25 blocked or no fixed address) forwards over WireGuard or another
-  private link: set `smtp_listen_host` to mr-moqui's address on that link and `smtp_allowed_addresses` to the gateway's.
+  private link: set `smtp-server@listen-host` to mr-moqui's address on that link and `smtp-server@allowed-addresses` to the gateway's.
   Over a link that is not private, turn on `starttls` and `require-tls` and have the gateway require TLS (below).
 
 ### LMTP
@@ -102,7 +102,7 @@ works the same, through the transport.
 ### TLS between the gateway and mr-moqui
 
 ```
-# conf: <smtp-server starttls="true" require-tls="true"/>, with smtp_tls_cert_file and smtp_tls_key_file, or
+# conf: <smtp-server starttls="true" require-tls="true"/>, with smtp-server@tls-cert-file and smtp-server@tls-key-file, or
 # moqui.example.com.crt and .key in runtime/cert
 
 # main.cf, LMTP: the lmtp_ parameters only touch this link
@@ -165,7 +165,7 @@ With `dsn="true"` the listener advertises `DSN` and takes the parameters the gat
 get one "delivered" report (`multipart/report`, RFC 3464, with the message's header) to the envelope sender, from the
 null reverse path, through the outgoing server of the first such account (usually the gateway); an account with no
 outgoing server, or a send that fails, is logged and the mail stays delivered. The report goes only when the sender is
-authenticated, so it is never backscatter to an address someone else wrote: `smtp_authserv_id` is set (in internet mode
+authenticated, so it is never backscatter to an address someone else wrote: `smtp-server@authserv-id` is set (in internet mode
 it always is) and the kept `Authentication-Results` show `spf=pass`, or `dmarc=pass` with its `header.from` aligned
 with the envelope sender's domain (the same domain, or one a subdomain of the other). Otherwise it is logged and not
 sent. The gateway's resend after a `451` tells
@@ -184,12 +184,12 @@ takes the mail and queues each message for it over the link, and the local node 
 `RCPT TO` is answered on the edge node from the local node's accounts, replicated to it, so an unknown address is refused
 while the local node is away too.
 
-- **The MTA in moqui** (E5b, the default on an edge node: `edge_mail_mta=moqui` in
+- **The MTA in moqui** (E5b, the default on an edge node: `moqui_conf__mail_delivery__mta=moqui` in
   [`conf/edge/MoquiEdgeConf.xml`](../../runtime/conf/edge/MoquiEdgeConf.xml)). The edge node takes port 25 itself and
-  delivers to each domain's MX. An empty `edge_mail_mta` keeps E5a's relay to Postfix, so an older edge node is not
+  delivers to each domain's MX. An empty `mail-delivery@mta` keeps E5a's relay to Postfix, so an older edge node is not
   switched by an upgrade.
 - **Postfix and Rspamd beside the edge node** (E5a). The gateway above runs on the edge node's host and hands mail to
-  the edge node's listener by LMTP on loopback (`edge_mail_mta=postfix`, `protocol="lmtp"`). Postfix signs the local
+  the edge node's listener by LMTP on loopback (`moqui_conf__mail_delivery__mta=postfix`, `protocol="lmtp"`). Postfix signs the local
   node's mail out with DKIM through Rspamd and delivers it ([below](#postfix-and-rspamd-beside-the-edge-node)).
 
 The local node's System › Edge Node wizard sets the mail side up: the `edge:` server for `SYSTEM` and the chosen
@@ -201,8 +201,8 @@ relay answering).
 
 ### Mail in
 
-The SMTP listener runs in internet mode (`smtp_internet=true`): set `smtp_listen_port=25`, `smtp_listen_host=0.0.0.0`
-(or `::`) and `smtp_hostname` (the MX name, also the authserv-id of its `Authentication-Results`) in the edge node's
+The SMTP listener runs in internet mode (`moqui_conf__smtp_server__internet=true`): set `moqui_conf__smtp_server__listen_port=25`, `moqui_conf__smtp_server__listen_host=0.0.0.0`
+(or `::`) and `smtp-server@hostname` (the MX name, also the authserv-id of its `Authentication-Results`) in the edge node's
 `.env`. It offers STARTTLS with the web certificate, limits each address (`max-connections-per-ip`,
 `connections-per-minute`), checks SPF, DKIM, DMARC and ARC after the data, removes any `Authentication-Results`
 claiming its name, refuses a DMARC failure whose policy is reject (550) and files a quarantine one in Junk.
@@ -213,12 +213,12 @@ claiming its name, refuses a DMARC failure whose policy is reject (550) and file
   its `SIZE` counted toward the bytes, is answered `451 4.7.1` and the peer tries again later. A message counts once,
   whatever its recipients; a bounce (the null reverse path) counts only against its client address.
 
-- **Spam.** With `mail_rspamd_url` (Rspamd's HTTP API, `http://127.0.0.1:11333`) Rspamd's verdict sets `X-Spam-Flag`
+- **Spam.** With `smtp-server@rspamd-url` (Rspamd's HTTP API, `http://127.0.0.1:11333`) Rspamd's verdict sets `X-Spam-Flag`
   and `X-Spam-Status` (any that came are removed); without it there is no spam check. Both fail open: Rspamd not
   reached, or a check that fails, is logged and the mail taken (as not spam); checks that do not finish in 45 seconds
   answer 451.
 - **DMARC** is RFC 9989's (`t=y` lowers the policy; there is no `pct`), and a passing ARC chain sealed by one of
-  `mail_arc_trusted_sealers` (a forwarder or list you trust) overrides a reject or quarantine; with none named there is
+  `smtp-server@arc-trusted-sealers` (a forwarder or list you trust) overrides a reject or quarantine; with none named there is
   no ARC exception.
 - **Recipients.** `RCPT TO` is answered from the local node's accounts, replicated to the edge node
   (`mailRecipients`), and each message is queued for the local node, which delivers it as its own listener would,
@@ -231,37 +231,37 @@ claiming its name, refuses a DMARC failure whose policy is reject (550) and file
 - **Behind a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19; [Run-Deploy, Full
   stack](../Run-Deploy.md#full-stack)). The MX points at the front, whose port 25 is an `EdgePort` row of kind `smtp`
   (System › Edge Clients › Ports on the front, to the edge cluster's pairing; only a front node takes the kind, and it
-  binds on `edge_smtp_tunnel_host`, every address when empty, at most 128 connections at once). Each connection goes
+  binds on `edge@smtp-tunnel-host`, every address when empty, at most 128 connections at once). Each connection goes
   down a live member's front link, by the sender's address, with a PROXY v2 header naming the sender; the member's own
   listener serves it as its mail edge and takes the sender's address from that header only because it came over its
-  own link, so `smtp_allowed_addresses`, the per-address limits and SPF see the sender, not the front. The front relays the
+  own link, so `smtp-server@allowed-addresses`, the per-address limits and SPF see the sender, not the front. The front relays the
   bytes: it reads none of the mail when the sender uses STARTTLS, but a sender that does not sends it in clear past
   the front, and a compromised front could strip the STARTTLS offer; MTA-STS for the domains makes senders that honor
   it require TLS with a valid certificate. STARTTLS ends on the member, which picks its certificate by the server name
-  or `smtp_hostname`, so the MX name's certificate goes on every member. SPF must list the members' addresses, where
+  or `smtp-server@hostname`, so the MX name's certificate goes on every member. SPF must list the members' addresses, where
   mail out leaves from: the wizard's `v=spf1 mx` would name the front, and its MX check expects the member's
-  `smtp_hostname`, so set both records by hand in this layout. The listener must run to take them (`smtp_listen_port`); its own port 25 may stay open for a second
+  `smtp-server@hostname`, so set both records by hand in this layout. The listener must run to take them (`smtp-server@listen-port`); its own port 25 may stay open for a second
   MX record, or listen on loopback, and a PROXY header sent there is not read. Mail out leaves from each member's own
-  address, so reverse DNS, SPF and `smtp_hostname` are each member's, not the front's. A local cluster behind a front
+  address, so reverse DNS, SPF and `smtp-server@hostname` are each member's, not the front's. A local cluster behind a front
   alone ([Run-Deploy, A front node](../Run-Deploy.md#a-front-node)) can take its mail the same way, its members'
   listener in internet mode; that path has no test yet.
 
 ### Mail out
 
 On the local node, give `SYSTEM` and the accounts an `EmailServer` with `smtpHost` `edge:`. A send is queued for the
-edge node, which DKIM-signs it (`mail_dkim_key`, generated into `.env` the first time; selector `mail_dkim_selector`,
-default `moqui`; for `mail_dkim_domains`, else the hosted accounts' domains) and delivers it to each recipient domain's
+edge node, which DKIM-signs it (`mail-delivery/dkim@key`, generated into `.env` the first time; selector `mail-delivery/dkim@selector`,
+default `moqui`; for `mail-delivery/dkim@domains`, else the hosted accounts' domains) and delivers it to each recipient domain's
 MX: STARTTLS when offered, MTA-STS honored (with `mode: enforce`, only the policy's MX hosts, with a valid
-certificate), a 4xx tried again from 5 minutes (`mail_delivery_retry_seconds`) doubling to 4 hours, for
-`mail_delivery_days` (5).
+certificate), a 4xx tried again from 5 minutes (`mail-delivery@retry-seconds`) doubling to 4 hours, for
+`mail-delivery@days` (5).
 
 - **Required TLS.** STARTTLS is opportunistic: an MX that does not offer it, or whose handshake fails, gets the
   message in clear text, and its certificate is not checked, unless the domain publishes an MTA-STS `enforce` policy.
-  `mail_mx_require_tls` names recipient domains (comma-separated, `*` for every one) that get mail only over
+  `mail-delivery@mx-require-tls` names recipient domains (comma-separated, `*` for every one) that get mail only over
   STARTTLS with a certificate valid for the MX host: without it the try waits as for a 4xx, and the message bounces
-  after `mail_delivery_days`. Empty by default.
+  after `mail-delivery@days`. Empty by default.
 
-- **Bounces.** Set `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the edge node) and each message
+- **Bounces.** Set `mail-delivery@bounce-domain` (as `bounces.example.com`, with its MX at the edge node) and each message
   goes from `bounce+<item>@` that domain, so a remote server's later bounce names the message. This replaces an app's
   own bounce address (`send#EmailTemplate`'s `bounceAddress`), so an app that reads its own bounces also reads the
   message the edge marks bounced (`ES_BOUNCED`), as Mantle's delivery ledger does.
@@ -270,7 +270,7 @@ certificate), a 4xx tried again from 5 minutes (`mail_delivery_retry_seconds`) d
   found by the plus tag), and read what comes back with `org.moqui.mail.EmailServices.read#DeliveryReport`: a delivery
   status notification (RFC 3464) or an abuse report (ARF, RFC 5965) of the stored message, from its report part and
   returned message, with the address it came to. Mantle's bounce intake does so.
-- **Failures.** A message no recipient got (refused at the MX, by a later bounce, or after `mail_delivery_days`) goes
+- **Failures.** A message no recipient got (refused at the MX, by a later bounce, or after `mail-delivery@days`) goes
   back to a mail client's Outbox with the replies as its send error, as does one the local node could not hand to the
   edge node within the queue's retention period; one some recipients got stays Sent, with the refused named in its
   send error. Mail for an `edge:` server while the local node is not paired is not queued, but fails as retryable and
@@ -284,17 +284,17 @@ For each mail domain: MX at the edge node's name; SPF (`v=spf1 a:edge.example.co
 key at `moqui._domainkey.<domain>` (the TXT value is `org.moqui.mail.EmailServices.get#DkimRecord`'s `record`, run on
 the edge node; it is longer than 255 characters, so enter it as several quoted strings of at most 255 each, which DNS
 joins); DMARC at `_dmarc.<domain>` (`v=DMARC1; p=quarantine; rua=mailto:...` to start); the bounce domain's MX at the
-edge node too. Reverse DNS: the edge node's address must resolve to its `smtp_hostname`, and that name back to the
+edge node too. Reverse DNS: the edge node's address must resolve to its `smtp-server@hostname`, and that name back to the
 address (set it at the cloud provider). MTA-STS for the domains themselves (`_mta-sts` and
 `https://mta-sts.<domain>/.well-known/mta-sts.txt`) is optional. DANE is not checked yet.
 
 ### Postfix and Rspamd beside the edge node
 
-They do the internet side instead, with the gateway's rules above. In the edge node's `.env`: `edge_mail_mta=postfix`,
-`smtp_internet=false`, `smtp_listen_port=10024` and `smtp_allowed_addresses=127.0.0.1,::1`, and `protocol="lmtp"` on
+They do the internet side instead, with the gateway's rules above. In the edge node's `.env`: `moqui_conf__mail_delivery__mta=postfix`,
+`moqui_conf__smtp_server__internet=false`, `moqui_conf__smtp_server__listen_port=10024` and `moqui_conf__smtp_server__allowed_addresses=127.0.0.1,::1`, and `protocol="lmtp"` on
 the `smtp-server` in the runtime's conf. Postfix hands mail for the local node's domains to that LMTP listener; set
-`smtp_authserv_id` on the local node to Rspamd's authserv-id, so only its `Authentication-Results` are kept. Mail out is
-relayed to Postfix on `edge_mail_relay_port` (10025), and Postfix signs it with DKIM through Rspamd and delivers it;
+`smtp-server@authserv-id` on the local node to Rspamd's authserv-id, so only its `Authentication-Results` are kept. Mail out is
+relayed to Postfix on `mail-delivery@relay-port` (10025), and Postfix signs it with DKIM through Rspamd and delivers it;
 while Postfix is not reached the message waits in the queue.
 
 ```

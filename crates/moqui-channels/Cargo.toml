@@ -6,7 +6,7 @@
 
 [package]
 name = "moqui-channels"
-description = "Business messaging channels: the SMS adapters, one for each provider, and business RCS on them."
+description = "Business messaging channels: the SMS adapters, one for each provider, business RCS on them, and GroupMe."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

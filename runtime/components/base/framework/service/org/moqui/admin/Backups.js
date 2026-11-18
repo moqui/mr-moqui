@@ -44,7 +44,7 @@ const REMOTE = "moqui.service.message.SystemMessageRemote"
 // the framework's backup and its seeded job (crates/moqui-core/src/service/backup.rs)
 const BACKUP_SERVICE = "org.moqui.impl.ServerServices.backup#EmbeddedDatabase"
 const BACKUP_JOB = "backup_EmbeddedDatabase_daily"
-const DIR_PROPERTY = "embedded_db_backup_dir"
+const DIR_PROPERTY = "database-backup@dir"
 const START = "org.moqui.admin.BackupServices.start#BackupRun"
 const HOLD = "org.moqui.admin.BackupServices.hold#BackupLock"
 const LEDGER = "backup-requests:" + BACKUP_JOB
@@ -52,7 +52,7 @@ const minMinutes = 30
 const maxPerDay = 3
 const maxArchives = 500
 const runsRead = 60
-const zone = () => text(System.getProperty("default_time_zone")) || "UTC"
+const zone = () => text(ec.factory.getConfValue("instance@default-time-zone")) || "UTC"
 const zoned = value => (value == null ? "" : ec.l10n.format(Number(value), "yyyy-MM-dd HH:mm", null, zone()))
 const now = () => ms(ec.user.nowTimestamp)
 
@@ -209,7 +209,7 @@ const sizeText = bytes =>
 function archivesOf() {
     const directory =
         text(jobParameters().backupDir) ||
-        text(System.getProperty(DIR_PROPERTY)) ||
+        text(ec.factory.getConfValue(DIR_PROPERTY)) ||
         String(ec.factory.getRuntimePath()) + "/db/backup"
     let entries
     try {

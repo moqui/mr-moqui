@@ -16,7 +16,7 @@
 //! `tests/fixtures/test-component/browser-client/Browser.spec.js` over the gallery screens of `/qapps` and the login
 //! form, with goto, roles and names, fill, click, a dialog, settle, a provoked console error that fails its feature
 //! and leaves its screenshot and text, allowPageProblems, allowProblems and takeProblems, a screenshot and a PDF. Opt-in
-//! as `gate3_browser` is, because it needs Chromium (`--chromium`, `moqui_chromium_path`, `runtime/chromium`, or an
+//! as `gate3_browser` is, because it needs Chromium (`--chromium`, `screen-facade/pdf@chromium-path`, `runtime/chromium`, or an
 //! installed Chromium, Google Chrome or Microsoft Edge):
 //!
 //! ```sh

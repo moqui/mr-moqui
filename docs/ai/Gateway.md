@@ -18,14 +18,14 @@ The gateway is off by default; while it is off everything under `/llm/v1` answer
 
 ```xml
 <llm-facade>
-    <gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300">
+    <gateway enabled="false" require-client="true" timeout="300">
         <alias name="fast" model="local-qwen"/>
         <alias name="default" feature="assist"/>
     </gateway>
 </llm-facade>
 ```
 
-- `llm_gateway_enabled=true` turns it on. `timeout` is the seconds one call may take in all.
+- `moqui_conf__llm_facade__gateway__enabled=true` turns it on. `timeout` is the seconds one call may take in all.
 - **Aliases** are the model names callers use: `model` names a model of the registry (System › LLM › Models), `feature`
   a feature whose binding (with its fallback and its reasoning level) the alias follows. `LlmModelAlias` rows (`alias`,
   `modelId` or `featureId`) replace a conf alias of the same name, and `disabled="Y"` turns one off. A conf that lists

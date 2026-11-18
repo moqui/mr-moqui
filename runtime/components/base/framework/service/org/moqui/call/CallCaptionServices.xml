@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     (org.moqui.call.SpeechServices, the model bound to the transcribe feature) and sends the text to every leg as rtc frames,
     with the notice that captions are on and which provider hears the audio. The policy is CallCaptions.js beside this file.
 
-    Refusals carry reasonCode: captionsOff (call_captions_enabled is not true), notSignedIn, notFound (not in the call: the
+    Refusals carry reasonCode: captionsOff (calls/captions@enabled is not true), notSignedIn, notFound (not in the call: the
     same answer as for a call that does not exist), callEnded, encrypted (the call's media is end-to-end encrypted, which
     captions never downgrade), mediaUnavailable (no media node), noProvider (no speech to text set up). Like the call
     services, these check the signed-in user's part in the call themselves; the Calls screen's transitions call them with
@@ -89,7 +89,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="store" noun="CallTranscript" authenticate="false" allow-remote="false">
-        <description>Internal (the media node's captions, with call_captions_store): a caption kept as a CallTranscript of
+        <description>Internal (the media node's captions, with calls/captions@store): a caption kept as a CallTranscript of
             the call and leg; only for a leg of that call.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>

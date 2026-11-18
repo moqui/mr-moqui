@@ -15,9 +15,9 @@
 //! Server log output, log files, and factory-scoped OpenTelemetry logs.
 //!
 //! [`install`] sets the process's `tracing` subscriber: one line per event on stderr, at
-//! `moqui_log_level` (default `info`) and above. The stderr line has a structured header and, when
+//! `logging@level` (default `info`) and above. The stderr line has a structured header and, when
 //! color is on, a dim stamp, a colored level, a dim thread, and a blue target. Color follows
-//! `moqui_log_color` (default `auto`: a terminal, and `NO_COLOR` unset). Spans are not tracked;
+//! `logging@color` (default `auto`: a terminal, and `NO_COLOR` unset). Spans are not tracked;
 //! telemetry spans follow artifact frames.
 //!
 //! [`attach_files`] opens `moqui.log` and `moqui-error.log` once the runtime directory and the
@@ -118,7 +118,7 @@ pub fn install() {
 }
 
 /// [`install`], with stderr limited to `console` and above while the log files still get every line at
-/// `moqui_log_level`: `moqui test` keeps its report readable this way.
+/// `logging@level`: `moqui test` keeps its report readable this way.
 pub fn install_with_console(console: Option<Level>) {
     install_subscriber(Some(console));
 }
@@ -129,14 +129,14 @@ pub fn install_without_console() {
     install_subscriber(None);
 }
 
-/// `console` is None for no stderr, `Some(None)` for every line at `moqui_log_level`, `Some(Some(level))` for that level
+/// `console` is None for no stderr, `Some(None)` for every line at the `logging` `level`, `Some(Some(level))` for that level
 /// and above.
 fn install_subscriber(console: Option<Option<Level>>) {
     static INSTALLED: OnceLock<()> = OnceLock::new();
     INSTALLED.get_or_init(|| {
         let level = log_filter::level_from_env();
         let color = color_enabled(
-            &moqui_lib::env::get_prop_or_env("moqui_log_color"),
+            &moqui_core::context::conf_env::setting("logging@color"),
             std::env::var_os("NO_COLOR").is_some(),
             std::io::stderr().is_terminal(),
         );
@@ -414,8 +414,8 @@ fn write_file_line(level: Level, line: &str) {
     }
 }
 
-/// Open the log files of the conf's `logging` element: `dir` (`moqui_log_dir`, a path or a `runtime://` location;
-/// empty means no files), `max-size-mb` and `max-files`; with no factory yet, `moqui_log_dir` and the defaults. Write
+/// Open the log files of the conf's `logging` element: `dir` (`logging@dir`, a path or a `runtime://` location;
+/// empty means no files), `max-size-mb` and `max-files`; with no factory yet, `logging@dir` and the defaults. Write
 /// the lines logged so far. The first call decides; later calls change nothing. Returns the directory when files are
 /// being written.
 pub fn attach_files(
@@ -432,10 +432,7 @@ pub fn attach_files(
             .map(|factory| factory.conf_setting("logging", name))
             .unwrap_or_default()
     };
-    let mut configured_dir = setting("dir");
-    if configured_dir.is_empty() {
-        configured_dir = moqui_lib::env::get_prop_or_env("moqui_log_dir");
-    }
+    let configured_dir = setting("dir");
     let dir = file_dir(runtime_dir, &configured_dir);
     let max_mb = setting("max-size-mb")
         .parse::<u64>()

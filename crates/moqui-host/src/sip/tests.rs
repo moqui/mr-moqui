@@ -23,20 +23,20 @@ fn settings(pairs: &[(&str, &str)]) -> Result<Option<SipSettings>, String> {
 
 #[test]
 fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
-    assert_eq!(settings(&[("sip_rtp_ports", "20000-20999")]), Ok(None));
-    let s = settings(&[("sip_port", "5060")]).unwrap().unwrap();
+    assert_eq!(settings(&[("sip-server@rtp-ports", "20000-20999")]), Ok(None));
+    let s = settings(&[("sip-server@port", "5060")]).unwrap().unwrap();
     assert_eq!(s.listen, Some("127.0.0.1:5060".parse().unwrap()));
     assert_eq!(s.tls, None);
     assert_eq!(s.rtp_ports, "20000-20999");
     assert_eq!(s.rtp_host, "127.0.0.1".parse::<IpAddr>().unwrap());
     let s = settings(&[
-        ("sip_tls_port", "5061"),
-        ("sip_host", "0.0.0.0"),
-        ("sip_tls_host", "127.0.0.2"),
-        ("sip_rtp_host", "127.0.0.3"),
-        ("sip_rtp_ports", "30000-30010"),
-        ("sip_public_address", "198.51.100.20"),
-        ("sip_tls_ca_file", "/nowhere/ca.pem"),
+        ("sip-server@tls-port", "5061"),
+        ("sip-server@host", "0.0.0.0"),
+        ("sip-server@tls-host", "127.0.0.2"),
+        ("sip-server@rtp-host", "127.0.0.3"),
+        ("sip-server@rtp-ports", "30000-30010"),
+        ("sip-server@public-address", "198.51.100.20"),
+        ("sip-server@tls-ca-file", "/nowhere/ca.pem"),
     ])
     .unwrap()
     .unwrap();
@@ -47,11 +47,11 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
     assert_eq!(s.ca_file, Some(PathBuf::from("/nowhere/ca.pem")));
     assert_eq!(s.limits, RequestLimits::default());
     let s = settings(&[
-        ("sip_port", "5060"),
-        ("sip_request_rate", "5"),
-        ("sip_request_burst", "10"),
-        ("sip_max_transactions", "300"),
-        ("sip_max_connections", "many"),
+        ("sip-server@port", "5060"),
+        ("sip-server/limits@request-rate", "5"),
+        ("sip-server/limits@request-burst", "10"),
+        ("sip-server/limits@max-transactions", "300"),
+        ("sip-server/limits@max-connections", "many"),
     ])
     .unwrap()
     .unwrap();
@@ -66,29 +66,36 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
         },
         "one that is not a number keeps its default"
     );
-    assert!(settings(&[("sip_port", "fifty")]).is_err());
-    assert!(settings(&[("sip_port", "5060"), ("sip_public_address", "sip.example")]).is_err());
+    assert!(settings(&[("sip-server@port", "fifty")]).is_err());
+    assert!(settings(&[
+        ("sip-server@port", "5060"),
+        ("sip-server@public-address", "sip.example")
+    ])
+    .is_err());
 }
 
 #[test]
 fn the_registrar_is_off_until_enabled_and_takes_its_limits_and_domain() {
-    let s = settings(&[("sip_port", "5060")]).unwrap().unwrap();
+    let s = settings(&[("sip-server@port", "5060")]).unwrap().unwrap();
     assert_eq!(s.registrar, None, "off by default, even with the listener on");
     assert_eq!(s.domain, "moqui");
-    let s = settings(&[("sip_port", "5060"), ("sip_public_address", "198.51.100.20")])
-        .unwrap()
-        .unwrap();
+    let s = settings(&[
+        ("sip-server@port", "5060"),
+        ("sip-server@public-address", "198.51.100.20"),
+    ])
+    .unwrap()
+    .unwrap();
     assert_eq!(
         s.domain, "198.51.100.20",
         "the realm is the public address when no domain is set"
     );
     let s = settings(&[
-        ("sip_port", "5060"),
-        ("sip_domain", "sip.example.com"),
-        ("sip_registrar_enabled", "true"),
-        ("sip_registrar_min_expires", "120"),
-        ("sip_registrar_max_expires", "60"),
-        ("sip_registrar_nat_expires", "often"),
+        ("sip-server@port", "5060"),
+        ("sip-server@domain", "sip.example.com"),
+        ("sip-server/registrar@enabled", "true"),
+        ("sip-server/registrar@min-expires", "120"),
+        ("sip-server/registrar@max-expires", "60"),
+        ("sip-server/registrar@nat-expires", "often"),
     ])
     .unwrap()
     .unwrap();
@@ -164,8 +171,8 @@ fn each_notice_is_its_own_tone_pattern_then_the_deployments_audio() {
     assert_eq!(Notice::from_code("recordingAck"), Notice::RecordingAck);
     assert_eq!(Notice::from_code("captions"), Notice::Captions);
     assert_eq!(Notice::from_code(""), Notice::Recording);
-    assert_eq!(Notice::Captions.audio_property(), "call_captions_prompt_audio");
-    assert_eq!(Notice::RecordingAck.audio_property(), "call_recording_prompt_audio");
+    assert_eq!(Notice::Captions.audio_property(), "calls/captions@prompt-audio");
+    assert_eq!(Notice::RecordingAck.audio_property(), "calls/recording@prompt-audio");
 }
 
 #[test]

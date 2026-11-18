@@ -16,8 +16,8 @@
 //! delegated view of it (mr-boss plan/design-admin.md §6 SignInPolicy; impl-admin P10, F110). No Java counterpart.
 //!
 //! The password, login key and lockout rules are literal attributes of the conf's `user-facade` (`password`,
-//! `login-key`, `login`) and the web session's of `webapp` `session-config`, which no `default-property` names, so a
-//! script cannot read them and System › Conf, which shows the whole conf, is the `ADMIN` group's. This answers a fixed
+//! `login-key`, `login`) and the web session's of `webapp` `session-config`; a script reads no secret of the conf, and
+//! System › Conf, which shows the whole conf, is the `ADMIN` group's. This answers a fixed
 //! list of them only, [`ATTRIBUTES`], each as the server reads it: the conf's value, else the fallback the code uses when
 //! the conf leaves it out. None is a secret (the hash types, the seal lists and every key stay out). The keys are the
 //! `confAttribute` of the `moqui.server.InstanceSetting` rows that describe them, which `get#EffectiveSettings` shows.
@@ -101,7 +101,6 @@ fn get_sign_in_policy_values(
                 } else {
                     factory
                         .user_facade_attr(child, name)
-                        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                 };

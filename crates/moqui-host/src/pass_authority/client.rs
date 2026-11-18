@@ -15,8 +15,8 @@
 //! A PASS frontend's calls to its authority over gRPC (plans/archive/Edge-Node.md §5.5): the `moqui_core::pass_authority`
 //! sender behind scripts' `ec.service.passAuthority(endpoint)`, on the host's runtime.
 //! - `grpc://host:port` and `grpcs://host:port`: the authority's gRPC listener, plain HTTP/2 or TLS (WebPKI roots,
-//!   ALPN h2), one connection per endpoint kept and dialed again when it closes; the client is `pass_client_id`, its
-//!   secret `pass_client_secret` in the metadata.
+//!   ALPN h2), one connection per endpoint kept and dialed again when it closes; the client is `pass@client-id`, its
+//!   secret `pass@client-secret` in the metadata.
 //! - `edge:`: on an edge node, a local node down the link: the pairing whose Configure names the call's site, else the
 //!   only one linked (`EdgeServer::pass_link`, plans/Edge-Node2.md §4.1); "local node offline" at once while that
 //!   link is down. Of the pairing's pool, the member the session handle hashes to while a sign-in is in progress, else
@@ -102,7 +102,7 @@ fn request<T>(message: T, endpoint: &Endpoint) -> Result<tonic::Request<T>, Erro
         let (id, secret) = direct_client();
         if id.is_empty() || secret.is_empty() {
             return Err(Error::new(
-                "pass_client_id and pass_client_secret must be set to call a gRPC authority",
+                "pass@client-id and pass@client-secret must be set to call a gRPC authority",
             ));
         }
         let metadata = request.metadata_mut();
@@ -116,10 +116,10 @@ fn request<T>(message: T, endpoint: &Endpoint) -> Result<tonic::Request<T>, Erro
     Ok(request)
 }
 
-/// `pass_client_id` and `pass_client_secret`.
+/// `pass@client-id` and `pass@client-secret`.
 fn direct_client() -> (String, String) {
-    let get = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
-    (get("pass_client_id"), get("pass_client_secret"))
+    let get = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
+    (get("pass@client-id"), get("pass@client-secret"))
 }
 
 /// A transport failure, with the gRPC status's message.

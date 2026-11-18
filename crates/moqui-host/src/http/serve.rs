@@ -71,7 +71,7 @@ pub(crate) struct WebApp {
     /// router, which answers Not Found (plans/Edge-Node2.md §4.2).
     #[cfg(feature = "grpc")]
     pub refusing_host: Option<RefusingHost>,
-    /// The `Host` names a request straight to a listener must give (`webapp_allowed_hosts`); `None` takes any
+    /// The `Host` names a request straight to a listener must give (`webapp-list/webapp[webroot]@allowed-hosts`); `None` takes any
     /// ([`host_allowed`]).
     pub allowed_hosts: Option<Arc<Vec<String>>>,
 }
@@ -551,7 +551,7 @@ pub(crate) fn request_deadline(
 }
 
 /// Whether a request that named `host` (its `Host` header, port included) may be served: always, unless the listeners
-/// answer only for some host names ([`WebApp::allowed_hosts`], `webapp_allowed_hosts`) and it came to one of them. The
+/// answer only for some host names ([`WebApp::allowed_hosts`], `webapp-list/webapp[webroot]@allowed-hosts`) and it came to one of them. The
 /// Desktop node's loopback listener names its own, so a page another site loads under a name that resolves to
 /// 127.0.0.1 (DNS rebinding) is refused before it reaches a screen (SEC-CLI-01).
 pub(crate) fn host_allowed(web: &WebApp, host: &str, via: moqui_core::web::RequestVia) -> bool {
@@ -561,10 +561,10 @@ pub(crate) fn host_allowed(web: &WebApp, host: &str, via: moqui_core::web::Reque
     !matches!(via, moqui_core::web::RequestVia::Direct) || allowed.iter().any(|name| name.eq_ignore_ascii_case(host.trim()))
 }
 
-/// The host names of `webapp_allowed_hosts` (comma separated, each as a `Host` header gives it, `127.0.0.1:8080`);
-/// `None` when it is empty, and every host name is served.
+/// The host names of the webroot webapp's `allowed-hosts` (comma separated, each as a `Host` header gives it,
+/// `127.0.0.1:8080`); `None` when it is empty, and every host name is served.
 pub(crate) fn allowed_hosts_property() -> Option<Arc<Vec<String>>> {
-    let names: Vec<String> = moqui_lib::env::get_prop_or_env("webapp_allowed_hosts")
+    let names: Vec<String> = moqui_core::context::conf_env::webroot_setting("allowed-hosts")
         .split(',')
         .map(str::trim)
         .filter(|name| !name.is_empty())

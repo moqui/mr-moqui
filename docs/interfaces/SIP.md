@@ -21,7 +21,7 @@ call out as their user.
 The engine needs:
 
 - the `sip` feature, in the Maximal, Enterprise and Debug packages;
-- call media on the same server (`rtc_media_port`, [WebRTC](WebRTC.md)).
+- call media on the same server (`media-server@port`, [WebRTC](WebRTC.md)).
 
 Every listener is off until its setting is set.
 
@@ -29,29 +29,29 @@ Every listener is off until its setting is set.
 
 | Property | Default | |
 | --- | --- | --- |
-| `sip_port` | empty (off) | SIP over UDP and TCP; 5060 by convention |
-| `sip_host` | `127.0.0.1` | The address `sip_port` binds |
-| `sip_tls_port` | empty (off) | SIP over TLS; 5061 by convention. The certificate comes from `runtime/cert` (for `sip_public_address`, else `default`), as the HTTPS listener's and TURN's do. A client must finish its TLS handshake within 10 seconds; at most 128 handshakes run at once, 8 from one source |
-| `sip_tls_host` | `sip_host` | The address `sip_tls_port` binds |
-| `sip_rtp_ports` | `20000-20999` | The UDP range of the phone legs' RTP, one port a leg |
-| `sip_rtp_host` | `sip_host` | The address the RTP sockets bind |
-| `sip_public_address` | the bound address | The address in Contact headers and SDP, for a server behind 1:1 NAT. A host bound to every address does not start without it |
-| `sip_tls_ca_file` | the system bundle (`/etc/ssl/certs/ca-certificates.crt`) | The CA certificates that verify a trunk's TLS certificate |
-| `sip_request_rate`, `sip_request_burst` | `20`, `100` | New requests (outside a dialog: INVITE, REGISTER, OPTIONS and the rest) a second from one source, and how many it may send at once; past them its requests are dropped unanswered. `0` turns it off |
-| `sip_max_transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
-| `sip_max_connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
-| `sip_max_connections_per_source` | `100` | TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every connection phones keep open; one past it is closed. `0` turns it off |
-| `sip_registrar_enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on. Read when the engine starts, as the listeners' settings are: a change takes a restart |
-| `sip_domain` | `sip_public_address`, else `moqui` | The realm of the digest challenges and the domain phones register to. The phones' verifiers are for it: after a change, each phone needs a new password |
-| `sip_registrar_min_expires`, `sip_registrar_max_expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
-| `sip_registrar_default_expires` | `600` | The expiry of a binding whose phone asks none |
-| `sip_registrar_nat_expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
-| `call_forward_max_hops` | `5` | The most forwards one call takes ([Call handling](#call-handling)): a user's to another user or group, a group's fallback group; past it the forward is skipped. 1 to 10 |
-| `call_forward_ring_seconds` | `30` | How long a forward to an outside number rings before the call goes on (to voicemail, or the next step). 10 to 120 |
-| `call_queue_tick_seconds` | `5` | How often the engine asks about each call waiting in a queue ([Queues](#queues)): offers that rang out, the next offer, the wait limit, the caller's place. 1 to 30 |
-| `call_transfer_ring_seconds` | `30` | How long a blind transfer's target rings before the far end goes to the target's voicemail ([Transfer and merge](#transfer-and-merge)). 10 to 120 |
-| `call_hold_music_location` | empty | Hold music for calls on hold and in queues without their own (any resource location; WAV or Ogg Opus, looped). Empty: a tone pattern. Use only audio you may use |
-| `call_queue_prompt_location` | empty | A folder with `0.wav` to `9.wav`: a queue caller's place spoken as digits. Without all ten, the place is pips |
+| `sip-server@port` | empty (off) | SIP over UDP and TCP; 5060 by convention |
+| `sip-server@host` | `127.0.0.1` | The address `sip-server@port` binds |
+| `sip-server@tls-port` | empty (off) | SIP over TLS; 5061 by convention. The certificate comes from `runtime/cert` (for `sip-server@public-address`, else `default`), as the HTTPS listener's and TURN's do. A client must finish its TLS handshake within 10 seconds; at most 128 handshakes run at once, 8 from one source |
+| `sip-server@tls-host` | `sip-server@host` | The address `sip-server@tls-port` binds |
+| `sip-server@rtp-ports` | `20000-20999` | The UDP range of the phone legs' RTP, one port a leg |
+| `sip-server@rtp-host` | `sip-server@host` | The address the RTP sockets bind |
+| `sip-server@public-address` | the bound address | The address in Contact headers and SDP, for a server behind 1:1 NAT. A host bound to every address does not start without it |
+| `sip-server@tls-ca-file` | the system bundle (`/etc/ssl/certs/ca-certificates.crt`) | The CA certificates that verify a trunk's TLS certificate |
+| `sip-server/limits@request-rate`, `sip-server/limits@request-burst` | `20`, `100` | New requests (outside a dialog: INVITE, REGISTER, OPTIONS and the rest) a second from one source, and how many it may send at once; past them its requests are dropped unanswered. `0` turns it off |
+| `sip-server/limits@max-transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
+| `sip-server/limits@max-connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
+| `sip-server/limits@max-connections-per-source` | `100` | TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every connection phones keep open; one past it is closed. `0` turns it off |
+| `sip-server/registrar@enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on. Read when the engine starts, as the listeners' settings are: a change takes a restart |
+| `sip-server@domain` | `sip-server@public-address`, else `moqui` | The realm of the digest challenges and the domain phones register to. The phones' verifiers are for it: after a change, each phone needs a new password |
+| `sip-server/registrar@min-expires`, `sip-server/registrar@max-expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
+| `sip-server/registrar@default-expires` | `600` | The expiry of a binding whose phone asks none |
+| `sip-server/registrar@nat-expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
+| `calls@forward-max-hops` | `5` | The most forwards one call takes ([Call handling](#call-handling)): a user's to another user or group, a group's fallback group; past it the forward is skipped. 1 to 10 |
+| `calls@forward-ring-seconds` | `30` | How long a forward to an outside number rings before the call goes on (to voicemail, or the next step). 10 to 120 |
+| `calls/queue@tick-seconds` | `5` | How often the engine asks about each call waiting in a queue ([Queues](#queues)): offers that rang out, the next offer, the wait limit, the caller's place. 1 to 30 |
+| `calls@transfer-ring-seconds` | `30` | How long a blind transfer's target rings before the far end goes to the target's voicemail ([Transfer and merge](#transfer-and-merge)). 10 to 120 |
+| `calls@hold-music-location` | empty | Hold music for calls on hold and in queues without their own (any resource location; WAV or Ogg Opus, looped). Empty: a tone pattern. Use only audio you may use |
+| `calls/queue@prompt-location` | empty | A folder with `0.wav` to `9.wav`: a queue caller's place spoken as digits. Without all ten, the place is pips |
 
 Trunks, numbers, caller-ID grants, fraud limits and emergency locations are records, set up in System, Voice:
 `VoiceTrunk`, `PhoneNumber`, `PhoneNumberUser`, `VoicePolicy`, `VoiceUserSetting` and `EmergencyLocation`.
@@ -62,9 +62,9 @@ Trunks, numbers, caller-ID grants, fraud limits and emergency locations are reco
 
 Open these ports on the firewall, to the provider's signaling and media addresses only where it publishes them:
 
-- `sip_port`, UDP and TCP;
-- `sip_tls_port`, TCP;
-- the `sip_rtp_ports` range, UDP.
+- `sip-server@port`, UDP and TCP;
+- `sip-server@tls-port`, TCP;
+- the `sip-server@rtp-ports` range, UDP.
 
 **DNS.** Desk and soft phones ([Registrar](#registrar)) find a server through its SRV record:
 
@@ -259,7 +259,7 @@ Each provider is unverified until its own live check.
 - **Hold** is a re-INVITE either way.
   - The provider's `sendonly` or `inactive` is answered `recvonly` or `inactive`, and Moqui stops sending.
   - `hold#PhoneCall` and `resume#PhoneCall` (m-call's Hold) send Moqui's own re-INVITE (`sendonly`); the phone hears hold
-    music (`call_hold_music_location`, else a tone pattern) and is not heard by the others (`CallLeg.heldDate`, V5).
+    music (`calls@hold-music-location`, else a tone pattern) and is not heard by the others (`CallLeg.heldDate`, V5).
 - **Cancel and forks.**
   - A call the user gives up while it rings is canceled (CANCEL, 487).
   - An answer that crosses the CANCEL is ACKed and ended with a BYE, and the call counts as canceled.
@@ -302,7 +302,7 @@ is open or closed):
    `mobileScheduleId` when set), for their box's rings; then the no-answer rule's target, else voicemail.
 
 A target is an outside number, another user (their rules apply), a ring group, voicemail, or a refusal. Forwards are
-bounded: a user or group already in the plan is skipped (a loop), as is a forward past `call_forward_max_hops`, a
+bounded: a user or group already in the plan is skipped (a loop), as is a forward past `calls@forward-max-hops`, a
 forward back to the caller's own number, and an emergency number (never a target). A forward to one of this deployment's
 numbers routes inside, to its user or group, never through the trunk.
 
@@ -370,10 +370,10 @@ the admin's recordings or tones.
 A call goes into a queue (`CallQueue`; System, Voice, Queues) from a number routed to it (`PnrQueue`), an IVR option or
 a transfer: a `CallQueueEntry`, waiting.
 
-- **What the caller hears.** Hold music looped (the queue's uploaded audio, else `call_hold_music_location`, else a soft
+- **What the caller hears.** Hold music looped (the queue's uploaded audio, else `calls@hold-music-location`, else a soft
   four-tone figure), and every `announceSeconds` their place: a chime, the queue's position prompt when uploaded, then
-  the place as digits when `call_queue_prompt_location` has `0.wav` to `9.wav`, else a pip a place (a long tone past 9).
-- **Offers.** Every `call_queue_tick_seconds` the engine asks `tick#QueueCall`. The waiting calls are offered oldest
+  the place as digits when `calls/queue@prompt-location` has `0.wav` to `9.wav`, else a pip a place (a long tone past 9).
+- **Offers.** Every `calls/queue@tick-seconds` the engine asks `tick#QueueCall`. The waiting calls are offered oldest
   first to the queue's free agents (`CallQueueAgent`: logged in, not paused, not in a call, out of wrap-up, not ringing
   for another queue call) by its strategy: the agent idle longest (since their last queue call ended, else since they
   logged in), round robin (after the last one offered) or all at once. An offer rings the agents' tabs and phones as
@@ -399,7 +399,7 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
 
 - **Blind transfer** (`transfer#Call` mode `blind`): the call's outside party (its answered phone leg) goes to a user, an
   outside number or a queue, and the user's leg leaves at once (`CerTransferred`). The far end hears ringback until the
-  target answers; a target that does not answer in `call_transfer_ring_seconds` (the engine's timer, then
+  target answers; a target that does not answer in `calls@transfer-ring-seconds` (the engine's timer, then
   `expire#CallTransfer`), or declines, missed it, and the far end goes to the target user's voicemail (a number's: the
   call ends). A transfer to a queue puts the far end in it at once. The timer of a transfer that is over (answered, or
   the call moved on to a queue or another transfer) does nothing.
@@ -425,7 +425,7 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
 - **Merge** (`merge#Calls`): another call the user is in moves into this one, which becomes a meeting; its people and
   legs move (a browser joins the new room with the same leg, a phone leg is moved by its engine: the control `move`),
   its own legs on hold come back, and the other call ends (`CerMerged`). Calls on two media nodes merge only with
-  cascading media nodes on (`rtc_cascade_enabled`, [WebRTC](WebRTC.md#cascading-media-nodes)): the other call's phones
+  cascading media nodes on (`media-server@cascade-enabled`, [WebRTC](WebRTC.md#cascading-media-nodes)): the other call's phones
   stay on their node, which relays to this call's node; without it they are refused (`differentNodes`). **Make it a meeting** (`convert#CallToMeeting`): the call goes on as long as
   anyone is in it.
 - **A desk phone's transfer.** A registered phone's blind transfer (REFER, RFC 3515) is checked before it is
@@ -436,7 +436,7 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
   is refused (501): transfer from the browser instead.
 - **New legs hear the notices.** A leg that joins by a transfer, an add or a merge gets the recording and captions
   notices as a late joiner does: a browser leg when it binds, a phone leg when it answers (`notify#PhoneLeg`, and a 1 to
-  acknowledge under `call_recording_ack_required`).
+  acknowledge under `calls/recording@ack-required`).
 
 **Screen pop.** When a phone call rings a user or an agent, their ring bar (and m-call) asks `get#CallContext`, which
 calls the apps' `call-context` providers as that user (`ShellServices.call#Providers`: each read in its own transaction,
@@ -462,9 +462,9 @@ notice that comes while another plays waits for it.
 
 | Notice | When | Tones | Audio |
 | --- | --- | --- | --- |
-| `recording` | A recording starts, or the phone answers while one goes ([Call recording](Call-Recording.md#the-notice-and-consent)) | 1400 Hz, 400 ms | `call_recording_prompt_audio` |
-| `recordingAck` | The same, under `call_recording_ack_required` | 1400 Hz twice | `call_recording_prompt_audio` |
-| `captions` | Captions turn on, or the phone answers while they are on ([WebRTC, Captions](WebRTC.md#captions)) | 900 then 1200 Hz | `call_captions_prompt_audio` |
+| `recording` | A recording starts, or the phone answers while one goes ([Call recording](Call-Recording.md#the-notice-and-consent)) | 1400 Hz, 400 ms | `calls/recording@prompt-audio` |
+| `recordingAck` | The same, under `calls/recording@ack-required` | 1400 Hz twice | `calls/recording@prompt-audio` |
+| `captions` | Captions turn on, or the phone answers while they are on ([WebRTC, Captions](WebRTC.md#captions)) | 900 then 1200 Hz | `calls/captions@prompt-audio` |
 
 - **Acknowledging** a recording is pressing 1. The phone's DTMF comes back through `note#PhoneLeg`, and
   `CallRecordingServices.ack#LegRecordingNotice` logs it with the method `dtmf`. Other keys, and a 1 when nothing asks
@@ -476,13 +476,13 @@ notice that comes while another plays waits for it.
 
 Desk phones (Yealink, Polycom, Grandstream) and soft phones (Linphone, Zoiper, Groundwire, on a computer or a mobile, the
 native-calls path of §7.2) register with the SIP engine, which is their registrar (plans/archive/Comms-Framework.md §5.2
-"Registrar for phones", V4). It is off unless `sip_registrar_enabled` is true, even with the listeners on; until then a
+"Registrar for phones", V4). It is off unless `sip-server/registrar@enabled` is true, even with the listeners on; until then a
 REGISTER is refused (403) without a challenge, so a phone pointed here is not blocked for failed digests, and phones may be added but cannot register or ring.
 
 **Phones and their credentials.** A user adds a phone in Comms, Settings, Desk and soft phones
 (`SipDeviceServices.create#SipDevice`). Its credentials are generated: a ten-digit username and a 22-character random
 password. They show once, with the domain, the port and the transport, each with a copy button; the password is never
-stored. What is kept (`SipDeviceVerifier`, encrypted) is a digest verifier per algorithm for `sip_domain`: HA1 =
+stored. What is kept (`SipDeviceVerifier`, encrypted) is a digest verifier per algorithm for `sip-server@domain`: HA1 =
 H(username:realm:password), as RFC 7616 and RFC 8760 define it.
 
 - **Profiles.** A standard phone has a SHA-256 verifier only. The registrar challenges with SHA-256 first and MD5 second
@@ -496,9 +496,9 @@ H(username:realm:password), as RFC 7616 and RFC 8760 define it.
 
 **Setting up a phone.** In the phone or the app, add a SIP account:
 
-- username and password as shown; the domain (also the registrar, or server, or proxy) is `sip_domain`;
-- transport TLS on `sip_tls_port` (5061) with SRTP media (SDES) for a phone outside the office network. UDP or TCP on
-  `sip_port` is for a phone on the same network, with plain RTP;
+- username and password as shown; the domain (also the registrar, or server, or proxy) is `sip-server@domain`;
+- transport TLS on `sip-server@tls-port` (5061) with SRTP media (SDES) for a phone outside the office network. UDP or TCP on
+  `sip-server@port` is for a phone on the same network, with plain RTP;
 - with an SRV record (`_sips._tcp`, [Settings](#settings)) a phone given only the domain finds the server;
 - behind a home router, turn on the phone's "outbound" (RFC 5626) or keepalive option where it has one;
 - leave the registration expiry at its default; the registrar holds it to its limits.
@@ -508,8 +508,8 @@ came over (transport, and the source address and port as `rport` gives them, RFC
 Outbound instance and reg-id, when it expires and was last refreshed, and the phone's user agent. Settings shows them.
 
 - A phone may have several bindings (at most 10), say a soft phone on two computers.
-- Expiry is the contact's, else the request's, else `sip_registrar_default_expires`, held between
-  `sip_registrar_min_expires` and `sip_registrar_max_expires` (one under the minimum is refused with 423 and
+- Expiry is the contact's, else the request's, else `sip-server/registrar@default-expires`, held between
+  `sip-server/registrar@min-expires` and `sip-server/registrar@max-expires` (one under the minimum is refused with 423 and
   `Min-Expires`).
 - `Expires: 0` on a contact removes it; `Contact: *` with `Expires: 0` removes them all.
 - A REGISTER with the same Call-ID must have a higher CSeq; one out of order is refused (500) and changes nothing.
@@ -527,7 +527,7 @@ Outbound instance and reg-id, when it expires and was last refreshed, and the ph
   request on the SIP socket instead (RFC 5626 §4.4.2): it is answered there with the address it came from
   (XOR-MAPPED-ADDRESS, no authentication, `moqui-sip` `stun.rs`), before the SIP stack sees it.
 - **Short expiry.** A phone behind a NAT (its Via does not name where it sends from) without Outbound gets at most
-  `sip_registrar_nat_expires` (60 seconds), so its own REGISTER keeps the mapping open.
+  `sip-server/registrar@nat-expires` (60 seconds), so its own REGISTER keeps the mapping open.
 - **RTP latching.** A phone's RTP is answered where it comes from. With SRTP, only an authenticated packet moves it.
   With plain RTP, packets are taken from the SDP's address or from the address the phone signals from (its NAT's,
   when its SDP names its private address), on any port until the first one latches; then only from that source.
@@ -535,7 +535,7 @@ Outbound instance and reg-id, when it expires and was last refreshed, and the ph
 **Calls to a phone.** When a call rings a user (a call from a colleague or a browser, or a call to their number
 through a trunk), each of their phones registered with the call's node gets a leg (`CltSipDevice`, offered), and the
 engine forks an INVITE to every live binding of it, beside the ring in their tabs. With cascading media nodes on
-(`rtc_cascade_enabled`), a phone registered with another node rings there too: its leg's media is on that node
+(`media-server@cascade-enabled`), a phone registered with another node rings there too: its leg's media is on that node
 (`CallLeg.mediaNodeId`), whose room relays to the call's node.
 
 - The offer is Opus, G.722 (wideband desk phones; 16 kHz audio on its 8000 RTP clock) and G.711, with
@@ -570,9 +570,9 @@ sleeping app is the app's own service; the registrar does not send pushes.
 Scanners probe SIP listeners for weak credentials, then place international calls (§5.2). Each of these is a release
 gate.
 
-- **Floods are held.** New requests from one source are held to `sip_request_rate` (`sip_request_burst` at once), and
-  dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections`, or past
-  `sip_max_connections_per_source` from one source, are closed
+- **Floods are held.** New requests from one source are held to `sip-server/limits@request-rate` (`sip-server/limits@request-burst` at once), and
+  dropped while the engine runs `sip-server/limits@max-transactions`; TCP and TLS connections past `sip-server/limits@max-connections`, or past
+  `sip-server/limits@max-connections-per-source` from one source, are closed
   ([Settings](#settings); moqui-lib `source_guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
 - **Failed digests block the source address, not the account.**
   - A request from an address that is not a trunk's is challenged: expiring nonces, and nonce counts that cannot be
@@ -649,20 +649,20 @@ A local node behind NAT takes its trunks and outside phones through its edge nod
 (SIP)", E8; [Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node)). The edge node runs the SIP listeners,
 the RTP and the call media; the local node keeps the numbers, the users, the call state and the boxes.
 
-- **Setup.** The SIP properties above go in the edge node's `.env` (`sip_port`, `sip_tls_port`, `sip_host`,
-  `sip_public_address`, `sip_registrar_enabled`); the local node needs none. Trunks, numbers and phones are set up on
+- **Setup.** The SIP properties above go in the edge node's `.env` (`sip-server@port`, `sip-server@tls-port`, `sip-server@host`,
+  `sip-server@public-address`, `sip-server/registrar@enabled`); the local node needs none. Trunks, numbers and phones are set up on
   the local node. The edge node gets the trunks and the policy by replication (set `voiceTrunks`, `authJson` encrypted
   at rest there), registers them and keeps them registered while the local node is away; it loads them again when a
   change arrives.
 - **The wizard** (System › Edge Node, plans/archive/Edge-Node.md §5.7 "As built (E10, phones)"). Discover shows the edge
   node's SIP engine, the local trunks and their numbers that go through it, its registrar and how many numbers have a
-  fallback. Apply writes `edge_sip_enabled` in the local node's `runtime/.env` (on unless `false`; unpairing removes
+  fallback. Apply writes `edge/node@sip-enabled` in the local node's `runtime/.env` (on unless `false`; unpairing removes
   it). Off, the local node sends `voiceTrunks` and `voiceFallbacks` empty, so the edge node's engine registers no trunk
   and answers no number from a fallback; the edge node's `SipNode` row stays but takes no new call, no phone rings
   through a binding there (Apply removes them), and its registrar
   signs no phone in. Test checks the row, that the edge node's engine loaded every enabled trunk (its offer lists them
   with their state) and that its copy holds every fallback. The DNS step checks the SRV records of the edge node's
-  `sip_domain` (`_sips._tcp` for its TLS port, `_sip._udp` and `_sip._tcp` for the other) against its names and
+  `sip-server@domain` (`_sips._tcp` for its TLS port, `_sip._udp` and `_sip._tcp` for the other) against its names and
   ports.
 - **Its node.** The edge node registers no `SipNode`: its link's Hello names its SIP addresses, its registrar's realm
   and switch, and the local node keeps the row (`edgeLinked`, `sipDomain`, `registrarEnabled`), beside its media
@@ -675,7 +675,7 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   leaves no ringing session or dial; the engine hangs up, and dials nothing into, a call whose phone it refused as
   decided too late.
 - **Phones outside.** The registrar is the edge node's, without the verifiers: phones are made on the local node with
-  verifiers for the edge node's realm (its `sip_domain`, which the local node reads from its `SipNode` row, as it does
+  verifiers for the edge node's realm (its `sip-server@domain`, which the local node reads from its `SipNode` row, as it does
   its registrar switch), and each digest answer is checked on the local node (`check#SipDeviceDigest`), which holds the
   HA1, while the edge node keeps the nonces and their counts. The local node takes an answer from the edge node only
   for that realm, with a nonce at most 330 seconds old, and each nonce count once, so an answer the edge node kept
@@ -693,22 +693,22 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
 - **On an all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), plans/archive/Edge-Node.md §10): one engine
   for both sides. Trunks come from the server's own config and the local node's copy. An inbound call goes by the
   number dialled: the server's own `PhoneNumber`, else the local node's copies, else the trunk's owner. Phones go by
-  realm: the server's `sip_domain` is checked on the server, the local node's domain is delegated to it. The local
+  realm: the server's `sip-server@domain` is checked on the server, the local node's domain is delegated to it. The local
   node's ids are keyed by node, and the fallback applies only to its numbers.
 - **Several local nodes** ([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16). One engine takes every pairing's
   trunks, each pairing's keyed by its node. An inbound call goes by the number dialled to the pairing whose copies
   have it: a number of its trunks (`PhoneNumber` replicates in `voiceTrunks`, its trunk alone), so a number with no
   fallback row is found too, or one with a fallback; else by the trunk it came on. A number two pairings' copies have
-  is refused (404) and logged with both. Phones go by realm: a local node's `sip_domain` goes with its Configure, and
+  is refused (404) and logged with both. Phones go by realm: a local node's `sip-server@domain` goes with its Configure, and
   the edge node's registrar takes that pairing's phones in it, so its Hello and offer name it as the realm the local
   node makes verifiers for; the same username in two domains rings each its own phone. A domain two pairings name is
-  refused. A local node that names no domain registers in the edge node's own `sip_domain`, which works while it is
+  refused. A local node that names no domain registers in the edge node's own `sip-server@domain`, which works while it is
   the only one paired. A number's fallback is read from its owner's copy, and a message the engine recorded is queued
   to the pairing whose call it was, also after a restart (its spool sidecar names the pairing). Each offer lists only
   that pairing's trunks.
 - **Not through a front node** ([Edge-Node2](../../plans/Edge-Node2.md) §4.7, E19): a front node runs no SIP engine and
   takes no call signaling. Before an edge cluster ([Run-Deploy, Full stack](../Run-Deploy.md#full-stack)) the SRV
-  records and each member's `sip_public_address` are at the edge members' own addresses, with their SIP and RTP ports
+  records and each member's `sip-server@public-address` are at the edge members' own addresses, with their SIP and RTP ports
   open there; a front pairing carries no `SipNode` row.
 - **An edge cluster** ([Edge-Node2](../../plans/Edge-Node2.md) §4.6, E18). Every member runs an engine and loads every
   trunk, so each places calls out and takes those a trunk sends it. Only one registers the trunks: the holder of the
@@ -748,13 +748,13 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   - A desk phone's attended transfer (REFER with Replaces) is refused; transfer attended from the browser.
   - A transfer moves a phone call's outside party; between users in the browser, add the person instead.
   - Merging calls on two media nodes waits for cascading SFUs (W7).
-  - Queue offers are made on the engine's tick (`call_queue_tick_seconds`), so a waiting call may ring a newly free agent
+  - Queue offers are made on the engine's tick (`calls/queue@tick-seconds`), so a waiting call may ring a newly free agent
     a few seconds late; there are no skills, priorities or callbacks.
   - Not checked with a live provider or a real desk phone's REFER (403 and 202 with its NOTIFY are checked against the
     tests' fake far end).
 - **Registrar.**
   - Provisioning files for the common desk phones come later; a phone is set up by hand.
-  - Without `rtc_cascade_enabled` a phone rings only for calls whose media is on the node it registered with.
+  - Without `media-server@cascade-enabled` a phone rings only for calls whose media is on the node it registered with.
   - An extension is a colleague's username; there are no numeric extensions yet.
   - Not checked with a real desk phone or app yet: the in-memory phones of the tests play their part.
 - **Offers.**

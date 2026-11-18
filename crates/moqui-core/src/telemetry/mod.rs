@@ -389,10 +389,7 @@ impl Config {
         let Ok(root) = MNode::parse_shared("telemetry-conf", text) else {
             return config;
         };
-        let setting = |node: &MNode, name: &str| {
-            node.attribute(name)
-                .map(|value| moqui_lib::env::expand(&value).unwrap_or(value))
-        };
+        let setting = |node: &MNode, name: &str| node.attribute(name);
         if let Some(stats) = root.first_named("server-stats") {
             if stats
                 .attribute("stats-skip-condition")
@@ -544,7 +541,7 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
     let slot = factory.extension(|_| std::sync::OnceLock::<Arc<Telemetry>>::new());
     let telemetry = Arc::clone(slot.get_or_init(|| {
         let mut resource = Resource::default();
-        let configured = moqui_lib::env::get_prop_or_env("instance_id");
+        let configured = crate::context::conf_env::setting_on(factory, crate::context::conf_env::INSTANCE_ID);
         let known = crate::cluster::instance_id(factory)
             .or_else(|| (!configured.is_empty()).then_some(configured))
             .or_else(|| {

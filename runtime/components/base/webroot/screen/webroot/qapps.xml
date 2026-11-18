@@ -178,12 +178,12 @@ along with this software (see the LICENSE.md file). If not, see
 
         // The libraries and the client, in the order they load. footer_scripts is written by Footer.html.fancy after the page.
         // vue.global.prod.js is the build with the template compiler, which server-merged qvt and the string templates of the m-* components need
-        // (and unsafe-eval in a CSP). vue.runtime.global.prod.js has no compiler: webapp_qvt_static_only=true loads it, for a deployment whose pages
+        // (and unsafe-eval in a CSP). vue.runtime.global.prod.js has no compiler: the webroot webapp's qvt-static-only="true" loads it, for a deployment whose pages
         // get only server-static templates and whose components are precompiled (plans/archive/QvtServerStatic.md, Server compile).
         const qvtLib = ec.resource.script('component://webroot/screen/includes/QvtConfig.js')
         const localeTag = String(ec.user.locale || 'en_US').replace('_', '-')
         const quasarLang = qvtLib.quasarLangOf(localeTag)
-        const staticOnly = System.getProperty('webapp_qvt_static_only') == 'true'
+        const staticOnly = ec.factory.getConfValue('webapp-list/webapp[webroot]@qvt-static-only') == 'true'
         footer_scripts.add(staticOnly ? '/libs/vue/vue.runtime.global.prod.js' : '/libs/vue/vue.global.prod.js')
         footer_scripts.add('/libs/quasar/quasar.umd.prod.js')
         footer_scripts.add('/libs/quasar/lang/' + quasarLang + '.umd.prod.js')
@@ -199,6 +199,10 @@ along with this software (see the LICENSE.md file). If not, see
         footer_scripts.add('/js/MoquiL10n.js')
         // the chat store and the account menu's status (moqui.chat), before the client, which registers its components
         footer_scripts.add('/js/WebrootChat.js')
+        // disappearing messages and view-once in the page (moqui.chat.expiry), beside the chat store
+        footer_scripts.add('/js/WebrootChatExpiry.js')
+        // joining a room: invite links, join requests, text members (moqui.chat.invites, moqui.chat.texts, their components)
+        footer_scripts.add('/js/WebrootChatJoin.js')
         // floats: the windows over the shell that Assist, the tray's tabs and the terminal undock into (moqui.floats,
         // plans/Terminal-Fancy.md §10), before the client, which registers its components, and before Assist, which floats
         footer_scripts.add('/js/WebrootFloats.js')

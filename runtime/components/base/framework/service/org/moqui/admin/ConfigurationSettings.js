@@ -4,18 +4,19 @@
 // A setting is a row of moqui.server.InstanceSetting, seed data of the component that reads it; nothing else is read or
 // written, so there is no unregistered key, JSON or code value. Two kinds:
 // - a preference (editable Y): its value is the moqui.server.InstancePreference row when one is set (source preference), else
-//   the conf property it names when that has a value (source configuration), else its registered default (source default). It
+//   the conf attribute it names when that has a value (source configuration), else its registered default (source default). It
 //   is changed at runtime by store#InstancePreference, typed and within its allowed values or limits, at the revision read,
 //   with who, when and why; the audit log keeps each value.
-// - deployment configuration (editable N): a default-property of the conf (or the environment variable of that name), shown
-//   read only with whether it is the shipped default, whether a change waits for a restart and how an operator changes it.
+// - deployment configuration (editable N): a conf attribute by its selector (propertyName; its environment name sets it over the
+//   conf files), shown read only with whether it is the shipped default, whether a change waits for a restart and how an
+//   operator changes it.
 //   The file and line a value comes from are System > Conf's, for an instance administrator. A setting that names a
 //   confAttribute instead (impl-admin P10, F110: the sign-in policy, literal attributes of user-facade and of the web
 //   session that no property holds) takes the value the server runs with from get#SignInPolicyValues, which answers a
 //   fixed list of nonsecret attributes and nothing else.
-// A secret is never a preference and never returned: a setting marked secret, or whose property name reads as one (pass, pw,
-// key, secret, token, credential, as the conf masks them), answers only whether it is set, and a registration that makes a
-// secret editable is logged by name and left out.
+// A secret is never a preference and never returned: a setting marked secret, whose name reads as one (pass, pw, key, secret,
+// token, credential), or whose conf attribute the schema marks secret, answers only whether it is set, and a registration that
+// makes a secret editable is logged by name and left out.
 //
 // Reading the list needs ADMIN_SETTINGS_VIEW and a change ADMIN_SETTINGS_MANAGE (and the setting's own managePermission, if
 // any). get#InstancePreference, the read of one registered preference for the code that uses it (value(key) for a script),
@@ -50,18 +51,20 @@ const sourceTexts = {
     default: "Default"
 }
 const secretName = name => /pass|pw|key|secret|token|credential/i.test(String(name || ""))
-// also a property the shipped conf marks is-secret, whatever its name (shippedConf below)
+// also a conf attribute its schema marks, whatever its name
 const isSecret = setting =>
     setting.isSecret === "Y" ||
     secretName(setting.propertyName) ||
     secretName(setting.settingKey) ||
-    (!!setting.propertyName && shippedConf().secrets.has(setting.propertyName))
+    (!!setting.propertyName && setting.propertyName.includes("@") && ec.factory.isConfSecret(setting.propertyName))
 const allowedList = setting =>
     text(setting.allowedValues)
         .split(",")
         .map(value => value.trim())
         .filter(Boolean)
-const property = name => (name ? text(System.getProperty(name)) : "")
+// a conf attribute by its selector (it has an @: webapp-list/webapp[webroot]@http-host, plans/archive/Conf-Paths.md §1), else a
+// process property or environment variable
+const property = name => (name ? text(String(name).includes("@") ? ec.factory.getConfValue(name) : System.getProperty(name)) : "")
 
 // ===== the registry =====
 // A registration in use, or why it is not: each is checked when read, logged by name and left out.
@@ -138,35 +141,43 @@ function typed(setting, given) {
     if (raw.length > maxLength) return {problem: "is longer than " + maxLength + " characters"}
     return {value: raw}
 }
-// The framework default conf's default-properties: their shipped values, to tell a shipped default from a deployment's own
-// value, and the names it marks is-secret, which are never returned whatever they are called.
+// The framework default conf's text, to tell a shipped default from a deployment's own value.
 let shipped = null
 function shippedConf() {
     if (shipped) return shipped
-    shipped = {values: new Map(), secrets: new Set(), text: ""}
+    shipped = {text: ""}
     try {
-        const conf = String(ec.resource.getLocationText("component://framework/conf/MoquiDefaultConf.xml", false) || "")
-        shipped.text = conf
-        const unescape = value =>
-            value
-                .replace(/&lt;/g, "<")
-                .replace(/&gt;/g, ">")
-                .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'")
-                .replace(/&amp;/g, "&")
-        for (const found of conf.matchAll(/<default-property\s([^>]*)>/g)) {
-            const attribute = name => (found[1].match(new RegExp("(?:^|\\s)" + name + '="([^"]*)"')) || [])[1]
-            const name = attribute("name")
-            if (!name) continue
-            shipped.values.set(name, unescape(attribute("value") ?? ""))
-            if (attribute("is-secret") === "true") shipped.secrets.add(name)
-        }
+        shipped.text = String(ec.resource.getLocationText("component://framework/conf/MoquiDefaultConf.xml", false) || "")
     } catch (error) {
         ec.logger.error("The default conf could not be read for the instance settings: " + error.message)
     }
     return shipped
 }
-const shippedDefaults = () => shippedConf().values
+// The shipped value of a setting by its conf selector: the attribute of the default conf's element (the first of each step
+// after the one before; a keyed step's element has an attribute of that value); null when the shipped conf leaves it out or
+// the setting names no conf attribute.
+function shippedValue(name) {
+    if (!String(name || "").includes("@")) return null
+    const [path, attributeName] = String(name).split("@")
+    const conf = shippedConf().text.replace(/<!--[\s\S]*?-->/g, "")
+    const quote = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    let at = 0
+    let tag = null
+    for (const step of path.split("/")) {
+        const found = /^([\w-]+)(?:\[([^\]]*)\])?$/.exec(step)
+        if (!found) return null
+        const pattern = found[2] != null
+            ? new RegExp("<" + found[1] + "\\s[^>]*=\"" + quote(found[2]) + "\"[^>]*>", "g")
+            : new RegExp("<" + found[1] + "(?:\\s[^>]*)?/?>", "g")
+        pattern.lastIndex = at
+        const match = pattern.exec(conf)
+        if (!match) return null
+        at = match.index + match[0].length
+        tag = match[0]
+    }
+    const attribute = new RegExp("\\s" + quote(attributeName) + '="([^"]*)"').exec(tag || "")
+    return attribute ? attribute[1].trim() : null
+}
 // The sign-in policy the server runs with, by conf attribute (the Rust service's fixed list), read once a call; empty when
 // the caller may not read it or the build has no such service, and each such setting is then left out by name.
 let policyValues = null
@@ -221,8 +232,8 @@ function effective(setting, preference) {
         return {value: running, source: running === (shippedValue ?? text(setting.defaultValue)) ? "default" : "configuration"}
     }
     const configured = property(setting.propertyName)
-    const defaults = shippedDefaults()
-    const isDefault = defaults.has(setting.propertyName) ? defaults.get(setting.propertyName).trim() === configured : !configured
+    const shippedText = shippedValue(setting.propertyName)
+    const isDefault = shippedText != null ? shippedText.trim() === configured : !configured
     return {value: configured || text(setting.defaultValue), source: isDefault ? "default" : "configuration"}
 }
 function described(setting, preference, canManage) {
@@ -248,7 +259,9 @@ function described(setting, preference, canManage) {
         // a script reads no secret property (System.getProperty answers null): whether one is set comes from the server
         valueSet: secret
             ? setting.propertyName && !editable
-                ? System.isPropertySet(setting.propertyName)
+                ? setting.propertyName.includes("@")
+                    ? ec.factory.isConfValueSet(setting.propertyName)
+                    : System.isPropertySet(setting.propertyName)
                 : !!found.value && found.value !== "CHANGEME"
             : found.value !== "",
         source: found.source,

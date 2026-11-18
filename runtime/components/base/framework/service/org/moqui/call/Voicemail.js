@@ -2,15 +2,15 @@
 //
 // Voicemail (plans/archive/Comms-Framework.md §5.3, §5.4, V2; docs/interfaces/Voicemail.md): the services of
 // org.moqui.call.VoicemailServices. A call to a user's number goes to their box when nobody answers within the box's rings
-// (or call_ring_seconds), when the user is in another call, or when they decline it. The SIP engine of the call's node
+// (or calls@ring-seconds), when the user is in another call, or when they decline it. The SIP engine of the call's node
 // (moqui-host src/sip/voicemail.rs) answers it with no one else in it, plays the greeting and a beep, records the caller and
 // hands the file to store#Voicemail; it asks begin#Voicemail first, which moves the call there (Calls.js phoneToVoicemail:
 // the user missed it). A caller who presses * during the greeting, or calls the access number (PnrVoicemail), gives a PIN
 // (check#VoicemailPin, rate limited per box and per source) and hears the new messages (act#PhoneVoicemail: 7 delete,
 // 9 save, # next). After a message is stored its owner hears of it (a chatUser push, Web Push, an email when they asked),
-// and a job transcribes it when voicemail_transcribe is on (SpeechServices.transcribe#Audio, a CallTranscript). Only the
+// and a job transcribes it when voicemail@transcribe is on (SpeechServices.transcribe#Audio, a CallTranscript). Only the
 // box's owner lists, plays, marks, deletes and empties; a box of a ring group (V3) will be its members'. The audio is read
-// only through get#VoicemailAudio; trash is emptied after voicemail_trash_days.
+// only through get#VoicemailAudio; trash is emptied after voicemail@trash-days.
 
 const BOX = 'moqui.call.VoicemailBox'
 const VOICEMAIL = 'moqui.call.Voicemail'
@@ -30,10 +30,10 @@ const RING_SECONDS = 6
 const MAX_RINGS = 10
 /** How long past its voicemail an inbound call may ring before expire#Calls ends it (the engine's timer comes first). */
 const RING_GRACE_SECONDS = 30
-/** A PIN that may be checked: 4 to 12 digits (a PIN set before voicemail_pin_min_digits was raised still works). */
+/** A PIN that may be checked: 4 to 12 digits (a PIN set before voicemail@pin-min-digits was raised still works). */
 const PIN_PATTERN = /^[0-9]{4,12}$/
-/** The fewest digits a new PIN has (voicemail_pin_min_digits, 4 to 12): six by default, as four fall to the box's limit in weeks. */
-const pinMinDigits = () => clamp(Math.round(Number(property('voicemail_pin_min_digits', '6'))) || 6, 4, 12)
+/** The fewest digits a new PIN has (voicemail@pin-min-digits, 4 to 12): six by default, as four fall to the box's limit in weeks. */
+const pinMinDigits = () => clamp(Math.round(Number(property('voicemail@pin-min-digits', '6'))) || 6, 4, 12)
 /** Failed PINs over the phone: a box takes BOX_FAILURES in BOX_WINDOW_MS, then refuses every PIN for BOX_BLOCK_MS. */
 const BOX_FAILURES = 5
 const BOX_WINDOW_MS = 15 * 60000
@@ -59,15 +59,16 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const yes = (value) => value === true || value === 'Y' || value === 'true'
 const blank = (value) => value == null || String(value).trim() === ''
+// a conf attribute by its selector (it has an @, plans/archive/Conf-Paths.md §1), else a property not yet moved to the conf
 const property = (name, fallback) => {
-  const value = System.getProperty(name)
+  const value = String(name).includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)
   return value == null || String(value).trim() === '' ? fallback : String(value).trim()
 }
 const clamp = (value, low, high) => Math.min(Math.max(value, low), high)
-const maxSeconds = () => clamp(Number(property('voicemail_max_seconds', '120')) || 120, 10, 600)
-const trashDays = () => Math.max(Number(property('voicemail_trash_days', '30')) || 0, 0)
-const transcribeOn = () => property('voicemail_transcribe', 'false') === 'true'
-const callRingSeconds = () => Math.max(10, Number(property('call_ring_seconds', '45')) || 45)
+const maxSeconds = () => clamp(Number(property('voicemail@max-seconds', '120')) || 120, 10, 600)
+const trashDays = () => Math.max(Number(property('voicemail@trash-days', '30')) || 0, 0)
+const transcribeOn = () => property('voicemail@transcribe', 'false') === 'true'
+const callRingSeconds = () => Math.max(10, Number(property('calls@ring-seconds', '45')) || 45)
 
 /** A refusal: an error for the user and a reason code for the caller. */
 function refuse(reasonCode, text) {
@@ -89,16 +90,16 @@ function fallbacksChanged() {
 }
 
 function appRoot() {
-  return property('comms_app_root', '/qapps/BasicComms').replace(/\/+$/, '')
+  return property('comms@app-root', '/qapps/BasicComms').replace(/\/+$/, '')
 }
 
-/** The site's own address for a link in an email, from the webapp properties; empty gives a path alone. */
+/** The site's own address for a link in an email, from the webroot webapp's conf; empty gives a path alone. */
 function siteUrl() {
-  const host = property('webapp_http_host', '')
+  const host = property('webapp-list/webapp[webroot]@http-host', '')
   if (!host) return ''
-  const https = property('webapp_https_port', '')
+  const https = property('webapp-list/webapp[webroot]@https-port', '')
   if (https) return 'https://' + host + (https === '443' ? '' : ':' + https)
-  const http = property('webapp_http_port', '')
+  const http = property('webapp-list/webapp[webroot]@http-port', '')
   return 'http://' + host + (!http || http === '80' ? '' : ':' + http)
 }
 
@@ -477,7 +478,7 @@ function pendingTranscript(voicemailId) {
 
 /**
  * The transcription job: the voicemail's audio to text (SpeechServices.transcribe#Audio, as its owner, purpose
- * voicemail:<id>). Only while voicemail_transcribe is on (the deployment's recording and transcription policy) and a
+ * voicemail:<id>). Only while voicemail@transcribe is on (the deployment's recording and transcription policy) and a
  * provider is set up; a failure is the transcript's state (CtsFailed with why), never the audio's.
  */
 function transcribe(p) {
@@ -500,7 +501,7 @@ function transcribe(p) {
     try {
       out = ec.service.sync().name('org.moqui.call.SpeechServices.transcribe#Audio').parameters({ audioLocation: voicemail.audioLocation,
         mediaType: 'audio/ogg', userId: box ? box.userId : null, purpose: 'voicemail:' + voicemail.voicemailId,
-        language: property('voicemail_transcribe_language', '') || null }).requireNewTransaction(true).disableAuthz().call() || {}
+        language: property('voicemail@transcribe-language', '') || null }).requireNewTransaction(true).disableAuthz().call() || {}
       if (ec.message.hasError()) out = { reasonCode: 'failed', errorText: ec.message.errorsString }
     } catch (err) {
       out = { reasonCode: 'failed', errorText: err && err.message ? err.message : String(err) }
@@ -815,7 +816,7 @@ function retryTranscript(p) {
 const PIN_FAILURE_KEEP_MS = 24 * 3600000
 
 /**
- * The trash job: messages in the trash longer than voicemail_trash_days (0 keeps them), each on its own; and the
+ * The trash job: messages in the trash longer than voicemail@trash-days (0 keeps them), each on its own; and the
  * per-source and no-box PIN failure counts a day old, which a caller faking numbers would otherwise pile up.
  */
 function expireTrash() {

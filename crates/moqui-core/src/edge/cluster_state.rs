@@ -378,7 +378,7 @@ pub fn remove_member_links(facade: &EntityFacade, edge: Option<&str>) -> Result<
 pub struct Elsewhere {
     /// The local members linked on another edge member (a fresh row), in id order.
     pub members: Vec<String>,
-    /// A live member of this edge cluster with an `edge_link_url` has no fresh row: its links are not known (it has
+    /// A live member of this edge cluster with an `edge@link-url` has no fresh row: its links are not known (it has
     /// not written since another member came up), so a node with no pinned key is not admitted yet.
     pub unknown: bool,
 }

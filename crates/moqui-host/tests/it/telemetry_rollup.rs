@@ -32,10 +32,10 @@ fn verify(url: Option<&str>) {
             None,
             "<search-facade backend=\"opensearch\"/>",
             &[
-                ("search_backend", "opensearch"),
-                ("elasticsearch_url", url),
-                ("elasticsearch_index_prefix", &prefix),
-                ("opensearch_run", "false"),
+                ("moqui_conf__search_facade__backend", "opensearch"),
+                ("moqui_conf__search_facade__cluster__url", url),
+                ("moqui_conf__search_facade__cluster__index_prefix", &prefix),
+                ("moqui_conf__search_facade__cluster__run", "false"),
             ],
         )
     } else {

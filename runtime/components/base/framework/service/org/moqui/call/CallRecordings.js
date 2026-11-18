@@ -59,12 +59,12 @@ function encrypted(session) {
 }
 
 function policy() {
-  const flag = (name) => String(System.getProperty(name) || '').trim().toLowerCase() === 'true'
-  const days = Number(System.getProperty('call_recording_retention_days') || 0)
+  const flag = (name) => String((String(name).includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)) || '').trim().toLowerCase() === 'true'
+  const days = Number(ec.factory.getConfValue('calls/recording@retention-days') || 0)
   return {
-    enabled: flag('call_recording_enabled'),
-    ackRequired: flag('call_recording_ack_required'),
-    revision: String(System.getProperty('call_recording_policy_revision') || '1'),
+    enabled: flag('calls/recording@enabled'),
+    ackRequired: flag('calls/recording@ack-required'),
+    revision: String(ec.factory.getConfValue('calls/recording@policy-revision') || '1'),
     retentionDays: days > 0 ? days : 0,
   }
 }

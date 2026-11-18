@@ -19,7 +19,6 @@
 //! conf overrides shows no change. The running conf holds only what is in effect: a change that needs a restart stays
 //! out of it, so the next reload reports it again until the restart. Guide: docs/tools/Component-Deploy.md.
 
-pub mod catalog;
 mod diff;
 pub mod view;
 
@@ -27,12 +26,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use moqui_lib::env;
+use moqui_lib::node::path::AttrPath;
 use moqui_lib::node::MNode;
 use moqui_lib::sync::lock;
 use serde::Serialize;
 
+use super::conf_schema::{self as catalog, Class, Group};
 use super::{conf, ComponentInfo, Error, ExecutionContextFactory};
-use catalog::{Class, Group};
 use diff::{Kind, UnitChange};
 
 /// What became of one change.
@@ -59,7 +59,7 @@ pub struct ConfChange {
     pub unit: String,
     /// The attribute that changed; none for the element added or removed, or its other content.
     pub attribute: Option<String>,
-    /// `added`, `removed`, `changed`, or `property` for a unit whose `${}` property changed.
+    /// `added`, `removed` or `changed`.
     pub kind: &'static str,
     /// `live`, `apply` or `restart`.
     pub class: &'static str,
@@ -102,6 +102,10 @@ struct Pending(Mutex<Vec<ConfChange>>);
 #[derive(Default)]
 struct Applying(Mutex<()>);
 
+/// What each attribute [`set_value`] set held in the running conf before its first set, by its path's compare key.
+#[derive(Default)]
+struct Originals(Mutex<std::collections::HashMap<String, Option<String>>>);
+
 /// Run `hook` after a conf reload that changed a unit of `group`.
 pub fn on_apply(
     factory: &ExecutionContextFactory,
@@ -109,6 +113,83 @@ pub fn on_apply(
     hook: impl Fn(&ExecutionContextFactory) + Send + Sync + 'static,
 ) {
     lock(&factory.extension(|_| Hooks::default()).0).push((group, Arc::new(hook)));
+}
+
+/// Set the attribute at `selector` in the running conf, from now on and over the conf files, as an environment name
+/// sets one (plans/archive/Conf-Paths.md §3); `value` `None` puts back what the files and the environment give now. With
+/// `persist` the value is kept in `runtime/.env` under the attribute's environment name, for a server that writes its
+/// own settings (edge pairing, the DKIM key made on first use); without, a process property of that name holds it until
+/// the process ends (a spec's `setConf`). Readers of the conf see it at once; one that read it at start keeps what it
+/// read. Answers the value that name held before in `.env` or as a process property, `None` when it held none.
+///
+/// # Errors
+///
+/// When `selector` does not name an attribute that has an environment name, the running conf does not parse, `.env`
+/// cannot be written, or the conf files do not merge.
+pub fn set_value(
+    factory: &ExecutionContextFactory,
+    selector: &str,
+    value: Option<&str>,
+    persist: bool,
+) -> Result<Option<String>, Error> {
+    let applying = factory.extension(|_| Applying::default());
+    let _applying = lock(&applying.0);
+    let path = AttrPath::parse(selector).map_err(|err| Error::new(format!("{selector}: {err}")))?;
+    let running = MNode::parse_text("running", &factory.conf_text())?;
+    let target = moqui_lib::node::path::resolve(&running, &path, &catalog::keying, true)
+        .map_err(|err| Error::new(format!("{selector}: {err}")))?;
+    let Some(name) = target.path.env_name() else {
+        return Err(Error::new(format!(
+            "{selector}: a key with no letter or digit has no environment name"
+        )));
+    };
+    let env_path = factory.runtime_dir().join(".env");
+    let before = if persist {
+        env::dotenv_entries()
+            .into_iter()
+            .find(|(held, _)| *held == name)
+            .map(|(_, value)| value)
+    } else {
+        env::get_property(&name)
+    };
+    match (value, persist) {
+        (Some(value), true) => env::update_dotenv_file(&env_path, &[(name.clone(), value.to_string())], &[])?,
+        (None, true) => env::update_dotenv_file(&env_path, &[], &[name.as_str()])?,
+        (Some(value), false) => env::set_property(&name, value),
+        (None, false) => env::clear_property(&name),
+    }
+    // the value the running conf had before the first set of this attribute since boot, for a put back with no conf
+    // files to merge (a factory of a unit test)
+    let originals = factory.extension(|_| Originals::default());
+    let original = {
+        let key = crate::context::conf_env::compare_key(&target.path);
+        let mut held = lock(&originals.0);
+        held.entry(key)
+            .or_insert_with(|| target.node.attribute(&target.attribute))
+            .clone()
+    };
+    let live = match value {
+        Some(value) => Some(value.to_string()),
+        None => match merged_from_files(factory, &factory.components()) {
+            Ok(files) => moqui_lib::node::path::resolve(&files, &target.path, &catalog::keying, false)
+                .ok()
+                .and_then(|found| found.node.attribute(&found.attribute)),
+            Err(error) => {
+                tracing::warn!(
+                    "{selector}: the conf files did not merge ({error}); putting back the value before it was set"
+                );
+                original
+            }
+        },
+    };
+    match live {
+        Some(live) => target.node.set_attribute(target.attribute.clone(), live),
+        None => {
+            target.node.remove_attribute(&target.attribute);
+        }
+    }
+    factory.replace_conf(running.write_string());
+    Ok(before)
 }
 
 /// The changes the last conf reload left waiting for a restart; empty before any reload.
@@ -123,7 +204,8 @@ pub fn pending_restart(factory: &ExecutionContextFactory) -> Vec<ConfChange> {
 ///
 /// When a conf file does not parse, or the runtime conf named is missing.
 pub fn merged_from_files(factory: &ExecutionContextFactory, components: &[ComponentInfo]) -> Result<MNode, Error> {
-    conf::merge_files(&conf_files(factory, components)?, None)
+    let env_file = factory.runtime_dir().join(".env");
+    conf::merge_files_with(&conf_files(factory, components)?, None, Some(&env_file)).map(|(conf, _)| conf)
 }
 
 /// The files the conf of `components` is merged from, in merge order, as boot merges them.
@@ -188,12 +270,11 @@ struct Decided {
     change: UnitChange,
     class: Class,
     reason: String,
-    /// For a `default-property` the reload sets: its name, raw value and whether it is a secret.
-    set_property: Option<(String, String, bool)>,
     no_effect: bool,
 }
 
 fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<ConfReport, Error> {
+    super::conf_env::refuse_retired(disk)?;
     let applying = apply.then(|| factory.extension(|_| Applying::default()));
     let _applying = applying.as_ref().map(|held| lock(&held.0));
     let started = std::time::Instant::now();
@@ -204,7 +285,6 @@ fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<C
             class: change.class,
             reason: restart_reason(change.class),
             change,
-            set_property: None,
             no_effect: false,
         })
         .collect();
@@ -213,36 +293,8 @@ fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<C
         ..ConfReport::default()
     };
     for item in &mut decided {
-        refine(factory, disk, item);
+        refine(item);
     }
-    // A property is set only when every unit that reads it is live or applied; one read at boot would see it changed
-    // while what it set up keeps the old value.
-    let names: Vec<String> = decided
-        .iter()
-        .filter_map(|item| item.set_property.as_ref().map(|(name, _, _)| name.clone()))
-        .collect();
-    let users = diff::property_users(disk, &names);
-    for item in &mut decided {
-        let Some((name, _, _)) = &item.set_property else {
-            continue;
-        };
-        if let Some((path, attr, _, _)) = users
-            .iter()
-            .find(|(_, _, class, user)| user == name && matches!(class, Class::Restart(_)))
-        {
-            item.reason = format!("{path}@{attr} reads it, and needs a restart");
-            item.class = Class::Restart("a unit that reads it needs a restart");
-            item.set_property = None;
-        }
-    }
-    let set: Vec<&String> = decided
-        .iter()
-        .filter_map(|item| item.set_property.as_ref().map(|(name, _, _)| name))
-        .collect();
-    let property_changes: Vec<(String, String, Class, String)> = users
-        .into_iter()
-        .filter(|(_, _, _, name)| set.contains(&name))
-        .collect();
     // An element added or removed whole waits for a restart when anything in it does.
     let mut outer_restart: Vec<Option<String>> = vec![None; decided.len()];
     for item in &decided {
@@ -273,24 +325,15 @@ fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<C
     let mut outcomes: Vec<Outcome> = Vec::with_capacity(decided.len());
     let mut changed = false;
     for item in &decided {
-        let mut outcome = match item.class {
+        let outcome = match item.class {
             Class::Restart(_) => Outcome::PendingRestart,
             _ if item.no_effect => Outcome::NoEffect,
             _ if apply => Outcome::Applied,
             _ => Outcome::WouldApply,
         };
-        if apply && outcome != Outcome::PendingRestart {
-            if let Some((name, raw, secret)) = &item.set_property {
-                if let Err(err) = factory.set_conf_property(name, raw, *secret) {
-                    tracing::error!("conf reload: could not set property {name}: {err}");
-                    report.problems.push(format!("property {name}: {err}"));
-                    outcome = Outcome::Failed;
-                }
-            }
-            if item.change.within.is_none() {
-                item.change.edit.apply();
-                changed = true;
-            }
+        if apply && outcome != Outcome::PendingRestart && item.change.within.is_none() {
+            item.change.edit.apply();
+            changed = true;
         }
         if let (Class::Apply(group), Outcome::Applied | Outcome::WouldApply) = (item.class, outcome) {
             if !groups.contains(&group) {
@@ -299,15 +342,8 @@ fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<C
         }
         outcomes.push(outcome);
     }
-    for (_, _, class, _) in &property_changes {
-        if let Class::Apply(group) = class {
-            if !groups.contains(group) {
-                groups.push(*group);
-            }
-        }
-    }
 
-    if apply && (changed || !property_changes.is_empty()) {
+    if apply && changed {
         report.generation = factory.replace_conf(running.write_string());
         run_hooks(factory, &groups, &mut report);
         tracing::warn!(
@@ -337,20 +373,6 @@ fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<C
             outcome,
         });
     }
-    let live = if apply { Outcome::Applied } else { Outcome::WouldApply };
-    for (path, attr, class, name) in property_changes {
-        report.changes.push(ConfChange {
-            unit: path,
-            attribute: Some(attr),
-            kind: "property",
-            class: class.name(),
-            group: group_of(class),
-            reason: format!("reads the property {name}"),
-            old: None,
-            new: None,
-            outcome: live,
-        });
-    }
     report.applied = report
         .changes
         .iter()
@@ -370,94 +392,13 @@ fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<C
     Ok(report)
 }
 
-/// The class a change takes beyond its unit's: the rules of a `default-property` and of a `cache`.
-fn refine(factory: &ExecutionContextFactory, disk: &MNode, item: &mut Decided) {
-    match item.class {
-        Class::Apply(Group::Properties) => refine_property(factory, disk, item),
-        Class::Apply(Group::Caches) => {
-            let added = item.change.kind == Kind::Added && item.change.attr.is_none();
-            if !added && item.change.within.is_none() {
-                item.class = Class::Restart("a cache's settings are read when it is made");
-                item.reason = "a cache's settings are read when it is made".to_string();
-            }
-        }
-        _ => {}
-    }
-}
-
-/// A `default-property` change: a new property is set as boot sets it unless the environment set it; a changed value
-/// is set while the property still has the value the conf set; a removed one, a secret's change, and the properties
-/// the process was set up with wait for a restart.
-fn refine_property(factory: &ExecutionContextFactory, disk: &MNode, item: &mut Decided) {
-    let path = &item.change.path;
-    let Some(name) = path
-        .strip_prefix("default-property[")
-        .and_then(|rest| rest.strip_suffix(']'))
-        .filter(|name| !name.contains('#'))
-        .map(str::to_string)
-    else {
-        return;
-    };
-    let restart = |item: &mut Decided, reason: String| {
-        item.class = Class::Restart("a property read at boot");
-        item.reason = reason;
-    };
-    let node = disk
-        .children_named("default-property")
-        .into_iter()
-        .find(|node| node.attribute("name").as_deref() == Some(name.as_str()));
-    let secret = super::factory::property_is_secret(
-        &name,
-        node.as_ref().and_then(|node| node.attribute("is-secret")).as_deref(),
-    );
-    if let Some(reason) = catalog::fixed_property(&name) {
-        restart(item, reason.to_string());
-        return;
-    }
-    let raw = node
-        .as_ref()
-        .and_then(|node| node.attribute("value"))
-        .unwrap_or_default();
-    match (item.change.kind, item.change.attr.as_deref()) {
-        (Kind::Removed, None) => {
-            restart(
-                item,
-                "a property the conf no longer sets is cleared at the next start".to_string(),
-            );
-        }
-        (Kind::Added, None) => {
-            if env::get_prop_or_env(&name).is_empty() {
-                if raw.is_empty() {
-                    item.no_effect = true;
-                    item.reason = "empty".to_string();
-                } else {
-                    item.set_property = Some((name, raw, secret));
-                }
-            } else {
-                item.no_effect = true;
-                item.reason = "set by the environment, runtime/.env or -D, which wins".to_string();
-            }
-        }
-        (_, Some("value")) => {
-            if secret {
-                restart(item, "a secret changes at the next start".to_string());
-                return;
-            }
-            let current = env::get_prop_or_env(&name);
-            let set_by_conf = factory
-                .conf_properties()
-                .get(&name)
-                .is_some_and(|value| *value == current);
-            if set_by_conf || current.is_empty() {
-                item.set_property = Some((name, raw, secret));
-            } else {
-                item.no_effect = true;
-                item.reason = "set by the environment, runtime/.env or -D, which wins".to_string();
-            }
-        }
-        _ => {
-            item.no_effect = true;
-            item.reason = "only the value sets the property".to_string();
+/// The class a change takes beyond its unit's: the rule of a `cache`.
+fn refine(item: &mut Decided) {
+    if item.class == Class::Apply(Group::Caches) {
+        let added = item.change.kind == Kind::Added && item.change.attr.is_none();
+        if !added && item.change.within.is_none() {
+            item.class = Class::Restart("a cache's settings are read when it is made");
+            item.reason = "a cache's settings are read when it is made".to_string();
         }
     }
 }
@@ -476,7 +417,7 @@ fn run_hooks(factory: &ExecutionContextFactory, groups: &[Group], report: &mut C
                 Err(err) => report.problems.push(format!("caches: {err}")),
             },
             // built again on first use; properties were set above
-            Group::Derived | Group::Properties | Group::WebProtection => {}
+            Group::Derived | Group::WebProtection => {}
         }
         let hooks: Vec<Hook> = lock(&factory.extension(|_| Hooks::default()).0)
             .iter()

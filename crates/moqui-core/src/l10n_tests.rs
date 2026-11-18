@@ -232,7 +232,7 @@ fn the_request_locale_is_the_fallback_when_the_session_has_none() {
 }
 
 /// Timestamp text without an offset is read in the session time zone, Java's `ec.user.getTimeZone()`: the user's, else
-/// the server's, which a test with no start has as UTC (MoquiDefaultConf's `default_time_zone`). A zone the session
+/// the server's, which a test with no start has as UTC (MoquiDefaultConf's `instance@default-time-zone`). A zone the session
 /// names that is not known is the server's too. Offsets, millis and dates are the same in any zone.
 #[test]
 fn timestamp_text_converts_in_the_session_zone_else_the_servers() {

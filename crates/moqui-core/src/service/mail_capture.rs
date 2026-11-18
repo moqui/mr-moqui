@@ -13,7 +13,7 @@
  */
 
 //! The mail capture, for specs (no Java counterpart; docs/dev/JS-Testkit.md, "Mail"). With the conf property
-//! `mail_capture_sends=true` (`mail_capture_sends=true ./moq test ...`) or the tool enabled by a spec, a send of
+//! `moqui_conf__email_client__capture_sends=true` (`moqui_conf__email_client__capture_sends=true ./moq test ...`) or the tool enabled by a spec, a send of
 //! `send#EmailMessage` (and so of `send#EmailTemplate` and the mail client's sends) does everything a real send does,
 //! the `EmailMessage` row and its `ES_SENT` status included, except connect: the message is kept in memory, where
 //! `ec.factory.getTool('MailCapture')` reads and clears it. The most recent [`MAX_CAPTURED`] are kept.
@@ -25,7 +25,7 @@
 //! `last()` and `clear()`.
 //!
 //! Only a `moqui test` run may capture ([`allowed`], the process flag the runner sets before it boots beside
-//! `http_fixtures::allow`, never set on a server): elsewhere `enable()` throws and `mail_capture_sends` is ignored, with
+//! `http_fixtures::allow`, never set on a server): elsewhere `enable()` throws and `email-client@capture-sends` is ignored, with
 //! a warning at startup,
 //! so no script on a running server can hold back password reset links and sign-in codes and read them
 //! (plans/Security-Review-Medium.md SEC-DEV-05, SEC-OUT-10, SEC-MAIL-09). Each `enable()` is logged as a warning.
@@ -41,8 +41,9 @@ use crate::native::{NativeRegistry, Tool, ToolFactory};
 
 /// The class `<tool-factory>` names for the mail capture tool.
 pub const MAIL_CAPTURE_CLASS: &str = "moqui_core::service::mail_capture::MailCaptureToolFactory";
-/// The conf property that turns the capture on for a factory with no `enable()`/`disable()` of its own.
-pub const MAIL_CAPTURE_PROPERTY: &str = "mail_capture_sends";
+/// The conf setting that turns the capture on for a factory with no `enable()`/`disable()` of its own
+/// (`moqui_conf__email_client__capture_sends=true` in the environment of a test run).
+pub const MAIL_CAPTURE_SETTING: &str = "email-client@capture-sends";
 /// The captured messages a factory keeps; past it the oldest go.
 pub const MAX_CAPTURED: usize = 500;
 
@@ -81,11 +82,11 @@ impl MailCapture {
         factory.extension(|_| Self::default())
     }
 
-    /// Whether sends are captured: in a test run only, the factory's `enable()`/`disable()`, else the conf property.
+    /// Whether sends are captured: in a test run only, the factory's `enable()`/`disable()`, else the conf setting.
     pub fn is_enabled(&self) -> bool {
         allowed()
             && decide(*lock(&self.enabled), || {
-                moqui_lib::env::get_prop_or_env(MAIL_CAPTURE_PROPERTY)
+                crate::context::conf_env::setting(MAIL_CAPTURE_SETTING)
             })
     }
 
@@ -223,11 +224,11 @@ impl ToolFactory for MailCaptureToolFactory {
     }
 
     fn init(&self, _factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
-        if moqui_lib::env::get_prop_or_env(MAIL_CAPTURE_PROPERTY).trim() == "true" {
+        if crate::context::conf_env::setting(MAIL_CAPTURE_SETTING) == "true" {
             if allowed() {
-                tracing::warn!("{MAIL_CAPTURE_PROPERTY} is true: sends are kept in memory and not delivered");
+                tracing::warn!("{MAIL_CAPTURE_SETTING} is true: sends are kept in memory and not delivered");
             } else {
-                tracing::warn!("{MAIL_CAPTURE_PROPERTY} is true but ignored: mail is captured only in a moqui test run");
+                tracing::warn!("{MAIL_CAPTURE_SETTING} is true but ignored: mail is captured only in a moqui test run");
             }
         }
         Ok(())

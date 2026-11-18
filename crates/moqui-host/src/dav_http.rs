@@ -17,7 +17,7 @@
 //! server, `OPTIONS`, the server off (`dav-server` `enabled`), no credentials or credentials over plain HTTP, and for a
 //! `PUT` credentials that do not hold (SEC-FIL-04). A `PUT`'s body, the file, is spooled as an upload's file part is, up
 //! to `dav-server` `max-file` bytes (256 MiB); another method's body (XML) is read whole, up to 1 MiB, within
-//! `webapp_body_timeout`. The request is served on a request worker in a fresh context. Credentials are taken over
+//! `webapp-list/webapp[webroot]/web-protection/requests@body-timeout`. The request is served on a request worker in a fresh context. Credentials are taken over
 //! HTTPS, from a trusted proxy's HTTPS, from loopback, or with `dav-server` `allow-http="true"`; a refused login counts
 //! for web protection as a refused screen login does.
 

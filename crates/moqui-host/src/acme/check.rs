@@ -13,7 +13,7 @@
  */
 
 //! The check before a name is set up (plans/Edge-Node2.md §4.8): that the name's DNS has an address, and that a TLS
-//! connection to it on the challenge port (443, `acme_challenge_port`), as the authority will open, reaches this node.
+//! connection to it on the challenge port (443, `acme@challenge-port`), as the authority will open, reaches this node.
 //! This node opens a challenge of its own for the name with a random digest, connects to the name as the authority
 //! would, offering `acme-tls/1`, and looks for that digest in the certificate it is served: only this node (or a member
 //! of its cluster, or this node through its edge node's passthrough tunnel) has it. The challenge is closed after.
@@ -41,7 +41,7 @@ const PROBE_LIMIT: Duration = Duration::from_secs(20);
 
 /// The port the authority connects to.
 pub(crate) fn challenge_port() -> u16 {
-    moqui_lib::env::get_prop_or_env("acme_challenge_port")
+    moqui_core::context::conf_env::setting("acme@challenge-port")
         .trim()
         .parse()
         .unwrap_or(443)

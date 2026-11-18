@@ -44,7 +44,7 @@ const boundsOf = target => ({
     maxRows: Math.min(Math.max(Number(target.maxRows) || defaultRows, 1), hardRows),
     maxBytes: Math.min(Math.max(Number(target.maxBytes) || defaultBytes, 1024), hardBytes)
 })
-const zone = () => text(System.getProperty("default_time_zone")) || "UTC"
+const zone = () => text(ec.factory.getConfValue("instance@default-time-zone")) || "UTC"
 const zoned = value => (value == null ? "" : ec.l10n.format(Number(value), "yyyy-MM-dd HH:mm", null, zone()))
 const refusal = (reasonCode, reason, extra = {}) => Object.assign({refused: true, reasonCode, reason}, extra)
 const notAvailable = () => new Error("This export is not available")

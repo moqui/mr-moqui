@@ -941,7 +941,7 @@ fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credent
     let mut gate = common::start_with_files(
         "report-alert-wire",
         Some(&fixture),
-        &[("scheduled_job_check_time", "0")],
+        &[("moqui_conf__service_facade__scheduled_job_check_time", "0")],
         &[
             (
                 "components/addon/m6_wire/component.xml",

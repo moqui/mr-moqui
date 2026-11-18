@@ -151,7 +151,7 @@ Accounts, passwords, second factors and the current user's keys.
 | `get#UserDeviceKeys`, `revoke#UserDeviceKey`, `renew#UserDeviceKey` | The devices signed in by key (the desktop and mobile clients) |
 
 The rest are the login steps (`login#UserAccount`, `validate#ExternalUserAuthcCode`, `send#ExternalAuthcCode`, `send#AuthcCodeEmail`, `send#AuthcCodeSms`), `get#InitialAdminNeeded` (→ `needed`, and while it is true the password
-rules `minLength`, `minDigits`, `minOthers`; `disabled` when no account exists but `initial_admin_enabled` is off) and
+rules `minLength`, `minDigits`, `minOthers`; `disabled` when no account exists but `user-facade/login@initial-admin-enabled` is off) and
 `create#InitialAdminAccount`, which refuses unless it is needed; its `joinAdvanced` puts the account in `ADMIN_ADV` too.
 
 ### SystemMessageServices
@@ -181,7 +181,7 @@ Data documents and feeds, entity snapshots, and sync between servers.
 | `create#DataDocument`, `clone#DataDocument`, `create#DataDocumentField` | Defining data documents in the database |
 | `export#EntityDataSnapshot` | `fromDate`, `thruDate`, `entitiesToInclude`, `entitiesToSkip`, `baseFilename`, `fileType` → `recordsWritten` |
 | `import#EntityDataSnapshot` | `zipFilename*`, `dummyFks`, `useTryInsert`, `disableEntityEca`, ... → `recordsLoaded` |
-| `rewrite#EntityEncryptedFields` | `entityName*` → `recordsUpdated`: after a change of encryption key; values stored as plain text before their field was encrypted are read (and sealed) only while `entity_ds_crypt_read_plain=true` (`entity-facade` `crypt-read-plain`), else skipped as `_DECRYPT_FAILED_` |
+| `rewrite#EntityEncryptedFields` | `entityName*` → `recordsUpdated`: after a change of encryption key; values stored as plain text before their field was encrypted are read (and sealed) only while ``entity-facade@crypt-read-plain`=true` (`entity-facade` `crypt-read-plain`), else skipped as `_DECRYPT_FAILED_` |
 | `EntitySyncServices.run#EntitySync` | `entitySyncId*`: one sync of an `EntitySync` record, push or pull |
 
 The top-level `org.moqui.EntityServices` has the interfaces a feed or a document names: `receive#DataFeed` (`documentList*`, `dataFeedId`, `feedStamp`), `receive#DataFeedDelete`, `add#ManualDocumentData`, `transform#DocumentMapping`; and `process#DataFeedPending`, the job that delivers pending feed rows.

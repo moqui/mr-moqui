@@ -300,7 +300,7 @@ fn entered_factory() -> Option<Arc<ExecutionContextFactory>> {
 
 /// `preview#ComponentDeploy`: fetch `branch` of `url` into a repository kept as `storage` (database, bare or clone,
 /// in `directory` for a clone), stage the files, and answer what deploying would do. The gate (the `COMPONENT_DEPLOY`
-/// permission, and `component_deploy_enabled` in production) is the deploy's own. Out: `preview`.
+/// permission, and `component-deploy@enabled` in production) is the deploy's own. Out: `preview`.
 fn preview_component_deploy(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,

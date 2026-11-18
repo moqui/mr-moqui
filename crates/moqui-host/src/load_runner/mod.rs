@@ -267,7 +267,7 @@ fn stop_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -
 }
 
 /// `update#LoadRunUsers` (plans/archive/LoadRunner.md L6): a running scenario's users or rate from now on, within
-/// `load_runner_max_users` for the run in all.
+/// `load-runner@max-users` for the run in all.
 fn update_load_run_users(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     if !may_run_loads() {
         return none();
@@ -309,7 +309,7 @@ fn update_load_run_users(parameters: &BTreeMap<String, Value>, _facade: &EntityF
     if let Err(message) = active.load.set_target(&scenario, target, limit) {
         let over = message.starts_with("the load may have at most");
         add_error(if over {
-            format!("{message} (load_runner_max_users)")
+            format!("{message} (load-runner@max-users)")
         } else {
             message
         });

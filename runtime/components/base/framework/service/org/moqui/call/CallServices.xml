@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     Access. A user reaches a call they are a participant of, and a group call of a room they are a current member of
     (they may join it); any other call is "not found". A direct call rings its callee until answered, declined, timed out
-    (call_ring_seconds, 45) or canceled; the first answer wins (the session row is locked) and the other tabs hear it. Only
+    (calls@ring-seconds, 45) or canceled; the first answer wins (the session row is locked) and the other tabs hear it. Only
     a group call's host ends it for everyone; anyone else leaves. Repeated requests are safe: start#Call with the same
     idempotencyKey answers the same call, and answering, joining or leaving again answers the state as it is. Refusals
     carry reasonCode (notFound, callEnded, notRinging, notAllowed, notAdmitted, legClosed, callFull, tooManyJoins, noCallee,
@@ -42,7 +42,7 @@ along with this software (see the LICENSE.md file). If not, see
     ends, send#MediaControl tells the media node after the commit. expire#Calls (every minute) ends calls that rang out,
     legs whose socket did not come back, and calls whose media node stopped.
 
-    Cascading media nodes (W7). With rtc_cascade_enabled (off by default) a leg's media is on the node of its signaling
+    Cascading media nodes (W7). With media-server@cascade-enabled (off by default) a leg's media is on the node of its signaling
     socket when that node holds media (CallLeg.mediaNodeId), and that node (a leg node) relays to the call's node (its
     origin). bind#Connection answers both. A leg node that stops ends only its legs (CerMediaNodeLost); the origin
     stopping ends the call, as before.
@@ -432,7 +432,7 @@ along with this software (see the LICENSE.md file). If not, see
             participant with no login and a guest leg, admitted at once by a link policy, else waiting in the lobby (the
             people in the call and the link's owner hear of it). credential is for the guest's page only: it sends it in the
             first frame of its call socket (/callws), never in a URL; it lasts 4 hours. Refused with callFull while 50 guests
-            are waiting or in the call (an open leg), and with tooManyJoins past call_guest_joins_per_minute joins by the link
+            are waiting or in the call (an open leg), and with tooManyJoins past calls@guest-joins-per-minute joins by the link
             in the last minute.</description>
         <in-parameters>
             <parameter name="token" required="true"/>
@@ -491,7 +491,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
-            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with rtc_cascade_enabled the signaling node (W7)</description></parameter>
+            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with media-server@cascade-enabled the signaling node (W7)</description></parameter>
             <parameter name="originNodeId"><description>The call's media node (W7)</description></parameter>
             <parameter name="reasonCode"/>
         </out-parameters>
@@ -561,7 +561,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
             <parameter name="direct" type="Boolean"/>
-            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with rtc_cascade_enabled the signaling node (W7)</description></parameter>
+            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with media-server@cascade-enabled the signaling node (W7)</description></parameter>
             <parameter name="originNodeId"><description>The call's media node (W7)</description></parameter>
             <parameter name="call" type="Map"/>
             <parameter name="reasonCode"/>
@@ -628,8 +628,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="IceServers">
         <description>The ICE servers for the current user's leg in the call, for its RTCPeerConnection: the TURN servers of
-            the call's media node and any external ones (turn_external_urls), with a short-lived credential for this leg
-            (turn_credential_hours, 4). Only for a leg that is admitted and in the call; empty when no TURN is set up.</description>
+            the call's media node and any external ones (media-server/turn-server@external-urls), with a short-lived credential for this leg
+            (media-server/turn-server@credential-hours, 4). Only for a leg that is admitted and in the call; empty when no TURN is set up.</description>
         <in-parameters><parameter name="callSessionId" required="true"/></in-parameters>
         <out-parameters><parameter name="iceServers" type="List"/><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('iceServers', context))</script></actions>
@@ -638,7 +638,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="CallPreferences">
         <description>The current user's call preferences kept on the server (Settings, Calls): alwaysRelay, whether their
             calls stay on the media server so the person they call never sees their network address, and whether this
-            server sends one-to-one calls peer to peer at all (call_direct_path).</description>
+            server sends one-to-one calls peer to peer at all (calls@direct-path).</description>
         <out-parameters>
             <parameter name="alwaysRelay" type="Boolean"/>
             <parameter name="directPathEnabled" type="Boolean"/>
@@ -667,9 +667,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="make" noun="IceServers" type="rust" location="moqui_core::service::call_media::make_ice_servers"
             authenticate="false" allow-remote="false" transaction="ignore">
-        <description>Internal: the ICE servers of a leg: the TURN URLs (turnUrls, the media node's, and turn_external_urls)
+        <description>Internal: the ICE servers of a leg: the TURN URLs (turnUrls, the media node's, and media-server/turn-server@external-urls)
             with a credential in the TURN REST form coturn's use-auth-secret takes: username &lt;expiry&gt;:&lt;callLegId&gt;,
-            password base64 of HMAC-SHA1 of it with turn_auth_secret. Empty without URLs or a secret. The URLs of
+            password base64 of HMAC-SHA1 of it with media-server/turn-server@auth-secret. Empty without URLs or a secret. The URLs of
             mediaNodeId when it is this node's edge node get a credential signed with this node's pairing's secret there,
             which its link told this node (plans/archive/Edge-Node.md §5.4), whose username names the pairing
             (&lt;expiry&gt;:&lt;callLegId&gt;@&lt;pairing&gt;, plans/Edge-Node2.md §4.1), and the external ones

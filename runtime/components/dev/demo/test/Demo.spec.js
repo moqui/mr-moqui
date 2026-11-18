@@ -45,7 +45,7 @@ const endedPermissions = [
     "MONITOR_RECOVER", "MONITOR_RECOVER_ADMIN", "MONITOR_SETTINGS", "MONITOR_PRIVATE_NETWORK",
     "ADMIN_ACCESS_MANAGE", "ADMIN_IDENTITY_MANAGE", "ADMIN_IDENTITY_GLOBAL", "ADMIN_BACKUP_RUN", "ADMIN_BACKUP_DOWNLOAD",
     "ADMIN_CONNECTION_MANAGE", "ADMIN_TRANSFER_RUN", "ADMIN_SETTINGS_MANAGE", "ADMIN_OPERATION_MANAGE", "ADMIN_CONSTITUTION_GLOBAL",
-    "AgentAdmin", "AgentSkillAuthor", "ChatBridgeAdmin", "VoiceAdmin", "PushHealthAdmin", "GIT_CI_ADMIN", "MONITOR_EVAL_RUN",
+    "AgentAdmin", "AgentSkillAuthor", "ChatBridgeAdmin", "ChatStickerAdmin", "VoiceAdmin", "PushHealthAdmin", "GIT_CI_ADMIN", "MONITOR_EVAL_RUN",
     "MONITOR_REPLAY", "EMAIL_ACCOUNT_HOSTED", "DRIVE_OWNER_CHANGE", "EMAIL_ACCOUNT_OWNER_CHANGE", "REPORT_OWNER_CHANGE",
 ]
 // what ADMIN keeps on a demo server, as the base seed grants it: the apps a visitor browses and changes (Comms, CalcGrid,
@@ -302,9 +302,9 @@ feature("DAV is off and the sync addresses offer no SFTP", {
 // demo's conf turns it on.
 feature("the demo's conf turns on the Login screen's Test Login", {
     expect() {
-        System.getProperty("demo_test_login") == "true"
-        withProperty("instance_purpose", "production",
-            () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered) === withProperty("instance_purpose", "test",
+        ec.factory.getConfValue("demo@test-login") == "true"
+        withConf("instance@purpose", "production",
+            () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered) === withConf("instance@purpose", "test",
             () => call(USER_SERVICES + "get#TestLoginOffered", {}).offered)
     },
 })

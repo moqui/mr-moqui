@@ -14,13 +14,13 @@ packs. The CI engine that runs a repository's pipelines for its pushes and merge
 |---|---|
 | HTTPS | `https://<host>/git/<path>.git` (`.git` is optional) |
 | HTTPS, on a public-site host | `https://<host>/<path>` or `https://<host>/<path>.git`: the page's URL |
-| SSH | `ssh://<username>@<host>:<ssh_port>/<path>.git`, or `<username>@<host>:<path>.git` on port 22 |
+| SSH | `ssh://<username>@<host>:<ssh-server@port>/<path>.git`, or `<username>@<host>:<path>.git` on port 22 |
 
 `<path>` is the repository's `repositoryPath` (`moqui/mr-moqui`), or its `repositoryId`, which always works too and is
 the only address of a repository with no path. `org.moqui.git.GitServices.get#GitCloneUrls` gives the HTTPS and SSH
-URLs with the path (and the path itself, `repositoryPath`), from `git_public_url` (else the webapp host and port
-properties), and `ssh_public_host` and `ssh_public_port` (else, on a node paired with an edge node, the host and port
-of the edge node's SSH tunnel to it; else the webapp host and `ssh_port`). The SSH username is the Moqui username.
+URLs with the path (and the path itself, `repositoryPath`), from `git-server@public-url` (else the webapp host and port
+properties), and `ssh-server@public-host` and `ssh-server@public-port` (else, on a node paired with an edge node, the host and port
+of the edge node's SSH tunnel to it; else the webapp host and `ssh-server@port`). The SSH username is the Moqui username.
 Behind a front or edge node: [Behind a front or edge node, and in a pool](#behind-a-front-or-edge-node-and-in-a-pool).
 
 ### Repository paths
@@ -95,8 +95,8 @@ first branch pushed) its default branch.
 
 - **HTTPS**: HTTP Basic with the username and the password, or an **access token** or an **app password** (docs/interfaces/Sync.md)
   as the password, which accounts with a second factor need (the password alone cannot complete a login there). `Authorization: Bearer <token>` and
-  an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp_https_listen_port` listener, or
-  `X-Forwarded-Proto: https` behind the proxy that `webapp_client_ip_header` names), from a client on this machine
+  an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp-list/webapp[webroot]@https-listen-port` listener, or
+  `X-Forwarded-Proto: https` behind the proxy that `webapp-list/webapp[webroot]@client-ip-header` names), from a client on this machine
   (behind that proxy, the client it names, never the proxy's own loopback address), or with `git-server`
   `allow-http="true"`. A request with no credentials is served what anyone may view ([Access](#access)) and gets 401 for
   everything else, so git asks for them; over a transport that takes no credentials it gets 403 "use HTTPS" instead,
@@ -128,12 +128,12 @@ first branch pushed) its default branch.
   confirms (the form answers only the sign-in it was shown for, not one another start put in its place), on a page that names the port the code goes to and
   says the app's name is the app's own word; the code goes to the redirect URI and the app takes it at `/sso/appToken`
   with its verifier for the key (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors
-  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp_app_redirect_uris` exactly, or any loopback one
+  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp-list/webapp[webroot]@app-redirect-uris` exactly, or any loopback one
   by its IP literal (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
-  `localhost`) unless `webapp_app_loopback_redirect` is false. It is on by default: any program on the user's computer
+  `localhost`) unless `webapp-list/webapp[webroot]@app-loopback-redirect` is false. It is on by default: any program on the user's computer
   may listen on a loopback port, which is why the confirmation names the port and the code is good only with the
   app's PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that
-  is not on loopback is listed in `webapp_app_redirect_uris`, or its users paste a token.
+  is not on loopback is listed in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token.
 - **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens only the LLM gateway
   (`UserLoginKey.scope` `gateway`): every other login (the web, REST, git, a socket) refuses it, and it is in the
   user's device list. A client that is let go ends what it held with `revoke#UserHeldKey` (the key itself, the user's
@@ -250,7 +250,7 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
   `objects/pack`, a `db` one writes each object as a row). Each ref is then moved by compare-and-set: a ref another
   push moved first is refused with `stale info`.
 - Clones and pushes run on a pool of their own (`git-server` `max-concurrent`, 4, and `git-server` `max-queued` waiting), not on the
-  request workers of the screens, and are exempt from `webapp_request_timeout`; `git-server` `idle-timeout` (120 seconds) of
+  request workers of the screens, and are exempt from `webapp-list/webapp[webroot]/web-protection/requests@request-timeout`; `git-server` `idle-timeout` (120 seconds) of
   silence in a request body ends it. Limits: `git-server` `max-request` (64 MB) for a fetch request, `git-server` `max-push-size` (2 GB),
   each counted as sent and, for a `Content-Encoding: gzip` body, as inflated, and over SSH for a push's whole input and for
   each round of a fetch (the want phase and each flush of haves in v0, each command in v2), as each HTTP request is
@@ -1202,10 +1202,10 @@ A `db` repository is rows of the database every cluster member shares, so it nee
 front or edge node that balances requests over the members of a pool (git over HTTP carries no session cookie and goes
 round robin; SSH goes by the client's address). A `local` or `remote` repository is a directory, of one node unless
 `runtime/git` (and every `localPath`) is on storage every member mounts, which the conf says with `git-server`
-`shared-storage="true"` (`git_shared_storage`).
+`shared-storage="true"` (`git-server@shared-storage`).
 
 A node is a cluster member when another member's heartbeat is live in `moqui.server.ClusterMember`, or it is set up to
-be one (`cluster_base_url`, `cluster_transport`); once seen to be one it stays one until it restarts, though every
+be one (`cluster-member@base-url`, `cluster-member@transport`); once seen to be one it stays one until it restarts, though every
 peer's heartbeat lapse, and an answer that could not be read is not kept. A thread with no context reads this and the
 conf through the provider's own factory. On a member **without** shared storage:
 
@@ -1329,7 +1329,7 @@ as the client takes it, on a thread of its own (at most `webapp` `transfer-worke
 a slow download holds no request worker. One `Range` is answered from the bytes it names, with `ETag` (a git file's
 blob id, a content blob's SHA-256) and `If-Range`. Only text types are compressed. An upload is read as it arrives: a
 file part over 256 KiB goes to a file in `runtime/tmp/upload`, and from there to its storage (a content blob, a git
-object) as it is read; `webapp_max_upload` (2 GiB) bounds it and `webapp_upload_idle_timeout` (60 seconds) of silence
+object) as it is read; `webapp-list/webapp[webroot]/web-protection/requests@max-upload` (2 GiB) bounds it and `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout` (60 seconds) of silence
 ends it.
 
 ## Large files (Git LFS)
@@ -1342,8 +1342,8 @@ repository has an object (`moqui.resource.GitLfsObject`) only once it was upload
 another repository's file. Uploads need the push rights of the repository, downloads view (with no credentials, on a
 repository anyone may view: [No credentials](#no-credentials)); a lock needs push rights (and listing locks a
 login),
-and force unlocking another user's lock `delete`. The batch's actions carry a token signed with `git_lfs_token_key`
-(generated into `runtime/.env`; `git_lfs_token_key_previous` still reads while it is changed) that says who the user
+and force unlocking another user's lock `delete`. The batch's actions carry a token signed with `git-server@lfs-token-key`
+(generated into `runtime/.env`; `git-server@lfs-token-key-previous` still reads while it is changed) that says who the user
 is, for 15 minutes, and each request is authorized again. Objects are at most `git-server` `lfs-max-object-size` (5 GiB).
 
 **A quota for uploads.** An LFS upload is not a push, so no pre-receive rule sees it. `git-server`
@@ -1397,11 +1397,11 @@ cluster members an edge node balances, and an edge cluster.
   the local node believes only there (a client's own is removed), or a PROXY v2 header on a passthrough or SSH
   tunnel. The local node's web protection, its anonymous limits, the push log and the access checks see the client,
   not the edge node. Credentials are taken as over HTTPS when the edge node took the request over TLS.
-- **The URLs.** `git-server` `public-url` (`git_public_url`) names the public URL clients use, the host on the edge
+- **The URLs.** `git-server` `public-url` (`git-server@public-url`) names the public URL clients use, the host on the edge
   node (`https://code.example.com`), not the local node's own address; with it empty, the request's own host is used,
-  which is the same behind a terminate host. Leave `ssh_public_host` and `ssh_public_port` empty behind an edge node:
+  which is the same behind a terminate host. Leave `ssh-server@public-host` and `ssh-server@public-port` empty behind an edge node:
   the clone URLs then name the edge node's SSH tunnel to this node, as its offer says (its public name, and the
-  pairing's own SSH port, an `EdgePort` row, else `edge_ssh_tunnel_port` while it is the one active pairing). With a
+  pairing's own SSH port, an `EdgePort` row, else `edge@ssh-tunnel-port` while it is the one active pairing). With a
   front pairing and an edge pairing (edge members behind a front, which bind no tunnel ports) they name the front's.
   Set them when clients reach SSH another way. `<git-ci server-url>` is for runners: [Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool).
 - **A host that refuses the framework's routes** (`root-screen` `framework-routes="refuse"`, a site of its own) still
@@ -1409,7 +1409,7 @@ cluster members an edge node balances, and an edge cluster.
   behind its own authentication and the web protection's checks; every other route of the host is Not Found there
   (`moqui_core::web::reserved`, which scripts read as `ec.web.reservedPaths`).
 - **The SSH tunnel.** The edge node pipes each connection to its SSH tunnel port down the link to the local node's
-  SSH server (`ssh_port`), which needs no open port of its own: `edge_ssh_tunnel_port` to the one active pairing, or
+  SSH server (`ssh-server@port`), which needs no open port of its own: `edge@ssh-tunnel-port` to the one active pairing, or
   a pairing's own port (System › Edge Clients › Ports). At most `<edge ssh-tunnels>` (256) connections per port at
   once. A client that a pairing's shared ban names is refused on that pairing's tunnel ports as on its hosts.
 - **Web protection.** The edge node applies its own rules before a request goes down, and the local node applies its
@@ -1417,8 +1417,8 @@ cluster members an edge node balances, and an edge cluster.
   edge node, which refuses that client for that pairing's hosts and tunnel ports. CI runner requests, and a job's
   fetch, with a token found good are counted per token ([Pipelines](Pipelines.md#behind-a-front-or-edge-node-and-in-a-pool)).
 - **In a pool or a cluster** (a load balancer, or an edge node's pool, which sends an LFS request or an SSH
-  connection to any member and after a failover to another): every member has the same `ssh_host_key`, or clients
-  are told the host key changed, and the same `git_lfs_token_key`, or a member refuses the tokens another issued
+  connection to any member and after a failover to another): every member has the same `ssh-server@host-key`, or clients
+  are told the host key changed, and the same `git-server@lfs-token-key`, or a member refuses the tokens another issued
   ([Run-Deploy](../Run-Deploy.md#requirements)). A member whose SSH host key differs from a live member's warns at
   startup. `db` repositories are in the shared database. `local` and `remote` repositories are allowed in a cluster
   only with the conf setting that says `runtime/git` is on storage every member mounts; without it they are refused.

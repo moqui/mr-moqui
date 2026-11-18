@@ -18,7 +18,7 @@ Java's Spock suite (`Security*.groovy`) was not ported. A row below that names o
 
 `--serve` starts `moqui test framework --spec ClientFixtures --db snapshot --serve` on a scratch database, under `conf/MoquiLoadTestConf.xml` (`test/client/suite.js`, and `test/acceptance/client/suite.js` for the acceptance specs). That file is the production conf with the screen, transition, and service tarpits off, so `LoadBasic` (an acceptance test) is not answered 429. `SecurityTarpit`, an acceptance test too (`./moq accept framework`), skips on that conf. A skip there is the expected result of `--serve`.
 
-`SecurityCors` fails its spec when the server allows every origin (the dev conf, `webapp_allow_origins=*`). The foreign-origin `/notws` proof skips on that conf. The other specs run on any conf.
+`SecurityCors` fails its spec when the server allows every origin (the dev conf, `moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=*`). The foreign-origin `/notws` proof skips on that conf. The other specs run on any conf.
 
 Fixture users come from `runtime/components/base/framework/test/ClientFixtures.spec.js`. They are not demo seed. `sec.ip.v4`, `sec.ip.loop`, and `sec.mfa.totp` are rows only. Against a server `--serve` did not start:
 
@@ -127,7 +127,7 @@ Crate tests for [Threat model: stored secrets](Attack-Surface-Data.md#threat-mod
 | `CryptConfig`'s `Debug` does not show the pass | `debug_leaves_out_the_pass` (`crypto_tests.rs`) |
 | An encrypted field reaches SQL as ciphertext and reads back as plaintext | `try_insert_seals_the_password_before_sql` (`crates/moqui-entity/src/entity/tests.rs`) |
 | Every bound value of an encrypted field in a query is encrypted | `every_bound_value_of_an_encrypted_field_is_sealed` (`crates/moqui-entity/src/entity/field_rw_tests.rs`) |
-| A generated secret is 32 random bytes, different each time; `entity_ds_crypt_pass_old` keeps its sentinel; a secret is named by its flag or by `pass`, `pw` or `key` | `generated_secrets_are_32_random_bytes_and_secret_names_are_known` (`crates/moqui-core/src/context/tests.rs`) |
+| A generated secret is 32 random bytes, different each time; `entity-facade@crypt-pass-old` keeps its sentinel; a secret is named by its flag or by `pass`, `pw` or `key` | `generated_secrets_are_32_random_bytes_and_secret_names_are_known` (`crates/moqui-core/src/context/tests.rs`) |
 | A generated secret goes to `runtime/.env` once, mode `0600`, and stays the same at the next start | `generated_secret_is_stable_and_unwritable_env_fails` (`context/tests.rs`), `update_dotenv_file_replaces_in_place_appends_and_removes` (`crates/moqui-lib/src/env_tests.rs`) |
 | Passwords are argon2id, login keys SHA-256, and a legacy hash becomes argon2id | `hash_password_is_an_argon2id_phc_string`, `hash_login_key_stays_sha256_hex` (`crates/moqui-core/src/user/password.rs`), `a_legacy_hash_verifies_and_the_stored_value_becomes_an_argon2_string` (`user/login_tests.rs`) |
 | A session cookie with a bad MAC is no session | `a_bad_mac_is_an_unknown_session` (`crates/moqui-core/src/user/session_tests.rs`) |
@@ -140,7 +140,7 @@ Crate tests for [Threat model: stored secrets](Attack-Surface-Data.md#threat-mod
 | Gap: DES ciphertext still decrypts | `known_gap_des_ciphertext_still_decrypts_through_the_alternates` (`crypto_tests.rs`) |
 | Gap: a value sealed under the public default pass is read as valid | `known_gap_a_value_sealed_under_the_public_default_pass_is_read_as_valid` (`crypto_tests.rs`) |
 | Gap: an empty `crypt-pass` turns field encryption off | `known_gap_an_empty_crypt_pass_turns_field_encryption_off` (`crates/moqui-entity/src/entity/tests.rs`) |
-| Gap: a new `session_cookie_key` ends every session; there is no old key | `known_gap_a_new_session_cookie_key_ends_every_session_cookie` (`session_tests.rs`) |
+| Gap: a new `webapp-list/webapp[webroot]/session-config@cookie-key` ends every session; there is no old key | `known_gap_a_new_session_cookie_key_ends_every_session_cookie` (`session_tests.rs`) |
 
 ### Not applicable
 
@@ -157,11 +157,11 @@ These Java HTTP tests have no port. The reason is the behavior they call.
 
 Java's Spock classes check these without an HTTP client. This pass did not look for a matching Rust unit test, and this catalog does not claim one.
 
-- Conf and utility flags: SubEtha and Jackrabbit factories absent, `upload-executable-allow` default false (the HTTP magic check is ported), shipped `entity_ds_crypt_pass` still `CHANGEME` until startup replaces it, password and login-key hash types, `allow-html` `safe` and `any`, HSTS on `screen-secure` only when the request is HTTPS, `email_allowed_hosts` empty, HMAC replay cache declared `distributed`, percent-encoded query names dropped, `getClientIp` address shapes.
+- Conf and utility flags: SubEtha and Jackrabbit factories absent, `upload-executable-allow` default false (the HTTP magic check is ported), shipped `moqui_conf__entity_facade__crypt_pass` still `CHANGEME` until startup replaces it, password and login-key hash types, `allow-html` `safe` and `any`, HSTS on `screen-secure` only when the request is HTTPS, `email_allowed_hosts` empty, HMAC replay cache declared `distributed`, percent-encoded query names dropped, `getClientIp` address shapes.
 - Integrity: component zip-slip and a contained-entry expand, XML external entities in `MNode`, ElFinder `joinUnderRoot` and hashed `..`, `create#UserAccount` ignoring extra password fields, DataSnapshot `disableEntityEca` restoring `ADMIN` membership, denied entity find writing `ArtifactAuthzFailure`.
 - Authn beyond the HTTP rows: lockout re-enable after `disable-minutes`, password-reset token single use and expiry, `hasLoggedOut`, `loginUserKey` stored as a hash, WebSocket handshake `api_key` in the header versus the query, a handshake not keeping the previous user, `AUTHZA_ALL` without `SQL_RUNNER_WEB` or `GROOVY_SHELL_WEB` (the GroovyShell screen is removed; its permission name stays sealed so no grant can be made to it).
 - Login history stored, and a failed login not storing the password.
-- `/llm/v1` CSRF, a dummy `login_key` or Basic not skipping it, and an empty `allowed-path` failing closed (`LlmServletTests`). A2A with `a2a_enabled` true. HOLD `TransactionCacheDb` not writing production rows.
+- `/llm/v1` CSRF, a dummy `login_key` or Basic not skipping it, and an empty `allowed-path` failing closed (`LlmServletTests`). A2A with `llm-facade/a2a@enabled` true. HOLD `TransactionCacheDb` not writing production rows.
 - Dependency versions that do not exist here (Log4j, Shiro) and the H2 TCP server.
 
 ## Recorded differences
@@ -173,7 +173,7 @@ Kept on purpose, and asserted by the specs. The parity notes are [Parity-Diffs](
 - A missing or wrong session token is 401 `Session token is missing or is not valid`.
 - An anonymous `/notws` upgrade is 401. The foreign-origin proof uses a logged-in session.
 - CORS and `/notws` compare scheme, host, and port. The same host on another port or scheme is refused.
-- An IP-refused REST login is 401 and not logged in. The body names the user and the client address (`check_ip_allowed`). The spec does not require Java's shared invalid-login sentence. `X-Forwarded-For` does not supply the allow-list address while `webapp_client_ip_header` is empty.
+- An IP-refused REST login is 401 and not logged in. The body names the user and the client address (`check_ip_allowed`). The spec does not require Java's shared invalid-login sentence. `X-Forwarded-For` does not supply the allow-list address while `webapp-list/webapp[webroot]@client-ip-header` is empty.
 
 `WebUtilities.isSameOriginRedirect` with no host argument uses the webapp `http-host`, which is empty in the default conf, so an absolute `returnTo` is refused. The login screen calls that one-argument form. The request `Host` header is not a configured host. `SecurityHeaders` is the proof.
 
@@ -182,9 +182,9 @@ Three `SecurityScreens` assertions are tighter than the Python ones they port. A
 ## Proof strength
 
 - `--serve` does not prove the tarpit. `SecurityTarpit` skips while the status is not 429, which is correct for the load-test conf and is a failed proof on the production conf.
-- `/status` is requested from loopback. The three features prove the public JSON shape and that forwarded headers do not hide it. They do not prove that a TCP source outside `webapp_status_ips` is rejected.
+- `/status` is requested from loopback. The three features prove the public JSON shape and that forwarded headers do not hide it. They do not prove that a TCP source outside `webapp-list/webapp[webroot]@status-ips` is rejected.
 - The HMAC replay cache is local unless a distributed cache is configured. A second server does not see the first server's replay.
-- With `search_backend` at its default `postgres`, `/search` and `/dashboard` are 404 after authentication. The `SearchRemote` feature asserts the response is neither 401 nor 403.
+- With `search-facade@backend` at its default `postgres`, `/search` and `/dashboard` are 404 after authentication. The `SearchRemote` feature asserts the response is neither 401 nor 403.
 - The `/resources` feature posts `cmd=put` at the volume root `v0_cm9vdA` and expects JSON containing `write not allowed` or `error`, and not `changed`. That is the root-refusal on every conf. It does not prove a production-only block of writes under `component://`.
 - The menu feature passes when the body is not the Tools menu, including when the status is 500. An anonymous `GET /menuData/apps/tools` logged `cannot read property 'extraPathNameList' of undefined` (`screen_host.rs`). The in-process menu test expects 401 once `getMenuData` runs. The HTTP proof does not require that status.
 - The email pixel proof is `GET /email/NOTAREALID.png`: status 200, `image/png`, inline, and the PNG magic. The client harness records the first four bytes as hex (`89504e47`). The full 68-byte image, and marking a known message `ES_VIEWED` with `receivedDate` set once, are the unit test `view_email_message_sends_the_png_and_marks_a_known_message`. That is Java's `markEmailMessageViewed` side effect. The Spock method that calls it was not ported.

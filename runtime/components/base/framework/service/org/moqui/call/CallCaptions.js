@@ -3,10 +3,10 @@
 // Live captions of a call (plans/archive/Comms-Framework.md §5.4, §6.4, W6): the policy of org.moqui.call.CallCaptionServices.
 // Someone in the call turns captions on or off; the call's media node transcribes (moqui-host rtc/captions.rs), told by
 // send#MediaControl after the commit, and tells every leg that captions are on and which provider hears the audio (the
-// notice). The checks, in order: the deployment allows captions (call_captions_enabled), the user is in the call (anyone
+// notice). The checks, in order: the deployment allows captions (calls/captions@enabled), the user is in the call (anyone
 // else gets "not found"), the call has not ended, its media is not end-to-end encrypted (the server cannot hear it, and
 // captions never downgrade it), and a speech provider is set up. CallCaptions keeps the state; nothing of the audio is
-// kept, and the text only when call_captions_store is true. A phone in the call hears the notice as a prompt instead.
+// kept, and the text only when calls/captions@store is true. A phone in the call hears the notice as a prompt instead.
 
 const SESSION = 'moqui.call.CallSession'
 const PARTICIPANT = 'moqui.call.CallParticipant'
@@ -28,7 +28,7 @@ function refuse(reasonCode, text) {
 
 /** Whether this deployment allows captions at all. */
 function enabled() {
-  return String(System.getProperty('call_captions_enabled') || '').trim() === 'true'
+  return String(ec.factory.getConfValue('calls/captions@enabled') || '').trim() === 'true'
 }
 
 /** Whether the call's media can be heard by the server: not end-to-end encrypted. */

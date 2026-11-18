@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <label type="p" text="Desk and soft phones that register with this server and ring with your calls." style="m-muted"/>
         <section name="RegistrarOff" condition="!registrarEnabled"><widgets>
-            <label type="p" text="The registrar is off on this server: phones cannot register until an administrator turns it on (sip_registrar_enabled)." style="text-warning"/>
+            <label type="p" text="The registrar is off on this server: phones cannot register until an administrator turns it on (sip-server/registrar@enabled)." style="text-warning"/>
         </widgets></section>
         <section name="NoDevices" condition="!deviceList.length"><widgets><label type="p" text="No phones yet."/></widgets></section>
         <form-list name="DeviceList" list="deviceList" skip-form="true">

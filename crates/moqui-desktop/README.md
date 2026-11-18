@@ -70,7 +70,7 @@ the node's router in this process (`moqui_host::in_process`), on worker threads 
   sidecar): the Dev AIDE (`/qapps/dev`) and the example component load from the bundle's `components/dev`, and the
   browser terminal offers the command line and shells, local to this computer. Off by default, when the conf says
   (production for a bundle). The default build carries the dev tools (`devtools`); a build without them has no item.
-- **PDF:** where the node finds no Chromium of its own (`moqui_chromium_path`, `runtime/chromium` or an installed one),
+- **PDF:** where the node finds no Chromium of its own (`screen-facade/pdf@chromium-path`, `runtime/chromium` or an installed one),
   it prints on the app's own CEF (`src/pdf.rs`): a hidden window with no capability, driven over the DevTools Protocol
   with the server's page sequence (`moqui_host::pdf::print_page`), its requests failed. The bundle carries Chromium's
   notices as `notices/chromium-credits.html`.
@@ -153,7 +153,7 @@ The attributes are in `moqui-conf-3.xsd` and
   on Linux.
 - **`mailto:`, `tel:`, `sip:`:** the package registers the app as a handler (`plugins.deep-link` in `tauri.conf.json`,
   `linux/main.desktop`). A mail link opens the Comms app's Compose filled in, a call link its Dialer, under
-  `comms_app_root` (default `/qapps/BasicComms`); a client's under its server's (`calls.appRoot` of the client
+  `comms@app-root` (default `/qapps/BasicComms`); a client's under its server's (`calls.appRoot` of the client
   config), both in the shell. "Make default for email and calls" makes the app the default:
   LaunchServices on macOS (the installed app only), `xdg-mime default` on Linux.
 - **First run:** once the initial admin is signed in on a node that is not paired and not an edge or all-in-one node,
@@ -167,7 +167,7 @@ The attributes are in `moqui-conf-3.xsd` and
 `src/backup.rs`, with a Backups menu in the tray: Back up now, choose and open the folder, Restore from backup, and the
 last backup's time. The folder and whether the nightly backup runs are in `backups` in the app's config directory.
 
-- **Nightly:** the node gets `embedded_db_backup_scheduled=true` and `embedded_db_backup_dir`, which run the
+- **Nightly:** the node gets `moqui_conf__database_backup__scheduled=true` and `database-backup@dir`, which run the
   framework's `backup_EmbeddedDatabase_daily` job into the folder, by default `MR-Moqui Backups` in Documents (a
   development run keeps `runtime/db/backup` and leaves the job's schedule as the repository's runtime has it). See [PostgresBackup](../../plans/archive/PostgresBackup.md).
 - **Back up now:** a `pg_dump` of the live database (`moqui save-db`), named `moqui-<stamp>-manual.dump`, outside the
@@ -216,7 +216,7 @@ MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign i
   after it is first set: the earlier start leaves Chromium's `devtools.remote_debugging.allowed` off in the profile, and
   the app turns it back on only once Chromium has started. A bundled app never opens it.
 - **A server on the same runtime:** a node's mode refuses to start while a server answers on the runtime's own port
-  (`webapp_http_port`, default 8080). Two nodes would share its Postgres. The client mode has no runtime.
+  (`webapp-list/webapp[webroot]@http-port`, default 8080). Two nodes would share its Postgres. The client mode has no runtime.
 
 The runtime is, in order: `MOQUI_RUNTIME`; in a development run, this repository's `runtime`; the first one with a
 `components/base` directory of `runtime` in the working directory, `runtime` beside the executable (for an AppImage, the
@@ -241,8 +241,12 @@ tauri-runtime-cef starts it with `--no-sandbox` ([Build-Test](../../docs/Build-T
 ## Test
 
 ```sh
-cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test
+./moq build                                                       # writes target/moqui-app, which this crate links
+cd crates/moqui-desktop && cargo test
 ```
+
+This crate is a workspace of its own, so the root's `cargo lint` and `cargo test` do not reach it: run these for any
+change here. Its `.cargo/config.toml` builds it into the repository's `target/`, which the root's `cargo clean` cleans.
 
 The host side of the stdin-close stop, the Postgres takeover, the node in process (`in_process`) and the shared PDF
 page sequence (`pdf`) are tested in their crates: `cargo test -p moqui-host -p moqui-drivers`; the client's proxy,

@@ -17,6 +17,7 @@
 //! The slot is thread-local and cleared when its guard drops, including on panic.
 //! A request-pool worker reuses its thread, so a leaked slot would leak into the next request.
 
+use crate::context::conf_env;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
@@ -35,7 +36,7 @@ pub fn effective_http_port(raw: &str) -> Result<u16, moqui_lib::error::Error> {
         return Ok(8080);
     }
     raw.parse()
-        .map_err(|_| moqui_lib::error::Error::new(format!("webapp_http_port {raw} is not a port")))
+        .map_err(|_| moqui_lib::error::Error::new(format!("the webroot webapp's http-port {raw} is not a port")))
 }
 
 /// Configured HTTP port text for a URL. Invalid non-empty values are kept for listener validation.
@@ -60,7 +61,7 @@ pub(crate) mod upstream;
 use crate::context::{Error, ErrorKind, ExecutionContext};
 use crate::entity::query_rest;
 
-/// The cap on a request body that is not multipart, unless `webapp_max_body` says otherwise.
+/// The cap on a request body that is not multipart, unless `webapp-list/webapp[webroot]/web-protection/requests@max-body` says otherwise.
 const DEFAULT_MAX_BODY: usize = 10 * 1024 * 1024;
 
 thread_local! {
@@ -1319,7 +1320,7 @@ pub(crate) fn view_email_message() {
     }
 }
 
-/// The label of the key an email's view key is signed with, derived from `session_cookie_key`, so its MAC is never a
+/// The label of the key an email's view key is signed with, derived from `webapp-list/webapp[webroot]/session-config@cookie-key`, so its MAC is never a
 /// session cookie's.
 const EMAIL_VIEW_LABEL: &str = "moqui email view key v1";
 /// Bytes of the HMAC kept in a view key: 128 bits, 22 characters of base64url.
@@ -1329,7 +1330,7 @@ fn email_view_mac(id: &str) -> Result<hmac::Hmac<sha2::Sha256>, Error> {
     use hmac::{KeyInit as _, Mac as _};
     let key = crate::user::session::derived_cookie_key(EMAIL_VIEW_LABEL).map_err(|err| Error::new(err.message()))?;
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&key)
-        .map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+        .map_err(|_| Error::new("the session cookie key cannot be used as an HMAC key"))?;
     mac.update(id.as_bytes());
     Ok(mac)
 }
@@ -1340,7 +1341,7 @@ fn email_view_mac(id: &str) -> Result<hmac::Hmac<sha2::Sha256>, Error> {
 ///
 /// # Errors
 ///
-/// Returns an error when `session_cookie_key` is not set or not usable.
+/// Returns an error when `webapp-list/webapp[webroot]/session-config@cookie-key` is not set or not usable.
 pub fn email_view_key(id: &str) -> Result<String, Error> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use hmac::Mac as _;
@@ -1948,8 +1949,8 @@ pub(crate) enum BodyError {
     Executable(String),
 }
 
-/// The largest request body: `web-protection` `requests` `max-body` (`webapp_max_body`, 10 MiB by default), and
-/// for a `multipart/form-data` body `max-upload` (`webapp_max_upload`). The conf of the current context's factory,
+/// The largest request body: `web-protection` `requests` `max-body` (`webapp-list/webapp[webroot]/web-protection/requests@max-body`, 10 MiB by default), and
+/// for a `multipart/form-data` body `max-upload` (`webapp-list/webapp[webroot]/web-protection/requests@max-upload`). The conf of the current context's factory,
 /// or the properties with none.
 pub fn body_limit(request: &WebRequest) -> usize {
     ExecutionContext::with_current(|ec| body_limit_for(Some(ec.factory().as_ref()), request))
@@ -1963,26 +1964,20 @@ pub fn body_limit_for(factory: Option<&crate::context::ExecutionContextFactory>,
         if let Some(max) = factory.and_then(|factory| factory.webapp_scripts().max_upload_for(&request.path)) {
             return max;
         }
-        parse_size(&protection_setting(
-            factory,
-            "requests",
-            "max-upload",
-            "webapp_max_upload",
-        ))
-        .unwrap_or(DEFAULT_MAX_UPLOAD)
+        parse_size(&protection_setting(factory, "requests", "max-upload")).unwrap_or(DEFAULT_MAX_UPLOAD)
     } else {
         // a servlet that takes larger bodies says so (`max-body`), as a search proxy does for a bulk load
         if let Some(max) = factory.and_then(|factory| factory.webapp_scripts().max_body_for(&request.path)) {
             return max;
         }
-        parse_size(&protection_setting(factory, "requests", "max-body", "webapp_max_body")).unwrap_or(DEFAULT_MAX_BODY)
+        parse_size(&protection_setting(factory, "requests", "max-body")).unwrap_or(DEFAULT_MAX_BODY)
     }
 }
 
 /// The cap on a `multipart/form-data` body sent with no user (no session signed in, no key, no Basic credentials that
-/// hold): `max-body` (`webapp_max_body`), when that is below the request's [`body_limit_for`] and the path is not one
-/// that takes uploads without a user (`web-protection` `requests` `anonymous-upload-paths`,
-/// `webapp_anonymous_upload_paths`: path prefixes, comma separated, such as a public share's file drop). None when no
+/// hold): `max-body`, when that is below the request's [`body_limit_for`] and the path is not one that takes uploads
+/// without a user (`web-protection` `requests` `anonymous-upload-paths`: path prefixes, comma separated, such as a
+/// public share's file drop). None when no
 /// such cap applies. The host asks who sent the request only when the body may be larger, so an anonymous request
 /// cannot have the server spool up to `max-upload` before anything is checked (SEC-RTE-07).
 pub fn anonymous_upload_limit(
@@ -1992,17 +1987,11 @@ pub fn anonymous_upload_limit(
     if !is_multipart(request) {
         return None;
     }
-    let anonymous =
-        parse_size(&protection_setting(factory, "requests", "max-body", "webapp_max_body")).unwrap_or(DEFAULT_MAX_BODY);
+    let anonymous = parse_size(&protection_setting(factory, "requests", "max-body")).unwrap_or(DEFAULT_MAX_BODY);
     if body_limit_for(factory, request) <= anonymous {
         return None;
     }
-    let paths = protection_setting(
-        factory,
-        "requests",
-        "anonymous-upload-paths",
-        "webapp_anonymous_upload_paths",
-    );
+    let paths = protection_setting(factory, "requests", "anonymous-upload-paths");
     (!open_upload_path(&paths, &request.path)).then_some(anonymous)
 }
 
@@ -2019,20 +2008,17 @@ fn open_upload_path(paths: &str, path: &str) -> bool {
 }
 
 /// The `webroot` webapp's `web-protection` setting: the attribute `name` of its child `child` (empty for
-/// `web-protection` itself), or the property `property` when the conf leaves it out or it expands to nothing.
+/// `web-protection` itself), of `factory`'s conf, else the running conf ([`conf_env::setting`]).
 pub fn protection_setting(
     factory: Option<&crate::context::ExecutionContextFactory>,
     child: &str,
     name: &str,
-    property: &str,
 ) -> String {
-    let configured = factory
-        .map(|factory| factory.web_protection_setting("webroot", child, name))
-        .unwrap_or_default();
-    if !configured.is_empty() || property.is_empty() {
-        return configured;
+    match factory {
+        Some(factory) => factory.web_protection_setting("webroot", child, name),
+        None if child.is_empty() => conf_env::setting(&format!("{}/web-protection@{name}", conf_env::WEBROOT)),
+        None => conf_env::setting(&format!("{}/web-protection/{child}@{name}", conf_env::WEBROOT)),
     }
-    moqui_lib::env::get_prop_or_env(property).trim().to_string()
 }
 
 pub fn is_multipart(request: &WebRequest) -> bool {
@@ -2046,9 +2032,10 @@ pub fn is_multipart(request: &WebRequest) -> bool {
 
 const DEFAULT_MAX_UPLOAD: usize = 2 * 1024 * 1024 * 1024;
 
-/// `webapp_max_upload`: bytes, or a number with a `k`, `m` or `g` suffix. 2 GiB when unset or not a size.
+/// The `webroot` webapp's `web-protection` `requests` `max-upload`: bytes, or a number with a `k`, `m` or `g` suffix.
+/// 2 GiB when unset or not a size.
 pub fn max_upload() -> usize {
-    parse_size(&moqui_lib::env::get_prop_or_env("webapp_max_upload")).unwrap_or(DEFAULT_MAX_UPLOAD)
+    parse_size(&protection_setting(None, "requests", "max-upload")).unwrap_or(DEFAULT_MAX_UPLOAD)
 }
 
 /// Bytes, or a number with a `k`, `m` or `g` suffix. `None` when `text` is not a size.
@@ -2072,20 +2059,16 @@ pub fn parse_size(text: &str) -> Option<usize> {
 }
 
 fn upload_executable_allowed() -> bool {
-    webroot_setting(None, "upload-executable-allow", "webapp_upload_executable_allow") == "true"
+    webroot_setting(None, "upload-executable-allow") == "true"
 }
 
-/// The `webroot` webapp's attribute `name` (Java's `WebappInfo`), or the property `property` when the conf leaves it out
-/// or it expands to nothing. With no factory given, the current context's, else only the property.
-fn webroot_setting(factory: Option<&crate::context::ExecutionContextFactory>, name: &str, property: &str) -> String {
-    let configured = match factory {
+/// The `webroot` webapp's attribute `name` (Java's `WebappInfo`): of `factory`'s conf, else the running conf
+/// ([`conf_env::webroot_setting`]).
+fn webroot_setting(factory: Option<&crate::context::ExecutionContextFactory>, name: &str) -> String {
+    match factory {
         Some(factory) => factory.webapp_setting("webroot", name),
-        None => ExecutionContext::with_current(|ec| ec.factory().webapp_setting("webroot", name)).unwrap_or_default(),
-    };
-    if !configured.is_empty() {
-        return configured;
+        None => conf_env::webroot_setting(name),
     }
-    moqui_lib::env::get_prop_or_env(property).trim().to_string()
 }
 
 /// Query, then a form body. A JSON object fills a name only when those did not already set it.
@@ -2413,15 +2396,15 @@ fn canonical_ip(text: &str) -> String {
 }
 
 pub(crate) fn require_session_token() -> bool {
-    webroot_setting(None, "require-session-token", "webapp_require_session_token") != "false"
+    webroot_setting(None, "require-session-token") != "false"
 }
 
 fn handle_cors(factory: Option<&crate::context::ExecutionContextFactory>) -> bool {
-    webroot_setting(factory, "handle-cors", "webapp_handle_cors") != "false"
+    webroot_setting(factory, "handle-cors") != "false"
 }
 
 fn allow_origins(factory: Option<&crate::context::ExecutionContextFactory>) -> Vec<String> {
-    webroot_setting(factory, "allow-origins", "webapp_allow_origins")
+    webroot_setting(factory, "allow-origins")
         .split(',')
         .map(str::trim)
         .filter(|text| !text.is_empty())
@@ -2676,18 +2659,18 @@ pub(crate) fn status_for(err: &Error) -> u16 {
 
 #[cfg(any(test, feature = "test-support"))]
 thread_local! {
-    /// A test's `instance_purpose` for this thread only, so it does not change other tests' instance.
+    /// A test's `instance@purpose` for this thread only, so it does not change other tests' instance.
     #[doc(hidden)]
     pub static TEST_PRODUCTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
-/// Whether this instance runs with `instance_purpose` production.
+/// Whether this instance runs with `instance@purpose` production.
 pub fn is_production() -> bool {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(production) = TEST_PRODUCTION.with(std::cell::Cell::get) {
         return production;
     }
-    moqui_lib::env::get_prop_or_env("instance_purpose") == "production"
+    crate::context::conf_env::instance_purpose() == "production"
 }
 
 /// The text a client gets for `err` sent with `status`. In production a 500's detail, which can hold SQL, file paths,

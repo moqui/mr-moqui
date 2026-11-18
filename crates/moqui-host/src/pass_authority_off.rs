@@ -21,15 +21,15 @@ use std::sync::Arc;
 
 use moqui_core::context::ExecutionContextFactory;
 
-pub(crate) const PORT_PROPERTY: &str = "pass_authority_grpc_port";
-pub(crate) const HOST_PROPERTY: &str = "pass_authority_grpc_host";
-pub(crate) const INSECURE_PROPERTY: &str = "pass_authority_grpc_insecure";
-const ENABLED_PROPERTY: &str = "pass_authority_grpc_enabled";
+pub(crate) const PORT_PROPERTY: &str = "pass-authority@grpc-port";
+pub(crate) const HOST_PROPERTY: &str = "pass-authority@grpc-host";
+pub(crate) const INSECURE_PROPERTY: &str = "pass-authority@grpc-insecure";
+const ENABLED_PROPERTY: &str = "pass-authority@grpc-enabled";
 
-/// Never: a `pass_authority_grpc_enabled=true` is logged as not built, once.
+/// Never: a `moqui_conf__pass_authority__grpc_enabled=true` is logged as not built, once.
 pub(crate) fn direct_enabled() -> bool {
     static LOGGED: std::sync::Once = std::sync::Once::new();
-    if moqui_lib::env::get_prop_or_env(ENABLED_PROPERTY).trim() == "true" {
+    if moqui_core::context::conf_env::setting(ENABLED_PROPERTY).trim() == "true" {
         LOGGED.call_once(|| {
             tracing::error!(
                 "{ENABLED_PROPERTY} is true, but this host has no PASS authority over gRPC (the edge feature)"

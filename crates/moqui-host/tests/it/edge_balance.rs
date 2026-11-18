@@ -13,7 +13,7 @@
  */
 
 //! Balancing a pool's traffic (plans/Edge-Node2.md §4.4, E17 part B). The edge node is a real server
-//! (`node_role=front_edge`) with a certificate for `shop.localhost`, a terminate host of one pairing.
+//! (`moqui_conf__instance__node_role=front_edge`) with a certificate for `shop.localhost`, a terminate host of one pairing.
 //!
 //! - **Regression** (`a_pool_shares_a_host_by_turn_and_a_session_stays_on_one_member`): the pool is two dialers of the
 //!   pairing, each with its own instance id and a [`FixedMember`] for its state and cluster, both serving one real local
@@ -44,7 +44,7 @@ use crate::edge_web::{authority, call, issue, pair_node, wait_until};
 
 const SHOP: &str = "shop.localhost";
 
-/// The edge node, started after the local server (`node_role` is a process property the local server must not read),
+/// The edge node, started after the local server (`instance@node-role` is a process property the local server must not read),
 /// with HTTPS on a port of its own and a certificate for `localhost` and [`SHOP`].
 fn start_edge(label: &str, root_cert: &(String, String)) -> (Gate, u16) {
     let port = crate::common::free_port();
@@ -52,7 +52,13 @@ fn start_edge(label: &str, root_cert: &(String, String)) -> (Gate, u16) {
     let edge = crate::common::start_second_with(
         label,
         "",
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port_text)],
+        &[
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+        ],
         &[("cert/default.crt", &root_cert.0), ("cert/default.key", &root_cert.1)],
     );
     (edge, port)
@@ -410,10 +416,10 @@ const MEMBER_LINK: &str = "MOQUI_EDGE_BALANCE_LINK";
 const MEMBER_TEST: &str = "edge_balance::balance_member_process";
 /// The generated secrets a second member of the cluster takes from the first: its session cookies are the first's.
 const SHARED_SECRETS: [&str; 4] = [
-    "session_cookie_key",
-    "cluster_tls_cert",
-    "cluster_tls_key",
-    "entity_ds_crypt_pass",
+    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+    "moqui_conf__cluster_member__tls_cert",
+    "moqui_conf__cluster_member__tls_key",
+    "moqui_conf__entity_facade__crypt_pass",
 ];
 
 /// A second member of the local cluster in a child process of this test binary, on the first's database, whose own
@@ -524,7 +530,7 @@ impl Pool {
         let local = crate::common::start_with_properties(
             &format!("{label}-local"),
             None,
-            &[("cluster_https_port", &cluster_port)],
+            &[("moqui_conf__cluster_member__https_port", &cluster_port)],
         );
         let (edge, port) = start_edge(&format!("{label}-edge"), &edge_cert);
         let rt = runtime();
@@ -543,7 +549,10 @@ impl Pool {
         .unwrap();
         // what the first member's .env would say, as the second's does: a node behind an edge node writes a new session
         // before its response (both servers of this process read it; the edge node's hook has started already)
-        moqui_lib::env::set_property(moqui_core::edge::NODE_URL, url.clone());
+        moqui_lib::env::set_property(
+            &moqui_core::context::conf_env::env_name_of(moqui_core::edge::NODE_URL),
+            url.clone(),
+        );
         let mut config = LocalConfig::new(&url, &paired.key, &paired.pin, &node);
         quick(&mut config);
         config.web = local_web(local.server.factory());

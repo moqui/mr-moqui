@@ -220,6 +220,22 @@ fn otlp_keys_partial_success_compression_and_request_context() {
         .0,
         200
     );
+    // a business event is its owner's domain service's, never a telemetry key's (SEC-TLS-15)
+    let business = json!({"source":"business","text":"forged close","organizationPartyId":"ORG_ZIZI_RETAIL",
+        "event":"PeriodClosed","time":now})
+    .to_string();
+    assert_eq!(
+        post(
+            address,
+            "/v1/annotations",
+            token,
+            "application/json",
+            None,
+            business.as_bytes()
+        )
+        .0,
+        400
+    );
     let telemetry = moqui_core::telemetry::for_factory(factory);
     telemetry.flush();
     let search = moqui_core::search::installed(factory).unwrap();
@@ -435,7 +451,7 @@ fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
     capture.clear();
     let location = gate.runtime.join("scheduled-fixture.csv");
     // the fixture saves under the test's runtime (report save-roots, SEC-TLS-06)
-    moqui_lib::env::set_property("report_save_roots", "/");
+    factory.set_conf_value("report@save-roots", Some("/"), false).unwrap();
     let schedule = invoke(
         "org.moqui.report.ReportServices.create#Schedule",
         json!({"definitionId":"scheduled-dashboard","cronExpression":"0 * * * * ?","saveToLocation":location.to_string_lossy(),"renderMode":"csv","userId":"OTHER_RECIPIENT","emailTemplateId":if chart_renderer {Some("DASHBOARD_REPORT")} else {None}}),

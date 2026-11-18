@@ -99,7 +99,6 @@ pub(crate) fn token_command(conf: &str, name: &str) -> Option<String> {
         .into_iter()
         .find(|node| node.attribute("name").as_deref() == Some(name))
         .and_then(|node| node.attribute("command"))
-        .map(|command| moqui_lib::env::expand(&command).unwrap_or(command))
         .filter(|command| !command.trim().is_empty())
 }
 

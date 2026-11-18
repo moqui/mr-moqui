@@ -16,7 +16,7 @@
 //! the finalize with this node's own key and request, and the certificate stored and written. One member of a cluster
 //! orders a name at a time, by its lock row; in this process one order per name runs at a time.
 //!
-//! The account's key is P-256, derived from `acme_account_key` (a secret in `runtime/.env`, generated at the first
+//! The account's key is P-256, derived from `acme@account-key` (a secret in `runtime/.env`, generated at the first
 //! start): the same key is the same account at each authority, created there at the first order (`newAccount` returns
 //! the existing one after that). The certificate's own key is a new P-256 key for each order.
 //!
@@ -61,15 +61,15 @@ const P256_PKCS8_HEAD: [u8; 35] = [
     0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x04, 0x27, 0x30, 0x25, 0x02, 0x01, 0x01, 0x04, 0x20,
 ];
 
-/// The account key from `seed` (the base64 of `acme_account_key`): a P-256 key whose scalar is a SHA-256 of the seed,
+/// The account key from `seed` (the base64 of `acme@account-key`): a P-256 key whose scalar is a SHA-256 of the seed,
 /// hashed again in the rare case it is not a valid scalar. The same seed is always the same key.
 pub(crate) fn account_key(seed: &str) -> Result<(instant_acme::Key, PrivateKeyDer<'static>), Error> {
     let seed = STANDARD
         .decode(seed.trim())
-        .map_err(|_| Error::new("acme_account_key is not base64"))?;
+        .map_err(|_| Error::new("acme@account-key is not base64"))?;
     if seed.len() < 16 {
         return Err(Error::new(
-            "acme_account_key is too short: it is the base64 of 32 random bytes",
+            "acme@account-key is too short: it is the base64 of 32 random bytes",
         ));
     }
     let mut scalar: [u8; 32] = Sha256::new()
@@ -85,7 +85,7 @@ pub(crate) fn account_key(seed: &str) -> Result<(instant_acme::Key, PrivateKeyDe
         }
         scalar = Sha256::digest(scalar).into();
     }
-    Err(Error::new("acme_account_key gives no P-256 key"))
+    Err(Error::new("acme@account-key gives no P-256 key"))
 }
 
 /// Order `host`'s certificate now, on this thread: the name must be set up. Its row says the outcome, and a failure
@@ -150,19 +150,19 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, host: &str) -> Resul
 }
 
 fn seed() -> Result<String, Error> {
-    let seed = moqui_lib::env::get_prop_or_env("acme_account_key");
+    let seed = moqui_core::context::conf_env::setting("acme@account-key");
     if seed.trim().is_empty() || seed.ends_with("CHANGEME") {
         return Err(Error::new(
-            "acme_account_key is not set; it is generated into runtime/.env at start",
+            "acme@account-key is not set; it is generated into runtime/.env at start",
         ));
     }
     Ok(seed)
 }
 
-/// `acme_directory_ca`: the root (a PEM file, absolute or under the runtime) an authority's HTTPS is checked against
+/// `acme@directory-ca`: the root (a PEM file, absolute or under the runtime) an authority's HTTPS is checked against
 /// in place of the operating system's, for a company's own authority; empty for the system's roots.
 fn directory_ca(factory: &ExecutionContextFactory) -> Option<std::path::PathBuf> {
-    let file = moqui_lib::env::get_prop_or_env("acme_directory_ca");
+    let file = moqui_core::context::conf_env::setting("acme@directory-ca");
     let file = file.trim();
     if file.is_empty() {
         return None;
@@ -179,7 +179,7 @@ fn directory_ca(factory: &ExecutionContextFactory) -> Option<std::path::PathBuf>
 fn builder(ca: Option<&std::path::Path>) -> Result<instant_acme::AccountBuilder, Error> {
     match ca {
         None => Account::builder().map_err(acme_error("the HTTPS client")),
-        Some(ca) => Account::builder_with_root(ca).map_err(acme_error(&format!("acme_directory_ca {}", ca.display()))),
+        Some(ca) => Account::builder_with_root(ca).map_err(acme_error(&format!("acme@directory-ca {}", ca.display()))),
     }
 }
 

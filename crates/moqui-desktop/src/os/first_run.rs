@@ -48,8 +48,8 @@ pub(crate) fn wizard_url(node: &Url) -> Url {
     url
 }
 
-/// Whether the node needs pairing: it has no `edge_node_url` (pairing writes it to `runtime/.env`, §5.1) and its
-/// `node_role` is not one that takes links (front, front_edge, edge or all-in-one). `property` is the node's own value where the
+/// Whether the node needs pairing: it has no `edge/node@url` (pairing writes it to `runtime/.env`, §5.1) and its
+/// `instance@node-role` (by its environment name) is not one that takes links (front, front_edge, edge or all-in-one). `property` is the node's own value where the
 /// host can read it (the node in process), `env_file` the runtime's `.env` (for a sidecar node too).
 pub(crate) fn needs_pairing(env_file: &str, property: impl Fn(&str) -> String) -> bool {
     let dotenv = moqui_lib::env::parse_dotenv(env_file);
@@ -65,7 +65,11 @@ pub(crate) fn needs_pairing(env_file: &str, property: impl Fn(&str) -> String) -
             .map(|(_, value)| value.clone())
             .unwrap_or_default()
     };
-    value(NODE_URL).trim().is_empty() && !NodeRole::parse(&value(NODE_ROLE)).takes_links()
+    let role = value(&moqui_core::context::conf_env::env_name_of(NODE_ROLE));
+    value(&moqui_core::context::conf_env::env_name_of(NODE_URL))
+        .trim()
+        .is_empty()
+        && !NodeRole::parse(&role).takes_links()
 }
 
 #[cfg(test)]

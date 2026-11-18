@@ -24,6 +24,7 @@
         T.tempSequences = [];
         T.dataErrors = [];
         T.properties = new Map();
+        T.confs = new Map();
     };
     T.reset(null);
     // the process properties a spec changed (setProperty, withProperty: server.js), each with the value it had before
@@ -33,6 +34,10 @@
         const properties = T.properties;
         T.properties = new Map();
         for (const [name, before] of properties) __moquiTestHost.setProperty(name, before);
+        // the conf attributes it set (setConf, withConf), the same way
+        const confs = T.confs;
+        T.confs = new Map();
+        for (const [selector, before] of confs) __moquiTestHost.setConf(selector, before);
     };
     T.setConditions = (conditions) => { T.conditions = conditions; };
 

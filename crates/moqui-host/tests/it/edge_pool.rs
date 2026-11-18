@@ -13,7 +13,7 @@
  */
 
 //! Pools of local nodes and failover to a standby (plans/Edge-Node2.md §4.4, §4.5, E17 part A). The edge node is a
-//! real server (`node_role=front_edge`); the members are dialers with explicit configs sharing one pairing's key, each
+//! real server (`moqui_conf__instance__node_role=front_edge`); the members are dialers with explicit configs sharing one pairing's key, each
 //! naming its own instance id, with a [`FixedMember`] for its state and its cluster's member list (no server), except
 //! where a delivery must be applied, which a real local server does (`local_web`).
 //!
@@ -511,15 +511,24 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
     }
     let certs = certs();
     // the local node keeps its queue rows and receipts by the pairing its link names, whichever member applies; an
-    // edge_node_pairing that says another is logged and written again
-    let local =
-        crate::common::start_with_properties("edge-again-local", None, &[("edge_node_pairing", "stale-pairing")]);
+    // edge/node@pairing that says another is logged and written again
+    let local = crate::common::start_with_properties(
+        "edge-again-local",
+        None,
+        &[("moqui_conf__edge__node__pairing", "stale-pairing")],
+    );
     let port = crate::common::free_port();
     let port_text = port.to_string();
     let edge = crate::common::start_second_with(
         "edge-again-edge",
         "",
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port_text)],
+        &[
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+        ],
         &[
             ("cert/default.crt", &certs.cert_pem),
             ("cert/default.key", &certs.key_pem),
@@ -565,7 +574,7 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
     });
     let applied = receipt(&local, "pool-a", &id).unwrap();
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap_or_default();
-    assert!(env.contains("edge_node_pairing=pool-a"), "{env}");
+    assert!(env.contains("moqui_conf__edge__node__pairing=pool-a"), "{env}");
     first.stop();
     wait_until(Duration::from_secs(5), "the first member unlinked", || {
         client(&edge, "pool-a")["linked"] == "false"
@@ -631,10 +640,10 @@ const MEMBER_ENV: &str = "MOQUI_EDGE_POOL_MEMBER_CLUSTER";
 const MEMBER_TEST: &str = "edge_pool::pool_member_process";
 /// The generated secrets a second member of the cluster takes from the first.
 const SHARED_SECRETS: [&str; 4] = [
-    "session_cookie_key",
-    "cluster_tls_cert",
-    "cluster_tls_key",
-    "entity_ds_crypt_pass",
+    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+    "moqui_conf__cluster_member__tls_cert",
+    "moqui_conf__cluster_member__tls_key",
+    "moqui_conf__entity_facade__crypt_pass",
 ];
 
 /// A second member of a local server's cluster, on its database, in a child process of this test binary: its member
@@ -715,7 +724,7 @@ fn pool_member_process() {
     drop(runtime);
 }
 
-/// The edge node after the local servers (`node_role` is a process property they must not read), and the pairing of
+/// The edge node after the local servers (`instance@node-role` is a process property they must not read), and the pairing of
 /// `local` under its own instance id: the edge node, the pairing's key, and its URL.
 fn edge_for(
     label: &str,
@@ -727,7 +736,13 @@ fn edge_for(
     let edge = crate::common::start_second_with(
         label,
         "",
-        &[("node_role", "front_edge"), ("webapp_https_listen_port", &port_text)],
+        &[
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+        ],
         &[
             ("cert/default.crt", &certs.cert_pem),
             ("cert/default.key", &certs.key_pem),
@@ -767,8 +782,11 @@ fn clients_shows_a_cluster_member_that_is_live_but_not_linked() {
     }
     let certs = certs();
     let cluster_port = crate::common::free_port().to_string();
-    let local =
-        crate::common::start_with_properties("edge-pool-cluster", None, &[("cluster_https_port", &cluster_port)]);
+    let local = crate::common::start_with_properties(
+        "edge-pool-cluster",
+        None,
+        &[("moqui_conf__cluster_member__https_port", &cluster_port)],
+    );
     let second = ChildMember::start(&local.cluster_dir);
     let (edge, paired, url) = edge_for("edge-pool-cluster-edge", &local, &certs);
     let rt = runtime();
@@ -831,7 +849,10 @@ fn a_standby_takes_over_gets_the_queued_items_once_and_the_first_machine_is_refu
     let (edge, paired, url) = edge_for("edge-pool-failover-edge", &first, &certs);
     let pairing = moqui_core::cluster::instance_id(first.server.factory()).unwrap();
     // the .env both machines share names the pairing (written at pairing), which their queue rows and receipts use
-    moqui_lib::env::set_property(moqui_core::edge::NODE_PAIRING, pairing.clone());
+    moqui_lib::env::set_property(
+        &moqui_core::context::conf_env::env_name_of(moqui_core::edge::NODE_PAIRING),
+        pairing.clone(),
+    );
     let rt = runtime();
     let (_, dialer, _stop) = server_dialer(&rt, &first, &paired, &url);
     wait_status(&dialer, Duration::from_secs(10), "the first machine linked", |status| {

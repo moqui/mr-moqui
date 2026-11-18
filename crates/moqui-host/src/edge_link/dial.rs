@@ -34,7 +34,7 @@
 //! up and down, each with its own generation and status; the edge members' calls are taken on each. This node's own
 //! work goes up one of them at a time, the link that carries the work ([`Cluster::elect`]): its outbox, its replicated
 //! sets, the sender lock and the edge node's call rows. Each link keeps its own route for call signaling, to its member,
-//! and a ban goes to every member ([`crate::guard_share`] by `edge_node_id`), as each keeps its own in memory.
+//! and a ban goes to every member ([`crate::guard_share`] by `edge/node@id`), as each keeps its own in memory.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -261,7 +261,7 @@ struct Prepared {
 
 fn prepare(config: &LocalConfig) -> Result<Prepared, String> {
     let url = parse_url(&config.url)?;
-    let pin = parse_hex(&config.pin).ok_or_else(|| "edge_node_pin is not a SHA-256 fingerprint".to_string())?;
+    let pin = parse_hex(&config.pin).ok_or_else(|| "edge/node@pin is not a SHA-256 fingerprint".to_string())?;
     let identity = Identity::from_key(&config.key, &config.instance_id)?;
     let tls = client_config(&ServerTrust::Pinned(pin), Some(&identity))?;
     Ok(Prepared { url, tls })
@@ -879,7 +879,7 @@ impl Cluster {
                     .members
                     .iter()
                     .map(|member| match member.link_url.as_str() {
-                        "" => format!("{} (no edge_link_url)", member.instance_id),
+                        "" => format!("{} (no edge@link-url)", member.instance_id),
                         url => format!("{} at {url}", member.instance_id),
                     })
                     .collect();
@@ -915,7 +915,7 @@ impl Cluster {
         }
         known.save(self.config.members_file.as_deref());
         tracing::info!("Edge link: edge member {id} is learned");
-        // under the list's lock, so two links learning at once do not each write `edge_node_id` over the other's
+        // under the list's lock, so two links learning at once do not each write `edge/node@id` over the other's
         if let Some(on_pin) = &self.config.on_pin {
             on_pin(id);
         }
@@ -1297,7 +1297,7 @@ pub(crate) fn role_matches(config: &LocalConfig, role: &str) -> Result<(), Strin
 }
 
 /// The pairing the edge node keys this node by, as its Hello answer said (plans/Edge-Node2.md §4.4): this server's
-/// queue rows and receipts are kept by it from now (`moqui_core::edge::queue::set_pairing_id`). When `edge_node_pairing`
+/// queue rows and receipts are kept by it from now (`moqui_core::edge::queue::set_pairing_id`). When `edge/node@pairing`
 /// says another, or nothing, that is logged as an error and the runtime's `.env` is written again with this one.
 fn note_pairing(config: &LocalConfig, pairing: &str) {
     // the queue's rows are the edge pairing's: a front node keys this node too, but carries none of them
@@ -1311,20 +1311,20 @@ fn note_pairing(config: &LocalConfig, pairing: &str) {
         return;
     }
     moqui_core::edge::queue::set_pairing_id(&factory, pairing);
-    let written = moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_PAIRING);
+    let written = moqui_core::context::conf_env::setting(moqui_core::edge::NODE_PAIRING);
     if written.trim() == pairing {
         return;
     }
     tracing::error!(
-        "Edge link: the edge node keys this node as pairing {pairing}, and edge_node_pairing says {:?}; runtime/.env \
+        "Edge link: the edge node keys this node as pairing {pairing}, and edge/node@pairing says {:?}; runtime/.env \
          is written with {pairing}, which this server uses from now",
         written.trim()
     );
     let env = factory.runtime_dir().join(".env");
     let set = [(moqui_core::edge::NODE_PAIRING.to_string(), pairing.to_string())];
-    if let Err(err) = moqui_lib::env::update_dotenv_file(&env, &set, &[]) {
+    if let Err(err) = moqui_core::context::conf_env::keep_in_env(&env, &set, &[]) {
         tracing::error!(
-            "Edge link: edge_node_pairing was not written to {}: {err}",
+            "Edge link: edge/node@pairing was not written to {}: {err}",
             env.display()
         );
     }
@@ -1634,7 +1634,7 @@ async fn link_once(
 /// (plans/Edge-Node2.md §4.7).
 fn remember_ssh(config: &LocalConfig, up: &UpLink) {
     if !config.front
-        && !moqui_lib::env::get_prop_or_env(moqui_core::edge::FRONT_URL)
+        && !moqui_core::context::conf_env::setting(moqui_core::edge::FRONT_URL)
             .trim()
             .is_empty()
     {
@@ -1797,7 +1797,7 @@ fn run_internal(
 /// member of a clustered local node that is the replication sender (`role`, plans/Edge-Node2.md §4.4) and on no other:
 /// written when it becomes the sender and again every `every`, from the link's liveness, so they go stale (and their
 /// calls end, `expire#Calls`) only when the link has been down past the nodes' grace. An edge node with no media, or no
-/// SIP engine, has that row removed. With this node's `edge_calls_enabled` off the media row is draining, read again
+/// SIP engine, has that row removed. With this node's `edge/node@calls-enabled` off the media row is draining, read again
 /// each time, so the wizard's choice holds (E10 calls). The SIP row's realm is the Hello's until a Configure's offer
 /// says another ([`Dialer::note_configured`]), which writes the row at once. Every link runs one, for its own edge
 /// member (plans/Edge-Node2.md §4.6); the fallbacks are the work link's ([`keep_fallbacks`]).
@@ -1857,7 +1857,7 @@ async fn keep_media_node(
 
 /// The phone numbers' fallbacks (E8), on the member of a clustered local node that is the replication sender, over the
 /// link that carries the work: written when it becomes the sender and every [`REFRESH_EVERY`], while this node's
-/// `edge_sip_enabled` is on (E10 phones). Their copies are shared by the edge cluster's members, so one link writes them.
+/// `edge/node@sip-enabled` is on (E10 phones). Their copies are shared by the edge cluster's members, so one link writes them.
 async fn keep_fallbacks(factory: Weak<ExecutionContextFactory>, mut role: tokio::sync::watch::Receiver<Option<u64>>) {
     loop {
         if role.borrow_and_update().is_none() {

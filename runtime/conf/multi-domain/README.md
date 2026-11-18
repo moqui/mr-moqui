@@ -22,10 +22,10 @@ claimed it first. Isolation is reasonable, not multi-tenant: one operator, relat
 
 ## `.env`
 
-- **Edge node**: as for one local node ([../edge/README.md](../edge/README.md)): `webapp_http_host`,
-  `edge_public_addresses`, the mail, calls, SIP and XMPP settings, and a WebPKI certificate in `cert/` for its own
+- **Edge node**: as for one local node ([../edge/README.md](../edge/README.md)): `webapp-list/webapp[webroot]@http-host`,
+  `edge@public-addresses`, the mail, calls, SIP and XMPP settings, and a WebPKI certificate in `cert/` for its own
   name and each terminate host. SSH ports per node are rows (System › Edge Clients › Ports), not `.env`.
-- **Each local node**: `webapp_http_host`, `xmpp_domain` and `sip_domain` of its own, and a certificate in `cert/` for
+- **Each local node**: `webapp-list/webapp[webroot]@http-host`, `xmpp-server@domain` and `sip-server@domain` of its own, and a certificate in `cert/` for
   each passthrough name. Pairing and the wizard write the rest.
 
 Each conf's comments say what each setting does.

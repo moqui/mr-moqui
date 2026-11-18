@@ -206,7 +206,7 @@ fn large_files_stream_with_ranges_and_validators() {
     let left = std::fs::read_dir(&spool).map(|entries| entries.count()).unwrap_or(0);
     assert_eq!(left, 0, "no spool file is left");
 
-    // SEC-RTE-07: the same upload with no user (a wrong password is none) stops at webapp_max_body, before it is read
+    // SEC-RTE-07: the same upload with no user (a wrong password is none) stops at webapp-list/webapp[webroot]/web-protection/requests@max-body, before it is read
     for authorization in ["", "Authorization: Basic am9obi5kb2U6d3Jvbmc=\r\n"] {
         let head = format!(
             "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{authorization}\

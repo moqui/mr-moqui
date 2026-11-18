@@ -580,13 +580,16 @@ fn the_login_page_and_the_root_render_as_html_and_a_failed_login_comes_back_with
     let (status, headers, text) = multipart("fields", "");
     assert_eq!(status, 302, "{text}");
     assert_eq!(header(&headers, "location").as_deref(), Some("/Login"));
-    moqui_lib::env::set_property("webapp_max_upload", "1k");
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_upload",
+        "1k",
+    );
     let big = format!(
         "--B0\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"a.txt\"\r\n\r\n{}\r\n",
         "x".repeat(2000)
     );
     let (status, _, text) = multipart("big", &big);
-    moqui_lib::env::clear_property("webapp_max_upload");
+    moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_upload");
     assert_eq!(status, 413, "{text}");
 
     // the applications screen is html for a signed-in user, with the navbar the shell builds

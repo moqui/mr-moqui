@@ -73,15 +73,15 @@ On the server:
 2. Put the certificate for your host in `/opt/moqui/cert/`, for example certbot's `cert/erp.example.com/fullchain.pem`
    and `privkey.pem` ([certificates](#certificates)).
 3. Write the host's settings to `/opt/moqui/.env`. The first start adds the generated secrets to the same file.
-   `webapp_https_port` is the port clients use; leave it out when they reach the server on 443.
-   `initial_admin_enabled=true` turns on the form that creates the first administrator (step 5); it is off unless set.
+   `webapp-list/webapp[webroot]@https-port` is the port clients use; leave it out when they reach the server on 443.
+   `moqui_conf__user_facade__login__initial_admin_enabled=true` turns on the form that creates the first administrator (step 5); it is off unless set.
 
    ```sh
    sudo -u moqui tee /opt/moqui/.env > /dev/null <<'EOF'
-   webapp_http_host=erp.example.com
-   webapp_https_enabled=true
-   webapp_https_port=8443
-   initial_admin_enabled=true
+   moqui_conf__webapp_list__webapp__WEBROOT__http_host=erp.example.com
+   moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true
+   moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443
+   moqui_conf__user_facade__login__initial_admin_enabled=true
    EOF
    sudo chmod 600 /opt/moqui/.env
    ```
@@ -98,8 +98,9 @@ On the server:
    form is there only while nobody has an account. From any machine but the server itself it also asks for the setup
    secret, which the server writes to its log at startup (`moqui.log`, the line that begins "No user account exists
    yet"). Check **Also join Administrators - Advanced** only if this account needs the advanced tools
-   ([the first administrator](#the-first-administrator)). Then take `initial_admin_enabled=true` out of `.env`.
-6. Back up `/opt/moqui/.env` with the database. It holds `entity_ds_crypt_pass`, the key of the encrypted fields.
+   ([the first administrator](#the-first-administrator)). Then take `moqui_conf__user_facade__login__initial_admin_enabled=true` out of `.env`.
+6. Back up `/opt/moqui/.env` with the database. It holds `moqui_conf__entity_facade__crypt_pass`, the key of the encrypted
+   fields.
 
 Upgrades, backups, binding port 443 and the rest are in [One production server](#one-production-server).
 
@@ -157,7 +158,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run the dev server | `./moq run` | `./gradlew run` |
 | Run on another port | `./moq run -p 8081` | `java -jar moqui.war port=8081` |
 | Run with the production conf | `./moq run-production` | `./gradlew runProduction` |
-| Set a property for one run | `./moq run -D entity_ds_db_conf=postgres` | `-Dentity_ds_db_conf=postgres` |
+| Set a conf attribute for one run | `./moq run -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres` | `-Dmoqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres` |
 | Load every data type | `./moq load` | `./gradlew load` |
 | Load some types | `./moq load seed seed-initial install` | `./gradlew load -Ptypes=seed,seed-initial,install` |
 | Load one component's data | `./moq load seed components=mr-mantle` | `java -jar moqui.war load components=...` |
@@ -208,14 +209,15 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
   warns at start when it finds them on a production one. A production image leaves them out: `./moq build --enterprise`,
   or Maximal without them (`cargo build --profile release --no-default-features -F maximal -p moqui`)
   ([Packaging](Build-Test.md#packages), SEC-OUT-14).
-- **Purpose**: `instance_purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
+- **Purpose**: `instance@purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Secrets**: the first start writes generated secrets to `runtime/.env` with mode 0600. Keep the file private and back
-  it up. Without `entity_ds_crypt_pass` the encrypted fields cannot be read ([conf](#runtime-directory-and-conf)).
+  it up. Without `moqui_conf__entity_facade__crypt_pass` the encrypted fields cannot be read
+  ([conf](#runtime-directory-and-conf)).
 - **Data**: no demo data, so no `john.doe` with password `moqui` ([first start](#data-and-the-first-start)).
-- **HTTPS**: a certificate in `runtime/cert`, or a proxy in front with `webapp_trusted_proxies` set
+- **HTTPS**: a certificate in `runtime/cert`, or a proxy in front with `webapp-list/webapp[webroot]@trusted-proxies` set
   ([HTTPS](#https-ports-and-proxies)).
-- **Ports**: firewall 8080. `webapp_http_bind` sets the address of both HTTP and HTTPS, so `127.0.0.1` suits only a
+- **Ports**: firewall 8080. `webapp-list/webapp[webroot]@http-bind` sets the address of both HTTP and HTTPS, so `127.0.0.1` suits only a
   server behind a proxy on the same machine. The cluster listener (8444) starts on every server, on every address, so
   firewall it unless cluster members use it ([ports](#ports)).
 - **Backups**: run the embedded database's backup job, or back up the external database
@@ -223,7 +225,7 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
 - **Disk and memory**: the thresholds at which the System home warns are `resource-watch`'s; copy the disk, memory
   and CPU alert rules so someone is told ([resource watch](#resource-watch)).
 - **Listeners**: SSH, inbound SMTP, A2A, MCP and the LLM gateway are off by default. Turn on only the ones that are used.
-- **CORS**: leave `webapp_allow_origins` empty. The dev conf names `localhost,127.0.0.1` (this machine on any port);
+- **CORS**: leave `webapp-list/webapp[webroot]@allow-origins` empty. The dev conf names `localhost,127.0.0.1` (this machine on any port);
   `*` is never sent with credentials.
 - **Lock-down**: the full list is in [Attack-Surface.md, Heavy lock-down](security/Attack-Surface.md#heavy-lock-down).
 
@@ -295,7 +297,7 @@ this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch
 the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
 and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
 start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
-`moqui_chromium_path` and `runtime/chromium`, before an installed one.
+`screen-facade/pdf@chromium-path` and `runtime/chromium`, before an installed one.
 
 **Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
 (the packed runtime files as built), and `postgres`, `opensearch` and `chromium` (each the `sha256sum` of the archive
@@ -332,112 +334,148 @@ or SIGHUP, and the file watcher on a dev instance), and lists the rest as waitin
 component is the exception: `example_disabled=true` leaves it out. The demo dev component is off until
 `demo_disabled=false` or a conf names it ([Public demo server](#public-demo-server)).
 
-### Properties
+### Settings and the environment
 
-A `default-property` in a conf is a default only. A property is looked up in this order:
+Every setting is an attribute of an element of the merged conf, with its default written in `MoquiDefaultConf.xml`
+(or, for a component's own settings, the component's `MoquiConf.xml`: basic-comms' `comms`, mr-pass's `pass`). A conf
+file sets one by its element: `<ssh-server port="2222"/>` in the runtime conf. Docs, scripts and System › Conf name a
+setting by its path, a selector: `ssh-server@port`, `webapp-list/webapp[webroot]@http-port` (a keyed element's key in
+brackets).
+
+Any attribute can also be set from the environment, over every conf file, by a name built from the same path:
+
+```sh
+moqui_conf__ssh_server__port=2222                              # ssh-server@port
+moqui_conf__webapp_list__webapp__WEBROOT__http_port=8091       # webapp-list/webapp[webroot]@http-port
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
+```
+
+The name is `moqui_conf__`, then each element from the root with `__` between them, a keyed element's key value after
+it (in capitals by convention, so it stands out), and the attribute last. Case does not matter, nor punctuation within
+a segment (`http_port`, `HTTP_PORT` and `http-port` are one name). A name is looked up in this order, and the first
+that is set wins over every conf file:
 
 1. a `-D name=value` on the command line (`./moq -D` sets it as an environment variable);
 2. the process environment;
-3. `runtime/.env`;
-4. the merged conf's `default-property`.
+3. `runtime/.env`.
 
-Use the underscore names (`entity_ds_db_conf`), not dotted ones. An empty value counts as unset, so it cannot clear a
-conf's default; to clear one, override the `default-property` in the runtime conf.
+An empty value is not applied, so it cannot clear a setting; to clear one, set the attribute empty in the runtime conf.
+A name for an element or attribute the conf does not have adds it, with a warning when its element is in the files
+(most often a misspelled name). `moqui conf env [text]` lists every attribute with its name and value (secrets masked)
+and where it was set, and System › Conf shows each attribute's name and what set it. The boot logs each name it applied.
 
 `runtime/.env` holds `KEY=value` lines. Blank lines and `#` comments are ignored, a matching pair of quotes is
-stripped, and `$` is not expanded. It is read after the conf merge, so it cannot select `MOQUI_CONF`. An archive made
-with `--no-data` leaves it out, so it is the place for per-host settings that should survive an upgrade.
+stripped, and `$` is not expanded. It is read before the conf merge, but cannot select `MOQUI_CONF`. An archive made
+with `--no-data` leaves it out, so it is the place for per-host settings and secrets that should survive an upgrade.
 
-When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
-covers `entity_ds_crypt_pass`, `session_cookie_key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
-`cluster_tls_key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
-`mail_dkim_key` (empty by default) is made there too, the first time a server needs it.
+When a secret attribute is still `CHANGEME` at startup, a value is generated and written to `runtime/.env` under its
+name. This covers `webapp-list/webapp[webroot]/session-config@cookie-key`, `entity-facade@crypt-pass`,
+`ssh-server@host-key`, `git-server@lfs-token-key`, the pair `cluster-member@tls-cert` and `cluster-member@tls-key`
+(made together), `edge@link-key` and the other keys the default conf leaves at `CHANGEME`. A new file gets mode 0600,
+and a `.env` that cannot be written fails the start. `mail-delivery/dkim@key` (empty by default) is made there too, the
+first time a server needs it. A secret is never logged, is masked wherever the conf is shown, and is null to a
+script's `ec.factory.getConfValue`.
 
-The properties most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
+A conf attribute holds its value as written: `${...}` is not expanded, and a conf that still has a `${` in an
+attribute, or a `default-property` element, refuses to start, naming each attribute and the environment name that
+sets it. Process properties remain for what is not configuration: the state the server sets as it runs, the switches
+of a test run, and the `${}` of a `component.xml` (`example_disabled`).
 
-| Property | Default | What it does |
+**Upgrading from properties.** Settings were once `default-property` entries with flat names (`entity_ds_crypt_pass`,
+`webapp_http_port`), referenced as `${name}` from attributes. Those names are no longer read, in the environment, in
+`runtime/.env` or in a conf file. Move each to its attribute's name (`moqui conf env` lists them); in particular copy
+the old secrets to their new names before the first start, or a new one is generated: `entity_ds_crypt_pass` to
+`moqui_conf__entity_facade__crypt_pass` (without it encrypted fields can no longer be read: `./moq clean-db` and
+`./moq load` for a dev runtime), the session cookie key, `ssh_host_key` (else the SSH host key changes) and the edge link
+key (else each local node must pair again).
+
+The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
+
+| Setting | Default | What it does |
 |---|---|---|
-| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
-| `default_locale`, `default_time_zone`, `database_time_zone` | `en_US`, `UTC`, `UTC` | |
-| `webapp_http_host` | empty: the request's host | The host in generated URLs |
-| `webapp_http_bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
-| `webapp_http_port` | empty: 8080 | The HTTP listen port (`-p`) |
-| `webapp_https_listen_port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
-| `webapp_https_port` | empty: 443 | The HTTPS port in generated URLs and redirects |
-| `webapp_https_enabled` | `false` | `true` makes generated URLs https |
-| `webapp_allow_origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
-| `webapp_trusted_proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
-| `webapp_client_ip_header` | empty | The header those proxies put the client address in |
-| `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
-| `scheduled_job_check_time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
-| `terminal_command_line`, `terminal_host_sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `true` on for any purpose, `false` off; any other value, empty included, is off with an error in the log ([Terminal](ui/Terminal.md#conf)) |
-| `terminal_remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `terminal_remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
-| `moqui_chromium_path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
-| `load_runner_targets`, `load_runner_max_runs`, `load_runner_max_users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
-| `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
-| `rtc_media_port`, `rtc_media_host`, `rtc_public_address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `rtc_media_port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
-| `call_ring_seconds` | `45` | How long a call rings before it is missed |
-| `call_guest_joins_per_minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
-| `chat_server_name`, `chat_to_device_retention_days` | `localhost`, `30` | The server name in the Matrix user IDs of browsers' crypto devices (set it before the first device: a change makes every device new), and how long a to-device message waits for a device that does not take it ([Chat keys](interfaces/Chat-Keys.md)) |
-| `chat_store_key_secret` | generated | The platform secret each crypto device's browser-store key is derived under (HMAC of user, device and revision), so no table holds the keys. A new value makes every browser's store unreadable: each makes a new device and reads older messages from the key backup ([Chat keys](interfaces/Chat-Keys.md)) |
-| `rtc_cascade_enabled` | `false` | Cascading media nodes ([WebRTC](interfaces/WebRTC.md#cascading-media-nodes)): a leg's media goes to the media node of its own socket, which relays to the call's node over both nodes' `rtc_media_port`; set it on every node |
-| `call_captions_enabled`, `call_captions_provider`, `call_captions_store` | `false`, `llm`, `false` | Live captions in calls ([WebRTC, Captions](interfaces/WebRTC.md#captions)): off unless `true`; the provider is the model bound to the `transcribe` feature (`local`, speech-local, is not built yet); `true` keeps each caption as a `CallTranscript` |
-| `call_captions_chunk_seconds`, `call_captions_queue`, `call_captions_workers`, `call_captions_timeout_seconds`, `call_captions_language` | `5`, `6`, `2`, `20`, empty | The longest chunk of speech sent, the chunks that wait (past this the oldest is dropped), how many of a call's go at once (all calls on a node together use at most half the service pool), how long one may take, and the language (empty lets the model tell) |
-| `turn_port`, `turn_tls_port`, `turn_tls443_host`, `turn_public_host`, `turn_auth_secret`, `turn_external_urls`, ... | empty; the secret generated | The embedded TURN server, or coturn instead ([TURN](interfaces/TURN.md)) |
-| `call_recording_enabled`, `call_recording_ack_required`, `call_recording_policy_revision` | `false`, `false`, `1` | Call recording by a call's host, with a notice to every leg, and whether each leg must acknowledge it ([Call recording](interfaces/Call-Recording.md)) |
-| `call_recording_retention_days` | `90` | Recordings are deleted this long after they start; `0` keeps them |
-| `call_recording_queue_frames`, `call_recording_segment_mb`, `call_recording_segment_minutes`, `call_recording_max_mb` | `4096`, `64`, `30`, `2048` | The recorder's queue, when a file is cut into the next segment, and where a recording stops |
-| `call_recording_prompt_audio`, `call_captions_prompt_audio` | empty | WAV files a phone leg hears after the recording and captions tones ([SIP, Notices](interfaces/SIP.md#notices)) |
-| `sip_port`, `sip_host`, `sip_tls_port`, `sip_tls_host`, `sip_rtp_ports`, `sip_rtp_host`, `sip_public_address`, `sip_tls_ca_file` | empty, `127.0.0.1`, empty, `sip_host`, `20000-20999`, `sip_host`, empty, the system bundle | Phone calls over SIP trunks ([SIP](interfaces/SIP.md)); off while both ports are empty, and only beside call media; the public address is what trunks are told in Contact and SDP |
-| `channels_webhooks_enabled`, `channels_webhook_max_bytes` | `false`, `262144` | The chat bridges' routes a provider calls: `POST /channels/{chatBridgeId}/webhook` (its body at most this many bytes) and `GET /channels/{chatBridgeId}/media/{token}` ([SMS](interfaces/SMS.md)) |
-| `channels_public_url`, `channels_media_key`, `channels_media_minutes` | empty, generated, `60` | The https base a provider reaches this server at, for the files of an MMS that goes out (none without it), the key their addresses are signed with, and how long one works |
-| `channels_edge_webhooks_per_minute`, `channels_edge_webhooks_per_client_minute`, `channels_edge_unverified_max_bytes`, `channels_edge_unverified_waiting` | `600`, `120`, `32768`, `500` | On an edge node, for a bridge whose provider signs with a secret it does not hold (the local node checks them): the webhooks a minute it queues for the bridge and from one client address, the largest body, and how many of the bridge's may wait; past them 413 or 429 |
-| `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`, `sip_max_connections_per_source` | `20`, `100`, `2000`, `500`, `100` | The SIP listener's flood caps: new requests a second per source and at once, the transactions past which new requests are dropped, TCP and TLS connections at once, and from one source ([SIP, Settings](interfaces/SIP.md#settings)) |
-| `sip_registrar_enabled`, `sip_domain` | `false`, empty | The registrar for desk and soft phones, off even with the SIP listeners on; the realm and domain phones register to (`sip_public_address`, else `moqui`, when empty) ([SIP, Registrar](interfaces/SIP.md#registrar)) |
-| `xmpp_domain`, `xmpp_rooms_domain`, `xmpp_upload_domain` | empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): off while `xmpp_domain` is empty; users are `user@<domain>`, rooms `room@rooms.<domain>` |
-| `xmpp_port`, `xmpp_host`, `xmpp_tls_port`, `xmpp_tls_host`, `xmpp_websocket_enabled` | empty, `0.0.0.0`, empty, `xmpp_host`, `false` | The XMPP client listeners: STARTTLS (5222 by convention) and direct TLS (5223), each off while empty; `/xmpp-websocket` on the HTTP listener when `true` |
-| `xmpp_upload_url`, `xmpp_upload_max_bytes`, `xmpp_upload_secret` | `https://<domain>` (with `webapp_https_port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
-| `xmpp_resume_seconds`, `xmpp_fast_token_days` | `300`, `14` | How long a dropped session waits for stream resumption, and how long a FAST token lasts |
-| `xmpp_upload_seconds` | `300` | The longest a PUT to an upload slot may take |
-| `xmpp_turn_enabled`, `xmpp_turn_per_hour` | `false`, `30` | External services (XEP-0215): TURN credentials for XMPP apps' calls, never to an external user, at most so many a user an hour |
-| `xmpp_scram_decoy_key` | generated | Derives the SCRAM salts of names that are no user's, so they stay the same across restarts and nodes |
-| `xmpp_s2s_port` | empty | Server to server (5269, federation, C3b): not built, nothing listens on it yet |
-| `call_forward_max_hops`, `call_forward_ring_seconds` | `5`, `30` | The most forwards one phone call takes (a user's rules, a ring group's fallback; 1 to 10), and how long a forward to an outside number rings before the call goes on (10 to 120) ([SIP, Call handling](interfaces/SIP.md#call-handling)) |
-| `call_queue_tick_seconds`, `call_transfer_ring_seconds` | `5`, `30` | How often the SIP engine checks each call waiting in a queue (offers, the wait limit, the caller's place; 1 to 30), and how long a blind transfer's target rings before the caller goes to their voicemail (10 to 120) ([SIP, Queues](interfaces/SIP.md#queues), [Transfer and merge](interfaces/SIP.md#transfer-and-merge)) |
-| `call_hold_music_location`, `call_queue_prompt_location` | empty | Hold music for calls on hold and in queues without their own (WAV or Ogg Opus, looped; empty: a tone pattern; use only audio you may use), and a folder of `0.wav` to `9.wav` that speaks a queue caller's place (empty: pips) ([SIP, Queues](interfaces/SIP.md#queues)) |
-| `sip_registrar_min_expires`, `sip_registrar_max_expires`, `sip_registrar_default_expires`, `sip_registrar_nat_expires` | `60`, `3600`, `600`, `60` | A phone binding's expiry in seconds: its bounds, when the phone asks none, and behind a NAT without Outbound ([SIP, Registrar](interfaces/SIP.md#registrar)) |
-| `voicemail_max_seconds`, `voicemail_trash_days` | `120`, `30` | The longest voicemail message (10 to 600), and how long a deleted one waits in the trash before it and its audio go (0 keeps them) ([Voicemail](interfaces/Voicemail.md)) |
-| `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
-| `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
-| `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
-| `node_role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it ([A front node](#a-front-node), [Full stack](#full-stack)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
-| `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
-| `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
-| `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
-| `edge_sip_enabled` | empty (on) | On a paired local node, whether its trunks and phones go through the edge node's SIP engine; `false` sends the replicated sets `voiceTrunks` and `voiceFallbacks` empty, so the edge node registers no trunk and answers no number from a fallback, and keeps its `SipNode` row but gives it no new call. The wizard's Apply writes it and unpairing removes it ([SIP](interfaces/SIP.md#behind-an-edge-node)) |
-| `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host` | empty | On an edge node, a port whose connections go to the SSH server of the one paired local node (refused with several, and while it is away), and the address it listens on (empty for every one). With several local nodes each gets a port of its own: a `moqui.edge.EdgePort` row (System › Edge Clients › Ports), on `edge_ssh_tunnel_host` |
-| `edge_smtp_tunnel_host` | empty | On a front node, the address an `EdgePort` row of kind `smtp` listens on (empty for every one): port 25 passed to an edge cluster's members with a PROXY header naming the client ([Mail-Inbound](interfaces/Mail-Inbound.md), plans/Edge-Node2.md §4.7) |
-| `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
-| `edge_call_legs_per_pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
-| `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
-| `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
-| `edge_mail_mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
-| `edge_mail_relay_host`, `edge_mail_relay_port` | `127.0.0.1`, `10025` | On an edge node with `edge_mail_mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
-| `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
-| `smtp_internet`, `mail_rspamd_url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in `conf/edge/MoquiEdgeConf.xml`), with Rspamd's HTTP API for its spam verdict when the URL is set; its hourly limits per client address and per sender are `smtp-server` `internet-messages-per-hour` and `internet-bytes-per-hour` (1000, 1 GiB) ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-in)) |
-| `mail_dkim_key`, `mail_dkim_selector`, `mail_dkim_domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
-| `mail_arc_trusted_sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
-| `mail_delivery_retry_seconds`, `mail_delivery_days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
-| `mail_mx_require_tls` | empty | On an edge node with the MTA in moqui, the recipient domains (comma-separated, `*` for every one) whose MX gets mail only over STARTTLS with a certificate valid for the host, as under an MTA-STS `enforce` policy whatever the domain publishes: an MX with no STARTTLS or a failed handshake or certificate is tried again later and the message bounces after `mail_delivery_days`, never sent in clear text. Empty: STARTTLS when offered, with any certificate, else clear text ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-out)) |
-| `mail_mx_override`, `mail_dns_offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
-| `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
-| `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
-| `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
-| `demo_disabled` | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
-| `llm_openai_url`, `llm_openai_api_key`, `llm_openai_model` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
-| `llm_anthropic_api_key`, `llm_dev_model` | empty, `default` | Dev conf only: the Claude API key of its `claude-haiku` model (Claude Haiku 5.5), and the model id its features (Assist, titles, summaries, classify, AI fields) are bound to; `llm_dev_model=claude-haiku` in `runtime/.env` puts Assist on Claude. The startup report's LLM line names the model Assist is on |
+| `instance@purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component); the Desktop app's tray item Developer tools sets it for its node |
+| `instance@default-locale`, `instance@default-time-zone`, `entity-facade@database-time-zone` | `en_US`, `UTC`, `UTC` | |
+| `webapp-list/webapp[webroot]@http-host` | empty: the request's host | The host in generated URLs |
+| `webapp-list/webapp[webroot]@http-bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
+| `webapp-list/webapp[webroot]@http-port` | empty: 8080 | The HTTP listen port (`-p`) |
+| `webapp-list/webapp[webroot]@https-listen-port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
+| `webapp-list/webapp[webroot]@https-port` | empty: 443 | The HTTPS port in generated URLs and redirects |
+| `webapp-list/webapp[webroot]@https-enabled` | `false` | `true` makes generated URLs https |
+| `webapp-list/webapp[webroot]@allow-origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
+| `webapp-list/webapp[webroot]@trusted-proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
+| `webapp-list/webapp[webroot]@client-ip-header` | empty | The header those proxies put the client address in |
+| `webapp-list/webapp[webroot]@status-ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
+| `service-facade@scheduled-job-check-time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
+| `terminal@command-line`, `terminal@host-sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `true` on for any purpose, `false` off; any other value, empty included, is off with an error in the log ([Terminal](ui/Terminal.md#conf)) |
+| `terminal@remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `moqui_conf__terminal__remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
+| `screen-facade/pdf@chromium-path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
+| `load-runner@targets`, `load-runner@max-runs`, `load-runner@max-users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
+| `ssh-server@port`, `ssh-server@host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh-server@port` is empty (`2222` in the dev conf) |
+| `media-server@port`, `media-server@host`, `media-server@public-address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `media-server@port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
+| `calls@ring-seconds` | `45` | How long a call rings before it is missed |
+| `calls@guest-joins-per-minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
+| `chat@server-name`, `chat@to-device-retention-days` | `localhost`, `30` | The server name in the Matrix user IDs of browsers' crypto devices (set it before the first device: a change makes every device new), and how long a to-device message waits for a device that does not take it ([Chat keys](interfaces/Chat-Keys.md)) |
+| `chat@store-key-secret` | generated | The platform secret each crypto device's browser-store key is derived under (HMAC of user, device and revision), so no table holds the keys. A new value makes every browser's store unreadable: each makes a new device and reads older messages from the key backup ([Chat keys](interfaces/Chat-Keys.md)) |
+| `media-server@cascade-enabled` | `false` | Cascading media nodes ([WebRTC](interfaces/WebRTC.md#cascading-media-nodes)): a leg's media goes to the media node of its own socket, which relays to the call's node over both nodes' `media-server@port`; set it on every node |
+| `calls/captions@enabled`, `calls/captions@provider`, `calls/captions@store` | `false`, `llm`, `false` | Live captions in calls ([WebRTC, Captions](interfaces/WebRTC.md#captions)): off unless `true`; the provider is the model bound to the `transcribe` feature (`local`, speech-local, is not built yet); `true` keeps each caption as a `CallTranscript` |
+| `calls/captions@chunk-seconds`, `calls/captions@queue`, `calls/captions@workers`, `calls/captions@timeout-seconds`, `calls/captions@language` | `5`, `6`, `2`, `20`, empty | The longest chunk of speech sent, the chunks that wait (past this the oldest is dropped), how many of a call's go at once (all calls on a node together use at most half the service pool), how long one may take, and the language (empty lets the model tell) |
+| `media-server/turn-server@port`, `media-server/turn-server@tls-port`, `media-server/turn-server@tls443-host`, `media-server/turn-server@public-host`, `media-server/turn-server@auth-secret`, `media-server/turn-server@external-urls`, ... | empty; the secret generated | The embedded TURN server, or coturn instead ([TURN](interfaces/TURN.md)) |
+| `calls/recording@enabled`, `calls/recording@ack-required`, `calls/recording@policy-revision` | `false`, `false`, `1` | Call recording by a call's host, with a notice to every leg, and whether each leg must acknowledge it ([Call recording](interfaces/Call-Recording.md)) |
+| `calls/recording@retention-days` | `90` | Recordings are deleted this long after they start; `0` keeps them |
+| `calls/recording@queue-frames`, `calls/recording@segment-mb`, `calls/recording@segment-minutes`, `calls/recording@max-mb` | `4096`, `64`, `30`, `2048` | The recorder's queue, when a file is cut into the next segment, and where a recording stops |
+| `calls/recording@prompt-audio`, `calls/captions@prompt-audio` | empty | WAV files a phone leg hears after the recording and captions tones ([SIP, Notices](interfaces/SIP.md#notices)) |
+| `sip-server@port`, `sip-server@host`, `sip-server@tls-port`, `sip-server@tls-host`, `sip-server@rtp-ports`, `sip-server@rtp-host`, `sip-server@public-address`, `sip-server@tls-ca-file` | empty, `127.0.0.1`, empty, `sip-server@host`, `20000-20999`, `sip-server@host`, empty, the system bundle | Phone calls over SIP trunks ([SIP](interfaces/SIP.md)); off while both ports are empty, and only beside call media; the public address is what trunks are told in Contact and SDP |
+| `channels@webhooks-enabled`, `channels@webhook-max-bytes` | `false`, `262144` | The chat bridges' routes a provider calls: `POST /channels/{chatBridgeId}/webhook` (its body at most this many bytes) and `GET /channels/{chatBridgeId}/media/{token}` ([SMS](interfaces/SMS.md)) |
+| `chat@groupme-self-service` | `true` | Whether users connect their own GroupMe account in Settings, Chat ([GroupMe](interfaces/GroupMe.md#connect)); `false` leaves it to an administrator (System, Chat Bridges) |
+| `chat@groupme-node-max` | `50` | The most GroupMe bridges one node holds the push connections of; the others go to other nodes ([GroupMe](interfaces/GroupMe.md#how-it-works)) |
+| `channels@public-url`, `channels@media-key`, `channels@media-minutes` | empty, generated, `60` | The https base a provider reaches this server at, for the files of an MMS that goes out (none without it), the key their addresses are signed with, and how long one works |
+| `channels/edge-limits@webhooks-per-minute`, `channels/edge-limits@webhooks-per-client-minute`, `channels/edge-limits@unverified-max-bytes`, `channels/edge-limits@unverified-waiting` | `600`, `120`, `32768`, `500` | On an edge node, for a bridge whose provider signs with a secret it does not hold (the local node checks them): the webhooks a minute it queues for the bridge and from one client address, the largest body, and how many of the bridge's may wait; past them 413 or 429 |
+| `sip-server/limits@request-rate`, `sip-server/limits@request-burst`, `sip-server/limits@max-transactions`, `sip-server/limits@max-connections`, `sip-server/limits@max-connections-per-source` | `20`, `100`, `2000`, `500`, `100` | The SIP listener's flood caps: new requests a second per source and at once, the transactions past which new requests are dropped, TCP and TLS connections at once, and from one source ([SIP, Settings](interfaces/SIP.md#settings)) |
+| `sip-server/registrar@enabled`, `sip-server@domain` | `false`, empty | The registrar for desk and soft phones, off even with the SIP listeners on; the realm and domain phones register to (`sip-server@public-address`, else `moqui`, when empty) ([SIP, Registrar](interfaces/SIP.md#registrar)) |
+| `xmpp-server@domain`, `xmpp-server@rooms-domain`, `xmpp-server@upload-domain` | empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): off while `xmpp-server@domain` is empty; users are `user@<domain>`, rooms `room@rooms.<domain>` |
+| `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host`, `xmpp-server@websocket-enabled` | empty, `0.0.0.0`, empty, `xmpp-server@host`, `false` | The XMPP client listeners: STARTTLS (5222 by convention) and direct TLS (5223), each off while empty; `/xmpp-websocket` on the HTTP listener when `true` |
+| `xmpp-server/upload@url`, `xmpp-server/upload@max-bytes`, `xmpp-server/upload@secret` | `https://<domain>` (with `webapp-list/webapp[webroot]@https-port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
+| `xmpp-server@resume-seconds`, `xmpp-server@fast-token-days` | `300`, `14` | How long a dropped session waits for stream resumption, and how long a FAST token lasts |
+| `xmpp-server/upload@seconds` | `300` | The longest a PUT to an upload slot may take |
+| `xmpp-server@turn-enabled`, `xmpp-server@turn-per-hour` | `false`, `30` | External services (XEP-0215): TURN credentials for XMPP apps' calls, never to an external user, at most so many a user an hour |
+| `xmpp-server@scram-decoy-key` | generated | Derives the SCRAM salts of names that are no user's, so they stay the same across restarts and nodes |
+| `xmpp-server@s2s-port` | empty | Server to server (5269, federation, C3b): not built, nothing listens on it yet |
+| `calls@forward-max-hops`, `calls@forward-ring-seconds` | `5`, `30` | The most forwards one phone call takes (a user's rules, a ring group's fallback; 1 to 10), and how long a forward to an outside number rings before the call goes on (10 to 120) ([SIP, Call handling](interfaces/SIP.md#call-handling)) |
+| `calls/queue@tick-seconds`, `calls@transfer-ring-seconds` | `5`, `30` | How often the SIP engine checks each call waiting in a queue (offers, the wait limit, the caller's place; 1 to 30), and how long a blind transfer's target rings before the caller goes to their voicemail (10 to 120) ([SIP, Queues](interfaces/SIP.md#queues), [Transfer and merge](interfaces/SIP.md#transfer-and-merge)) |
+| `calls@hold-music-location`, `calls/queue@prompt-location` | empty | Hold music for calls on hold and in queues without their own (WAV or Ogg Opus, looped; empty: a tone pattern; use only audio you may use), and a folder of `0.wav` to `9.wav` that speaks a queue caller's place (empty: pips) ([SIP, Queues](interfaces/SIP.md#queues)) |
+| `sip-server/registrar@min-expires`, `sip-server/registrar@max-expires`, `sip-server/registrar@default-expires`, `sip-server/registrar@nat-expires` | `60`, `3600`, `600`, `60` | A phone binding's expiry in seconds: its bounds, when the phone asks none, and behind a NAT without Outbound ([SIP, Registrar](interfaces/SIP.md#registrar)) |
+| `voicemail@max-seconds`, `voicemail@trash-days` | `120`, `30` | The longest voicemail message (10 to 600), and how long a deleted one waits in the trash before it and its audio go (0 keeps them) ([Voicemail](interfaces/Voicemail.md)) |
+| `voicemail@prompt-location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
+| `voicemail@pin-min-digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
+| `voicemail@transcribe`, `voicemail@transcribe-language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
+| `instance@node-role` | empty | `front_edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener and has both option sets, the front (web access, ports, balancing) and the edge (delegate, queue, replicate, mail, chat, calls, SIP, PASS) ([Edge node](#a-local-server-with-an-edge-node)); `front` has the front set alone and `edge` the edge set alone, for a front node and the edge nodes behind it ([A front node](#a-front-node), [Full stack](#full-stack)); `all-in-one` makes a full server that also takes local nodes' links, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
+| `edge@link-key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
+| `edge/node@url`, `edge/node@key`, `edge/node@pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
+| `edge/node@calls-enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
+| `edge/node@sip-enabled` | empty (on) | On a paired local node, whether its trunks and phones go through the edge node's SIP engine; `false` sends the replicated sets `voiceTrunks` and `voiceFallbacks` empty, so the edge node registers no trunk and answers no number from a fallback, and keeps its `SipNode` row but gives it no new call. The wizard's Apply writes it and unpairing removes it ([SIP](interfaces/SIP.md#behind-an-edge-node)) |
+| `edge@ssh-tunnel-port`, `edge@ssh-tunnel-host` | empty | On an edge node, a port whose connections go to the SSH server of the one paired local node (refused with several, and while it is away), and the address it listens on (empty for every one). With several local nodes each gets a port of its own: a `moqui.edge.EdgePort` row (System › Edge Clients › Ports), on `edge@ssh-tunnel-host` |
+| `edge@smtp-tunnel-host` | empty | On a front node, the address an `EdgePort` row of kind `smtp` listens on (empty for every one): port 25 passed to an edge cluster's members with a PROXY header naming the client ([Mail-Inbound](interfaces/Mail-Inbound.md), plans/Edge-Node2.md §4.7) |
+| `edge@xmpp-port`, `edge@xmpp-tls-port`, `edge@xmpp-host` | empty | On an edge node, the ports for every local node's XMPP domain, STARTTLS (5222) and direct TLS (5223), and the address they listen on (empty for every one): each connection goes to the node whose domain it names. A node's own pair of ports is an `EdgePort` row each |
+| `edge@call-legs-per-pairing` | 200 | On an edge node, the most call legs of one local node on its media node at once; 0 for no cap |
+| `edge@offline-page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
+| `edge@public-addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
+| `mail-delivery@mta` | `moqui` in `conf/edge/MoquiEdgeConf.xml`, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
+| `mail-delivery@relay-host`, `mail-delivery@relay-port` | `127.0.0.1`, `10025` | On an edge node with `moqui_conf__mail_delivery__mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
+| `mail-delivery@bounce-domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
+| `smtp-server@internet`, `smtp-server@rspamd-url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in `conf/edge/MoquiEdgeConf.xml`), with Rspamd's HTTP API for its spam verdict when the URL is set; its hourly limits per client address and per sender are `smtp-server` `internet-messages-per-hour` and `internet-bytes-per-hour` (1000, 1 GiB) ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-in)) |
+| `mail-delivery/dkim@key`, `mail-delivery/dkim@selector`, `mail-delivery/dkim@domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
+| `smtp-server@arc-trusted-sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
+| `mail-delivery@retry-seconds`, `mail-delivery@days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
+| `mail-delivery@mx-require-tls` | empty | On an edge node with the MTA in moqui, the recipient domains (comma-separated, `*` for every one) whose MX gets mail only over STARTTLS with a certificate valid for the host, as under an MTA-STS `enforce` policy whatever the domain publishes: an MX with no STARTTLS or a failed handshake or certificate is tried again later and the message bounces after `mail-delivery@days`, never sent in clear text. Empty: STARTTLS when offered, with any certificate, else clear text ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-out)) |
+| `mail-delivery@mx-override`, `mail-delivery@dns-offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
+| `logging@level`, `logging@dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
+| `search-facade@backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
+| `example_disabled` (a property its `component.xml` reads) | `false` | `true` leaves out the example component and its gallery on a dev instance |
+| `demo_disabled` (a property its `component.xml` reads) | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
+| `llm-facade/endpoint[default]@url`, `llm-facade/endpoint[default]@api-key`, `llm-facade/model[default]@name` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
+| `llm-facade@default-model`, `llm-facade/endpoint[anthropic]@api-key` | `default`, empty | The model of every feature whose `bind` names none (Assist, titles, summaries, classify, AI fields in the default conf), and in the dev conf the Claude API key of its `claude-haiku` model (Claude Haiku 5.5); `moqui_conf__llm_facade__default_model=claude-haiku` with `moqui_conf__llm_facade__endpoint__ANTHROPIC__api_key` in `runtime/.env` puts the dev instance's features on Claude. The startup report's LLM line names the model Assist is on |
 
-The database properties are in [Database and search](#database-and-search), and the cluster properties in
+The database settings are in [Database and search](#database-and-search), and the cluster settings in
 [Cluster](#cluster).
 
 ### Resource watch
@@ -497,10 +535,10 @@ Server options:
 
 | Option | What it does |
 |---|---|
-| `-p N`, `--port N` | The HTTP port (`webapp_http_port`) |
-| `--https-port N` | The HTTPS listen port (`webapp_https_listen_port`), or `off` |
+| `-p N`, `--port N` | The HTTP port (`webapp-list/webapp[webroot]@http-port`) |
+| `--https-port N` | The HTTPS listen port (`webapp-list/webapp[webroot]@https-listen-port`), or `off` |
 | `-c FILE`, `--conf FILE` | The runtime conf, as `MOQUI_CONF` does |
-| `--no-run-es` | Do not start the OpenSearch in `runtime/opensearch` (`opensearch_run=false`) |
+| `--no-run-es` | Do not start the OpenSearch in `runtime/opensearch` (`moqui_conf__search_facade__cluster__run=false`) |
 | `-D name=value` | Set a property for this run; repeatable |
 
 The Java forms `port=N` and `conf=FILE` also work.
@@ -524,7 +562,7 @@ given `--nobuild`.
 ## Data and the first start
 
 When a server starts on a database with no `moqui.basic.Enumeration` rows, it loads the data types in
-`entity_empty_db_load` (default `seed,seed-initial,install`; `all` in the dev conf). It then starts its factory again,
+`tools@empty-db-load` (default `seed,seed-initial,install`; `all` in the dev conf). It then starts its factory again,
 and the log has:
 
 ```
@@ -532,11 +570,11 @@ Found 0 Enumeration records, loading empty-db-load data types (seed,seed-initial
 Data loaded into empty DB, re-initializing ExecutionContextFactory
 ```
 
-Every start checks the tables. `entity_add_missing_startup` (default `true`) creates missing tables and adds missing
-columns and indexes. Columns are never dropped or changed.
+Every start checks the tables. A datasource's `startup-add-missing` (default `true`) creates missing tables and adds
+missing columns and indexes. Columns are never dropped or changed.
 
 While the only accounts are the seeded ones nobody logs in as (`_NA_` and the agents' chat users) and
-`initial_admin_enabled` is `true`, the login page shows **Create Initial Admin Account**
+`user-facade/login@initial-admin-enabled` is `true`, the login page shows **Create Initial Admin Account**
 ([the first administrator](#the-first-administrator)). Once any person has an account, the form is gone and the
 service refuses the call. A request from the server's own machine (a loopback peer, straight to the listener, with no
 proxy's forwarding header) creates it as is; from any other address the form asks for the one-time setup secret the
@@ -565,8 +603,8 @@ Either way, concurrent calls for one new key do not fail on it
 
 ### The first administrator
 
-`initial_admin_enabled` is `false` in the default conf and `true` in the dev conf (and on the Desktop app's node). On a
-server, set it for the setup, usually as a line in `.env` (`initial_admin_enabled=true`), restart, and take it out once
+`user-facade/login@initial-admin-enabled` is `false` in the default conf and `true` in the dev conf (and on the Desktop app's node). On a
+server, set it for the setup, usually as a line in `.env` (`moqui_conf__user_facade__login__initial_admin_enabled=true`), restart, and take it out once
 the account is made. While it is off and no account exists, the login page and the startup log say how to turn it on,
 and the service refuses the call.
 
@@ -590,7 +628,8 @@ moqui load location=$PWD/adv.xml
 
 ### Embedded Postgres
 
-Without `entity_ds_db_conf` (or with Moqui Java's `h2`), the server runs its own Postgres. Every package but Enterprise
+With the transactional datasource's `database-conf-name` `embedded` (the default; empty and Moqui Java's `h2` are the
+same), the server runs its own Postgres. Every package but Enterprise
 embeds it.
 
 - **Data**: `runtime/db/embedded`, with two databases: `moqui` for the entities and `moqui_content` for the stored
@@ -602,26 +641,37 @@ embeds it.
 
 ### External Postgres or MySQL
 
-Set `entity_ds_db_conf` and the other `entity_ds_*` properties, in the environment, `.env` or the runtime conf. There
-are examples in `runtime/conf/MoquiDevConf.xml`. Use `mysql8` for MySQL 8 and `mysql` for MariaDB (which has no
+Set the transactional datasource's attributes, by their names in `runtime/.env` or the environment, or on the
+`datasource` element in the runtime conf ([Settings and the environment](#settings-and-the-environment)). There are
+examples in `runtime/conf/MoquiDevConf.xml`. Use `mysql8` for MySQL 8 and `mysql` for MariaDB (which has no
 `LATERAL`) and MySQL 5.7. Both create `utf8mb4` tables, so any character (an emoji) can be stored; create the database
 with `CHARACTER SET utf8mb4`. A database made before, with 3-byte `utf8` tables, needs a fresh load or each table
 converted by hand (`ALTER TABLE ... CONVERT TO CHARACTER SET utf8mb4`). Loading every data type into each was checked
 ([MySQL-Issues](../plans/archive/MySQL-Issues.md)).
 
-| Property | Example | What it does |
-|---|---|---|
-| `entity_ds_db_conf` | `postgres` | `postgres`, `mysql` or `mysql8`; empty is embedded Postgres |
-| `entity_ds_host` | `db.internal` | Default `127.0.0.1` |
-| `entity_ds_port` | | Empty is 5432 or 3306 |
-| `entity_ds_database` | `moqui` | |
-| `entity_ds_schema` | | Empty for the default schema |
-| `entity_ds_user`, `entity_ds_password` | `moqui`, ... | |
-| `entity_ds_sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
-| `entity_ds_sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
-| `entity_ds_crypt_pass` | generated | The key of encrypted fields; it must move with the database |
+```sh
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__host=db.internal
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__user=moqui
+moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
+```
 
-The content datasource has its own `content_ds_*` properties ([Content database](#content-database)).
+| Attribute of `entity-facade/datasource[transactional]` | Example | What it does |
+|---|---|---|
+| `database-conf-name` | `postgres` | `postgres`, `mysql` or `mysql8`; `embedded` (the default) is embedded Postgres |
+| `host` | `db.internal` | Default `127.0.0.1` |
+| `port` | | Empty is 5432 or 3306 |
+| `database` | `moqui` | |
+| `schema-name` | | Empty for the default schema |
+| `user`, `password` | `moqui`, ... | |
+| `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+| `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
+
+`entity-facade@crypt-pass` (`moqui_conf__entity_facade__crypt_pass`), generated at the first start, is the key of
+encrypted fields; it must move with the database. A datasource's own `inline-jdbc` with `xa-properties` or a `jdbc-uri`,
+as a conf from Moqui Java has it, replaces these attributes.
+
+The content datasource has the same attributes ([Content database](#content-database)).
 
 Each connection to an external database sets the datasource's transaction isolation level for its session: the
 `inline-jdbc` `isolation-level`, else the database's `default-isolation-level`, `ReadCommitted` for Postgres and MySQL
@@ -646,16 +696,17 @@ Mail attachments, chat files, call recordings, voicemail, drives, wiki pages and
 Only the resource implementations (`dbresource://`, the blob store, git) read and write these entities. Code everywhere
 else uses `ec.resource`. No foreign key or view-entity crosses between the content database and the main one.
 
-| `content_ds_db_conf` | Where the content database is |
+| `entity-facade/datasource[content]@database-conf-name` | Where the content database is |
 |---|---|
-| empty, embedded transactional database (default) | the `content_ds_database` database (`moqui_content`) in the embedded cluster |
+| empty, embedded transactional database (default) | the database its `database` names (`moqui_content`) in the embedded cluster |
 | empty, external transactional database | the transactional database itself, with no second database |
-| `postgres`, `mysql` or `mysql8` | `content_ds_database` on that server |
+| `postgres`, `mysql` or `mysql8` | its `database` on that server |
 
-For a server of its own, set `content_ds_host`, `content_ds_port`, `content_ds_user`, `content_ds_password`,
-`content_ds_sslmode` and `content_ds_sslrootcert`. Each one left empty takes its `entity_ds_` value. So setting only
-`content_ds_db_conf=postgres` puts the content in a `moqui_content` database on the transactional server, which must
-exist. `content_ds_schema` names a schema, as `entity_ds_schema` does.
+For a server of its own, set its `host`, `port`, `user`, `password`, `sslmode` and `sslrootcert`
+(`moqui_conf__entity_facade__datasource__CONTENT__host` and the rest). Each one left empty takes the transactional
+datasource's. So setting only `moqui_conf__entity_facade__datasource__CONTENT__database_conf_name=postgres` puts the
+content in a `moqui_content` database on the transactional server, which must exist. Its `schema-name` names a schema,
+as the transactional one's does.
 
 One transaction spans both databases, as Moqui Java's transaction spans every datasource, but without two-phase commit:
 
@@ -680,11 +731,11 @@ transactional one, so it needs both external.
 Search runs on Postgres by default: tables in the `search` schema of the entity database, or a dedicated embedded
 cluster when the entity database is not Postgres. OpenSearch is optional:
 
-- set `search_backend=opensearch`, and `elasticsearch_url` (default `http://127.0.0.1:9200`), plus
-  `elasticsearch_user`, `elasticsearch_password` and `elasticsearch_index_prefix` as needed;
+- set `moqui_conf__search_facade__backend=opensearch`, and `search-facade/cluster@url` (default `http://127.0.0.1:9200`), plus
+  `search-facade/cluster@user`, `search-facade/cluster@password` and `search-facade/cluster@index-prefix` as needed;
 - `./moq opensearch-download` installs OpenSearch in `runtime/opensearch`;
-- the server starts that install and stops it on shutdown when `elasticsearch_url` is on this host, nothing answers
-  there, and there is no pid file. `opensearch_run=false` (or `--no-run-es`) turns that off;
+- the server starts that install and stops it on shutdown when `search-facade/cluster@url` is on this host, nothing answers
+  there, and there is no pid file. `moqui_conf__search_facade__cluster__run=false` (or `--no-run-es`) turns that off;
 - `./moq opensearch-start` and `opensearch-stop` run it as a daemon with a pid file.
 
 ### Snapshots
@@ -697,9 +748,9 @@ before a restore. These work on the embedded database only; an external database
 ### Backups
 
 The job `backup_EmbeddedDatabase_daily` backs up the embedded clusters while the server runs. It is paused in the seed
-data; set it running on System › Operations › Jobs, or with `embedded_db_backup_scheduled=true`, which each boot applies
+data; set it running on System › Operations › Jobs, or with `moqui_conf__database_backup__scheduled=true`, which each boot applies
 (`false` pauses it). It runs daily at 02:00 and keeps 7 daily, 5 weekly and 12 monthly archives, and every yearly one,
-in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
+in `runtime/db/backup`, or the directory in `database-backup@dir`.
 
 - **Modes**: `backupMode=dump`, the default, writes a `pg_dump` file of each database: `moqui-<stamp>-d.dump` and
   `moqui_content-<stamp>-d.dump`, with the same stamp. `incremental` takes `pg_basebackup` fulls and block
@@ -743,27 +794,27 @@ a backup asked for now with the job's own parameters ([Attack-Surface](security/
 
 | Port | Listener | Default | Properties |
 |---|---|---|---|
-| 8080 | HTTP | On, every address | `webapp_http_port`, `webapp_http_bind` |
-| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp_https_listen_port` (`off`), `webapp_http2` |
-| 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address`, `cluster_protocol` |
-| `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
-| `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
-| `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `rtc_cascade_enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address`, `rtc_cascade_enabled` |
-| `rtc_media_tcp_port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off | `rtc_media_tcp_port` |
-| `turn_port` (UDP and TCP), `turn_tls_port`, 443 on `turn_tls443_host`; `turn_relay_ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off | `turn_port`, `turn_tls_port`, `turn_tls443_host`, `turn_host`, `turn_relay_ports` |
-| `sip_port` (UDP and TCP), `sip_tls_port`; `sip_rtp_ports` (UDP) | SIP trunks, desk and soft phones (the registrar, with `sip_registrar_enabled`; `sip_tls_port` 5061 and `_sips._tcp` for remote phones), and the RTP of phone legs ([SIP](interfaces/SIP.md)) | Off; Maximal, Enterprise and Debug only | `sip_port`, `sip_host`, `sip_tls_port`, `sip_tls_host`, `sip_rtp_ports`, `sip_rtp_host`, `sip_public_address` |
-| `xmpp_port` (5222), `xmpp_tls_port` (5223) | XMPP clients, STARTTLS and direct TLS with ALPN `xmpp-client` ([XMPP](interfaces/XMPP.md)); the WebSocket is on the HTTP listener (`/xmpp-websocket`) | Off; Maximal, Enterprise and Debug only | `xmpp_domain`, `xmpp_port`, `xmpp_host`, `xmpp_tls_port`, `xmpp_tls_host` |
+| 8080 | HTTP | On, every address | `webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind` |
+| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-port` (`off`), `webapp-list/webapp[webroot]@http2` |
+| 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster-member@https-port`, `cluster-member@bind-address`, `cluster-member@protocol` |
+| `ssh-server@port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh-server@port`, `ssh-server@host` |
+| `smtp-server@listen-port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp-server@listen-port`, `smtp-server@listen-host` |
+| `media-server@port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `media-server@cascade-enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off; Maximal, Enterprise and Debug only | `media-server@port`, `media-server@host`, `media-server@public-address`, `media-server@cascade-enabled` |
+| `media-server@tcp-port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off | `media-server@tcp-port` |
+| `media-server/turn-server@port` (UDP and TCP), `media-server/turn-server@tls-port`, 443 on `media-server/turn-server@tls443-host`; `media-server/turn-server@relay-ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off | `media-server/turn-server@port`, `media-server/turn-server@tls-port`, `media-server/turn-server@tls443-host`, `media-server/turn-server@host`, `media-server/turn-server@relay-ports` |
+| `sip-server@port` (UDP and TCP), `sip-server@tls-port`; `sip-server@rtp-ports` (UDP) | SIP trunks, desk and soft phones (the registrar, with `sip-server/registrar@enabled`; `sip-server@tls-port` 5061 and `_sips._tcp` for remote phones), and the RTP of phone legs ([SIP](interfaces/SIP.md)) | Off; Maximal, Enterprise and Debug only | `sip-server@port`, `sip-server@host`, `sip-server@tls-port`, `sip-server@tls-host`, `sip-server@rtp-ports`, `sip-server@rtp-host`, `sip-server@public-address` |
+| `xmpp-server@port` (5222), `xmpp-server@tls-port` (5223) | XMPP clients, STARTTLS and direct TLS with ALPN `xmpp-client` ([XMPP](interfaces/XMPP.md)); the WebSocket is on the HTTP listener (`/xmpp-websocket`) | Off; Maximal, Enterprise and Debug only | `xmpp-server@domain`, `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host` |
 
 XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTLS) and `_xmpps-client._tcp.<domain>`
 (5223, direct TLS, XEP-0368), both at the host's name; the certificates in `runtime/cert` must cover the domain,
 `rooms.<domain>` and `upload.<domain>` (a wildcard of the domain does). `_xmpp-server._tcp` waits for federation (C3b).
 
-`/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
-Through a reverse proxy whose client-ip header is believed, the client it names must be in `webapp_status_ips` too:
+`/health` answers `{"ready":true}` to loopback and to the addresses in `webapp-list/webapp[webroot]@status-ips`, and 404 to everyone else.
+Through a reverse proxy whose client-ip header is believed, the client it names must be in `webapp-list/webapp[webroot]@status-ips` too:
 list a monitor that probes through the proxy, or have it probe the port directly.
 
-The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass_authority_grpc_port`) and the edge tunnel
-ports (`edge_ssh_tunnel_port`, `edge_xmpp_port`, `edge_xmpp_tls_port`) also open only when they are configured.
+The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass-authority@grpc-port`) and the edge tunnel
+ports (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`) also open only when they are configured.
 
 Before the database opens, a start checks every port it will bind, over TCP or UDP as the listener uses it, and logs
 `Ports checked free: …`. If HTTP, HTTPS, cluster or SSH is busy, the start stops, and the error names each busy port
@@ -776,18 +827,18 @@ its own once the properties are set (`Instance purpose dev (from the conf), node
 ### HTTP/2
 
 The HTTPS listener offers HTTP/2 and HTTP/1.1 by ALPN, so browsers and other clients that speak HTTP/2 use it; the
-plain HTTP listener is HTTP/1.1 only. `webapp_http2=false` keeps HTTPS to HTTP/1.1.
+plain HTTP listener is HTTP/1.1 only. `moqui_conf__webapp_list__webapp__WEBROOT__http2=false` keeps HTTPS to HTTP/1.1.
 
 - **WebSockets** (`/notws`, `/callws`, `/termws`, `/xmpp-websocket`) open on an HTTP/2 connection by extended CONNECT
   (RFC 8441), or on a connection of their own over HTTP/1.1, as the client chooses.
 - **gRPC.** When the OTLP/gRPC receiver or the PASS authority's gRPC is on, the HTTPS listener takes their calls over
   HTTP/2 too, so a client can use the HTTPS port instead of 4317; the gRPC listener stays.
-- **Limits.** One HTTP/2 connection carries at most `webapp_http2_max_streams` (100) requests at once. One with no
-  request for `webapp_header_timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
+- **Limits.** One HTTP/2 connection carries at most `webapp-list/webapp[webroot]/web-protection/connections@http2-max-streams` (100) requests at once. One with no
+  request for `webapp-list/webapp[webroot]/web-protection/connections@header-timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
   and so is a client's connection when web protection refuses that client.
-- **Slow readers.** A connection whose client takes nothing of a response for `webapp_write_timeout` (60 seconds) is
+- **Slow readers.** A connection whose client takes nothing of a response for `webapp-list/webapp[webroot]/web-protection/connections@write-timeout` (60 seconds) is
   closed, a WebSocket's included; a download that keeps moving is not. A WebSocket keeps its connection's place in
-  `webapp_max_connections` and web protection's `max-per-client` until it closes.
+  `webapp-list/webapp[webroot]/web-protection/connections@max` and web protection's `max-per-client` until it closes.
 - **Behind a proxy**, HTTP/2 is between the client and the proxy; the proxy may reach the server over HTTP/1.1 or, on
   the HTTPS port, over HTTP/2 (gRPC through a proxy needs HTTP/2 to the server).
 
@@ -803,9 +854,9 @@ A subdomain falls back one label up only: first to `_wildcard.<parent>` (mkcert)
 After that, `default` serves any other name. A domain with no certificate gets a refused handshake. The files are read
 again within seconds of a change, so a renewal needs no restart.
 
-In dev (`instance_purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
+In dev (`moqui_conf__instance__purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
-`runtime/cert` (seen within a minute). A `webapp_https_listen_port` set explicitly with no certificate no longer fails
+`runtime/cert` (seen within a minute). A `webapp-list/webapp[webroot]@https-listen-port` set explicitly with no certificate no longer fails
 the start: the listener waits the same way.
 
 **System › Certificates** lists the names this node answers (its own host, its sites' hosts, the SMTP host, the XMPP
@@ -813,7 +864,7 @@ domain, an edge node's terminate hosts, the files in `runtime/cert`) and the cer
 its expiry and its file. A name with none gets no HTTPS.
 
 **From ACME.** Set up with ACME, on that screen, gets a name's certificate from an ACME authority: Let's Encrypt
-(`acme_directory_url`), its staging directory for a first try, or any other authority's directory URL. Nothing is ever
+(`acme@directory-url`), its staging directory for a first try, or any other authority's directory URL. Nothing is ever
 asked for a name nobody set up there.
 
 - **The challenge** is TLS-ALPN-01 on the HTTPS listener: the authority connects to the name on port 443, so 443 must
@@ -837,21 +888,21 @@ asked for a name nobody set up there.
 - **Cluster.** One member orders a name at a time (a lock row whose 15-minute lease is by each member's clock, so the
   clocks must agree); the challenge and the certificate are rows, the key encrypted, so any member answers the
   challenge and every member writes its own files within a minute.
-- **Account.** The account key is derived from `acme_account_key`, a secret generated into `runtime/.env`; the members
+- **Account.** The account key is derived from `acme@account-key`, a secret generated into `runtime/.env`; the members
   of a cluster share it in their shared `.env`, or each is a separate account. For a company's own authority,
-  `acme_directory_ca` names the root its HTTPS is checked against.
+  `acme@directory-ca` names the root its HTTPS is checked against.
 - **Not built:** HTTP-01 (port 80), DNS-01 and so wildcard names.
 
 ### Listen ports and URL ports
 
-`webapp_https_listen_port` is the port the server binds. `webapp_https_port` is the port clients see in generated URLs
-and https redirects; empty is 443, as in Moqui Java. To make generated URLs use https, set `webapp_https_enabled=true`.
+`webapp-list/webapp[webroot]@https-listen-port` is the port the server binds. `webapp-list/webapp[webroot]@https-port` is the port clients see in generated URLs
+and https redirects; empty is 443, as in Moqui Java. To make generated URLs use https, set `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`.
 
 | Clients reach the server | Set |
 |---|---|
-| Directly on 8443 | `webapp_https_enabled=true`, `webapp_https_port=8443` |
-| On 443, through a port redirect or a proxy | `webapp_https_enabled=true`; leave `webapp_https_port` empty |
-| On 443, which the server binds itself | `webapp_https_enabled=true`, `webapp_https_listen_port=443`, and the capability to bind it (below) |
+| Directly on 8443 | `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`, `moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443` |
+| On 443, through a port redirect or a proxy | `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`; leave `webapp-list/webapp[webroot]@https-port` empty |
+| On 443, which the server binds itself | `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true`, `moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port=443`, and the capability to bind it (below) |
 
 A firewall redirect from 443 to 8443 (nftables or iptables) keeps the server unprivileged. To bind 443 directly under
 systemd, add a drop-in `/etc/systemd/system/moqui.service.d/https-443.conf`:
@@ -859,27 +910,27 @@ systemd, add a drop-in `/etc/systemd/system/moqui.service.d/https-443.conf`:
 ```ini
 [Service]
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-Environment=webapp_https_listen_port=443
+Environment=moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port=443
 ```
 
 ### Behind a proxy or load balancer
 
 The server terminates HTTPS itself, so a proxy is optional. A proxy or load balancer in front needs these settings:
 
-- `webapp_trusted_proxies` lists the proxies' address ranges (`10.0.0.0/8`, `fd00::/8`, or single addresses). Only
+- `webapp-list/webapp[webroot]@trusted-proxies` lists the proxies' address ranges (`10.0.0.0/8`, `fd00::/8`, or single addresses). Only
   those peers are believed for `X-Forwarded-Proto` and the client address header. The client address is then the
   rightmost address that is not a trusted proxy.
-- `webapp_client_ip_header` names the header: `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or
+- `webapp-list/webapp[webroot]@client-ip-header` names the header: `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or
   `CloudFront-Viewer-Address`.
-- Setting `webapp_trusted_proxies` also turns on the per-client web protection: rate limits, connection limits and
-  bans by client address. Without a proxy, `webapp_web_protection=true` turns it on.
+- Setting `webapp-list/webapp[webroot]@trusted-proxies` also turns on the per-client web protection: rate limits, connection limits and
+  bans by client address. Without a proxy, `moqui_conf__webapp_list__webapp__WEBROOT__web_protection__enabled=true` turns it on.
 - A `rate-limit` or a client, path or user-agent rule with `host="shop.example.com"` (or `*.example.com`) applies only
   to that site, on top of the rules without `host`, so one site can be stricter than the others.
 - A ban is shared with the other cluster members and up the edge link: a ban a local node starts (a sign-in that
   keeps failing) is told to its edge node, which refuses that client for that node's host names only. An edge node
   tells the nodes behind it nothing, as its bans may come from another pairing's visitors. System › Security › Web
   Protection lists what each rule refused and the bans held now, and lifts one.
-- Leave `webapp_https_port` empty when the proxy serves 443.
+- Leave `webapp-list/webapp[webroot]@https-port` empty when the proxy serves 443.
 
 ## One production server
 
@@ -951,11 +1002,11 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 
 | Service | How |
 |---|---|
-| PDF | Chromium: `./moq chromium-download` into `runtime/chromium`, or `moqui_chromium_path`. The server starts without it, and PDF is unavailable |
+| PDF | Chromium: `./moq chromium-download` into `runtime/chromium`, or `screen-facade/pdf@chromium-path`. The server starts without it, and PDF is unavailable |
 | OpenSearch | [Search](#search) |
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
-| SSH | `ssh_port`, with `ssh_host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
+| SSH | `ssh-server@port`, with `moqui_conf__ssh_server__host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
 
 ## Several sites by host name
 
@@ -988,7 +1039,7 @@ every host gets `webroot.xml`, the apps on paths under it, until a `root-screen`
 
 - **Links.** A link made in a request to such a host keeps that host, with the webapp's scheme and port: only a host a
   `root-screen` pattern names counts, as a plain host name, never another `Host` header. On a `refuse` host it is
-  `webapp_http_host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
+  `webapp-list/webapp[webroot]@http-host`'s, as a link made outside a request (mail, a report, a job) always is: such links are often to the
   apps, which that host does not serve.
 - **Sessions.** The session cookie is tied to its host, with no cookie domain: a person signs in to each host. Over
   https it is `__Host-moqui.session`, which no other host of the domain and no plain-http page can set or shadow; a
@@ -1019,7 +1070,7 @@ included, on the first start:
 The component keeps the apps writable and takes away running code or SQL, bulk import and export, the file manager,
 writes in Tools and System, SSH, WebDAV, MCP, A2A, the LLM gateway, mail to other hosts, and changes that would lock
 visitors out of the shared login ([its README](../runtime/components/dev/demo/README.md)). Restore the saved database on
-a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `instance_purpose=dev`:
+a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `moqui_conf__instance__purpose=dev`:
 the Dev AIDE loads there.
 
 ## A local server with an edge node
@@ -1034,7 +1085,7 @@ local node is away.
 
 ```
  visitors, mail servers, chat and phone providers
-    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223, edge_ssh_tunnel_port
+    |  443, 25, 3478, 10000 (UDP), 5060/5061, 5222/5223, edge@ssh-tunnel-port
  edge node      conf/edge/MoquiEdgeConf.xml    base components and mr-pass; the link's queue and copies
     ^  the local node dials 443 and keeps one link open
  local node     conf/edge/MoquiLocalConf.xml   the apps and the data, in the office or at home
@@ -1045,11 +1096,11 @@ The confs, the `.env` names each node needs and the commands are in
 runs the Maximal package, or Enterprise with an external database (both have the link), with the base components and
 mr-pass (`./moq component-get edge`). Its HTTPS listener needs a WebPKI certificate ([Certificates](#certificates)),
 which local nodes check when they pair, and no TLS-terminating proxy in front: the link needs ALPN and client
-certificates end to end. If a proxy is in front of it, name it in `webapp_trusted_proxies`; on an edge node a
+certificates end to end. If a proxy is in front of it, name it in `webapp-list/webapp[webroot]@trusted-proxies`; on an edge node a
 client-IP header with no trusted proxies is ignored.
 
 The browser terminal goes through too, in both web access modes: a client of the edge node is another machine to the
-local node, so a dev local node's command line and shells need `terminal_remote=true` and a recent sign-in there, and a
+local node, so a dev local node's command line and shells need `moqui_conf__terminal__remote=true` and a recent sign-in there, and a
 dropped link resumes each terminal by the count of what it drew ([Terminal](ui/Terminal.md#the-desktop-and-mobile-apps-and-phones)).
 
 **Attach a local node in one sitting.**
@@ -1057,8 +1108,8 @@ dropped link resumes each terminal by the count of what it drew ([Terminal](ui/T
    its System › Edge Clients › Clients, make a pairing code. Clients also lists the paired nodes, pings and revokes
    them, and shows the edge node's link key fingerprint; Domains has their host names and what each claims, and Ports
    their tunnel ports.
-2. On the local node, in System › Edge Node, choose **Pair with an edge node**. Pairing writes `edge_node_url`,
-   `edge_node_key`, `edge_node_pin` and `edge_node_id` to `runtime/.env` and brings the link up; unpairing removes them.
+2. On the local node, in System › Edge Node, choose **Pair with an edge node**. Pairing writes `edge/node@url`,
+   `edge/node@key`, `edge/node@pin` and `edge/node@id` to `runtime/.env` and brings the link up; unpairing removes them.
    The wizard's steps:
    1. **Edge node.** Its address and the pairing code.
    2. **Connect.** Check its name and link key fingerprint against Edge Clients. Next pairs and waits for the link.
@@ -1106,7 +1157,7 @@ address.
 
 System › Edge Node shows the outbox and the replicated sets, with Pause and Resync; Edge Clients shows each node's
 queue and sets. The edge node's database holds the queue, and its conf sets the backup job running
-(`embedded_db_backup_scheduled`).
+(`database-backup@scheduled`).
 
 **A cluster or a standby behind it.** Every member of a local cluster links on its own, and the edge node pools and
 balances them ([A local cluster with an edge node](#a-local-cluster-with-an-edge-node)). A second machine started
@@ -1132,24 +1183,24 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
  local node        conf/edge/MoquiLocalConf.xml            the apps and the data
 ```
 
-- **Conf.** Run `conf/all-in-one/MoquiAllInOneConf.xml` (`node_role=all-in-one`) with the server's full runtime, on
+- **Conf.** Run `conf/all-in-one/MoquiAllInOneConf.xml` (`moqui_conf__instance__node_role=all-in-one`) with the server's full runtime, on
   the Maximal package. The `.env` names and the commands are in
   [runtime/conf/all-in-one](../runtime/conf/all-in-one/README.md). It needs what an edge node needs: a WebPKI
-  certificate on the HTTPS listener, `edge_public_addresses`, and the edge node's mail, calls and SIP properties in
+  certificate on the HTTPS listener, `edge@public-addresses`, and the edge node's mail, calls and SIP properties in
   `.env`. It takes the link and never dials an edge node itself. Its conf sets the backup job running: the queue is in
   the server's database.
 - **Each item has one owner.** The server's own host names, mail accounts, chat bridges, numbers, calls and XMPP
   domain are served here as on a normal node; the local node's `EdgeHost` names, recipients, bridges, numbers and calls
   go over the link. A mail domain may be split by address.
 - **Claims both sides make.** The server's own items win. The wizard's Configure refuses the local node's bridges,
-  XMPP domain, SIP domain, numbers and a mail domain the server holds whole (its `edge_mail_bounce_domain`). A
+  XMPP domain, SIP domain, numbers and a mail domain the server holds whole (its `mail-delivery@bounce-domain`). A
   replicated record that claims a server's item is not applied: System › Edge Clients › Domains lists it under Replica conflicts,
   with Check again. The server's own setup refuses an address, bridge or number the local node holds. An address both
   sides hold gets 451 at `RCPT TO`, and a bridge both hold gets 409 at its webhook; each is logged.
-- **XMPP.** The server's XMPP server keeps `xmpp_port` and `xmpp_tls_port`. Give the local node's domain tunnel ports
-  of their own, such as `edge_xmpp_port=5242` and `edge_xmpp_tls_port=5243`, named in that domain's SRV records. A
+- **XMPP.** The server's XMPP server keeps `xmpp-server@port` and `xmpp-server@tls-port`. Give the local node's domain tunnel ports
+  of their own, such as `moqui_conf__edge__xmpp_port=5242` and `moqui_conf__edge__xmpp_tls_port=5243`, named in that domain's SRV records. A
   tunnel port the same as the server's own is off, with an error logged.
-- **PASS.** The server's mr-pass keeps its local authority (`pass_backend_url` is not `edge:`). PASS sites for the
+- **PASS.** The server's mr-pass keeps its local authority (`pass@backend-url` is not `edge:`). PASS sites for the
   local node are not served here yet.
 - **Limits.** One paired node. Its load shares the server's CPU, bandwidth and media ports. The queue is in the
   server's database, so the server's backups cover it. Unpairing leaves the server's own services as they were.
@@ -1177,7 +1228,7 @@ The confs, the `.env` names and the commands are in [runtime/conf/multi-domain](
 
 1. Set up the edge node as for one local node, from `conf/multi-domain/MoquiEdgeConf.xml`.
 2. For each local node: make a pairing code on the edge node (System › Edge Clients › Clients), and pair and run the
-   wizard on the local node. Give each local node its own `xmpp_domain` and `sip_domain` first.
+   wizard on the local node. Give each local node its own `xmpp-server@domain` and `sip-server@domain` first.
 3. Check Edge Clients › Domains: each local node's host names, mail domains, XMPP domain, SIP realm and numbers, chat
    bridges and PASS sites, and any record refused because another node claimed its item.
 4. For SSH, give each local node a tunnel port of its own on Edge Clients › Ports.
@@ -1194,7 +1245,7 @@ The confs, the `.env` names and the commands are in [runtime/conf/multi-domain](
   refused while more than one local node is paired.
 - **Limits per local node.** The queue's size cap holds for each local node alone, and a local node's own cap is set
   on Edge Clients › Clients (Queue cap). Mail delivery gives each local node with mail due an even share of its
-  sessions. Call legs have a cap per local node (`edge_call_legs_per_pairing`).
+  sessions. Call legs have a cap per local node (`edge@call-legs-per-pairing`).
 - **Isolation.** Reasonable, not multi-tenant: one operator runs the edge node, and the local nodes belong to one
   organization or to related ones. Shared: the edge node's addresses and mail reputation, its DKIM key (published in
   each domain), its media and TURN ports, web protection's counts, CPU and bandwidth. Revoking a local node ends its
@@ -1226,7 +1277,7 @@ The cluster itself is as in [Cluster](#cluster): one external database, the same
 
 1. Set up the edge node as for one local node. Start the first member, and pair it and run the wizard (System › Edge
    Node) as for one local node.
-2. Copy its whole `.env`, with what pairing wrote, to each other member, add that member's own `cluster_base_url`,
+2. Copy its whole `.env`, with what pairing wrote, to each other member, add that member's own `cluster-member@base-url`,
    and start it. Never copy `runtime/db`: each member keeps its own instance id and member key there.
 3. Check System › Edge Clients › Clients on the edge node: each member under Members, linked and live.
 
@@ -1331,10 +1382,10 @@ The conf, the `.env` names, the DNS records and the commands are in
 [runtime/conf/edge-cluster](../runtime/conf/edge-cluster/README.md). The members are a cluster as in
 [Cluster](#cluster): one external database, the same `.env` and secrets, a distinct instance id each.
 
-1. Start the first member once, so it generates its secrets into `.env`, among them `edge_link_key`, the one link key
+1. Start the first member once, so it generates its secrets into `.env`, among them `edge@link-key`, the one link key
    every member presents and every local node pins.
-2. Copy that `.env` to each other member before its first start, and give each member its own `cluster_base_url` and
-   `edge_link_url` (its own public `https` address, where local nodes dial it), and its own mail, media and SIP
+2. Copy that `.env` to each other member before its first start, and give each member its own `cluster-member@base-url` and
+   `edge@link-url` (its own public `https` address, where local nodes dial it), and its own mail, media and SIP
    addresses.
 3. Check System › Edge Clients › Edge cluster on any member: each member live, with its link address. It warns of a
    live member with no usable address while there is more than one.
@@ -1354,7 +1405,7 @@ The conf, the `.env` names, the DNS records and the commands are in
   per member, so a phone that reaches another member is challenged again ([SIP](interfaces/SIP.md)).
 - **Stopping a member** leaves the others serving its names: DNS sends visitors to each member's address, so a client
   of the stopped one retries another record, and each local node's other links carry its work.
-- **A clustered all-in-one server** takes links on every member the same way: `node_role=all-in-one` on each, on one
+- **A clustered all-in-one server** takes links on every member the same way: `moqui_conf__instance__node_role=all-in-one` on each, on one
   external database.
 
 **Before the cluster** a front node can face visitors and mail servers: [Full stack](#full-stack). **Not built**:
@@ -1362,7 +1413,7 @@ cascading call media between edge members (so a phone on one member rings for a 
 
 ## A front node
 
-A front node has the front option set alone (`node_role=front`, [plan](../plans/Edge-Node2.md#47-a-front-node) §4.7):
+A front node has the front option set alone (`moqui_conf__instance__node_role=front`, [plan](../plans/Edge-Node2.md#47-a-front-node) §4.7):
 web access by host name, terminate or passthrough; load balancing over a pairing's members, sticky by the session
 cookie, with health and set-aside; web protection with rules per host; TLS and certificates; TCP ports; the offline
 page. It has none of the edge set (no mail, call media, TURN, SIP, XMPP server, queue, delegated calls, replication or
@@ -1387,10 +1438,10 @@ The confs, the `.env` names, the DNS and the commands are in [runtime/conf/front
 1. Start the front node, with a certificate for its own name. Start the first member of the cluster.
 2. Make a pairing code on the front (System › Edge Clients › Clients) and pair the first member with it (System › Edge
    Node; the Pair screen shows the role, front, before the code is spent). Run the wizard: host names and XMPP.
-3. Copy that member's `.env` to each other member, with its own `cluster_base_url`, and start it.
+3. Copy that member's `.env` to each other member, with its own `cluster-member@base-url`, and start it.
 
-- **The front pairing.** Pairing with a node whose role is `front` writes `front_node_url`, `front_node_key`,
-  `front_node_pin` and `front_node_id`, a pairing of its own beside any edge pairing (`edge_node_*`). It carries web
+- **The front pairing.** Pairing with a node whose role is `front` writes `edge/front-node@url`, `edge/front-node@key`,
+  `edge/front-node@pin` and `edge/front-node@id`, a pairing of its own beside any edge pairing (`edge_node_*`). It carries web
   access and ports only: no queue, delegated calls, replication, call or SIP rows. System › Edge Node shows it, and
   Unpair (or Unpair front, beside an edge pairing) ends it.
 - **The pool, balancing, admission, draining and shared bans** are as with an edge node
@@ -1405,7 +1456,7 @@ The confs, the `.env` names, the DNS and the commands are in [runtime/conf/front
 - **Your own load balancer** in place of a front node stays supported ([Cluster](#cluster)). Before an edge cluster it
   must pass TLS through with a PROXY header, since the links need ALPN and client certificates end to end.
 - **Two front nodes** are a cluster of front nodes: one external database and one `.env`, each with its own
-  `edge_link_url`, and each node behind them links to every member, as with an [edge cluster](#an-edge-cluster). The
+  `edge@link-url`, and each node behind them links to every member, as with an [edge cluster](#an-edge-cluster). The
   names' address records name each front member.
 
 ## Full stack
@@ -1430,7 +1481,7 @@ The confs, the `.env` names per tier, the DNS and the order to pair are in
 [runtime/conf/full-stack](../runtime/conf/full-stack/README.md). Each cluster is as in [Cluster](#cluster); the edge
 cluster as in [An edge cluster](#an-edge-cluster).
 
-1. Start the front node. Start the edge cluster and give its own name (`webapp_http_host`, at the members' own
+1. Start the front node. Start the edge cluster and give its own name (`webapp-list/webapp[webroot]@http-host`, at the members' own
    addresses) a certificate (below). Pair one edge member with the front (System › Edge Node, Pair with a
    front node) and copy the `front_node_*` lines to every edge member. On the front, add port 25 of kind SMTP for the
    edge cluster's pairing (Edge Clients › Ports).
@@ -1445,16 +1496,16 @@ cluster as in [An edge cluster](#an-edge-cluster).
 - **What the edge members give the front.** Their sites' hosts and chat address's host as terminate hosts, so the
   front sees the session cookie and keeps a browser on one edge member; with `front_edge`, every name of their local
   nodes in its mode. A name another pairing of the front holds is refused and given again after a minute.
-- **The local nodes' links through the front.** Each edge member names its `edge_link_url` in its Hello; the front
+- **The local nodes' links through the front.** Each edge member names its `edge@link-url` in its Hello; the front
   keeps the host as that member's link name (Edge Clients › Domains) and passes its connections through untouched to
   that member alone, picked by the server name before the link's ALPN. A local node dials each edge member there, so
   the edge members need no inbound port for links. A link name is never balanced: while its member is not linked it is
   refused. The front is then a single point for the links as well as the web: while it is down the local nodes'
-  queue, delegated calls and replication stop too. Set an edge member's `edge_link_url` to a name at its own address
+  queue, delegated calls and replication stop too. Set an edge member's `edge@link-url` to a name at its own address
   instead (443 open on it) to keep the links up without the front.
 - **The edge members' first certificate.** An edge member with no certificate starts no link server (no EdgeServer,
   no relay down), and an ACME standby listener takes no links, so a link name's first certificate cannot come through
-  the front. Give the edge cluster's own name (`webapp_http_host`, its System app, with address records at the
+  the front. Give the edge cluster's own name (`webapp-list/webapp[webroot]@http-host`, its System app, with address records at the
   members' own addresses) a certificate first: System › Certificates with ACME at a member, which answers the
   challenge on its own 443, or a copied one in `runtime/cert`. The `AcmeCertificate` rows are shared, so every member
   writes it. Pair the local nodes there, or at a link name once its certificate is set up the same way.
@@ -1469,7 +1520,7 @@ cluster as in [An edge cluster](#an-edge-cluster).
   member's by the client its link names. A ban goes up only the links of the node that started it and is not told
   on: a local member's ban reaches its edge members (and the front only by its own front pairing, with `edge`
   members); an edge member's reaches the front, which refuses that client for the edge cluster's names.
-- **PASS.** The sites are on the edge members (`pass_backend_url=edge:`), each host the root of mr-pass's `Pass.xml`;
+- **PASS.** The sites are on the edge members (`moqui_conf__pass__backend_url=edge:`), each host the root of mr-pass's `Pass.xml`;
   every edge member calls the local cluster as the authority down its own link (mr-pass's `docs/Deployment.md`, Full
   stack).
 
@@ -1484,11 +1535,11 @@ Sessions are rows in the shared database, so any member can serve any request.
 ```
                    clients
                       | https
-               load balancer             webapp_trusted_proxies on each member
+               load balancer             webapp-list/webapp[webroot]@trusted-proxies on each member
            +----------+----------+
        member 1   member 2   member 3    conf/local-cluster/MoquiLocalConf.xml; 8444 between members only
            +----------+----------+
-              shared Postgres            entity_ds_db_conf=postgres
+              shared Postgres            database-conf-name=postgres
 ```
 
 Every member runs `conf/local-cluster/MoquiLocalConf.xml`; the `.env` names and the commands are in
@@ -1500,16 +1551,16 @@ node](#a-local-cluster-with-an-edge-node).
 
 - **One external database.** Postgres, or MySQL with the default transport. The Enterprise package has no embedded
   Postgres, so a member cannot start on a database of its own by mistake. The content database shares it unless
-  `content_ds_db_conf` names another ([Content database](#content-database)).
-- **The same secrets on every member**: `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key` and
-  `entity_ds_crypt_pass`. Startup fails when a live member has a different session key or certificate, with
-  "session_cookie_key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".
-  For git hosting, `ssh_host_key` and `git_lfs_token_key` too: behind a load balancer or an edge node's pool a client's
+  the content datasource's `database-conf-name` names another ([Content database](#content-database)).
+- **The same secrets on every member**: `webapp-list/webapp[webroot]/session-config@cookie-key`, `cluster-member@tls-cert`, `cluster-member@tls-key` and
+  `moqui_conf__entity_facade__crypt_pass`. Startup fails when a live member has a different session key or certificate, with
+  "webapp-list/webapp[webroot]/session-config@cookie-key does not match a live cluster member" or "cluster-member@tls-cert does not match a live cluster member".
+  For git hosting, `ssh-server@host-key` and `git-server@lfs-token-key` too: behind a load balancer or an edge node's pool a client's
   SSH connections and LFS requests reach any member, and another one after a failover, so a member with its own host
   key is a changed host to git clients and one with its own LFS key refuses the others' tokens. A member whose SSH
   host key differs from a live member's warns at startup; no member row shows the LFS key. Copying the first member's
   whole `.env` gives each the same ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
-- **A distinct instance id**: each member keeps its own in `runtime/db/instance_id` (or `instance_id`). It is not in
+- **A distinct instance id**: each member keeps its own in `runtime/db/instance_id` (or `instance@id`). It is not in
   `.env`, so copying `.env` between members is safe.
 
 ### Steps
@@ -1517,19 +1568,19 @@ node](#a-local-cluster-with-an-edge-node).
 1. Start the first member once with `conf/local-cluster/MoquiLocalConf.xml` and the shared database settings in
    `.env`, so it generates its secrets into `.env`.
 2. Copy that `.env` to each other member before its first start.
-3. Set `cluster_base_url=https://<this member's private address>:8444` on each member. Empty is
+3. Set `moqui_conf__cluster_member__base_url=https://<this member's private address>:8444` on each member. Empty is
    `https://127.0.0.1:8444`, which logs an error once other members are live.
 4. Open port 8444 between the members only.
 5. The conf writes each session change before the response (`<session-config flush="guarantee"/>`), for a load
    balancer that does not keep a client on one member. With sticky sessions it can go.
-6. Set `webapp_trusted_proxies` and `webapp_client_ip_header` for the load balancer, then start the other members.
+6. Set `webapp-list/webapp[webroot]@trusted-proxies` and `webapp-list/webapp[webroot]@client-ip-header` for the load balancer, then start the other members.
 7. Check the cluster with `SELECT instance_id, cluster_base_url, heartbeat FROM cluster_member;` on the shared database.
 
 ### Transports
 
-`cluster_transport` sets how peers reach this member: its cluster port at `cluster_base_url` (the default: TLS with the
+`cluster-member@transport` sets how peers reach this member: its cluster port at `cluster-member@base-url` (the default: TLS with the
 cluster certificate), Postgres `LISTEN`/`NOTIFY` (`notify`, for members that cannot connect to each other), or its SSH
-server (`ssh`). On the cluster port `cluster_protocol` picks gRPC on HTTP/2 (the default) or HTTP/1.1 only (`rest`).
+server (`ssh`). On the cluster port `cluster-member@protocol` picks gRPC on HTTP/2 (the default) or HTTP/1.1 only (`rest`).
 Members on different settings, or of different builds, still reach each other: the HTTP/1.1 POST is always there. The
 values are in the conf's comments.
 
@@ -1542,7 +1593,7 @@ values are in the conf's comments.
     the conf setting that says `runtime/git` is on storage every member mounts, and refused without it; else use
     `db` repositories ([Git-Hosting](interfaces/Git-Hosting.md#behind-a-front-or-edge-node-and-in-a-pool)).
   - Files on disk are each member's own: the SFTP root (`runtime://sftp`), and any setting that names a directory,
-    such as `pass_media_root`. Share the directory between the members.
+    such as `pass@media-root`. Share the directory between the members.
   - The LLM gateway's requests-per-minute and the web protection's limits are counted on each member separately. A
     ban is shared: one a member starts is told to the others on the cluster topic `web-ban` and holds there too, and
     a member takes it only from a live member of its cluster. System › Security › Web Protection shows one member's
@@ -1577,13 +1628,13 @@ and the commands are in [runtime/conf/pass](../runtime/conf/pass/README.md), and
 setting does. Change their example names (the host, site id, client id and callback) to yours.
 
 In local mode, mr-pass runs in the same runtime as Mantle and makes in-process calls; that is the default when
-`pass_backend_url` is not set. Provisioning, mail, media, workers and imports are in mr-pass
+`pass@backend-url` is not set. Provisioning, mail, media, workers and imports are in mr-pass
 [docs/Deployment.md](../runtime/components/addon/mr-pass/docs/Deployment.md). This section covers the remote layout.
 
 The remote calls go over REST, which every package has and which is Lite's default, or over gRPC where the package has
 it (Maximal, Enterprise): direct to the authority's gRPC listener, or from an
-[edge node](#a-local-server-with-an-edge-node) to its local node over the edge link (`pass_backend_url=edge:`).
-`pass_backend_transport` chooses (`rest`, `grpc`, or empty for automatic); the settings are in Deployment.md. With an
+[edge node](#a-local-server-with-an-edge-node) to its local node over the edge link (`moqui_conf__pass__backend_url=edge:`).
+`pass@backend-transport` chooses (`rest`, `grpc`, or empty for automatic); the settings are in Deployment.md. With an
 edge node as the PASS server, the local node's Edge Node wizard writes the client properties for it.
 
 ### The authority
@@ -1592,9 +1643,8 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
    [cluster](#cluster). Use Maximal or Enterprise: forum thumbnails need `image`, and sign-in providers need `sso`.
    The site readiness check reports what is missing. The PASS jobs are in Mantle's data (`ForumSetupData.xml`) and run
    here. Add mr-pass only if this server also serves sites itself.
-2. Register each PASS deployment: in the conf its sites and exact SSO callback (`pass_client_<id>_sites`,
-   `pass_client_<id>_callback`), in `.env` its secret (`pass_client_<id>_secret`). The conf turns on gRPC for PASS
-   clients (`pass_authority_grpc_enabled`); the HTTPS listener takes the same calls over [HTTP/2](#http2), so no other
+2. Register each PASS deployment: in the conf its sites and exact SSO callback (`pass-authority/client[<id>]@sites`, `@callback`), in `.env` its secret (`pass-authority/client[<id>]@secret`). The conf turns on gRPC for PASS
+   clients (`pass-authority@grpc-enabled`); the HTTPS listener takes the same calls over [HTTP/2](#http2), so no other
    port needs to be open.
 3. Create the sites and bind their hosts and mounts with `mantle.public.SiteServices.create#Site` and `store#Mounts`
    (Deployment.md, Provisioning).
@@ -1614,11 +1664,11 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
 2. Build it with any server package. PASS calls the authority for images and sign-in, so Lite, the smallest, is
    enough: `./moq archive --lite --no-data --conf conf/pass/MoquiPassConf.xml`.
 3. Set the authority's origin, the client id and the public site's host and mounts in the conf; they must match the
-   ones bound at the authority. Put `pass_client_secret` in `.env`.
+   ones bound at the authority. Put `pass@client-secret` in `.env`.
 4. Embedded Postgres is enough. The PASS server stores framework tables and sessions, and the sessions hold each
    visitor's delegation from the authority.
-5. Put the certificate for the public host in `cert/`. Behind a proxy, set `webapp_trusted_proxies` and
-   `webapp_client_ip_header`. Each call to the authority carries the visitor's address, and the authority's sign-in rate
+5. Put the certificate for the public host in `cert/`. Behind a proxy, set `webapp-list/webapp[webroot]@trusted-proxies` and
+   `webapp-list/webapp[webroot]@client-ip-header`. Each call to the authority carries the visitor's address, and the authority's sign-in rate
    limits count by it.
 6. Check:
    - the site answers at its host;
@@ -1634,7 +1684,7 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
   share a Postgres as their own [cluster](#cluster). That cluster is separate from the authority's.
 - **The authority as a cluster**: delegations, SSO handoffs and rate-limit counts are rows, so any member can check
   them. The second factor and the SSO front channel use the authority's web session, so set `flush="guarantee"` or keep
-  a client on one member. `pass_media_root` and `pass_import_dir` must name storage that every member can read.
+  a client on one member. `pass@media-root` and `pass@import-dir` must name storage that every member can read.
 - **Latency**: each public page makes at least two calls to the authority, and nothing is cached. Keep the PASS servers
   close to it.
 
@@ -1658,7 +1708,7 @@ team's model keys. Developers who do not run a server, often business users who 
  laptop      ./moq run, dev, 127.0.0.1 ---+   git over https or ssh, /llm, /rest/s1/mantle/my/tasks
  laptop      ./moq run, dev, 127.0.0.1 ---+--------> group server team.example.com, production purpose
  shared dev-aide server, dev, https ------+          mr-boss, mr-mantle: Projects, git hosting, LLM gateway
-   dev_aide_shared=true                              one server or a cluster
+   moqui_conf__dev_aide__shared=true                 one server or a cluster
 ```
 
 The group server runs production purpose because it holds the team's real data. A dev instance loads Dev AIDE, which
@@ -1687,7 +1737,7 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
    - grant `LlmGatewayUse` to the developers' group;
    - for each developer's key, add an `LlmApiClient` row with the `gateway` scope (System › LLM › Gateway). Its
      `allowedAliases`, `dailyTokens` and `dailyCost` limit that key.
-4. Optionally, turn on MCP (`mcp_enabled=true` in the conf) for coding agents. `/mcp/setup` gives a client config to paste
+4. Optionally, turn on MCP (`moqui_conf__llm_facade__mcp__server_enabled=true` in `runtime/.env`, or `llm-facade/mcp@server-enabled` in the conf) for coding agents. `/mcp/setup` gives a client config to paste
    ([MCP](ai/MCP.md)).
 
 ### Each dev instance
@@ -1709,8 +1759,8 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
      give the server's another name;
    - the task source (`moqui-rest`) with your token: Tasks lists your work items, and commits carry the current
      task's trailer;
-   - the LLM gateway's lines in `runtime/.env` (`llm_openai_url`, the alias as `llm_openai_model`, and as
-     `llm_openai_api_key` a key the server makes for its gateway alone, never your account's key), applied at the next
+   - the LLM gateway's lines in `runtime/.env` (`llm-facade/endpoint[default]@url`, the alias as `llm-facade/model[default]@name`, and as
+     `llm-facade/endpoint[default]@api-key` a key the server makes for its gateway alone, never your account's key), applied at the next
      start. The lines you had before are kept and put back by Remove. The gateway needs `LlmGatewayUse`; the key,
      made for the gateway alone, is its own client, so its `require-client` asks no `LlmApiClient` row of it
      ([Gateway](ai/Gateway.md));
@@ -1729,18 +1779,19 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
    contributor agreement's warning and Sign). Checking out a merge request runs its code here (the file watcher
    reloads it): read it first. Merging stays on the server's page. For a pre-commit hook or a coding agent in a
    terminal, `moqui check --agreement` asks the server the same (`MOQUI_GROUP_SERVER`, `MOQUI_GROUP_TOKEN`).
-4. **Binding.** Set `webapp_http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
+4. **Binding.** Set `moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1`. Dev AIDE gives its users code execution, so a laptop's server should
    not be reachable from the network.
 
 The same by hand, as before Connect: a `myaddons.xml` repository (`<repository name="team"><location type="git"
-url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_openai_*` lines in `runtime/.env`, a
+url="https://team.example.com/git/${name}.git"/></repository>`), the default LLM endpoint's three lines in `runtime/.env` (`moqui_conf__llm_facade__endpoint__DEFAULT__url`,
+`moqui_conf__llm_facade__endpoint__DEFAULT__api_key` and `moqui_conf__llm_facade__model__DEFAULT__name`), a
 `moqui-rest` task source with the token in Dev AIDE › Tasks, and the token in a git credential helper.
 
 ### The shared dev-aide server
 
 1. Run a dev instance (`./moq run`, or `MOQUI_CONF=conf/MoquiDevConf.xml`) with the components the users extend, and
-   set `dev_aide_shared=true`.
-2. Give it a certificate, leave `webapp_http_bind` empty, and do not publish 8080. Set `webapp_allow_origins` to the
+   set `moqui_conf__dev_aide__shared=true`.
+2. Give it a certificate, leave `webapp-list/webapp[webroot]@http-bind` empty, and do not publish 8080. Set `webapp-list/webapp[webroot]@allow-origins` to the
    server's own origin, such as `https://dev.example.com`, in place of the dev conf's `*`. An empty value would not
    replace it.
 3. Put its users in `DEV_AIDE_EXTENDERS`, who may write site components and publish them, or `DEV_AIDE_USERS`, who may
@@ -1748,7 +1799,7 @@ url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_
 4. Network git (fetch, pull, push, clone) is off on a shared server until an admin turns it on in Dev AIDE › Settings,
    with a deploy token or per-user tokens from the group server. Each user connects to the group server as
    themselves (Settings › Group servers); a shared server's address is not loopback, so the group server lists its
-   `/qapps/dev/Settings/serverSignedIn` URL in `webapp_app_redirect_uris`, or its users paste a token. Connect's
+   `/qapps/dev/Settings/serverSignedIn` URL in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token. Connect's
    `myaddons.xml` and `.env` items are not offered on a shared server.
 5. Commits carry the logged-in user as author. A save checks the file on disk by its hash, so a save over another
    user's change offers Compare instead of overwriting it.
@@ -1758,7 +1809,7 @@ url="https://team.example.com/git/${name}.git"/></repository>`), the three `llm_
 A shared dev database is not supported. Every serving process joins the cluster of its database, so dev instances
 with their own generated secrets refuse to start on one. If they did start, one developer's entity changes would alter
 everyone's schema, and any instance could run the team's jobs. Each dev instance keeps its own embedded Postgres. To
-hand a database to someone else, send a `./moq save-db` save and the matching `entity_ds_crypt_pass`.
+hand a database to someone else, send a `./moq save-db` save and the matching `moqui_conf__entity_facade__crypt_pass`.
 
 **Not built**:
 - Moqui is not an identity provider, so a dev instance's own users do not log in through the group server (Connect
@@ -1805,7 +1856,7 @@ load it on a running server, with its data, when it has no Rust code
 | `java -jar moqui.war load types=...` | `moqui load types=...`, or `./moq load ...` |
 | `./gradlew addRuntime`, moqui-plus-runtime.war | `./moq archive`: a directory with the binary, not a WAR |
 | `MoquiInit.properties`, `-Dmoqui.runtime`, `-Dmoqui.conf` | `MOQUI_RUNTIME`, `MOQUI_CONF`, or `--conf` |
-| H2 by default | Embedded Postgres by default; `entity_ds_db_conf=h2` also means embedded |
+| H2 by default | Embedded Postgres by default; a `database-conf-name` of `h2` also means embedded |
 | JDBC driver jars in `runtime/lib` | Built in: Postgres in every package, MySQL in Maximal and Enterprise |
 | Tomcat, Elastic Beanstalk with a WAR | One process: the binary serves HTTP and HTTPS itself |
 | Docker Compose with nginx-proxy | Podman stacks, and no proxy container ([podman/README.md](../podman/README.md)) |

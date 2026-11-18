@@ -107,7 +107,7 @@ impl PushTransport for Network {
     fn fcm(&self, device: &str, message: &serde_json::Value) -> Sent {
         let config = match fcm::config() {
             Ok(Some(config)) => config,
-            Ok(None) => return Sent::Refused("FCM is not configured (fcm_service_account)".to_string()),
+            Ok(None) => return Sent::Refused("FCM is not configured (push/fcm@service-account)".to_string()),
             Err(reason) => {
                 return Sent::Retry {
                     after_millis: None,
@@ -130,7 +130,7 @@ impl PushTransport for Network {
     fn web(&self, device: &str, provider: Provider, post: &WebPost<'_>) -> Sent {
         let signer = web_push::vapid_signer();
         if provider == Provider::Web && signer.is_none() {
-            return Sent::Refused("the web_push_vapid_key property is not set".to_string());
+            return Sent::Refused("push/web@vapid-key is not set".to_string());
         }
         let now_secs = u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0);
         let authorization = signer.and_then(|(key, subject)| key.authorization(post.endpoint, &subject, now_secs).ok());

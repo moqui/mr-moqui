@@ -818,8 +818,16 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
         )));
     }
     // A dev component's specs run on a dev instance, where it loads (plans/design-dev-aide.md 3.1).
-    if needs_dev_purpose(&runtime, &components) && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty() {
-        moqui_lib::env::set_property("instance_purpose", "dev");
+    if needs_dev_purpose(&runtime, &components)
+        && moqui_lib::env::get_prop_or_env(&moqui_core::context::conf_env::env_name_of(
+            moqui_core::context::conf_env::PURPOSE,
+        ))
+        .is_empty()
+    {
+        moqui_lib::env::set_property(
+            &moqui_core::context::conf_env::env_name_of(moqui_core::context::conf_env::PURPOSE),
+            "dev",
+        );
     }
     // a spec may answer outbound HTTP with fixtures (docs/dev/JS-Testkit.md, "HTTP fixtures"), only in a test run
     moqui_core::service::http_fixtures::allow();

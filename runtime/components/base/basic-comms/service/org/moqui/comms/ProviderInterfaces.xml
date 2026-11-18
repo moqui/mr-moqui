@@ -108,6 +108,23 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="eventUrl"/>
         </out-parameters>
     </service>
+    <service verb="chat" noun="CalendarEntry" type="interface">
+        <description>chat-calendar: a chat event's entry on a calendar (org.moqui.chat.ChatCalServices calls it, each provider
+            in a transaction of its own; plans/Comms-Messaging.md §18.3 phase 19). Only ids and the action are given: the
+            provider reads moqui.chat.ChatCalEvent and the current user's moqui.chat.ChatCalAnswer itself and trusts nothing
+            else. action answer: put the current user's entry when they answered going or maybe, change it to the event as
+            it is now, or remove the one it put when they answered no or took the answer back. change: bring every entry it
+            put for this event up to date (its UID chat-roomId-eventSeq@domain, SEQUENCE the revision). cancel: cancel them.
+            Answers eventUrl, a link to the user's entry.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="action" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventUrl"/>
+        </out-parameters>
+    </service>
     <service verb="contact" noun="Card" type="interface">
         <description>contact-card: who an address (or a party the item names) is, as the user may see it, for the contact
             card of the Inbox's reading pane (org.moqui.comms.InboxServices.get#ContactCard calls it). card {emailAddress,

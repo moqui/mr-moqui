@@ -4,7 +4,7 @@
 // other page and the speaker view lays out the call, the call shows in the side panel of a desktop's width and, off its
 // screen and panel, in the floating LiveCall window, and leaving from it ends the call on the other page. Chromium's fake
 // camera and microphone stand in for devices. Needs a binary with the rtc feature and a server holding call media (the
-// suite's --serve server sets rtc_media_port).
+// suite's --serve server sets media-server@port).
 // The call's flow (plans/Comms-Messaging.md §8.3 items 1-7, phase 4): a voice call starts with audio only, and video
 // turned on in the call reaches the other side as a prompt, not a new call, and goes off again; Move to this device takes
 // a call to a second page of the same user while the other side's connection goes on; call waiting holds a call to answer

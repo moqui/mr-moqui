@@ -30,7 +30,7 @@
 //! The directory is read again at most every [`RECHECK`], so a renewed or added certificate is served without a
 //! restart. A pair whose files changed but do not load keeps serving the one loaded before.
 //!
-//! In dev (`instance_purpose=dev`) an empty directory gets a self-signed `localhost` certificate and a `default` copy.
+//! In dev (`moqui_conf__instance__purpose=dev`) an empty directory gets a self-signed `localhost` certificate and a `default` copy.
 //!
 //! The SMTP listener looks up the name the gateway asks for, then its own `smtp-server` `hostname` (a gateway that
 //! connects by address sends no name), then `default`; or it serves the files `tls-cert-file` and `tls-key-file` name,
@@ -56,9 +56,9 @@ use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 
 const DEFAULT_PORT: u16 = 8443;
-/// The port this process listens on. `webapp_https_port` is the port clients see in generated URLs, which differs
-/// behind a reverse proxy.
-const LISTEN_PORT: &str = "webapp_https_listen_port";
+/// What sets the port this process listens on, for its messages: the webroot webapp's `https-listen-port`. Its
+/// `https-port` is the port clients see in generated URLs, which differs behind a reverse proxy.
+const LISTEN_PORT: &str = "https-listen-port";
 /// How long the directory listing is trusted before it is read again.
 const RECHECK: Duration = Duration::from_secs(5);
 /// One warning about a name with no certificate in this time; the others go to debug, as scanners send many.
@@ -80,14 +80,18 @@ pub(crate) struct HttpsListen {
 /// The HTTPS listener to start on `ip`, or `None` when it is off. With no certificate it stands by
 /// ([`HttpsListen::standby`]): a name with no certificate gets no HTTPS, and with none at all nothing listens until a
 /// name is set up with ACME.
-pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, use_default_port: bool) -> Result<Option<HttpsListen>, Error> {
-    let raw = moqui_lib::env::get_prop_or_env(LISTEN_PORT);
-    let raw = raw.trim();
+pub(crate) fn plan(
+    runtime_dir: &Path,
+    ip: IpAddr,
+    use_default_port: bool,
+    listen_port_text: &str,
+) -> Result<Option<HttpsListen>, Error> {
+    let raw = listen_port_text.trim();
     let Some(port) = listen_port(raw, use_default_port)? else {
         return Ok(None);
     };
     let dir = runtime_dir.join("cert");
-    if moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+    if moqui_core::context::conf_env::instance_purpose() == "dev" {
         if let Err(err) = ensure_dev_cert(&dir) {
             tracing::warn!(
                 "Could not generate a development certificate in {}: {err}",
@@ -115,19 +119,22 @@ pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, use_default_port: bool) -> Re
 
 /// The port [`plan`] would bind, without generating a certificate: an explicit port, or by default 8443 when a
 /// certificate exists or a dev instance will generate one. None when the listener stays off.
-pub(crate) fn planned_port(runtime_dir: &Path, use_default_port: bool) -> Result<Option<u16>, Error> {
-    let raw = moqui_lib::env::get_prop_or_env(LISTEN_PORT);
-    let raw = raw.trim();
+pub(crate) fn planned_port(
+    runtime_dir: &Path,
+    use_default_port: bool,
+    listen_port_text: &str,
+) -> Result<Option<u16>, Error> {
+    let raw = listen_port_text.trim();
     let Some(port) = listen_port(raw, use_default_port)? else {
         return Ok(None);
     };
-    if !raw.is_empty() || moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+    if !raw.is_empty() || moqui_core::context::conf_env::instance_purpose() == "dev" {
         return Ok(Some(port));
     }
     Ok((!CertStore::new(runtime_dir.join("cert")).is_empty()).then_some(port))
 }
 
-/// `webapp_https_listen_port`: empty is 8443 when `use_default_port` (tests bind their own HTTP address and leave it
+/// `webapp-list/webapp[webroot]@https-listen-port`: empty is 8443 when `use_default_port` (tests bind their own HTTP address and leave it
 /// off so they do not take 8443), `0` is ephemeral, and `off` turns the listener off.
 fn listen_port(raw: &str, use_default_port: bool) -> Result<Option<u16>, Error> {
     match raw.trim() {
@@ -155,11 +162,9 @@ pub(crate) fn server_config(store: impl Into<Arc<CertStore>>) -> Result<rustls::
     Ok(config)
 }
 
-/// `webapp_http2`: HTTP/2 on the HTTPS listener, on unless `false`.
+/// The webroot webapp's `http2`: HTTP/2 on the HTTPS listener, on unless `false`.
 pub(crate) fn http2_enabled() -> bool {
-    !moqui_lib::env::get_prop_or_env("webapp_http2")
-        .trim()
-        .eq_ignore_ascii_case("false")
+    !moqui_core::context::conf_env::webroot_setting("http2").eq_ignore_ascii_case("false")
 }
 
 /// The HTTPS listener's ALPN: `h2` first when `http2`, then `http/1.1`. A client that offers none gets HTTP/1.1.
@@ -299,7 +304,7 @@ pub(crate) fn smtp_server_config(
 ) -> Result<rustls::ServerConfig, Error> {
     let resolver: Arc<dyn ResolvesServerCert> = if cert_file.is_empty() && key_file.is_empty() {
         let dir = runtime_dir.join("cert");
-        if moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+        if moqui_core::context::conf_env::instance_purpose() == "dev" {
             if let Err(err) = ensure_dev_cert(&dir) {
                 tracing::warn!(
                     "Could not generate a development certificate in {}: {err}",

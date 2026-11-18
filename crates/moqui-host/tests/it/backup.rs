@@ -33,7 +33,14 @@ fn the_backup_service_mirrors_a_rotated_dump() {
         return;
     }
     let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
-    let gate = crate::common::start_with_properties("backup", None, &[("ssh_port", "0"), ("ssh_host_key", &seed)]);
+    let gate = crate::common::start_with_properties(
+        "backup",
+        None,
+        &[
+            ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__host_key", &seed),
+        ],
+    );
     let address = gate.server.ssh_address().expect("the SSH server listens");
     let factory = std::sync::Arc::clone(gate.server.factory());
     let context = factory.new_context();

@@ -124,9 +124,13 @@ fn a_server_grant_checks_for_its_purpose_and_subject_until_it_expires() {
     use crate::script::runtime::{clear_context_stack, eval_value};
     use base64::Engine as _;
     let _lock = crate::user::session::cookie_property_lock();
-    let previous = moqui_lib::env::get_prop_or_env("session_cookie_key");
+    let previous =
+        moqui_lib::env::get_prop_or_env("moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key");
     let key = |byte: u8| base64::engine::general_purpose::STANDARD.encode([byte; 32]);
-    moqui_lib::env::set_property("session_cookie_key", key(5));
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        key(5),
+    );
     clear_context_stack();
     let checks = eval_value(
         "const t = ec.user.serverGrant('article-rating', 'site1:page1', 60); \
@@ -143,7 +147,10 @@ fn a_server_grant_checks_for_its_purpose_and_subject_until_it_expires() {
     );
     let token = eval_value("ec.user.serverGrant('article-rating', 'site1:page1')")
         .map(|v| moqui_lib::object::to_plain_string(&v));
-    moqui_lib::env::set_property("session_cookie_key", key(6));
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        key(6),
+    );
     let after_new_key = token.as_ref().map(|token| {
         eval_value(&format!(
             "ec.user.checkServerGrant('article-rating', 'site1:page1', '{token}')"
@@ -151,10 +158,13 @@ fn a_server_grant_checks_for_its_purpose_and_subject_until_it_expires() {
         .map(|v| moqui_lib::object::to_plain_string(&v))
     });
     // (no key: an error to sign, false to check. Not asserted here: under moq the environment holds runtime/.env's
-    // session_cookie_key, which no property clear removes.)
-    moqui_lib::env::clear_property("session_cookie_key");
+    // webapp-list/webapp[webroot]/session-config@cookie-key, which no property clear removes.)
+    moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key");
     if !previous.is_empty() {
-        moqui_lib::env::set_property("session_cookie_key", &previous);
+        moqui_lib::env::set_property(
+            "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+            &previous,
+        );
     }
     assert_eq!(
         moqui_lib::object::to_plain_string(&checks.unwrap()),

@@ -213,6 +213,12 @@ fn build(dir: &Path, file: &str, root: &str) -> Option<Digest> {
         };
         let mut children = Vec::new();
         schema.element_content(&decl, &mut spec, &mut children);
+        // A component's own settings element (mr-pass's pass) beside the named ones, which the conf merge takes
+        // (moqui-core conf::merge_component_elements) and an XSD 1.0 content model cannot: a wildcard beside optional
+        // named elements is not deterministic.
+        if spec.top && root == "moqui-conf" {
+            spec.open_children = true;
+        }
         for child in &children {
             spec.children.push(child.attribute("name").unwrap_or_default());
         }

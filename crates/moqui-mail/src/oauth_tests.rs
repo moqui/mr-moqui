@@ -43,25 +43,25 @@ const CLIENT: &str = "client-1";
 const SECRET: &str = "secret-1";
 const PENDING: &str = "moqui.email.oauth";
 
-/// The properties a test sets, cleared after it.
+/// The conf settings a test sets by their environment names (as an override sets them), cleared after it.
 struct Properties;
+
+const REDIRECT_SETTING: &str = "moqui_conf__email_client__oauth_redirect_uri";
+const CLIENT_ID_SETTING: &str = "moqui_conf__email_client__oauth_provider__TEST__client_id";
+const CLIENT_SECRET_SETTING: &str = "moqui_conf__email_client__oauth_provider__TEST__client_secret";
 
 impl Properties {
     fn set() -> Self {
-        moqui_lib::env::set_property("email_oauth_redirect_uri", REDIRECT);
-        moqui_lib::env::set_property("email_oauth_test_client_id", CLIENT);
-        moqui_lib::env::set_property("email_oauth_test_client_secret", SECRET);
+        moqui_lib::env::set_property(REDIRECT_SETTING, REDIRECT);
+        moqui_lib::env::set_property(CLIENT_ID_SETTING, CLIENT);
+        moqui_lib::env::set_property(CLIENT_SECRET_SETTING, SECRET);
         Properties
     }
 }
 
 impl Drop for Properties {
     fn drop(&mut self) {
-        for name in [
-            "email_oauth_redirect_uri",
-            "email_oauth_test_client_id",
-            "email_oauth_test_client_secret",
-        ] {
+        for name in [REDIRECT_SETTING, CLIENT_ID_SETTING, CLIENT_SECRET_SETTING] {
             moqui_lib::env::clear_property(name);
         }
     }
@@ -201,12 +201,12 @@ fn out_text(out: &BTreeMap<String, Value>, key: &str) -> String {
     out.get(key).map(to_plain_string).unwrap_or_default()
 }
 
-/// The fake provider as an `EmailOAuthProvider` (its client from the email_oauth_test_ properties, which win over the
-/// row's), with the mail servers of an account made with it.
+/// The fake provider as an `EmailOAuthProvider` (its client from the conf's oauth-provider[test], set by its
+/// environment names, which wins over the row's), with the mail servers of an account made with it.
 fn provider_row(facade: &EntityFacade, id: &str, fake: &FakeProvider, servers: (u16, u16), revoke: bool) {
     let mut fields = vec![
         ("oauthProviderEnumId", text(id)),
-        ("propertyPrefix", text("email_oauth_test")),
+        ("confProviderId", text("test")),
         ("clientId", text("row-client")),
         ("clientSecret", text("row-secret")),
         ("authorizeUrl", text(&fake.url("/authorize"))),

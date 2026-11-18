@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of stickers and locations (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices,
+    ChatLocationServices), each included by name: in Chat.xml stickerPacks (the picker's packs), stickerImage (a sticker's
+    picture or its thumbnail, sent inline with nosniff), sendSticker and sendLocation (a plain room's; an encrypted room's
+    are the browser's own encrypted sends); in Settings/Stickers.xml and System/ChatStickers.xml the pack management
+    (createStickerPack, updateStickerPack, deleteStickerPack, addSticker, removeSticker), which go back to
+    the screen with its message. A JSON refusal is answered with its reasonCode and the errors, as send's is. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="stickerPacks" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatStickerServices.get#StickerPacks').call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {packList: []} : {packList: out.packList || [], version: out.version || 0})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="stickerImage" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatStickerServices.get#StickerImage').parameters({chatStickerId: chatStickerId || '',
+                thumb: String(thumb) === 'true'}).call() || {}
+            if (ec.message.hasError() || !out.location) { ec.web.response.setStatus(404); ec.web.sendJsonResponse({}); return }
+            ec.web.response.setHeader('X-Content-Type-Options', 'nosniff')
+            ec.web.response.setHeader('Cache-Control', 'private, max-age=86400')
+            ec.web.sendResourceResponse(out.location, true)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sendSticker">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatStickerServices.send#Sticker').parameters({chatRoomId: chatRoomId || '',
+                chatStickerId: chatStickerId || '', replyToEventSeq: replyToEventSeq ? Number(replyToEventSeq) : null,
+                threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sendLocation">
+        <actions><script><![CDATA[
+            let place = {}
+            try { place = JSON.parse(locationJson || '{}') } catch (err) { place = {} }
+            const out = ec.service.sync().name('org.moqui.chat.ChatLocationServices.send#Location').parameters({chatRoomId: chatRoomId || '',
+                location: place && typeof place === 'object' ? place : {}, replyToEventSeq: replyToEventSeq ? Number(replyToEventSeq) : null,
+                threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
+                roomUrl: (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call() || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: clientRef || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- the pack management of the two screens -->
+    <transition name="createStickerPack">
+        <service-call name="org.moqui.chat.ChatStickerServices.create#StickerPack" in-map="{packName: packName, server: String(server) === 'true'}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="updateStickerPack">
+        <service-call name="org.moqui.chat.ChatStickerServices.update#StickerPack" in-map="{chatStickerPackId: chatStickerPackId, packName: packName || null,
+                hidden: hidden == null || hidden === '' ? null : String(hidden) === 'true'}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteStickerPack">
+        <service-call name="org.moqui.chat.ChatStickerServices.delete#StickerPack" in-map="{chatStickerPackId: chatStickerPackId}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="addSticker">
+        <service-call name="org.moqui.chat.ChatStickerServices.add#Sticker" in-map="{chatStickerPackId: chatStickerPackId, file: file, emoji: emoji, altText: altText}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeSticker">
+        <service-call name="org.moqui.chat.ChatStickerServices.remove#Sticker" in-map="{chatStickerId: chatStickerId}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+</screen>

@@ -8,7 +8,7 @@
 // challenge, keeps each binding as a SipRegistration row (store#SipRegistration), rings a user's devices when the call
 // services ring the user (ring#SipDevices, from Calls.js ring), and hands a phone's own call to receive#DeviceCall, which
 // places it as the phone's user: to another user (by username), or to a number through place#PhoneCall's policy. The
-// registrar is off unless sip_registrar_enabled is true; then nothing rings and no call is taken, though phones may be added.
+// registrar is off unless sip-server/registrar@enabled is true; then nothing rings and no call is taken, though phones may be added.
 
 const CALLS = 'component://framework/service/org/moqui/call/Calls.js'
 const VOICE = 'component://framework/service/org/moqui/call/Voice.js'
@@ -36,7 +36,7 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields || {}).list())
 const yes = (value) => value === true || value === 'Y' || value === 'true' || value === 'y' || value === '1'
 const blank = (value) => value == null || String(value).trim() === ''
-const property = (name) => String(System.getProperty(name) || '').trim()
+const property = (name) => String((name.includes('@') ? ec.factory.getConfValue(name) : System.getProperty(name)) || '').trim()
 
 function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
@@ -48,14 +48,14 @@ function isAdmin() {
 }
 
 /**
- * Whether phones go through this node's edge node: on unless edge_sip_enabled is false, n, no, 0 or off (the wizard's
+ * Whether phones go through this node's edge node: on unless edge/node@sip-enabled is false, n, no, 0 or off (the wizard's
  * phones area, plans/archive/Edge-Node.md §5.7 "As built (E10, phones)"; moqui_core::edge::sip::sip_enabled).
  */
-const edgeSipEnabled = () => !['false', 'n', 'no', '0', 'off'].includes(property('edge_sip_enabled').toLowerCase())
+const edgeSipEnabled = () => !['false', 'n', 'no', '0', 'off'].includes(property('edge/node@sip-enabled').toLowerCase())
 
 /**
  * The live SIP node of this node's edge node (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the link keeps from
- * its Hello with its realm and registrar switch; null when there is none, or phones are off (edge_sip_enabled). Its
+ * its Hello with its realm and registrar switch; null when there is none, or phones are off (edge/node@sip-enabled). Its
  * registrar is the phones'.
  */
 function edgeSipNode() {
@@ -64,13 +64,13 @@ function edgeSipNode() {
 }
 
 /**
- * Whether the registrar is on: sip_registrar_enabled (off by default, even with the SIP listeners on); behind an edge
+ * Whether the registrar is on: sip-server/registrar@enabled (off by default, even with the SIP listeners on); behind an edge
  * node, the edge node's (its row), whose registrar the phones use.
  */
 function registrarOn() {
   const edge = edgeSipNode()
   if (edge) return edge.registrarEnabled === 'Y'
-  return yes(property('sip_registrar_enabled').toLowerCase())
+  return yes(property('sip-server/registrar@enabled').toLowerCase())
 }
 
 /**
@@ -80,17 +80,17 @@ function registrarOn() {
 function domain() {
   const edge = edgeSipNode()
   if (edge && !blank(edge.sipDomain)) return edge.sipDomain
-  return property('sip_domain') || property('sip_public_address') || 'moqui'
+  return property('sip-server@domain') || property('sip-server@public-address') || 'moqui'
 }
 
-/** The live SIP nodes; the edge node's link-kept row only while phones go through it (edge_sip_enabled, E10 phones). */
+/** The live SIP nodes; the edge node's link-kept row only while phones go through it (edge/node@sip-enabled, E10 phones). */
 function liveSipNodes() {
   const edgeOn = edgeSipEnabled()
   return rows(SIP_NODE).filter((n) => ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS && (edgeOn || n.edgeLinked !== 'Y'))
 }
 
 /** Cascading media nodes (W7, Calls.js cascadeOn): a phone may ring on another node than the call's. */
-const cascade = () => ['true', 'y', 'yes', '1'].includes(property('rtc_cascade_enabled').toLowerCase())
+const cascade = () => ['true', 'y', 'yes', '1'].includes(property('media-server@cascade-enabled').toLowerCase())
 
 /** A live media node that takes calls (CallMediaNode), for a phone's room there to relay to the call's node. */
 function liveMediaNode(instanceId) {
@@ -105,8 +105,8 @@ function serverSetup() {
     return fromNode || (property(name) ? Number(property(name)) : null)
   }
   const node = liveSipNodes()[0]
-  const sipPort = port(node?.sipAddress, 'sip_port')
-  const tlsPort = port(node?.tlsAddress, 'sip_tls_port')
+  const sipPort = port(node?.sipAddress, 'sip-server@port')
+  const tlsPort = port(node?.tlsAddress, 'sip-server@tls-port')
   return { domain: domain(), sipPort, tlsPort, transport: tlsPort ? 'TLS' : sipPort ? 'UDP' : null, registrarEnabled: registrarOn() }
 }
 
@@ -310,7 +310,7 @@ function edgeDigestFresh(device) {
  */
 function checkDigest(p) {
   // the edge node's (E8): only for the realm its registrar challenges with, which its phones' verifiers are for, and
-  // none while phones are off (edge_sip_enabled, E10 phones)
+  // none while phones are off (edge/node@sip-enabled, E10 phones)
   if (isEdgeCaller() && (!edgeSipEnabled() || String(p.realm || '') !== domain())) return { matched: false }
   const auth = deviceAuth({ username: p.username, realm: p.realm })
   const verifier = (auth.verifierList || []).find((v) => String(v.algorithm).toUpperCase() === String(p.algorithm || '').toUpperCase())
@@ -396,7 +396,7 @@ function expireRegistrations() {
 /**
  * Rings the devices of these users that are registered with the call's node (Calls.js ring, beside their tabs): a CltSipDevice
  * leg offered for each, which the engine forks to the device's live bindings. The first answer wins (Calls.js deviceEvent).
- * Nothing while the registrar is off, or the call's node has no SIP engine. With rtc_cascade_enabled (W7) a phone
+ * Nothing while the registrar is off, or the call's node has no SIP engine. With media-server@cascade-enabled (W7) a phone
  * registered with another node rings there too: its leg's media is on that node (CallLeg.mediaNodeId), whose room is
  * linked to the call's node first.
  */
@@ -417,7 +417,7 @@ function ringDevices(p) {
   if (p.fromUserId) fromUser = one('moqui.security.UserAccount', { userId: p.fromUserId })?.username || null
   if (!fromUser) fromUser = rows(LEG, { callSessionId: session.callSessionId, legTypeEnumId: 'CltPstn' })[0]?.phoneNumber || 'moqui'
   // a phone rings as long as the call may ring: until the session's ring expiry (a voicemail box's rings, V2, can make it
-  // longer than call_ring_seconds); voicemail or an answer cancels it sooner
+  // longer than calls@ring-seconds); voicemail or an answer cancels it sooner
   const ringSeconds = Math.max(1, Math.ceil(((ms(session.ringExpireDate) || now) - now) / 1000))
   let ringCount = 0
   for (const userId of Array.from(p.userIdList || [])) {

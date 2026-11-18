@@ -14,8 +14,8 @@
 
 //! The Rust part of `org.moqui.chat.ChatKeyServices` (the rest is `ChatKeys.js`): `derive#ChatStoreKey`, the passphrase a
 //! browser encrypts a crypto device's store with (docs/interfaces/Chat-Keys.md, "At rest"). It is derived, not stored:
-//! HMAC-SHA-256 under the platform secret `chat_store_key_secret` (an `is-secret` default-property, generated when unset)
-//! of `userId|deviceId|revision`, as 43 characters of URL-safe base64. So no table holds it: an administrator who reads
+//! HMAC-SHA-256 under the platform secret `chat@store-key-secret` (a conf secret, generated into `runtime/.env` when
+//! unset) of `userId|deviceId|revision`, as 43 characters of URL-safe base64. So no table holds it: an administrator who reads
 //! the entities in Tools, or an export, does not get it. A revoke bumps the device's revision.
 
 use std::collections::BTreeMap;
@@ -29,7 +29,7 @@ use super::util::param_text;
 use crate::entity::EntityFacade;
 
 /// The platform secret the store keys are derived under.
-const SECRET_PROPERTY: &str = "chat_store_key_secret";
+const SECRET_PROPERTY: &str = "chat@store-key-secret";
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -51,7 +51,7 @@ fn derive_store_key(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let secret = moqui_lib::env::get_prop_or_env(SECRET_PROPERTY);
+    let secret = crate::context::conf_env::setting(SECRET_PROPERTY);
     let secret = secret.trim();
     if secret.is_empty() || secret.ends_with("CHANGEME") {
         return Err(LibError::new(format!(

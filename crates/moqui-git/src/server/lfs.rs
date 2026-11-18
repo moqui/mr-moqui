@@ -20,7 +20,7 @@
 //! repository's file. Over SSH, `git-lfs-authenticate` gives git-lfs the HTTPS endpoint and a token for it.
 //!
 //! The actions a batch answers carry a `MoquiLfs` token in their `Authorization` header: the user, repository,
-//! operation and expiry, signed with `git_lfs_token_key` (or `git_lfs_token_key_previous`, while a key is rotated).
+//! operation and expiry, signed with `git-server@lfs-token-key` (or `git-server@lfs-token-key-previous`, while a key is rotated).
 //! The token only says who the user is: each request is authorized again, as any other is. Guide:
 //! `docs/interfaces/Git-Hosting.md`, Large files.
 
@@ -35,7 +35,7 @@ use serde_json::{json, Value as Json};
 use sha2::Sha256;
 
 use super::{
-    anonymous_slot, authenticate_with, current_user, may_push, open_path, path, property, provider, public_base_url,
+    anonymous_slot, authenticate_with, current_user, may_push, open_path, path, provider, public_base_url,
     AnonymousSlot, GitService, HttpResponder, Refusal,
 };
 use crate::{Repo, RepositoryKind};
@@ -184,16 +184,11 @@ fn now_seconds() -> i64 {
         .unwrap_or(0)
 }
 
-/// A token key: set, and not the placeholder the conf ships.
-/// The `git-server` attribute `name` (`lfs-token-key`), else the property `property`; None when empty or not yet set.
-fn key(name: &str, property_name: &str) -> Option<String> {
-    let configured = crate::setting(name);
-    let key = if configured.is_empty() {
-        property(property_name)
-    } else {
-        configured
-    };
-    Some(key).filter(|key| !key.is_empty() && !key.ends_with("CHANGEME"))
+/// A token key, the `git-server` attribute `name` (`lfs-token-key`): set, and not the placeholder the conf ships; None
+/// when empty or not yet generated. Read with no context too (an SSH session's git-lfs-authenticate).
+fn key(name: &str) -> Option<String> {
+    Some(moqui_core::context::conf_env::setting(&format!("git-server@{name}")))
+        .filter(|key| !key.is_empty() && !key.ends_with("CHANGEME"))
 }
 
 fn tag(key: &str, payload: &str) -> Result<Vec<u8>, Error> {
@@ -205,7 +200,7 @@ fn tag(key: &str, payload: &str) -> Result<Vec<u8>, Error> {
 
 /// The `Authorization` header value of a token for `username` to `operation` on `repository`, for `seconds`.
 fn issue(username: &str, repository: &str, operation: Operation, seconds: i64) -> Result<String, Error> {
-    let key = key("lfs-token-key", "git_lfs_token_key").ok_or_else(|| Error::new("git_lfs_token_key is not set"))?;
+    let key = key("lfs-token-key").ok_or_else(|| Error::new("git-server@lfs-token-key is not set"))?;
     issue_with(&key, username, repository, operation, seconds)
 }
 
@@ -234,13 +229,10 @@ fn issue_with(
 /// The token of a `MoquiLfs` header: `None` for another kind of header, an error for a token that is not good (a
 /// wrong signature, expired).
 fn read_token(header: &str) -> Option<Result<Token, Refusal>> {
-    let keys: Vec<String> = [
-        key("lfs-token-key", "git_lfs_token_key"),
-        key("lfs-token-key-previous", "git_lfs_token_key_previous"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let keys: Vec<String> = [key("lfs-token-key"), key("lfs-token-key-previous")]
+        .into_iter()
+        .flatten()
+        .collect();
     read_token_with(&keys, header)
 }
 

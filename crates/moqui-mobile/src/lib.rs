@@ -38,6 +38,7 @@ mod calls;
 mod commands;
 mod dial;
 mod host;
+mod join;
 mod keystore;
 mod native;
 mod push;
@@ -133,6 +134,8 @@ pub fn run() {
             commands::call_take_answer,
             commands::call_audio,
             commands::call_audio_route,
+            commands::secure_screen,
+            commands::calendar_insert,
             commands::call_dial_account,
             commands::call_dial_choice,
             commands::call_dial_from,
@@ -267,7 +270,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
         PageLoadEvent::Started => {
             // any new document (a reload, the webview's own Back, a renderer gone and loaded again, not a pushState or
             // a hash): the calls the page joined end with it
-            load_host.page_gone(false);
+            load_host.page_gone(None);
             load_host.page.started(payload.url());
             if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
                 core.sockets().close_for(MAIN);
@@ -289,7 +292,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
 fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
     match goes(url, host.page.from().as_deref(), host.signed_in().is_some()) {
         Goes::Here => {
-            host.page.navigating();
+            host.page.navigating(Some(url));
             true
         }
         Goes::AppPage => {
@@ -364,6 +367,17 @@ fn on_event(app: &AppHandle, event: RunEvent) {
                             std::thread::spawn(move || host.open_room_link(&url));
                         }
                         None => log::info!("A room link before the app was set up: the shell opens as it is"),
+                    }
+                } else if join::is_join_link(&url) {
+                    // a room's invite link from its join page (plans/Comms-Messaging.md §18.3 phase 17): only a page of a
+                    // server the app has an account on opens, where the person presses Join
+                    match (join::join_link_of(&url), app.try_state::<Arc<MobileHost>>()) {
+                        (Some((host, token)), Some(state)) => {
+                            let state = Arc::clone(&state);
+                            std::thread::spawn(move || state.open_join_link(&host, &token));
+                        }
+                        (None, _) => log::warn!("A join link that is not one is refused"),
+                        (_, None) => log::info!("A join link before the app was set up: the shell opens as it is"),
                     }
                 } else if calls::is_call_link(&url) {
                     // the activity is exported, so any app may send a call link: only one the native code made for

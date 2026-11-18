@@ -21,11 +21,10 @@ fn a_postgres_session_takes_the_schema_and_the_isolation_level() {
     use moqui_core::entity::datasource::IsolationLevel;
 
     let text = r#"<moqui-conf>
-        <entity-facade><datasource group-name="transactional" database-conf-name="postgres" schema-name="app"/></entity-facade>
+        <entity-facade><datasource group-name="transactional" database-conf-name="postgres" host="db.example"
+            database="moqui" schema-name="app"/></entity-facade>
         <database-list>
-            <database name="postgres" default-isolation-level="ReadCommitted">
-                <inline-jdbc><xa-properties serverName="db.example" databaseName="moqui"/></inline-jdbc>
-            </database>
+            <database name="postgres" default-isolation-level="ReadCommitted"><inline-jdbc/></database>
         </database-list>
     </moqui-conf>"#;
     let mut conf = datasource_conf(&MNode::parse_text("test", text).unwrap(), "transactional").unwrap();

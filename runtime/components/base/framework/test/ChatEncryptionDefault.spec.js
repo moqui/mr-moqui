@@ -1,6 +1,6 @@
 // E2EE by default (plans/Comms-Messaging.md §6.5; docs/interfaces/Chat-Keys.md "Encrypted by default"): get#EncryptionDefault
 // answers one bit for a set of people, true only when the asker and each of them have a crypto device in use (not revoked,
-// its identity keys uploaded, seen in the last chat_device_active_days); a user without one, with a revoked or keyless
+// its identity keys uploaded, seen in the last chat@device-active-days); a user without one, with a revoked or keyless
 // device, with one not seen in 90 days, or unknown counts as having none. The answer holds the bit and nothing of the
 // devices; more than 50 people is refused, and past 600 people an hour a user is rateLimited. check#DevicesReady is the same
 // count for create#ChatRoom's default. A person an app's chat-target provider or an external asker's reach refuses is

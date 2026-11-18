@@ -728,6 +728,8 @@ interface MoquiResourceFacade {
     /** A PNG thumbnail of an image, no side over maxSize (256); null when the bytes are not an image. */
     readonly imageAvailable: boolean;
     makeThumbnail(source: string, target: string, maxSize?: number | null): { width: number; height: number; contentType: string } | null;
+    /** A chat sticker's picture: its type from its bytes, its sides from its header before it is decoded, a small decode. */
+    makeStickerThumbnail(source: string, target: string, maxSide?: number | null, thumbSize?: number | null): { format?: string; contentType?: string; width?: number | null; height?: number | null; thumbWidth?: number; thumbHeight?: number; reasonCode?: "badType" | "tooLarge" };
     /** Page 1 of a PDF as a PNG at target, no side over maxSize (1024), with the page count; null when there is no PDF engine or the PDF does not open. */
     makePdfPreview(source: string, target: string, maxSize?: number | null): { width: number; height: number; pages: number; contentType: string } | null;
     /** The first rows of a sheet (the first when sheetName is empty), from the first used row and column; null when it is not a spreadsheet. */
@@ -878,7 +880,7 @@ interface MoquiUserFacade {
     initialAdminAllowed(setupSecret: string | null): boolean;
     /** With nobody logged in the session becomes anonymous; whether this call did that. */
     loginAnonymousIfNoUser(): boolean;
-    /** A token for the subject that checkServerGrant accepts for the same purpose until ttlSeconds (3600; 1 second to 7 days) have passed, `<expiry millis>.<HMAC hex>`, keyed by a key the server derives for the purpose from its own secret, which no script reads. An error with no purpose, or when the server has no session_cookie_key. */
+    /** A token for the subject that checkServerGrant accepts for the same purpose until ttlSeconds (3600; 1 second to 7 days) have passed, `<expiry millis>.<HMAC hex>`, keyed by a key the server derives for the purpose from its own secret, which no script reads. An error with no purpose, or when the server has no webapp-list/webapp[webroot]/session-config@cookie-key. */
     serverGrant(purpose: string, subject: string, ttlSeconds?: number | null): string;
     /** Whether the token is a serverGrant of this purpose and subject that has not expired; false for a null token. */
     checkServerGrant(purpose: string, subject: string, token: string | null): boolean;
@@ -1214,9 +1216,10 @@ interface MoquiRestClient {
     addHeader(name: string, value: string): MoquiRestClient;
     addHeaders(headers: Record<string, string>): MoquiRestClient;
     /**
-     * A header whose value is the property `propertyName`, read by the host at send time and never given to the script;
-     * sent only to a URL under the base URL in the property `baseUrlPropertyName` (same scheme, host and port, a path at
-     * or below the base's), never on a redirect. Else the call fails and nothing is sent.
+     * A header whose value is the setting `propertyName` (a conf selector such as `pass@client-secret`, or a property),
+     * read by the host at send time and never given to the script; sent only to a URL under the base URL in the setting
+     * `baseUrlPropertyName` (same scheme, host and port, a path at or below the base's), never on a redirect. Else the
+     * call fails and nothing is sent.
      */
     addPropertyHeader(headerName: string, propertyName: string, baseUrlPropertyName: string): MoquiRestClient;
     /** The Authorization header of HTTP basic authentication. */
@@ -1432,6 +1435,12 @@ interface MoquiServerEc {
         /** Java's `getTool(name, parameters...)`: the object of a component's Rust tool factory. A tool that declares its type is in `MoquiToolMap` (`tools.d.ts`). */
         getTool<K extends keyof MoquiToolMap>(name: K, ...parameters: unknown[]): MoquiToolMap[K];
         getTool(name: string, ...parameters: unknown[]): MoquiTool;
+        /** The running conf's attribute at a selector (`webapp-list/webapp[webroot]@dev-marker-color`), or null when there is none or it is a secret. */
+        getConfValue(selector: string): string | null;
+        /** Whether the running conf's attribute at a selector, a secret one too, has a value other than empty or `CHANGEME`; the value is not returned. */
+        isConfValueSet(selector: string): boolean;
+        /** Whether the attribute at a selector holds a secret (a password, a key) by the conf schema or its name. */
+        isConfSecret(selector: string): boolean;
         /** The tool factory a conf `tool-factory` element selected, or null when there is none of that name. */
         getToolFactory<K extends keyof MoquiToolMap>(name: K): MoquiToolFactory<MoquiToolMap[K]> | null;
         getToolFactory(name: string): MoquiToolFactory | null;

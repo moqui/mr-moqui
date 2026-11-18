@@ -610,7 +610,7 @@ pub struct McpConf {
     /// The base URL the server advertises (its card, the approval links); else from the request.
     pub public_url: Option<String>,
     pub trust_forwarded_headers: bool,
-    /// The key of the `requestState` MACs, standard base64; else one derived from `session_cookie_key`.
+    /// The key of the `requestState` MACs, standard base64; else one derived from `webapp-list/webapp[webroot]/session-config@cookie-key`.
     pub request_state_key: Option<String>,
     /// Seconds a retry of a call whose approval is still pending waits for the decision before it answers again.
     pub approval_wait: u64,
@@ -721,9 +721,14 @@ impl LlmConf {
                     Err(problem) => problems.push(problem),
                 }
             }
+            // a bind that names no model takes the facade's default-model
+            let default_model = attr(node, "default-model");
             for element in node.named_iter("bind") {
-                let (Some(feature), Some(model)) = (attr(&element, "feature"), attr(&element, "model")) else {
-                    problems.push("llm-facade bind needs a feature and a model".to_string());
+                let model = attr(&element, "model").or_else(|| default_model.clone());
+                let (Some(feature), Some(model)) = (attr(&element, "feature"), model) else {
+                    problems.push(
+                        "llm-facade bind needs a feature, and a model or the llm-facade default-model".to_string(),
+                    );
                     continue;
                 };
                 let reasoning = match attr(&element, "reasoning") {
@@ -1151,7 +1156,7 @@ pub fn json_object(text: &str) -> Result<serde_json::Value, String> {
 /// An attribute with `${name}` expanded and trimmed. Empty is `None`.
 fn attr(node: &MNode, name: &str) -> Option<String> {
     let raw = node.attribute(name)?;
-    let expanded = moqui_lib::env::expand(&raw).unwrap_or(raw);
+    let expanded = raw;
     let trimmed = expanded.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }

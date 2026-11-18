@@ -487,7 +487,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="queryId" required="true"/></in-parameters>
     </service>
     <service verb="purge" noun="DatabaseAudit" type="rust" location="moqui_tools::sql_service::purge_database_audit">
-        <description>Delete the DatabaseAudit rows older than the database_audit_days property (90 by default, at least
+        <description>Delete the DatabaseAudit rows older than the tools@database-audit-days property (90 by default, at least
             1), and the expired SqlRunToken rows: the DatabaseAuditPurge ServiceJob, which runs with no user signed in; a
             signed-in caller needs DATABASE_ADMIN.</description>
         <out-parameters><parameter name="deleted" type="Long"/></out-parameters>

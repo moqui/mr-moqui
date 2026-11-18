@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The archives the backup keeps (archiveList, newest first, a page at a time), as metadata only: the
             archive's name (archiveKey), its database, its kind (a dump file or a physical backup), its tier (daily,
             weekly, monthly, yearly), when it was made and, for a dump, its size. Never a path, and no download. The
-            directory read is the instance's own (the backup job's stored parameter, the embedded_db_backup_dir
+            directory read is the instance's own (the backup job's stored parameter, the database-backup@dir
             property or runtime/db/backup): no parameter names one. Needs ADMIN_BACKUP_VIEW or
             ADMIN_BACKUP_RUN.</description>
         <in-parameters>

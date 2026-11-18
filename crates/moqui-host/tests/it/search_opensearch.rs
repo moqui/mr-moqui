@@ -33,10 +33,10 @@ fn opensearch_backend_proxies_and_exports_telemetry() {
     let url = std::env::var("OPENSEARCH_URL").expect("set OPENSEARCH_URL to run this test");
     let prefix = format!("moqui_server_test_{}_", std::process::id());
     for (name, value) in [
-        ("search_backend", "opensearch"),
-        ("elasticsearch_url", url.as_str()),
-        ("elasticsearch_index_prefix", prefix.as_str()),
-        ("opensearch_run", "false"),
+        ("moqui_conf__search_facade__backend", "opensearch"),
+        ("moqui_conf__search_facade__cluster__url", url.as_str()),
+        ("moqui_conf__search_facade__cluster__index_prefix", prefix.as_str()),
+        ("moqui_conf__search_facade__cluster__run", "false"),
     ] {
         moqui_lib::env::set_property(name, value.to_string());
     }
@@ -57,7 +57,7 @@ fn opensearch_backend_proxies_and_exports_telemetry() {
     );
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("cluster_name"), "{body}");
-    // kibana_host defaults to this host; with no Dashboards there the proxy answers 502.
+    // the DashboardProxy's proxyTo defaults to this host; with no Dashboards there the proxy answers 502.
     let (status, _, _) = exchange(address, &http_request("GET", "/dashboard/", &[], ""));
     assert_eq!(status, 401, "the Dashboards proxy needs a login too");
 

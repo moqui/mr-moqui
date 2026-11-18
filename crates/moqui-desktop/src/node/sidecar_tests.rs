@@ -72,17 +72,20 @@ fn the_binary_is_the_variable_then_the_builds_or_beside_the_app() {
 fn the_node_gets_the_listen_properties_and_stops_on_stdin_close() {
     let args = args(51234, &[]);
     assert!(args.chunks(2).all(|pair| pair[0] == "-D"));
-    assert!(args.contains(&"webapp_http_port=51234".to_string()));
-    assert!(args.contains(&"webapp_http_bind=127.0.0.1".to_string()));
+    assert!(args.contains(&"moqui_conf__webapp_list__webapp__WEBROOT__http_port=51234".to_string()));
+    assert!(args.contains(&"moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1".to_string()));
     assert!(args.contains(&"moqui_stop_on_stdin_close=true".to_string()));
 }
 
 #[test]
 fn the_node_gets_the_backup_properties_as_defines() {
-    let args = args(51234, &[("embedded_db_backup_dir", "/b/MR Moqui".to_string())]);
+    let args = args(
+        51234,
+        &[("moqui_conf__database_backup__dir", "/b/MR Moqui".to_string())],
+    );
     let at = args
         .iter()
-        .position(|arg| arg == "embedded_db_backup_dir=/b/MR Moqui")
+        .position(|arg| arg == "moqui_conf__database_backup__dir=/b/MR Moqui")
         .unwrap();
     assert_eq!(args[at - 1], "-D");
 }

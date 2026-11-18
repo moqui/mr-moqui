@@ -40,7 +40,7 @@ const IDENTITY_CODES = { CikLocal: 'local', CikGuest: 'guest', CikPhone: 'phone'
 const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn' }
 
 /** Seconds a call rings before it is missed. */
-const ringSeconds = () => Math.max(10, Number(System.getProperty('call_ring_seconds') || 45))
+const ringSeconds = () => Math.max(10, Number(ec.factory.getConfValue('calls@ring-seconds') || 45))
 /**
  * A leg whose socket closed and did not come back in this long has left: a minute, so a phone that loses its network
  * comes back to the call by itself without a new ring (plans/Comms-Messaging.md §8.3 item 11).
@@ -57,8 +57,8 @@ const NEVER_CONNECTED_MS = 120000
 const MEDIA_NODE_STALE_MS = 60000
 /** The most people a call rings. */
 const MAX_INVITEES = 50
-/** The most guests who join by one link in a minute (call_guest_joins_per_minute, 20 by default). */
-const guestJoinsPerMinute = () => Math.max(1, Number(System.getProperty('call_guest_joins_per_minute')) || 20)
+/** The most guests who join by one link in a minute (calls@guest-joins-per-minute, 20 by default). */
+const guestJoinsPerMinute = () => Math.max(1, Number(ec.factory.getConfValue('calls@guest-joins-per-minute')) || 20)
 /** How long a guest's credential lasts. */
 const GUEST_HOURS = 4
 /** How long a call link lasts by default, and at most, in hours. */
@@ -109,7 +109,7 @@ const KID_SPAN = 65536
  * (Settings, Calls: Always relay my calls), and the property that turns the direct path off for the server.
  */
 const ALWAYS_RELAY_PREF = 'CALL_ALWAYS_RELAY'
-const directPathOn = () => !['false', 'n', 'no', '0'].includes(String(System.getProperty('call_direct_path') || '').trim().toLowerCase())
+const directPathOn = () => !['false', 'n', 'no', '0'].includes(String(ec.factory.getConfValue('calls@direct-path') || '').trim().toLowerCase())
 
 /** A refusal: an error for the user and a reason code for the caller. */
 function refuse(reasonCode, text) {
@@ -139,7 +139,7 @@ function isExternal(userId) {
 }
 
 function appRoot() {
-  return (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '')
+  return (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms').replace(/\/+$/, '')
 }
 
 function callLink(callSessionId) {
@@ -157,11 +157,11 @@ function liveMediaNodes() {
 }
 
 /**
- * Cascading media nodes (W7, plans/archive/Comms-Framework.md §6.3 "Cluster"): with rtc_cascade_enabled a leg's media is on the
+ * Cascading media nodes (W7, plans/archive/Comms-Framework.md §6.3 "Cluster"): with media-server@cascade-enabled a leg's media is on the
  * node its signaling socket is on, when that node holds media, and the node relays to the call's node (its origin).
  * Off by default: every leg's media is on the call's node.
  */
-const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(System.getProperty('rtc_cascade_enabled') || '').trim().toLowerCase())
+const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(ec.factory.getConfValue('media-server@cascade-enabled') || '').trim().toLowerCase())
 
 /** The node holding a leg's media: its own (a leg node, W7), else the call's. */
 function legNode(session, callLegId) {
@@ -227,7 +227,7 @@ function alwaysRelays(userId) {
  * (decided 2026-11-16, plans/Comms-Messaging.md §8.3 item 15): a direct call (a direct room's call of two), every
  * answered leg a browser's, of two users of this server, neither of whom keeps their calls on the media server, with no
  * recording or captions going on (the media server makes them). A guest, a phone, a third person, either one's Always
- * relay, or call_direct_path=false keeps the call on the media server; the pages of a direct call move there when it
+ * relay, or moqui_conf__calls__direct_path=false keeps the call on the media server; the pages of a direct call move there when it
  * stops being one. An encrypted call stays encrypted on either path: the SFrame keys are the same.
  */
 function directPath(session, legs, participants) {
@@ -1284,7 +1284,7 @@ function bind(p) {
 }
 
 /**
- * The node a leg's media goes to as it binds (W7): with rtc_cascade_enabled the node of its signaling socket, when that is
+ * The node a leg's media goes to as it binds (W7): with media-server@cascade-enabled the node of its signaling socket, when that is
  * a live media node not draining, and the leg was not sent back to the call's node (its relay link refused); else the
  * call's.
  */
@@ -1535,7 +1535,7 @@ function expireItem(p) {
   if (!session || session.statusId === 'CssEnded') return { done: false }
   const participant = one(PARTICIPANT, { callParticipantId: current.callParticipantId })
   if (p.itemKind === 'offered' && current.statusId === 'ClsOffered') {
-    // a phone call that rings longer than call_ring_seconds before voicemail (its box's rings, V2) keeps ringing until then
+    // a phone call that rings longer than calls@ring-seconds before voicemail (its box's rings, V2) keeps ringing until then
     if (session.statusId === 'CssRinging' && (ms(session.ringExpireDate) || 0) > nowMs()) return { done: false }
     closeLeg(current, 'ClsTimedOut', 'CerNoAnswer')
     if (isDeviceLeg(current)) sipLegControl(session, current.callLegId, 'hangup')
@@ -2049,7 +2049,7 @@ function registerNode(p) {
 function capabilities() {
   const supported = !!ec.factory.hasFeature('rtc')
   const live = liveMediaNodes().filter((n) => n.draining !== 'Y')
-  const configured = supported && String(System.getProperty('rtc_media_port') || '').trim() !== ''
+  const configured = supported && String(ec.factory.getConfValue('media-server@port') || '').trim() !== ''
   const reasonCode = live.length ? null : !supported && !live.length ? 'notBuilt' : 'noMediaServer'
   return { supported, configured, active: live.length > 0, reasonCode, e2ee: supported }
 }
@@ -2122,7 +2122,7 @@ function makePhoneParticipant(session, displayName, admission) {
  * answered). Inbound: the phone is in it (its leg answered) and the user is rung like any callee; silent (V2: the user is
  * busy, the call goes straight to voicemail) offers the user's leg without ringing it, and with no userId (V2: the
  * voicemail access number) nobody is rung and the call is active at once. ringExpireSeconds (V2) keeps an inbound call
- * ringing past call_ring_seconds while its voicemail waits for more rings. chatRoomId (C4-SMS) is the room of the number
+ * ringing past calls@ring-seconds while its voicemail waits for more rings. chatRoomId (C4-SMS) is the room of the number
  * pair (our number, theirs), where the call's start and end are shown with the pair's texts; it changes nothing else.
  */
 function startPhone(p) {

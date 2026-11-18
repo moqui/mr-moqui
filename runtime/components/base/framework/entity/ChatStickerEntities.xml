@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Sticker packs in chat (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices, ChatSticker.js):
+    the server's packs (an administrator's, ChatStickerAdmin) and each user's own, their pictures stored as content
+    (chat/stickers@root, dbresource://chat-stickers by default). A sent sticker is a copy of its picture in the room, an
+    ordinary ChatAttachment (stickerOf), so removing a pack never breaks a message and a user's pack stays its owner's. No
+    outside service. No Java counterpart. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="ChatStickerPack" package="moqui.chat" use="transactional" cache="never">
+        <description>A pack of stickers: the server's (no ownerUserId), offered to every chat user, or a user's own, offered to
+            them only. statusEnumId CspActive (offered) or CspHidden (kept, not offered). coverStickerId is the sticker its
+            tab shows.</description>
+        <field name="chatStickerPackId" type="id" is-pk="true"/>
+        <field name="packName" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="coverStickerId" type="id"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one" title="ChatStickerPackStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="CHAT_STICKER_PACK_OWNER"><index-field name="ownerUserId"/><index-field name="statusEnumId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Sticker Pack Status" enumTypeId="ChatStickerPackStatus"/>
+            <moqui.basic.Enumeration description="Offered" enumId="CspActive" enumCode="active" enumTypeId="ChatStickerPackStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Hidden" enumId="CspHidden" enumCode="hidden" enumTypeId="ChatStickerPackStatus" sequenceNum="2"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="ChatSticker" package="moqui.chat" use="transactional" cache="never">
+        <description>A sticker of a pack: a PNG, WebP or GIF picture (animated ones too) at contentLocation, its type read
+            from its bytes and its sides (at most 512 px) from its header before it is decoded; thumbLocation is its still PNG of at most 128 px a side, and width and height that thumbnail's
+            (its shape). emoji is the one emoji it stands for (search, and its text form "Sticker 👍"); altText what a
+            screen reader reads. digest (SHA-256) keeps the same picture once a pack.</description>
+        <field name="chatStickerId" type="id" is-pk="true"/>
+        <field name="chatStickerPackId" type="id"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="emoji" type="text-short"/>
+        <field name="altText" type="text-medium"/>
+        <field name="contentLocation" type="text-medium"/>
+        <field name="thumbLocation" type="text-medium"/>
+        <field name="contentType" type="text-short"/>
+        <field name="fileSize" type="number-integer"/>
+        <field name="width" type="number-integer"/>
+        <field name="height" type="number-integer"/>
+        <field name="digest" type="text-medium"/>
+        <field name="createdByUserId" type="id"><description>Who added it: a user adds at most chat/stickers@uploads-per-hour</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatStickerPack" short-alias="pack"/>
+        <index name="CHAT_STICKER_PACK_SEQ"><index-field name="chatStickerPackId"/><index-field name="sequenceNum"/></index>
+    </entity>
+
+    <extend-entity entity-name="ChatAttachment" package="moqui.chat">
+        <field name="stickerOf" type="id"><description>The chatStickerId a room's copy of a sticker came from: find#RoomFiles
+            leaves it out of the media and files lists</description></field>
+    </extend-entity>
+</entities>

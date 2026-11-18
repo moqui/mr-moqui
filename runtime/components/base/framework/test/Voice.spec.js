@@ -449,8 +449,8 @@ feature("an outbound call is active when the number answers, and ends when the u
 feature("a phone leg hears the recording notice and acknowledges it by pressing 1; another key is the call's own", {
     when() {
         endAll()
-        setProperty("call_recording_enabled", "true")
-        setProperty("call_recording_ack_required", "true")
+        setConf("calls/recording@enabled", "true")
+        setConf("calls/recording@ack-required", "true")
         const placed = placeA()
         const callSessionId = placed.callSessionId
         const phone = {callSessionId, callLegId: placed.phoneLegId}
@@ -510,6 +510,6 @@ feature("the capabilities say supported, configured and active apart", {
         caps.active == true
         caps.reasonCode == null
         noNode.active == false
-        noNode.reasonCode == (built ? (String(System.getProperty("sip_port") || System.getProperty("sip_tls_port") || "").trim() ? "noSipServer" : "notConfigured") : "notBuilt")
+        noNode.reasonCode == (built ? (String(ec.factory.getConfValue("sip-server@port") || ec.factory.getConfValue("sip-server@tls-port") || "").trim() ? "noSipServer" : "notConfigured") : "notBuilt")
     }
 })

@@ -19,8 +19,8 @@
 //! plain copies files and directories as they are.
 //!
 //! Two properties let a deployment set the backup up without editing its job row (plans/archive/PostgresBackup.md):
-//! `embedded_db_backup_dir` is the archive directory when the call names no `backupDir`, and
-//! `embedded_db_backup_scheduled` (`true` or `false`) sets the seed job `backup_EmbeddedDatabase_daily` running or
+//! `database-backup@dir` is the archive directory when the call names no `backupDir`, and
+//! `database-backup@scheduled` (`true` or `false`) sets the seed job `backup_EmbeddedDatabase_daily` running or
 //! paused at boot ([`apply_schedule_property`]). Unset, neither changes anything; the desktop app sets both
 //! (plans/Mobile-Desktop.md section 4, configuration 1, Backups).
 
@@ -42,9 +42,9 @@ const SERVICE_JOB: &str = "moqui.service.job.ServiceJob";
 /// The seed data's scheduled backup (MoquiSetupData.xml), paused there.
 pub(crate) const BACKUP_JOB: &str = "backup_EmbeddedDatabase_daily";
 /// The archive directory when the call names none.
-pub(crate) const DIR_PROPERTY: &str = "embedded_db_backup_dir";
+pub(crate) const DIR_PROPERTY: &str = "database-backup@dir";
 /// `true` runs [`BACKUP_JOB`] on its schedule, `false` pauses it; set at each boot.
-pub(crate) const SCHEDULED_PROPERTY: &str = "embedded_db_backup_scheduled";
+pub(crate) const SCHEDULED_PROPERTY: &str = "database-backup@scheduled";
 const MESSAGE_TYPE: &str = "moqui.service.message.SystemMessageType";
 
 pub(in crate::service) fn register(
@@ -109,7 +109,7 @@ fn request_from(parameters: &BTreeMap<String, Value>) -> BackupRequest {
     };
     let dir = backup_dir(
         &param_text(parameters, "backupDir"),
-        &moqui_lib::env::get_prop_or_env(DIR_PROPERTY),
+        &crate::context::conf_env::setting(DIR_PROPERTY),
     );
     let minutes = count_param(parameters, "timeoutMinutes", 120).max(1);
     BackupRequest {
@@ -147,7 +147,7 @@ pub(crate) fn paused_for(scheduled: &str) -> Option<&'static str> {
 /// At boot: set [`BACKUP_JOB`] running or paused as [`SCHEDULED_PROPERTY`] says, when it is set and the job row is
 /// there (after an empty database's seed load, the boot that follows it). A failure is logged and the boot goes on.
 pub(crate) fn apply_schedule_property(facade: &EntityFacade) {
-    let text = moqui_lib::env::get_prop_or_env(SCHEDULED_PROPERTY);
+    let text = crate::context::conf_env::setting(SCHEDULED_PROPERTY);
     let Some(paused) = paused_for(&text) else {
         if !text.trim().is_empty() {
             tracing::warn!("{SCHEDULED_PROPERTY} is {text:?}, not true or false; {BACKUP_JOB} is left as it is");

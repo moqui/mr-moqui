@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="tick" noun="QueueCall" authenticate="false" allow-remote="false">
-        <description>Internal (the SIP engine, every call_queue_tick_seconds while a call waits): an offer that rang the
+        <description>Internal (the SIP engine, every calls/queue@tick-seconds while a call waits): an offer that rang the
             queue's ringSeconds ends (the agents missed it) and the next is made, past maxWaitSeconds the call goes to the
             fallback, and every announceSeconds the caller hears their place. answer: mode queue (tickSeconds, position,
             announce, positionPromptLocation), done (answered or ended), or where the fallback sends the call (as route#IvrCall).

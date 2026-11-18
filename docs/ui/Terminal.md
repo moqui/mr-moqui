@@ -167,12 +167,12 @@ permission hooks: start the server outside it, or `claude` with those variables 
 ## Who may open what, and from where
 
 - The command line needs `SSH_SHELL` (sealed, on `ADMIN_ADV`), host sessions `TERMINAL_HOST` (sealed, on `ADMIN_ADV`),
-  both on a dev instance (`instance_purpose` dev), and a build with the dev tools (Maximal, Debug; not Lite or
+  both on a dev instance (`instance@purpose` dev), and a build with the dev tools (Maximal, Debug; not Lite or
   Enterprise). john.doe has both in the demo data; a plain `ADMIN` member gets the apps.
 - **From this machine** (a loopback peer, no forwarding header, the server's own loopback origin; or the Desktop app's
   node in process) nothing more is asked.
 - **From anywhere else** (a LAN, a VPN, the edge node, a tunnel tool or a proxy on this machine) the command line and
-  host sessions need `terminal_remote=true`, HTTPS, and a sign-in within the last hour, asked when a session is opened
+  host sessions need `moqui_conf__terminal__remote=true`, HTTPS, and a sign-in within the last hour, asked when a session is opened
   and when a window attaches to one. A dev server with remote on says so in its log at start.
 - They take only the server's own origin, whatever `allow-origins` says.
 - Elsewhere the Terminal offers the apps only, and a request for more gets one vague refusal.
@@ -183,7 +183,7 @@ permission hooks: start the server outside it, or `claude` with those variables 
 
 ```xml
 <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
-        command-line="${terminal_command_line}" host-sessions="${terminal_host_sessions}" remote="${terminal_remote}"
+        command-line="dev" host-sessions="dev" remote="false"
         remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
         host-directory="">
     <host-profile name="shell" title="Shell" integration="true"/>
@@ -192,11 +192,11 @@ permission hooks: start the server outside it, or `claude` with those variables 
 </terminal>
 ```
 
-`terminal_command_line` and `terminal_host_sessions` are `dev` by default (on for a dev instance), `false` turns one
+`terminal@command-line` and `terminal@host-sessions` are `dev` by default (on for a dev instance), `false` turns one
 off, and `true` turns it on for any purpose; any other value, empty included, is off, with an error in the log, so a
-typo never turns it on (and `true` on a production instance is a warning in the log). To reach them from another machine, `terminal_remote=true` in
-`runtime/.env` (this host only), the environment for one run, or a `default-property` in a runtime conf
-([Run-Deploy](../Run-Deploy.md#properties)). A `host-profile` takes `command`, `args` (words, or a JSON list),
+typo never turns it on (and `true` on a production instance is a warning in the log). To reach them from another machine, `moqui_conf__terminal__remote=true` in
+`runtime/.env` (this host only), the environment for one run, or `<terminal remote="true"/>` in a runtime conf
+([Run-Deploy](../Run-Deploy.md#settings-and-the-environment)). A `host-profile` takes `command`, `args` (words, or a JSON list),
 `resume-args`, `directory`, `login`, `integration`, `agent` and `env` children.
 
 ## The Desktop and Mobile apps, and phones

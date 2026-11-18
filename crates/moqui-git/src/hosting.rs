@@ -34,9 +34,10 @@ use super::store::{GitStore, RefEdit, RefOutcome};
 use super::{GitProvider, Repo, RepositoryKind};
 use moqui_core::context::Error;
 
-/// The most commits a comparison lists, and the most files it diffs.
+/// The most commits a comparison lists, the most files it diffs, and the most it counts the changed lines of.
 pub(crate) const MAX_COMPARE_COMMITS: usize = 250;
 pub(crate) const MAX_COMPARE_FILES: usize = 300;
+pub(crate) const MAX_COMPARE_COUNTED_FILES: usize = 3000;
 
 /// One entry of a directory at a revision.
 #[derive(Clone, Debug)]
@@ -76,7 +77,8 @@ pub(crate) struct Comparison {
     pub behind: usize,
     /// Oldest first, at most [`MAX_COMPARE_COMMITS`].
     pub commits: Vec<CommitDetails>,
-    /// Each changed file, with its diff for the first [`MAX_COMPARE_FILES`].
+    /// Each changed file, with its diff for the first [`MAX_COMPARE_FILES`] and for the one asked for, and its line
+    /// counts alone (each hunk's lines dropped) for the others up to [`MAX_COMPARE_COUNTED_FILES`].
     pub files: Vec<(FileChange, Option<FileDiff>)>,
     pub mergeability: Option<Mergeability>,
 }
@@ -256,6 +258,7 @@ impl GitProvider {
     /// with `mergeable` a trial merge of head into base. `None` when either names no commit. `head` is a revision
     /// of `head_repository` when one is given (another repository of the fork network, which the caller may view):
     /// the two are then read as one store.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn compare(
         &self,
         repository_id: &str,
@@ -263,6 +266,7 @@ impl GitProvider {
         head: &str,
         head_repository: Option<&str>,
         diffs: bool,
+        only: Option<&str>,
         mergeable: bool,
     ) -> Result<Option<Comparison>, Error> {
         let repo = self.repo(repository_id)?;
@@ -303,8 +307,18 @@ impl GitProvider {
         let changes = diff::tree_changes(store, from_tree.as_ref(), Some(&to_tree))?;
         let mut files = Vec::with_capacity(changes.len());
         for (position, change) in changes.into_iter().enumerate() {
-            let file = if position < MAX_COMPARE_FILES {
+            let asked = only.is_some_and(|path| path == change.path);
+            let file = if position < MAX_COMPARE_FILES || asked {
                 Some(diff::file_diff(store, &change)?)
+            } else if position < MAX_COMPARE_COUNTED_FILES {
+                // counted, not shown: the lines go once the stats are made
+                let mut file = diff::file_diff(store, &change)?;
+                if let Some(text) = &mut file.diff {
+                    for hunk in &mut text.hunks {
+                        hunk.lines.clear();
+                    }
+                }
+                Some(file)
             } else {
                 None
             };
