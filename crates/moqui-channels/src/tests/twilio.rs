@@ -264,12 +264,14 @@ fn a_twilio_reply_goes_out_and_its_status_callbacks_come_back_in_any_order() {
         ("CdsAccepted", sid("SM", 1).as_str())
     );
 
-    // delivered first, then a late sent and a queued: still delivered; read is delivered
-    for status in ["sending", "delivered", "sent", "queued", "read"] {
+    // delivered first, then a late sent and a queued: still delivered; read is past it
+    for status in ["sending", "delivered", "sent", "queued"] {
         assert!(is_twiml(&bed.twilio_status(&remote, status, None)), "{status}");
     }
     let (state, _, _, _, receipt) = bed.delivery(&room, seq);
     assert_eq!((state.as_str(), receipt.as_str()), ("CdsAccepted", "delivered"));
+    assert!(is_twiml(&bed.twilio_status(&remote, "read", None)));
+    assert_eq!(bed.delivery(&room, seq).4, "read");
 
     // undelivered, with the carrier's code: failed, the reason Twilio's
     let second = bed.send(&room, "Or seven", &[]);

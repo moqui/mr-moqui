@@ -47,6 +47,8 @@
 //! own `sendsPerMinute` wins), `allowInternalAddresses`; and `webhookUrl`, the URL the provider posts to, read only by
 //! [`moqui_core::service::chat_bridge::webhook_public_url`] (a signature over the URL) and [`callback_url`].
 
+pub mod rich;
+
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -59,6 +61,8 @@ use moqui_core::service::chat_bridge::{
 use moqui_lib::http::{Method, RestClient, RestResponse};
 use moqui_lib::object::{to_plain_string, Value};
 use serde_json::{json, Value as Json};
+
+pub use rich::Rich;
 
 /// The most a file fetched from a provider may be, whatever a bridge says.
 pub const MEDIA_CAP: u64 = 20 * 1024 * 1024;
@@ -185,6 +189,9 @@ pub struct Outgoing<'a> {
     /// An RCS send ([`Channel::Rcs`]) may go as SMS or MMS from our number when the phone takes no RCS: the bridge's
     /// `smsFallback` (true when not set). Always true for an SMS provider, where it means nothing.
     pub fallback: bool,
+    /// An RCS send's cards and suggestions ([`rich`]), its `text` the fallback; none for an SMS provider, which sends
+    /// the fallback and the files.
+    pub rich: Option<&'a Rich>,
 }
 
 impl Outgoing<'_> {
@@ -346,6 +353,8 @@ pub struct InboundMedia {
 pub enum ReceiptStatus {
     Sent,
     Delivered,
+    /// Read on the phone (an RCS bridge's: Twilio's `read`, Sinch's `READ`).
+    Read,
     Unconfirmed,
     Failed,
 }
@@ -356,6 +365,7 @@ impl ReceiptStatus {
         match self {
             ReceiptStatus::Sent => "sent",
             ReceiptStatus::Delivered => "delivered",
+            ReceiptStatus::Read => "read",
             ReceiptStatus::Unconfirmed => "unconfirmed",
             ReceiptStatus::Failed => "failed",
         }
@@ -552,6 +562,41 @@ pub trait SmsProvider: Send + Sync + Sized + 'static {
         let _ = config;
         None
     }
+
+    /// Show `theirs` that a user of ours is typing, from `ours` (an RCS provider's typing indicator), through `client`
+    /// (the guarded one; [`plain`] sends one request); nothing when the provider has none or the bridge lacks what it
+    /// needs. Nothing by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it was not sent.
+    fn send_typing(
+        &self,
+        client: &RestClient,
+        config: &Self::Config,
+        settings: &Settings,
+        ours: &str,
+        theirs: &str,
+    ) -> Result<(), String> {
+        let _ = (client, config, settings, ours, theirs);
+        Ok(())
+    }
+    /// Delete a content this provider made for a send (a Twilio Content resource, [`keep_content`]); one it no longer
+    /// has is deleted. Nothing by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it was not deleted.
+    fn delete_content(
+        &self,
+        client: &RestClient,
+        config: &Self::Config,
+        settings: &Settings,
+        content_id: &str,
+    ) -> Result<(), String> {
+        let _ = (client, config, settings, content_id);
+        Ok(())
+    }
 }
 
 // ---- the adapter ----
@@ -680,6 +725,31 @@ pub fn form_encode(pairs: &[(String, String)]) -> String {
         .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
         .collect();
     parts.join("&")
+}
+
+/// Send `request`, whose answer is only its status (a typing indicator, a delete), through `client`: 2xx is done, and
+/// 404 too when `gone_is_done`.
+///
+/// # Errors
+///
+/// Returns the provider's answer, or why it was not reached.
+pub fn plain<P: SmsProvider>(
+    provider: &P,
+    client: &RestClient,
+    request: &ApiRequest,
+    gone_is_done: bool,
+) -> Result<(), String> {
+    let response = call(client, request).map_err(|error| error.message().to_string())?;
+    let status = response.status();
+    if (200..300).contains(&status) || (gone_is_done && status == 404) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} answered {status}: {}",
+            provider.name(),
+            provider.error_of(response.body()).text
+        ))
+    }
 }
 
 /// Send `request` through `client` (no answer kept but the response).
@@ -965,6 +1035,31 @@ impl<P: SmsProvider> ChatBridgeAdapter for SmsAdapter<P> {
     fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
         self.fetch(bridge, url, max_bytes)
     }
+
+    fn typing(&self, bridge: &BridgeInfo, external_room_id: &str) -> Result<(), String> {
+        if self.provider.channel() != Channel::Rcs || !typing_on(&bridge.config) {
+            return Ok(());
+        }
+        // a pair only: RBM has no groups
+        let Some((ours, theirs)) = pair_of(external_room_id) else {
+            return Ok(());
+        };
+        // a STOP ends every contact, a typing indicator too
+        if opted_out(&ours, &theirs)? {
+            return Ok(());
+        }
+        let settings = self.settings(bridge);
+        let config = self.provider.config(&bridge.config);
+        self.provider
+            .send_typing(self.client(settings.allow_internal), &config, &settings, &ours, &theirs)
+    }
+
+    fn delete_content(&self, bridge: &BridgeInfo, content_id: &str) -> Result<(), String> {
+        let settings = self.settings(bridge);
+        let config = self.provider.config(&bridge.config);
+        self.provider
+            .delete_content(self.client(settings.allow_internal), &config, &settings, content_id)
+    }
 }
 
 impl<P: SmsProvider> SmsAdapter<P> {
@@ -1009,6 +1104,12 @@ impl<P: SmsProvider> SmsAdapter<P> {
             return failed("empty", "A text has words or a file");
         }
         let rcs = self.provider.channel() == Channel::Rcs;
+        // the cards and suggestions go only to an RCS provider; any other sends the fallback (the text) and the files
+        let rich = request
+            .rich
+            .as_ref()
+            .filter(|_| rcs)
+            .and_then(|value| Rich::of(value, media_urls.len()));
         let out = Outgoing {
             bridge,
             request,
@@ -1017,6 +1118,7 @@ impl<P: SmsProvider> SmsAdapter<P> {
             text: words,
             media_urls: &media_urls,
             fallback: !rcs || sms_fallback(&bridge.config),
+            rich: rich.as_ref(),
         };
         let config = self.provider.config(&bridge.config);
         let outcome = self
@@ -1093,7 +1195,14 @@ impl<P: SmsProvider> SmsAdapter<P> {
                 }
                 Handover::Unreadable => WebhookResponse::text(503, "the text was not taken; try again later"),
             },
-            SmsEvent::Receipt(receipt) => noted(bridge, &receipt),
+            SmsEvent::Receipt(receipt) => {
+                let (answer, content) = noted(bridge, &receipt);
+                // the message is done: the content made for its send goes (best effort; the daily sweep has the rest)
+                if let Some(content) = content {
+                    self.drop_content(bridge, &receipt.remote_event_id, &content);
+                }
+                answer
+            }
             SmsEvent::OptSignal(signal) => opted(bridge, &signal),
             SmsEvent::Path { remote_event_id, path } => {
                 let found = note_path(bridge, &[("remoteEventId", &remote_event_id)], path);
@@ -1191,6 +1300,27 @@ impl<P: SmsProvider> SmsAdapter<P> {
             return leave("notInWebhook", "and this is not the RCS bridge's own webhook");
         }
         Handover::To(target)
+    }
+
+    /// Delete `content`, made for the send of `remote_event_id`, now its message is done, and clear it from the delivery;
+    /// one not deleted is logged and stays for the sweep.
+    fn drop_content(&self, bridge: &BridgeInfo, remote_event_id: &str, content: &str) {
+        match ChatBridgeAdapter::delete_content(self, bridge, content) {
+            Ok(()) => {
+                if let Err(error) = clear_content(bridge, remote_event_id, content) {
+                    tracing::warn!(
+                        "{} bridge {}: content {content} was deleted and stays named on its delivery: {error}",
+                        self.provider.name(),
+                        bridge.chat_bridge_id
+                    );
+                }
+            }
+            Err(error) => tracing::warn!(
+                "{} bridge {}: content {content} was not deleted (the daily sweep tries again): {error}",
+                self.provider.name(),
+                bridge.chat_bridge_id
+            ),
+        }
     }
 
     fn fetch(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
@@ -1378,8 +1508,9 @@ fn received(bridge: &BridgeInfo, settings: &Settings, text: &Inbound) -> Webhook
 }
 
 /// A delivery receipt, to `ChatBridgeServices.note#DeliveryReceipt`: the message's state at its recipient. A group
-/// text's names the group's message (the delivery's remote id) and its one recipient.
-fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
+/// text's names the group's message (the delivery's remote id) and its one recipient. With the answer, the content made
+/// for the send ([`keep_content`]) when the receipt is final: its message is done with it.
+fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> (WebhookResponse, Option<String>) {
     let status = receipt.status.as_str();
     let mut parameters = BTreeMap::from([
         ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
@@ -1409,12 +1540,19 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
             if let Some(signal) = &receipt.opt_signal {
                 let answer = opted(bridge, signal);
                 if !(200..300).contains(&answer.status) {
-                    return answer;
+                    return (answer, None);
                 }
             }
-            WebhookResponse::json(
-                200,
-                &json!({"found": out.get("found") == Some(&Value::Bool(true)), "status": status}),
+            let content = out
+                .get("providerContentId")
+                .map(to_plain_string)
+                .filter(|content| !content.is_empty());
+            (
+                WebhookResponse::json(
+                    200,
+                    &json!({"found": out.get("found") == Some(&Value::Bool(true)), "status": status}),
+                ),
+                content,
             )
         }
         Err(error) => {
@@ -1423,9 +1561,66 @@ fn noted(bridge: &BridgeInfo, receipt: &Receipt) -> WebhookResponse {
                 bridge.chat_bridge_id,
                 receipt.remote_event_id
             );
-            WebhookResponse::text(503, "the receipt was not kept; try again later")
+            (
+                WebhookResponse::text(503, "the receipt was not kept; try again later"),
+                None,
+            )
         }
     }
+}
+
+/// Keep `content`, a content the provider made for the send of delivery `delivery_id` (a Twilio Content resource of a
+/// rich message), on the delivery (`ChatBridgeServices.note#DeliveryContent`, in a transaction of its own): its final
+/// receipt deletes it, else the daily sweep (`clean#ProviderContent`). Called before the send, so a send that never got
+/// through leaves it for the sweep.
+///
+/// # Errors
+///
+/// Returns why it was not kept.
+pub fn keep_content(bridge: &BridgeInfo, delivery_id: &str, content: &str) -> Result<(), String> {
+    if delivery_id.is_empty() {
+        return Err("a direct send has no delivery to keep its content on".to_string());
+    }
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("chatBridgeDeliveryId".to_string(), Value::string(delivery_id)),
+        ("providerContentId".to_string(), Value::string(content)),
+    ]);
+    crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters).map(|_| ())
+}
+
+/// Clear `content` from the delivery of `remote_event_id` once it is deleted.
+fn clear_content(bridge: &BridgeInfo, remote_event_id: &str, content: &str) -> Result<(), String> {
+    let parameters = BTreeMap::from([
+        ("chatBridgeId".to_string(), Value::string(&bridge.chat_bridge_id)),
+        ("remoteEventId".to_string(), Value::string(remote_event_id)),
+        ("deletedContentId".to_string(), Value::string(content)),
+    ]);
+    crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryContent", parameters).map(|_| ())
+}
+
+/// An RCS bridge's `typingIndicators`: true unless it is false (or the text `false`).
+pub fn typing_on(config: &Json) -> bool {
+    !config
+        .get("typingIndicators")
+        .is_some_and(|value| value.as_bool() == Some(false) || value.as_str() == Some("false"))
+}
+
+/// Whether the person at `theirs` opted out of texts from `ours` (`SmsOptOut`).
+fn opted_out(ours: &str, theirs: &str) -> Result<bool, String> {
+    let Some(facade) = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
+        return Err("no entity facade to check the opt-out".to_string());
+    };
+    let row = facade
+        .find("moqui.call.SmsOptOut")
+        .and_then(|find| {
+            find.eq("phoneNumber", Value::string(ours))
+                .eq("otherNumber", Value::string(theirs))
+                .disable_authz()
+                .one()
+        })
+        .map_err(|error| format!("the opt-out was not read: {error}"))?;
+    Ok(row.is_some_and(|row| row.get("optedOut").map(to_plain_string).as_deref() == Some("Y")))
 }
 
 /// The way a sent message went, to `ChatBridgeServices.note#DeliveryPath` by `key` (its delivery's id, or its remote

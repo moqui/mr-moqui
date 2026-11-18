@@ -2068,8 +2068,9 @@ suggestion: {type: reply, text, postback} | {type: url, text, url} | {type: dial
   - a final receipt (delivered, read, failed or undelivered) deletes it (`DELETE {contentBaseUrl}/v1/Content/{sid}`)
     and clears the field: `note#DeliveryReceipt` answers the delivery's `providerContentId` with a final status, and the
     adapter deletes it after the receipt is kept;
-  - a daily sweep (`ChatBridgeServices.clean#ProviderContent`, a ServiceJob) deletes those left on deliveries older than
-    2 days (a receipt that never came, a crash before the send), through `ChatBridgeAdapter::delete_content`;
+  - a daily sweep (`ChatBridgeServices.clean#ProviderContent`, run by the delivery worker once a day beside its other
+    cleaning) deletes those left on deliveries older than 2 days (a receipt that never came, a crash before the send),
+    through `ChatBridgeAdapter::delete_content`;
   - best effort: a failed DELETE is logged and the field kept for the sweep; one Twilio no longer has (404) is cleared;
   - an app's own `providerContent.twilio.contentSid` is never kept there, so never deleted.
 
@@ -2193,6 +2194,22 @@ README; the crate's notes (`sms.rs`, `providers/twilio.rs`, `providers/sinch.rs`
 - The shape of Sinch's `explicit_channel_omni_message` value (its reference names a map of channel to content, with no
   schema), and that MMS shows a `card_message` as described.
 - Whether either provider bills a typing indicator.
+
+**Status (2026-11-17): built**, against fake servers only. Not yet tested with the provider.
+- Built as designed, with these details:
+  - The fallback HTML is one paragraph with a blank line (`<br><br>`) between blocks, so `send#Message`'s `bodyText`
+    (what every bridge sends) is the fallback text.
+  - The trait's provider hooks are `SmsProvider::send_typing` and `delete_content` (each sends its own request: Sinch
+    needs its access token), with `sms::plain` for a one-request call; the adapter's are `ChatBridgeAdapter::typing`
+    and `delete_content`, in the new `crates/moqui-core/src/service/chat_bridge_provider.rs` with `send#BridgeTyping`
+    and `clean#ProviderContent`.
+  - `rcs-sinch` takes up to 10 files (`maxMediaCount`), for a carousel's pictures; a plain text there still carries
+    one.
+  - A link or call button opens on any message; only a reply is the other side's to tap.
+- Left:
+  - the live tests with Twilio and Sinch, and the facts listed above;
+  - our read receipts out (later, with their own setting);
+  - rich messages in direct sends and from the terminal.
 
 #### Phase 10 and later
 

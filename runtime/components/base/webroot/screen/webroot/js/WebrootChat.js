@@ -1487,6 +1487,7 @@
             const delivered = destinations.length ? destinations.map((one) => ({
                 name: repeats(network(one)) && one.bridgeName && one.bridgeName !== network(one) ? network(one) + " · " + one.bridgeName : network(one),
                 state: one.state || "pending", receipt: one.receipt || null, error: one.error || null, path: one.path || null,
+                adapterName: one.adapterName || null,
                 // a group text's receipts, one a recipient (number to its receipt)
                 recipients: one.recipients && typeof one.recipients === "object" ? one.recipients : null })) : null;
             let readBy = null;
@@ -1512,6 +1513,53 @@
             const path = destination && destination.path;
             return path === "sms" ? tr("SMS") : path === "mms" ? tr("MMS") : "";
         },
+        // The provider an SMS or RCS bridge's adapter is of (rcs-twilio: Twilio), for the RCS label's banner; '' for another
+        providerName(adapterName) {
+            const name = String(adapterName || "");
+            if (/(^|-)twilio$/.test(name)) return "Twilio";
+            if (/(^|-)sinch$/.test(name)) return "Sinch";
+            if (name === "sms" || /(^|-)telnyx$/.test(name)) return "Telnyx";
+            return "";
+        },
+        // An RCS message's encryption by the way it went (Comms-Messaging §16.5): RCS (or not known yet) in transit only, the
+        // provider named; the fallback's SMS or MMS not encrypted
+        rcsDetail(path, adapterName) {
+            if (path === "sms") return tr("The phone did not support RCS. This message went as SMS.");
+            if (path === "mms") return tr("The phone did not support RCS. This message went as MMS.");
+            return fillIn(tr("Encrypted in transit only. {provider}, Google, carriers and this server can read it."),
+                { provider: chat.providerName(adapterName) || tr("The provider") });
+        },
+        // ---- rich messages (Comms-Messaging §18.3 phase 13; the server's ChatRich.js, kept in step by the specs) ----
+        // The text a rich message ({kind, text, suggestions, cards}) goes as where cards are not shown: its words, each card's
+        // title and words (a carousel's numbered), "label: URL" for a link, "label: number" for a call, "Reply: Yes, No"
+        richFallback(rich) {
+            const it = rich || {};
+            const lines = (suggestions) => {
+                const out = [];
+                for (const one of suggestions || []) {
+                    if (one.type === "url") out.push(one.text + ": " + one.url);
+                    else if (one.type === "dial") out.push(one.text + ": " + one.phone);
+                }
+                const replies = (suggestions || []).filter((one) => one.type === "reply").map((one) => one.text);
+                if (replies.length) out.push(tr("Reply: ${options}").replace("${options}", replies.join(", ")));
+                return out;
+            };
+            const blocks = [];
+            if (it.kind === "text") {
+                blocks.push([it.text || ""]);
+                const more = lines(it.suggestions);
+                if (more.length) blocks.push(more);
+            } else {
+                (it.cards || []).forEach((card, index) => {
+                    const head = it.kind === "carousel" ? (index + 1) + ". " + (card.title || card.description) : card.title;
+                    const block = [];
+                    if (head) block.push(head);
+                    if (card.description && !(it.kind === "carousel" && !card.title)) block.push(card.description);
+                    blocks.push(block.concat(lines(card.suggestions)));
+                });
+            }
+            return blocks.map((block) => block.join("\n")).join("\n\n");
+        },
         // Info as lines [{key, label, text}] (the dialog's, and what a test reads): when is fullTime(millis). A read receipt is
         // never said to be missing: an empty Read by says who is not listed, and receipts off say so.
         messageInfoLines(info, when) {
@@ -1519,7 +1567,7 @@
             if (info.sent != null) lines.push({ key: "sent", label: tr("Sent"), text: when ? when(info.sent) : String(info.sent) });
             if (info.from) lines.push({ key: "from", label: tr("Came from"), text: info.from });
             const STATES = { pending: tr("Sending"), failed: tr("Not delivered"), uncertain: tr("May not have arrived") };
-            const RECEIPTS = { delivered: tr("Delivered: the network's receipt says so"), sent: tr("Sent on by the network"),
+            const RECEIPTS = { delivered: tr("Delivered: the network's receipt says so"), read: tr("Read: the network's receipt says so"), sent: tr("Sent on by the network"),
                 unconfirmed: tr("Taken by the network; it has not confirmed delivery") };
             const PATHS = { rcs: tr("RCS"), sms: tr("SMS: the phone did not take RCS"), mms: tr("MMS: the phone did not take RCS") };
             for (const one of info.delivered || []) {
@@ -1527,6 +1575,8 @@
                 lines.push({ key: "delivered", label: one.name || tr("Bridge"), text: text + (one.error && one.state !== "accepted" ? ": " + one.error : ""), state: one.state });
                 // an RCS bridge's: the way it went (Comms-Messaging §16), RCS or the fallback's SMS or MMS
                 if (PATHS[one.path]) lines.push({ key: "path", label: tr("Sent as"), text: PATHS[one.path], path: one.path });
+                // an RCS bridge's: what can read it, by the way it went (§16.5)
+                if (one.path || /^rcs-/.test(one.adapterName || "")) lines.push({ key: "encryption", label: tr("Encryption"), text: chat.rcsDetail(one.path, one.adapterName) });
                 // a group text: each recipient's own receipt, a failed one said as such even when the others got it
                 for (const number of Object.keys(one.recipients || {}).sort()) {
                     const receipt = one.recipients[number];
@@ -1555,8 +1605,9 @@
         // room is never end to end on this server: the bridge reads its messages to pass them on. Mail never has a lock
         // (rule 7). subject: a room as get#Room or find#Rooms gives it ({encrypted, roomTypeEnumId, visibilityEnumId, bridges
         // or bridgeNetworks, bridged, bridgeNetworkNames}), a call ({call: {e2ee, phone}}) or mail ({mail: true}); trust: the
-        // room's devices when known (chat.trustOf). Answers {state, lock, verified, icon, banner, hint, verify, text}: state
-        // verified, encrypted, plain, public, sms, bridged, call-encrypted, call-phone, call or mail; lock true only for end
+        // room's devices when known (chat.trustOf). Answers {state, lock, verified, icon, badge, banner, hint, verify, text}: state
+        // verified, encrypted, plain, public, rcs, sms, bridged, call-encrypted, call-phone, call or mail; badge an icon beside
+        // the open lock (rcs: the brand's agent is verified, §16.5); lock true only for end
         // to end; icon a Material symbol (none for mail); banner the text at the top of the room ('' for none); hint the
         // composer's ('' for its own); verify whether the banner offers Verify; text the label as one line.
         e2eeLabel(subject, trust) {
@@ -1581,6 +1632,12 @@
             const others = bridges.filter((bridge) => bridge.network !== "sms");
             const namesOf = (list) => Array.from(new Set(list.map((bridge) => bridge.networkName || bridge.name).filter((name) => name))).join(", ");
             const otherNames = namesOf(outbound.filter((bridge) => bridge.network !== "sms")) || (!bridges.length ? (it.bridgeNetworkNames || []).join(", ") : "");
+            // business RCS (§16.5): encrypted in transit only, from the brand's verified agent; its texts' fallback is SMS
+            const rcsBridge = bridges.find((bridge) => bridge.network === "rcs");
+            if (rcsBridge) {
+                return label("rcs", false, chat.rcsDetail(null, rcsBridge.adapterName),
+                    { text: tr("RCS Business - not end-to-end encrypted"), badge: "sym_o_verified", hint: tr("RCS message") });
+            }
             const hints = [];
             if (it.roomTypeEnumId === "CrtExternal" || outbound.some((bridge) => bridge.network === "sms")) hints.push(tr("Text message"));
             if (otherNames) hints.push(fillIn(tr("{network} message"), { network: otherNames }));

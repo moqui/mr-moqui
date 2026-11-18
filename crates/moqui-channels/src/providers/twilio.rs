@@ -26,6 +26,7 @@
 //! | `conversationServiceSid` | The Conversations service (`IS...`) group texts are kept in; else the account's default one |
 //! | `conversationsBaseUrl` | `https://conversations.twilio.com` (a test's fake) |
 //! | `mediaContentBaseUrl` | `https://mcs.us1.twilio.com`, where a group text's files are (a test's fake) |
+//! | `contentBaseUrl`, `messagingBaseUrl` | `https://content.twilio.com` and `https://messaging.twilio.com`: an RCS bridge's rich messages and typing indicator ([`rcs`]; a test's fake) |
 //!
 //! Its defaults: `apiBaseUrl` `https://api.twilio.com`, `maxTextLength` 1600, `maxMediaCount` 10 and `maxMediaBytes`
 //! 5 MB in all (an MMS's limits), `maxInboundMediaBytes` 5 MiB.
@@ -90,6 +91,16 @@ pub struct Config {
     pub conversations_base_url: String,
     /// No trailing `/`.
     pub media_content_base_url: String,
+    /// The Content API (`https://content.twilio.com`, a test's fake): an RCS bridge's rich messages ([`rcs`]). No
+    /// trailing `/`.
+    pub content_base_url: String,
+    /// The Messaging v3 API (`https://messaging.twilio.com`, a test's fake): an RCS bridge's typing indicator. No
+    /// trailing `/`.
+    pub messaging_base_url: String,
+    /// The language of the contents an RCS bridge makes (`contentLanguage`, `en` by default).
+    pub content_language: String,
+    /// The RCS agent's id (`rcsSenderId`: `rcs:` and it is the typing indicator's `from`); none sends no indicator.
+    pub rcs_sender_id: Option<String>,
     /// `allowInternalAddresses` off production: the Conversations and media addresses may be http (a test's fake).
     pub allow_internal: bool,
 }
@@ -192,6 +203,19 @@ impl SmsProvider for Twilio {
             fallback_from: text_of(config, "fallbackFrom"),
             conversations_base_url: base("conversationsBaseUrl", "https://conversations.twilio.com"),
             media_content_base_url: base("mediaContentBaseUrl", "https://mcs.us1.twilio.com"),
+            content_base_url: base("contentBaseUrl", "https://content.twilio.com"),
+            messaging_base_url: base("messagingBaseUrl", "https://messaging.twilio.com"),
+            content_language: text_of(config, "contentLanguage")
+                .filter(|language| {
+                    language.len() <= 16
+                        && language
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                })
+                .unwrap_or_else(|| "en".to_string()),
+            rcs_sender_id: text_of(config, "rcsSenderId")
+                .map(|id| rcs::bare(&id).chars().take(128).collect::<String>())
+                .filter(|id| !id.is_empty()),
             allow_internal: Settings::of(config, &self.defaults()).allow_internal,
         }
     }
@@ -221,6 +245,8 @@ impl SmsProvider for Twilio {
         for (key, url) in [
             ("conversationsBaseUrl", &config.conversations_base_url),
             ("mediaContentBaseUrl", &config.media_content_base_url),
+            ("contentBaseUrl", &config.content_base_url),
+            ("messagingBaseUrl", &config.messaging_base_url),
         ] {
             if !(url.starts_with("https://") || (config.allow_internal && url.starts_with("http://"))) {
                 return Err(format!("The Twilio bridge's {key} is not an https address"));
@@ -301,7 +327,38 @@ impl SmsProvider for Twilio {
         if out.group() && !self.is_rcs() {
             return group::send(self, client, config, settings, out);
         }
+        // an RCS bridge's cards and suggestions: a Content made for the send (or an app's own), then the send
+        if let Some(rich) = out.rich.filter(|_| self.is_rcs()) {
+            return rcs::send_rich(self, client, config, settings, out, rich);
+        }
         exchange(self, client, out, &self.request(config, settings, out))
+    }
+
+    fn send_typing(
+        &self,
+        client: &RestClient,
+        config: &Config,
+        _settings: &Settings,
+        _ours: &str,
+        theirs: &str,
+    ) -> Result<(), String> {
+        match self.is_rcs().then(|| rcs::typing_request(config, theirs)).flatten() {
+            Some(request) => crate::sms::plain(self, client, &request, false),
+            None => Ok(()),
+        }
+    }
+
+    fn delete_content(
+        &self,
+        client: &RestClient,
+        config: &Config,
+        _settings: &Settings,
+        content_id: &str,
+    ) -> Result<(), String> {
+        match self.is_rcs().then(|| rcs::delete_request(config, content_id)).flatten() {
+            Some(request) => crate::sms::plain(self, client, &request, true),
+            None => Ok(()),
+        }
     }
 
     fn signature_header(&self) -> &'static str {
@@ -705,8 +762,9 @@ fn receipt(form: &Form, status: &str, rcs: Option<&Config>) -> SmsEvent {
     };
     let status = match status {
         "sent" => ReceiptStatus::Sent,
-        // read: an RCS or WhatsApp read receipt, which is past delivered
-        "delivered" | "read" => ReceiptStatus::Delivered,
+        "delivered" => ReceiptStatus::Delivered,
+        // an RCS (or WhatsApp) read receipt, past delivered
+        "read" => ReceiptStatus::Read,
         "undelivered" | "failed" | "canceled" => ReceiptStatus::Failed,
         other => return SmsEvent::Ignored(other.to_string()),
     };

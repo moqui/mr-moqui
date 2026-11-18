@@ -53,7 +53,7 @@
 //!   The event is the body's key: `message` (`MESSAGE_INBOUND` on the SMS or MMS channel, any other channel's left: a
 //!   text, a file, or a file with a caption; each file of an MMS comes as its own event, so each is its own message, its
 //!   caption with each), `message_delivery_report` (`MESSAGE_DELIVERY`:
-//!   `DELIVERED` and `READ` delivered, `FAILED` failed with its reason; `QUEUED_ON_CHANNEL` and `SWITCHING_CHANNEL`
+//!   `DELIVERED` delivered, `READ` read, `FAILED` failed with its reason; `QUEUED_ON_CHANNEL` and `SWITCHING_CHANNEL`
 //!   left), `opt_out_notification` and `opt_in_notification` (STOP and START for `smsSender`, once by `request_id`;
 //!   Sinch sends none for a STOP texted on SMS, which comes as a text and is the keyword rule's); others are left. Its
 //!   files are kept by Sinch 7 days, and the core fetches them as the text comes in.
@@ -305,7 +305,8 @@ impl SmsProvider for Sinch {
         Defaults {
             api_base_url: "https://us.conversation.api.sinch.com",
             max_text_length: 1600,
-            max_media_count: 1,
+            // a text carries one file; an RCS card or carousel one a card, in the rich message itself
+            max_media_count: if self.is_rcs() { 10 } else { 1 },
             max_media_bytes: 1024 * 1024,
             max_inbound_media_bytes: 5 * 1024 * 1024,
         }
@@ -382,10 +383,14 @@ impl SmsProvider for Sinch {
         } else {
             ("SMS", "SMS_SENDER")
         };
-        let message = match (file, out.text) {
-            (Some(url), Some(text)) => json!({"card_message": {"description": text, "media_message": {"url": url}}}),
-            (Some(url), None) => json!({"media_message": {"url": url}}),
-            (None, text) => json!({"text_message": {"text": text.unwrap_or_default()}}),
+        let message = match (out.rich.filter(|_| self.is_rcs()), file, out.text) {
+            // an RCS bridge's cards and suggestions, with its own fallback for the SMS or MMS channel
+            (Some(rich), _, _) => rcs::rich_message(out, rich),
+            (None, Some(url), Some(text)) => {
+                json!({"card_message": {"description": text, "media_message": {"url": url}}})
+            }
+            (None, Some(url), None) => json!({"media_message": {"url": url}}),
+            (None, None, text) => json!({"text_message": {"text": text.unwrap_or_default()}}),
         };
         let theirs = out.theirs.first().cloned().unwrap_or_default();
         let mut body = json!({
@@ -400,6 +405,9 @@ impl SmsProvider for Sinch {
             body["recipient"]["identified_by"]["channel_identities"] = identities;
             body["channel_priority_order"] = order;
             body["channel_properties"] = properties;
+            if let Some(fallback) = out.rich.and_then(|rich| rcs::fallback_override(out, rich)) {
+                body["explicit_channel_omni_message"] = fallback;
+            }
         }
         let delivery = &out.request.chat_bridge_delivery_id;
         if !delivery.is_empty() && delivery.len() <= 128 {
@@ -441,7 +449,7 @@ impl SmsProvider for Sinch {
     /// One text, one call: refused here when Sinch cannot carry it, else the access token, the send, and its answer
     /// (401, 403 and 404 read here, the rest by the core's classes).
     fn send(&self, client: &RestClient, config: &Config, settings: &Settings, out: &Outgoing<'_>) -> DeliveryOutcome {
-        if out.media_urls.len() > 1 {
+        if out.media_urls.len() > 1 && (out.rich.is_none() || !self.is_rcs()) {
             return failed(
                 "tooManyFiles",
                 "Sinch sends one file a text: send each file in a text of its own",
@@ -515,6 +523,28 @@ impl SmsProvider for Sinch {
             }
         }
         answer(self, out, result)
+    }
+
+    /// An RCS bridge's typing indicator: `events:send` with a `composing_event` to the person's `RCS` identity.
+    fn send_typing(
+        &self,
+        client: &RestClient,
+        config: &Config,
+        _settings: &Settings,
+        _ours: &str,
+        theirs: &str,
+    ) -> Result<(), String> {
+        if !self.is_rcs() {
+            return Ok(());
+        }
+        let token = self
+            .token(client, config, jiff::Timestamp::now().as_millisecond())
+            .map_err(|_| "no Sinch access token".to_string())?;
+        let mut request = rcs::typing_request(config, theirs);
+        request
+            .headers
+            .push(("authorization".to_string(), format!("Bearer {token}")));
+        crate::sms::plain(self, client, &request, false)
     }
 
     fn signature_header(&self) -> &'static str {
@@ -762,7 +792,9 @@ fn receipt(event: &Json, report: &Json, rcs: bool) -> Result<SmsEvent, WebhookRe
     };
     let status = str_at(report, "/status").unwrap_or_default();
     let status = match status {
-        "DELIVERED" | "READ" => ReceiptStatus::Delivered,
+        "DELIVERED" => ReceiptStatus::Delivered,
+        // read on the phone (RCS)
+        "READ" => ReceiptStatus::Read,
         "FAILED" => ReceiptStatus::Failed,
         // RCS did not reach the phone: the next channel of the order, SMS or MMS, is tried
         "SWITCHING_CHANNEL" if rcs => {

@@ -695,7 +695,8 @@ along with this software (see the LICENSE.md file). If not, see
                 entry.destinations.push({chatBridgeDeliveryId: row.chatBridgeDeliveryId, chatBridgeId: row.chatBridgeId, bridgeName: bridge.name ?? null,
                     networkName: types[bridge.typeEnumId]?.description || null, state: state, reasonCode: row.reasonCode ?? null,
                     error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
-                    receipt: row.receiptStatus ?? null, recipients: recipientsOf(row), path: row.deliveryPath ?? null})
+                    receipt: row.receiptStatus ?? null, recipients: recipientsOf(row), path: row.deliveryPath ?? null,
+                    adapterName: bridge.adapterName ?? null})
                 if (RANK[state] > RANK[entry.state]) entry.state = state
                 if (state === 'failed' || state === 'uncertain') entry.retryable = true
             }
@@ -751,7 +752,9 @@ along with this software (see the LICENSE.md file). If not, see
             group text has one receipt a recipient (recipientNumber; a network may name the delivery by its group's id or by
             otherRemoteEventId, its own): each recipient's is kept (recipientReceipts), and the delivery's receipt is theirs
             together, the least of those not failed, and failed (the delivery failed) only when every recipient failed. The
-            room hears of a change (push#DeliveryState). Out: found (a delivery of that message), changed.</description>
+            room hears of a change (push#DeliveryState). read (RCS: read on the phone) is past delivered and never taken back. With a final
+            status (delivered, read, failed), providerContentId: the content the adapter made for the send, for it to delete
+            (note#DeliveryContent). Out: found (a delivery of that message), changed, providerContentId.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="remoteEventId" required="true"/>
@@ -764,16 +767,19 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="found" type="Boolean"/>
             <parameter name="changed" type="Boolean"/>
+            <parameter name="providerContentId"/>
         </out-parameters>
         <actions><script><![CDATA[
-            found = false; changed = false
-            const RANK = {sent: 1, unconfirmed: 2, delivered: 3, failed: 3}
+            found = false; changed = false; providerContentId = null
+            const RANK = {sent: 1, unconfirmed: 2, delivered: 3, failed: 3, read: 4}
             if (!RANK[status]) { ec.message.addError(`Unknown receipt status ${status}`); return }
             const byRemote = (id) => id ? Array.from(ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId)
                     .condition('remoteEventId', id).forUpdate(true).disableAuthz().list())[0] : null
             const row = byRemote(remoteEventId) || byRemote(otherRemoteEventId)
             if (!row) return
             found = true
+            // the message is done: the content made for its send may go
+            if (['delivered', 'read', 'failed'].includes(status) && row.providerContentId) providerContentId = row.providerContentId
             let overall = status
             let recipientsText = null
             if (recipientNumber) {
@@ -854,6 +860,69 @@ along with this software (see the LICENSE.md file). If not, see
             ec.service.sync().name('org.moqui.chat.ChatBridgeServices.push#DeliveryState').parameters({chatRoomId: row.chatRoomId,
                 eventSeq: row.eventSeq}).disableAuthz().call()
         ]]></script></actions>
+    </service>
+
+    <service verb="note" noun="DeliveryContent" allow-remote="false" transaction="force-new">
+        <description>Internal (an adapter, plans/Comms-Messaging.md §18.3 phase 13): providerContentId, a content the adapter
+            made at its network for the send of delivery chatBridgeDeliveryId (a Twilio Content resource of a rich message),
+            kept on the delivery before the send, so its final receipt or the daily sweep (clean#ProviderContent) deletes
+            it; or deletedContentId, cleared from the delivery of remoteEventId (or chatBridgeDeliveryId) once deleted. In a
+            transaction of its own. Out: found.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="chatBridgeDeliveryId"/>
+            <parameter name="remoteEventId"/>
+            <parameter name="providerContentId"/>
+            <parameter name="deletedContentId"/>
+        </in-parameters>
+        <out-parameters><parameter name="found" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            found = false
+            let find = ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId).forUpdate(true).disableAuthz()
+            if (chatBridgeDeliveryId) find = find.condition('chatBridgeDeliveryId', chatBridgeDeliveryId)
+            else if (remoteEventId) find = find.condition('remoteEventId', remoteEventId)
+            else return
+            const row = Array.from(find.list())[0]
+            if (!row) return
+            found = true
+            if (providerContentId) {
+                row.set('providerContentId', String(providerContentId).slice(0, 60))
+                row.update()
+            } else if (deletedContentId && row.providerContentId === deletedContentId) {
+                row.set('providerContentId', null)
+                row.update()
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="BridgeTyping" type="rust" location="moqui_core::service::chat_bridge::provider::send_bridge_typing"
+            allow-remote="false" transaction="ignore">
+        <description>Internal (ChatServices.signal#Typing, asynchronously; plans/Comms-Messaging.md §18.3 phase 13): show the
+            other side of each outbound bridge of room chatRoomId that a user of ours is typing, where the network has a
+            typing indicator (business RCS: ChatBridgeAdapter::typing). At most once in 15 seconds for a room on this node;
+            nothing is kept or retried, and a bridge whose indicator fails is logged. nowMillis is a test's clock. Out:
+            sent (the bridges asked), throttled.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="nowMillis" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sent" type="Long"/>
+            <parameter name="throttled" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="clean" noun="ProviderContent" type="rust" location="moqui_core::service::chat_bridge::provider::clean_provider_content"
+            allow-remote="false" transaction="ignore">
+        <description>Internal (the delivery worker, once a day): delete the contents adapters made at their networks for sends
+            (ChatBridgeDelivery.providerContentId: a Twilio Content resource) still named on deliveries made more than 2 days
+            before nowMillis (a receipt that never came), each through its adapter; one that fails is logged and kept for
+            the next sweep. Out: deleted, kept.</description>
+        <in-parameters><parameter name="nowMillis" type="Long"/></in-parameters>
+        <out-parameters>
+            <parameter name="deleted" type="Long"/>
+            <parameter name="kept" type="Long"/>
+        </out-parameters>
     </service>
 
     <service verb="send" noun="BridgeDirect" type="rust" location="moqui_core::service::chat_bridge::web::send_bridge_direct"

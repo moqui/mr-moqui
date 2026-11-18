@@ -663,6 +663,20 @@ function receive(p) {
       ec.message.clearErrors()
     }
   }
+  // an RCS reply to a suggestion (Comms-Messaging §18.3 phase 13): its postback on the message, for the app that sent
+  // the buttons (a SECA on note#SuggestionReply); the text stays when it fails
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && extra && extra.postback) {
+    try {
+      ec.service.sync().name('org.moqui.chat.ChatRichServices.note#SuggestionReply').parameters({ chatRoomId: pair.chatRoomId,
+        eventSeq: first.eventSeq, postback: String(extra.postback), chatBridgeId: p.chatBridgeId }).disableAuthz().call()
+    } catch (err) {
+      ec.logger.error(`SMS ${p.messageId}: its suggestion reply was not noted: ${err && err.message ? err.message : err}`)
+    }
+    if (ec.message.hasError()) {
+      ec.logger.error(`SMS ${p.messageId}: its suggestion reply was not noted: ${ec.message.errorsString}`)
+      ec.message.clearErrors()
+    }
+  }
   // a webhook sent again answers as the first did, as a duplicate
   return { outcome: out.duplicate === true ? 'duplicate' : first.outcome || 'waiting', reasonCode: first.reasonCode || null, message: first.message || null,
     duplicate: out.duplicate === true, chatRoomId: pair.chatRoomId, eventSeq: first.eventSeq ?? null }

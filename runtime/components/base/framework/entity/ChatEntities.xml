@@ -153,7 +153,8 @@ along with this software (see the LICENSE.md file). If not, see
             A message (CetMessage) has its content in contentJson: {body (safe HTML), mentions [userId], attachments
             [{chatAttachmentId, attachmentSeq, fileName, contentType, fileSize}], records [{entity, id}], forwardOf (a
             forwarded message: {senderUserId, senderName, sentDate, body, bodyText}, made by the server), poll ({question}:
-            the poll's rows are ChatPoll)}; replyToEventSeq
+            the poll's rows are ChatPoll), rich (a card, a carousel or a text with suggestion buttons, its body the fallback:
+            ChatRichServices), postback ({data, toEventSeq}: a message answering a suggestion)}; replyToEventSeq
             quotes another, threadRootEventSeq puts it in that message's thread. An edit (CetEdit, editsEventSeq the
             message, contentJson the new body and mentions), a reaction (CetReaction, relatesToEventSeq the message,
             contentJson {key}), a redaction (CetRedaction, relatesToEventSeq the message or reaction it removes), a pin
