@@ -432,6 +432,29 @@ fn bridge_info(row: &EntityValue) -> BridgeInfo {
     }
 }
 
+/// The bridge `bridge_id` as its adapter sees it (`configJson` read and parsed), with its status: for an adapter's
+/// own thread (a network's push connection), which reads its bridge again between its waits. None when there is no
+/// such bridge.
+///
+/// # Errors
+///
+/// When the row cannot be read.
+pub fn bridge_row(facade: &EntityFacade, bridge_id: &str) -> Result<Option<(BridgeInfo, String)>, LibError> {
+    Ok(facade
+        .find(BRIDGE)?
+        .eq("chatBridgeId", Value::string(bridge_id))
+        .disable_authz()
+        .one()?
+        .map(|row| (bridge_info(&row), text_of(&row, "statusId").unwrap_or_default())))
+}
+
+/// Keep a bridge's status from an adapter's own thread: connected, or not connected with `error` as its last error. A
+/// disabled bridge stays disabled; the same connected status again writes nothing.
+pub fn note_status(facade: &EntityFacade, bridge_id: &str, connected: bool, error: Option<&str>) {
+    let status = if connected { "CbsConnected" } else { "CbsNotConnected" };
+    set_status(facade, bridge_id, status, error, now_millis());
+}
+
 /// The adapter of a bridge: its `adapterName`, else its network's enumeration code.
 fn adapter_of(
     factory: &ExecutionContextFactory,
@@ -1643,8 +1666,8 @@ fn push_state(room_id: &str, seq: i64) {
 #[path = "chat_bridge_web.rs"]
 mod web;
 pub use web::{
-    media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook,
-    webhook_public_url, FetchedMedia, MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
+    delivery_file, media, media_at, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms,
+    webhook, webhook_public_url, FetchedMedia, MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
 };
 
 #[path = "chat_bridge_edge.rs"]

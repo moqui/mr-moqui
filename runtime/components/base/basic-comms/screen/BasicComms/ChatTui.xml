@@ -152,15 +152,19 @@ along with this software (see the LICENSE.md file). If not, see
                     const roomBridges = Array.from(room.bridges || [])
                     const sms = room.roomTypeEnumId === 'CrtExternal' || roomBridges.some((bridge) => bridge.network === 'sms')
                     const otherBridge = roomBridges.some((bridge) => bridge.network !== 'sms')
+                    // a network with no E2EE of its own (GroupMe) says so
+                    const plainNetworks = roomBridges.length && roomBridges.every((bridge) => bridge.encryption === 'None')
+                        ? Array.from(new Set(roomBridges.map((bridge) => bridge.networkName || bridge.name).filter((name) => name))).join(', ') : ''
                     // a record's room kept to its members is a plain private room
                     const open = room.roomTypeEnumId === 'CrtPublic' || ['CrvUsers', 'CrvRecord'].includes(room.visibilityEnumId)
                         || (room.roomTypeEnumId === 'CrtRecord' && room.visibilityEnumId !== 'CrvMembers')
                     e2eeText = ec.l10n.localize(encryptedRoom ? 'End-to-end encrypted'
                         : sms && otherBridge ? 'Not end-to-end encrypted. Texts go through the phone network and the SMS provider, and the bridge reads messages to pass them on.'
                         : sms ? 'Not end-to-end encrypted. Texts go through the phone network and the SMS provider.'
+                        : plainNetworks ? 'Not end-to-end encrypted. {network} has no end-to-end encryption, and the bridge reads messages to pass them on.'
                         : room.bridged ? 'Not end-to-end encrypted on this server. The bridge reads messages to pass them on.'
                         : open ? 'Not end-to-end encrypted: the server can read this room'
-                        : 'Not end-to-end encrypted. The server can read these messages.')
+                        : 'Not end-to-end encrypted. The server can read these messages.').replace('{network}', plainNetworks)
                     const STATES = {accepted: 'Delivered', pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}
                     const page = out.timeline || {}
                     const names = page.userNames || {}

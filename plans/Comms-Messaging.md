@@ -2006,12 +2006,16 @@ The push channel is chosen. Polling is only its catch-up after a reconnect.
 - New core helpers in `chat_bridge.rs`:
   - `note_status(facade, bridge_id, connected, error)` wraps `set_status` for an adapter's own thread;
   - `bridge_row(facade, bridge_id)` returns the `BridgeInfo` and status.
-- **In a cluster** each node whose worker starts the bridge connects. Duplicates stop in `ingest#Event`:
-  - one transaction id a GroupMe event (`gm:<message id>`), so the second node's batch is a duplicate before its items
-    are worked;
-  - `ChatEventExternal` is unique on the event.
+- **In a cluster** one node holds each bridge's connection (decided 2026-11-17, at the design check). It is the lease
+  the replication sender and the SIP trunks already use: a `moqui.edge.EdgeSenderLock` row `groupme:<chatBridgeId>`,
+  through `moqui_core::edge::replica::sender::claim`.
+  - The lease is 120 s, renewed between steps (each long poll is at most the server's timeout plus 15 s).
+  - Another node asks every 15 s and takes the lease over when it lapses.
+  - A holder whose claims fail stops after two thirds of the lease since its last good claim.
+  - A thread that ends lets the lease go.
 
-  The cost is each node's API calls.
+  Should two nodes still meet, duplicates stop in `ingest#Event`: one transaction id a GroupMe event
+  (`gm:<message id>`), and `ChatEventExternal` is unique on the event.
 - **Edge nodes:** nothing. The connection goes out from the core node, and files go out as uploads, not addresses.
 
 **Catch-up** (the polling fallback).
@@ -2132,15 +2136,34 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   - the room choices above, `syncMinutes`, `sendsPerMinute`, `maxImageBytes`, `maxInboundMediaBytes`;
   - `apiBaseUrl` (`https://api.groupme.com/v3`), `imageBaseUrl` (`https://image.groupme.com`), `pushUrl`
     (`https://push.groupme.com/faye`), and `allowInternalAddresses` (tests only, never on production).
-- `store#Bridge` for `CbtGroupMe` checks:
+- `store#Bridge` for `CbtGroupMe` checks (`GroupMeServices.check#Bridge`):
   - the adapter is `groupme`;
   - `accessToken` and `ownerUserId` are there, and the owner is a user;
-  - the owner does not change while the bridge has rooms (`ownerFixed`).
+  - the owner does not change while the bridge has rooms (`ownerFixed`);
+  - the owner has no other GroupMe bridge (`oneBridge`).
 - `lib.rs`: `pub mod groupme;` and its line in `adapters()`.
 
-**Screens.** No new screen.
-- System, Chat Bridges takes a GroupMe bridge as any other: the network, the adapter and the JSON configuration. The
-  guide gives the keys.
+**Self-service** (decided 2026-11-17, at the design check: in the first release).
+- Settings, Chat gets a GroupMe section (`Settings/Chat.xml`, which renders in both modes). It shows:
+  - the status (Connected with the room count; Not connected with the reason; Disconnected);
+  - Access token (a password field, write-only) and Connect, or Connect again;
+  - Disconnect.
+- `GroupMeServices`, the current user's own bridge:
+  - `get#MyGroupMe`: the status, never the token.
+  - `connect#MyGroupMe`: makes the user's GroupMe bridge (owner the user, adapter `groupme`), or replaces its token and
+    connects it again. An empty token keeps the one kept. At most one per user (the user's row lock, then a look).
+  - `disconnect#MyGroupMe`: the bridge is disabled, so the worker stops its thread. The token is forgotten. The
+    `lastErrorText` says "Disconnected by its owner: the rooms keep their history and no longer sync with GroupMe".
+    The rooms stay.
+- Only the owner (these services) and a `ChatBridgeAdmin` (System, Chat Bridges, `find#Bridges`, `store#Bridge`) see or
+  change the bridge. The token is kept in the encrypted `configJson`.
+- The property `chat_groupme_self_service` (`true` by default) turns it off. When `false`, Connect is refused
+  (`selfServiceOff`) and the section shows only a bridge the user has, without its token form.
+- The administrator's path stays: System, Chat Bridges takes a GroupMe bridge as any other (the network, the adapter and
+  the JSON configuration), and the guide gives the keys.
+
+**Screens.**
+- Settings, Chat, GroupMe (above). BasicComms.spec's one render of Settings, Chat checks it.
 - GroupMe rooms show in Chat's Bridged section with the GroupMe chip, a failed send's reason, and Send again.
 - The label (§6.2), in `WebrootChat.js` `e2eeLabel` and `ChatTui.xml`: a room whose bridges all have `encryption`
   `None` and are not SMS says "Not end-to-end encrypted. {network} has no end-to-end encryption, and the bridge reads
@@ -2177,14 +2200,13 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   the heart (GroupMe's newer reactions are community-documented), and sending video and files.
 - History beyond the catch-up (§15), and GroupMe's system messages.
 - A group's whole roster as members: a GroupMe person joins the room when they first post or like.
-- One node holding the connection in a cluster (a lease).
-- A user setting up their own GroupMe without an administrator, and GroupMe's OAuth flow for applications.
+- GroupMe's OAuth flow for applications: the user pastes their token.
 - The WebSocket transport: long-polling needs no new crate.
 - Archiving a room when the owner leaves its group. GroupMe's 403 or 404 fails its sends with the reason.
 - Bots.
 
 **Tests** (regression):
-- `crates/moqui-channels/src/tests/groupme.rs`, on a fake GroupMe on loopback (REST, image service and Faye long-poll).
+- `crates/moqui-channels/src/groupme/tests.rs`, on a fake GroupMe on loopback (REST, image service and Faye long-poll).
   The token is built with `format!`. The push session is driven a step at a time (`push::Session::step`), with no
   timing:
   - send: a text with the idempotency key as `source_guid` and the token header; `textTooLong`; another member's
@@ -2204,8 +2226,11 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   - rate limits: 420 and 429 on a send are `Retry`; the session backs off on a push 5xx;
   - catch-up: after a reconnect, the messages after the room's newest fetched with `after_id`;
   - a lost answer found by its `source_guid`;
-  - `store#Bridge`'s checks; the capabilities (`None`).
+  - `store#Bridge`'s checks; the capabilities (`None`);
+  - self-service: one bridge a user, the token never shown, Connect again with no token, Disconnect, the property off;
+  - the lease: one node holds it, another is refused.
 - `webroot/test/client/WebrootChat.spec.js`: the label of a room whose bridge's network has no E2EE.
+- `basic-comms/test/BasicComms.spec.js`: the GroupMe section on the existing Settings, Chat render.
 
 **Docs:**
 - New: `docs/interfaces/GroupMe.md`, the operator guide, marked **not yet tested with GroupMe**: getting the token
@@ -2213,8 +2238,9 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   the facts not confirmed.
 - Changed:
   - `Chat-Bridges.md`: the adapter, the network that connects out, the label;
-  - `docs/tools/Comms.md`: Bridged rooms;
-  - the crate's notes (`lib.rs`, `Cargo.toml`'s description);
+  - `docs/tools/Comms.md`: GroupMe, beside Bridged rooms;
+  - `docs/Run-Deploy.md`: the property `chat_groupme_self_service`;
+  - `Cargo.toml`'s description;
   - this plan's status.
 
 **The API facts** (dev.groupme.com, read 2026-11-17).
@@ -2236,6 +2262,18 @@ transport check. Nothing comes in on the webhook route: `webhook()` keeps the de
   - the order of a chat id (`a+b`);
   - the rate limit's numbers and the image size limit;
   - whether GroupMe itself treats `@all` as anything but text.
+
+**Status (2026-11-17): built**, against a fake GroupMe only. Not yet tested with GroupMe.
+- Built as designed, with the design check's two changes (self-service in Settings, Chat, and one node holding each
+  connection by the lease), and these details:
+  - `receive#Likes` runs with no transaction of its own (`transaction="ignore"`), as `receive#Sms` does, so
+    `ingest#Event` stores its batch first.
+  - After a refused token the thread asks for the bridge every 10 s during its wait, so a new token connects within
+    seconds, not at once.
+  - Settings, Chat is an XML screen that renders in both modes, so the terminal has the GroupMe section too.
+- Left:
+  - the live test with GroupMe, and the facts not confirmed (`docs/interfaces/GroupMe.md`, "Not confirmed");
+  - what "Left out" names.
 
 #### Phase 10 and later
 

@@ -1002,6 +1002,10 @@ test("the E2EE label's edges: a members-only record room is plain, a text with a
     const inbound = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "xmpp", networkName: "XMPP", outbound: false }] });
     assert.deepEqual([inbound.state, inbound.hint], ["bridged", ""], "nothing goes out through it");
     assert.equal(label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "sms", networkName: "SMS", outbound: false }] }).hint, "", "a text room that sends nothing out");
+    // a network with no E2EE of its own (GroupMe, Comms-Messaging phase 14) says so
+    const groupme = label({ roomTypeEnumId: "CrtPrivate", bridges: [{ network: "groupme", networkName: "GroupMe", encryption: "None", outbound: true }] });
+    assert.deepEqual([groupme.state, groupme.lock, groupme.hint], ["bridged", false, "GroupMe message"]);
+    assert.equal(groupme.banner, "Not end-to-end encrypted. GroupMe has no end-to-end encryption, and the bridge reads messages to pass them on.");
 });
 
 test("people's checks (§6.1 rule 3): a verified identity or every device verified; a new identity is not verified; Verify asks another person first", () => {

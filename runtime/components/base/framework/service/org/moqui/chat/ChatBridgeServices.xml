@@ -48,7 +48,8 @@ along with this software (see the LICENSE.md file). If not, see
             itemList: up to 200 items of {itemId (the item's name in the outcomes), type (message, edit, reaction or
             redaction), externalRoomId, externalEventId, externalUserId, displayName, avatarUrl, text (plain), originDate
             (millis), relatesToExternalEventId (an edit's, reaction's or delete's target), key (a reaction), replyToExternalEventId,
-            metadata (a map kept beside the event), media (a message's files, up to 10: [{url, contentType, fileName, size}], each
+            metadata (a map kept beside the event), mentions (['@room'] only: the text's first @all or @everyone mentions
+            the room), media (a message's files, up to 10: [{url, contentType, fileName, size}], each
             fetched by the bridge's adapter when the item is worked, store#BridgeMedia)}. transportVerified: the bridge's adapter
             checked the request's signature itself (its webhook, ChatBridgeAdapter::webhook), so no token is needed; honored
             only inside that bridge's webhook (chat_bridge::webhook marks the context), else badToken. A security failure rejects the whole batch (reasonCode unknownBridge,
@@ -376,6 +377,9 @@ along with this software (see the LICENSE.md file). If not, see
             const externalRoomId = field('externalRoomId'), externalEventId = field('externalEventId'), externalUserId = field('externalUserId')
             const displayName = field('displayName'), avatarUrl = field('avatarUrl', 1024), relatesTo = field('relatesToExternalEventId')
             const text = field('text', 65536), key = field('key', 64), replyTo = field('replyToExternalEventId')
+            // a mention of the whole room from the network (GroupMe's @all): only @room, made of the text's first @all or @everyone
+            const mentions = item.mentions == null ? [] : Array.isArray(item.mentions) || (item.mentions && typeof item.mentions.length === 'number') ? Array.from(item.mentions) : null
+            if (mentions === null || mentions.some((value) => value !== '@room')) { reject('malformed', 'A mention from a bridge is @room only'); return }
             if (!TYPES.includes(type)) { reject('malformed', 'An item is a message, edit, reaction or redaction'); return }
             if (!externalRoomId || !externalEventId || !externalUserId) { reject('malformed', 'An item names its room, its event and its sender'); return }
             if ([displayName, avatarUrl, relatesTo, text, key, replyTo].some((value) => value === undefined)) { reject('malformed', 'A field of the item is too long'); return }
@@ -498,7 +502,9 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 let bodyText = text ? text : ''
                 if (missed.length) bodyText = (bodyText ? bodyText + '\n' : '') + `[${missed.length === 1 ? 'A file' : missed.length + ' files'} not received: ${missed.join(', ')}]`
-                out = ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters(Object.assign({body: bodyText.trim() ? htmlOf(bodyText) : null,
+                let body = bodyText.trim() ? htmlOf(bodyText) : null
+                if (body && mentions.includes('@room')) body = body.replace(/(^|[^\w@])(@(?:all|everyone))(?![\w])/i, '$1<span data-mention-id="@room">$2</span>')
+                out = ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters(Object.assign({body: body,
                     replyToEventSeq: replyToEventSeq, chatAttachmentIdList: attachmentIds}, common)).call()
                 if (ec.message.hasError()) return
                 eventSeq = out.eventSeq
@@ -1064,6 +1070,12 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError(ec.l10n.localize('An RCS bridge\'s adapter is rcs-twilio or rcs-sinch')); return }
             if (row.typeEnumId === 'CbtSms' && adapter && !/^sms(-|$)/.test(adapter)) {
                 ec.message.addError(ec.l10n.localize('An SMS bridge\'s adapter is sms, sms-twilio or sms-sinch')); return }
+            // a GroupMe bridge (plans/Comms-Messaging.md §18.3 phase 14): one person's account, its token and owner; one a user
+            if (row.typeEnumId === 'CbtGroupMe') {
+                const check = ec.service.sync().name('org.moqui.chat.GroupMeServices.check#Bridge').parameters({chatBridgeId: created ? null : row.chatBridgeId,
+                    adapterName: adapter, configJson: row.configJson}).disableAuthz().call() || {}
+                if (check.reasonCode) { ec.message.addError(check.message || check.reasonCode); return }
+            }
             // an RCS bridge (plans/Comms-Messaging.md §16, phase 10): one number, its home number, never the system's
             if (row.typeEnumId === 'CbtRcs' && !created) {
                 const numbers = Array.from(ec.entity.find('moqui.call.PhoneNumber').condition('messagingBridgeId', row.chatBridgeId).disableAuthz().list())

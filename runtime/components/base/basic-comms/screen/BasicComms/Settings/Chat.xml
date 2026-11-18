@@ -22,7 +22,10 @@ along with this software (see the LICENSE.md file). If not, see
     (CHAT_AUTO_AWAY_MINUTES, which the framework's presence reads); the do not disturb hours (apply#DndHours puts an online user
     on do not disturb in them) and the people whose calls still ring then (CHAT_DND_ALLOWED, store#DndAllowed, read by the
     framework's filter#RingUsers, plans/Comms-Messaging.md §7.2 rule 4); and the status presets (CHAT_STATUS_PRESETS) the Chat rail's status menu and the account menu's
-    status dialog offer (Use sets one now). The Chat screens read these when they open. -->
+    status dialog offer (Use sets one now). The Chat screens read these when they open. GroupMe: the user's own GroupMe
+    account as a bridge (org.moqui.chat.GroupMeServices get#MyGroupMe, connect#MyGroupMe, disconnect#MyGroupMe;
+    docs/interfaces/GroupMe.md): its status, the token (write-only) and Disconnect, unless the property
+    chat_groupme_self_service is false. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-index="6" server-static="qvt" menu-image="sym_o_chat" menu-image-type="icon">
 
@@ -65,6 +68,18 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="connectGroupMe">
+        <service-call name="org.moqui.chat.GroupMeServices.connect#MyGroupMe" in-map="{accessToken:accessToken}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">GroupMe is connecting: your groups appear in Chat as they sync</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="disconnectGroupMe">
+        <service-call name="org.moqui.chat.GroupMeServices.disconnect#MyGroupMe"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">GroupMe disconnected: its rooms keep their history</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="addPreset">
         <service-call name="org.moqui.comms.ChatScreenServices.store#StatusPreset" in-map="{action:'add', emoji:emoji, text:text, clearAfter:clearAfter}"/>
         <default-response url="."/>
@@ -84,6 +99,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <service-call name="org.moqui.comms.ChatScreenServices.get#ChatPrefs" out-map="prefsOut"/>
+        <service-call name="org.moqui.chat.GroupMeServices.get#MyGroupMe" out-map="groupMe"/>
         <script><![CDATA[
             const L = (text) => ec.l10n.localize(text)
             const prefs = prefsOut.prefs
@@ -101,6 +117,16 @@ along with this software (see the LICENSE.md file). If not, see
                 clearText: L(clears[preset.clearAfter] || clears['0'])}))
             canAddPreset = presetList.length < 12
             addPreset = {emoji: '', text: '', clearAfter: '0'}
+            // GroupMe: the user's own bridge's status, never its token
+            showGroupMe = !!(groupMe.enabled || groupMe.hasBridge)
+            groupMeConnected = !!(groupMe.hasBridge && groupMe.statusId !== 'CbsDisabled')
+            groupMeText = !groupMe.hasBridge ? L('Not connected. Paste your GroupMe access token to bring your groups, Topics and direct messages here.')
+                : groupMe.statusId === 'CbsDisabled' ? L('Disconnected. Your GroupMe rooms keep their history and no longer sync.')
+                : groupMe.connected ? ec.resource.expand('Connected, ${count} rooms.', '', {count: groupMe.roomCount || 0})
+                : L('Not connected yet.')
+            groupMeError = groupMe.hasBridge && groupMe.statusId !== 'CbsConnected' ? (groupMe.lastErrorText || '') : ''
+            groupMeForm = {accessToken: ''}
+            groupMeButton = groupMe.hasBridge ? L('Connect again') : L('Connect')
         ]]></script>
     </actions>
 
@@ -134,6 +160,27 @@ along with this software (see the LICENSE.md file). If not, see
                 </box-body></container-box>
             </row-col>
             <row-col lg="6" md="6">
+                <section name="GroupMeSection" condition="showGroupMe"><widgets>
+                    <container-box><box-header title="GroupMe"/><box-body>
+                        <label type="p" text="${groupMeText}" style="text-body2"/>
+                        <section name="GroupMeError" condition="groupMeError"><widgets>
+                            <label type="p" text="${groupMeError}" style="text-caption m-muted"/>
+                        </widgets></section>
+                        <section name="GroupMeConnect" condition="groupMe.enabled"><widgets>
+                            <form-single name="GroupMeToken" transition="connectGroupMe" map="groupMeForm">
+                                <field name="accessToken"><default-field title="Access token" tooltip="Empty keeps the token kept"><password size="40" maxlength="200"/></default-field></field>
+                                <field name="submitButton"><default-field title="${groupMeButton}"><submit/></default-field></field>
+                                <field-layout><field-row><field-ref name="accessToken"/><field-ref name="submitButton"/></field-row></field-layout>
+                            </form-single>
+                        </widgets></section>
+                        <section name="GroupMeDisconnect" condition="groupMeConnected"><widgets>
+                            <link url="disconnectGroupMe" link-type="hidden-form-link" text="Disconnect" icon="sym_o_link_off"
+                                    confirmation="Disconnect GroupMe? Its rooms keep their history and stop syncing, and the token is forgotten."/>
+                        </widgets></section>
+                        <label type="p" text="Get your token at dev.groupme.com: sign in, then Access Token. GroupMe has no end-to-end encryption, and this server reads the messages it passes on."
+                                style="text-caption m-muted q-mb-none q-mt-sm"/>
+                    </box-body></container-box>
+                </widgets></section>
                 <container-box><box-header title="Do not disturb hours"/><box-body>
                     <label type="p" text="${dndText}" style="text-body2"/>
                     <form-single name="DndHours" transition="saveDndHours" map="dndPrefs">

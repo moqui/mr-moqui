@@ -484,7 +484,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="ChatBridge" package="moqui.chat" use="transactional" cache="never">
         <description>A connector account or federated network: one row each. typeEnumId is the network; adapterName picks the
             ChatBridgeAdapter registered through moqui_core::extension that serves it (empty: the network's code; an SMS
-            bridge's names its provider's adapter: sms for Telnyx; an RCS bridge, CbtRcs, rcs-twilio or rcs-sinch). configJson
+            bridge's names its provider's adapter: sms for Telnyx; an RCS bridge, CbtRcs, rcs-twilio or rcs-sinch; a GroupMe bridge,
+            CbtGroupMe, groupme: one person's account, its configJson's ownerUserId, org.moqui.chat.GroupMeServices). configJson
             holds the provider account's settings and secrets, encrypted; inboundTokenHash is the SHA-256 (hex) of the token
             an adapter gives ingest#Event. statusId: CbsConnected, CbsNotConnected (its rooms show "not connected" and keep
             their local timeline), CbsDisabled (no deliveries, no input). sendsPerMinute caps the deliveries a node sends to
@@ -525,6 +526,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Microsoft Teams" enumId="CbtTeams" enumCode="teams" enumTypeId="ChatBridgeType" sequenceNum="10"/>
             <moqui.basic.Enumeration description="Discord" enumId="CbtDiscord" enumCode="discord" enumTypeId="ChatBridgeType" sequenceNum="11"/>
             <moqui.basic.Enumeration description="RCS" enumId="CbtRcs" enumCode="rcs" enumTypeId="ChatBridgeType" sequenceNum="12"/>
+            <moqui.basic.Enumeration description="GroupMe" enumId="CbtGroupMe" enumCode="groupme" enumTypeId="ChatBridgeType" sequenceNum="13"/>
 
             <moqui.basic.StatusType description="Chat Bridge" statusTypeId="ChatBridge"/>
             <moqui.basic.StatusItem statusId="CbsConnected" statusTypeId="ChatBridge" sequenceNum="1" description="Connected"/>
