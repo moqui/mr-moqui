@@ -456,6 +456,9 @@ leaves them alone (`pushDelivers`) and only tells the host which room shows (`ro
 - A shared sign-out does not clear the webview's HTTP cache. The pages' queue of scoped storage to clear is in memory,
   so a page that closes before it runs leaves it to the next one.
 - A kept link that arrives while signed out stays for the next sign-in, which may be another account's.
+- Send later (Send's arrow or a right click; plans/Comms-Messaging.md phase 15) needs a connection: a scheduled message
+  is not an outbox operation. An encrypted room's scheduled message, which the device holds, goes only while a Chat
+  window of the account is open, and when one next opens if none was (sent late).
 - The store's cap keeps no running total of its size: each check measures the rows and files again, a cost that
   grows with the store.
 - A reply or forward built offline quotes with English labels and this computer's time zone, not the user's locale and
