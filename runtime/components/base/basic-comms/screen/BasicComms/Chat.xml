@@ -189,9 +189,11 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="attachment" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#Attachment').parameter('chatAttachmentId', chatAttachmentId || '').call()
-            if (ec.message.hasError()) ec.web.sendJsonResponse({})
+            if (ec.message.hasError()) { ec.web.sendJsonResponse({}); return }
+            // a disappearing message's file is kept in no cache (plans/Comms-Messaging.md §18.3 phase 16)
+            if (out.expiring) ec.web.response.setHeader('Cache-Control', 'no-store')
             // inline: a picture the room shows, or a sound or video its player plays (a voice note); anything else is a download
-            else ec.web.sendResourceResponse(out.location, String(inline) === 'true'
+            ec.web.sendResourceResponse(out.location, String(inline) === 'true'
                 && /^(image\/(png|jpe?g|gif|webp)|audio\/(webm|ogg|mpeg|mp4|aac|wav|x-m4a)|video\/(mp4|webm|ogg|quicktime))(\s*;.*)?$/i.test(out.contentType || ''))
         ]]></script></actions>
         <default-response type="none"/>
@@ -258,7 +260,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.send#ChatMessage').parameters({chatRoomId: chatRoomId || '', body: body || null,
                 replyToEventSeq: number(replyToEventSeq), threadRootEventSeq: number(threadRootEventSeq), chatAttachmentIds: chatAttachmentIds || null,
                 clientRef: clientRef || null, forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: number(forwardOfEventSeq),
-                encrypted: sealed, mentionUserIdList: mentionList}).call()
+                encrypted: sealed, mentionUserIdList: mentionList, viewOnce: String(viewOnce) === 'true'}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out?.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: out.clientRef, duplicate: out.duplicate})
         ]]></script></actions>
         <default-response type="none"/>
@@ -675,6 +677,41 @@ along with this software (see the LICENSE.md file). If not, see
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
             ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, verifiedDevicesOnly: !!out.verifiedDevicesOnly})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- disappearing messages and view-once media (plans/Comms-Messaging.md §18.3 phase 16; ChatExpiryServices): the room's
+        timer (seconds, 0 for off), a view-once message's open (its file, served by viewOnceFile in the open's window, kept in
+        no cache) -->
+    <transition name="setRoomTimer">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.set#RoomTimer').parameters({chatRoomId: chatRoomId || '',
+                seconds: seconds == null || seconds === '' ? 0 : Number(seconds)}).requireNewTransaction(true).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, seconds: out.seconds ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="openViewOnce">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.open#ViewOnce').parameters({chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq) || 0}).requireNewTransaction(true).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(errors ? {reasonCode: out.reasonCode || null, errors} : {chatAttachmentId: out.chatAttachmentId, fileName: out.fileName,
+                contentType: out.contentType, fileSize: out.fileSize ?? null, until: out.until})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="viewOnceFile" method="get">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.chat.ChatExpiryServices.get#ViewOnceFile').parameter('chatAttachmentId', chatAttachmentId || '')
+                    .requireNewTransaction(true).call() || {}
+            if (ec.message.hasError()) { ec.message.clearErrors(); ec.web.sendError(404, 'Not found'); return }
+            ec.web.response.setHeader('Cache-Control', 'no-store')
+            ec.web.sendResourceResponse(out.location, true)
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

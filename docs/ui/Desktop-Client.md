@@ -299,6 +299,12 @@ run until it answers (five tries), so a stop or a failed read loses nothing.
   another change's message read again (`timeline` by `eventSeq`, a thread reply's root too, an event gone removed),
   in order, the room's cursor stopping at the first change not done; past 50 messages, or on a reset, the room's held
   events go and its latest page is read. A room with nothing held only takes its cursor.
+- **Disappearing messages** (plans/Comms-Messaging.md §18.3 phase 16): each held event keeps its `expireDate`
+  (`chat_event.expire_ms`). The store deletes what is due at each feed run, at each chat push, and before any offline
+  chat answer, which never gives an expired event; a room's `expired` push and its feed's marker (a change with no
+  `eventSeq`, `{cause: 'expired', before}`) delete what they name, with the room's kept timeline answers. The store
+  runs with `secure_delete`, so a deleted row's bytes do not stay in the file. The column is in the store's schema as
+  is (no migrations before 0.1.0): a store made before it is removed and read again.
 - **The mail feed:** each change makes the thread match: `deleted` removes it everywhere, `removedMessageIds` and the
   messages no longer in it go, the kept messages and the thread's rows take its state (read, flags, archived,
   folder, label, newest message), a row of a folder none of its messages is in leaves it, and a thread with a message

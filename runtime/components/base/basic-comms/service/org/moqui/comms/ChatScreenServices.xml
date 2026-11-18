@@ -693,6 +693,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="forwardOfEventSeq" type="Integer"/>
             <parameter name="encrypted" type="Map"/>
             <parameter name="mentionUserIdList" type="List"/>
+            <parameter name="viewOnce" type="Boolean" default="false"><description>A view-once photo or video (send#Message)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -709,7 +710,7 @@ along with this software (see the LICENSE.md file). If not, see
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null, chatAttachmentIdList: ids,
                 recordList: records, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId), clientRef: clientRef || null,
                 forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: forwardOfEventSeq ?? null,
-                encrypted: encrypted || null, mentionUserIdList: mentionUserIdList || null}).call()
+                encrypted: encrypted || null, mentionUserIdList: mentionUserIdList || null, viewOnce: !!viewOnce}).call()
             reasonCode = out?.reasonCode || null
             if (ec.message.hasError()) return
             eventSeq = out.eventSeq; event = out.event; clientRef = out.clientRef; duplicate = !!out.duplicate

@@ -46,6 +46,9 @@ along with this software (see the LICENSE.md file). If not, see
             with commas, so the room of a set of users is found and reused</description></field>
         <field name="retentionDays" type="number-integer"><description>How many days the room keeps its events; empty for
             always. The daily job clean#ChatRetention deletes the older ones.</description></field>
+        <field name="messageTimerSeconds" type="number-integer"><description>Disappearing messages (plans/Comms-Messaging.md
+            §18.3 phase 16; ChatExpiryServices): a new message goes this many seconds after it is sent (30 to 2419200, 4
+            weeks), on the server and on every device; empty is off. set#RoomTimer sets it.</description></field>
         <field name="createdByUserId" type="id"/>
         <field name="createdDate" type="date-time"/>
         <field name="archivedDate" type="date-time"><description>An archived room is read only</description></field>
@@ -198,6 +201,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="clientRef" type="text-medium"><description>The sender's reference of the message, ^[A-Za-z0-9_.:-]{1,64}$</description></field>
         <field name="linkPreviewJson" type="text-very-long"><description>The previews of the message's links, a JSON list of
             {url, title, description, siteName} (fetch#LinkPreviews), or {"removed": true} once the sender removed them</description></field>
+        <field name="expireDate" type="date-time"><description>When the event goes (phase 16, ChatExpiryServices.expire#DueMessages):
+            a message's sentDate plus its room's timer, a view-once message's at the latest chat_view_once_days after it is
+            sent; an edit, reaction, redaction or pin of a message has the message's. Empty: never.</description></field>
+        <field name="viewOnce" type="text-indicator"><description>Y: a view-once photo or video (open#ViewOnce)</description></field>
+        <field name="megolmSessionId" type="text-medium"><description>An encrypted event's Megolm session (content.encrypted.session_id),
+            so the expiry knows when the key backup of a session may go</description></field>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one-nofk" title="Sender" related="moqui.security.UserAccount" short-alias="sender">
             <key-map field-name="senderUserId" related="userId"/></relationship>
@@ -211,6 +220,8 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CHAT_EVENT_UNREAD"><index-field name="chatRoomId"/><index-field name="eventTypeEnumId"/><index-field name="eventSeq"/></index>
         <index name="CHAT_EVENT_CLIENT_REF"><index-field name="chatRoomId"/><index-field name="senderUserId"/><index-field name="clientRef"/></index>
         <index name="CHAT_EVENT_THREAD_LAST"><index-field name="chatRoomId"/><index-field name="threadLastDate"/></index>
+        <index name="CHAT_EVENT_EXPIRE"><index-field name="expireDate"/></index>
+        <index name="CHAT_EVENT_SESSION"><index-field name="chatRoomId"/><index-field name="megolmSessionId"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Chat Event Type" enumTypeId="ChatEventType"/>
             <moqui.basic.Enumeration description="Message" enumId="CetMessage" enumCode="message" enumTypeId="ChatEventType" sequenceNum="1"/>
@@ -288,6 +299,18 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <index name="CHAT_ATTACH_EVENT"><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
     </entity>
+    <entity entity-name="ChatViewOnceOpen" package="moqui.chat" use="transactional" cache="never">
+        <description>A recipient's open of a view-once message (plans/Comms-Messaging.md §18.3 phase 16; open#ViewOnce): the
+            file is served to them for 2 minutes after openedDate, at most 3 times (downloadCount). The rows go with the
+            message.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="openedDate" type="date-time"/>
+        <field name="downloadCount" type="number-integer"/>
+        <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
 
     <entity entity-name="ChatPoll" package="moqui.chat" use="transactional" cache="never">
         <description>A poll: a message (CetMessage, content.poll) whose options are ChatPollOption and whose votes are
@@ -354,6 +377,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
         <relationship type="one-nofk" related="moqui.chat.ChatLinkPreview" short-alias="preview">
             <key-map field-name="urlHash"/></relationship>
+        <index name="CHAT_LINK_HASH"><index-field name="urlHash"/></index>
     </entity>
     <view-entity entity-name="ChatEventLinkPreview" package="moqui.chat">
         <description>A room's links with their cached previews, for find#RoomLinks' search by URL or title: every link, and

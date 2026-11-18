@@ -561,6 +561,18 @@ async fn omemo_is_kept_as_it_came_and_moqui_s_encrypted_rooms_are_refused() {
         text.contains("not-acceptable") && text.contains("end-to-end encrypted"),
         "{text}"
     );
+
+    // so is a room with disappearing messages (plans/Comms-Messaging.md §18.3 phase 16): an XMPP client keeps what it gets
+    let out = john
+        .send(
+            "<presence to='x-54494d4544@rooms.moqui.local/john'><x xmlns='http://jabber.org/protocol/muc'/></presence>",
+        )
+        .await;
+    let text = text_of(&out);
+    assert!(
+        text.contains("not-acceptable") && text.contains("disappearing messages"),
+        "{text}"
+    );
 }
 
 #[tokio::test]

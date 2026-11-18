@@ -45,7 +45,7 @@ impl Session {
         let mut parameters = json!({});
         if let Some(room) = &room {
             match self.room(room, false).await {
-                Some(meta) if !meta.direct && !meta.encrypted => {}
+                Some(meta) if !meta.direct && meta.unserved().is_none() => {}
                 _ => return self.refuse(iq, "cancel", "item-not-found", None),
             }
             parameters["chatRoomId"] = json!(room);

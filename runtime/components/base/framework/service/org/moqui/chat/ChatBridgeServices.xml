@@ -1107,7 +1107,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="store" noun="RoomBridge">
         <description>Map a room to a room or conversation of a bridge's network (ChatBridgeAdmin): externalRoomId, its name and
             link, directionEnumId (CrbBoth by default, CrbIn, CrbOut). An external room has one active mapping per bridge
-            (reasonCode mappingExists); a room of a direct conversation or an encrypted room is not bridged. With
+            (reasonCode mappingExists); a room of a direct conversation or an encrypted room is not bridged, nor one with
+            disappearing messages (reasonCode timerOn). With
             chatRoomBridgeId, changes the mapping's name, link and direction.</description>
         <in-parameters>
             <parameter name="chatRoomBridgeId"/>
@@ -1141,6 +1142,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!room) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             if (room.roomTypeEnumId === 'CrtDirect') { ec.message.addError(ec.l10n.localize('A direct conversation is not bridged')); return }
             if (room.encrypted === 'Y') { reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('An encrypted room is not bridged: the server has no text to send')); return }
+            // disappearing messages cannot be deleted on another network (plans/Comms-Messaging.md §18.3 phase 16)
+            if ((reasonCode = ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('checkBridge', {chatRoomId: chatRoomId}).reasonCode || null)) return
             if (!ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', chatBridgeId).disableAuthz().one()) { ec.message.addError(`Chat bridge ${chatBridgeId} not found`); return }
             ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', chatBridgeId).forUpdate(true).disableAuthz().one()
             if (ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatBridgeId', chatBridgeId).condition('externalRoomId', externalRoomId)

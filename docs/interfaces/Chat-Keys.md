@@ -189,6 +189,12 @@ longer is (no shared room, no live call), because a membership ended since `devi
 tracking them.
 
 **Key backup** (`m.megolm_backup.v1.curve25519-aes-sha2`; the server stores `session_data` as the browser made it).
+- **Disappearing messages** (plans/Comms-Messaging.md §18.3 phase 16). When the expiry deletes an encrypted room's
+  messages, a backed-up session (room ID `!<chatRoomId>:<chat_server_name>`) that no event of the room still uses
+  (`ChatEvent.megolmSessionId`) goes from every user's backup. In a room with a timer the sending browser rotates its
+  session at the timer (a week at most) or every 100 messages, and a timer change starts a new one, so no session outlives
+  the messages it opens. The device's own store keeps its inbound copy: the SDK has no delete for one, and it opens nothing
+  once the ciphertext is gone.
 - **Versions.** Versions are `"1"`, `"2"`, … per user and never reused.
   - `backupVersionCreate` takes `{algorithm, auth_data}` and answers `{version}`; the new version is the current one.
   - `backupVersion` takes `{version}`, or nothing for the current (the latest not deleted). It answers

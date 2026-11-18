@@ -21,8 +21,17 @@
 //!
 //! There is no event type column: an edit, a reaction or a redaction the server pushes is folded by the caller into
 //! the JSON of the event it changes (as `get#Timeline` gives it), and that event written again.
+//!
+//! An event that disappears (plans/Comms-Messaging.md phase 16) has its `expireDate` in `expire_ms`, which every write
+//! takes from its JSON. It is removed when that time comes ([`Store::expire_chat_events`]) or when the server says it
+//! went ([`Store::expire_room_events`], for its push and its changes feed's marker), with the reply count of its
+//! thread's root and the room's last message set back. The ranges stay as they are: a hole in a stretch held whole is
+//! no gap, as the server no longer has the event either.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{params, OptionalExtension};
+use serde_json::{json, Value};
 
 use super::{failed, text_len, Read, Store, ROW_BYTES};
 use moqui_lib::error::Error;
@@ -481,6 +490,166 @@ impl Store {
         }
     }
 
+    /// Every event kept whose `expireDate` is at or before `now_ms` goes: its time came, on the server too. Gives the
+    /// rooms it went from (their kept pages, which may show it, are the caller's to drop). A room whose rows cannot be
+    /// removed is logged and left; they are due again next time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the due events cannot be read.
+    pub fn expire_chat_events(&self, now_ms: i64) -> Result<Vec<String>, Error> {
+        let due = self.query_events(
+            "SELECT chat_room_id, event_seq, event, thread_seq FROM chat_event WHERE expire_ms <= ?1",
+            params![now_ms],
+        )?;
+        let mut by_room: BTreeMap<String, Vec<ChatEvent>> = BTreeMap::new();
+        for event in due {
+            by_room.entry(event.chat_room_id.clone()).or_default().push(event);
+        }
+        let mut touched = Vec::new();
+        for (room, gone) in by_room {
+            match self.remove_expired(&room, &gone) {
+                Ok(()) => touched.push(room),
+                Err(err) => tracing::warn!(
+                    "Client store {}: expired events of {room} not removed: {err}",
+                    self.account
+                ),
+            }
+        }
+        if !touched.is_empty() {
+            self.checkpoint();
+        }
+        Ok(touched)
+    }
+
+    /// The server says events of a room went (its `expired` push, or its changes feed's marker): those of `seqs`, and
+    /// every one whose `expireDate` is at or before `before`. Gives how many of them were kept here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the events cannot be read or removed.
+    pub fn expire_room_events(&self, chat_room_id: &str, before: Option<i64>, seqs: &[i64]) -> Result<usize, Error> {
+        let mut gone = match before {
+            Some(before) => self.query_events(
+                "SELECT chat_room_id, event_seq, event, thread_seq FROM chat_event
+                WHERE chat_room_id = ?1 AND expire_ms <= ?2",
+                params![chat_room_id, before],
+            )?,
+            None => Vec::new(),
+        };
+        for seq in seqs {
+            if gone.iter().any(|event| event.event_seq == *seq) {
+                continue;
+            }
+            if let Some(event) = self.chat_event(chat_room_id, *seq) {
+                gone.push(event);
+            }
+        }
+        if gone.is_empty() {
+            return Ok(0);
+        }
+        self.remove_expired(chat_room_id, &gone)?;
+        self.checkpoint();
+        Ok(gone.len())
+    }
+
+    /// Remove the expired events `gone` of a room in one unit: their rows, a reply's count on its thread's root (as a
+    /// redaction takes it down; a reply redacted already was taken off then), and the room's last message when it was
+    /// one of them.
+    fn remove_expired(&self, chat_room_id: &str, gone: &[ChatEvent]) -> Result<(), Error> {
+        let seqs: BTreeSet<i64> = gone.iter().map(|event| event.event_seq).collect();
+        self.atomic(|store| {
+            for event in gone {
+                store
+                    .conn
+                    .prepare_cached("DELETE FROM chat_event WHERE chat_room_id = ?1 AND event_seq = ?2")
+                    .and_then(|mut statement| statement.execute(params![chat_room_id, event.event_seq]))
+                    .map_err(failed("expired chat event not removed"))?;
+            }
+            let mut replies: BTreeMap<i64, i64> = BTreeMap::new();
+            for event in gone {
+                let Some(root) = event.thread_seq else { continue };
+                let redacted = serde_json::from_str::<Value>(&event.event)
+                    .is_ok_and(|item| item["redacted"].as_bool() == Some(true));
+                if !redacted && !seqs.contains(&root) {
+                    *replies.entry(root).or_default() += 1;
+                }
+            }
+            for (root, count) in replies {
+                let Some(kept) = store.chat_event(chat_room_id, root) else {
+                    continue;
+                };
+                let Ok(mut item) = serde_json::from_str::<Value>(&kept.event) else {
+                    continue;
+                };
+                item["threadReplyCount"] = json!((json_i64(&item["threadReplyCount"]).unwrap_or(0) - count).max(0));
+                let changed = ChatEvent {
+                    event: item.to_string(),
+                    ..kept
+                };
+                store
+                    .write_chat_event(&changed)
+                    .map_err(failed("thread root not kept"))?;
+            }
+            store.set_back_last_message(chat_room_id, &seqs)
+        })
+    }
+
+    /// The room's last message, when it is one of `gone`: the newest message of its timeline still kept, or none.
+    fn set_back_last_message(&self, chat_room_id: &str, gone: &BTreeSet<i64>) -> Result<(), Error> {
+        let Some(mut room) = self.chat_room(chat_room_id) else {
+            return Ok(());
+        };
+        let Ok(mut row) = serde_json::from_str::<Value>(&room.row) else {
+            return Ok(());
+        };
+        if !json_i64(&row["lastMessage"]["eventSeq"]).is_some_and(|seq| gone.contains(&seq)) {
+            return Ok(());
+        }
+        let latest = self.query_events(
+            "SELECT chat_room_id, event_seq, event, thread_seq FROM chat_event
+            WHERE chat_room_id = ?1 AND thread_seq IS NULL ORDER BY event_seq DESC LIMIT 50",
+            params![chat_room_id],
+        )?;
+        let standing = latest
+            .iter()
+            .filter_map(|event| serde_json::from_str::<Value>(&event.event).ok())
+            .find(|item| item["type"].as_str() == Some("message") && item["redacted"].as_bool() != Some(true));
+        row["lastMessage"] = match standing {
+            Some(item) => json!({ "eventSeq": item["eventSeq"], "senderUserId": item["senderUserId"],
+                "sentDate": item["sentDate"], "snippet": item["bodyText"], "encrypted": item["encrypted"] }),
+            None => Value::Null,
+        };
+        room.row = row.to_string();
+        let size = self.write_chat_room(&room).map_err(failed("chat room not kept"))?;
+        self.wrote(size);
+        Ok(())
+    }
+
+    /// The old pages of deleted rows written out of the WAL, so they do not stay there either; logged when it fails.
+    /// Inside a unit it waits for a later removal (a checkpoint cannot pass an open write).
+    fn checkpoint(&self) {
+        if !self.conn.is_autocommit() {
+            return;
+        }
+        let done = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get::<_, i64>(0));
+        if let Err(err) = done {
+            tracing::warn!("Client store {}: WAL not checkpointed: {err}", self.account);
+        }
+    }
+
+    /// The events of a query; an error when it does not run.
+    fn query_events(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<ChatEvent>, Error> {
+        let mut statement = self.conn.prepare_cached(sql).map_err(failed("chat events not read"))?;
+        let rows = statement
+            .query_map(params, event_of)
+            .map_err(failed("chat events not read"))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(failed("chat events not read"))
+    }
+
     fn write_chat_room(&self, room: &ChatRoom) -> rusqlite::Result<i64> {
         let size = ROW_BYTES + text_len(&room.chat_room_id) + text_len(&room.row);
         self.conn
@@ -508,9 +677,10 @@ impl Store {
         let size = ROW_BYTES + text_len(&event.chat_room_id) + text_len(&event.event);
         self.conn
             .prepare_cached(
-                "INSERT INTO chat_event (chat_room_id, event_seq, event, thread_seq, size) VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO chat_event (chat_room_id, event_seq, event, thread_seq, size, expire_ms)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ON CONFLICT (chat_room_id, event_seq) DO UPDATE SET event = excluded.event,
-                    thread_seq = excluded.thread_seq, size = excluded.size",
+                    thread_seq = excluded.thread_seq, size = excluded.size, expire_ms = excluded.expire_ms",
             )
             .and_then(|mut statement| {
                 statement.execute(params![
@@ -518,7 +688,8 @@ impl Store {
                     event.event_seq,
                     event.event,
                     event.thread_seq,
-                    size
+                    size,
+                    expire_of(&event.event)
                 ])
             })?;
         self.conn.execute(
@@ -651,6 +822,25 @@ fn room_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRoom> {
         last_seq: row.get(2)?,
         sort_ms: row.get(3)?,
     })
+}
+
+/// An event's `expireDate` (ms since the epoch), when it has one. Most events have none, so the JSON is parsed only when
+/// it names one.
+fn expire_of(event: &str) -> Option<i64> {
+    if !event.contains("\"expireDate\"") {
+        return None;
+    }
+    let item: Value = serde_json::from_str(event).ok()?;
+    json_i64(&item["expireDate"])
+}
+
+/// A number of the server's JSON: a number, or a string of one.
+fn json_i64(value: &Value) -> Option<i64> {
+    match value {
+        Value::Number(number) => number.as_i64().or_else(|| number.as_f64().map(|float| float as i64)),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
 }
 
 fn event_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatEvent> {

@@ -205,6 +205,43 @@ fn timeline_pages_answer_offline_within_what_is_held_and_stop_at_a_gap() {
 }
 
 #[test]
+fn an_offline_timeline_never_answers_an_expired_event() {
+    let (store, dir) = store("expired");
+    let later = crate::store::now_ms() + 600_000;
+    let mut list = events(1..=3);
+    list[1]["expireDate"] = json!(1);
+    list[2]["expireDate"] = json!(later);
+    let body = json!({ "room": { "chatRoomId": "R1" }, "eventList": list, "hasMoreBefore": false,
+        "hasMoreAfter": false });
+    keep(
+        &store,
+        Kind::Timeline,
+        TIMELINE,
+        "chatRoomId=R1&limit=50",
+        body.to_string().as_bytes(),
+    );
+    let answered = offline(&store, Kind::Timeline, TIMELINE, "chatRoomId=R1&limit=50").unwrap();
+    assert_eq!(seqs(&answered), vec![1, 3]);
+    assert!(store.chat_event("R1", 2).is_none());
+    // a page kept whole only (around a seq): answered less what is due
+    let around = json!({ "eventList": events(1..=2).into_iter().map(|mut event| {
+        event["expireDate"] = json!(1);
+        event
+    }).collect::<Vec<_>>() });
+    keep(
+        &store,
+        Kind::Timeline,
+        TIMELINE,
+        "chatRoomId=R2&aroundSeq=1",
+        around.to_string().as_bytes(),
+    );
+    let answered = offline(&store, Kind::Timeline, TIMELINE, "chatRoomId=R2&aroundSeq=1").unwrap();
+    assert!(seqs(&answered).is_empty());
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_room_views_first_page_and_a_threads_replies_are_kept_as_rows() {
     let (store, dir) = store("room-view");
     let view = json!({ "room": { "chatRoomId": "R1" }, "member": { "lastReadEventSeq": 2 }, "access": {}, "memberList": [],

@@ -394,3 +394,41 @@ fn a_room_left_goes_with_all_kept_of_it() {
     assert!(store.sync_cursor("pending:latest:R1").is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn an_expired_push_removes_its_events_and_a_room_push_sweeps_what_is_due() {
+    let (store, dir) = store("expired");
+    let later = crate::store::now_ms() + 600_000;
+    let timeline = "/apps/BasicComms/Chat/timeline";
+    for query in ["chatRoomId=R1&limit=50", "chatRoomId=R2&limit=50"] {
+        store.put_answer(timeline, query, "application/json", b"{}").unwrap();
+    }
+    // one due later by the server's word (`before`), one listed, one never
+    let due = json!({ "eventSeq": 2, "type": "message", "body": "m2", "expireDate": later });
+    store.put_chat_events(&[chat_event("R1", &due).unwrap()]).unwrap();
+    event_push(
+        &store,
+        json!({ "eventSeq": 4, "type": "message", "senderUserId": "U2", "body": "bye", "sentDate": 40,
+            "expireDate": later + 600_000 }),
+    );
+    assert_eq!(latest(&store), [1, 2, 3, 4]);
+    push(
+        &store,
+        "chatRoom:R1",
+        json!({ "kind": "expired", "chatRoomId": "R1", "before": later, "eventSeqList": [4] }),
+    );
+    assert_eq!(latest(&store), [1, 3]);
+    assert!(store.answer(timeline, "chatRoomId=R1&limit=50").is_none());
+    assert!(store.answer(timeline, "chatRoomId=R2&limit=50").is_some());
+
+    // past due by this device's clock: the next push of a room sweeps it
+    let past = json!({ "eventSeq": 3, "type": "message", "body": "m3", "expireDate": 1 });
+    store.put_chat_events(&[chat_event("R1", &past).unwrap()]).unwrap();
+    push(
+        &store,
+        "chatRoom:R1",
+        json!({ "kind": "read", "chatRoomId": "R1", "userId": "U2", "lastReadEventSeq": 1 }),
+    );
+    assert_eq!(latest(&store), [1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

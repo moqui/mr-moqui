@@ -971,6 +971,37 @@ fn the_payload_is_encrypted_to_each_device() {
     assert_eq!(said["senderName"], "Alice");
 }
 
+/// A disappearing message (plans/Comms-Messaging.md §18.3 phase 16): its push has the room and sender only, as an
+/// encrypted room's, and is not sent after the message's own time.
+#[test]
+fn a_disappearing_message_pushes_no_text_and_ends_with_it() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("alice");
+    ok(
+        "org.moqui.chat.ChatExpiryServices.set#RoomTimer",
+        &[("chatRoomId", text(&bed.room)), ("seconds", Value::I64(300))],
+    );
+    let seq = send(&bed.room, "<p>Gone soon</p>", &[]);
+    let expires = rows(&bed.facade, "moqui.chat.ChatEvent", &[("chatRoomId", &bed.room)])
+        .into_iter()
+        .find(|row| count_of(row, "eventSeq") == seq)
+        .and_then(|row| millis_of(&row, "expireDate"))
+        .expect("the message's time");
+    run(bed.now);
+    let posts = bed.net.take();
+    let said = payload(posts.iter().find(|post| post.device == "BOB-PHONE").unwrap());
+    assert!(said["snippet"].is_null(), "{said}");
+    assert_eq!(said["senderName"], "Alice");
+    // a push that waits is not sent past the message's time
+    let ends = rows(&bed.facade, OUTBOX, &[("subscriptionId", "BOB-PHONE")])
+        .iter()
+        .filter_map(|row| millis_of(row, "expireDate"))
+        .max()
+        .unwrap();
+    assert!(ends <= expires, "{ends} past {expires}");
+}
+
 /// Rule 4: on do not disturb a call rings from a person on the user's allowed list, or as the same person's second
 /// call within 3 minutes.
 #[test]

@@ -29,6 +29,9 @@
 //!   and mention counts gone.
 //! - `chatUser:<me>`, kind `room`, action `left`: the room and its events forgotten. A room joined or changed carries
 //!   no row; the next room list brings it.
+//! - `chatRoom:<id>`, kind `expired` (`before`, `eventSeqList`): disappearing messages went on the server
+//!   (plans/Comms-Messaging.md phase 16); those listed, and every event of the room due by `before`, go here too with
+//!   the room's kept pages (`offline::expire_room`). Each room push first sweeps what is due by this device's clock.
 //!
 //! A push that comes twice (the shell's socket and an app window's) changes nothing the second time: one at or below
 //! the head range, or whose row is kept, is in already. A frame that does
@@ -67,6 +70,7 @@ pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) -> bool {
     }
     let (kept, wanted) = if let Some(room) = topic.strip_prefix("chatRoom:") {
         let room = message["chatRoomId"].as_str().unwrap_or(room).to_string();
+        crate::offline::sweep_expired(store, crate::store::now_ms());
         let kept = room_push(store, me, &room, &message);
         // a push that did not fold has the feeds read (where they are kept: a cursor of the room)
         let name = format!("{ROOM_CURSOR}{room}");
@@ -152,6 +156,13 @@ fn room_push(store: &Store, me: &str, room: &str, message: &Value) -> Result<(),
             })
         }
         "read" if message["userId"].as_str() == Some(me) => read_room(store, room, message["lastReadEventSeq"].clone()),
+        "expired" => {
+            let seqs: Vec<i64> = message["eventSeqList"]
+                .as_array()
+                .map(|list| list.iter().filter_map(number).collect())
+                .unwrap_or_default();
+            crate::offline::expire_room(store, room, number(&message["before"]), &seqs).map(|_| ())
+        }
         _ => Ok(()),
     }
 }

@@ -394,6 +394,15 @@ adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind debugCha
     "'{\"kind\":\"message\",\"account\":\"chat.example.com-0123456789ab\",\"chatRoomId\":\"100\",\"eventSeq\":5,\"roomName\":\"Team\",\"senderName\":\"Ann\",\"snippet\":\"Hi\"}'"
 ```
 
+## Screen security
+
+`moquiDesktop.secureScreen(reason, on)` (the `secure_screen` command, `ScreenSecurity.kt`) turns Android's `FLAG_SECURE`
+on for a reason, and off once no reason holds it: no screenshot, no screen recording and a blank recent-apps thumbnail.
+Chat's view-once viewer holds `viewOnce` while it is open (plans/Comms-Messaging.md §18.3 phase 16); the reasons are a
+set, so a screen-security setting of the app or of a room can hold its own. It answers whether the flag is on; the
+desktop app has no such member, and the viewer says a screenshot cannot be stopped there. The app's store deletes
+disappearing messages at their time as the desktop's does ([Desktop-Client](Desktop-Client.md)).
+
 ## Known gaps (MT1)
 
 What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans/Mobile-Desktop.md#android-track-md6)).

@@ -133,6 +133,7 @@ pub fn run() {
             commands::call_take_answer,
             commands::call_audio,
             commands::call_audio_route,
+            commands::secure_screen,
             commands::call_dial_account,
             commands::call_dial_choice,
             commands::call_dial_from,

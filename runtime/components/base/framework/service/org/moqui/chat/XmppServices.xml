@@ -20,7 +20,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     Rooms: a room's access is ChatServices.get#RoomAccess; an end-to-end encrypted room (C7, ChatRoom.encrypted) is not
     served over XMPP, whose server could neither read nor write its Megolm messages: get#RoomInfo says encrypted and the
-    session refuses it with that reason. An OMEMO message is kept as it came (store#EncryptedMessage): no bodyText, no
+    session refuses it with that reason. A room with disappearing messages (ChatRoom.messageTimerSeconds, phase 16) is
+    refused the same way (get#RoomInfo disappearing): an XMPP client keeps what it gets. An OMEMO message is kept as it came (store#EncryptedMessage): no bodyText, no
     snippet, search or mentions, no agent, and never in a bridged room.
     Files: a slot (create#UploadSlot) is put to /xmpp-upload/<token>/<name> on the HTTP listener (moqui-host), which
     serves it back at the same URL; the token is the capability to read it, as XEP-0363 has it. A message linking it
@@ -221,7 +222,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="RoomInfo">
         <description>A room the current user may read, for its XMPP view: the room (with encrypted, the C7 flag, when the
-            field is there), whether it is bridged, and its local members with their usernames and roles.</description>
+            field is there, and disappearing, a room with a timer), whether it is bridged, and its local members with their usernames and roles.</description>
         <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="room" type="Map"/><parameter name="bridged" type="Boolean"/>
@@ -235,7 +236,8 @@ along with this software (see the LICENSE.md file). If not, see
             let encrypted = false
             try { encrypted = row.encrypted === 'Y' || row.encrypted === true } catch (err) { encrypted = false }
             room = {chatRoomId: row.chatRoomId, roomTypeEnumId: row.roomTypeEnumId, roomName: row.roomName || access.room?.displayName || '',
-                topic: row.topic || '', visibilityEnumId: row.visibilityEnumId, encrypted: encrypted, archived: !!row.archivedDate}
+                topic: row.topic || '', visibilityEnumId: row.visibilityEnumId, encrypted: encrypted, archived: !!row.archivedDate,
+                disappearing: Number(row.messageTimerSeconds) > 0}
             bridged = ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null).disableAuthz().count() > 0
             const isDirect = row.roomTypeEnumId === 'CrtDirect'
             const members = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).disableAuthz().list())
@@ -774,6 +776,8 @@ along with this software (see the LICENSE.md file). If not, see
             const base = String(System.getProperty('xmpp_upload_url') || '').replace(/\/+$/, '')
             // the secret never reaches the script: System.secretCodeHash keys the digest with it (SEC-SCR-03)
             if (!base || !System.isPropertySet('xmpp_upload_secret')) return
+            // a view-once photo has no URL: it opens only in MR Moqui (plans/Comms-Messaging.md §18.3 phase 16)
+            if (ec.resource.script('component://framework/service/org/moqui/chat/ChatExpiry.js').execute('fileKind', {chatRoomId: chatRoomId, eventSeq: eventSeq}).viewOnce) return
             const files = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
                     .orderBy('chatAttachmentId').disableAuthz().list())
             for (const file of files) {

@@ -28,6 +28,10 @@
 //! write: the read times that order eviction are kept in memory and written in one unit now and then (every
 //! [`READS_HELD`] reads, before a trim, and when the store is dropped); a crash loses only some of that order.
 //!
+//! A chat event that disappears (its `expireDate`, plans/Comms-Messaging.md phase 16) is kept with its due time and
+//! removed when it comes ([`Store::expire_chat_events`]), or when the server says it went. Deleted rows are overwritten
+//! (`secure_delete`), so no expired message stays in the file's free pages.
+//!
 //! Beside them (MD5) the cursors of the server's changes feeds and the progress of files sent in chunks.
 //!
 //! The cached reads (answers, rooms with their events, mail threads with their messages) are kept under a size cap:
@@ -61,13 +65,15 @@ pub use mail::{MailFolder, MailMessage, MailThread};
 pub use outbox::{new_client_ref, order_group, OutboxOp, OutboxState, OutboxUpdate};
 pub use sync::{SyncCursor, Upload};
 
-/// The schema, a step per release that changes it; `PRAGMA user_version` is the number of steps applied. Add a step,
-/// never change one that has shipped.
+/// The schema, a step per release that changes it; `PRAGMA user_version` is the number of steps applied. From release
+/// 0.1.0 add a step and never change one that has shipped. Before it there are no migrations: a change goes into its
+/// step as is, and a store made before it is removed by hand (or by forgetting the account) and read again.
 const MIGRATIONS: &[&str] = &[
     // 1: MD4's tables. read_ms is the read clock (Store::tick) that orders eviction; size is the row's bytes as the
     // size cap counts them (its text and a fixed overhead). chat_range: the seq ranges of a room's timeline (thread_seq
     // 0) or of a thread that the store holds whole, from the server's pages; low 0 is the timeline's start, head 1 a
-    // range that reached the latest event and is kept up by pushes while the socket stays up.
+    // range that reached the latest event and is kept up by pushes while the socket stays up. chat_event.expire_ms: the
+    // event's expireDate, when a disappearing message's is due (plans/Comms-Messaging.md phase 16).
     "CREATE TABLE answer (
         key TEXT PRIMARY KEY,
         body BLOB NOT NULL,
@@ -91,9 +97,11 @@ const MIGRATIONS: &[&str] = &[
         event TEXT NOT NULL,
         thread_seq INTEGER,
         size INTEGER NOT NULL,
+        expire_ms INTEGER,
         PRIMARY KEY (chat_room_id, event_seq)
     ) WITHOUT ROWID;
     CREATE INDEX chat_event_thread ON chat_event (chat_room_id, thread_seq);
+    CREATE INDEX chat_event_expire ON chat_event (expire_ms);
     CREATE TABLE chat_range (
         chat_room_id TEXT NOT NULL,
         thread_seq INTEGER NOT NULL,
@@ -227,6 +235,9 @@ impl Store {
         conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0))
             .map_err(failed_open)?;
         conn.pragma_update(None, "synchronous", "FULL").map_err(failed_open)?;
+        // a deleted row's bytes are overwritten, so an expired message does not stay in a free page
+        conn.query_row("PRAGMA secure_delete = ON", [], |row| row.get::<_, i64>(0))
+            .map_err(failed_open)?;
         migrate(&mut conn, &db)?;
         let store = Self {
             conn,
@@ -551,7 +562,8 @@ fn text_len(text: &str) -> i64 {
     i64::try_from(text.len()).unwrap_or(i64::MAX)
 }
 
-fn now_ms() -> i64 {
+/// The time now, ms since the epoch.
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
