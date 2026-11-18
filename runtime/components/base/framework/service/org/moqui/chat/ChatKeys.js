@@ -1257,6 +1257,83 @@ function peerNames(p) {
   return { nameMap: names }
 }
 
+// ---- E2EE by default (plans/Comms-Messaging.md §6.5) ----
+
+/** People one ask of the default may name, and people a user may ask about in an hour. */
+const DEFAULT_MAX_USERS = 50
+const DEFAULT_PER_HOUR = 600
+
+/** The days a device counts as in use after it was last seen (chat_device_active_days, default 90). */
+function activeDays() {
+  const days = Number(property('chat_device_active_days'))
+  return days > 0 ? days : 90
+}
+
+/**
+ * Of userIds, the users with a crypto device in use: not revoked, with its identity keys uploaded, and seen (a key upload
+ * or a sync) in the last chat_device_active_days. A device that has not synced for that long would never read a message.
+ */
+function usersWithDevices(userIds) {
+  const ids = Array.from(new Set(userIds.filter((id) => id)))
+  const out = new Set()
+  if (!ids.length) return out
+  const since = new Date(ms(ec.user.nowTimestamp) - activeDays() * 86400000)
+  for (const part of chunks(ids, 500)) {
+    for (const row of find(DEVICE).condition('userId', 'in', part).condition('revokedDate', null).condition('deviceKeysJson', '!=', null)
+      .condition('lastSeenDate', '>=', since).selectField('userId').distinct(true).list()) out.add(row.userId)
+  }
+  return out
+}
+
+/** The people of a list, each once, the current user left out. */
+function othersOf(me, p) {
+  return Array.from(new Set(Array.from(p.userIdList || []).map((id) => String(id || '').trim()).filter((id) => id && id !== me)))
+}
+
+/**
+ * Internal (check#DevicesReady): whether the current user and every one of userIdList have a crypto device in use, so a new
+ * direct or private room of them is encrypted by default. A user that does not exist or is disabled has none.
+ */
+function devicesReady(p) {
+  const me = ec.user.userId
+  if (!me) return { ready: false }
+  const others = othersOf(me, p)
+  const known = new Set(others.length ? Array.from(find('moqui.security.UserAccount').condition('userId', 'in', others)
+    .condition(ec.entity.conditionFactory.makeCondition('disabled', 'not-equals', 'Y', true)).selectField('userId').list())
+    .map((row) => row.userId) : [])
+  if (others.some((id) => !known.has(id))) return { ready: false }
+  const have = usersWithDevices([me].concat(others))
+  return { ready: [me].concat(others).every((id) => have.has(id)) }
+}
+
+/**
+ * get#EncryptionDefault: one bit for a set of people, whether a new room of the current user and them would be end-to-end
+ * encrypted by default (every one has a crypto device in use). Nothing else of their devices. A user an app's chat-target
+ * provider refuses this one (get#RefusedUsers), or one that does not exist, counts as one with no device. At most
+ * DEFAULT_MAX_USERS people an ask (tooMany) and DEFAULT_PER_HOUR an hour a user (rateLimited), each answered false.
+ */
+function encryptionDefault(p) {
+  const me = ec.user.userId
+  if (!me) return { encrypted: false, reasonCode: 'notSignedIn' }
+  const others = othersOf(me, p)
+  if (others.length > DEFAULT_MAX_USERS) return { encrypted: false, reasonCode: 'tooMany' }
+  // at most DEFAULT_PER_HOUR people an hour a user, counted on the distributed cache by user and hour
+  const asked = ec.cache.getCache('moqui.chat.encryption.default.asked')
+  const hourKey = me + ':' + Math.floor(ms(ec.user.nowTimestamp) / 3600000)
+  const count = Number(asked.get(hourKey) || 0)
+  const weight = Math.max(1, others.length)
+  if (count + weight > DEFAULT_PER_HOUR) return { encrypted: false, reasonCode: 'rateLimited' }
+  asked.put(hourKey, count + weight)
+  if (others.length) {
+    const refused = ec.service.sync().name('org.moqui.chat.ChatServices.get#RefusedUsers').parameter('userIdList', others).call()
+    if (ec.message.hasError() || Array.from(refused?.refusedUserIdList || []).length) {
+      ec.message.clearErrors()
+      return { encrypted: false }
+    }
+  }
+  return { encrypted: devicesReady({ userIdList: others }).ready === true }
+}
+
 /** Internal: Matrix user IDs of userIds, and back (for screens and other services). */
 function mapIds(p) {
   const out = {}
@@ -1299,7 +1376,7 @@ const operations = {
   createDevice, findDevices, renameDevice, revokeDevice, storeKey, uploadKeys, queryKeys, claimKeys, sendToDevice, syncToDevice,
   uploadCrossSigningKeys, uploadKeySignatures, createBackupVersion, getBackupVersion, updateBackupVersion,
   deleteBackupVersion, storeBackupKeys, getBackupKeys, deleteBackupKeys, clean, whoami, mapIds, web,
-  findBackupVersions, getKeySettings, storeKeySettings, setRoomVerifiedOnly, peerNames,
+  findBackupVersions, getKeySettings, storeKeySettings, setRoomVerifiedOnly, peerNames, devicesReady, encryptionDefault,
 }
 
 function execute(op, parameters) {

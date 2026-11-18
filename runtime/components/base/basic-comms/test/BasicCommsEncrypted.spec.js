@@ -308,3 +308,113 @@ feature("an outsider sending the same reaction, Create from or File on record to
         after == before
     }
 })
+
+// E2EE by default (plans/Comms-Messaging.md §6.5): Chat's create#ChatRoom with no encrypted makes a direct room (one person
+// or several) and a private room encrypted when the user and every member have a crypto device in use, plain otherwise; a
+// direct room answers the encrypted room of these people first, then the plain one there is (which keeps opening though
+// everyone now has a device), and encrypted true (Start an encrypted chat) makes the encrypted one beside it. A public room is
+// never encrypted, and create#Room's own default stays plain. Chat's encryptionDefault answers one bit, false for a person an
+// external user's reach leaves out.
+const D = "CHAT_E2EE_SPEC_D"
+const E = "CHAT_E2EE_SPEC_E"
+const X = "CHAT_E2EE_SPEC_X"
+const EXTERNAL_GROUP = "CHAT_E2EE_SPEC_EXTERNAL"
+const SCREEN = "org.moqui.comms.ChatScreenServices.create#ChatRoom"
+const KEYS = "org.moqui.chat.ChatKeyServices."
+/** A device of userId with its identity keys uploaded, as a browser makes it (opaque keys here); its deviceId. */
+function cryptoDevice(userId) {
+    const made = as(userId, KEYS + "create#ChatDevice", {displayName: "E2EE spec"})
+    const mx = as(null, KEYS + "map#ChatKeyUserIds", {userIdList: [userId]}).matrixIds[userId]
+    as(userId, KEYS + "upload#Keys", {deviceId: made.deviceId, device_keys: {user_id: mx, device_id: made.deviceId, algorithms: ["m.olm.v1.curve25519-aes-sha2"],
+        keys: {["curve25519:" + made.deviceId]: "curve-" + userId, ["ed25519:" + made.deviceId]: "ed-" + userId}, signatures: {}}})
+    return made.deviceId
+}
+function prepareDefault() {
+    sys(() => {
+        if (!ec.entity.find("moqui.security.UserGroup").condition("userGroupId", EXTERNAL_GROUP).one()) {
+            const row = ec.entity.makeValue("moqui.security.UserGroup")
+            row.setFields({userGroupId: EXTERNAL_GROUP, description: "E2EE spec external"}, true, null, null)
+            row.create()
+            const grant = ec.entity.makeValue("moqui.security.UserGroupPermission")
+            grant.setFields({userGroupId: EXTERNAL_GROUP, userPermissionId: "EXTERNAL_USER", fromDate: new Date(Date.now() - 60000)}, true, null, null)
+            grant.create()
+        }
+    })
+    for (const u of [D, E, X]) makeUser(u)
+    sys(() => {
+        if (ec.entity.find("moqui.security.UserGroupMember").condition({userGroupId: EXTERNAL_GROUP, userId: X}).count() === 0) {
+            const member = ec.entity.makeValue("moqui.security.UserGroupMember")
+            member.setFields({userGroupId: EXTERNAL_GROUP, userId: X, fromDate: new Date(Date.now() - 60000)}, true, null, null)
+            member.create()
+        }
+        for (const entity of ["moqui.chat.ChatToDevice", "moqui.chat.ChatDeviceKey", "moqui.chat.ChatDevice"]) {
+            ec.entity.find(entity).condition("userId", "in", [A, C, D, E, X]).deleteAll()
+        }
+        // the direct rooms of an earlier run are not found again: each run starts with none of C, D or E
+        for (const who of [C, D, E]) {
+            ec.entity.find("moqui.chat.ChatRoom").condition("roomTypeEnumId", "CrtDirect")
+                .condition(ec.entity.conditionFactory.makeCondition("directKey", "like", "%" + who + "%")).updateAll({directKey: null})
+        }
+    })
+    for (const u of [A, D, E, X]) cryptoDevice(u)
+}
+
+feature("a new direct or private room is encrypted when everyone in it has a device; a plain direct room there is keeps opening", {
+    when() {
+        prepareDefault()
+        const direct = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [D]})
+        const directAgain = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [D]})
+        const group = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [D, E]})
+        const privateRoom = as(A, SCREEN, {roomTypeEnumId: "private", roomName: "E2EE spec default", memberUserIdList: [D, E]})
+        const privateNoDevice = as(A, SCREEN, {roomTypeEnumId: "private", roomName: "E2EE spec default plain", memberUserIdList: [D, C]})
+        const privateChosen = as(A, SCREEN, {roomTypeEnumId: "private", roomName: "E2EE spec chosen plain", memberUserIdList: [D], encrypted: false})
+        const publicRoom = as(A, SCREEN, {roomTypeEnumId: "public", roomName: "E2EE spec default public"})
+        const noDevice = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [C]})
+        const ownDefault = as(A, "create#Room", {roomTypeEnumId: "private", roomName: "E2EE spec own default", memberUserIdList: [D, E]})
+        // a plain direct room there is keeps opening though both have devices; Start an encrypted chat makes the other
+        const plainFirst = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [E], encrypted: false})
+        const plainAgain = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [E]})
+        ec.user.internalLoginUser(username(A))
+        const switched = json("createDirect", {userIds: E, encrypted: "true"})
+        const afterSwitch = json("createDirect", {userIds: E})
+        // the encrypted direct room is answered after a device of theirs went
+        sys(() => ec.entity.find("moqui.chat.ChatDevice").condition("userId", D).updateAll({revokedDate: ec.user.nowTimestamp}))
+        const afterRevoke = as(A, SCREEN, {roomTypeEnumId: "direct", memberUserIdList: [D]})
+        ec.user.internalLoginUser(username(A))
+        const bitE = json("encryptionDefault", {userIds: E})
+        const bitD = json("encryptionDefault", {userIds: D})
+        const bitC = json("encryptionDefault", {userIds: C})
+        // X (EXTERNAL_USER) shares no room with E: E counts as one with no device
+        ec.user.internalLoginUser(username(X))
+        const bitOutside = json("encryptionDefault", {userIds: E})
+        // the same ask of no one but X answers: X's own device counts
+        const bitSelf = json("encryptionDefault", {userIds: ""})
+        const encryptedOf = (out) => (out && out.chatRoomId ? roomRow(out.chatRoomId).encrypted === "Y" : null)
+        return {direct, directAgain, group, privateRoom, privateNoDevice, privateChosen, publicRoom, noDevice, plainFirst,
+            plainAgain, switched, afterSwitch, afterRevoke, bitE, bitD, bitC, bitOutside, bitSelf,
+            stored: {direct: encryptedOf(direct), privateRoom: encryptedOf(privateRoom), noDevice: encryptedOf(noDevice), ownDefault: encryptedOf(ownDefault),
+                plainFirst: encryptedOf(plainFirst), switched: encryptedOf(switched)}}
+    },
+    then({direct, directAgain, group, privateRoom, privateNoDevice, privateChosen, publicRoom, noDevice, plainFirst,
+          plainAgain, switched, afterSwitch, afterRevoke, bitE, bitD, bitC, bitOutside, bitSelf, stored}) {
+        direct.errors == "" && direct.created == true && direct.encrypted == true && stored.direct == true
+        directAgain.chatRoomId == direct.chatRoomId && directAgain.created == false && directAgain.encrypted == true
+        group.encrypted == true && group.chatRoomId != direct.chatRoomId
+        privateRoom.encrypted == true && stored.privateRoom == true
+        privateNoDevice.encrypted == false
+        privateChosen.encrypted == false
+        publicRoom.errors == "" && publicRoom.encrypted == false
+        noDevice.encrypted == false && stored.noDevice == false
+        stored.ownDefault == false
+        plainFirst.encrypted == false && stored.plainFirst == false
+        plainAgain.chatRoomId == plainFirst.chatRoomId && plainAgain.encrypted == false
+        switched.encrypted == true && switched.created == true && switched.chatRoomId != plainFirst.chatRoomId && stored.switched == true
+        afterSwitch.chatRoomId == switched.chatRoomId && afterSwitch.encrypted == true
+        afterRevoke.chatRoomId == direct.chatRoomId && afterRevoke.encrypted == true
+        bitE.encrypted == true
+        bitD.encrypted == false
+        bitC.encrypted == false
+        bitOutside.encrypted == false
+        bitSelf.encrypted == true
+    }
+})

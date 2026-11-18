@@ -454,6 +454,32 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('peerNames', context))</script></actions>
     </service>
 
+    <!-- ========== E2EE by default (plans/Comms-Messaging.md §6.5) ========== -->
+
+    <service verb="get" noun="EncryptionDefault">
+        <description>One bit for the people of userIdList (at most 50): encrypted, whether a new direct or private room of
+            the current user and them is end-to-end encrypted by default, which is when every one of them has a crypto device
+            in use (not revoked, its identity keys uploaded, seen in the last chat_device_active_days, default 90). Nothing
+            else of their devices: no IDs, counts, names or dates. A user an app's chat-target provider keeps from this one
+            (get#RefusedUsers), or one that does not exist or is disabled, counts as one with no device. Refused, answered
+            false: more than 50 people (reasonCode tooMany), past 600 people an hour a user (rateLimited).</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters>
+            <parameter name="encrypted" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('encryptionDefault', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="DevicesReady" allow-remote="false">
+        <description>Internal (create#ChatRoom's default): ready, whether the current user and every one of userIdList have
+            a crypto device in use, as get#EncryptionDefault counts them, with no limit and no provider's refusal (the
+            room's own create refuses those).</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters><parameter name="ready" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('devicesReady', context))</script></actions>
+    </service>
+
     <!-- ========== Only verified devices ========== -->
 
     <service verb="get" noun="ChatKeySettings">
