@@ -1517,10 +1517,13 @@
         people(url, request, maxAge) {
             const now = Date.now();
             const kept = chat.peopleCache;
-            if (kept && kept.url === url && now - kept.at < (maxAge || 300000)) return kept.promise;
+            if (kept && kept.url === url && now - kept.at < (kept.maxAge || maxAge || 300000)) return kept.promise;
             const promise = (request || moqui.request)(url).then((result) => {
                 const json = (result && result.json) || {};
-                const state = { personList: Array.isArray(json.personList) ? json.personList : [], roomPersonMap: json.roomPersonMap || {} };
+                const state = { personList: Array.isArray(json.personList) ? json.personList : [], roomPersonMap: json.roomPersonMap || {},
+                    contactsAway: !!(json.hookFailed || json.contactsSkipped) };
+                // the contacts were away (the hook failed or its hour was used): asked again soon, not in five minutes
+                if (state.contactsAway && chat.peopleCache && chat.peopleCache.promise === promise) chat.peopleCache.maxAge = 30000;
                 chat.peopleState = state;
                 chat.applyPeople(chat.namedRooms);
                 return state;
@@ -1588,27 +1591,34 @@
         },
         // The room a way opens: an existing room, the direct chat made (createDirect, no encrypted: the server decides), the
         // number's room (textRoom), or none for mail (the Inbox opens). post(name, params) is the screen's. Resolves
-        // {chatRoomId} or {url} (mail); a refused way rejects, and its reason is the server's message.
+        // {chatRoomId, encrypted} (a made direct chat's as the server made it, never a guess) or {url} (mail); a refused way
+        // rejects, and its reason is the server's message.
         openWay(way, post) {
             const it = way || {};
-            if (it.kind === "room" && it.chatRoomId) return Promise.resolve({ chatRoomId: it.chatRoomId });
+            if (it.kind === "room" && it.chatRoomId) return Promise.resolve({ chatRoomId: it.chatRoomId, encrypted: !!it.encrypted });
             if (it.kind === "mail") return Promise.resolve({ url: it.url || null });
-            const made = (json) => (json && json.chatRoomId ? { chatRoomId: json.chatRoomId } : Promise.reject({ refused: "notMade" }));
+            const made = (json) => (json && json.chatRoomId ? { chatRoomId: json.chatRoomId, encrypted: json.encrypted === true } : Promise.reject({ refused: "notMade" }));
             if (it.kind === "direct" && it.userId) return post("createDirect", { userIds: it.userId }).then(made);
-            if (it.kind === "text" && it.number) return post("textRoom", { textTo: it.number, textFrom: it.fromNumber || "" }).then(made);
+            if (it.kind === "text" && it.number) return post("textRoom", { textTo: it.number, textFrom: it.fromNumber || "" }).then((json) => made(Object.assign({}, json, { encrypted: false })));
             return Promise.reject({ refused: "none" });
         },
-        // Moving a draft from the room open (fromSealed: end-to-end encrypted) to a way: a note when the move leaves end-to-end
-        // encryption, which the user is told once, else null.
-        moveNote(fromSealed, way, directEncrypted) {
-            if (!fromSealed || !way || way.network === "mail") return null;
-            const lock = chat.wayLabel(way, directEncrypted).lock;
-            return lock ? null : fillIn(tr("Moved to {network}: not end-to-end encrypted"), { network: chat.networkName(way.network) });
+        // Moving a draft from the room open (fromSealed) to the room opened (toSealed, as openWay answered it): a note when the
+        // move leaves end-to-end encryption, which the user is told once, else null.
+        moveNote(fromSealed, toSealed, network) {
+            if (!fromSealed || toSealed) return null;
+            return fillIn(tr("Moved to {network}: not end-to-end encrypted"), { network: chat.networkName(network) });
+        },
+        // A draft moved into a room that has one: both kept, the room's first, a blank line between (never overwritten).
+        joinDrafts(existing, moved) {
+            const empty = (html) => !html || !String(html).replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+            if (empty(moved)) return existing || "";
+            if (empty(existing)) return moved;
+            return String(existing) + "<p><br></p>" + String(moved);
         },
         // The nudge in a person's text or bridge room when they are a user of this server: the Moqui chat way to offer, or
         // null (it is the room's own network, the person has none, or it was closed for this room).
         nudgeWay(person, room, closed) {
-            if (!person || !person.userId || !room || closed || person.blocked) return null;
+            if (!person || !person.userId || person.reachable === false || !room || closed || person.blocked) return null;
             const own = (person.rooms || []).find((one) => one.chatRoomId === room.chatRoomId);
             if (!own || own.network === "moqui") return null;
             return (person.ways || []).find((way) => way.network === "moqui" && !way.blocked && !way.reasonCode) || null;

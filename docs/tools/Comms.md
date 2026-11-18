@@ -107,13 +107,19 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   in the apps (with Mantle: your personal contacts, your books and those shared with you, your organizations'
   directory). Each room stays a row of its own, with its network's icon and label, and shows the person's name. In a
   person's room the composer starts with a **network button**: it lists their ways, the best first (MR Moqui chat for a
-  user of this server, end to end encrypted when they have a device; else the network they last wrote on; else a text
-  from your number; else mail), each with what it encrypts. Choosing one opens that room, or starts it, with your draft;
-  a draft moved out of an encrypted chat says so. A text or GroupMe room of a user of this server offers "chat there"
-  above the composer. The People tab starts with the person's **card**: Rename, Add (another conversation of theirs, a
-  number or a mail address), Not this person on each address, Undo my changes, Open the contact. Your people are your
-  own: nobody else sees them or is told. A user's phone number is never shown through chat: of a user of this server
-  you see only the numbers of your own rooms with them. Blocked people and numbers are never offered
+  user of this server, end to end encrypted when they have a device; else the network they last wrote on; else their
+  text room with the latest message from either side, or a new text from your number; else mail), each with what it
+  encrypts. Choosing one opens that room, or starts it, with your draft added after the draft it already has; a draft
+  moved out of an encrypted chat says so, and a draft with files attached does not move (send or remove the files
+  first). A text or GroupMe room of a user of this server offers "chat there" above the composer. The People tab starts
+  with the person's **card**: Rename, Add (another conversation of theirs, a number or a mail address; a user of this
+  server takes only a number or address of one of your conversations), Not this person on each address, Undo my
+  changes, Open the contact. Your people are your own: nobody else sees them or is told. A user's phone number is never
+  shown through chat: of a user of this server you see only the numbers of your own rooms with them. A number on your
+  Blocked list, one that replied STOP or a bridge that is not connected shows dimmed with its reason and is never the
+  best; a person you blocked has no ways, and a user who blocked you, or whom an app keeps from you, is as one that does
+  not exist (no name or addresses from the contacts, no new chat). While the contacts cannot be asked (an hour's 60
+  asks used, or the app's hook failing), Rename and Add say to try again shortly
   (`org.moqui.chat.ChatPeopleServices`, the `people` transition).
 - <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). A new direct chat or private room is encrypted when everyone in it
   has a crypto device (Chat makes your browser's when it opens); otherwise it is plain, with the plain note. A direct chat
@@ -492,8 +498,9 @@ the framework keeps no contacts), named by the `chat_contact_service` property, 
 `STRT_CHAT_CONTACT_SERVICE` of the user's theme, as the mail contact hook (`STRT_EMAIL_CONTACT_SERVICE`) is.
 `ChatPeopleServices.find#ContactPeople` (Rust, `crates/moqui-core/src/service/contacts.rs`) calls it with authorization
 disabled, in its own transaction, with `userId` and `addressList` (`tel:+E.164`, `email:address`, `user:userId`; only
-the addresses of the user's own rooms, at most 300, at most 60 times an hour a user), and it answers `contactList`, the
-contacts the user can see with one of them, each `{contactRef, name, url, addressList}` with its own addresses. The hook
+the addresses of the user's own rooms, at most 300, at most 60 times an hour a user, its answer kept three minutes for
+the user's tabs, devices and mail lines), and it answers `contactList`, the contacts the user can see with one of them,
+each `{contactRef, name, url (a path on this server), addressList}` with its own addresses. The hook
 enforces the app's visibility itself. Without one, a user's people come from their rooms and their own changes. Mantle
 answers it (`mantle.party.ContactBookServices.find#ContactPeople`, the rules of `filter#ContactAddresses`) and IronStone
 names it. A person who is a user of this server shows none of the hook's numbers or addresses.

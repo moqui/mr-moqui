@@ -289,6 +289,14 @@ fn contact_text(contact: &ValueMap, name: &str, max: usize) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// Whether a url is a path on this server: one leading `/`, and no backslash, whitespace or control character anywhere
+/// (a browser reads `/\host` and `/<tab>/host` as another host).
+fn local_path(url: &str) -> bool {
+    url.starts_with('/')
+        && !url.starts_with("//")
+        && !url.chars().any(|c| c == '\\' || c.is_whitespace() || c.is_control())
+}
+
 /// The hook's contactList normalized: maps only, each `{contactRef, name, url, addressList}` with valid keys (at most
 /// PEOPLE_ADDRESSES_MAX), a contact with none left out, at most PEOPLE_CONTACTS_MAX contacts. A url is kept only when it is
 /// a path on this server (one leading /), so a hook cannot hand the page an outside link.
@@ -306,7 +314,7 @@ fn contact_people(value: &Value) -> Vec<Value> {
         if keys.is_empty() {
             continue;
         }
-        let url = contact_text(contact, "url", 500).filter(|url| url.starts_with('/') && !url.starts_with("//"));
+        let url = contact_text(contact, "url", 500).filter(|url| local_path(url));
         let text = |field: Option<String>| field.map_or(Value::Null, Value::String);
         let mut map = ValueMap::default();
         map.insert("contactRef".to_string(), text(contact_text(contact, "contactRef", 100)));
@@ -377,7 +385,22 @@ fn find_contact_people(
 
 #[cfg(test)]
 mod tests {
-    use super::{addresses, contact_people, person_key, person_keys};
+    use super::{addresses, contact_people, local_path, person_key, person_keys};
+
+    #[test]
+    fn a_contact_url_is_a_path_on_this_server_only() {
+        assert!(local_path("/qapps/People/Contact?partyId=P1"));
+        for url in [
+            "//evil.example/",
+            "/\\evil.example/",
+            "/\t/evil.example",
+            "/a b",
+            "https://evil.example/",
+            "/x\u{0}y",
+        ] {
+            assert!(!local_path(url), "{url:?}");
+        }
+    }
     use moqui_lib::object::{Value, ValueMap};
 
     #[test]

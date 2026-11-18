@@ -1068,15 +1068,15 @@ const chatComposer = {
             window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: this.room.roomId } }));
             this.room.typingStop();
         },
-        // the network button's choice (Comms-Messaging §11.1): the room opens that way with this draft's text; the files stay
+        // the network button's choice (Comms-Messaging §11.1): the room opens that way with this draft's text added to its
+        // own draft; with files attached nothing moves (they are uploaded to this room), and that is said
         chooseWay(way) {
+            if (this.files.length) {
+                moqui.notifyMessages([{ type: 'warning', message: this.room.t('Send or remove the attached files first: they belong to this chat') }]);
+                return;
+            }
             const text = isEmptyHtml(this.body) ? '' : this.body;
-            this.room.chooseWay(way, text).then((moved) => {
-                if (!moved) return;
-                const files = this.files;
-                this.clear();
-                this.files = files;
-            }, () => null);
+            this.room.chooseWay(way, text).then((moved) => { if (moved) this.clear(); }, () => null);
         },
         pickFiles() {
             const input = this.$refs.picker && this.$refs.picker.$el && this.$refs.picker.$el.querySelector('input[type=file]');
@@ -2580,13 +2580,15 @@ const chatRoom = {
                 if (!out.chatRoomId || out.chatRoomId === this.roomId) return false;
                 const target = out.chatRoomId;
                 const known = (this.person && this.person.rooms || []).find((one) => one.chatRoomId === target);
-                const sealed = known ? !!known.encrypted : way.network === 'moqui' && this.personEncrypted === true;
+                // the room as it is: an existing one's flag, a made one's as the server made it (never the guess)
+                const sealed = known ? !!known.encrypted : out.encrypted === true;
                 if (text) {
-                    // an encrypted room's draft stays in this page (C7)
-                    if (sealed) sealedDrafts[draftPrefix() + target] = text;
-                    else storage.set(draftPrefix() + target, text);
+                    // an encrypted room's draft stays in this page (C7); the room's own draft is kept, this one after it
+                    const key = draftPrefix() + target;
+                    if (sealed) sealedDrafts[key] = moqui.chat.joinDrafts(sealedDrafts[key], text);
+                    else storage.set(key, moqui.chat.joinDrafts(storage.get(key), text));
                     window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: target } }));
-                    const note = moqui.chat.moveNote(this.sealed, way, this.personEncrypted);
+                    const note = moqui.chat.moveNote(this.sealed, sealed, way.network);
                     if (note) moqui.notifyMessages([{ type: 'info', message: note }]);
                 }
                 if (!known) { moqui.chat.peopleChanged(); this.$emit('changed'); }

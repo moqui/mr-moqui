@@ -2,13 +2,19 @@
 // Chat's transitions call them. A user's people come from their rooms (a direct room of two, a phone room of one number),
 // their own merges, splits and names, and the contacts hook (test/service/.../PeopleTestServices.xml, named by
 // chat_contact_service in test/MoquiConf.xml), asked only about their rooms' addresses; a person who is a user shows no
-// number or address the hook gave; a refused user is left out; one user's changes are theirs alone; the ways come best
-// first (Moqui chat, then the network they wrote on, then SMS, then mail) and a blocked number is never best; the mail
-// line of an outside person comes from the contact's address (find#DirectChatMail). Nothing is sent.
+// number or address the hook gave; a contact naming an unknown user or one who blocked the viewer is left out whole;
+// a typed address cannot probe what the hook knows; one user's changes are theirs alone; an automatic person's key stays
+// when a message comes; the ways come best first (Moqui chat, then the network they wrote on, then SMS, then mail) and a
+// blocked number is never best; the mail line of an outside person comes from the contact's address (find#DirectChatMail)
+// with the hook asked once for both; with the hook's hour used, rename and merge wait. Nothing is sent.
 // Run: ./moq test basic-comms --spec BasicCommsPeople
 const A = "CHAT_PEOPLE_SPEC_A"
 const B = "CHAT_PEOPLE_SPEC_B"
 const C = "CHAT_PEOPLE_SPEC_C"
+// R blocked A; R's contact (the hook's) carries a number and an address of its own
+const R = "CHAT_PEOPLE_SPEC_R"
+const BLOCKER = "+15553334006"
+const HIDDEN = "+15553334008"
 const SMS = "CHAT_PEOPLE_SPEC_SMS"
 const RCS = "CHAT_PEOPLE_SPEC_RCS"
 const OURS = "+15553330001"
@@ -83,6 +89,12 @@ const people = (userId) => chat(userId, "people")
 const personOf = (out, chatRoomId) => (out.personList || []).find((person) => person.personKey === (out.roomPersonMap || {})[chatRoomId]) || null
 const keys = (person) => (person ? person.addresses.map((one) => one.addressKey) : []).sort().join(" ")
 const asked = () => String(ec.cache.getCache("moqui.test.people.asked").get(A) || "")
+// the hook's answer kept for a user, forgotten so the next people ask the hook again
+const forgetContacts = () => { for (const userId of [A, B, C, R]) ec.cache.getCache("moqui.chat.people.contacts").put(userId, "") }
+// the hook's asks this hour for A (ChatPeople.js hookSlot)
+const hourKey = () => A + ":" + Math.floor(Date.now() / 3600000)
+const slots = () => Number(ec.cache.getCache("moqui.chat.people.hook.asked").get(hourKey()) || 0)
+const rowsOf = (userId) => sys(() => Array.from(ec.entity.find("moqui.chat.ChatPersonAddress").condition("ownerUserId", userId).list()).map((row) => row.addressKey))
 const rooms = {}
 
 spec({
@@ -91,13 +103,17 @@ spec({
         makeUser(A, "People A")
         makeUser(B, "People B")
         makeUser(C, "People C")
-        // a run before this one left its rows: each user's people start automatic
+        makeUser(R, "People R")
+        // a run before this one left its rows and the hook's kept answer: each user's people start automatic
         sys(() => {
-            for (const userId of [A, B, C]) {
+            for (const userId of [A, B, C, R]) {
                 ec.entity.find("moqui.chat.ChatPersonAddress").condition("ownerUserId", userId).deleteAll()
                 ec.entity.find("moqui.chat.ChatPerson").condition("ownerUserId", userId).deleteAll()
             }
         })
+        forgetContacts()
+        // R blocked A: R is to A as a user that does not exist, save the room R made with A
+        store("moqui.chat.ChatUserBlock", {userId: R, blockedUserId: A, blockedDate: new Date()})
         store("moqui.chat.ChatBridge", {chatBridgeId: SMS, typeEnumId: "CbtSms", adapterName: "sms", name: "People spec texts", statusId: "CbsConnected",
             configJson: JSON.stringify({apiKey: "spec", apiBaseUrl: "http://127.0.0.1:9"})})
         store("moqui.chat.ChatBridge", {chatBridgeId: RCS, typeEnumId: "CbtRcs", adapterName: "rcs-twilio", name: "People spec RCS", statusId: "CbsConnected",
@@ -111,6 +127,8 @@ spec({
         rooms.sam = pairRoom(OURS, SAM)
         rooms.samRcs = pairRoom(OURS_RCS, SAM)
         rooms.gone = pairRoom(OURS, GONE)
+        rooms.blocker = pairRoom(OURS, BLOCKER)
+        rooms.withR = as(R, "org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "direct", memberUserIdList: [A]}).chatRoomId
         // Sam last wrote on RCS: a message from the other side (no local sender)
         sys(() => {
             const room = ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", rooms.samRcs).one()
@@ -154,9 +172,17 @@ feature("each kind of room is a person; the contacts hook names an outside numbe
         personOf(out, rooms.sam).personKey == personOf(out, rooms.samRcs).personKey
         personOf(out, rooms.sam).best.chatRoomId == rooms.samRcs
         personOf(out, rooms.sam).best.network == "rcs"
-        // a refused (unknown) user from the hook is left out: Gone's number is a person alone, with no user
+        // a contact naming an unknown user is left out whole: Gone's number is a person alone, no user, name or other address
         personOf(out, rooms.gone).userId == null
-        !keys(personOf(out, rooms.gone)).includes("user:")
+        keys(personOf(out, rooms.gone)) == "tel:" + GONE
+        personOf(out, rooms.gone).name == null
+        // the same for a contact naming R, who blocked A: no name from the hook, none of its addresses, no new chat with R
+        keys(personOf(out, rooms.blocker)) == "tel:" + BLOCKER
+        personOf(out, rooms.blocker).name == null
+        !personOf(out, rooms.blocker).ways.some((way) => way.kind == "direct")
+        // the room R made with A stays, as R's, with no new chat offered and no nudge (reachable false)
+        personOf(out, rooms.withR).personKey != personOf(out, rooms.blocker).personKey
+        personOf(out, rooms.withR).reachable == false
         // the hook was asked about the rooms' numbers
         hooked.includes("tel:" + JANE) && hooked.includes("tel:" + SAM)
     }
@@ -186,22 +212,66 @@ feature("merge: a typed number joins a person and never reaches the hook; the pe
     }
 })
 
-feature("merge refuses an address not mine to name, a bad number, two users and the 21st address", {
+feature("merge refuses an address not mine to name, a bad number, two users, the 21st address, a user who blocked me, and a number not shown to me for a user", {
     when() {
         const out = people(A)
         const sam = personOf(out, rooms.sam).personKey
+        const bob = personOf(out, rooms.withB).personKey
         return {
             ext: chat(A, "mergePeople", {personKeys: sam, addressKeys: "ext:XA_NOT_MINE"}),
             bad: chat(A, "mergePeople", {personKeys: sam, addressKeys: "tel:12"}),
             twoUsers: chat(A, "mergePeople", {addressKeys: "user:" + B + ",user:" + C}),
             many: chat(A, "mergePeople", {personKeys: sam, addressKeys: Array.from({length: 20}, (_, i) => "tel:+1555333" + String(5000 + i)).join(",")}),
+            blocker: chat(A, "mergePeople", {personKeys: sam, addressKeys: "user:" + R}),
+            // B's contact has HIDDEN, which A is not shown: typing it neither finds B nor joins B to it
+            hidden: chat(A, "mergePeople", {personKeys: bob, addressKeys: "tel:" + HIDDEN}),
+            rows: rowsOf(A),
         }
     },
-    then({ext, bad, twoUsers, many}) {
+    then({ext, bad, twoUsers, many, blocker, hidden, rows}) {
         ext.reasonCode == "notYourRoom"
         bad.reasonCode == "badAddress"
         twoUsers.reasonCode == "twoUsers"
         many.reasonCode == "tooManyAddresses"
+        blocker.reasonCode == "userNotFound"
+        hidden.reasonCode == "notShown"
+        !rows.includes("tel:" + HIDDEN)
+    }
+})
+
+feature("a typed number only B's contact knows joins an outside person alone, never B", {
+    when() {
+        const before = people(A)
+        const merged = chat(A, "mergePeople", {personKeys: personOf(before, rooms.gone).personKey, addressKeys: "tel:" + HIDDEN})
+        return {merged, after: people(A)}
+    },
+    then({merged, after}) {
+        merged.personKey.startsWith("p:")
+        keys(personOf(after, rooms.gone)) == ["tel:" + GONE, "tel:" + HIDDEN].sort().join(" ")
+        personOf(after, rooms.gone).userId == null
+        personOf(after, rooms.withB).personKey != personOf(after, rooms.gone).personKey
+    }
+})
+
+feature("an automatic person's key stays when a new message comes in another of their rooms, so Rename still finds it", {
+    when() {
+        const before = personOf(people(A), rooms.jane).personKey
+        // a newer message in Jane's room
+        sys(() => {
+            const room = ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", rooms.jane).one()
+            room.setFields({lastEventDate: new Date(), lastMessageDate: new Date()}, true, null, null)
+            room.update()
+        })
+        const after = personOf(people(A), rooms.jane).personKey
+        return {before, after, renamed: chat(A, "renamePerson", {personKey: before, displayName: "Jane at home"}), named: people(A)}
+    },
+    then({before, after, renamed, named}) {
+        before.startsWith("a:")
+        after == before
+        renamed.personKey.startsWith("p:")
+        personOf(named, rooms.jane).name == "Jane at home"
+        // the rows are what A was shown: the contact's address and other number too
+        keys(personOf(named, rooms.jane)).includes("email:jane.contact@people-spec.example")
     }
 })
 
@@ -259,5 +329,44 @@ feature("the mail line of an outside person: the contact's address gives their p
         lines.some((line) => line.chatRoomId == rooms.jane && line.subject == "PEOPLE_SPEC_M_JANE" && line.userId == null)
         // B's contact address (the hook's) is not B's to be credited with: only their account's and the ones I link
         !lines.some((line) => line.subject == "PEOPLE_SPEC_M_PAT")
+    }
+})
+
+feature("the room list asks the hook once for the people and the mail lines; with the hour's asks used, the people say so and rename and merge wait", {
+    when() {
+        forgetContacts()
+        const before = slots()
+        people(A)
+        chat(A, "mailLines")
+        const spent = slots() - before
+        // the hour's asks used, and no kept answer
+        forgetContacts()
+        ec.cache.getCache("moqui.chat.people.hook.asked").put(hourKey(), 60)
+        const away = people(A)
+        const rename = chat(A, "renamePerson", {personKey: personOf(away, rooms.sam).personKey, displayName: "Sam again"})
+        const merge = chat(A, "mergePeople", {personKeys: personOf(away, rooms.sam).personKey, addressKeys: "tel:+15553334888"})
+        ec.cache.getCache("moqui.chat.people.hook.asked").put(hourKey(), 0)
+        return {spent, away, rename, merge}
+    },
+    then({spent, away, rename, merge}) {
+        spent == 1
+        away.contactsSkipped == true
+        // Sam was changed by the merge above (a person with rows): its rename needs no contacts; a merge does
+        rename.personKey == personOf(away, rooms.sam).personKey
+        merge.reasonCode == "contactsUnavailable"
+    }
+})
+
+feature("with the hook's asks used, an automatic person's rename waits too", {
+    when() {
+        forgetContacts()
+        ec.cache.getCache("moqui.chat.people.hook.asked").put(hourKey(), 60)
+        const away = people(A)
+        const rename = chat(A, "renamePerson", {personKey: personOf(away, rooms.blocker).personKey, displayName: "Somebody"})
+        ec.cache.getCache("moqui.chat.people.hook.asked").put(hourKey(), 0)
+        return {rename}
+    },
+    then({rename}) {
+        rename.reasonCode == "contactsUnavailable"
     }
 })

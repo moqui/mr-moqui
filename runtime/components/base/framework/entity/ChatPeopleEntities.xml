@@ -46,4 +46,34 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <index name="CHAT_PERSON_ADDRESS_PERSON"><index-field name="chatPersonId"/></index>
     </entity>
+
+    <view-entity entity-name="ChatPersonRoom" package="moqui.chat">
+        <description>A user's rooms in sight that may be one person's (direct, external and private: a bridge's direct
+            conversation), with what find#ChatPeople needs of each, in one query: find by userId with leftDate and
+            filterEnumId empty, newest first, limited.</description>
+        <member-entity entity-alias="CRM" entity-name="moqui.chat.ChatRoomMember"/>
+        <member-entity entity-alias="CR" entity-name="moqui.chat.ChatRoom" join-from-alias="CRM">
+            <key-map field-name="chatRoomId"/></member-entity>
+        <alias entity-alias="CRM" name="chatRoomId"/>
+        <alias entity-alias="CRM" name="userId"/>
+        <alias entity-alias="CRM" name="leftDate"/>
+        <alias entity-alias="CRM" name="filterEnumId"/>
+        <alias entity-alias="CR" name="roomTypeEnumId"/>
+        <alias entity-alias="CR" name="encrypted"/>
+        <alias entity-alias="CR" name="lastEventDate"/>
+        <alias entity-alias="CR" name="lastMessageDate"/>
+    </view-entity>
+
+    <view-entity entity-name="ChatRoomInboundLast" package="moqui.chat">
+        <description>The latest message from the other side of each room (an external actor's: no local sender), in one
+            query: find by chatRoomId in a list and senderUserId empty, select chatRoomId and lastInboundDate (grouped by
+            room).</description>
+        <member-entity entity-alias="CE" entity-name="moqui.chat.ChatEvent"/>
+        <alias entity-alias="CE" name="chatRoomId"/>
+        <alias entity-alias="CE" name="senderUserId"/><!-- filter only: empty -->
+        <alias entity-alias="CE" name="lastInboundDate" field="sentDate" function="max"/>
+        <entity-condition>
+            <econdition entity-alias="CE" field-name="eventTypeEnumId" value="CetMessage"/>
+        </entity-condition>
+    </view-entity>
 </entities>

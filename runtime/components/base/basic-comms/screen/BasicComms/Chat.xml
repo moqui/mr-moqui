@@ -546,7 +546,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="people" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatPeopleServices.find#ChatPeople').call() || {}
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {personList: out.personList || [], roomPersonMap: out.roomPersonMap || {}})
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {personList: out.personList || [], roomPersonMap: out.roomPersonMap || {},
+                hookFailed: out.hookFailed === true, contactsSkipped: out.contactsSkipped === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

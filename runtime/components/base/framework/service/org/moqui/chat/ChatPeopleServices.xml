@@ -23,8 +23,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The signed-in user's people: from their rooms (a direct room of two, a pair room of one outside number,
             a GroupMe direct conversation; the 200 newest in sight), their own merges, splits and names, and the app's
             contacts they can see (find#ContactPeople, asked only about the addresses of their rooms that they have not
-            grouped themselves, at most 60 times an hour: then contactsSkipped). personList, each {personKey (p:id for a
-            person the user changed, else a:its first address), name, nameFrom (mine, user, contact or empty), edited,
+            grouped themselves, its answer kept three minutes, at most 60 times an hour: then contactsSkipped; hookFailed
+            when it failed). personList, each {personKey (p:id for a
+            person the user changed, else a:its lowest address), name, nameFrom (mine, user, contact or empty), edited,
+            reachable (false: a user the signed-in user may not reach, refused or blocking: no new chat),
             userId, contactUrl, addresses [{addressKey, kind (user, tel, email, ext), label}], rooms [{chatRoomId, network
             (moqui, sms, rcs, groupme), encrypted, fromNumber, lastMessageDate, lastInboundDate, notConnected}], ways (kind
             room, direct, text or mail; network; chatRoomId, userId, number, fromNumber, address, url; blocked; reasonCode
@@ -43,9 +45,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="merge" noun="ChatPeople">
         <description>Put people together for the signed-in user: one person with every address the persons named
             (personKeyList) show and the addresses given (addressKeyList: user:userId, tel:number, email:address,
-            ext:chatExternalUserId; an address already in a person brings that person). Each must be one the user may name:
+            ext:chatExternalUserId; an address the user is shown in a person brings that person). Each must be one the user may name:
             a user they may reach, a number, a mail address, a bridge person of one of their own conversations. Changes only
-            the user's own rows. reasonCode: badAddress, userNotFound, notYourRoom, personNotFound, nothingToMerge, twoUsers,
+            the user's own rows. A typed address is matched only against what the user is shown, and joins a user of this
+            server only when already shown (notShown). reasonCode: badAddress, userNotFound, notYourRoom, personNotFound,
+            nothingToMerge, twoUsers, notShown, contactsUnavailable (the contacts could not be asked now),
             tooManyAddresses (20 a person), tooManyPeople (2,000 rows a user).</description>
         <in-parameters>
             <parameter name="personKeyList" type="List"/>
@@ -71,7 +75,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="rename" noun="ChatPerson">
         <description>The signed-in user's own name for a person (displayName, at most 100 characters; empty clears it). A
-            person grouped automatically keeps its addresses as they are now. reasonCode: personNotFound,
+            person grouped automatically keeps its addresses as they are now (refused while the contacts cannot be asked:
+            contactsUnavailable). reasonCode: personNotFound,
             tooManyPeople.</description>
         <in-parameters>
             <parameter name="personKey" required="true"/>

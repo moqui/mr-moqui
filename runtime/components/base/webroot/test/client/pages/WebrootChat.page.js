@@ -1340,20 +1340,26 @@ test("a person's name over a room's: mine and a user's name where they apply, th
 
 test("a way opens its room, makes a direct chat or a text, or goes to the Inbox; a move out of an encrypted room is said; the nudge", async () => {
     const posted = [];
-    const post = (name, params) => { posted.push(name + ":" + JSON.stringify(params)); return Promise.resolve({ chatRoomId: "NEW" }); };
-    assert.deepEqual(await chat.openWay({ kind: "room", chatRoomId: "S1" }, post), { chatRoomId: "S1" });
-    assert.deepEqual(await chat.openWay({ kind: "direct", network: "moqui", userId: "bob" }, post), { chatRoomId: "NEW" });
-    assert.deepEqual(await chat.openWay({ kind: "text", network: "sms", number: "+15550002", fromNumber: "+15559999" }, post), { chatRoomId: "NEW" });
+    const post = (name, params) => { posted.push(name + ":" + JSON.stringify(params)); return Promise.resolve({ chatRoomId: "NEW", encrypted: true }); };
+    assert.deepEqual(await chat.openWay({ kind: "room", chatRoomId: "S1" }, post), { chatRoomId: "S1", encrypted: false });
+    // a made direct chat's encryption is the server's answer, not a guess
+    assert.deepEqual(await chat.openWay({ kind: "direct", network: "moqui", userId: "bob" }, post), { chatRoomId: "NEW", encrypted: true });
+    assert.deepEqual(await chat.openWay({ kind: "text", network: "sms", number: "+15550002", fromNumber: "+15559999" }, post), { chatRoomId: "NEW", encrypted: false });
     assert.deepEqual(posted, ['createDirect:{"userIds":"bob"}', 'textRoom:{"textTo":"+15550002","textFrom":"+15559999"}'], "no encrypted flag: the server decides");
     assert.deepEqual(await chat.openWay({ kind: "mail", url: "/qapps/BasicComms/Inbox/Compose?to=x" }, post), { url: "/qapps/BasicComms/Inbox/Compose?to=x" });
     let refused = false;
     await chat.openWay({ kind: "text" }, post).catch(() => { refused = true; });
     assert.ok(refused, "a way with nothing to open is refused");
-    assert.match(chat.moveNote(true, { kind: "room", network: "sms" }), /not end-to-end encrypted/);
-    assert.equal(chat.moveNote(true, { kind: "room", network: "moqui", encrypted: true }), null);
-    assert.equal(chat.moveNote(false, { kind: "room", network: "sms" }), null);
+    assert.match(chat.moveNote(true, false, "sms"), /Moved to SMS: not end-to-end encrypted/);
+    assert.equal(chat.moveNote(true, true, "moqui"), null);
+    assert.equal(chat.moveNote(false, false, "sms"), null);
+    // a moved draft never overwrites the room's own: both, the room's first, a blank line between
+    assert.equal(chat.joinDrafts("<p>theirs</p>", "<p>mine</p>"), "<p>theirs</p><p><br></p><p>mine</p>");
+    assert.equal(chat.joinDrafts("", "<p>mine</p>"), "<p>mine</p>");
+    assert.equal(chat.joinDrafts("<p>theirs</p>", "<p></p>"), "<p>theirs</p>");
     const state = personState();
     const bob = state.personList[1];
+    assert.equal(chat.nudgeWay(Object.assign({}, bob, { reachable: false }), { chatRoomId: "S2" }, false), null, "no nudge to a user I may not reach");
     assert.equal(chat.nudgeWay(bob, { chatRoomId: "S2" }, false).chatRoomId, "D1", "Bob's SMS room offers his Moqui chat");
     assert.equal(chat.nudgeWay(bob, { chatRoomId: "D1" }, false), null, "not in the Moqui chat itself");
     assert.equal(chat.nudgeWay(bob, { chatRoomId: "S2" }, true), null, "closed for the room");
@@ -1372,6 +1378,14 @@ test("the people are asked once for the page and shared; a change asks again; th
     const state = await chat.people(url, request);
     assert.equal(asked, 2);
     assert.equal(state.personList.length, 3);
+    // the contacts away (the hook skipped or failed): kept 30 seconds, not five minutes
+    chat.peopleChanged();
+    const away = () => { asked++; return Promise.resolve({ json: Object.assign(personState(), { contactsSkipped: true }) }); };
+    assert.equal((await chat.people(url, away)).contactsAway, true);
+    assert.equal(chat.peopleCache.maxAge, 30000);
+    chat.peopleCache.at -= 30001;
+    await chat.people(url, request);
+    assert.equal(asked, 4, "asked again after 30 seconds");
     chat.peopleCache = null;
     chat.peopleState = null;
     ["m-chat-networks", "m-chat-person"].forEach((name) => {

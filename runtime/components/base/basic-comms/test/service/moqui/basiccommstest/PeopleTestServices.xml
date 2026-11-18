@@ -21,8 +21,10 @@
                     addressList: ['tel:+15553334001', 'email:jane.contact@people-spec.example', 'tel:+15553334009']},
                 {contactRef: 'SPEC_PAT', name: 'Pat Employee', url: '/qapps/spec/Contact?partyId=SPEC_PAT',
                     addressList: ['tel:+15553334002', 'user:CHAT_PEOPLE_SPEC_B', 'tel:+15553334008', 'email:pat.private@people-spec.example']},
-                {contactRef: 'SPEC_REFUSED', name: 'Refused User', url: null,
-                    addressList: ['tel:+15553334005', 'user:CHAT_PEOPLE_SPEC_GONE']},
+                {contactRef: 'SPEC_GONE', name: 'Gone User', url: null,
+                    addressList: ['tel:+15553334005', 'user:CHAT_PEOPLE_SPEC_GONE', 'email:gone.extra@people-spec.example']},
+                {contactRef: 'SPEC_BLOCKER', name: 'Blocker Contact', url: null,
+                    addressList: ['tel:+15553334006', 'user:CHAT_PEOPLE_SPEC_R', 'email:blocker.extra@people-spec.example', 'tel:+15553334016']},
             ]
             for (const contact of contacts) if (contact.addressList.some((key) => asked.includes(key))) contactList.push(contact)
         ]]></script></actions>

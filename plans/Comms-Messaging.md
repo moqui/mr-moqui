@@ -896,10 +896,11 @@ Designed 2026-11-17 as phase 22 (§18.3).
   (their rooms and the ones that can be started), the best first. Choosing one opens that room and moves the draft there.
 - **Best path first**: Moqui chat when the person is a user of this server (their encrypted direct room first, as §6.5
   has it); else the network they last wrote on; else SMS from the user's number; else mail in the Inbox. A blocked
-  person or number (phase 11) is never a way.
+  number (phase 11) is listed dimmed and never the best; a person the user blocked has no way.
 - **Mail stays in the Inbox** (§19.1): a person's latest mail thread is a line on their rooms and opens in the Inbox.
 - **Privacy**: a user's phone number is never learned through chat (§14.4); the hook is asked only about the addresses
-  of the user's own rooms, so it cannot be probed.
+  of the user's own rooms, and an address the user types is matched only against what they are shown and joins a user
+  of this server only when already shown, so the contacts cannot be probed by typing.
 
 ## 12. The protocols MR Moqui keeps
 
@@ -3568,9 +3569,29 @@ Mantle's visibility rule moved to `filter#VisibleContacts`, which `filter#Contac
 `find#ContactPeople` share (mr-mantle branch `d4-contact-people`); IronStone's theme row is on mr-boss's branch of the same
 name.
 
-Measured: basic-comms server 0.3 s for `BasicCommsPeople`; webroot client 0.2 s for the whole of `WebrootChat`; the
-basic-comms client suite unchanged, though its served run measured 12.4 s of 12 s on a loaded machine (see the
-report).
+The review's fixes (2026-11-18):
+- a typed address is matched only against what the user is shown, and joins a user of this server only when already
+  shown (`notShown`);
+- a hook contact naming a refused, blocking, disabled or external user is left out whole; `get#RefusedUsers` is asked
+  with the blocks, and such a user of a room gets no new chat, no nudge and no merge;
+- an automatic person's key is its lowest address, so a new message does not change it;
+- the hook's answer is kept three minutes per user (`moqui.chat.people.contacts`), so the people and the mail lines
+  spend one ask; the `people` answer says when the contacts were away, the page asks again after 30 s, and merge and
+  rename of an automatic person refuse meanwhile (`contactsUnavailable`);
+- a moved draft is added after the room's own, a draft with files does not move, and a made direct chat's encryption
+  is the server's answer;
+- the queries are a fixed count, independent of the number of rooms: the rooms (`ChatPersonRoom`, limited in the
+  query), their members, mappings, bridges, GroupMe people and latest inbound messages (`ChatRoomInboundLast`, grouped)
+  are one query each, and the blocks, the Blocked list, the opt-outs and the text numbers one or two each. Read from
+  the code: about 25 for `find#ChatPeople` with 100 SMS, 80 direct and 20 GroupMe rooms, plus the hook's own (none while
+  kept) and the apps' `chat-target` providers;
+- Mantle matches a +1 number by its area code and its local number's written forms (the area and number index), and
+  another country's by its last seven digits, one scan for all of them; the user link stays inside the cap of 10;
+- the hook's url refuses a backslash, whitespace and control characters; the caller's messages are kept apart, not
+  cleared; a text number on a bridge that is not connected is never the best.
+
+Measured: basic-comms server 0.6 s for `BasicCommsPeople`; webroot client 0.4 s for the whole of `WebrootChat`; the
+basic-comms client suite unchanged (see the report).
 
 Left: the checks on a real phone of the network sheet and the card; a GroupMe direct conversation's person (`ext:`)
 has no server spec of its own.
@@ -3670,9 +3691,11 @@ The person key is `p:<chatPersonId>`, else `a:<its first address>`. Each person 
 - **Linking a number to a user.** The hook may do it, through an app contact the viewer can see: IronStone's directory
   already shows an employee's phone to the people who can see it. Chat never links a number to a user from its own or
   voice's data: not `CallHandlingSetting`'s mobile, not caller-ID grants, not ring groups.
-- **Refused users.** A `user:` address that `get#RefusedUsers` refuses (an app's `chat-target`, or a user who blocked the
-  viewer) is left out, as a user that does not exist. A room the viewer already has with them still shows as it does
-  today.
+- **Refused users.** A user that `get#RefusedUsers` refuses with the blocks (an app's `chat-target`, or a user who
+  blocked the viewer), a disabled user and an external user are as users that do not exist. A hook contact that names
+  one is left out whole: no name, none of its other addresses, so the person shows only as the viewer's own room
+  addresses. A room the viewer already has with them still shows as it does today, with no new direct chat, no nudge,
+  and no merge of that user.
 - **Nothing is shared.** No service reads another user's rows. A merge changes only the user's own rows, and the other
   person sees nothing.
 
@@ -3708,7 +3731,7 @@ The best way (`best`) is the first of these:
    label comes from `encryptionDefault`, as a dm link's).
 2. **The network they use**: of their rooms on other networks (RCS, GroupMe, SMS), the connected one with their latest
    message to the user (`lastInboundDate`).
-3. **SMS**: the pair room of their number that the user wrote in last; else a new text from the user's number
+3. **SMS**: the pair room of their number with the latest message from either side; else a new text from the user's number
    (`find#MyTextNumbers`: their only number, or the first, with the From choice). RCS is never the default for a
    new conversation, because it comes from the brand agent's name, not the user's number (§19.4 Q1).
 4. **Mail**: their latest thread, or Compose to their address.
