@@ -68,7 +68,7 @@ A link's password is stored as a password hash and checked by `open#PublicShare`
 
 A path with a `..` segment is "Not found", and a link to a whole drive does not reach `.trash`. `download#PublicShare` sends a file itself with `ec.web.sendResourceResponse`; inline is asked only for PNG, JPEG, GIF, WebP, BMP and PDF. A folder is zipped to `runtime://tmp/drive-zip/<16 random characters>.zip` (at most 20000 entries, depth 32).
 
-`upload#PublicShare` takes files on a folder link with `RspUpload` or `RspEdit`, and calls `upload#Resource` with authorization off and `asInternal` true, `conflictPolicy` `keepBoth`. The only size limit in the service is the drive's `quotaBytes`, which is empty unless set. The uploader's name (100 characters) goes into the version note. No type or content scan is done.
+`upload#PublicShare` takes files on a folder link with `RspUpload` or `RspEdit`, and calls `upload#Resource` with authorization off and `asInternal` true, `conflictPolicy` `keepBoth`. Each file is named by the last segment of its own name, so it lands in the shared folder and makes no folder (an empty name or `.trash` becomes `upload`). A link's own limits hold whatever the drive's `quotaBytes` (empty unless set): 20 files and 100 MiB in one call, 30 calls an hour through one link and 60 from one requester (`record#Attempt`), and 1000 files and 2 GiB through a link in all (`ResourceShare.uploadCount`, `uploadBytes`). The uploader's name (100 characters) goes into the version note. No type or content scan is done.
 
 ### Drive services
 

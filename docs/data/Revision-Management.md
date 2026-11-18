@@ -285,7 +285,8 @@ under `runtime://tmp/drive-*` (zips, exports, any copies an application keeps th
 **Public links.** `check#PublicShareToken` (the token route's check), `open#PublicShare` (the token, then the password:
 a grant for an hour, an HMAC of the share and its expiry keyed by the share's secrets; counts the opening),
 `list#PublicShare`, `download#PublicShare` (a file, or a folder as a zip) and `upload#PublicShare` (a file drop with the
-uploader's name in the version note; names never replace). Each is anonymous and checks the token before it reads
+uploader's name in the version note; names never replace, and each file is named by the last segment of its own name; 20
+files and 100 MiB a call, 30 calls an hour a link and 60 a requester, 1000 files and 2 GiB a link in all). Each is anonymous and checks the token before it reads
 anything else, and never answers about a path outside the share. A public page's visitor has no user, and a file on the
 database tree is entity rows that visitor may not read, so the page does not send the location itself:
 `download#PublicShare` with `sendResponse: true` (and `inline: true` for a picture or a PDF to show in the page) writes the

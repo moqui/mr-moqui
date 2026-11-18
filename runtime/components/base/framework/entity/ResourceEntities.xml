@@ -707,6 +707,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <field name="openedCount" type="number-integer"/>
         <field name="lastOpenedDate" type="date-time"/>
+        <field name="uploadCount" type="number-integer"><description>The files a link has taken (upload#PublicShare),
+            against its file cap</description></field>
+        <field name="uploadBytes" type="number-integer"><description>The bytes of those files, against its byte cap</description></field>
         <field name="revokedDate" type="date-time"/>
         <field name="acceptedDate" type="date-time"/>
         <field name="declinedDate" type="date-time"/>

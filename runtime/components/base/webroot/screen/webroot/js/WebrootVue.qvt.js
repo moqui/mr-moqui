@@ -468,8 +468,9 @@
     // Follow a link of a message or notification: an app link through the shell ($root.setUrl), an external one in a new window,
     // or by the system when an app around the page (window.moquiDesktop) opens it.
     moqui.openLink = (link) => {
-        if (!link) return;
-        const text = String(link).trim();
+        // a javascript: or data: link is not followed (SEC-CLU-06)
+        const text = moqui.followableLink(link);
+        if (!text) return;
         if (moqui.isExternalLink(text)) {
             if (root.moquiDesktop && root.moquiDesktop.openExternal) root.moquiDesktop.openExternal(text);
             else if (root.open) root.open(text, "_blank", "noopener");
