@@ -280,6 +280,7 @@ fn facts(
         stopped: stopped(entity)?,
         allow_automatic: settings.allow_automatic,
         confidence,
+        regressed: !regressions.values().is_empty(),
         degraded: open.iter().any(|row| field(row, "dataQuality") == "degraded"),
         instances: affected.len() + healthy.len(),
         locality,

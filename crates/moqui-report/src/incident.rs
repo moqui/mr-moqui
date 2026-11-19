@@ -323,8 +323,32 @@ fn save_causes(entity: &EntityFacade, incident: &str, ranked: &[causes::Ranked])
     Ok(())
 }
 
+/// The severities an incident takes; a label of any other is `major`.
+const SEVERITIES: [&str; 3] = ["minor", "major", "critical"];
+
+/// Whether the user `owner_id` (an alert rule's owner) may have the rule open a Monitor incident: an active account
+/// that holds `MONITOR_INCIDENT` by its own grants, asked in a context of its own.
+pub(crate) fn may_open_incident(ec: &ExecutionContext, owner_id: &str, now: i64) -> bool {
+    let Some(entity) = ec.factory().entity() else {
+        return false;
+    };
+    let account = match crate::delivery::account(ec, &entity, owner_id, now) {
+        Ok(Some(account)) if account.active => account,
+        Ok(_) => return false,
+        Err(error) => {
+            tracing::error!(owner = owner_id, %error, "could not read an alert rule's owner");
+            return false;
+        }
+    };
+    let context = ec.factory().new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(&account.username).is_ok()
+        && moqui_core::user::has_permission("MONITOR_INCIDENT").unwrap_or(false)
+}
+
 /// An alert rule labelled `incident="true"` went to Firing: open an incident for its service (the `service` or
-/// `service.name` label, else the rule), or add the alert to the open one. A failure is logged: alerting goes on.
+/// `service.name` label, else the rule), or add the alert to the open one, with the `severity` label when it is one of
+/// [`SEVERITIES`]. A failure is logged: alerting goes on.
 pub(crate) fn open_from_alert(ec: &ExecutionContext, rule: &str, title: &str, series: &str, labels: &Json, now: i64) {
     let Some(entity) = ec.factory().entity() else {
         return;
@@ -350,10 +374,11 @@ pub(crate) fn open_from_alert(ec: &ExecutionContext, rule: &str, title: &str, se
                     let mut incident = entity.make_value(INCIDENT)?;
                     incident.set_sequenced_id_primary(&entity)?;
                     incident.set("title", Value::String(format!("{title} is firing")));
-                    incident.set(
-                        "severity",
-                        Value::string(labels["severity"].as_str().unwrap_or("major")),
-                    );
+                    let severity = labels["severity"]
+                        .as_str()
+                        .filter(|severity| SEVERITIES.contains(severity))
+                        .unwrap_or("major");
+                    incident.set("severity", Value::string(severity));
                     incident.set("statusId", Value::string("Open"));
                     incident.set("source", Value::string("alert"));
                     incident.set("serviceName", Value::string(&service));

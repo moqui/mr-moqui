@@ -1444,7 +1444,18 @@ fn evaluate_claimed(
             // (plans/archive/Monitoring.md, Later: Regressions and incidents).
             let wants_incident = labels["incident"] == "true" || body["labels"]["incident"] == "true";
             if wants_incident && instance.state == State::Firing {
-                super::incident::open_from_alert(ec, id, text(definition, "title", id), &key, &labels, now);
+                // an incident is a Monitor record and starts recovery: the rule's owner opens one only while they
+                // hold MONITOR_INCIDENT themselves (SEC-TLS-107)
+                let owner = text(definition, "ownerId", "");
+                if super::incident::may_open_incident(ec, owner, now) {
+                    super::incident::open_from_alert(ec, id, text(definition, "title", id), &key, &labels, now);
+                } else {
+                    tracing::info!(
+                        rule = id,
+                        owner,
+                        "an alert labelled incident opens no incident: its owner does not hold MONITOR_INCIDENT"
+                    );
+                }
             }
         }
         if matches!(
