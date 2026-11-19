@@ -285,9 +285,14 @@ fn a_separate_smtp_sign_in_is_used_tried_and_cleared() {
         field(&one(&facade, SERVER, "emailServerId", &server), "smtpPassword"),
         "smtp-secret"
     );
+    // SMTP then signs in with the store's password, so it is entered again with the change (SEC-MAIL-84)
     ok(
         "update#EmailAccount",
-        &[("emailAccountId", text(&account)), ("smtpUsername", text(""))],
+        &[
+            ("emailAccountId", text(&account)),
+            ("smtpUsername", text("")),
+            ("mailPassword", text("app-password")),
+        ],
     );
     let cleared = one(&facade, SERVER, "emailServerId", &server);
     assert_eq!(field(&cleared, "smtpUsername"), "");
@@ -443,7 +448,7 @@ fn an_endpoint_change_without_the_password_clears_the_stored_sign_in() {
             ("emailAccountId", text(&oauth)),
             ("storeHost", text("imap.taker.example")),
         ],
-        "not a server of the account's sign-in provider",
+        "is not a mail server of",
     );
     ok(
         "update#EmailAccount",
@@ -459,6 +464,114 @@ fn an_endpoint_change_without_the_password_clears_the_stored_sign_in() {
         ),
         "eu.mail.provider.example"
     );
+}
+
+/// The SMTP side's own sign-in is never the store's password (plans/Security-Review-Medium.md SEC-MAIL-84): an SMTP user of
+/// its own signs in only with `smtpPassword`, so giving one and then another SMTP host sends the new host nothing of
+/// the store's; and a change of the SMTP user is an SMTP change, so with the host moved and then the user cleared the
+/// store's password, which SMTP would sign in with again, is cleared and the account still waits for its sign-in.
+#[test]
+fn the_store_password_never_goes_to_an_smtp_host_it_was_not_entered_for() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install_with(None);
+    alice(&facade);
+    let smtp = FakeSmtp::start("unused");
+    lock(&smtp.state).passwords = vec![("taker".to_string(), "app-password".to_string())];
+    let make = || {
+        out_text(
+            &ok(
+                "create#EmailAccount",
+                &[
+                    ("emailAddress", text("alice@example.com")),
+                    ("smtpHost", text("smtp.example.com")),
+                    ("smtpStartTls", text("N")),
+                    ("mailUsername", text("alice")),
+                    ("mailPassword", text("app-password")),
+                ],
+            ),
+            "emailAccountId",
+        )
+    };
+    let stored = |account: &str, name: &str| {
+        field(
+            &one(&facade, SERVER, "emailServerId", &server_of(&facade, account)),
+            name,
+        )
+    };
+    let status = |account: &str| field(&one(&facade, ACCOUNT, "emailAccountId", account), "statusId");
+
+    // an SMTP user of its own with no password, then the SMTP host moved to the taker's: the store's password stays for
+    // the store, and the test signs in at the new host without it
+    let first = make();
+    ok(
+        "update#EmailAccount",
+        &[("emailAccountId", text(&first)), ("smtpUsername", text("taker"))],
+    );
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&first)),
+            ("smtpHost", text("127.0.0.1")),
+            ("smtpPort", text(&smtp.port.to_string())),
+        ],
+    );
+    assert_eq!(stored(&first, "mailPassword"), "app-password");
+    let _ = call(
+        "test#EmailAccount",
+        &[("emailAccountId", text(&first)), ("testStore", Value::Bool(false))],
+    );
+    assert!(
+        !lock(&smtp.state).auths.iter().any(|auth| auth.ends_with(" ok")),
+        "{:?}",
+        lock(&smtp.state).auths
+    );
+
+    // the SMTP host moved with an SMTP user of its own, then the user cleared: nothing is left for SMTP to sign in with
+    let second = make();
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&second)),
+            ("smtpUsername", text("alice-smtp")),
+            ("smtpPassword", text("smtp-secret")),
+        ],
+    );
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&second)),
+            ("smtpHost", text("taker.example.net")),
+        ],
+    );
+    assert_eq!(stored(&second, "smtpPassword"), "");
+    assert_eq!(status(&second), "EasAuthFailed");
+    ok(
+        "update#EmailAccount",
+        &[("emailAccountId", text(&second)), ("smtpUsername", text(""))],
+    );
+    assert_eq!(stored(&second, "mailPassword"), "");
+    assert_eq!(status(&second), "EasAuthFailed");
+
+    // a form that fills the standard port in for an empty one moves nothing; a caller that refuses to clear is told
+    let third = make();
+    ok(
+        "update#EmailAccount",
+        &[("emailAccountId", text(&third)), ("smtpPort", text("25"))],
+    );
+    assert_eq!(stored(&third, "mailPassword"), "app-password");
+    refused(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&third)),
+            ("smtpHost", text("taker.example.net")),
+            ("refuseClearing", Value::List(vec![text("mailPassword")])),
+        ],
+        "enter its password again",
+    );
+    assert_eq!(stored(&third, "smtpHost"), "smtp.example.com");
+    assert_eq!(stored(&third, "mailPassword"), "app-password");
 }
 
 fn kind_and_filing(facade: &EntityFacade, account: &str) -> (String, String) {

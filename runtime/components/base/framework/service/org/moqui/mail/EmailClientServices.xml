@@ -210,7 +210,7 @@ along with this software (see the LICENSE.md file). If not, see
             host is given); emailServerId names an existing server instead, and ownerUserId another owner, only for
             internal work (authorization disabled). The Internal account is made by ensure#InternalAccount.
             recordFilingEnumId defaults by kind: an external account files only what is linked (ErfLinkedOnly), a hosted
-            or shared one every party match (ErfAllMatches). smtpUsername (with smtpPassword, else mailPassword) is the
+            or shared one every party match (ErfAllMatches). smtpUsername (with smtpPassword only, never the store's mailPassword) is the
             outgoing server's own sign-in, for a provider whose SMTP takes another user than its IMAP or POP; empty, SMTP
             signs in as mailUsername. statusId EasPaused makes an account the sync job leaves until its setup is done
             (update#EmailAccount makes it active).</description>
@@ -321,7 +321,9 @@ along with this software (see the LICENSE.md file). If not, see
 
             The endpoint-change rule, as a relay's (update#RelayServer, Admin's Connections): a change of where or how the
             stored sign-in is sent (a host, a port, a TLS setting, the store protocol, storeAllowPlain, a user, the sign-in
-            kind or the OAuth provider) clears each stored password not given again in the same change, and revokes and
+            kind or the OAuth provider, side by side: the store's sign-in is mailPassword, SMTP's is smtpPassword with an
+            SMTP user of its own and else mailPassword, and a change of the SMTP user is an SMTP change) clears each stored
+            password of a side that moved and is not given again in the same change, and revokes and
             clears the OAuth refresh token, so a manager who is not the mailbox's owner cannot point its server at a host of
             theirs and receive the mailbox's password or a token for it; the account is then marked EasAuthFailed until its
             sign-in is entered again (plans/Security-Review-Medium.md SEC-MAIL-84). A server that signs in with OAuth takes
@@ -358,6 +360,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="smtpPassword" allow-html="any"/>
             <parameter name="authTypeEnumId"/>
             <parameter name="oauthProviderEnumId"/>
+            <parameter name="refuseClearing" type="List"><description>The passwords (mailPassword, smtpPassword) a change
+                may not clear: a change that would (an endpoint changed with the password not given again) is refused with a
+                validation error on that field instead, before anything is changed (the account wizard)</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="emailServerId"/></out-parameters>
         <actions><script><![CDATA[
@@ -467,38 +472,49 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 // a server field as this change leaves it
                 const after = (name) => given(serverFields[name]) ? blank(serverFields[name]) : server.get(name)
-                // an OAuth server signs in only at its provider's own hosts: a token is never sent to another
+                // an OAuth server signs in only at its provider's own hosts: a token is never sent to another (the rule is
+                // check#OAuthServerHosts', kept once in Rust with the token's own check; a host without the mail client has
+                // no OAuth sign-in)
                 const signInMoved = ['storeHost', 'smtpHost', 'authTypeEnumId', 'oauthProviderEnumId'].some((name) => given(serverFields[name]))
-                if (signInMoved && after('authTypeEnumId') === 'EatOAuth2' && after('oauthProviderEnumId')) {
-                    const provider = ec.entity.find('moqui.basic.email.EmailOAuthProvider')
-                            .condition('oauthProviderEnumId', after('oauthProviderEnumId')).disableAuthz().one()
-                    const own = provider ? [provider.storeHost, provider.popHost, provider.smtpHost]
-                            .map((host) => String(host ?? '').trim().toLowerCase()).filter((host) => host) : []
-                    const suffixes = provider ? String(provider.hostSuffixes ?? '').split(',')
-                            .map((suffix) => suffix.trim().toLowerCase()).filter((suffix) => suffix) : []
-                    const providers = (host) => own.includes(host) || suffixes.some((suffix) => host === suffix || host.endsWith('.' + suffix))
-                    for (const name of ['storeHost', 'smtpHost']) {
-                        const host = String(after(name) ?? '').trim().toLowerCase()
-                        if (host && !providers(host)) {
-                            ec.message.addError(host + " is not a server of the account's sign-in provider: an account that signs in with it uses the provider's own servers")
-                            return
-                        }
+                if (signInMoved && after('authTypeEnumId') === 'EatOAuth2' && after('oauthProviderEnumId') && ec.factory.hasFeature('imap')) {
+                    const hosts = ec.service.sync().name('org.moqui.mail.EmailClientServices.check#OAuthServerHosts')
+                            .parameters({oauthProviderEnumId: after('oauthProviderEnumId'), storeHost: after('storeHost'), smtpHost: after('smtpHost')})
+                            .disableAuthz().call()
+                    if (hosts?.refusedHost) {
+                        ec.message.addError(hosts.refusedHost + " is not a mail server of " + hosts.providerName + ": an account that signs in with it uses the provider's own servers")
+                        return
                     }
                 }
                 // the endpoint-change rule: what the stored sign-in is sent to or over, compared as the sender reads it (a
-                // flag Y or not, a host in any case), so a form that posts every setting back changes nothing. Each side
-                // has its own: the store's (mailPassword) and SMTP's (smtpPassword, or mailPassword when SMTP signs in as
-                // the store does); the sign-in kind and the provider are both sides'.
+                // flag Y or not, a host in any case, an empty port as the default the sender takes), so a form that posts
+                // every setting back changes nothing. Each side has its own: the store's (mailPassword), and SMTP's, which
+                // is smtpPassword with an SMTP user of its own and else mailPassword (implementation.rs smtp_password); a
+                // change of the SMTP user is an SMTP change; the sign-in kind and the provider are both sides'.
                 const FLAGS = ['smtpStartTls', 'smtpSsl', 'storeAllowPlain']
+                // a port left empty is the protocol's standard one, so a form that fills a standard port in moves nothing
+                const STANDARD_PORTS = {storePort: ['143', '993', '110', '995'], smtpPort: ['25', '465', '587']}
                 const endpointOf = (name, value) => FLAGS.includes(name) ? (value === 'Y' || value === true ? 'Y' : 'N')
-                        : String(value ?? '').trim().toLowerCase()
-                const moved = (names) => !creating && serverGiven.some((name) => names.includes(name)
-                        && endpointOf(name, blank(serverFields[name])) !== endpointOf(name, server.get(name)))
+                        : String(value ?? '').trim().toLowerCase().replace(/\.$/, '')
+                const moved = (names) => !creating && serverGiven.some((name) => {
+                    if (!names.includes(name)) return false
+                    const was = endpointOf(name, server.get(name)), now = endpointOf(name, blank(serverFields[name]))
+                    if (STANDARD_PORTS[name] && (!was || !now) && STANDARD_PORTS[name].includes(was || now)) return false
+                    return was !== now
+                })
                 const bothMoved = moved(['authTypeEnumId', 'oauthProviderEnumId'])
                 const storeMoved = bothMoved || moved(['storeHost', 'storePort', 'storeProtocol', 'storeAllowPlain', 'mailUsername'])
-                const smtpHostMoved = bothMoved || moved(['smtpHost', 'smtpPort', 'smtpStartTls', 'smtpSsl'])
-                const smtpMoved = smtpHostMoved || moved(['smtpUsername'])
+                const smtpMoved = bothMoved || moved(['smtpHost', 'smtpPort', 'smtpStartTls', 'smtpSsl', 'smtpUsername'])
                 const endpointChanged = storeMoved || smtpMoved
+                // the passwords this change leaves with nothing to stand for: each one not given again in it
+                const smtpOwnUser = !!String(after('smtpUsername') ?? '').trim()
+                const clears = ['mailPassword', 'smtpPassword'].filter((name) => !serverFields[name] && server.get(name) && (name === 'mailPassword'
+                        ? storeMoved || (smtpMoved && !smtpOwnUser) : smtpMoved && smtpOwnUser))
+                // a caller that asks for it (the account wizard) is refused instead, before anything is changed
+                const kept = clears.filter((name) => Array.from(refuseClearing || []).map(String).includes(name))
+                if (kept.length) {
+                    ec.message.addValidationError(null, kept[0], null, ec.l10n.localize('The server changed: enter its password again'), null)
+                    return
+                }
                 const hadToken = !creating && !!server.oauthRefreshToken
                 // back to a password, or the endpoint changed: the provider sign-in is revoked there and deleted here
                 const leavingOAuth = server.authTypeEnumId === 'EatOAuth2' && given(authTypeEnumId) && authTypeEnumId !== 'EatOAuth2'
@@ -508,19 +524,14 @@ along with this software (see the LICENSE.md file). If not, see
                             .parameter('emailServerId', emailServerId).disableAuthz().call()
                     server.set('oauthRefreshToken', null)
                 }
-                let secretCleared = endpointChanged && hadToken && !leavingOAuth
+                const secretCleared = (endpointChanged && hadToken && !leavingOAuth) || clears.length > 0
                 for (const name of serverGiven) {
                     if (name === 'mailPassword' && !mailPassword) continue
                     if (name === 'smtpPassword' && !smtpPassword) continue
                     server.set(name, blank(serverFields[name]))
                 }
                 // a password is never sent to an endpoint it was not entered for
-                const clear = (name) => {
-                    if (!serverFields[name] && server.get(name)) { server.set(name, null); secretCleared = true }
-                }
-                if (storeMoved || (smtpHostMoved && !server.smtpUsername)) clear('mailPassword')
-                // with no SMTP user of its own the SMTP password is not used, and is dropped below
-                if (smtpMoved && server.smtpUsername) clear('smtpPassword')
+                for (const name of clears) server.set(name, null)
                 // no SMTP user of its own: SMTP signs in as the store does, and no other password is kept for it
                 if (!server.smtpUsername) server.set('smtpPassword', null)
                 if (creating) {
@@ -2289,6 +2300,23 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="providerName"/>
             <parameter name="configured" type="Boolean"/>
             <parameter name="matchedBy"/>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="OAuthServerHosts" type="rust" location="moqui_mail::check_oauth_server_hosts"
+            allow-remote="false">
+        <description>Whether storeHost and smtpHost are mail servers of the OAuth provider oauthProviderEnumId: its
+            storeHost, popHost or smtpHost, or a host under its hostSuffixes, in any case and with or without a trailing
+            dot. refusedHost is the first that is not (empty when both are); with no such provider every host given is.
+            update#EmailAccount asks it, and the token is refused for such a server where it is made too
+            (plans/Security-Review-Medium.md SEC-MAIL-84). Internal: callers disable authorization.</description>
+        <in-parameters>
+            <parameter name="oauthProviderEnumId" required="true"/>
+            <parameter name="storeHost"/>
+            <parameter name="smtpHost"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="refusedHost"/>
+            <parameter name="providerName"/>
         </out-parameters>
     </service>
     <service verb="revoke" noun="OAuthSignIn" type="rust" location="moqui_mail::revoke_oauth_sign_in"

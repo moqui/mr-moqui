@@ -1895,13 +1895,14 @@ pub(super) fn smtp_user(server: &EntityValue) -> String {
     }
 }
 
-/// The SMTP password: with an SMTP user of its own `smtpPassword` (else `mailPassword`), else `mailPassword`.
-fn smtp_password(server: &EntityValue) -> String {
-    let own = field_text(server, "smtpPassword");
-    if field_text(server, "smtpUsername").trim().is_empty() || own.is_empty() {
+/// The SMTP password: with an SMTP user of its own only `smtpPassword`, else `mailPassword`. Never the store's password
+/// for another user: `update#EmailAccount` clears `smtpPassword` when the SMTP side moves, and the store's password
+/// would otherwise go to the new SMTP host (plans/Security-Review-Medium.md SEC-MAIL-84).
+pub(super) fn smtp_password(server: &EntityValue) -> String {
+    if field_text(server, "smtpUsername").trim().is_empty() {
         field_text(server, "mailPassword")
     } else {
-        own
+        field_text(server, "smtpPassword")
     }
 }
 

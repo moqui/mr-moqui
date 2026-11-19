@@ -2284,6 +2284,32 @@ fn revoke_server(facade: &EntityFacade, server_id: &str, clear: bool) -> Result<
     Ok(true)
 }
 
+/// `check#OAuthServerHosts`: the first of `storeHost` and `smtpHost` that is not a mail server of the provider
+/// `oauthProviderEnumId` ([`Provider::serves`]), as `refusedHost`, empty when both are; with no such provider every host
+/// given is refused. `update#EmailAccount` asks it before an OAuth server's hosts change, so the rule is kept once.
+pub(super) fn check_server_hosts_service(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let id = param_text(parameters, "oauthProviderEnumId");
+    let provider = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        load_provider(facade, &id)?
+    };
+    let refused = ["storeHost", "smtpHost"]
+        .into_iter()
+        .map(|name| param_text(parameters, name).trim().to_string())
+        .find(|host| !host.is_empty() && !provider.as_ref().is_some_and(|provider| provider.serves(host)))
+        .unwrap_or_default();
+    Ok(BTreeMap::from([
+        ("refusedHost".to_string(), Value::string(refused)),
+        (
+            "providerName".to_string(),
+            Value::string(provider.map(|provider| provider.name).unwrap_or(id)),
+        ),
+    ]))
+}
+
 /// `revoke#OAuthToken`: internal (authorization disabled), for delete#EmailAccount and update#EmailAccount.
 pub(super) fn revoke_token_service(
     parameters: &BTreeMap<String, Value>,

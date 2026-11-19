@@ -134,6 +134,7 @@ fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), Strin
         rust_service!(map, get_oauth_status)?;
         rust_service!(map, get_oauth_providers)?;
         rust_service!(map, find_oauth_provider)?;
+        rust_service!(map, check_oauth_server_hosts)?;
         rust_service!(map, revoke_oauth_sign_in)?;
         rust_service!(map, revoke_oauth_token)?;
     }
@@ -260,6 +261,8 @@ mail_service!(get_oauth_status, oauth::sign_in_status);
 mail_service!(get_oauth_providers, oauth::providers_service);
 #[cfg(feature = "imap")]
 mail_service!(find_oauth_provider, oauth::find_provider_service);
+#[cfg(feature = "imap")]
+mail_service!(check_oauth_server_hosts, oauth::check_server_hosts_service);
 #[cfg(feature = "imap")]
 mail_service!(revoke_oauth_sign_in, oauth::sign_out_service);
 #[cfg(feature = "imap")]
