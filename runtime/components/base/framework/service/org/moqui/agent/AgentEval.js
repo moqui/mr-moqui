@@ -10,6 +10,16 @@ const json=t=>{if(t==null||t==='')return null;if(typeof t!='string')return t;try
 const text=v=>v==null?'':typeof v=='string'?v:JSON.stringify(v)
 function need(permission){if(!ec.user.userId)throw new Error('Sign in to use evals');if(!ec.user.hasPermission(permission))throw new Error('This needs the '+permission+' permission')}
 const TERMINAL={AgrCompleted:1,AgrFailed:1,AgrCanceled:1,AgrRejected:1}
+// the service scorers of the evals themselves; a scorer of another service is AgentAudit's to make (SEC-AI-83)
+const SERVICE_SCORERS=['org.moqui.agent.AgentEvalServices.score#ExactMatch','org.moqui.agent.AgentEvalServices.score#Contains','org.moqui.agent.AgentEvalServices.score#CalledTool']
+// Whether the current user may make a scorer of `scorer` (a service scorer of another service needs AgentAudit), or
+// attach one to an agent: live scoring scores every user's runs of the agent, so an attach needs AgentAudit and is
+// written to AgentAuditLog (SEC-AI-83). An error message, or null.
+function scorerRefusal(p){const audit=ec.user.hasPermission('AgentAudit')
+ if(p.op==='store'){if(p.scorerTypeEnumId==='AgstService'&&!SERVICE_SCORERS.includes(p.serviceName)&&!audit)return'A scorer of a service other than the evals\' own needs the AgentAudit permission';return null}
+ if(!audit)return'Live scoring reads every user\'s runs of the agent: attaching a scorer to an agent needs the AgentAudit permission'
+ create('AgentAuditLog',{auditorUserId:ec.user.userId,reason:'attached scorer '+p.scorerId+' to agent '+p.agentId+' for live scoring',auditDate:now()});return null}
+function checkScorer(p){return{refusal:scorerRefusal(p)}}
 
 // ---- datasets: each change raises versionNum; an item belongs to versions fromVersion..thruVersion (exclusive)
 function dataset(id){const d=one('AgentDataset',{datasetId:id});if(!d)throw new Error('Dataset '+id+' is not available');return d}
@@ -50,7 +60,11 @@ function judge(s,c){
 }
 function scoreOne(s,c){
  if(s.scorerTypeEnumId==='AgstJudge')return judge(s,c)
- if(s.scorerTypeEnumId==='AgstService'){const out=call(s.serviceName,{input:c.input,output:c.output,groundTruth:c.groundTruth,runId:c.runId,metadata:json(c.metadataJson),config:json(s.configJson)||{}});return{score:num(out.score),reason:out.reason}}
+ if(s.scorerTypeEnumId==='AgstService'){const p={input:c.input,output:c.output,groundTruth:c.groundTruth,runId:c.runId,metadata:json(c.metadataJson),config:json(s.configJson)||{}}
+  // a built-in scorer runs as the evals do; any other service with the caller's own authorization (none in a job), never
+  // as the system for whoever named it (SEC-AI-83)
+  const out=SERVICE_SCORERS.includes(s.serviceName)?call(s.serviceName,p):(ec.service.sync().name(s.serviceName).parameters(p).call()||{})
+  if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return{score:num(out.score),reason:out.reason}}
  return null // a human scorer is scored by a person
 }
 // Writes an AgentScore per scorer; a scorer that fails writes a score row with its error and the others go on.
@@ -160,5 +174,5 @@ function calledTool(p){if(!p.runId)return{score:0,reason:'No run to check'};cons
  const used=new Set(rows('AgentToolCall',{runId:p.runId}).map(c=>c.toolName));if(!want.length)return{score:used.size?1:0,reason:used.size?'Called '+[...used].join(', '):'Called no tool'}
  const missing=want.filter(t=>!used.has(t));return{score:(want.length-missing.length)/want.length,reason:missing.length?'Did not call '+missing.join(', '):'Called '+want.join(', ')}}
 
-function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,runReadable,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
+function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,runReadable,checkScorer,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
 ;({execute})

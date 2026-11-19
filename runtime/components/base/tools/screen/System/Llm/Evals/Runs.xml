@@ -37,11 +37,8 @@
                 .parameters({runId: r.runId, reason: 'listed in Evals, Runs'}).call().readable === true
         const hidden = ec.l10n.localize("Another user's run: its content needs the AgentAudit permission")
         runRows = runs.map(r => {
-            if (!reads(r)) {
-                const scores = Array.from(find('moqui.agent.AgentScore', {runId: r.runId}).orderBy('-scoredDate').list())
-                return {runId: r.runId, agentId: r.agentId || (r.externalHarnessId ? 'external ' + r.externalHarnessId : ''), statusId: r.statusId, endedDate: r.endedDate == null ? '' : ec.l10n.format(r.endedDate, 'yyyy-MM-dd HH:mm'), cost: r.cost, input: hidden, output: '', readable: false,
-                    scores: scores.map(s => (scorers[s.scorerId]?.scorerName || s.scorerId) + ': ' + (s.score == null ? 'error' : num(s.score).toFixed(2))).join('\n')}
-            }
+            // nor its scores: a judge's rubric or a Contains scorer's terms make a score tell what the run said
+            if (!reads(r)) return {runId: r.runId, agentId: r.agentId || (r.externalHarnessId ? 'external ' + r.externalHarnessId : ''), statusId: r.statusId, endedDate: r.endedDate == null ? '' : ec.l10n.format(r.endedDate, 'yyyy-MM-dd HH:mm'), cost: r.cost, input: hidden, output: '', readable: false, scores: ''}
             // the run's user message, else the conversation's last one sent by the time the run was submitted (external runs)
             const at = r.submittedDate == null ? Infinity : Date.parse(String(r.submittedDate)) || Number(String(r.submittedDate))
             const msg = Array.from(find('moqui.agent.AgentMessage', {runId: r.runId, role: 'user'}).orderBy('messageSeq').limit(1).list())[0]

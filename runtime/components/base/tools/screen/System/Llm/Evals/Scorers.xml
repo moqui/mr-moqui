@@ -5,6 +5,9 @@
         <actions><script><![CDATA[
             if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
             if (configJson) { try { JSON.parse(configJson) } catch (e) { ec.message.addError(ec.l10n.localize('Config is not JSON')); return } }
+            const refusal = ec.service.sync().name('org.moqui.agent.AgentEvalServices.check#ScorerChange')
+                    .parameters({op: 'store', scorerTypeEnumId, serviceName: serviceName || null}).call().refusal
+            if (refusal) { ec.message.addError(ec.l10n.localize(refusal)); return }
             const fields = {scorerName, description, scorerTypeEnumId, serviceName: serviceName || null, rubric: rubric || null, configJson: configJson || null, passThreshold: passThreshold || null}
             const old = scorerId ? ec.entity.find('moqui.agent.AgentScorer').condition({scorerId}).disableAuthz().one() : null
             ec.service.sync().name((old ? 'update' : 'create') + '#moqui.agent.AgentScorer').parameters(Object.assign({scorerId: scorerId || null}, fields, old ? {} : {createdDate: ec.user.nowTimestamp})).disableAuthz().call()
@@ -15,6 +18,9 @@
         <actions><script><![CDATA[
             if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
             const rate = Number(samplingRate); if (!(rate > 0 && rate <= 1)) { ec.message.addError(ec.l10n.localize('Sampling rate is more than 0 and at most 1')); return }
+            const refusal = ec.service.sync().name('org.moqui.agent.AgentEvalServices.check#ScorerChange')
+                    .parameters({op: 'attach', scorerId, agentId}).call().refusal
+            if (refusal) { ec.message.addError(ec.l10n.localize(refusal)); return }
             ec.service.sync().name('create#moqui.agent.AgentScorerAttach').parameters({scorerId, agentId, samplingRate: rate, fromDate: ec.user.nowTimestamp, lastScoredDate: ec.user.nowTimestamp}).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."/>

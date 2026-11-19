@@ -64,10 +64,30 @@ feature("another user's run is read only with AgentAudit, and the read is logged
   audited===true;logs.length==1;logs[0].auditorUserId=='EVAL_T_AUDITOR';logs[0].targetUserId=='EVAL_T_VIEWER';logs[0].reason=='spec'},
 })
 // SEC-AI-83: Evals › Runs (its html render) lists another user's run without its content, the viewer's own with it
-feature("Runs lists the content of the viewer's own runs only",{
- when(){login('john.doe');ec.artifactExecution.disableAuthz();const render=screenTest('apps').render('system/Llm/Evals/Runs',{agentId:'EVAL_T_AGENT'},'get')
+feature("Runs lists the content and scores of the viewer's own runs only",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  // a score of another user's run whose reason would tell what the run said
+  const theirs=list('moqui.agent.AgentRun',{userId:'EVAL_T_VIEWER'})[0]
+  call('create#moqui.agent.AgentScore',{scorerId:'CONTAINS',sourceEnumId:'AgssLive',runId:theirs.runId,score:1,passed:'Y',reason:'Found the secret term',scoredDate:ec.user.nowTimestamp})
+  const render=screenTest('apps').render('system/Llm/Evals/Runs',{agentId:'EVAL_T_AGENT'},'get')
   return{output:render.output||'',errors:Array.from(render.errorMessages||[])}},
- then({output,errors}){errors.length==0;output.includes('The order ships Tuesday.');!output.includes('Their private reply');output.includes('needs the AgentAudit permission')},
+ then({output,errors}){errors.length==0;output.includes('The order ships Tuesday.');!output.includes('Their private reply');output.includes('needs the AgentAudit permission')
+  !output.includes('Found the secret term')},
+})
+// SEC-AI-83: live scoring reads every user's runs of an agent, so attaching a scorer to an agent needs AgentAudit and
+// is logged; a service scorer runs a service of the evals' own unless an AgentAudit holder makes another
+feature("attaching a live scorer and a scorer of another service need AgentAudit",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  const change=(p)=>call(S+'check#ScorerChange',p).refusal||''
+  const attach=change({op:'attach',scorerId:'CONTAINS',agentId:'EVAL_T_AGENT'})
+  const other=change({op:'store',scorerTypeEnumId:'AgstService',serviceName:'org.moqui.impl.UserServices.create#UserAccount'})
+  const own=change({op:'store',scorerTypeEnumId:'AgstService',serviceName:S+'score#Contains'})
+  const judge=change({op:'store',scorerTypeEnumId:'AgstJudge'})
+  login('eval.auditor');ec.artifactExecution.disableAuthz();let audited,auditedOther;try{audited=change({op:'attach',scorerId:'CONTAINS',agentId:'EVAL_T_AGENT'})
+   auditedOther=change({op:'store',scorerTypeEnumId:'AgstService',serviceName:'org.example.Any.score#Thing'})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  return{attach,other,own,judge,audited,auditedOther,logs:list('moqui.agent.AgentAuditLog',{auditorUserId:'EVAL_T_AUDITOR'}).filter(l=>String(l.reason).includes('live scoring'))}},
+ then({attach,other,own,judge,audited,auditedOther,logs}){attach.includes('AgentAudit');other.includes('AgentAudit');own=='';judge==''
+  audited=='';auditedOther=='';logs.length==1},
 })
 // SEC-AI-81: while an agent may write Vue SFC canvases, the app's pages (the qapps shell, which holds the Assist drawer)
 // let frames load only from this server, the conf's policy kept
