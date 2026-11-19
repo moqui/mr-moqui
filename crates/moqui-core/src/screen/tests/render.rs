@@ -2189,6 +2189,155 @@ fn a_previewed_screens_actions_may_not_disable_authorization() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-AI-102: the whole of a proposed screen runs under the lock, not only its `<actions>`: a form-list's row-actions and
+/// its `entity-find`, a drop-down's `entity-options`, a tree node, a label's `${}` and a section's `condition` may not
+/// disable authorization, and its actions may not sign in as another user; the same text from the file may.
+#[test]
+fn a_previewed_screens_widgets_forms_trees_and_expressions_may_not_disable_authorization_or_switch_user() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-widgets-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // `PROBE` disables authorization on a find and answers whether that was refused
+    let probe = "(() => { try { ec.entity.find('moqui.basic.Enumeration').disableAuthz(); return 'ALLOWED' } \
+        catch (e) { return String(e.message).includes('change of user are refused') ? 'REFUSED' : 'OTHER ' + e.message } })()";
+    let refused = crate::script::host::LOCKED_AUTHZ;
+    let enums = r#"<entity-find entity-name="moqui.basic.Enumeration" list="enumList" disable-authz="true"><econdition field-name="enumId" value="NONE_SUCH"/></entity-find>"#;
+    let cases: Vec<(&str, String)> = vec![
+        (
+            "actions",
+            format!(
+                r#"<actions><script>out = {probe}</script></actions><widgets><label text="MARK ${{out}}"/></widgets>"#
+            ),
+        ),
+        (
+            "login",
+            r#"<actions><script>try { ec.user.internalLoginUser('nobody.here'); out = 'ALLOWED' }
+                catch (e) { out = String(e.message).includes('change of user are refused') ? 'REFUSED' : 'ALLOWED' }
+                ec.message.clearErrors()</script></actions>
+                <widgets><label text="MARK ${out}"/></widgets>"#
+                .to_string(),
+        ),
+        (
+            "label",
+            format!(r#"<widgets><label text="MARK ${{{probe}}}"/></widgets>"#),
+        ),
+        (
+            "condition",
+            format!(
+                r#"<widgets><section name="S" condition="{probe} == 'ALLOWED'"><widgets><label text="MARK ALLOWED"/></widgets>
+                <fail-widgets><label text="MARK REFUSED"/></fail-widgets></section></widgets>"#
+            ),
+        ),
+        (
+            "row-actions",
+            format!(
+                r#"<actions><script>rows = [{{v: 1}}]</script></actions><widgets><form-list name="F" list="rows" skip-form="true">
+                <row-actions><script>out = 'MARK ' + {probe}</script></row-actions>
+                <field name="out"><default-field><display/></default-field></field></form-list></widgets>"#
+            ),
+        ),
+        (
+            "form-find",
+            format!(
+                r#"<widgets><label text="MARK ALLOWED"/><form-list name="F" list="enumList" skip-form="true">{enums}
+                <field name="enumId"><default-field><display/></default-field></field></form-list></widgets>"#
+            ),
+        ),
+        (
+            "options",
+            format!(
+                r#"<widgets><label text="MARK ALLOWED"/><form-single name="F"><field name="enumId"><default-field><drop-down>
+                <entity-options key="${{enumId}}" text="${{description}}">{}</entity-options></drop-down></default-field></field>
+                </form-single></widgets>"#,
+                enums.replace(r#" list="enumList""#, "")
+            ),
+        ),
+    ];
+    for (name, body) in &cases {
+        let location = dir.join(format!("Probe{}.xml", name.replace('-', "")));
+        let screen = format!(r#"<screen require-authentication="false">{body}</screen>"#);
+        std::fs::write(&location, &screen).unwrap();
+        let root = location.to_string_lossy().into_owned();
+        let render = || {
+            make_render(&world.factory)
+                .root_screen(root.clone())
+                .screen_path("")
+                .render_mode("html")
+                .render()
+                .map(|output| output.body_text())
+                .unwrap_or_else(|err| err.message().to_string())
+        };
+        let plain = render();
+        assert!(
+            plain.contains("MARK ALLOWED") && !plain.contains(refused),
+            "{name} from the file: {plain}"
+        );
+        let mut overlay = crate::screen::overlay::Overlay::new();
+        overlay.insert(&root, None, &screen);
+        let previewed = crate::screen::overlay::with(overlay, render);
+        assert!(
+            previewed.contains("MARK REFUSED") || previewed.contains(refused),
+            "{name} in a preview: {previewed}"
+        );
+        assert!(
+            !previewed.contains("MARK ALLOWED") || previewed.contains(refused),
+            "{name} in a preview: {previewed}"
+        );
+    }
+    // a tree's node data, asked by its own request
+    let location = dir.join("ProbeTree.xml");
+    let screen = format!(
+        r#"<screen require-authentication="false"><widgets><tree name="T">
+        <tree-node name="N"><label text="${{nodeList_entry.name}}"/></tree-node>
+        <tree-sub-node node-name="N" list="nodes"><actions><script>nodes = [{{name: 'MARK ' + {probe}}}]</script></actions></tree-sub-node>
+        </tree></widgets></screen>"#
+    );
+    std::fs::write(&location, &screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let fetch = || {
+        let mut get = request("GET", "/actions/T");
+        get.query = vec![("treeNodeId".to_string(), "#".to_string())];
+        serve_at(&world.factory, get, &root).body_text()
+    };
+    let plain = fetch();
+    assert!(plain.contains("MARK ALLOWED"), "tree from the file: {plain}");
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, &screen);
+    let previewed = crate::screen::overlay::with(overlay, fetch);
+    assert!(previewed.contains("MARK REFUSED"), "tree in a preview: {previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview's response policy loads nothing from another site: images, styles' `url()`, fonts, fetches and
+/// sockets are its own origin's (or a `data:` image or font), and only the app frames it.
+#[test]
+fn the_preview_policy_loads_nothing_from_another_site() {
+    let policy = crate::screen::render::PREVIEW_POLICY;
+    let directives: Vec<&str> = policy
+        .split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    for wanted in [
+        "default-src 'self'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "frame-ancestors 'self'",
+        "form-action 'self'",
+    ] {
+        assert!(directives.contains(&wanted), "{wanted}: {policy}");
+    }
+    for directive in &directives {
+        for source in directive.split_whitespace().skip(1) {
+            assert!(
+                source.starts_with('\'') || source == "data:",
+                "{directive} names a source of another site: {policy}"
+            );
+        }
+    }
+}
+
 /// SEC-AI-82: while a screen stands at a preview's proposed text, its `encode="false"` labels, displays, links,
 /// editables and button-menus are encoded in html and qvt (a qvt `{{ }}` as well), and a label's `type` is one of the
 /// XSD's tags, overlay or not, so it is never markup of its own.

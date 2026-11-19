@@ -85,29 +85,6 @@ impl XmlFragment {
 pub struct Actions {
     pub xml: Arc<str>,
     prepared: crate::script::PreparedActions,
-    /// Made from a preview's proposed text ([`super::overlay`]): run with authorization required and locked.
-    proposed: bool,
-}
-
-thread_local! {
-    /// Set while a definition that stands at an overlay's text is built ([`ScreenDef::load`]): the [`Actions`] made
-    /// then are proposed text. A definition built under an overlay is never cached, so none reaches another render.
-    static PROPOSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Puts back [`PROPOSED`] as it was when dropped.
-struct ProposedBuild(bool);
-
-impl ProposedBuild {
-    fn enter(proposed: bool) -> Self {
-        Self(PROPOSED.with(|cell| cell.replace(cell.get() || proposed)))
-    }
-}
-
-impl Drop for ProposedBuild {
-    fn drop(&mut self) {
-        PROPOSED.with(|cell| cell.set(self.0));
-    }
 }
 
 impl Actions {
@@ -128,7 +105,6 @@ impl Actions {
         Self {
             xml: xml.into(),
             prepared: crate::script::PreparedActions::default(),
-            proposed: PROPOSED.with(std::cell::Cell::get),
         }
     }
 
@@ -136,18 +112,8 @@ impl Actions {
     /// ([`crate::context::ExecutionContext::keep_authz`]): a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()`
     /// the block leaves on, by a throw or an early return, ends with it, and the rest of the render (later actions,
     /// subscreens, widget finds) runs with the state it had before (SEC-RTE-92).
-    ///
-    /// The actions of a preview's proposed text, while its overlay is held, run with authorization required and a
-    /// script's `disableAuthz()` refused ([`crate::context::ExecutionContext::lock_authz`]): text a model wrote reads
-    /// only what the viewer may (plans/Security-Review-Low.md SEC-AI-102). A service they call runs its own code as
-    /// ever.
     pub fn run(&self) -> Result<(), Error> {
-        let scope = if self.proposed && super::overlay::active() {
-            crate::context::ExecutionContext::lock_authz
-        } else {
-            crate::context::ExecutionContext::keep_authz
-        };
-        let _authz = crate::context::ExecutionContext::with_current(scope);
+        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
         self.prepared.run(&self.xml, None)
     }
 }
@@ -1180,6 +1146,11 @@ pub struct ScreenDef {
     /// The merged screen XML, after `screen-extend`.
     pub source: XmlFragment,
     pub sources: Vec<Source>,
+    /// The screen, or a screen-extend of it, stands at a preview's proposed text ([`super::overlay`]): while it renders
+    /// (its actions, widgets, forms, trees and transitions) authorization is required and no script disables it
+    /// ([`super::proposed_running`], plans/Security-Review-Low.md SEC-AI-102). A definition built under an overlay is
+    /// never cached, so it reaches no other render.
+    pub proposed: bool,
     /// When the sources were last found current, in epoch milliseconds.
     pub(super) checked_at: std::sync::atomic::AtomicI64,
     /// The screen configuration data generation the `SubscreensItem` rows were read at.
@@ -1329,13 +1300,6 @@ impl ScreenDef {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
         let extended = apply_screen_extends(factory, &node, location, &mut sources)?;
-        // the screen or a screen-extend of it stands at a preview's proposed text: its actions are proposed (SEC-AI-102)
-        let _proposed = ProposedBuild::enter(
-            super::overlay::active()
-                && sources
-                    .iter()
-                    .any(|source| super::overlay::text_of(&source.location).is_some()),
-        );
         if crate::devtools::is_dev_instance() {
             // F10: each widget element keeps the file that wrote it, merged ones their screen-extend's
             for root in node
@@ -1637,6 +1601,10 @@ impl ScreenDef {
             shell_providers: super::shell::ShellProviders::of(node, location),
             ext_items: super::ext::of(node, location),
             source: XmlFragment::of(node),
+            proposed: super::overlay::active()
+                && sources
+                    .iter()
+                    .any(|source| super::overlay::text_of(&source.location).is_some()),
             sources,
             checked_at: std::sync::atomic::AtomicI64::new(super::cache::now_millis()),
             config_generation,

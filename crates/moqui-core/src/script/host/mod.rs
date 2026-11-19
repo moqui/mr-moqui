@@ -666,12 +666,13 @@ pub fn with_ec<T>(body: impl FnOnce(&crate::context::ExecutionContext) -> T) -> 
 }
 
 /// What a script's `disableAuthz()` (of `ec.artifactExecution`, a find or a service call) answers where it is refused.
-pub const LOCKED_AUTHZ: &str = "Authorization stays on in a preview of proposed screen text: disableAuthz() is refused";
+pub const LOCKED_AUTHZ: &str =
+    "Authorization stays on in a preview of proposed screen text: disableAuthz() and a change of user are refused";
 
-/// Refuse a script's disabling of authorization where [`crate::context::ExecutionContext::lock_authz`] holds: the
-/// actions of a preview's proposed screen text (plans/Security-Review-Low.md SEC-AI-102).
+/// Refuse a script's disabling of authorization, or a change of the user, while a preview's proposed screen text runs
+/// ([`crate::screen::proposed_running`], plans/Security-Review-Low.md SEC-AI-102).
 pub fn refuse_locked_authz() -> Result<(), HostError> {
-    if crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::authz_locked).unwrap_or(false) {
+    if crate::screen::proposed_running() {
         return Err(HostError::message(LOCKED_AUTHZ));
     }
     Ok(())

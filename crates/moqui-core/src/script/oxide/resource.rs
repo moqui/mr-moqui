@@ -104,12 +104,11 @@ fn thrown_on(scope: &mut Scope<'_>, err: RuntimeError) -> Conv {
 /// arguments, and gives what it returns (the file's value itself when it has no such function);
 /// `script(location, method, additionalContext)` runs both with the map's entries in a context frame of their own.
 ///
-/// The run holds the scope a service call holds ([`crate::context::ExecutionContext::keep_script_authz`]): a
+/// The run holds the scope a service call holds ([`crate::context::ExecutionContext::keep_authz`]): a
 /// `disableAuthz()`, `disableEntityEca()` or `disableTarpit()` the file leaves on ends with the run, and the caller's
-/// state comes back however it ends (SEC-RTE-92). Where the caller may not disable authorization (a preview's proposed
-/// actions, SEC-AI-102) the file may not either.
+/// state comes back however it ends (SEC-RTE-92).
 fn script(scope: &mut Scope<'_>) -> Result<Value, Conv> {
-    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_script_authz);
+    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
     let method = match scope.arg(1) {
         Value::String(text) => Some(text.to_utf8_lossy()).filter(|name| !name.is_empty()),
         _ => None,

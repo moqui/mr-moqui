@@ -193,6 +193,8 @@ pub fn render_active_screen(state: &RenderState, runner: &dyn Runner, is_target:
 }
 
 fn render_def(state: &RenderState, runner: &dyn Runner, def: &Arc<ScreenDef>, is_target: bool) -> Result<(), Error> {
+    // a screen at a preview's proposed text renders with authorization required (SEC-AI-102)
+    let _required = crate::screen::render::require_if_proposed(def);
     let mut frames = Frames::default();
     frames.enter_rendered_screen(def, is_target)?;
     frames.hit_detail(Some(&state.content_type), def.track_artifact_hit);

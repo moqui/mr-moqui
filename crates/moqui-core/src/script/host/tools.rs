@@ -965,6 +965,8 @@ macro_rules! tools_js {
         },
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
+        // whether disableAuthz() is refused here: a preview's proposed screen text runs (SEC-AI-102)
+        authzLocked: host.authzLocked,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
         disableTarpit: host.disableTarpit, enableTarpit: host.enableTarpit,
         // Java's stack: each frame as {name, typeEnumId, actionEnumId}, top first. No history is kept here: what ran
@@ -1265,6 +1267,7 @@ static METHODS: &[Method] = &[
     method!("tools", "disableAuthz", [], disable_authz),
     method!("tools", "enableAuthz", [], enable_authz),
     method!("tools", "authzDisabled", [], authz_disabled),
+    method!("tools", "authzLocked", [], authz_locked),
     method!("tools", "disableTarpit", [], disable_tarpit),
     method!("tools", "enableTarpit", [], enable_tarpit),
     method!("tools", "entityEcaDisabled", [], entity_eca_disabled),
@@ -2987,8 +2990,15 @@ fn enable_tarpit(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(crate::context::ExecutionContext::enable_tarpit)?))
 }
 
+/// `ec.artifactExecution.authzLocked()`: whether `disableAuthz()` is refused here, as while a preview's proposed screen
+/// text runs ([`super::refuse_locked_authz`]). Framework template code asks it and reads as the viewer then.
+///
 /// `ec.artifactExecution.authzDisabled()`: whether authorization is disabled for this execution context now, by a
 /// script or by Rust code (a call with `disableAuthz()`, a job), without changing it.
+fn authz_locked(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(crate::screen::proposed_running()))
+}
+
 fn authz_disabled(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(crate::context::ExecutionContext::authz_disabled)?))
 }

@@ -88,10 +88,6 @@ pub(super) struct ArtifactStack {
     /// Java's `tarpitDisabled` of the `ArtifactExecutionFacade`: no frame of this context is counted against a tarpit.
     /// Shared with each [`AuthzScope`], which puts it back.
     tarpit_disabled: Rc<Cell<bool>>,
-    /// Whether script code here may not disable authorization ([`super::ExecutionContext::lock_authz`]): the actions of
-    /// a preview's proposed screen text (SEC-AI-102). Shared with each [`AuthzScope`], which sets it for what runs
-    /// inside and puts it back.
-    authz_locked: Rc<Cell<bool>>,
     /// The first frame an authorization decision sees: frames below it belong to the render an isolated check runs in.
     check_base: usize,
     /// How many isolated checks are open: their frames ask whether the user may, they are not a use.
@@ -445,22 +441,11 @@ impl ArtifactStack {
         self.authz_depth.get() > 0
     }
 
-    pub(super) fn authz_locked(&self) -> bool {
-        self.authz_locked.get()
-    }
-
     /// The authorization state here, set aside until the guard drops: the disabled depth, the guard of a script's
     /// `disableAuthz()` in `script` (taken out, so what runs inside starts with none of its own), and whether entity ECA
     /// rules and tarpit counting are disabled. With `require`, authorization is checked until then whatever an outer
-    /// `disable_authz` holds; without it, the depth stays. With `lock` true a script inside may not disable it, with
-    /// false it may (a service's own code, a screen's own actions) whatever the caller's lock, and with none the
-    /// caller's lock holds inside (a file a script runs).
-    pub(super) fn scope_authz(
-        &self,
-        require: bool,
-        lock: Option<bool>,
-        script: &Rc<RefCell<Option<AuthzGuard>>>,
-    ) -> AuthzScope {
+    /// `disable_authz` holds; without it, the depth stays.
+    pub(super) fn scope_authz(&self, require: bool, script: &Rc<RefCell<Option<AuthzGuard>>>) -> AuthzScope {
         let saved = if require {
             self.authz_depth.replace(0)
         } else {
@@ -475,11 +460,6 @@ impl ArtifactStack {
             saved_entity_eca: self.entity_eca_disabled.get(),
             tarpit: Rc::clone(&self.tarpit_disabled),
             saved_tarpit: self.tarpit_disabled.get(),
-            locked: Rc::clone(&self.authz_locked),
-            saved_locked: match lock {
-                Some(lock) => self.authz_locked.replace(lock),
-                None => self.authz_locked.get(),
-            },
         }
     }
 }
@@ -499,8 +479,6 @@ pub struct AuthzScope {
     saved_entity_eca: bool,
     tarpit: Rc<Cell<bool>>,
     saved_tarpit: bool,
-    locked: Rc<Cell<bool>>,
-    saved_locked: bool,
 }
 
 impl Drop for AuthzScope {
@@ -512,7 +490,6 @@ impl Drop for AuthzScope {
         *self.script.borrow_mut() = self.outer_script.take();
         self.entity_eca.set(self.saved_entity_eca);
         self.tarpit.set(self.saved_tarpit);
-        self.locked.set(self.saved_locked);
     }
 }
 

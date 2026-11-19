@@ -542,6 +542,37 @@ pub(super) fn with_qvt_render<R>(
     body(&state)
 }
 
+/// Whether the code running now is a preview's proposed text (plans/Security-Review-Low.md SEC-AI-102): an overlay is
+/// held, the screen the render is at stands at its text ([`super::definition::ScreenDef::proposed`]), and no service
+/// call runs its own code since (a service the text calls is the service's). Its actions, widget and condition
+/// expressions, forms, trees and transitions alike: a script's `disableAuthz()`, of a find or a service call too, and a
+/// change of user are refused then (`script::host::refuse_locked_authz`), and authorization is required while it
+/// renders.
+pub(crate) fn proposed_running() -> bool {
+    if !super::overlay::active() {
+        return false;
+    }
+    let proposed = with_current_render(|state| {
+        let defs = &state.url_info.path_defs;
+        match state.override_def.borrow().as_ref() {
+            Some(def) => def.proposed,
+            None => defs.get(state.screen_path_index.get()).is_some_and(|def| def.proposed),
+        }
+    })
+    .unwrap_or(false);
+    proposed && !ExecutionContext::with_current(ExecutionContext::in_service_body).unwrap_or(false)
+}
+
+/// Authorization required until the guard drops, for the work of a definition that stands at a preview's proposed
+/// text; nothing for another (SEC-AI-102).
+pub(super) fn require_if_proposed(def: &ScreenDef) -> Option<crate::context::AuthzScope> {
+    if def.proposed {
+        ExecutionContext::with_current(ExecutionContext::require_authz)
+    } else {
+        None
+    }
+}
+
 /// Run `body` with the render in progress on this thread, if there is one.
 pub fn with_current_render<R>(body: impl FnOnce(&RenderState) -> R) -> Option<R> {
     let state = ACTIVE.with(|stack| stack.borrow().last().cloned())?;
@@ -1120,6 +1151,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
             frames.enter_screen(def, index == last)?;
             state.screen_path_index.set(index);
             if let Some(actions) = &def.always_actions {
+                let _required = require_if_proposed(def);
                 actions.run()?;
             }
         }
@@ -1165,6 +1197,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
             if index >= first_pre {
                 state.screen_path_index.set(index);
                 if let Some(actions) = &def.pre_actions {
+                    let _required = require_if_proposed(def);
                     actions.run()?;
                 }
             }
@@ -2002,10 +2035,13 @@ fn run_transition_steps(
         frames.apply_anonymous(def)?;
         state.screen_path_index.set(index);
         if let Some(actions) = &def.always_actions {
+            let _required = require_if_proposed(def);
             actions.run()?;
         }
     }
     let screen = Arc::clone(&info.target_screen);
+    // a proposed screen's transition runs with authorization required (SEC-AI-102)
+    let _required = require_if_proposed(&screen);
     crate::web::set_attribute(
         "moqui.telemetry.artifact.type",
         Some(Value::string("AT_XML_SCREEN_TRANS")),

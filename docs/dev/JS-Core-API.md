@@ -473,6 +473,7 @@ context.
 | `disableAuthz()` | Authorization is not checked in this execution context until `enableAuthz()`. Returns whether it was already disabled |
 | `enableAuthz()` | Checks authorization again |
 | `authzDisabled()` | Whether authorization is disabled, by a script or by the caller (a call with `disableAuthz()`, a job); changes nothing |
+| `authzLocked()` | Whether `disableAuthz()`, a find's or a service call's, and a change of user are refused here: while a preview's proposed screen text runs (its actions, widgets, forms, trees and transitions). Framework template code asks it before a read it would otherwise make with authorization off |
 | `disableEntityEca()` | Entity ECA rules do not run for this execution context's writes. Returns whether they were already disabled |
 | `enableEntityEca()`, `entityEcaDisabled()` | Runs them again; whether they are disabled |
 | `disableTarpit()` | No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled |
