@@ -14,7 +14,8 @@
 
 //! The [age](https://age-encryption.org/v1) file format for one X25519 recipient, streamed: what this writes the `age`
 //! and `rage` tools decrypt with the recipient's identity (`age -d -i key.txt`). A host that encrypts holds only the
-//! public `age1...` recipient. [`decrypt`] reads the same format back, for tests and small files.
+//! public `age1...` recipient. [`Decryptor`] reads the same format back as a stream, a database backup's included
+//! (plans/Security-Review.md SEC-CLI-114); [`decrypt`] reads a whole small file.
 
 use std::io::{self, Read, Write};
 
@@ -220,37 +221,46 @@ impl<W: Write> Write for Encryptor<W> {
     }
 }
 
-/// Decrypt a whole age file encrypted to `identity`'s recipient.
-///
-/// # Errors
-///
-/// When the file is not age v1 with an X25519 stanza for `identity`, or it was changed or cut short.
-pub fn decrypt(identity: &Identity, input: &mut dyn Read) -> Result<Vec<u8>, Error> {
-    let mut data = Vec::new();
-    input
-        .read_to_end(&mut data)
-        .map_err(|err| Error::new("could not read the age file").with_source(err))?;
-    let bad = |what: &str| Error::new(format!("not a readable age file: {what}"));
-    let mut lines = Vec::new();
-    let mut at = 0;
+/// The longest age header read: a file has one stanza here, a few hundred bytes; one from another tool may have a few.
+const HEADER_MAX: usize = 64 * 1024;
+
+fn bad(what: &str) -> Error {
+    Error::new(format!("not a readable age file: {what}"))
+}
+
+/// The header of an age file, read from `input` to the end of its `---` line, at most [`HEADER_MAX`] bytes.
+fn read_header(input: &mut dyn Read) -> Result<Vec<u8>, Error> {
+    let mut header = Vec::with_capacity(256);
+    let mut line_start = 0;
+    let mut byte = [0_u8; 1];
     loop {
-        let end = data[at..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .ok_or_else(|| bad("header"))?
-            + at;
-        let line = std::str::from_utf8(&data[at..end]).map_err(|_| bad("header"))?;
-        at = end + 1;
-        let done = line.starts_with("---");
-        lines.push(line);
-        if done {
-            break;
+        let read = input
+            .read(&mut byte)
+            .map_err(|err| Error::new("could not read the age file").with_source(err))?;
+        if read == 0 {
+            return Err(bad("header"));
+        }
+        header.push(byte[0]);
+        if byte[0] == b'\n' {
+            if header[line_start..].starts_with(b"---") {
+                return Ok(header);
+            }
+            line_start = header.len();
+        }
+        if header.len() > HEADER_MAX {
+            return Err(bad("header too long"));
         }
     }
+}
+
+/// The file key `header` (its lines to the `---` one) wraps for `identity`, its MAC checked.
+fn file_key_of(identity: &Identity, header: &[u8]) -> Result<[u8; 16], Error> {
+    let text = std::str::from_utf8(header).map_err(|_| bad("header"))?;
+    let lines: Vec<&str> = text.strip_suffix('\n').unwrap_or(text).split('\n').collect();
     if lines.first() != Some(&VERSION_LINE) {
         return Err(bad("version"));
     }
-    let mut file_key = None;
+    let mut file_key: Option<[u8; 16]> = None;
     let mut index = 1;
     while index + 1 < lines.len() {
         let args: Vec<&str> = lines[index].split(' ').collect();
@@ -288,32 +298,145 @@ pub fn decrypt(identity: &Identity, input: &mut dyn Read) -> Result<Vec<u8>, Err
         let wrap_key = hkdf(&salt, &shared, X25519_INFO);
         file_key = ChaCha20Poly1305::new(&wrap_key.into())
             .decrypt(&Nonce::default(), wrapped.as_slice())
-            .ok();
+            .ok()
+            .and_then(|key| <[u8; 16]>::try_from(key.as_slice()).ok());
     }
     let file_key = file_key.ok_or_else(|| bad("no stanza for this identity"))?;
     let mac_line = lines.last().copied().unwrap_or("");
     let mac = b64()
         .decode(mac_line.strip_prefix("--- ").unwrap_or(""))
         .map_err(|_| bad("MAC"))?;
-    let header_len = at - mac_line.len() - 1 + 3;
+    // the MAC covers the header up to and with the `---` of its last line
+    let covered = header.len() - 1 - mac_line.len() + 3;
     let mut check = hmac::Hmac::<Sha256>::new_from_slice(&hkdf(&[], &file_key, b"header")).map_err(|_| bad("MAC"))?;
-    check.update(&data[..header_len]);
+    check.update(&header[..covered]);
     check.verify_slice(&mac).map_err(|_| bad("header MAC"))?;
-    let nonce = data.get(at..at + 16).ok_or_else(|| bad("nonce"))?;
-    let cipher = ChaCha20Poly1305::new(&hkdf(nonce, &file_key, b"payload").into());
+    Ok(file_key)
+}
+
+/// Reads an age file encrypted to an identity's recipient as its plain text, one chunk in memory at a time. Each
+/// chunk is checked before any of it is handed on, so what it gives was written by the file's author; a file cut
+/// short at a chunk's end is an error at that end, not a shorter text.
+pub struct Decryptor<R: Read> {
+    inner: R,
+    cipher: ChaCha20Poly1305,
+    counter: u64,
+    /// The plain text of the chunk being handed on, and how much of it was.
+    plain: Vec<u8>,
+    at: usize,
+    /// A byte read past a full chunk, the first of the next one.
+    next: Option<u8>,
+    done: bool,
+}
+
+impl<R: Read> Decryptor<R> {
+    /// Read the header and the payload nonce from `inner` and open the file key with `identity`.
+    ///
+    /// # Errors
+    ///
+    /// When the file is not age v1 with an X25519 stanza for `identity`, its header MAC does not hold, or it cannot
+    /// be read.
+    pub fn new(mut inner: R, identity: &Identity) -> Result<Self, Error> {
+        let header = read_header(&mut inner)?;
+        let file_key = file_key_of(identity, &header)?;
+        let mut nonce = [0_u8; 16];
+        inner.read_exact(&mut nonce).map_err(|_| bad("nonce"))?;
+        Ok(Self {
+            inner,
+            cipher: ChaCha20Poly1305::new(&hkdf(&nonce, &file_key, b"payload").into()),
+            counter: 0,
+            plain: Vec::new(),
+            at: 0,
+            next: None,
+            done: false,
+        })
+    }
+
+    /// Read and open the next chunk into `plain`; false at the end of the file.
+    fn next_chunk(&mut self) -> io::Result<bool> {
+        if self.done {
+            return Ok(false);
+        }
+        let mut sealed = Vec::with_capacity(CHUNK + TAG);
+        if let Some(byte) = self.next.take() {
+            sealed.push(byte);
+        }
+        let mut filled = sealed.len();
+        sealed.resize(CHUNK + TAG, 0);
+        while filled < sealed.len() {
+            let read = self.inner.read(&mut sealed[filled..])?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        sealed.truncate(filled);
+        // a full chunk is the last one only when nothing follows it
+        let mut last = filled < CHUNK + TAG;
+        if !last {
+            let mut byte = [0_u8; 1];
+            let read = loop {
+                match self.inner.read(&mut byte) {
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                    other => break other?,
+                }
+            };
+            if read == 0 {
+                last = true;
+            } else {
+                self.next = Some(byte[0]);
+            }
+        }
+        let cut = || {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "not a readable age file: payload changed or cut short",
+            )
+        };
+        if sealed.is_empty() {
+            return Err(cut());
+        }
+        let plain = self
+            .cipher
+            .decrypt(&chunk_nonce(self.counter, last), sealed.as_slice())
+            .map_err(|_| cut())?;
+        // only a file's one chunk may be empty
+        if plain.is_empty() && self.counter > 0 {
+            return Err(cut());
+        }
+        self.counter += 1;
+        self.done = last;
+        self.plain = plain;
+        self.at = 0;
+        Ok(true)
+    }
+}
+
+impl<R: Read> Read for Decryptor<R> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        while self.at == self.plain.len() {
+            if !self.next_chunk()? {
+                return Ok(0);
+            }
+        }
+        let take = out.len().min(self.plain.len() - self.at);
+        out[..take].copy_from_slice(&self.plain[self.at..self.at + take]);
+        self.at += take;
+        Ok(take)
+    }
+}
+
+/// Decrypt a whole age file encrypted to `identity`'s recipient.
+///
+/// # Errors
+///
+/// When the file is not age v1 with an X25519 stanza for `identity`, or it was changed or cut short.
+pub fn decrypt(identity: &Identity, input: &mut dyn Read) -> Result<Vec<u8>, Error> {
+    let mut reader = Decryptor::new(input, identity)?;
     let mut out = Vec::new();
-    let sealed = &data[at + 16..];
-    let chunks: Vec<&[u8]> = sealed.chunks(CHUNK + TAG).collect();
-    for (counter, chunk) in chunks.iter().enumerate() {
-        let last = counter + 1 == chunks.len();
-        let plain = cipher
-            .decrypt(&chunk_nonce(u64::try_from(counter).unwrap_or(u64::MAX), last), *chunk)
-            .map_err(|_| bad("payload changed or cut short"))?;
-        out.extend_from_slice(&plain);
-    }
-    if chunks.is_empty() {
-        return Err(bad("no payload"));
-    }
+    reader
+        .read_to_end(&mut out)
+        .map_err(|err| bad(&err.to_string().replace("not a readable age file: ", "")))?;
     Ok(out)
 }
 

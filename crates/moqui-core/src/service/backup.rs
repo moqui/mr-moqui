@@ -22,7 +22,10 @@
 //! `database-backup@dir` is the archive directory when the call names no `backupDir`, and
 //! `database-backup@scheduled` (`true` or `false`) sets the seed job `backup_EmbeddedDatabase_daily` running or
 //! paused at boot ([`apply_schedule_property`]). Unset, neither changes anything; the desktop app sets both
-//! (plans/Mobile-Desktop.md section 4, configuration 1, Backups).
+//! (plans/Mobile-Desktop.md section 4, configuration 1, Backups). A third, `database-backup@recipient`, an age
+//! recipient, seals each dump to it as it is written (`<name>.dump.age`); the desktop app sets it to the public key of
+//! the backup key it keeps (plans/Security-Review.md SEC-CLI-114). An encrypted mirror seals such a dump again, to its
+//! own recipient, so its copy needs both keys: with this set, the mirror need not encrypt.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,6 +48,8 @@ pub(crate) const BACKUP_JOB: &str = "backup_EmbeddedDatabase_daily";
 pub(crate) const DIR_PROPERTY: &str = "database-backup@dir";
 /// `true` runs [`BACKUP_JOB`] on its schedule, `false` pauses it; set at each boot.
 pub(crate) const SCHEDULED_PROPERTY: &str = "database-backup@scheduled";
+/// The age recipient each dump is sealed to as it is written; empty writes dumps as they are (SEC-CLI-114).
+pub(crate) const RECIPIENT_PROPERTY: &str = "database-backup@recipient";
 const MESSAGE_TYPE: &str = "moqui.service.message.SystemMessageType";
 const JOB_PARAMETER: &str = "moqui.service.job.ServiceJobParameter";
 /// This service, as a `ServiceJob` names it.
@@ -211,7 +216,14 @@ fn request_from(parameters: &BTreeMap<String, Value>) -> BackupRequest {
         chain_incrementals: flag_param(parameters, "chainIncrementals"),
         fast_checkpoint: flag_param(parameters, "fastCheckpoint"),
         timeout: Duration::from_secs(u64::from(minutes) * 60),
+        recipient: recipient_of(&crate::context::conf_env::setting(RECIPIENT_PROPERTY)),
     }
+}
+
+/// The [`RECIPIENT_PROPERTY`] a dump is sealed to, none when it is empty. The host checks that it is an age recipient
+/// before it dumps anything, and a backup with one that is not fails rather than write the dump as it is.
+pub(crate) fn recipient_of(property: &str) -> Option<String> {
+    Some(property.trim().to_string()).filter(|recipient| !recipient.is_empty())
 }
 
 /// The archive directory: the call's `backupDir`, else the [`DIR_PROPERTY`] property, else none (`runtime/db/backup`).
@@ -389,12 +401,14 @@ fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::Backu
         .map(|(path, _)| path.rsplit('/').next().unwrap_or(path).to_string())
         .collect();
     let keep_names: Vec<String> = outcome.keep.iter().map(|kept| kept.name.clone()).collect();
+    // what an encrypted mirror sealed is left alone, unless the dumps here are sealed themselves (SEC-CLI-114)
+    let local_sealed = backup::sealed_locally(&outcome.keep);
     let plan = backup::mirror_plan(
         &keep_names,
         &remote_names,
         &outcome.renames,
         &outcome.rewritten,
-        backup::is_archive_name,
+        |name| backup::is_mirror_archive(name, local_sealed),
     );
     let mut failed = false;
     for (old, new) in &plan.renames {

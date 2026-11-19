@@ -1451,3 +1451,59 @@ fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
     std::os::unix::fs::symlink(&socket_dir, &link).unwrap();
     assert!(socket_dir_private(&link, &owned).is_err());
 }
+
+/// SEC-CLI-114: a sealed dump is opened for a restore only with its recipient's identity, read from an identity file
+/// with its comments; it is decrypted whole into an owner-only file under the runtime's `db` directory, which goes
+/// when the restore is done, and one that was changed opens to nothing and leaves nothing; a plain dump is used as it is.
+#[test]
+fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file() {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let runtime = temp_cluster_dir();
+    let _guard = DirGuard(runtime.clone());
+    std::fs::create_dir_all(&runtime).unwrap();
+    let identity = Identity::generate().unwrap();
+    let file = format!(
+        "# created: 2026-11-19T00:00:00Z\n# public key: {}\n{}\n",
+        identity.recipient(),
+        identity.secret_text()
+    );
+    let read = identity_of(&file).unwrap();
+    assert_eq!(read.recipient(), identity.recipient());
+    assert!(identity_of("# only a comment\n").is_err());
+
+    let sealed = runtime.join("moqui-20261119T020000Z-manual.dump.age");
+    let mut writer = moqui_lib::age::Encryptor::new(Vec::new(), &identity.recipient()).unwrap();
+    writer.write_all(b"PGDMP and the rest of a dump").unwrap();
+    std::fs::write(&sealed, writer.finish().unwrap()).unwrap();
+
+    let refused = opened_dump(&runtime, "moqui", &sealed, None).err().unwrap();
+    assert!(refused.message().contains("--identity"), "{refused}");
+    let other = Identity::generate().unwrap();
+    assert!(opened_dump(&runtime, "moqui", &sealed, Some(&other)).is_err());
+
+    let opened = opened_dump(&runtime, "moqui", &sealed, Some(&identity)).unwrap();
+    let path = opened.path().to_path_buf();
+    assert!(path.starts_with(runtime.join("db")), "{}", path.display());
+    assert_eq!(std::fs::read(&path).unwrap(), b"PGDMP and the rest of a dump");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    drop(opened);
+    assert!(!path.exists(), "the plain file stays after the restore");
+
+    let mut changed = std::fs::read(&sealed).unwrap();
+    let last = changed.len() - 3;
+    changed[last] ^= 1;
+    std::fs::write(&sealed, &changed).unwrap();
+    assert!(opened_dump(&runtime, "moqui", &sealed, Some(&identity)).is_err());
+    let left: Vec<_> = std::fs::read_dir(runtime.join("db")).unwrap().flatten().collect();
+    assert!(left.is_empty(), "a dump that did not open left {left:?}");
+
+    let plain = runtime.join("moqui.dump");
+    std::fs::write(&plain, b"PGDMP").unwrap();
+    assert_eq!(
+        opened_dump(&runtime, "moqui", &plain, None).unwrap().path(),
+        plain.as_path()
+    );
+    assert!(plain.exists(), "a plain dump is deleted after");
+}

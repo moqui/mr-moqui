@@ -18,6 +18,9 @@
 mod cluster {
     use std::path::{Path, PathBuf};
 
+    use std::time::Duration;
+
+    use moqui_lib::age::{Identity, Recipient};
     use moqui_lib::error::Error;
     use postgresql_embedded::blocking::PostgreSQL;
     use postgresql_embedded::{Settings, BOOTSTRAP_SUPERUSER};
@@ -168,6 +171,27 @@ mod cluster {
             args.push("--file".to_string());
             args.push(dump.display().to_string());
             run_tool(self, "pg_dump", &args)
+        }
+
+        /// [`Self::save_database`] sealed to `recipient` as `pg_dump` writes it, into `dump` made owner-only first:
+        /// only the sealed bytes reach the disk (plans/Security-Review.md SEC-CLI-114).
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when `pg_dump` is missing or exits non-zero, or the dump cannot be written.
+        pub fn save_database_sealed(&self, database: &str, dump: &Path, recipient: &Recipient) -> Result<(), Error> {
+            let mut args = connect_args(self, database);
+            args.push("--format=custom".to_string());
+            moqui_lib::private_fs::file_options()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(dump)
+                .and_then(|_| moqui_lib::private_fs::restrict(dump))
+                .map_err(|err| Error::new(format!("create {}", dump.display())).with_source(err))?;
+            let bin = tool_bin(&self.server.settings().binary_dir(), "pg_dump");
+            let password = self.server.settings().password.clone();
+            crate::backup::run_bounded_to(&bin, &args, &password, Duration::MAX, Some((dump, recipient)))
         }
 
         /// `pg_restore --format=custom` of a dump from [`Self::save_db`].
@@ -348,14 +372,30 @@ mod cluster {
     ///
     /// Returns an error when the cluster or `pg_dump` fails.
     pub fn save_db(runtime_dir: &Path, dir: &Path, dump: &Path) -> Result<(), Error> {
+        save_db_to(runtime_dir, dir, dump, None)
+    }
+
+    /// [`save_db`], each dump sealed to `recipient` (an `age1...` recipient's text) when there is one, as `pg_dump`
+    /// writes it (SEC-CLI-114); `dump` then names the sealed file (`.dump.age`), and the other databases' beside it
+    /// take the same ending.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `recipient` is not an age recipient, or the cluster or `pg_dump` fails.
+    pub fn save_db_to(runtime_dir: &Path, dir: &Path, dump: &Path, recipient: Option<&str>) -> Result<(), Error> {
+        let recipient = crate::backup::sealing_recipient(recipient)?;
         let (cluster, _driver) = EmbeddedCluster::start_with(dir, &cli_options(runtime_dir, dir)?)?;
-        cluster.save_db(dump)?;
+        let save = |database: &str, path: &Path| match &recipient {
+            Some(recipient) => cluster.save_database_sealed(database, path, recipient),
+            None => cluster.save_database(database, path),
+        };
+        save(DATABASE, dump)?;
         for database in cluster.other_databases()? {
             let path = database_dump_path(dump, &database);
             let mut part = path.clone().into_os_string();
             part.push(".partial");
             let part = PathBuf::from(part);
-            cluster.save_database(&database, &part)?;
+            save(&database, &part)?;
             std::fs::rename(&part, &path)
                 .map_err(|err| Error::new(format!("move {} into place", part.display())).with_source(err))?;
             tracing::info!("Saved database {database} to {}", path.display());
@@ -398,13 +438,110 @@ mod cluster {
     ///
     /// Returns an error when the cluster or `pg_restore` fails.
     pub fn load_save(runtime_dir: &Path, dir: &Path, dump: &Path) -> Result<(), Error> {
+        load_save_with(runtime_dir, dir, dump, None)
+    }
+
+    /// [`load_save`], a sealed dump (`.age`) opened with `identity`, the text of an age identity file (its
+    /// `AGE-SECRET-KEY-1...` line, comments beside it). Each sealed dump is decrypted whole into an owner-only file
+    /// under the runtime's `db` directory before anything is restored, so a dump that was changed or cut short restores
+    /// nothing, and that file is deleted after (SEC-CLI-114).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a sealed dump with no identity or another's, or when the cluster or `pg_restore` fails.
+    pub fn load_save_with(runtime_dir: &Path, dir: &Path, dump: &Path, identity: Option<&str>) -> Result<(), Error> {
+        let identity = identity.map(identity_of).transpose()?;
+        // every sealed dump is opened first: none is restored if one does not open
+        let mut opened = Vec::new();
+        let mut dumps = vec![(DATABASE.to_string(), dump.to_path_buf())];
+        dumps.extend(sibling_dumps(dump));
+        for (database, path) in &dumps {
+            opened.push((
+                database.clone(),
+                opened_dump(runtime_dir, database, path, identity.as_ref())?,
+            ));
+        }
         let (cluster, _driver) = EmbeddedCluster::start_with(dir, &cli_options(runtime_dir, dir)?)?;
-        cluster.load_save(dump)?;
-        for (database, path) in sibling_dumps(dump) {
-            cluster.load_database(&database, &path)?;
-            tracing::info!("Restored database {database} from {}", path.display());
+        for (database, path) in &opened {
+            cluster.load_database(database, path.path())?;
+            if database != DATABASE {
+                tracing::info!("Restored database {database}");
+            }
         }
         Ok(())
+    }
+
+    /// The identity in `text`, an age identity file: its `AGE-SECRET-KEY-1...` line, `#` comments and blank lines
+    /// passed over.
+    fn identity_of(text: &str) -> Result<Identity, Error> {
+        let line = text
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .unwrap_or("");
+        Identity::parse(line).map_err(|err| Error::new(format!("the backup key does not read: {err}")))
+    }
+
+    /// A dump to restore: `path` itself, or for a sealed one (`.age`) its plain text in an owner-only file under the
+    /// runtime's `db` directory, deleted when this is dropped.
+    enum OpenedDump {
+        Plain(PathBuf),
+        Opened(PathBuf),
+    }
+
+    impl OpenedDump {
+        fn path(&self) -> &Path {
+            match self {
+                Self::Plain(path) | Self::Opened(path) => path,
+            }
+        }
+    }
+
+    impl Drop for OpenedDump {
+        fn drop(&mut self) {
+            if let Self::Opened(path) = self {
+                if let Err(err) = std::fs::remove_file(&*path) {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        tracing::error!("The opened dump {} was not deleted: {err}", path.display());
+                    }
+                }
+            }
+        }
+    }
+
+    fn opened_dump(
+        runtime_dir: &Path,
+        database: &str,
+        path: &Path,
+        identity: Option<&Identity>,
+    ) -> Result<OpenedDump, Error> {
+        if path.extension().and_then(|extension| extension.to_str()) != Some("age") {
+            return Ok(OpenedDump::Plain(path.to_path_buf()));
+        }
+        let identity = identity.ok_or_else(|| {
+            Error::new(format!(
+                "{} is sealed: give the backup key it was made for (moqui load-save ... --identity <file>)",
+                path.display()
+            ))
+        })?;
+        let dir = runtime_dir.join("db");
+        moqui_lib::private_fs::create_dir_all(&dir)
+            .map_err(|err| Error::new(format!("create {}", dir.display())).with_source(err))?;
+        let plain = dir.join(format!("restore-{}-{database}.dump", std::process::id()));
+        let opened = OpenedDump::Opened(plain.clone());
+        let mut out = moqui_lib::private_fs::file_options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&plain)
+            .map_err(|err| Error::new(format!("create {}", plain.display())).with_source(err))?;
+        let sealed =
+            std::fs::File::open(path).map_err(|err| Error::new(format!("open {}", path.display())).with_source(err))?;
+        let mut reader = moqui_lib::age::Decryptor::new(std::io::BufReader::new(sealed), identity)
+            .map_err(|err| Error::new(format!("{} does not open with this backup key: {err}", path.display())))?;
+        std::io::copy(&mut reader, &mut out)
+            .map_err(|err| Error::new(format!("{} does not open: {err}", path.display())))?;
+        Ok(opened)
     }
 
     /// The dumps of the other databases beside `dump` that one save wrote with it ([`database_dump_path`]), by
@@ -1188,8 +1325,8 @@ mod cluster {
 pub use cluster::{archive, process_live, stop_postmaster, unpack_install};
 #[cfg(feature = "embedded-postgres")]
 pub use cluster::{
-    database_dump_path, load_save, save_db, shared_install_dir, sibling_dumps, ClusterRole, EmbeddedCluster,
-    StartOptions, ToolTarget,
+    database_dump_path, load_save, load_save_with, save_db, save_db_to, shared_install_dir, sibling_dumps, ClusterRole,
+    EmbeddedCluster, StartOptions, ToolTarget,
 };
 
 /// Without embedded Postgres there is no archive.
@@ -1278,6 +1415,26 @@ pub fn load_save(
     _runtime_dir: &std::path::Path,
     _dir: &std::path::Path,
     _dump: &std::path::Path,
+) -> Result<(), moqui_lib::error::Error> {
+    Err(moqui_lib::error::Error::new("embedded postgres is not in this build"))
+}
+
+#[cfg(not(feature = "embedded-postgres"))]
+pub fn save_db_to(
+    _runtime_dir: &std::path::Path,
+    _dir: &std::path::Path,
+    _dump: &std::path::Path,
+    _recipient: Option<&str>,
+) -> Result<(), moqui_lib::error::Error> {
+    Err(moqui_lib::error::Error::new("embedded postgres is not in this build"))
+}
+
+#[cfg(not(feature = "embedded-postgres"))]
+pub fn load_save_with(
+    _runtime_dir: &std::path::Path,
+    _dir: &std::path::Path,
+    _dump: &std::path::Path,
+    _identity: Option<&str>,
 ) -> Result<(), moqui_lib::error::Error> {
     Err(moqui_lib::error::Error::new("embedded postgres is not in this build"))
 }

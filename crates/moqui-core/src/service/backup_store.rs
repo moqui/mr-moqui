@@ -158,12 +158,14 @@ fn parse_recipient(text: &str) -> Result<Recipient, LibError> {
 }
 
 /// The archive name of a key under `prefix`, and the key's suffix: none or `.tar.gz`, then `.age` when `sealed`.
-/// The other mode's objects are not archives here, so turning encryption on or off sends every archive again.
-fn archive_of<'a>(prefix: &str, key: &'a str, sealed: bool) -> Option<(&'a str, &'a str)> {
+/// The other mode's objects are not archives here, so turning encryption on or off sends every archive again. A
+/// sealed dump's name is an archive only when the archives here are sealed (`local_sealed`,
+/// [`backup::is_mirror_archive`]).
+fn archive_of<'a>(prefix: &str, key: &'a str, sealed: bool, local_sealed: bool) -> Option<(&'a str, &'a str)> {
     let rest = key.strip_prefix(prefix)?;
     let stem = if sealed { rest.strip_suffix(AGE)? } else { rest };
     let name = stem.strip_suffix(TAR_GZ).unwrap_or(stem);
-    (!name.contains('/') && backup::is_archive_name(name)).then(|| (name, &rest[name.len()..]))
+    (!name.contains('/') && backup::is_mirror_archive(name, local_sealed)).then(|| (name, &rest[name.len()..]))
 }
 
 fn key_prefix(prefix: &str) -> String {
@@ -184,13 +186,14 @@ pub(super) fn mirror(
     outcome: &BackupOutcome,
 ) -> Result<String, LibError> {
     let sealed = recipient.is_some();
+    let local_sealed = backup::sealed_locally(&outcome.keep);
     let listed = store.list(prefix).inspect_err(|err| {
         tracing::error!("backup mirror could not list {shown}: {err}");
     })?;
     // archive name to its key and size
     let mut remote: HashMap<String, (String, u64)> = HashMap::new();
     for object in &listed {
-        if let Some((name, _)) = archive_of(prefix, &object.key, sealed) {
+        if let Some((name, _)) = archive_of(prefix, &object.key, sealed, local_sealed) {
             remote.insert(name.to_string(), (object.key.clone(), object.size));
         }
     }
@@ -201,14 +204,14 @@ pub(super) fn mirror(
         &remote_names,
         &outcome.renames,
         &outcome.rewritten,
-        backup::is_archive_name,
+        |name| backup::is_mirror_archive(name, local_sealed),
     );
     let mut failed = false;
     for (old, new) in &plan.renames {
         let Some((from, size)) = remote.get(old).cloned() else {
             continue;
         };
-        let suffix = archive_of(prefix, &from, sealed).map_or("", |(_, suffix)| suffix);
+        let suffix = archive_of(prefix, &from, sealed, local_sealed).map_or("", |(_, suffix)| suffix);
         let to = format!("{prefix}{new}{suffix}");
         if let Err(err) = store.rename(&from, &to, size) {
             tracing::error!("backup mirror could not rename {from} to {to}: {err}");

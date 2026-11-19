@@ -257,8 +257,13 @@
 
     <!-- Backups of the embedded database (docs/Run-Deploy.md, Backups): scheduled true or false sets the nightly
         backup_EmbeddedDatabase_daily job running or paused at each boot (empty leaves it as it is); dir is where the
-        archives go (runtime/db/backup when empty). -->
-    <database-backup scheduled="" dir=""/>
+        archives go (runtime/db/backup when empty); recipient, an age public key (age1..., as age-keygen prints), seals
+        each dump to it as it is written, as <name>.dump.age, which only its identity decrypts (moqui load-save with
+        the identity option, or age -d), so a folder a cloud syncs holds no plain copy of the database (empty writes
+        the dumps as they are; a physical backup is not sealed; SEC-CLI-114). Keep the identity apart from the
+        backups: without it they do not restore. An encrypted mirror (mirrorEncrypt) seals such a dump again, to its
+        own recipient. -->
+    <database-backup scheduled="" dir="" recipient=""/>
 
     <!-- Default Properties: only set if there is no Java property or environment variable of the same name (or with underscores replaced by dots) -->
 

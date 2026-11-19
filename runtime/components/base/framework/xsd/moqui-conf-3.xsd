@@ -2399,6 +2399,10 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="scheduled" type="xs:string"/>
             <xs:attribute name="dir" type="xs:string"/>
+            <xs:attribute name="recipient" type="xs:string"><xs:annotation><xs:documentation>An age X25519 recipient
+                (age1...) each dump of backup#EmbeddedDatabase is sealed to as it is written, as name.dump.age; empty
+                writes them as they are. A recipient that does not parse fails the backup. No Java
+                counterpart.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="comms">

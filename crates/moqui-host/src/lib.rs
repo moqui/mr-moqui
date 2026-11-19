@@ -611,6 +611,41 @@ pub fn load_save(
     db::embedded::load_save(&runtime_framework_dirs().0, dir.as_ref(), dump.as_ref())
 }
 
+/// The option of `save-db` (`--recipient <age1...>`) or `load-save` (`--identity <file>`, `-` for stdin) after its two
+/// paths: the recipient's text, or the identity file's (plans/Security-Review.md SEC-CLI-114).
+fn backup_key_option(command: &str, rest: &[String]) -> Result<Option<String>, moqui_lib::error::Error> {
+    let wanted = if command == "save-db" {
+        "--recipient"
+    } else {
+        "--identity"
+    };
+    let value = match rest {
+        [] => return Ok(None),
+        [flag, value] if flag == wanted => value.clone(),
+        [flag] if flag.starts_with(&format!("{wanted}=")) => flag[wanted.len() + 1..].to_string(),
+        _ => {
+            return Err(moqui_lib::error::Error::new(format!(
+                "{command} takes <cluster-dir> <dump-file> [{wanted} {}]",
+                if command == "save-db" { "<age1...>" } else { "<file>|-" }
+            )))
+        }
+    };
+    if command == "save-db" {
+        return Ok(Some(value));
+    }
+    let text = if value == "-" {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+            .map_err(|err| moqui_lib::error::Error::new("could not read the backup key from stdin").with_source(err))?;
+        text
+    } else {
+        std::fs::read_to_string(&value).map_err(|err| {
+            moqui_lib::error::Error::new(format!("could not read the backup key {value}")).with_source(err)
+        })?
+    };
+    Ok(Some(text))
+}
+
 /// The process entry of a moqui binary: [`dispatch`] on the command line arguments, the line it returns printed, and
 /// exit status 1 with the error on stderr when it fails. The detached child of `moqui serve` writes that error on
 /// stdout, which is the pipe its parent is reading. A binary that links component crates names each one
@@ -724,12 +759,24 @@ where
         return Ok(None);
     }
     match args.as_slice() {
-        [command, dir, file] if command == "save-db" => {
-            save_db(dir, file)?;
+        [command, dir, file, rest @ ..] if command == "save-db" => {
+            let recipient = backup_key_option(command, rest)?;
+            db::embedded::save_db_to(
+                &runtime_framework_dirs().0,
+                dir.as_ref(),
+                file.as_ref(),
+                recipient.as_deref(),
+            )?;
             Ok(None)
         }
-        [command, dir, file] if command == "load-save" => {
-            load_save(dir, file)?;
+        [command, dir, file, rest @ ..] if command == "load-save" => {
+            let identity = backup_key_option(command, rest)?;
+            db::embedded::load_save_with(
+                &runtime_framework_dirs().0,
+                dir.as_ref(),
+                file.as_ref(),
+                identity.as_deref(),
+            )?;
             Ok(None)
         }
         [command] if command == "version" || command == "--version" => {

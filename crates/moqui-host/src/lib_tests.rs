@@ -481,3 +481,34 @@ fn the_server_has_unsafe_code_only_at_the_listed_reviewed_sites() {
     let found: std::collections::BTreeMap<&str, usize> = found.iter().map(|(path, n)| (path.as_str(), *n)).collect();
     assert_eq!(found, listed, "unsafe code in the server's crates");
 }
+
+/// SEC-CLI-114: `save-db` takes `--recipient <age1...>` and `load-save` `--identity <file>` (or `=`), the identity
+/// file's text read; nothing else follows their two paths.
+#[test]
+fn save_db_and_load_save_take_their_backup_key_option() {
+    let args = |items: &[&str]| items.iter().map(|item| (*item).to_string()).collect::<Vec<_>>();
+    assert_eq!(super::backup_key_option("save-db", &[]).unwrap(), None);
+    assert_eq!(
+        super::backup_key_option("save-db", &args(&["--recipient", "age1x"])).unwrap(),
+        Some("age1x".to_string())
+    );
+    assert_eq!(
+        super::backup_key_option("save-db", &args(&["--recipient=age1y"])).unwrap(),
+        Some("age1y".to_string())
+    );
+    assert!(super::backup_key_option("save-db", &args(&["--identity", "k"])).is_err());
+    assert!(super::backup_key_option("load-save", &args(&["--recipient", "age1x"])).is_err());
+    assert!(super::backup_key_option("load-save", &args(&["--identity", "a", "b"])).is_err());
+    let file = std::env::temp_dir().join(format!("moqui-identity-{}.txt", std::process::id()));
+    std::fs::write(&file, "# public key: age1x\nAGE-SECRET-KEY-1X\n").unwrap();
+    let path = file.display().to_string();
+    assert_eq!(
+        super::backup_key_option("load-save", &args(&["--identity", &path])).unwrap(),
+        Some("# public key: age1x\nAGE-SECRET-KEY-1X\n".to_string())
+    );
+    let _ = std::fs::remove_file(&file);
+    assert!(
+        super::backup_key_option("load-save", &args(&["--identity", &path])).is_err(),
+        "a missing file"
+    );
+}
