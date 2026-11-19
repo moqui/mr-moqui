@@ -224,8 +224,16 @@ along with this software (see the LICENSE.md file). If not, see
             <label text="${(message_index+1).toString().padStart(3,'0')}: ${message}" type="div"/>
         </widgets></section-iterate>
 
+        <!-- The check reads the stored records the data names, so it needs what load needs, all actions on this screen, though
+            it runs as the screen renders; the loader refuses the entities a load refuses, and the check does not compare a
+            password or encrypted field (plans/Security-Review-Medium.md SEC-TLS-84). -->
         <section name="CheckDiffSection" condition="runCheck == 'true'"><actions>
             <script><![CDATA[
+                diffInfoList = []
+                if (!ec.artifactExecution.isPermitted(sri.getActiveScreenDef().getLocation(), 'AT_XML_SCREEN', 'all')) {
+                    ec.message.addError(ec.l10n.localize("Checking data needs authorization for all actions on this screen"))
+                    return
+                }
                 const edl = ec.entity.makeDataLoader()
                 let source = ""
                 if (types || components) {

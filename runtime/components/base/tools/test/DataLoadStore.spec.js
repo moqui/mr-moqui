@@ -122,6 +122,35 @@ feature("Browse's update writes the other fields of an account but not its passw
     },
 })
 
+// Load's Check Data as the screen renders it (runCheck), as the user
+function renderCheck(username, xmlText) {
+    ec.user.internalLoginUser(username)
+    ec.message.clearAll()
+    const res = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml").render("Data/Load", { runCheck: "true", xmlText }, "get")
+    const out = { errors: res.errorMessages.join(" ") + " " + ec.message.errors.join(" "), output: String(res.output || "") }
+    ec.message.clearAll()
+    ec.user.logoutUser()
+    return out
+}
+
+// the check answers the stored value of each field the data gives that differs (plans/Security-Review-Medium.md SEC-TLS-84)
+feature("Load's check needs all actions on Tools and answers no password hash or restricted record", {
+    when() {
+        const guess = `<entity-facade-xml><moqui.security.UserAccount userId="${TARGET}" userFullName="Spec Guess" currentPassword="guess"/></entity-facade-xml>`
+        const viewer = renderCheck("spec.dls.updater", guess)
+        const admin = renderCheck("john.doe", guess)
+        const member = renderCheck("john.doe", `<entity-facade-xml><moqui.security.UserGroupMember userGroupId="ADMIN" userId="john.doe" fromDate="2001-01-01 00:00:00.0"/></entity-facade-xml>`)
+        return { viewer, admin, member }
+    },
+    then({ viewer, admin, member }) {
+        viewer.errors.includes("Checking data needs authorization for all actions on this screen")
+        !viewer.output.includes("Spec DLS")
+        admin.output.includes("Spec DLS")
+        !admin.output.includes("spec-original-hash")
+        (member.errors + member.output).includes("is not allowed in this data load")
+    },
+})
+
 const loadXml = (attributes) => post("john.doe", "Data/Load/load",
     { xmlText: `<entity-facade-xml><moqui.security.UserAccount ${attributes}/></entity-facade-xml>` })
 

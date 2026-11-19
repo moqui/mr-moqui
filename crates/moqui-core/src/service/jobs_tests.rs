@@ -269,3 +269,41 @@ fn a_run_dropped_at_shutdown_releases_its_lock() {
     let _authz = ctx.disable_authz();
     assert_released_and_failed(&facade, "DroppedJob", "R2");
 }
+
+/// A job row's own run is a generic call, so its entity-auto write of an entity no generic write takes is refused; a
+/// call the service queue spilled into a row (`persist_queued`, `QUEUE_PREFIX`) is the framework's own and writes it
+/// (plans/Security-Review-Medium.md SEC-TLS-85).
+#[test]
+fn a_job_rows_entity_auto_run_is_generic_and_a_spilled_queued_call_is_not() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let keys = |key: &str| {
+        facade
+            .find("moqui.monitor.IngestKey")
+            .unwrap()
+            .eq("keyId", Value::string(key))
+            .list()
+            .unwrap()
+            .len()
+    };
+    let queued = format!("{}SPEC", super::QUEUE_PREFIX);
+    for (job, run_id, key) in [
+        ("SpecIngestJob", "R-ROW", "SPEC_ROW_KEY"),
+        (queued.as_str(), "R-QUEUED", "SPEC_QUEUED_KEY"),
+    ] {
+        let mut run = claimed(&ctx, &facade, job, run_id);
+        run.service_name = "create#moqui.monitor.IngestKey".to_string();
+        run.parameters = BTreeMap::from([("keyId".to_string(), Value::string(key))]);
+        super::run_job(run);
+    }
+    assert_eq!(keys("SPEC_ROW_KEY"), 0);
+    let row_run = one(&facade, JOB_RUN, "jobRunId", "R-ROW");
+    assert!(
+        text(&row_run, "errors").contains("written only by its own services"),
+        "{row_run:?}"
+    );
+    assert_eq!(keys("SPEC_QUEUED_KEY"), 1);
+}

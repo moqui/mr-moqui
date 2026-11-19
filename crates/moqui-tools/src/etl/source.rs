@@ -229,8 +229,9 @@ struct EntityExtractor {
     conditions: BTreeMap<String, Value>,
     start_row: usize,
     max_rows: Option<usize>,
-    /// The `UserAccount` password fields by name or by origin (a view's renamed alias), left out of each row.
-    secrets: Vec<String>,
+    /// The password fields by name or by origin (a view's renamed alias) and the encrypted ones
+    /// ([`super::access::hidden_fields_of`]), left out of each row.
+    hidden: Vec<String>,
 }
 
 impl Extractor for EntityExtractor {
@@ -261,9 +262,7 @@ impl Extractor for EntityExtractor {
                 let mut values: BTreeMap<String, Value> = value
                     .fields()
                     .iter()
-                    .filter(|(name, _)| {
-                        !super::access::is_secret_field(name) && !self.secrets.iter().any(|secret| **secret == ***name)
-                    })
+                    .filter(|(name, _)| !self.hidden.iter().any(|hidden| **hidden == ***name))
                     .map(|(name, field)| (name.to_string(), field.clone()))
                     .collect();
                 values.insert(ROW_NUMBER_KEY.to_string(), Value::I64(offset));
@@ -351,7 +350,7 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
                     conditions: mapping.source_conditions.clone(),
                     start_row: options.start_row,
                     max_rows: options.max_rows,
-                    secrets: super::access::secret_fields_of(facade, &mapping.source_entity_name),
+                    hidden: super::access::hidden_fields_of(facade, &mapping.source_entity_name),
                 }),
                 headers,
                 resolved: format!("entity {}", mapping.source_entity_name),

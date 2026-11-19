@@ -47,6 +47,8 @@ exclude = [
     "runtime/components/test",
     "runtime/components/dev",
     "crates/moqui-desktop",
+    # patched crates.io crates, each its own package (patches/README.md)
+    "patches/yrs",
 ]
 
 [workspace.package]
@@ -433,3 +435,6 @@ rusqlite = { version = "0.42", features = ["bundled"] }
 [patch.crates-io]
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
+# yrs 0.28.1 with a depth limit on the values an update decodes, which recursed once a level with no limit
+# (patches/README.md; plans/Security-Review-Medium.md SEC-TLS-95)
+yrs = { path = "patches/yrs" }

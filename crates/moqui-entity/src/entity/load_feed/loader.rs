@@ -36,7 +36,7 @@ use super::xml::{load_xml_reader, load_xml_text};
 use super::zip::load_zip_reader;
 use super::{error_chain, with_load_slot, DataFileService, LoadOptions, LoadResult};
 use crate::entity::facade::EntityFacade;
-use crate::entity::fk::FkScope;
+use crate::entity::fk::fk_scope;
 use crate::entity::value::EntityValue;
 use crate::entity::FieldMap;
 use crate::transaction::TransactionAttribute;
@@ -75,7 +75,7 @@ pub(super) struct RelInfo {
 /// Load one XML, CSV, JSON, or zip location, or a directory of those files. As Java, `options.components` does not
 /// filter a location given here; the callers that gather locations use [`location_in_components`].
 pub fn load_entity_data(facade: &EntityFacade, location: &str, options: &LoadOptions) -> Result<LoadResult, Error> {
-    let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
+    let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
     let path = resolve_location(facade, location)?;
     let mut failed_files = 0;
     let records = load_path(facade, location, &path, options, &mut failed_files)?;
@@ -89,7 +89,7 @@ pub fn load_entity_xml_text(
     text: &str,
     options: &LoadOptions,
 ) -> Result<LoadResult, Error> {
-    let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
+    let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
     let records = super::check::at_location(location, || {
         in_file_transaction(facade, options, || load_xml_text(facade, location, text, options))
     })?;
@@ -107,7 +107,7 @@ pub fn load_entity_text_file(
     path: &Path,
     options: &LoadOptions,
 ) -> Result<LoadResult, Error> {
-    let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
+    let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
     let records = super::check::at_location(label, || {
         in_file_transaction(facade, options, || load_file(facade, label, path, options))
     })?;
@@ -429,11 +429,13 @@ pub(super) fn inherit_pk_fields(
 }
 
 pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record: Record) -> Result<u64, Error> {
-    if super::check::checking() {
-        return super::check::check_record(facade, &record);
-    }
+    // before a check or a list too: a check answers the stored values of the record the data names
+    // (plans/Security-Review-Medium.md SEC-TLS-84)
     if options.restrict_sensitive_entities {
         refuse_restricted(facade, &record, options)?;
+    }
+    if super::check::checking() {
+        return super::check::check_record(facade, &record);
     }
     // Inside an outer transaction a failed record marks it rollback-only and gives back its join, so the
     // owner's rollback still ends the frame.
@@ -572,11 +574,11 @@ fn write_tree(facade: &EntityFacade, options: &LoadOptions, record: Record, ance
 /// `createOrUpdate`d. There is no entity-auto `fromDate` default, secondary sequence or status-flow check, which
 /// Java's CSV path does not run either.
 pub(super) fn store_value(facade: &EntityFacade, options: &LoadOptions, record: Record) -> Result<u64, Error> {
-    if super::check::checking() {
-        return super::check::check_record(facade, &record);
-    }
     if options.restrict_sensitive_entities {
         refuse_restricted(facade, &record, options)?;
+    }
+    if super::check::checking() {
+        return super::check::check_record(facade, &record);
     }
     let Record { entity, fields, .. } = record;
     let entity = entity.as_str();

@@ -1,7 +1,8 @@
 // The load wrap (service/moqui/tools/DatabaseLoadServices.xml run#LoadWrap) runs as a ServiceJob, which runs with
 // authorization off: it needs DATABASE_ADMIN itself, and it loads as the user, authorized as from the Tools app
 // (ec.artifactExecution.runAsUser), so the security checks of what it writes apply; runAsUser leaves the caller's own
-// authorization state as it found it.
+// authorization state as it found it. A snapshot import, an administrator's whole-database restore, runs with
+// authorization off inside it, as the plain import job does.
 // Run: ./moq test tools --spec LoadWrap
 const adminId = "SPEC_LW_ADMIN"
 const dbaId = "SPEC_LW_DBA"
@@ -138,5 +139,47 @@ feature("runAsUser leaves the caller's authorization state as it was, whatever i
         inside === false
         after === true
         enabled === true
+    },
+})
+
+// A snapshot restore is an administrator's whole-database operation: the wrapped import runs with authorization off, as
+// the plain ImportEntityDataSnapshot job does, so a privileged-group membership in the snapshot is restored for a
+// DATABASE_ADMIN user outside that group; the security-check rules the import's disableEntityEca keeps would refuse it
+// with authorization on and roll back the whole file (plans/Security-Review-Medium.md SEC-DAT-83)
+feature("a DATABASE_ADMIN user's wrapped snapshot import restores a privileged-group membership", {
+    expect() {
+        const snapUser = "SPEC_LW_SNAP"
+        const run = () => {
+            ec.artifactExecution.disableAuthz()
+            make("moqui.security.UserAccount", { userId: snapUser, username: "spec.lw.snap", userFullName: "Spec Load Wrap Snapshot" })
+            make("moqui.security.UserGroupMember", { userGroupId: "ADMIN_ADV", userId: snapUser, fromDate: 1265184000000 })
+            // the snapshot of the memberships, by an administrator who may take a full backup
+            ec.user.internalLoginUser("john.doe")
+            ec.service.sync().name("org.moqui.impl.EntityServices.export#EntityDataSnapshot").parameters({
+                entitiesToInclude: ["moqui.security.UserGroupMember"], baseFilename: "SpecLoadWrapSnapshot" }).call()
+            ec.entity.find("moqui.security.UserGroupMember").condition("userId", snapUser).deleteAll()
+            ec.artifactExecution.enableAuthz()
+            const removed = memberOf(snapUser, "ADMIN_ADV")
+            ec.user.internalLoginUser("spec.lw.dba")
+            const wrap = ec.service.sync().name("org.moqui.dev.DatabaseServices.plan#LoadWrap").parameters({ db: "group:transactional",
+                entityNames: ["moqui.security.UserGroupMember"], description: "Spec snapshot load wrap" }).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            // as the ServiceJob runs it: authorization off
+            ec.artifactExecution.disableAuthz()
+            const out = ec.service.sync().name("moqui.tools.DatabaseLoadServices.run#LoadWrap").parameters({ dropJobId: wrap.dropJobId,
+                restoreJobId: wrap.restoreJobId, loadKind: "snapshot", zipFilename: "SpecLoadWrapSnapshot.zip" }).call() || {}
+            ec.message.clearErrors()
+            const restored = memberOf(snapUser, "ADMIN_ADV")
+            ec.resource.getLocationReference(ec.factory.getRuntimePath() + "/db/snapshot/SpecLoadWrapSnapshot.zip").delete()
+            ec.entity.find("moqui.security.UserGroupMember").condition("userId", snapUser).deleteAll()
+            ec.entity.find("moqui.security.UserAccount").condition("userId", snapUser).deleteAll()
+            ec.artifactExecution.enableAuthz()
+            return { removed, out, restored }
+        }
+        const { removed, out, restored } = run()
+        removed == 0
+        out.loaded === true
+        out.restoreStatusId == "DbjsDone"
+        restored == 1
     },
 })
