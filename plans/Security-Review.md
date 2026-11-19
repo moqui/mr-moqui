@@ -447,6 +447,19 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    a synced mailbox's mail, SEC-BAP-84) and `mantle@forum-inbound-accounts` (the forum's inbound accounts; until set
    the forum reads no route's mail, SEC-PFS-85).
 
+   Filed 2026-11-19 from the notes of items 3 to 5 and 12, each checked in code: SEC-ADM-89 (Marble's Party and
+   Customer screens change any account's sign-in fields; `update#UserAccount`'s `NONE`), SEC-DAT-98 (Marble's search
+   and record screens skip `search#Universal`'s per-hit rules), SEC-BAP-140 (Marble's identifications shown whole) and
+   SEC-RTE-91 (an upload has no total time limit), all Medium; SEC-RTE-92 (a screen action's or script's
+   `disableAuthz()` outlives it), SEC-AI-102 (a previewed screen's actions), SEC-ADM-90 (`store#Membership` to oneself),
+   SEC-TLS-116 (`LlmEndpoint` and `EntitySync` keep their secret on a new URL) and SEC-BAP-141 (change history beyond
+   the fixed field set), all Low. SEC-DAT-82, SEC-FIL-99, SEC-FIL-82, SEC-BAP-93 and SEC-TLS-92 are fixed in part, as
+   their own entries say what is left. Checked and not filed: `GitWebhook`, `GitCiEnvironment` and `AgentPushConfig`
+   (their secrets are rewritten, audience-bound or never sent), Marble's `DataDocument` titles (only a
+   `DATABASE_ADMIN` or a data load writes one since SEC-SCR-05), the promise job queue (SEC-SCR-83; component code
+   only), `served` (only rows written before SEC-BAP-138), the CalcGrid minute (a refresh checks scope first) and the
+   private forum reply held as spam (a product gap, now given a release path).
+
    Found while fixing and not fixed: the shipped-quantity ceiling on a return and a check in `settle#Return`
    (SEC-BAP-93); per-viewer field read rules in a record's change history beyond ai-opt-out, encrypted and secret
    fields (SEC-BAP-94); `Content.js` `served` takes any image under a content root, every record's folder included,
@@ -459,27 +472,27 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Area | Critical | High | Medium | Low | Info | Refuted | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Web authentication and controls (`WEB`) | 0 | 1 | 5 | 19 | 2 | 0 | 27 |
-| Routes, screens and REST (`RTE`) | 0 | 2 | 8 | 15 | 3 | 0 | 28 |
-| Administration, identity and sign-in (`ADM`) | 0 | 1 | 8 | 11 | 1 | 0 | 21 |
-| Tools, System, Monitor and Dashboards (`TLS`) | 0 | 4 | 20 | 27 | 3 | 0 | 54 |
-| LLM, A2A, MCP and Assist (`AI`) | 0 | 0 | 5 | 25 | 4 | 0 | 34 |
+| Routes, screens and REST (`RTE`) | 0 | 2 | 9 | 16 | 3 | 0 | 30 |
+| Administration, identity and sign-in (`ADM`) | 0 | 1 | 9 | 12 | 1 | 0 | 23 |
+| Tools, System, Monitor and Dashboards (`TLS`) | 0 | 4 | 20 | 28 | 3 | 0 | 55 |
+| LLM, A2A, MCP and Assist (`AI`) | 0 | 0 | 5 | 26 | 4 | 0 | 35 |
 | Git hosting and pipelines (`GIT`) | 0 | 3 | 8 | 24 | 4 | 0 | 39 |
 | Mail (`MAIL`) | 0 | 3 | 10 | 17 | 6 | 0 | 36 |
 | Files, DAV, SSH and the terminal (`FIL`) | 0 | 0 | 14 | 17 | 8 | 0 | 39 |
 | Calls, chat and messaging (`COM`) | 0 | 0 | 9 | 28 | 14 | 0 | 51 |
 | Cluster and edge node (`CLU`) | 0 | 0 | 0 | 18 | 4 | 0 | 22 |
-| Data layer and stored secrets (`DAT`) | 0 | 0 | 7 | 19 | 4 | 0 | 30 |
+| Data layer and stored secrets (`DAT`) | 0 | 0 | 8 | 19 | 4 | 0 | 31 |
 | PASS frontend (mr-pass) (`PSF`) | 0 | 0 | 1 | 8 | 10 | 0 | 19 |
 | PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 3 | 0 | 14 |
 | PASS application services (Mantle) (`PSS`) | 0 | 0 | 8 | 26 | 9 | 0 | 43 |
 | Forum and Smithy (`PFS`) | 0 | 2 | 4 | 22 | 12 | 0 | 40 |
 | BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 37 | 14 | 0 | 75 |
-| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 16 | 29 | 20 | 0 | 68 |
+| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 17 | 30 | 20 | 0 | 70 |
 | Clients (`CLI`) | 0 | 0 | 6 | 21 | 29 | 0 | 56 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 169 | 408 | 162 | 0 | 763 |
+| **All** | 0 | 24 | 173 | 413 | 162 | 0 | 772 |
 
 ## Findings by area
 
@@ -551,6 +564,8 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-88 | `crates/moqui-core/src/screen/url.rs:567-577`; `crates/moqui-core/src/screen/cache.rs:308-311`, `:607-618` | The `//` screen path search keeps every miss in a map with no limit | Low | reported (to check) |
 | SEC-RTE-89 | `runtime/components/base/webroot/screen/webroot/echopath.xml:15-22` | `/echopath/<anything>`, a sample screen kept from Moqui Java, answers 500 to anyone on every instance | Info | confirmed (second check) |
 | SEC-RTE-90 | `crates/moqui-core/src/web/mod.rs:1120-1166`; `crates/moqui-core/src/screen/render.rs:2247-2254`, `:2472-2475` | A service's validation error in a screen transition answered as JSON is a 500 | Info | confirmed (second check) |
+| SEC-RTE-91 | crates/moqui-host/src/http/serve.rs:536-552, :655-664, :711; crates/moqui-host/src/http.rs:1182-1183, :1247-1252; runtime/components/base/framework/conf/MoquiDefaultConf.xml:592-597 | A multipart request from anyone, to any path, has no total time limit, so slow uploads hold every connection | Medium | reported (confirmed in code) |
+| SEC-RTE-92 | crates/moqui-core/src/screen/render.rs:1113-1121, :1157-1166; crates/moqui-core/src/context/factory.rs:1420-1437, :1447, :1462; crates/moqui-core/src/script/oxide/resource.rs:106-167; crates/moqui-entity/src/entity/load_feed/eca.rs:62-68 | A screen action's or a script run's disableAuthz(), disableEntityEca() or disableTarpit() lasts for the rest of the request | Low | reported (confirmed in code) |
 
 ### Administration, identity and sign-in
 
@@ -579,6 +594,8 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 | SEC-ADM-86 | `admin/ConfigurationLocalization.js:389-432`; `crates/moqui-core/src/service/validate.rs:629-647` | A translation with markup is saved through the import, though the single save refuses it | Low | reported (likely) |
 | SEC-ADM-87 | `admin/ConfigurationProviders.js:611-628`; `admin/ConfigurationConnections.js:288` | No configuration change asks for a recent sign-in | Low | reported (confirmed in code) |
 | SEC-ADM-88 | `admin/ConfigurationConnections.js:1388-1389`, `:292-300` | A connection key that names no record starts a new connection of a kind marked not creatable | Low | reported (to check) |
+| SEC-ADM-89 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:121-166, :452-466, :652-687; runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:963-995; runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:61-66; runtime/components/addon/mr-marble/screen/SimpleScreens/Customer/EditCustomer.xml:49-54 | A holder of Marble's Party or Customer screens changes another account's email and sign-in fields, and enables or disables any account | Medium | reported (confirmed in code) |
+| SEC-ADM-90 | runtime/components/base/framework/service/org/moqui/admin/Access.js:507-571, :1100-1103, :828-862 | An access administrator gives themselves any bundle they may delegate, with no second person | Low | reported (confirmed in code) |
 
 ### Tools, System, Monitor and Dashboards
 
@@ -616,7 +633,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | SEC-TLS-89 | `crates/moqui-tools/src/etl/source.rs:236-279`, `:345-359`; `crates/moqui-tools/src/etl/transform.rs:324-373`; `crates/moqui-tools/src/etl/service.rs:764-767` | An ETL entity source and an ETL lookup answer encrypted fields in clear | Medium | fixed |
 | SEC-TLS-90 | `crates/moqui-report/src/delivery.rs:2027-2062`; `crates/moqui-report/src/definitions.rs:230-261` | A schedule's transfer hands the new owner every definition it references, an alert rule included, active and unchecked | Medium | fixed |
 | SEC-TLS-91 | `crates/moqui-report/src/lib.rs:234-243`, `:312-343`, `:877-899`, `:2644-2655` | A dataset's `serviceName` and `rowFilterService` make each viewer call a service the dataset's author chose, with parameters a dashboard's author chose | Medium | fixed |
-| SEC-TLS-92 | `crates/moqui-report/src/business.rs:529-595`, `:679-719`, `:838-977`, `:981-1099` | A dataset steward rewrites the fields and conditions of any DataDocument that is in a data feed | Medium | fixed |
+| SEC-TLS-92 | `crates/moqui-report/src/business.rs:529-595`, `:679-719`, `:838-977`, `:981-1099` | A dataset steward rewrites the fields and conditions of any DataDocument that is in a data feed | Medium | fixed in part |
 | SEC-TLS-93 | `crates/moqui-calc/src/room.rs:503-526`, `:652-671`, `:767-773`, `:835-837`, `:1184-1206`; `crates/moqui-calc/src/service.rs:1185-1213` | A CalcGrid author's `clear`, `clearFormatting` or `style` edit over a huge area runs without limit, under locks every CalcGrid call waits on | Medium | fixed |
 | SEC-TLS-94 | `crates/moqui-calc/src/service.rs:550-570`, `:849-873`, `:1004-1011`, `:1262-1277`; `crates/moqui-calc/src/room.rs:1211-1222` | A CalcGrid room's rows are read again under the caller's scope of the moment, so a room made for one scope can come to hold another scope's rows | Medium | fixed |
 | SEC-TLS-95 | `crates/moqui-collab/src/markdown.rs:572-622`, `:648-713`, `:800-811`; `crates/moqui-collab/src/lib.rs:512`, `:632-650` | A co-editing update with deeply nested elements overflows the stack when the server writes the page's markdown, which ends the process | Medium | fixed |
@@ -640,6 +657,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | SEC-TLS-113 | `crates/moqui-calc/src/service.rs:807-820`; `crates/moqui-calc/src/together.rs:394-405`; `crates/moqui-host/src/notws/calc.rs:116`, `:147-169`; `crates/moqui-host/src/notws/collab.rs:129`, `:147`, `:159-193`, `:230-237` | Presence and membership on the notification socket have no count or size limit, and `get#CalcCells` stores any JSON as a selection | Low | reported (confirmed in code) |
 | SEC-TLS-114 | `crates/moqui-calc/src/service.rs:695-711`; `crates/moqui-core/src/workbook.rs:270-273` | A workbook opened as a CalcGrid document is unpacked and parsed with no limit on its expanded size | Low | reported (likely) |
 | SEC-TLS-115 | `crates/moqui-tools/src/etl/service.rs:635-642` | The `DbaEtlRun` audit row's detail is not JSON and takes the target name unescaped | Info | reported (confirmed in code) |
+| SEC-TLS-116 | crates/moqui-llm/src/registry.rs:204-224; runtime/components/base/tools/screen/System/Llm/Models/EndpointDetail.xml:24-27; runtime/components/base/tools/screen/System/EntitySync/EntitySyncDetail.xml:20-21; crates/moqui-core/src/service/system_sync/entity_sync.rs:505-511 | A model endpoint's API key and an entity sync's password go to a new URL with no new secret | Low | reported (confirmed in code) |
 
 ### LLM, A2A, MCP and Assist
 
@@ -681,6 +699,7 @@ Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewe
 | SEC-AI-99 | `crates/moqui-llm/src/mcp/tools.rs:433-436`, `:482`; `crates/moqui-core/src/user/authz.rs:730` | The MCP tarpit counts by tool name, and the name is the caller's | Info | reported (confirmed in code) |
 | SEC-AI-100 | `crates/moqui-llm/src/gateway.rs:160-204`, `:512-543` | The gateway passes URLs in a prompt to the model server, which may fetch them from where it runs | Info | reported (to check) |
 | SEC-AI-101 | `crates/moqui-llm/src/skills/learn.rs:745-759`; `crates/moqui-tui/src/assist/draw.rs:264-282` | The `save_skill` confirm card shows the skill's name and description, not its text | Info | reported (to check) |
+| SEC-AI-102 | crates/moqui-core/src/screen/render.rs:789-796; crates/moqui-core/src/script/host/tools.rs:2964-2970; crates/moqui-core/src/user/filter.rs:74-78 | A previewed screen-xml canvas's actions read any record with authorization off, and the preview's policy lets an image carry it out | Low | reported (likely) |
 
 ### Git hosting and pipelines
 
@@ -796,7 +815,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-65 | crates/moqui-host/src/term/access.rs:247 | `terminal` `command-line` and `host-sessions` are on in production for any value but `dev` or `false` | Info | fixed |
 | SEC-FIL-66 | crates/moqui-host/src/term/hold.rs:139 | The `term-hold` socket checks file modes only; a connection starts any program | Info | reported (confirmed in code) |
 | SEC-FIL-81 | `crates/moqui-host/src/ssh/server.rs:765-772`; `crates/moqui-host/src/term/apps.rs:343-344` | An SSH client sets a terminal size of up to 10 million cells, and each `apps` session draws frames that large | Medium | fixed |
-| SEC-FIL-82 | `crates/moqui-dav/src/pim/ics.rs:31-36`, `:54-98` | A calendar file of nested `BEGIN` lines overflows the stack when its parse tree is dropped, which ends the server process | Medium | fixed |
+| SEC-FIL-82 | `crates/moqui-dav/src/pim/ics.rs:31-36`, `:54-98` | A calendar file of nested `BEGIN` lines overflows the stack when its parse tree is dropped, which ends the server process | Medium | fixed in part |
 | SEC-FIL-83 | `crates/moqui-dav/src/dav/files.rs:319-337`; `crates/moqui-dav/src/dav/locks.rs:99-158` | Any user a drive is listed for locks any path of it over WebDAV, the whole drive included, and holds every other writer | Medium | fixed |
 | SEC-FIL-84 | `crates/moqui-host/src/ssh/sftp_fs.rs:351-407` | An SFTP read handle holds a window as large as the client asks, past the per-user bound of SEC-FIL-61 | Medium | fixed |
 | SEC-FIL-85 | `crates/moqui-dav/src/pim/rrule.rs:353-379`, `:450-475` | One period of a recurrence rule is built whole before any limit applies: a yearly rule makes about 31.5 million date-times | Medium | fixed |
@@ -813,7 +832,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-96 | `crates/moqui-host/src/ssh/client.rs:508-511`; `crates/moqui-core/src/service/system_sync/sftp.rs:358-359` | The SFTP client reads a remote file whole, with no size bound | Low | reported (confirmed in code) |
 | SEC-FIL-97 | `crates/moqui-host/src/term/access.rs:179-189`; `crates/moqui-host/src/command/host.rs:51` | Over SSH a loopback peer is the server's own machine, and a recent sign-in is never asked | Info | reported (confirmed in code) |
 | SEC-FIL-98 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:1545-1551`, `:1476-1481` | A drive's `.trash` is guarded in four services only | Info | reported (confirmed in code) |
-| SEC-FIL-99 | `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`; `crates/moqui-host/src/term/apps.rs:304`, `:389-393` | A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login | Medium | fixed |
+| SEC-FIL-99 | `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`; `crates/moqui-host/src/term/apps.rs:304`, `:389-393` | A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login | Medium | fixed in part |
 | SEC-FIL-100 | `crates/moqui-tui/src/decode.rs:300-305`; `crates/moqui-tui/src/ui/session_loop.rs:240-241`, `:251-257`; `crates/moqui-host/src/termws.rs:274-284` | The browser terminal's 500 by 500 limit does not hold: the session takes a window size from its input bytes, which brings SEC-FIL-81 to every signed-in user | Medium | fixed |
 | SEC-FIL-101 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:328-333`, `:417-419`; `crates/moqui-git/src/fs.rs:440-454` | A drive mirror's URL may be plain `http://`, and the mirror's stored token is offered to it | Low | likely (second check) |
 
@@ -924,7 +943,7 @@ Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Rev
 | SEC-DAT-12 | `runtime/components/addon/mr-mantle/entity/AccountingAccountEntities.xml:1144-1145` | Regulated identifiers stored in clear | Info | confirmed (second check) |
 | SEC-DAT-13 | `deny.toml:6-8`, `:10-18` | The advisory check covers one target and the default features | Info | not confirmed (second check) |
 | SEC-DAT-81 | `runtime/components/addon/mr-marble/screen/SimpleScreens/QuickSearch.xml:41-46`, `Search.xml:19-23`; `runtime/components/addon/mr-mantle/service/mantle/GeneralServices.xml:238-286`; `runtime/components/base/framework/service/org/moqui/search/SearchServices.xml:140-141` | A Marble user names any document type in a search and reads mail subjects, chat text and telemetry of every user | Medium | fixed |
-| SEC-DAT-82 | `runtime/components/addon/mr-mantle/service/mantle/search/UniversalSearchServices.xml:257-259`, `:273-323`, `:378-390` | Universal search counts the records it then hides, so a query tells what a hidden record says | Medium | fixed |
+| SEC-DAT-82 | `runtime/components/addon/mr-mantle/service/mantle/search/UniversalSearchServices.xml:257-259`, `:273-323`, `:378-390` | Universal search counts the records it then hides, so a query tells what a hidden record says | Medium | fixed in part |
 | SEC-DAT-83 | `crates/moqui-core/src/script/host/tools.rs:1886-1889`, `:1919-1921`; `crates/moqui-entity/src/entity/facade.rs:123`, `:788-791` | A load's `disableEntityEca` and `disableAuditLog` switch entity ECA rules and the audit log off for every thread, and two overlapping loads can leave them off | Medium | fixed |
 | SEC-DAT-84 | `crates/moqui-core/src/search/postgres/mod.rs:670-683`; `crates/moqui-core/src/search/postgres/compile.rs:954-965` | The search SQL has no time limit, and one wildcard word reads every row | Low | reported (confirmed in code) |
 | SEC-DAT-85 | `crates/moqui-core/src/search/parse.rs:509-512`; `runtime/components/addon/mr-marble/template/product/ProductTransitions.xml:61-62`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Catalog/Search.xml:64-65` | An empty group in a query string matches every document, and Marble writes its organization limit as such a group | Low | reported (confirmed in code) |
@@ -940,6 +959,7 @@ Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Rev
 | SEC-DAT-95 | `crates/moqui-drivers/src/pgwire.rs:197-208`, `:236-238`; `crates/moqui-core/src/service/call.rs:781-810`; `crates/moqui-entity/src/error.rs:222-234` | A database error's text, its DETAIL line included, reaches the caller on a production instance | Low | reported (likely) |
 | SEC-DAT-96 | `crates/moqui-entity/src/entity/load_feed/loader.rs:760`; `runtime/components/base/tools/screen/Tools/Data/Load.xml:74-78`; `crates/moqui-core/src/service/jobs.rs:1372-1376` | A load keeps every service element with its parameters for the life of the process, and a wrapped load stores its whole text as job parameters | Info | reported (confirmed in code) |
 | SEC-DAT-97 | `crates/moqui-drivers/src/entity_db.rs:430-448`; `crates/moqui-drivers/src/lib.rs:107-117` | A MySQL datasource takes only on or off from `sslmode` and ignores `sslrootcert`, and a conf connection to MySQL with no mode is plain text | Info | reported (confirmed in code) |
+| SEC-DAT-98 | runtime/components/addon/mr-mantle/service/mantle/GeneralServices.xml:238-302; runtime/components/addon/mr-marble/screen/SimpleScreens/Search.xml:19-23, :52-75; runtime/components/addon/mr-marble/screen/SimpleScreens/Request/EditRequest.xml:51 | Marble's search and record screens show HR cases, hidden applicants, protected and confidential tasks and maintenance requests that BOSS hides inside an organization | Medium | reported (likely) |
 
 ### PASS frontend (mr-pass)
 
@@ -1194,7 +1214,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 | SEC-BAP-90 | `runtime/components/addon/mr-mantle/service/mantle/product/PricePolicy.js:37-40`, `:139-262`; `runtime/components/addon/mr-mantle/service/mantle/order/Awards.js:228-241`, `:1349`, `:1365-1366` | A supplier-price editor's price row names any quote line as its source, and Purchasing's award then prices that line from it | Medium | fixed |
 | SEC-BAP-91 | `runtime/components/addon/mr-mantle/service/mantle/order/SalesOrderChanges.js:483-496`, `:518-525`, `:584-596`; `runtime/components/addon/mr-mantle/service/mantle/account/Credit.js:162-180` | A commercial change that raises an approved sales order's total is never credit checked | Medium | fixed |
 | SEC-BAP-92 | `runtime/components/addon/mr-boss/screen/Purchasing/Orders/OrderChanges.xml:29`, `:96-103`; `runtime/components/addon/mr-mantle/service/mantle/order/PurchaseRevisions.js:42-49`, `:256-258`, `:417-419`, `:599-601` | A purchasing buyer reads the first line and city of any postal address, and can make it a purchase order's ship-to address | Medium | fixed |
-| SEC-BAP-93 | `runtime/components/addon/mr-boss/template/WarehouseReturnParts.xml:85-110`, `:125-140`; `runtime/components/addon/mr-mantle/service/mantle/order/ReturnServices.xml:351-400`; `runtime/components/addon/mr-mantle/service/mantle/order/ReturnSettlement.js:259-278`, `:395-412` | A warehouse receiver adds any order's line to a return, an already approved one included, where it is born authorized | Medium | fixed |
+| SEC-BAP-93 | `runtime/components/addon/mr-boss/template/WarehouseReturnParts.xml:85-110`, `:125-140`; `runtime/components/addon/mr-mantle/service/mantle/order/ReturnServices.xml:351-400`; `runtime/components/addon/mr-mantle/service/mantle/order/ReturnSettlement.js:259-278`, `:395-412` | A warehouse receiver adds any order's line to a return, an already approved one included, where it is born authorized | Medium | fixed in part |
 | SEC-BAP-94 | `runtime/components/addon/mr-boss/service/ironstone/shared/ChatterServices.xml:531-549`, `:746-753`; `runtime/components/addon/mr-mantle/service/mantle/party/CommunicationServices.xml:2899`, `:3801-3839` | The record panel's change history shows every Commons user the audited field values of records no rule or entity filter covers, a job offer's pay among them | Medium | fixed |
 | SEC-BAP-95 | `runtime/components/addon/mr-boss/service/ironstone/shared/RecordFilesServices.xml:593-604`, `:667-668`; `runtime/components/addon/mr-boss/service/ironstone/shared/ChatterServices.xml:969-970`, `:1271-1272`; `crates/moqui-core/src/script/host/tools.rs:3101-3109` | Any user who reaches the record panels removes and replaces other users' files, unlinks messages and removes followers on other apps' records, because "may update the record" is a check every user of the root passes | Medium | fixed |
 | SEC-BAP-96 | `crates/moqui-core/src/service/system_sync/message.rs:271-283`; `runtime/components/addon/mr-mantle/service/mantle/edi/X12.js:37-49`, `:296-311`; `runtime/components/addon/mr-mantle/service/mantle/ext/account/OfxServices.xml:28-50`; `runtime/components/addon/mr-mantle/service/mantle/ext/account/NachaServices.xml:484-506` | A login remote takes posts from every system-message receiver, so one trading partner's account delivers interchanges as another partner, and bank files on a bank's remote | Medium | fixed |
@@ -1241,6 +1261,8 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 | SEC-BAP-137 | `runtime/components/addon/mr-boss/screen/Sales/Reports/SalesSummaryStats.fancy:16-18`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Accounting/Reports/SalesSummaryStats.html.fancy:2-4` | Sales Summary loads Chart.js 2.9.3 from cdnjs with no `integrity` in its html and vuet modes | Low | confirmed (second check) |
 | SEC-BAP-138 | `runtime/components/addon/mr-mantle/service/mantle/product/Content.js:175`, `:203-208`; `runtime/components/addon/mr-mantle/service/mantle/product/ProductServices.xml:947`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Catalog/Product/Content/ContentList.xml:27-33`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Catalog/Category/Content/ContentList.xml:22-28` | A catalog content row of any type but a download or the Shop's texts takes any location, and mr-marble's Catalog screens stream it with no location rule (SEC-PSS-82's fix covers the Shop's types only) | Medium | fixed |
 | SEC-BAP-139 | `runtime/components/addon/mr-mantle/service/mantle/work/ShipmentWorkServices.xml:176-210` | The shipment load filter quotes category ids into SQL after refusing only `'`, so on MySQL a category id ending in a backslash breaks out of its quote | Info | likely (second check) |
+| SEC-BAP-140 | runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:52-57, :427-466; runtime/components/addon/mr-marble/screen/SimpleScreens/Customer/EditCustomer.xml:40-45, :162; runtime/components/addon/mr-marble/screen/SimpleScreens/Supplier/EditSupplier.xml:29-34, :90 | Marble's party, customer and supplier screens show and edit every identification whole, an employee's SSN among them | Medium | reported (confirmed in code) |
+| SEC-BAP-141 | runtime/components/addon/mr-mantle/service/mantle/party/CommunicationServices.xml:3957-3995; runtime/components/addon/mr-mantle/entity/PartyEntities.xml:46-49 | A record's change history shows every audited field to whoever opens the record, a personal contact's former owner among them | Low | reported (likely) |
 
 ### Clients
 

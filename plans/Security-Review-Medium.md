@@ -197,6 +197,15 @@ Medium; likely (lead); fixed.
 - **Suggested fix:** Limit `resourceLocation` to `dbresource://` and `content://` (and a component's `template/` or label paths where an application needs them), as `/resources` does in production; refuse `file:`, `runtime://` and `http(s)://`. Put `NetworkPrinter` create and update behind `store#Connection`.
 - **Re-check:** Read `service/tools.rs:157-180`: `resourceLocation` goes to `resource().get` and its bytes to `print#Document`, with no location rule in these lines. Not read by the lead: who reaches the REST resource, what a printer row may name.
 
+#### SEC-RTE-91. A multipart request from anyone, to any path, has no total time limit, so slow uploads hold every connection
+
+Medium; reported (confirmed in code).
+
+- **Where:** `crates/moqui-host/src/http/serve.rs:655-664` (`upload`: any request whose `Content-Type` starts with `multipart/`), `:711`, `:542-552` (`request_deadline` gives a `streaming` request none); `crates/moqui-host/src/http.rs:1247-1252` (`read_multipart`: only `upload-idle-timeout` between chunks); `:1182-1183` (the deadline starts only once the body has arrived); `runtime/components/base/framework/conf/MoquiDefaultConf.xml:576-597` (`connections max="4096" max-per-client="64"`, `body-timeout="60"`, `upload-idle-timeout="60"`, `request-timeout="300"`; the per-client parts are on only with `trusted-proxies` or `enabled="true"`).
+- **Reached by:** anyone, with no session: a `multipart/form-data` POST to any path (anonymous bodies stop at `max-body`, 10 MiB; under `/s/` at `max-upload`, 2 GiB).
+- **What happens:** Any other body must arrive within `body-timeout` (60 s), and a request must answer within `request-timeout` (300 s). A multipart body has neither: it is cut off only when nothing arrives for 60 s. A client that sends one byte every 50 s keeps a request open for as long as it likes: 10 MiB at that rate lasts for years. Each such request holds a connection and an open spool. Scenario: one anonymous client on a server with no `trusted-proxies` (per-client limits off by default) opens 4096 such uploads to `/Login`. The listeners stop accepting, and no one can reach the server until the client stops. With per-client limits on, 64 addresses do the same.
+- **Suggested fix:** Give an upload a total limit while it arrives: a minimum rate (for example 1 KiB/s after the first 60 s), or a deadline from `max-upload` and that rate. Count slow uploads per client even when per-client protection is off, and cap the uploads arriving at once (a share of `connections@max`).
+
 ## Administration, identity and sign-in
 
 #### SEC-ADM-02. `update#Password` tests passwords with no lockout and tells right from wrong
@@ -305,6 +314,15 @@ Medium; likely (lead); fixed.
 - **Not confirmed:** which templates build links from the base, and which mail bodies hold a link with a token in it (an invitation or a verification link would hand the token to that host on a click). Looked for and not found: a check of the URL's host against the instance's own; a second permission.
 - **Suggested fix:** Refuse a `webBaseUrl` whose host is not the instance's public host or a name the conf lists, or leave the field to an instance administrator (Tools).
 - **Re-check:** Read `ConfigurationConnections.js:883-889`: `webBaseUrl` is a plain audited field, not marked `endpoint` or `retest`. Not read: `implementation.rs:101-103`, `:602-603`.
+
+#### SEC-ADM-89. A holder of Marble's Party or Customer screens changes another account's email and sign-in fields, and enables or disables any account
+
+Medium; reported (confirmed in code).
+
+- **Where:** `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:148-152` (`update#UserAccount` asks `check#AccountAction` with `permissionId: 'NONE'`), `:677` (`permissionId !== 'NONE' && !ec.user.hasPermission(permissionId)`: with NONE, no permission is asked), `:452-466` (`enable#UserAccount` and `disable#UserAccount`: no account rule at all); `runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:963-995` (`update#PartyUserAccount`: `userId` from the caller, not tied to `partyId`, no own-account or `ADMIN_IDENTITY_MANAGE` rule; compare `update#Account`, `:827-829`, which has one); `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:61-66`, `Customer/EditCustomer.xml:49-54`; `runtime/components/addon/mr-mantle/service/mantle.rest.xml:69` (`PATCH parties/{partyId}/user`, ADMIN only by seed).
+- **Reached by:** a member of a group given Marble's `SimpleScreensParty` or `SimpleScreensCustomer` artifact group (`mr-marble/data/SimpleScreensSetupData.xml:310-324`, made to be granted to staff), or of `MarbleErpAdmin` (`ZmeMarbleErpSetupData.xml:30`), who holds no `ADMIN_IDENTITY_MANAGE`. The routes are `POST .../Party/EditParty/updateUserAccount`, `enableUserAccount` and `disableUserAccount`, with any `userId`.
+- **What happens:** `update#UserAccount`'s only rule for another account is `check#AccountAction` bounded (`Identity.js:222-238` `heldBeyond`: the account is in a privileged group the caller is not in, or holds a sealed permission the caller lacks), plus a recent sign-in, the caller's own, for the email address. The caller's authority over accounts is not asked. So a Party screen user changes a coworker's or customer's `emailAddress`, `username`, `ipAllowed` or `requirePasswordChange`, provided that account holds no more than they do. They then ask a password reset at the new address and sign in as that user, and read that user's mail, chats and files. `enable#UserAccount` and `disable#UserAccount` ask nothing, not even `heldBeyond`. The same user therefore disables an ADMIN's account, or brings back one an administrator disabled for good (a departed employee's), by `userId` alone. A screen's `service-call` is not a generic call, so `account_write_refusal` (`service/call.rs:1632-1700`) does not apply.
+- **Suggested fix:** Have `update#UserAccount` ask `check#AccountAction` with `ADMIN_IDENTITY_MANAGE` (its default) for another account. Have `enable#` and `disable#UserAccount` ask the same, bounded. Have `update#PartyUserAccount` take the `userId` of `partyId` only, as `update#Account` does.
 
 ## Tools, System, Monitor and Dashboards
 
@@ -546,7 +564,7 @@ Medium; reported (likely); fixed.
 
 #### SEC-TLS-92. A dataset steward rewrites the fields and conditions of any DataDocument that is in a data feed
 
-Medium; reported (likely); fixed.
+Medium; reported (likely); fixed in part (what is left: 2026-11-19).
 
 - **Fix:** Fixed 2026-11-19 (F1, merged `2be698e23`): `create#BusinessDataset` and the field and condition stores need a `DataDocumentUserGroup` row for the document in one of the steward's groups, and a field or condition change needs the steward to steward every other dataset over the document (the refusal counts them and names none). A field or condition is changed or removed only by the dataset that added it (`BusinessDataset.fieldSeqIds`, `conditionSeqIds`, cleared when a dataset is created), never one shipped with the document or made in Tools: the owner's decision is that a shipped dataset's seeded fields stay as the component ships them. `index#BusinessDataset` needs only the dataset's steward, since a rebuild widens nothing (BOSS's People datasets). `get#BusinessDatasetOptions` offers only documents the caller's groups read (`check_document_steward`, `crates/moqui-report/src/business.rs`; `fedDocuments`, `ReportReads.js`). Left open: a field of a related entity a steward adds widens what the document's other reader groups read from the index. Tests: `framework/test/BusinessDatasets.spec.js`.
 - **Where:** `crates/moqui-report/src/business.rs:529-595`, `:679-719`, `:838-977`, `:981-1099`
@@ -1002,7 +1020,7 @@ Medium; likely (lead); fixed.
 
 #### SEC-FIL-82. A calendar file of nested `BEGIN` lines overflows the stack when its parse tree is dropped, which ends the server process
 
-Medium; likely (lead); fixed.
+Medium; likely (lead); fixed in part (what is left: 2026-11-19).
 
 - **Fix:** Fixed 2026-11-19 (F3, merged `ef992e6e2`): the iCalendar reader leaves out a component nested deeper than `MAX_DEPTH` (8) with all it holds and reads at most `MAX_COMPONENTS` (100000) components a file, each logged; an END naming an open component closes those inside it, so the parse tree's drop stays shallow (`components`, `crates/moqui-dav/src/pim/ics.rs`). All iCalendar, the Mantle feed's included, goes through it. Tests: `pim::tests::nested_components_past_the_depth_limit_are_left_out_in_a_small_stack`, `a_calendar_file_holds_at_most_its_component_count`.
 - **Where:** `crates/moqui-dav/src/pim/ics.rs:31-36`, `:54-98`, `:516-584`
@@ -1066,7 +1084,7 @@ Medium; reported (likely); fixed.
 
 #### SEC-FIL-99. A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login
 
-Medium; confirmed (lead); fixed.
+Medium; confirmed (lead); fixed in part (what is left: 2026-11-19).
 
 - **Fix:** Fixed 2026-11-19 (F3, merged `ef992e6e2`): a bracketed paste keeps at most `MAX_PASTE` (1 MiB), each read searching only its new bytes for the end marker; a longer one, a few bytes past included, is delivered cut back to a whole UTF-8 character and logged (`Decoder::push`, `Paste::keep_within`, `crates/moqui-tui/src/decode.rs`). The session's input channel stays unbounded; the decoder is now linear in its input. Test: `decode::tests::a_paste_keeps_at_most_its_limit_and_ends_at_its_marker`.
 - **Where:** `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`, `:471-473`; `crates/moqui-host/src/term/apps.rs:304`, `:378`, `:389-393`. Report: round 3 `B15.md`.
@@ -1293,7 +1311,7 @@ Medium; likely (lead); fixed.
 
 #### SEC-DAT-82. Universal search counts the records it then hides, so a query tells what a hidden record says
 
-Medium; likely (lead); fixed.
+Medium; likely (lead); fixed in part (what is left: 2026-11-19).
 
 - **Fix:** Fixed 2026-11-18 (mr-mantle `d5a09ada`, `ccba960e`): `search#Universal` counts a type from the page (`totalRelation` `gte`) when the page left out a hit of that type, and does the same for every type with a per-hit rule (parties, tasks, requests, messages, ledger transactions, invoices, payments) whenever the page is not the whole match (an offset, or more matches than it holds), so its total and facet counts never include the index's count of a hidden record. Left open, Low-Medium: a page one short of its size can still answer yes or no for a prefix that matches a hidden record ranked on it; only putting each hide rule in the trusted filter (index fields marking protected tasks, hidden applicants, maintenance requests) removes that. Test: `mr-mantle/test/search/UniversalSearch.spec.js`.
 - **Where:** `runtime/components/addon/mr-mantle/service/mantle/search/UniversalSearchServices.xml:257-259`, `:273-323`, `:378-380`, `:384-390`. Report: round 3 `B10.md`.
@@ -1322,6 +1340,16 @@ Medium; confirmed (lead); fixed.
 - **Not confirmed:** confirmed in code for the flags, likely for a use of the window. Which reachable service a user who is not in `ADMIN_ADV` would use to write `UserGroupMember` while a load runs was not traced (`AccessServices.store#Membership` and the entity-auto services are candidates). Looked for and not found: a per-thread or per-context form of the flags in `load_data` (the execution context has one for ECA, `entity_eca_disabled`, `entity_hooks.rs:36`, which `load_data` does not use); a second enforcement of the privileged-group and sealed-permission checks in a service (a grep of `assert_privileged_group_membership`, `assert_sealed_permission_grant`); a lock that keeps two loads apart.
 - **Suggested fix:** Carry the three switches on the thread (a guard like `FkScope`, `loader.rs:78`) or on the execution context, not on the facade; never let a switch skip the `UserSecurityChecks` rules (`service/eca.rs:264` `is_security_check` already tells them apart).
 - **Re-check:** Read `script/host/tools.rs:1886-1889` (the facade's ECA, audit and feed flags are set from the request) and `:1919-1921` (the values read before are restored), so of two loads that overlap the later restore can leave them off. Not read by the lead: that the facade's flags are process-wide.
+
+#### SEC-DAT-98. Marble's search and record screens show HR cases, hidden applicants, protected and confidential tasks and maintenance requests that BOSS hides inside an organization
+
+Medium; reported (likely).
+
+- **Where:** `runtime/components/addon/mr-mantle/service/mantle/GeneralServices.xml:238-302` (`search#MantleFiltered`: the organization limit and, for parties, the private-contact clause, `:274`; then `search#DataDocuments` returns the hits as they are); `runtime/components/addon/mr-marble/screen/SimpleScreens/Search.xml:19-23`, `:52-75` (each hit's expanded title and links), `QuickSearch.xml:45`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Request/EditRequest.xml:51` (a request by id, under the entity filters only); the rules they lack are `mr-mantle/service/mantle/search/UniversalSearchServices.xml:230-280` (HR case, `hiddenApplicants`, `hiddenTaskIds`, `check#TaskHidden`, `workHidden`, `requestHidden`). No mr-marble screen or template names any of them.
+- **Reached by:** a member of a group given `MarbleErpApp` (Search and QuickLookup, "for all non-admin user groups", `mr-marble/data/ZmeMarbleErpSetupData.xml:35-41`), and for the record screens a holder of `SimpleScreensRequest` or `SimpleScreensProject`, within their own organizations.
+- **What happens:** Inside an organization, BOSS hides some records hit by hit: a confidential HR case (`RqtHrCase`), an applicant only recruiters see, a protected People task, the task of a confidential Smithy issue, and a maintenance work order or request outside the user's maintenance reach. Marble's search applies only the trusted organization filter, so every such document of the user's organizations is a hit. Its title (the request's or task's name, the applicant's name) is shown with an Edit link. Marble's `EditRequest` and task screens then open the record by id. Scenario: a Marble user of the organization searches `harassment` and reads the titles of HR cases, then opens one in Request › Edit Request and reads its description and comments.
+- **Not confirmed:** not run. Whether the `MarbleErpApp` grant is in use in a deployment (the seed gives Marble to `ADMIN` and `MarbleErpAdmin`), and which Marble record screens read each kind (only `EditRequest.xml:51` was read).
+- **Suggested fix:** Have `search#MantleFiltered` drop hits by the same rules as `search#Universal` (a shared per-hit function in `SearchScope.js`), or leave those types out of Marble's search. Ask the same rules in Marble's request and task record screens (`get#RecordLinkInfo`'s rule for the record).
 
 ## PASS frontend (mr-pass)
 
@@ -2044,7 +2072,7 @@ Medium; reported (confirmed in code); fixed.
 
 #### SEC-BAP-93. A warehouse receiver adds any order's line to a return, an already approved one included, where it is born authorized
 
-Medium; reported (likely); fixed.
+Medium; reported (likely); fixed in part (what is left: 2026-11-19).
 
 - **Fix:** Fixed 2026-11-19 (mr-mantle `94a6c7ca`, `9629365e`; mr-marble `c1554e7`).
   - `add#OrderItemToReturn` refuses a line whose order part's customer or vendor is not the return's (ORDER_MISMATCH).
@@ -2138,6 +2166,15 @@ Medium; confirmed (second check); fixed.
 - **Not confirmed:** who may open mr-marble's Catalog screens (their artifact groups were not read), and which BOSS screen or REST path passes `contentLocation` to `update#ProductContent`; SEC-BAP-130 found none in BOSS, so on an instance without mr-marble the writer needs another path. Not run. Looked for and not found: a location rule in `sendResourceResponse` or in mr-marble's download transitions, and one for category content on create or update.
 - **Suggested fix:** SEC-PSS-82's own: refuse a caller-given `contentLocation` for every product and category content type (keep a file in the record's own folder, or an `http(s)` link only for an image a page shows by its URL), and apply `owned` in mr-marble's `downloadContent` transitions and in `get#RecordFile` (SEC-BAP-130).
 - **Re-check:** Read `Content.js:70-95`, `:159-215`, `:225-234`, `:290-310`, `:430-450`, `ProductServices.xml:932-1066`, mr-marble's two `ContentList.xml` and their `ContentDetail.xml:27`, and `send_resource_response`. Not read: the screens' authorization, the REST resources of Mantle that may update content.
+
+#### SEC-BAP-140. Marble's party, customer and supplier screens show and edit every identification whole, an employee's SSN among them
+
+Medium; reported (confirmed in code).
+
+- **Where:** `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:427-466` (`PartyIdentificationSection`: every `PartyIdentification` of the party, `idValue` decrypted in a `text-line`), `:52-57` (create, update and delete as entity-auto); `Customer/EditCustomer.xml:162`, `Supplier/EditSupplier.xml:90` (the same section); compare `mr-mantle/service/mantle/account/CustomerFinance.js:7-8`, `:40` and `humanres/Employees.js:31` (never `PtidSsn`, `PtidFein`, `PtidFuid`; the rest masked to four).
+- **Reached by:** a holder of `SimpleScreensParty`, `SimpleScreensCustomer` or `SimpleScreensSupplier`, or a member of `MarbleErpAdmin`, through `GET .../Party/EditParty?partyId=<any party of their organizations>`.
+- **What happens:** Payroll keeps an employee's SSN as a `PtidSsn` identification (`mantle/humanres/PayrollDocumentServices.xml:60`). People never shows it, even to HR, and since SEC-BOS-82 Accounting and Customer Service never answer it and mask the other types. Marble's party screens list every identification of the party in full and write any type. Scenario: a staff user with Marble's Party screens (granted to manage customers) opens Edit Party for a coworker and reads the coworker's SSN. They can also replace it, and the next payroll tax document carries the new value.
+- **Suggested fix:** Read the section through `CustomerFinance.js` `identifications` (or People's rule), with the tax types left out and the rest masked, and write it through `store#CustomerIdentification`, which refuses the tax types and a masked value.
 
 ## Clients
 
