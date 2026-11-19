@@ -16,7 +16,10 @@
 //! SEC-CLI-01): a request from this machine (a loopback peer, straight to the listener, through no proxy), or one that
 //! gives the one-time setup secret this server printed in its startup log. The secret is made once per server and
 //! held in memory only, so a restart makes a new one. None of it is offered unless `user-facade/login@initial-admin-enabled` is true
-//! (`get#InitialAdminNeeded`; false in the default conf, true in the dev conf).
+//! (`get#InitialAdminNeeded`; false in the default conf, true in the dev conf). On a machine other people sign in to,
+//! `user-facade/login@initial-admin-local` `in-process` narrows "this machine" to the server's own process: the Desktop
+//! app's node sets it, so another account of the computer that reaches the node's ports needs the secret too
+//! (SEC-CLI-101).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -39,18 +42,35 @@ fn secret(factory: &ExecutionContextFactory) -> Arc<SetupSecret> {
     })
 }
 
+/// Who counts as this machine: `loopback` (the default) or `in-process`.
+const LOCAL_SETTING: &str = "user-facade/login@initial-admin-local";
+
+/// Whether only the server's own process counts as this machine (`initial-admin-local` `in-process`).
+fn in_process_only() -> bool {
+    crate::context::conf_env::setting(LOCAL_SETTING) == "in-process"
+}
+
 /// Whether the current caller is on this machine. A request: a loopback peer that reached the listener itself (or the
 /// Desktop app's node in process), with no proxy's forwarding header, so a reverse proxy on the same host does not make
 /// every client local. With no request (the terminal's dialog over SSH, server code): the address
-/// [`super::with_client_ip`] gave is loopback, or there is none (work in this process).
+/// [`super::with_client_ip`] gave is loopback, or there is none (work in this process). With `initial-admin-local`
+/// `in-process`, only a request made in the server's process and work with no address count.
 pub fn initial_admin_local() -> bool {
+    let in_process = in_process_only();
     match crate::web::current_request() {
-        Some(request) => request_is_local(&request, &crate::web::client_addressing().header().to_ascii_lowercase()),
-        None => {
-            let address = super::login::client_ip();
-            address.trim().is_empty() || loopback(&address)
-        }
+        Some(request) => request_is_local(
+            &request,
+            &crate::web::client_addressing().header().to_ascii_lowercase(),
+            in_process,
+        ),
+        None => no_request_is_local(&super::login::client_ip(), in_process),
     }
+}
+
+/// Work with no request: local when it has no client address (this process), or a loopback one unless only the
+/// process counts (another account of the computer reaches an SSH listener from loopback too).
+fn no_request_is_local(address: &str, in_process_only: bool) -> bool {
+    address.trim().is_empty() || (!in_process_only && loopback(address))
 }
 
 fn loopback(text: &str) -> bool {
@@ -59,9 +79,13 @@ fn loopback(text: &str) -> bool {
         .is_ok_and(|address| address.to_canonical().is_loopback())
 }
 
-fn request_is_local(request: &crate::web::WebRequest, client_ip_header: &str) -> bool {
-    matches!(request.via, RequestVia::Direct | RequestVia::InProcess)
-        && loopback(&request.peer_ip)
+fn request_is_local(request: &crate::web::WebRequest, client_ip_header: &str, in_process_only: bool) -> bool {
+    let via = if in_process_only {
+        matches!(request.via, RequestVia::InProcess)
+    } else {
+        matches!(request.via, RequestVia::Direct | RequestVia::InProcess)
+    };
+    via && loopback(&request.peer_ip)
         && loopback(&crate::web::client_ip(request))
         && ["forwarded", "x-forwarded-for", "x-real-ip", client_ip_header]
             .iter()
@@ -114,9 +138,14 @@ pub fn log_initial_admin_setup(factory: &Arc<ExecutionContextFactory>) {
     if secret.0.is_empty() {
         return;
     }
+    let local = if in_process_only() {
+        "in the app's own window as is"
+    } else {
+        "from this machine as is"
+    };
     tracing::warn!(
-        "No user account exists yet. Create the first administrator at /Login: from this machine as is, or from \
-         another address with this setup secret: {}. The secret is good until the server stops.",
+        "No user account exists yet. Create the first administrator at /Login: {local}, or from another address with \
+         this setup secret: {}. The secret is good until the server stops.",
         secret.0
     );
 }

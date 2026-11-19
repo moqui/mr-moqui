@@ -19,7 +19,7 @@ use std::path::Path;
 
 use moqui_client::assets::SFRAME_WORKER;
 
-use super::shell_assets;
+use super::{named_device, shell_assets};
 
 #[test]
 fn the_repository_shell_has_its_page_scripts_and_libraries() {
@@ -65,4 +65,22 @@ fn the_repository_shell_has_its_page_scripts_and_libraries() {
     let worker = assets.read(SFRAME_WORKER).expect("the worker is staged");
     assert!(worker.worker);
     assert!(String::from_utf8_lossy(&worker.body).contains("importScripts(\"/js/WebrootSFrame.js\")"));
+}
+
+/// SEC-CLI-106: the device is named for the OS, never the computer's host name, which other users who share a room or
+/// a call are told as its crypto device's name.
+#[test]
+fn the_device_is_named_for_its_os_not_its_host() {
+    assert_eq!(named_device("macos"), "MR Moqui desktop on macOS");
+    assert_eq!(named_device("linux"), "MR Moqui desktop on Linux");
+    assert_eq!(named_device("windows"), "MR Moqui desktop on Windows");
+    assert_eq!(named_device("redox"), "MR Moqui desktop on this computer");
+    let host = std::process::Command::new("hostname")
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default();
+    let host = host.strip_suffix(".local").unwrap_or(&host);
+    if !host.is_empty() {
+        assert!(!super::device_name().contains(host), "{host}");
+    }
 }

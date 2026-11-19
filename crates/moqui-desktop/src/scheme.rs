@@ -17,4 +17,6 @@
 //! to a worker thread. The workers and the handling CEF's HTML answers need are `moqui_client_tauri::scheme`'s, shared
 //! with the mobile app (tested there).
 
-pub(crate) use moqui_client_tauri::scheme::{document_request, has_script_policy, plain, run};
+pub(crate) use moqui_client_tauri::scheme::{
+    document_request, has_script_policy, plain, run, upgraded_page, PAGE_PERMISSIONS_POLICY,
+};

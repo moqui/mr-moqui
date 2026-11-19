@@ -246,7 +246,7 @@
         drafts,
         // the shell (shell/js/shell.js): the accounts and sign-in, which the host keeps; never the key
         state: () => ask("client_state"),
-        // the name of the shell's chat crypto device (WebrootCrypto deviceName): "MR Moqui desktop on <host>"
+        // the name of the shell's chat crypto device (WebrootCrypto deviceName): "MR Moqui desktop on <OS>"
         deviceName: String(window.__moquiDeviceName || ""),
         // the storage of the accounts state's clearScopes names, as the shell loads
         clearScopes,

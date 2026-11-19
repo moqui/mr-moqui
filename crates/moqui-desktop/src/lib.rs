@@ -157,8 +157,15 @@ pub fn run() {
 /// people's audio start in a window hidden to the tray, or one the user has not clicked since it loaded. The app's
 /// windows show only its own pages (the node's, or a client's shell and server pages); the web opens in the system
 /// browser.
+///
+/// Chromium's own requests to Google (plans/Security-Review.md SEC-CLI-123): Safe Browsing is off, as its list updates
+/// are a standing request for windows whose links and downloads go to the system browser and the host, which check
+/// them there. The component updater stays on: it keeps the certificate revocation set and the Certificate
+/// Transparency log list current. Spell checking stays on, which fetches a language's dictionary the first time.
 fn cef() -> tauri_runtime_cef::Cef {
-    let cef = tauri_runtime_cef::Cef::default().autoplay(tauri_runtime_cef::AutoplayPolicy::NoUserGestureRequired);
+    let cef = tauri_runtime_cef::Cef::default()
+        .autoplay(tauri_runtime_cef::AutoplayPolicy::NoUserGestureRequired)
+        .safe_browsing(false);
     let port: Option<u16> = std::env::var("MOQUI_DESKTOP_DEVTOOLS_PORT")
         .ok()
         .and_then(|port| port.trim().parse().ok());
@@ -491,7 +498,7 @@ fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("The node is a dev instance: the Dev AIDE and the dev tools (Developer tools in the tray)");
     }
     properties.extend(node::purpose_properties(dev_tools));
-    properties.extend(node::setup_properties());
+    properties.extend(node::setup_properties(mode));
     let start = NodeStart {
         mode,
         runtime,
@@ -616,3 +623,7 @@ fn start_failed(app: &AppHandle, message: &str) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "lib_tests.rs"]
+mod tests;

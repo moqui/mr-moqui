@@ -42,3 +42,21 @@ pub(crate) fn client_with(timeout: Duration) -> Result<reqwest::blocking::Client
 }
 
 pub(crate) use moqui_lib::remote_login::{form_body, reason};
+
+/// A transport error as text, with no URL, and its causes, which reqwest's own text leaves out. reqwest names the URL
+/// whole in its text, the query and a token in the path (a share link) included, and the apps log what fails, which
+/// on the phone is logcat (plans/Security-Review.md SEC-CLI-112).
+pub(crate) fn transport(err: reqwest::Error) -> String {
+    let err = err.without_url();
+    let mut text = err.to_string();
+    let mut source = std::error::Error::source(&err);
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.ends_with(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
+}

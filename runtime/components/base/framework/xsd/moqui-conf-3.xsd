@@ -1056,6 +1056,17 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="initial-admin-enabled" type="boolean-expandable" default="false">
                 <xs:annotation><xs:documentation>The Login page's Create Initial Admin Account form and
                     create#InitialAdminAccount, while no account exists but the seed ones.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="initial-admin-local" default="loopback">
+                <xs:annotation><xs:documentation>Who creates the first administrator with no setup secret: a request
+                    from this machine (loopback), or only one made in the server's own process (in-process: the Desktop
+                    app's node, where any account of the computer reaches the loopback ports).</xs:documentation></xs:annotation>
+                <xs:simpleType>
+                    <xs:restriction base="xs:token">
+                        <xs:enumeration value="loopback"/>
+                        <xs:enumeration value="in-process"/>
+                    </xs:restriction>
+                </xs:simpleType>
+            </xs:attribute>
             <xs:attribute name="history-incorrect-password" type="boolean" default="false">
                 <xs:annotation><xs:documentation>Ignored: the password a login tried is never stored, as that is too much
                     security risk (UserLoginHistory.passwordUsed is removed). Kept so a Java conf that sets it is still

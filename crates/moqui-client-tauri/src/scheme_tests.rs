@@ -14,7 +14,7 @@
 
 use tauri::http::{HeaderMap, HeaderValue};
 
-use super::{document_request, forwarded_on_shell, has_script_policy};
+use super::{document_request, forwarded_on_shell, has_script_policy, upgraded_page, PAGE_PERMISSIONS_POLICY};
 use crate::tests::{fixture, Fixture};
 use crate::{APP_ORIGIN, SHELL_ORIGIN};
 
@@ -62,6 +62,42 @@ fn only_a_servers_script_policy_is_kept() {
     ));
     assert!(has_script_policy("Default-Src 'self'"));
     assert!(!has_script_policy(""));
+}
+
+/// SEC-CLI-105: a server's page in an app window gets `upgrade-insecure-requests` as a meta tag at the start of its
+/// head, so its `http://` loads of other hosts go over https (the app's own `http://*.localhost` origins are not
+/// upgraded, which Chromium 156 was seen to keep), and a page with no head still gets it before its content and after
+/// its doctype, so it stays in standards mode.
+#[test]
+fn a_servers_page_has_its_loads_of_other_hosts_upgraded_in_its_head() {
+    let meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"upgrade-insecure-requests\">";
+    let page = |html: &str| String::from_utf8(upgraded_page(html.as_bytes().to_vec())).unwrap();
+    assert_eq!(
+        page("<!DOCTYPE html><html lang=\"en\"><HEAD><title>t</title></HEAD><body><header>h</header></body></html>"),
+        format!("<!DOCTYPE html><html lang=\"en\"><HEAD>{meta}<title>t</title></HEAD><body><header>h</header></body></html>")
+    );
+    assert_eq!(
+        page("<html><head data-x=\"1\"></head></html>"),
+        format!("<html><head data-x=\"1\">{meta}</head></html>")
+    );
+    // no head: after the html tag, else the doctype, else first; a <header> is not a head
+    assert_eq!(page("<html><body>x</body></html>"), format!("<html>{meta}<body>x</body></html>"));
+    assert_eq!(page("<!doctype html><header>x</header>"), format!("<!doctype html>{meta}<header>x</header>"));
+    assert_eq!(page("<p>x</p>"), format!("{meta}<p>x</p>"));
+}
+
+/// SEC-CLI-124 and SEC-CLI-90: a server's page gives the camera, microphone and location to its own origin only, so a
+/// frame of another origin it embeds with `allow="camera"` does not get them by the window's grant.
+#[test]
+fn a_servers_page_keeps_its_media_to_its_own_origin() {
+    for feature in ["camera", "microphone", "geolocation"] {
+        assert!(
+            PAGE_PERMISSIONS_POLICY
+                .split(", ")
+                .any(|directive| directive == format!("{feature}=(self)")),
+            "{feature}"
+        );
+    }
 }
 
 #[test]

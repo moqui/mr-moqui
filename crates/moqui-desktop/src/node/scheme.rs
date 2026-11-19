@@ -28,7 +28,7 @@ use tauri::http::{Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder};
 
 use super::cookies::Jar;
-use crate::scheme::{document_request, has_script_policy, plain, run};
+use crate::scheme::{document_request, has_script_policy, plain, run, upgraded_page, PAGE_PERMISSIONS_POLICY};
 
 /// The node's scheme, and its origin on Chromium.
 pub(crate) const NODE_SCHEME: &str = "moqui-node";
@@ -203,6 +203,13 @@ fn answer(app: &AppHandle, request: tauri::http::Request<Vec<u8>>) -> Response<V
         }
         response = response.header(name.as_str(), value.as_str());
     }
+    // a window's or a frame's page, as the client's server pages (moqui_client_tauri::scheme::answer): its media for its
+    // own origin (SEC-CLI-124), its loads of other hosts over https (SEC-CLI-105)
+    let page = html && document;
+    if page && header(&shown, "permissions-policy").is_none() {
+        response = response.header("Permissions-Policy", PAGE_PERMISSIONS_POLICY);
+    }
+    let body = if page { upgraded_page(body) } else { body };
     response
         .body(body)
         .unwrap_or_else(|_| plain(StatusCode::BAD_GATEWAY, "The node's answer could not be passed on"))

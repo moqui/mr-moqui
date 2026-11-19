@@ -203,7 +203,7 @@
     }
 
     function deviceName() {
-        // the desktop client's shell names its device for the app and the computer ("MR Moqui desktop on <host>")
+        // the desktop client's shell names its device for the app and the OS ("MR Moqui desktop on macOS")
         const named = root.moquiDesktop && root.moquiDesktop.deviceName;
         if (named) return String(named);
         const ua = (root.navigator && root.navigator.userAgent) || "";

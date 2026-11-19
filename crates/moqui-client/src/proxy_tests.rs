@@ -180,6 +180,29 @@ fn a_cross_site_request_or_odd_method_never_leaves_the_host() {
     assert!(refused(request("CONNECT", &[])).contains("not a method"));
 }
 
+/// SEC-CLI-112: a request the server does not answer fails with the server and the transport's reason, never the path
+/// or the query, which can hold a token (a share link) and which the hosts log (logcat on the phone).
+#[test]
+fn a_failed_request_names_its_server_not_its_path_or_query() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let request = Request {
+        method: "GET".to_string(),
+        path: "/s/abc123share?token=SECRET".to_string(),
+        headers: Vec::new(),
+        body: Vec::new(),
+    };
+    let err = match Proxy::new().unwrap().send(&base, None, ORIGIN, request) {
+        Err(err) => err.to_string(),
+        Ok(_) => panic!("a closed port answered"),
+    };
+    assert!(err.starts_with(&base), "{err}");
+    for hidden in ["SECRET", "token=", "abc123share"] {
+        assert!(!err.contains(hidden), "{hidden} in {err}");
+    }
+}
+
 #[test]
 fn an_attachment_is_named_without_a_directory() {
     assert_eq!(

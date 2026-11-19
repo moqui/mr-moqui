@@ -13,7 +13,8 @@
  */
 
 use super::{
-    choose_port, dev_purpose, purpose_properties, save_port, saved_port, set_dev_tools, setup_properties, PURPOSE_FILE,
+    choose_port, dev_purpose, purpose_properties, save_port, saved_port, set_dev_tools, setup_properties, Mode,
+    PURPOSE_FILE,
 };
 use std::net::{Ipv4Addr, TcpListener};
 
@@ -125,12 +126,27 @@ fn the_dev_tools_follow_the_variable_then_the_purpose_file_and_are_off_by_defaul
         "off leaves the conf's own purpose"
     );
     assert_eq!(
-        setup_properties(),
+        setup_properties(Mode::Sidecar),
         vec![(
             "moqui_conf__user_facade__login__initial_admin_enabled",
             "true".to_string()
         )],
         "the first run offers the first administrator"
+    );
+    // SEC-CLI-101: in process the window comes through the scheme, so a loopback caller of the tray's ports (any account
+    // of the computer) is not this machine's and needs the setup secret
+    assert_eq!(
+        setup_properties(Mode::InProcess),
+        vec![
+            (
+                "moqui_conf__user_facade__login__initial_admin_enabled",
+                "true".to_string()
+            ),
+            (
+                "moqui_conf__user_facade__login__initial_admin_local",
+                "in-process".to_string()
+            )
+        ]
     );
 
     let dir = std::env::temp_dir().join(format!("moqui-desktop-purpose-{}", std::process::id()));

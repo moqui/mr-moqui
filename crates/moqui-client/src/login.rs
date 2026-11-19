@@ -58,7 +58,7 @@ pub fn sign_out(base: &str, key: &str) -> Result<(), Error> {
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(form_body(&[("revokeLoginKey", "true")]))
         .send()
-        .map_err(|err| Error::new(format!("{url}: {err}")))?;
+        .map_err(|err| Error::new(format!("{url}: {}", crate::http::transport(err))))?;
     let status = response.status().as_u16();
     if status >= 400 && status != 401 {
         return Err(Error::new(format!("{url}: HTTP {status}")));
@@ -79,7 +79,7 @@ pub fn client_config(base: &str, key: &str) -> Result<Option<serde_json::Value>,
         .header("Accept", "application/json")
         .header("login_key", key)
         .send()
-        .map_err(|err| Error::new(format!("{url}: {err}")))?;
+        .map_err(|err| Error::new(format!("{url}: {}", crate::http::transport(err))))?;
     let status = response.status().as_u16();
     if status == 401 {
         return Ok(None);
@@ -169,7 +169,7 @@ pub fn key_period(base: &str, key: &str) -> Result<Option<(i64, i64)>, Error> {
         .header("Accept", "application/json")
         .header("login_key", key)
         .send()
-        .map_err(|err| Error::new(format!("{url}: {err}")))?;
+        .map_err(|err| Error::new(format!("{url}: {}", crate::http::transport(err))))?;
     let status = response.status().as_u16();
     if status == 401 {
         return Ok(None);

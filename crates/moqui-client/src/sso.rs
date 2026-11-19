@@ -72,7 +72,7 @@ pub fn providers(base: &str) -> Result<Vec<Provider>, Error> {
         .get(&url)
         .header("Accept", "application/json")
         .send()
-        .map_err(|err| Error::new(format!("{url}: {err}")))?;
+        .map_err(|err| Error::new(format!("{url}: {}", crate::http::transport(err))))?;
     let status = response.status().as_u16();
     let value: serde_json::Value = serde_json::from_str(&response.text().unwrap_or_default()).unwrap_or_default();
     if status >= 400 {
@@ -173,7 +173,7 @@ pub fn exchange(pending: &Pending, code: &str, device: &str) -> Result<String, E
             ("deviceName", device),
         ]))
         .send()
-        .map_err(|err| Error::new(format!("{url}: {err}")))?;
+        .map_err(|err| Error::new(format!("{url}: {}", crate::http::transport(err))))?;
     let status = response.status().as_u16();
     let value: serde_json::Value = serde_json::from_str(&response.text().unwrap_or_default()).unwrap_or_default();
     match value["loginKey"].as_str() {

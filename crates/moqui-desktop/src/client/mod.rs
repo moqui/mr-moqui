@@ -248,16 +248,23 @@ pub(crate) fn comms_root(app: &AppHandle) -> Option<String> {
     client.core.noted_comms_root(&id)
 }
 
-/// A name for this computer in the user's device list.
+/// A name for this computer in the user's device list and of the shell's chat crypto device, which other users who
+/// share a room or a call are told: by its OS, not its host name, which often carries the owner's name or an asset tag
+/// (plans/Security-Review.md SEC-CLI-106). The user renames either afterwards.
 fn device_name() -> String {
-    let host = std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "this computer".to_string());
-    let host = host.strip_suffix(".local").unwrap_or(&host).to_string();
-    format!("MR Moqui desktop on {host}")
+    named_device(std::env::consts::OS)
+}
+
+/// "MR Moqui desktop on <OS>", from `std::env::consts::OS`.
+fn named_device(os: &str) -> String {
+    let os = match os {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "freebsd" => "FreeBSD",
+        _ => "this computer",
+    };
+    format!("MR Moqui desktop on {os}")
 }
 
 #[cfg(test)]

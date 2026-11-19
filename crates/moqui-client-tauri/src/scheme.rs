@@ -27,7 +27,8 @@
 //! Two things of a scheme's HTML answers need handling on CEF, and do no harm elsewhere: the runtime puts the app's
 //! initialization scripts into every `text/html` answer, so HTML a page fetches is handed on as text
 //! ([`document_request`]); and it adds those scripts' hashes to a page's CSP, so a server's CSP with no script policy
-//! is not passed on ([`has_script_policy`]).
+//! is not passed on ([`has_script_policy`]). A server's page itself gets its media for its own origin only and its loads
+//! of other hosts over https ([`PAGE_PERMISSIONS_POLICY`], [`upgraded_page`]), as a browser would give it over https.
 
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
@@ -137,6 +138,40 @@ pub fn has_script_policy(csp: &str) -> bool {
         let name = directive.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
         name == "script-src" || name == "script-src-elem" || name == "default-src"
     })
+}
+
+/// The camera, microphone and location for a server's page in an app window: its own origin only. The runtimes ask the
+/// app by the window, not by the frame that asked, so without this a frame of another origin that a page embeds with
+/// `allow="camera"` got what the window may have (plans/Security-Review.md SEC-CLI-124, SEC-CLI-90). A server that
+/// sends a policy of its own keeps it.
+pub const PAGE_PERMISSIONS_POLICY: &str = "camera=(self), microphone=(self), geolocation=(self)";
+
+/// The policy a server's page gets in a meta tag: its `http://` loads of other hosts are upgraded to https, as they are
+/// when the page is served over https on the web. The app's origins are `http://*.localhost`, which Chromium does not
+/// treat as mixed content and does not upgrade (nor loopback), so the page's own loads stay as they are
+/// (SEC-CLI-105). A meta tag, not a header: the CEF runtime rewrites a page's first CSP header to add its scripts'
+/// hashes, and a header with this alone would then stop the page's inline scripts.
+const UPGRADE_META: &[u8] = b"<meta http-equiv=\"Content-Security-Policy\" content=\"upgrade-insecure-requests\">";
+
+/// A server's HTML page with [`UPGRADE_META`] at the start of its head: after the `<head>` tag, else after `<html>`,
+/// else after a doctype, else first.
+pub fn upgraded_page(mut body: Vec<u8>) -> Vec<u8> {
+    let lower = body.to_ascii_lowercase();
+    let after_tag = |tag: &[u8]| -> Option<usize> {
+        let at = lower.windows(tag.len()).position(|window| window == tag)?;
+        // `<head>` or `<head ...>`, not `<header>`
+        let next = *lower.get(at + tag.len())?;
+        if !(next == b'>' || next.is_ascii_whitespace()) {
+            return None;
+        }
+        lower[at..].iter().position(|&byte| byte == b'>').map(|end| at + end + 1)
+    };
+    let at = after_tag(b"<head")
+        .or_else(|| after_tag(b"<html"))
+        .or_else(|| after_tag(b"<!doctype"))
+        .unwrap_or(0);
+    body.splice(at..at, UPGRADE_META.iter().copied());
+    body
 }
 
 /// A plain text answer.
@@ -255,7 +290,10 @@ pub fn answer(
     let upstream = match sent {
         Ok(upstream) => upstream,
         Err(err) => {
-            tracing::info!("{} {bare}: {err}", account.server);
+            // the server and the path's first part only: a path can hold a token (a share link), and the phone's log is
+            // logcat (plans/Security-Review.md SEC-CLI-112)
+            let area = bare.split('/').find(|part| !part.is_empty()).unwrap_or("");
+            tracing::info!("{} /{area}: {err}", account.server);
             let offline_body = match (kept, &store_key_device) {
                 (Some(kind), _) => state
                     .core
@@ -334,10 +372,16 @@ pub fn answer(
         }
         response = response.header(name.as_str(), value.as_str());
     }
+    // a window's or a frame's page: its media for its own origin, its loads of other hosts over https
+    let page = html && document;
+    if page && header(&headers, "permissions-policy").is_none() {
+        response = response.header("Permissions-Policy", PAGE_PERMISSIONS_POLICY);
+    }
     if origin == SHELL_ORIGIN {
         // the server's answer is data to the shell, never a script or style its origin would take
         response = response.header("X-Content-Type-Options", "nosniff");
     }
+    let body = if page { upgraded_page(body) } else { body };
     let response = response
         .body(body)
         .unwrap_or_else(|_| plain(StatusCode::BAD_GATEWAY, "The server's answer could not be passed on"));

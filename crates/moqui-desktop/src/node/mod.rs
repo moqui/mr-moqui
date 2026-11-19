@@ -132,12 +132,22 @@ pub(crate) fn purpose_properties(dev: bool) -> Vec<(&'static str, String)> {
 
 /// The node's settings on every start: `user-facade/login@initial-admin-enabled` true, so the first run's /Login
 /// offers the first administrator (the default conf has it off, for a server set up from its `.env`). The node is this
-/// user's own, and the form goes once any account exists.
-pub(crate) fn setup_properties() -> Vec<(&'static str, String)> {
-    vec![(
+/// user's own, and the form goes once any account exists. In process the window's requests come through the scheme,
+/// not a port, so `initial-admin-local` `in-process` makes only those this machine's: another account of the computer
+/// that reaches the tray's ports needs the setup secret (SEC-CLI-101). A sidecar's window is a loopback client like any
+/// other, so it keeps the default until the app hands its window the secret.
+pub(crate) fn setup_properties(mode: Mode) -> Vec<(&'static str, String)> {
+    let mut properties = vec![(
         "moqui_conf__user_facade__login__initial_admin_enabled",
         "true".to_string(),
-    )]
+    )];
+    if mode == Mode::InProcess {
+        properties.push((
+            "moqui_conf__user_facade__login__initial_admin_local",
+            "in-process".to_string(),
+        ));
+    }
+    properties
 }
 
 impl Mode {

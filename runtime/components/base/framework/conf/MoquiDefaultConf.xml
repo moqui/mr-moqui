@@ -638,8 +638,12 @@
         <!-- initial-admin-enabled: the Login page's Create Initial Admin Account form, and create#InitialAdminAccount,
             while no account exists but the seed ones: off unless true. Set
             moqui_conf__user_facade__login__initial_admin_enabled=true in runtime/.env (or the environment) to set up a new
-            system, and take it out once the first administrator is made (docs/Run-Deploy.md). -->
-        <login max-failures="3" disable-minutes="5" history-store="true" initial-admin-enabled="false"/>
+            system, and take it out once the first administrator is made (docs/Run-Deploy.md).
+            initial-admin-local: who makes it with no setup secret: loopback, a request from this machine (a loopback
+            peer through no proxy); in-process, only a request made in the server's own process, as the Desktop app's
+            window, which its node sets so that another account of the computer needs the secret (SEC-CLI-101). -->
+        <login max-failures="3" disable-minutes="5" history-store="true" initial-admin-enabled="false"
+               initial-admin-local="loopback"/>
         <!-- privileged-groups: UserGroupMember create/update/delete for these groups is allowed only if the caller is
             already a member (seed/install and disableAuthz skip the check). SYSMSG_RECEIVE is one: its members may call
             receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission

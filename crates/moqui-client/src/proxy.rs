@@ -98,7 +98,7 @@ impl Upstream {
         self.response
             .bytes()
             .map(|bytes| bytes.to_vec())
-            .map_err(|err| Error::new(err.to_string()))
+            .map_err(|err| Error::new(crate::http::transport(err)))
     }
 
     /// Stream the body to `out`, for a download kept out of memory; answers the bytes written.
@@ -107,7 +107,7 @@ impl Upstream {
     ///
     /// Returns the transport's or the writer's error.
     pub fn copy_to(mut self, out: &mut dyn std::io::Write) -> Result<u64, Error> {
-        self.response.copy_to(out).map_err(|err| Error::new(err.to_string()))
+        self.response.copy_to(out).map_err(|err| Error::new(crate::http::transport(err)))
     }
 
     /// The file name of an attachment (`Content-Disposition: attachment`), which the host saves itself rather than
@@ -181,7 +181,10 @@ impl Proxy {
         if let Some(timeout) = timeout {
             builder = builder.timeout(timeout);
         }
-        let response = builder.send().map_err(|err| Error::new(format!("{url}: {err}")))?;
+        // the server, not the URL, which can hold a token (a share link's path, a query value): the hosts log this
+        let response = builder
+            .send()
+            .map_err(|err| Error::new(format!("{base}: {}", crate::http::transport(err))))?;
         let status = response.status().as_u16();
         let headers: Vec<(String, String)> = response
             .headers()

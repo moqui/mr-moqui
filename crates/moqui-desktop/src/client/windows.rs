@@ -392,7 +392,7 @@ fn app_window_script(scope: &str, cleared: &[String]) -> Result<String, String> 
     ))
 }
 
-/// The script the shell starts with: its crypto device's name ("MR Moqui desktop on <host>"), then the bridge.
+/// The script the shell starts with: its crypto device's name ("MR Moqui desktop on <OS>"), then the bridge.
 fn shell_script(device_name: &str) -> String {
     let name = serde_json::to_string(device_name).unwrap_or_else(|_| "\"\"".to_string());
     format!("window.__moquiDeviceName = {name};\n{}", crate::bridge::SCRIPT)

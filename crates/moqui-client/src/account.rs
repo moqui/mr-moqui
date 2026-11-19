@@ -177,13 +177,25 @@ fn device_mode_of<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<D
     })
 }
 
-/// `https://host[:port][/path]` from what the user typed, refusing plain http to anything but this machine: the
-/// password and then the key would cross the network in the clear.
+/// `https://host[:port][/path]` from what the user typed, refusing plain http: the password and then the key would
+/// cross the network in the clear. A debug build also takes `http://` to this machine (`localhost`, `127.0.0.1`,
+/// `[::1]`), for a development server (`adb reverse`); a release build does not, as any app of the phone, or any user of
+/// the computer, may listen on a loopback port and so be handed the password (plans/Security-Review.md SEC-CLI-109).
 ///
 /// # Errors
 ///
-/// Returns an error for a url that does not parse, a scheme other than http(s), or `http://` to another machine.
+/// Returns an error for a url that does not parse, a scheme other than http(s), or `http://` that is not to this
+/// machine in a debug build.
 pub fn base_url(server: &str) -> Result<String, Error> {
+    base_url_with(server, cfg!(debug_assertions))
+}
+
+/// [`base_url`], taking `http://` to this machine when `loopback_http`.
+///
+/// # Errors
+///
+/// As [`base_url`].
+pub fn base_url_with(server: &str, loopback_http: bool) -> Result<String, Error> {
     let typed = server.trim();
     let with_scheme = if typed.contains("://") {
         typed.to_string()
@@ -196,12 +208,13 @@ pub fn base_url(server: &str) -> Result<String, Error> {
     };
     match url.scheme() {
         "https" => {}
-        "http" if matches!(host, "localhost" | "127.0.0.1" | "[::1]") => {}
-        "http" => {
+        "http" if loopback_http && matches!(host, "localhost" | "127.0.0.1" | "[::1]") => {}
+        "http" if loopback_http => {
             return Err(Error::new(format!(
                 "{typed}: plain http sends the password over the network; use https, or http to this machine"
             )))
         }
+        "http" => return Err(Error::new(format!("{typed}: plain http sends the password in the clear; use https"))),
         other => return Err(Error::new(format!("{typed}: {other} is not http or https"))),
     }
     let port = url.port().map(|port| format!(":{port}")).unwrap_or_default();

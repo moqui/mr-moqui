@@ -26,18 +26,32 @@ fn account(id: &str) -> Account {
     }
 }
 
+/// A debug build takes plain http to this machine only, for a development server.
 #[test]
 fn plain_http_is_for_this_machine_only() {
-    assert_eq!(base_url("http://localhost:8080/").unwrap(), "http://localhost:8080");
-    assert_eq!(base_url("erp.example.com").unwrap(), "https://erp.example.com");
+    assert_eq!(base_url_with("http://localhost:8080/", true).unwrap(), "http://localhost:8080");
+    assert_eq!(base_url_with("erp.example.com", true).unwrap(), "https://erp.example.com");
     assert_eq!(
-        base_url(" https://erp.example.com/moqui/ ").unwrap(),
+        base_url_with(" https://erp.example.com/moqui/ ", true).unwrap(),
         "https://erp.example.com/moqui"
     );
-    assert!(base_url("http://127.0.0.1:8080").is_ok());
-    assert!(base_url("http://erp.example.com").is_err());
-    assert!(base_url("ftp://localhost").is_err());
-    assert!(base_url("https://").is_err());
+    assert!(base_url_with("http://127.0.0.1:8080", true).is_ok());
+    assert!(base_url_with("http://[::1]:8080", true).is_ok());
+    assert!(base_url_with("http://erp.example.com", true).is_err());
+    assert!(base_url_with("ftp://localhost", true).is_err());
+    assert!(base_url_with("https://", true).is_err());
+}
+
+/// SEC-CLI-109: a release build takes no plain http at all: on a phone any app, and on a computer any user, may listen
+/// on a loopback port and be handed the password and then the key.
+#[test]
+fn a_release_build_takes_no_plain_http_even_to_this_machine() {
+    for server in ["http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080", "http://erp.example.com"] {
+        let err = base_url_with(server, false).unwrap_err().to_string();
+        assert!(err.contains("use https"), "{server}: {err}");
+    }
+    assert_eq!(base_url_with("https://localhost:8443", false).unwrap(), "https://localhost:8443");
+    assert_eq!(base_url("http://localhost:8080").is_ok(), cfg!(debug_assertions));
 }
 
 #[test]

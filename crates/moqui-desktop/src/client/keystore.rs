@@ -18,7 +18,8 @@
 //! only the user can read, as `moqui tui --server` keeps its key; the shell says so.
 //!
 //! `MOQUI_DESKTOP_KEY_STORE` (`os` or `file`) chooses. A development run uses the file unless it says `os`: each build
-//! is a new unsigned binary, which the Keychain would ask about again.
+//! is a new unsigned binary, which the Keychain would ask about again. A run that has the OS store moves into it the
+//! keys an earlier run left in the file ([`move_file_keys`]).
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -121,7 +122,13 @@ fn open(dir: &Path) -> (Box<dyn KeyStore>, &'static str) {
     let variable = std::env::var("MOQUI_DESKTOP_KEY_STORE").ok();
     if chosen(variable.as_deref(), tauri::is_dev()) == "os" {
         match OsKeyStore::available() {
-            Ok(()) => return (Box::new(OsKeyStore), "os"),
+            Ok(()) => {
+                let moved = move_file_keys(dir, &OsKeyStore);
+                if moved > 0 {
+                    tracing::info!("{moved} device keys moved from {} to the OS key store", dir.display());
+                }
+                return (Box::new(OsKeyStore), "os");
+            }
             Err(err) => tracing::warn!(
                 "No OS key store ({err}): the device keys are kept in {}, readable by this user only",
                 dir.display()
@@ -131,9 +138,72 @@ fn open(dir: &Path) -> (Box<dyn KeyStore>, &'static str) {
     (Box::new(FileKeyStore::new(dir)), "file")
 }
 
+/// Move into `store` (the OS key store of this run) the keys a run with the file store left in `dir`
+/// (`<account>.key`: a development run, `MOQUI_DESKTOP_KEY_STORE=file`, a session with no Secret Service), and remove
+/// each file. Else it stays in plain text, never read again (the account shows signed out, and its sign-out and removal
+/// go to the OS store only), while the key is still good on the server (plans/Security-Review.md SEC-CLI-111). An
+/// account `store` already holds a key of keeps that one, and the file goes. One that does not move is kept and logged,
+/// and the rest go on, as the phone seals its plain keys (`SealedFileStore::seal_plain_keys`). How many moved.
+pub(crate) fn move_file_keys(dir: &Path, store: &dyn KeyStore) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let file = FileKeyStore::new(dir);
+    let mut moved = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(account) = name.strip_suffix(".key") else {
+            continue;
+        };
+        let Some(key) = file.get(account) else {
+            continue;
+        };
+        if store.get(account).is_none() {
+            if let Err(err) = store.set(account, &key) {
+                tracing::error!("The device key of {account} was not moved to the OS key store, and is kept: {err}");
+                continue;
+            }
+        }
+        match file.delete(account) {
+            Ok(()) => moved += 1,
+            Err(err) => tracing::error!("The device key of {account} is in the OS key store but its file stays: {err}"),
+        }
+    }
+    moved
+}
+
 #[cfg(test)]
 mod tests {
-    use super::chosen;
+    use super::{chosen, move_file_keys};
+    use moqui_client::keys::{FileKeyStore, KeyStore};
+
+    /// SEC-CLI-111: a run with the OS store takes the keys a file-store run left, keeps one it already holds, and leaves
+    /// no key file behind; other files of the directory stay.
+    #[test]
+    fn a_run_with_the_os_store_moves_the_file_keys_into_it() {
+        let base = std::env::temp_dir().join(format!("moqui-desktop-keys-{}", std::process::id()));
+        let (dir, os) = (base.join("file"), base.join("os"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&os).unwrap();
+        let (file, store) = (FileKeyStore::new(&dir), FileKeyStore::new(&os));
+        file.set("example.com-0123456789ab", "old-key").unwrap();
+        file.set("example.org-ba9876543210", "file-key").unwrap();
+        file.set("example.org-ba9876543210.chat-store", "passphrase").unwrap();
+        store.set("example.com-0123456789ab", "os-key").unwrap();
+        std::fs::write(dir.join("accounts.json"), "{}").unwrap();
+
+        assert_eq!(move_file_keys(&dir, &store), 3);
+        assert_eq!(store.get("example.com-0123456789ab").as_deref(), Some("os-key"), "the OS store's own is kept");
+        assert_eq!(store.get("example.org-ba9876543210").as_deref(), Some("file-key"));
+        assert_eq!(store.get("example.org-ba9876543210.chat-store").as_deref(), Some("passphrase"));
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, vec!["accounts.json".to_string()]);
+        assert_eq!(move_file_keys(&dir, &store), 0);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 
     #[test]
     fn the_variable_chooses_and_a_development_run_keeps_its_keys_in_a_file() {
