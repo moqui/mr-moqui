@@ -1411,6 +1411,73 @@ fn a_pages_dialogs_name_who_asks_and_a_prompt_is_refused_on_the_apps_origins() {
     );
 }
 
+/// SEC-CLI-90: the WebView gives the camera, the microphone and the location only to the app's own origins, and of the
+/// resources a page asks for grants only the camera and the microphone. In wry's chrome client (the patch), each of
+/// `onPermissionRequest` and `onGeolocationPermissionsShowPrompt` refuses an origin `isPageOrigin` does not take before
+/// it asks Rust or Android anything, `isPageOrigin` takes `SHELL_ORIGIN` and `APP_ORIGIN` only, and what is granted
+/// passes `filterKnownPermissions`, which names the audio and video capture and no other resource.
+#[test]
+fn only_the_apps_own_origins_get_the_camera_the_microphone_or_the_location() {
+    let path = root().join("crates/moqui-mobile/patches/wry/src/android/kotlin/RustWebChromeClient.kt");
+    let chrome = lex(&read(&path));
+    let check = body_of(&chrome, "fun isPageOrigin(").unwrap_or_else(|| panic!("{}: no isPageOrigin", path.display()));
+    assert!(
+        check.contains("pageOrigin(url)")
+            && check.contains("origin == SHELL_ORIGIN || origin == APP_ORIGIN")
+            && !check.contains("true"),
+        "isPageOrigin takes more than the app's two origins: {check}"
+    );
+    for (handler, asks, refuses) in [
+        (
+            "fun onPermissionRequest(",
+            "onPermissionRequestNative(",
+            "!isPageOrigin(request.origin.toString())",
+        ),
+        (
+            "fun onGeolocationPermissionsShowPrompt(",
+            "onGeolocationPermissionRequestNative(",
+            "!isPageOrigin(origin)",
+        ),
+    ] {
+        let body = body_of(&chrome, handler).unwrap_or_else(|| panic!("{}: no {handler}", path.display()));
+        let refused = body
+            .find(refuses)
+            .unwrap_or_else(|| panic!("{handler} does not refuse another origin ({refuses})"));
+        let asked = body.find(asks).unwrap_or_else(|| panic!("{handler} does not ask Rust"));
+        assert!(refused < asked, "{handler} asks before it checks the origin");
+        let after = &body[refused..asked];
+        assert!(
+            after.contains("request.deny()") || after.contains("callback.invoke(origin, false, false)"),
+            "{handler} does not refuse another origin: {after}"
+        );
+        assert!(
+            after.contains("return"),
+            "{handler} goes on after refusing another origin"
+        );
+    }
+    let request = body_of(&chrome, "fun onPermissionRequest(").expect("onPermissionRequest");
+    assert!(
+        request.contains("val resources = filterKnownPermissions(")
+            && request.contains("grantPermissionRequest(request, resources)"),
+        "onPermissionRequest grants what filterKnownPermissions did not pass: {request}"
+    );
+    let known = body_of(&chrome, "fun filterKnownPermissions(").expect("filterKnownPermissions");
+    let named: Vec<&str> = known
+        .match_indices("PermissionRequest.RESOURCE_")
+        .map(|(at, _)| {
+            let rest = &known[at + "PermissionRequest.".len()..];
+            &rest[..rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(rest.len())]
+        })
+        .collect();
+    assert_eq!(
+        named,
+        ["RESOURCE_AUDIO_CAPTURE", "RESOURCE_VIDEO_CAPTURE"],
+        "filterKnownPermissions grants more than the camera and the microphone"
+    );
+}
+
 /// SEC-CLI-120 (the microphone half): the app asks for the microphone after a sign-in only behind a dialog that says
 /// why: in `MainActivity.askForCallsOnce`, every `requestPermissions` is in the dialog's buttons and listeners (within
 /// its one `ObscuredTouches.show(...)`), and each title and reason it picks when the microphone is missing

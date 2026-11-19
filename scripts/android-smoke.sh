@@ -47,6 +47,7 @@ wait_shell() {
 # The classes and methods Rust calls by name (src/android.rs, src/native.rs, wry's main_pipe.rs, tao's ndk_glue.rs).
 JNI_NAMES=(
     org/moqui/mobile/KeyVault#ready org/moqui/mobile/KeyVault#seal org/moqui/mobile/KeyVault#open
+    org/moqui/mobile/KeyVault#readyUnlocked org/moqui/mobile/KeyVault#sealUnlocked org/moqui/mobile/KeyVault#openUnlocked
     org/moqui/mobile/CallManager#pageCallState org/moqui/mobile/ActivityEnd#endedForGood
     org/moqui/mobile/Native#init org/moqui/mobile/Native#pushToken org/moqui/mobile/Native#decline
     org/moqui/mobile/Native#hasAccount org/moqui/mobile/Native#flush org/moqui/mobile/Native#openPush
@@ -61,7 +62,7 @@ JNI_NAMES=(
     org/moqui/mobile/PhoneBook#search org/moqui/mobile/PhoneBook#names
     org/moqui/mobile/ScreenSecurity#set org/moqui/mobile/CalendarIntent#insert org/moqui/mobile/Push#startFcm
     org/moqui/mobile/CallManager#busyNow org/moqui/mobile/Native#instanceOf org/moqui/mobile/Native#accountOf
-    org/moqui/mobile/DeviceLock#isSecure org/moqui/mobile/RustWebChromeClient#pageServer
+    org/moqui/mobile/DeviceLock#isSecure org/moqui/mobile/PageStorage#clear org/moqui/mobile/RustWebChromeClient#pageServer
     org/moqui/mobile/ChatNotifications#forgetAccount org/moqui/mobile/Push#stopFcm
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion

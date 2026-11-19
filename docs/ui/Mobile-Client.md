@@ -88,7 +88,12 @@ own `/qapps`), never both:
   it, and kept in the app's private files (`client/keys/<account>.sealed`). The Keystore is asked twice; a device that
   still cannot make its key keeps them in a plain owner-only file there, and the shell says so (`keyStore: file`). A
   later run with the Keystore seals any such plain key and removes it. The key is not limited to an unlocked device
-  (`setUnlockedDeviceRequired`): the outbox and the coming call path (MT2) need the keys with the screen locked.
+  (`setUnlockedDeviceRequired`): the outbox and the coming call path (MT2) need the keys with the screen locked. What
+  no background work reads, each account's chat store passphrases, is sealed by a second Keystore key that is
+  (`client/keys/<account>.chat-store.unlocked`, Android 9 and later; one sealed by the first key before moves as it is
+  read), so they do not open while the phone is locked and are never kept in memory.
+- **A screen lock.** The shell's account menu warns when the phone has none (`KeyguardManager.isDeviceSecure()`), and
+  a shared-device sign-in is refused there: the next person to pick the phone up would open the account in the app.
 - **No backup.** `allowBackup` is off and `data_extraction_rules.xml` excludes every file from cloud backups and device
   transfers: the private files hold each account's store (its mail and chat) and the sealed keys, whose Keystore key
   would not come along anyway.

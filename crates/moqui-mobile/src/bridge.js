@@ -72,6 +72,34 @@
         for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
         return bytes;
     };
+    // The page's own GET and HEAD on its origin carry the bridge's mark, by which the scheme tells the page's own
+    // request from one a frame of another origin in it started, as the WebView does not say (scheme.rs page_site,
+    // SEC-CLI-102). Such a frame cannot send the mark: it needs a preflight, which the scheme refuses.
+    const ownHeader = "x-moqui-own";
+    const ownGet = (request) => {
+        const headers = new Headers(request.headers);
+        headers.set(ownHeader, "1");
+        // a no-cors request would drop the mark; on the page's own origin cors is the same request
+        return pageFetch(new Request(request, { headers, mode: request.mode === "no-cors" ? "cors" : request.mode }));
+    };
+    const xhrOpen = XMLHttpRequest.prototype.open;
+    const xhrSend = XMLHttpRequest.prototype.send;
+    const xhrOwn = new WeakMap();
+    XMLHttpRequest.prototype.open = function (method, url) {
+        let own = false;
+        try {
+            const verb = String(method).toUpperCase();
+            own = (verb === "GET" || verb === "HEAD") && new URL(String(url), location.href).origin === location.origin;
+        } catch (err) { own = false; }
+        xhrOwn.set(this, own);
+        return xhrOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+        if (xhrOwn.get(this)) {
+            try { this.setRequestHeader(ownHeader, "1"); } catch (err) { /* not opened: send throws as it would */ }
+        }
+        return xhrSend.apply(this, arguments);
+    };
     // the shell's carries its load's nonce, as the host answers the shell's origin only to the shell's current load
     // (scheme.rs refuse_fetch, SEC-CLI-06); the host sets Origin and Sec-Fetch-* itself
     const fetchAsk = shell ? shellAsk : ask;
@@ -86,7 +114,8 @@
             const next = new URL(location, request.url);
             // 307 and 308 keep the method and body; the rest are a GET, which the scheme takes
             if (answer.status === 307 || answer.status === 308) return viaHost(new Request(next.href, request), hops + 1);
-            return pageFetch(next.href, { credentials: request.credentials, headers: request.headers });
+            const follow = new Request(next.href, { credentials: request.credentials, headers: request.headers });
+            return next.origin === location.origin ? ownGet(follow) : pageFetch(follow);
         }
         const nullBody = answer.status === 204 || answer.status === 205 || answer.status === 304;
         return new Response(nullBody ? null : fromBase64(answer.body), { status: answer.status, headers: answer.headers });
@@ -95,7 +124,8 @@
         let request;
         try { request = new Request(input, init); } catch (err) { return pageFetch(input, init); }
         const sameOrigin = new URL(request.url, location.href).origin === location.origin;
-        if (!sameOrigin || request.method === "GET" || request.method === "HEAD") return pageFetch(input, init);
+        if (!sameOrigin) return pageFetch(input, init);
+        if (request.method === "GET" || request.method === "HEAD") return ownGet(request);
         return viaHost(request.clone(), 0);
     };
 
@@ -300,7 +330,7 @@
             deviceMode: given.deviceMode ? String(given.deviceMode) : null }),
         sendCode: (given) => shellAsk("client_send_code", { server: String(given.server || ""), username: String(given.username || ""),
             password: String(given.password || ""), factor: String(given.factor || "") }),
-        signOut: () => shellAsk("client_sign_out"),
+        signOut: (forget) => shellAsk("client_sign_out", { forget: forget === true }),
         switchAccount: (id) => shellAsk("client_switch_account", { id: String(id) }),
         addAccount: () => shellAsk("client_add_account"),
         removeAccount: (id) => shellAsk("client_remove_account", { id: String(id) }),

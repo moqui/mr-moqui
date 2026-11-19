@@ -13,7 +13,7 @@ their own.
 - **On this device.** Each account's list entry, and its device key (the credential that signs the app in, in place of
   your password), sealed by the system's key store. A store of each account's mail, chat, drafts and outbox, for use
   with no network, in the app's own files. Signing out of a shared account removes its store; a personal account keeps
-  its store until you remove the account.
+  its store until you remove the account, or sign out and choose to delete it.
 - **The device's name.** The app names this device in your device list and as your chat encryption device, which the
   people who share a room or a call with you see: on the phone its model, on the desktop "MR Moqui desktop on" its
   operating system. You can rename it.
@@ -37,7 +37,8 @@ their own.
 - **Android's WebView** shows the server's pages. It sends Google no usage metrics of this app. Its Safe Browsing
   check, which Android keeps on, compares the addresses the pages load against a list on the phone that Google updates.
 - **No backup.** The app's data is not in Android's cloud backup. A phone with no screen lock lets whoever holds it
-  open your accounts in the app, which tells you so.
+  open your accounts in the app, which tells you so, and a shared-device sign-in needs one. The passphrases of your
+  chats' offline store open only while the phone is unlocked.
 
 ## The desktop app
 
@@ -57,5 +58,6 @@ their own.
 ## Removing your data
 
 Signing out revokes the device key on your server, or as soon as the server can be reached. Removing an account from
-the app deletes its store and keys on this device. Uninstalling the app removes the rest of its data on this device,
+the app, or signing out with "Also delete the mail, chat and drafts kept for it", deletes its store and keys on this
+device. Uninstalling the app removes the rest of its data on this device,
 but not the desktop node's backups in a folder of yours. What your server keeps, ask its operator.

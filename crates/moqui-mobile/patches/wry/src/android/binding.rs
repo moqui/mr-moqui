@@ -97,6 +97,11 @@ macro_rules! android_binding {
   }};
 }
 
+/// MR Moqui patch (crates/moqui-mobile/patches/README.md, SEC-CLI-102): the header the binding sets on the main frame's
+/// own document request, and only on it; the app's scheme (crates/moqui-mobile/src/scheme.rs `MAIN_FRAME_HEADER`)
+/// reads it.
+const MAIN_FRAME_HEADER: &str = "x-moqui-main-frame";
+
 fn handle_request(
   env: &mut JNIEnv,
   webview_id: JString,
@@ -148,6 +153,13 @@ fn handle_request(
       .as_str(),
   );
 
+  // MR Moqui patch (crates/moqui-mobile/patches/README.md, SEC-CLI-102): the WebView tells only here whether a request
+  // is the main frame's own document, which the app's scheme takes as the page's own (same-origin); it is passed as
+  // MAIN_FRAME_HEADER, and a copy of it the request came with is never kept
+  let main_frame = env
+    .call_method(&request, "isForMainFrame", "()Z", &[])?
+    .z()?;
+
   let request_headers = env
     .call_method(request, "getRequestHeaders", "()Ljava/util/Map;", &[])?
     .l()?;
@@ -162,8 +174,15 @@ fn handle_request(
       HeaderName::from_bytes(header.to_bytes()),
       HeaderValue::from_bytes(value.to_bytes()),
     ) {
+      // MR Moqui patch (SEC-CLI-102): the marker is the binding's own to set
+      if header.as_str() == MAIN_FRAME_HEADER {
+        continue;
+      }
       request_builder = request_builder.header(header, value);
     }
+  }
+  if main_frame {
+    request_builder = request_builder.header(MAIN_FRAME_HEADER, "1");
   }
 
   let final_request = match request_builder.body(Vec::new()) {

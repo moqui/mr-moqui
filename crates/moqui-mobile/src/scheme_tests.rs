@@ -20,7 +20,12 @@ use tauri::Url;
 
 use moqui_client_tauri::scheme::SchemeHooks;
 
-use super::{fetch_answer, fetch_request, redirect_page, refuse_fetch, FetchHooks};
+use super::{
+    fetch_answer, fetch_request, page_site, redirect_page, refuse_fetch, FetchHooks, MobileHooks, MAIN_FRAME_HEADER,
+    OWN_HEADER,
+};
+use moqui_client_tauri::APP_ORIGIN;
+use tauri::http::HeaderMap;
 
 fn redirect(location: &str) -> Response<Vec<u8>> {
     Response::builder()
@@ -130,4 +135,84 @@ fn a_fetch_on_the_shells_origin_without_the_shells_nonce_is_refused() {
     assert!(refuse_fetch("http://moqui-shell.localhost", false).is_err());
     assert!(refuse_fetch("http://moqui-shell.localhost", true).is_ok());
     assert!(refuse_fetch("http://moqui-app.localhost", false).is_ok());
+}
+
+fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+    let mut map = HeaderMap::new();
+    for (name, value) in pairs {
+        map.insert(*name, value.parse().unwrap());
+    }
+    map
+}
+
+/// SEC-CLI-102: the WebView tells the scheme nothing of where a request comes from, so the scheme takes as the page's
+/// own only the main frame's document (wry's mark) and the bridge's marked fetches, or an `Origin` of its own; the rest,
+/// what a frame of another origin in the page starts among it, is `cross-site`, and the server refuses a writing GET.
+#[test]
+fn only_the_main_frames_document_and_the_pages_own_marked_fetches_are_same_origin() {
+    assert_eq!(
+        page_site(&headers(&[(MAIN_FRAME_HEADER, "1")]), APP_ORIGIN),
+        "same-origin"
+    );
+    assert_eq!(page_site(&headers(&[(OWN_HEADER, "1")]), APP_ORIGIN), "same-origin");
+    assert_eq!(
+        page_site(&headers(&[("origin", APP_ORIGIN)]), APP_ORIGIN),
+        "same-origin"
+    );
+    // a nested frame or an image a frame of another origin starts: no mark, no Origin
+    assert_eq!(
+        page_site(&headers(&[("accept", "text/html")]), APP_ORIGIN),
+        "cross-site"
+    );
+    assert_eq!(page_site(&HeaderMap::new(), APP_ORIGIN), "cross-site");
+    // a CORS request of another origin says so, even with a mark it could only have sent after a preflight
+    assert_eq!(
+        page_site(
+            &headers(&[("origin", "https://elsewhere.example"), (OWN_HEADER, "1")]),
+            APP_ORIGIN
+        ),
+        "cross-site"
+    );
+    assert_eq!(page_site(&headers(&[("origin", "null")]), APP_ORIGIN), "cross-site");
+    assert_eq!(
+        MobileHooks.fetch_site(&headers(&[(MAIN_FRAME_HEADER, "1")]), APP_ORIGIN),
+        Some("same-origin")
+    );
+    assert_eq!(
+        MobileHooks.fetch_site(&HeaderMap::new(), APP_ORIGIN),
+        Some("cross-site")
+    );
+}
+
+/// The marks are set where the WebView or the page can tell, under the names the scheme reads: wry's binding sets
+/// [`MAIN_FRAME_HEADER`] from `isForMainFrame` and drops a copy a request came with, and the bridge adds [`OWN_HEADER`]
+/// to its own-origin GET and HEAD fetches and XHRs.
+#[test]
+fn the_main_frame_and_the_bridge_mark_the_pages_own_requests_under_the_names_the_scheme_reads() {
+    let binding = include_str!("../patches/wry/src/android/binding.rs");
+    assert!(
+        binding.contains(&format!("const MAIN_FRAME_HEADER: &str = \"{MAIN_FRAME_HEADER}\";")),
+        "wry's binding names the main frame's mark otherwise"
+    );
+    assert!(
+        binding.contains("\"isForMainFrame\", \"()Z\""),
+        "wry's binding does not ask isForMainFrame"
+    );
+    assert!(
+        binding.contains("if header.as_str() == MAIN_FRAME_HEADER {\n        continue;"),
+        "wry's binding keeps a main-frame mark the request came with"
+    );
+    assert!(
+        binding.contains("if main_frame {\n    request_builder = request_builder.header(MAIN_FRAME_HEADER, \"1\");"),
+        "wry's binding does not mark the main frame's document"
+    );
+    let bridge = include_str!("bridge.js");
+    assert!(
+        bridge.contains(&format!("const ownHeader = \"{OWN_HEADER}\";")),
+        "the bridge names its mark otherwise"
+    );
+    assert!(
+        bridge.contains("XMLHttpRequest.prototype.send"),
+        "the bridge does not mark the page's XHRs"
+    );
 }

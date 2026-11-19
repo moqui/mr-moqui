@@ -23,12 +23,16 @@
 //!   goes there ([`MobileHooks`]); the bridge's `fetch` follows a redirect itself.
 //! - **One init script for every page.** A server page's storage scope and the scopes to clear are asked of the host
 //!   at its start ([`PAGE_PATH`]), as an app window's init script has them on the desktop.
+//! - **No `Sec-Fetch-*`.** The scheme hears whether the page itself asked from two marks, the main frame's document
+//!   (wry's patch) and the bridge's on the page's own GETs, and tells the server the rest came from another site
+//!   ([`page_site`], SEC-CLI-102).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
 use base64::Engine;
 use moqui_client::assets::{asset, Asset, Assets};
+use moqui_client::proxy::site_by_origin;
 use moqui_client_tauri::scheme::{answer, answered, plain, run, SchemeHooks};
 use moqui_client_tauri::{ClientState, ShellFiles, APP_ORIGIN, SHELL_ORIGIN};
 use serde_json::{json, Value};
@@ -61,12 +65,42 @@ impl ShellFiles for EmbeddedShell {
     }
 }
 
+/// The header wry's binding sets on the main frame's own document request, and only there (the patch's
+/// `MAIN_FRAME_HEADER`, `patches/wry/src/android/binding.rs`, from the WebView's `isForMainFrame`).
+pub(crate) const MAIN_FRAME_HEADER: &str = "x-moqui-main-frame";
+
+/// The header the bridge adds to the page's own GET and HEAD `fetch` and `XMLHttpRequest` on its own origin
+/// (`bridge.js`). A frame of another origin cannot send it: a header that is not CORS-safelisted needs a preflight,
+/// which the scheme refuses (it takes GET and HEAD only), and a `no-cors` request drops it.
+pub(crate) const OWN_HEADER: &str = "x-moqui-own";
+
 /// The hooks of Android's WebView.
 pub(crate) struct MobileHooks;
 
 impl SchemeHooks for MobileHooks {
     fn adapt(&self, document: bool, response: Response<Vec<u8>>) -> Response<Vec<u8>> {
         redirect_page(document, response)
+    }
+
+    fn fetch_site(&self, headers: &HeaderMap, origin: &str) -> Option<&'static str> {
+        Some(page_site(headers, origin))
+    }
+}
+
+/// The `Sec-Fetch-Site` of a request of the WebView on `origin`, which hands the scheme no fetch metadata
+/// (SEC-CLI-102): by its `Origin` where it sends one ([`site_by_origin`]); else `same-origin` for the main frame's own
+/// document ([`MAIN_FRAME_HEADER`]) or the page's own fetch ([`OWN_HEADER`]); else `cross-site`, so the server refuses
+/// a GET of a writing transition that a frame of another origin in the page started (a nested frame, an image). The
+/// page's own requests that carry no mark (its stylesheets, scripts and images, a frame of its own origin) read as
+/// `cross-site` too, which the server's rule takes only for a writing transition.
+pub(crate) fn page_site(headers: &HeaderMap, origin: &str) -> &'static str {
+    if let Some(sent) = headers.get("origin") {
+        return site_by_origin(sent.to_str().ok(), origin);
+    }
+    if headers.contains_key(MAIN_FRAME_HEADER) || headers.contains_key(OWN_HEADER) {
+        "same-origin"
+    } else {
+        "cross-site"
     }
 }
 

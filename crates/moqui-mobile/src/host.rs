@@ -187,15 +187,8 @@ impl PageState {
     }
 }
 
-/// What the host evaluates in the shell's document to hand it its nonce: it takes it only on the shell's origin, so a
-/// document that came in its place gets nothing.
-pub(crate) fn nonce_script(nonce: &str) -> String {
-    let quoted = serde_json::to_string(nonce).unwrap_or_else(|_| "\"\"".to_string());
-    format!(
-        "if (location.origin === {origin:?} && window.__moquiShellNonce) window.__moquiShellNonce({quoted});",
-        origin = SHELL_ORIGIN
-    )
-}
+/// What the host evaluates in the shell's document to hand it its nonce, the desktop's too.
+pub(crate) use moqui_client_tauri::shell_load::nonce_script;
 
 /// Whether `host` is one of this device's or the app's own (`localhost`, `*.localhost`), never opened outside the app.
 pub(crate) fn own_host(host: &str) -> bool {
@@ -810,6 +803,17 @@ impl ShellHost for MobileHost {
             fcm_stop();
         }
         unified_register_all();
+    }
+
+    /// The server pages' origin, which every account's pages share in the one webview, loses what the last account's
+    /// pages kept there (`PageStorage.clear`, SEC-CLI-81).
+    fn clear_page_storage(&self) {
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::clear_page_storage() {
+            log::warn!("The server pages' storage was not cleared for the change of account: {err}");
+        }
+        #[cfg(not(target_os = "android"))]
+        log::info!("The server pages' storage is cleared");
     }
 }
 

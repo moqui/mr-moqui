@@ -20,6 +20,12 @@
 //! [`SealedFileStore`] is the file side over any [`Sealer`]; where the Keystore cannot be used (it refused to make its
 //! key) the app falls back to `moqui_client::keys::FileKeyStore` in the same private directory, which Android keeps
 //! from other apps, and the shell says the keys are in a file.
+//!
+//! The device keys are used while the phone is locked (the outbox, an incoming call, a push), so their Keystore key is
+//! not tied to the lock. What no background work reads, each account's chat store passphrases (`<account>.chat-store`,
+//! asked for by the shell's page only), is sealed by a second Keystore key that opens only while the phone is
+//! unlocked, from Android 9 ([`SealedFileStore::with_unlocked`], `<entry>.unlocked`; plans/Security-Review.md
+//! SEC-CLI-113). One sealed by the first key before is moved to the second as it is read.
 
 // The sealed store is used on Android only; its tests run everywhere.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -38,10 +44,18 @@ pub(crate) trait Sealer: Send + Sync {
     fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, String>;
 }
 
-/// Keys sealed by a [`Sealer`] in `<dir>/<account>.sealed`.
+/// Keys sealed by a [`Sealer`] in `<dir>/<account>.sealed`; with a second sealer for an unlocked phone, the chat store
+/// passphrases by it in `<dir>/<account>.chat-store.unlocked` ([`unlocked_only`]).
 pub(crate) struct SealedFileStore<S: Sealer> {
     dir: PathBuf,
     sealer: S,
+    unlocked: Option<S>,
+}
+
+/// Whether the store entry `entry` is one no background work reads, sealed by the key of an unlocked phone where there
+/// is one: an account's chat store passphrases (`moqui_client::keys::Keys::chat_store_key`).
+pub(crate) fn unlocked_only(entry: &str) -> bool {
+    entry.ends_with(".chat-store")
 }
 
 impl<S: Sealer> SealedFileStore<S> {
@@ -49,26 +63,47 @@ impl<S: Sealer> SealedFileStore<S> {
         Self {
             dir: dir.to_path_buf(),
             sealer,
+            unlocked: None,
         }
     }
 
-    /// The file of `account`, or none for an id that could leave the directory.
-    fn file(&self, account: &str) -> Option<PathBuf> {
+    /// The store with `sealer` for what no background work reads ([`unlocked_only`]), a key that opens only while the
+    /// phone is unlocked.
+    pub(crate) fn with_unlocked(mut self, sealer: S) -> Self {
+        self.unlocked = Some(sealer);
+        self
+    }
+
+    /// The file of `account` with `suffix` (`sealed`, `unlocked`), or none for an id that could leave the directory.
+    fn file_as(&self, account: &str, suffix: &str) -> Option<PathBuf> {
         let plain = !account.is_empty()
             && !account.starts_with('.')
             && account
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
-        plain.then(|| self.dir.join(format!("{account}.sealed")))
+        plain.then(|| self.dir.join(format!("{account}.{suffix}")))
     }
-}
 
-impl<S: Sealer> KeyStore for SealedFileStore<S> {
-    fn get(&self, account: &str) -> Option<String> {
-        let path = self.file(account)?;
-        let sealed = std::fs::read(&path).ok()?;
-        match self.sealer.open(&sealed) {
+    /// The file of `account` sealed by the first key.
+    fn file(&self, account: &str) -> Option<PathBuf> {
+        self.file_as(account, "sealed")
+    }
+
+    /// The sealer of an unlocked phone, where `account` is an entry for it and there is one.
+    fn unlocked_for(&self, account: &str) -> Option<&S> {
+        self.unlocked.as_ref().filter(|_| unlocked_only(account))
+    }
+
+    /// The text `sealer` opens from `path`, or none (no file; a key that does not open now, logged).
+    fn open_file(sealer: &S, path: &Path, account: &str, unlocked: bool) -> Option<String> {
+        let sealed = std::fs::read(path).ok()?;
+        match sealer.open(&sealed) {
             Ok(plain) => String::from_utf8(plain).ok().filter(|key| !key.is_empty()),
+            Err(err) if unlocked => {
+                // the phone is locked (or the key was invalidated): none now, asked again next time
+                log::warn!("The key of {account} opens only on an unlocked phone: {err}");
+                None
+            }
             Err(err) => {
                 // the Keystore's key is gone (the app's data cleared, a restore on another device): as no key
                 log::error!("The key of {account} does not open: {err}");
@@ -77,30 +112,79 @@ impl<S: Sealer> KeyStore for SealedFileStore<S> {
         }
     }
 
+    /// Seal `key` by `sealer` into `path`, owner-only, through a part file.
+    fn write_sealed(&self, sealer: &S, path: &Path, key: &str) -> Result<(), Error> {
+        let sealed = sealer
+            .seal(key.as_bytes())
+            .map_err(|err| Error::new(format!("the key store did not seal the key: {err}")))?;
+        std::fs::create_dir_all(&self.dir).map_err(|err| Error::new(format!("{}: {err}", self.dir.display())))?;
+        let mut temp = path.as_os_str().to_owned();
+        temp.push(".part");
+        let temp = PathBuf::from(temp);
+        std::fs::write(&temp, &sealed).map_err(|err| Error::new(format!("{}: {err}", temp.display())))?;
+        restrict(&temp);
+        std::fs::rename(&temp, path).map_err(|err| Error::new(format!("{}: {err}", path.display())))
+    }
+}
+
+/// Remove `path`; none there is not an error.
+fn remove(path: &Path) -> Result<(), Error> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(Error::new(format!("{}: {err}", path.display()))),
+    }
+}
+
+impl<S: Sealer> KeyStore for SealedFileStore<S> {
+    fn get(&self, account: &str) -> Option<String> {
+        let path = self.file(account)?;
+        let Some(unlocked) = self.unlocked_for(account) else {
+            return Self::open_file(&self.sealer, &path, account, false);
+        };
+        let moved = self.file_as(account, "unlocked")?;
+        if moved.exists() {
+            return Self::open_file(unlocked, &moved, account, true);
+        }
+        // sealed by the first key before the second was there: moved to the second as it is read
+        let key = Self::open_file(&self.sealer, &path, account, false)?;
+        match self.write_sealed(unlocked, &moved, &key) {
+            Ok(()) => {
+                if let Err(err) = remove(&path) {
+                    log::error!("The key of {account} is sealed again but its old file stays: {err}");
+                }
+            }
+            Err(err) => log::warn!("The key of {account} stays sealed by the first key for now: {err}"),
+        }
+        Some(key)
+    }
+
     fn set(&self, account: &str, key: &str) -> Result<(), Error> {
         let path = self
             .file(account)
             .ok_or_else(|| Error::new(format!("not an account id: {account}")))?;
-        let sealed = self
-            .sealer
-            .seal(key.as_bytes())
-            .map_err(|err| Error::new(format!("the key store did not seal the key: {err}")))?;
-        std::fs::create_dir_all(&self.dir).map_err(|err| Error::new(format!("{}: {err}", self.dir.display())))?;
-        let temp = path.with_extension("sealed.part");
-        std::fs::write(&temp, &sealed).map_err(|err| Error::new(format!("{}: {err}", temp.display())))?;
-        restrict(&temp);
-        std::fs::rename(&temp, &path).map_err(|err| Error::new(format!("{}: {err}", path.display())))
+        let Some(unlocked) = self.unlocked_for(account) else {
+            return self.write_sealed(&self.sealer, &path, key);
+        };
+        let moved = self
+            .file_as(account, "unlocked")
+            .ok_or_else(|| Error::new(format!("not an account id: {account}")))?;
+        self.write_sealed(unlocked, &moved, key)?;
+        remove(&path)
     }
 
     fn delete(&self, account: &str) -> Result<(), Error> {
         let Some(path) = self.file(account) else {
             return Ok(());
         };
-        match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(Error::new(format!("{}: {err}", path.display()))),
-        }
+        let moved = self.file_as(account, "unlocked");
+        let first = remove(&path);
+        moved.map_or(Ok(()), |moved| remove(&moved))?;
+        first
+    }
+
+    fn fresh(&self, entry: &str) -> bool {
+        self.unlocked_for(entry).is_some()
     }
 }
 
@@ -158,7 +242,14 @@ pub(crate) fn open_keys(dir: &Path) -> moqui_client::keys::Keys {
         });
         match vault {
             Ok(vault) => {
-                let store = SealedFileStore::new(dir, vault);
+                let mut store = SealedFileStore::new(dir, vault);
+                match crate::android::KeyVault::ready_unlocked() {
+                    Ok(unlocked) => store = store.with_unlocked(unlocked),
+                    Err(err) => log::warn!(
+                        "The Keystore has no key for an unlocked phone (Android 9 and later); the chat store passphrases \
+                         are sealed by the device keys' key: {err}"
+                    ),
+                }
                 let moved = store.seal_plain_keys();
                 if moved > 0 {
                     log::info!("{moved} plain keys sealed by the Android Keystore");

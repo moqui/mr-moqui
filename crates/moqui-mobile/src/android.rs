@@ -452,6 +452,16 @@ pub(crate) fn fcm_stop() -> Result<(), String> {
     })
 }
 
+/// Clear the server pages' origin's storage (`PageStorage.clear`), at a switch of the current account or its sign-out
+/// (SEC-CLI-81).
+pub(crate) fn clear_page_storage() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PageStorage"))?;
+        env.call_static_method(&class, jni_str!("clear"), jni_sig!("()V"), &[])?;
+        Ok(())
+    })
+}
+
 /// Whether the phone has a secure lock screen (`DeviceLock.isSecure`: `KeyguardManager.isDeviceSecure()`), which the
 /// shell warns of when it has not (SEC-CLI-113).
 pub(crate) fn device_secure() -> Result<bool, String> {
@@ -539,28 +549,47 @@ pub(crate) fn open_url(url: &str) -> Result<(), String> {
     })
 }
 
-/// The Android Keystore's AES-GCM key of the app's device keys (`org.moqui.mobile.KeyVault`).
-pub(crate) struct KeyVault;
+/// An Android Keystore AES-GCM key of the app's (`org.moqui.mobile.KeyVault`): the device keys' (`unlocked` false), or
+/// the one that opens only while the phone is unlocked, for what no background work reads (SEC-CLI-113,
+/// `crate::keystore`).
+pub(crate) struct KeyVault {
+    unlocked: bool,
+}
 
 impl KeyVault {
-    /// The vault, once its Keystore key is made or found.
+    /// The device keys' vault, once its Keystore key is made or found.
     pub(crate) fn ready() -> Result<Self, String> {
         with_context(|env, app| {
             let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
             env.call_static_method(&class, jni_str!("ready"), jni_sig!("()V"), &[])?;
             Ok(())
         })?;
-        Ok(Self)
+        Ok(Self { unlocked: false })
     }
 
-    /// `bytes` through `KeyVault.<method>(byte[]): byte[]`.
-    fn call(method: &'static str, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    /// The vault of an unlocked phone, once its Keystore key is made or found; an error before Android 9, which has no
+    /// such key.
+    pub(crate) fn ready_unlocked() -> Result<Self, String> {
+        with_context(|env, app| {
+            let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
+            env.call_static_method(&class, jni_str!("readyUnlocked"), jni_sig!("()V"), &[])?;
+            Ok(())
+        })?;
+        Ok(Self { unlocked: true })
+    }
+
+    /// `bytes` through `KeyVault.<method>(byte[]): byte[]` (`seal`, `open`, or for the unlocked phone's key
+    /// `sealUnlocked`, `openUnlocked`).
+    fn call(&self, method: &'static str, bytes: &[u8]) -> Result<Vec<u8>, String> {
+        let unlocked = self.unlocked;
         with_context(|env, app| {
             let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
             let input = env.byte_array_from_slice(bytes)?;
-            let name = match method {
-                "seal" => jni_str!("seal"),
-                _ => jni_str!("open"),
+            let name = match (method, unlocked) {
+                ("seal", false) => jni_str!("seal"),
+                ("seal", true) => jni_str!("sealUnlocked"),
+                (_, false) => jni_str!("open"),
+                (_, true) => jni_str!("openUnlocked"),
             };
             let output = env
                 .call_static_method(&class, name, jni_sig!("([B)[B"), &[JValue::Object(&input)])?
@@ -573,11 +602,11 @@ impl KeyVault {
 
 impl Sealer for KeyVault {
     fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String> {
-        Self::call("seal", plain)
+        self.call("seal", plain)
     }
 
     fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, String> {
-        Self::call("open", sealed)
+        self.call("open", sealed)
     }
 }
 
