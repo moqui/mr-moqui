@@ -370,8 +370,8 @@ impl ResourceFacade {
         let mut valid = Vec::with_capacity(changes.len());
         for change in changes {
             match change.normalized() {
-                // a path with a '#' is refused where the location would be cut at it (`refuse_cut_write`)
-                Ok(change) if scheme_of(root) != "dbresource" && has_hash(&change) => refused.push((
+                // a path with a '#' is refused: a read would stop at it (`refuse_cut_write`)
+                Ok(change) if has_hash(&change) => refused.push((
                     change.path().to_string(),
                     format!("a resource is not written at a path with '#' in it: {}", change.path()),
                 )),

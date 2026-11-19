@@ -1135,14 +1135,16 @@ pub(crate) fn split_version(location: &str) -> Option<(&str, &str)> {
         .filter(|(path, version)| !path.is_empty() && !version.is_empty())
 }
 
-/// A write, delete or move at a location that holds a `#` is refused, but on `dbresource://`, where the `#` stays part
-/// of the name. Elsewhere a reference cuts the location at its first `#` (a version suffix: [`strip_hash`]), so the
-/// write would change the file named before it, another file than the one asked for: a content root of
-/// `component://<name>/screen/App.xml#` made an upload under it replace that screen (SEC-PFS-82, SEC-BAP-82).
+/// A write, delete, move or restore at a location that holds a `#` is refused, on every storage. A reference and a read
+/// cut a location at its first `#` (a version suffix: [`strip_hash`], [`split_version`]), so on a file, runtime,
+/// component or provider location the write would change the file named before the `#`, another file than the one
+/// asked for (a content root of `component://<name>/screen/App.xml#` made an upload under it replace that screen), and
+/// on `dbresource://`, which keeps the `#` in the name it writes, the file would be written and never found again
+/// (SEC-PFS-82, SEC-BAP-82). Uploaded file names have the `#` made `_` (`web::multipart::safe_file_name`).
 pub(crate) fn refuse_cut_write(location: &str) -> Result<(), Error> {
-    if location.contains('#') && scheme_of(location) != "dbresource" {
+    if location.contains('#') {
         return Err(Error::new(format!(
-            "a resource is not written at a location with '#' in it (only the part before the '#' would be): {location}"
+            "a resource is not written at a location with '#' in it (a read would stop at the '#'): {location}"
         )));
     }
     Ok(())

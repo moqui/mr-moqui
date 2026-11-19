@@ -127,12 +127,12 @@ fn gone(file_name: &str) -> moqui_lib::error::Error {
 }
 
 impl UploadedFile {
-    /// A file whose content is `bytes`.
+    /// A file whose content is `bytes`, named [`safe_file_name`] of `file_name`.
     #[must_use]
     pub fn in_memory(field_name: &str, file_name: &str, content_type: &str, bytes: Vec<u8>) -> Self {
         Self {
             field_name: field_name.to_string(),
-            file_name: file_name.to_string(),
+            file_name: safe_file_name(file_name),
             content_type: content_type.to_string(),
             size: bytes.len() as u64,
             head: bytes[..bytes.len().min(HEAD_BYTES)].to_vec(),
@@ -561,7 +561,7 @@ impl Part {
         };
         Ok(UploadedFile {
             field_name: std::mem::take(&mut self.name),
-            file_name: base_name(&file_name),
+            file_name: safe_file_name(&file_name),
             content_type,
             content,
             size: self.size,
@@ -852,9 +852,24 @@ impl BodySpool {
     }
 }
 
-/// A file name without the directories some browsers send.
-fn base_name(name: &str) -> String {
-    name.rsplit(['/', '\\']).next().unwrap_or(name).to_string()
+/// An uploaded file's name as a service may put it in a location: its base name, without the directories some
+/// browsers send, with each control character, `#` and `?` made `_` (a `#` would end the location where a reference
+/// reads it, so the file would be written and never found: SEC-PFS-82, SEC-BAP-82). An empty name (no file chosen),
+/// `.` and `..` stay as they are, for the caller that refuses them.
+#[must_use]
+pub fn safe_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let cleaned: String = base
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || ch == '#' || ch == '?' {
+                '_'
+            } else {
+                ch
+            }
+        })
+        .collect();
+    cleaned.trim().to_string()
 }
 
 /// `name="x"` or `name=x` in a `Content-Disposition` value. A quoted value may hold `\"` and `\\`.

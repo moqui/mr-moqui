@@ -504,12 +504,17 @@ macro_rules! tools_js {
         // a write goes to the location as it was given: a reference of `location#suffix` reads the file before the `#`,
         // and the facade refuses a write there rather than write that other file (SEC-PFS-82)
         const writeAt = () => ref.writeLocation || ref.location;
+        // a child or matching directory of a `location#suffix` reference would be made from the location cut at the
+        // `#`, another tree than the one named, so none is derived from one
+        const derivable = () => {
+            if (ref.writeLocation) throw new Error("No file or directory is found under a location with '#' in it: " + ref.writeLocation);
+        };
         Object.assign(ref, {
             getLocation: () => ref.location, getFileName: () => ref.fileName, getExists: () => ref.exists,
             isDirectory: () => ref.directory, isFile: () => ref.file, getSize: () => ref.size,
             isText: () => ref.text, isBinary: () => ref.binary, getContentType: () => ref.contentType,
             getLastModified: () => ref.lastModified, length: () => ref.size || 0, getName: () => ref.fileName,
-            getDirectoryEntries: () => host.resourceEntries(ref.location).map((child) => wrap("Resource", child)),
+            getDirectoryEntries: () => { derivable(); return host.resourceEntries(ref.location).map((child) => wrap("Resource", child)); },
             // null for a file that is not there, as Java's (the stream is null)
             getInputStream: () => ref.openStream(),
             // a reference of `location#versionName` reads that version, as getLocationText does
@@ -563,6 +568,7 @@ macro_rules! tools_js {
                 versionNameLhs == null ? "" : String(versionNameLhs), versionNameRhs == null ? "" : String(versionNameRhs)),
             // the directory named as this file without its extensions, or this directory
             findMatchingDirectory: function () {
+                derivable();
                 if (ref.directory) return ref;
                 let dirLoc = ref.location, directoryRef = ref;
                 while (!(directoryRef.exists && directoryRef.directory) && dirLoc.lastIndexOf(".") > 0) {
@@ -571,13 +577,17 @@ macro_rules! tools_js {
                 }
                 return directoryRef;
             },
-            getChild: (childName) => childName ? makeRef(joinPath(ref.findMatchingDirectory().location, String(childName))) : null,
+            getChild: (childName) => {
+                derivable();
+                return childName ? makeRef(joinPath(ref.findMatchingDirectory().location, String(childName))) : null;
+            },
             getChildren: function () {
                 const directoryRef = ref.findMatchingDirectory();
                 if (directoryRef == null || !directoryRef.exists) return null;
                 return directoryRef.getDirectoryEntries().filter((child) => child.file);
             },
             findChildFile: function (relativePath) {
+                derivable();
                 if (!relativePath) return ref;
                 relativePath = String(relativePath);
                 const directoryRef = ref.findMatchingDirectory();
@@ -603,6 +613,7 @@ macro_rules! tools_js {
                 return makeRef(newDirectoryLoc + "/" + relativePath);
             },
             findChildDirectory: function (relativePath) {
+                derivable();
                 if (!relativePath) return ref;
                 relativePath = String(relativePath);
                 let childDirectoryRef = ref.file ? ref.findMatchingDirectory() : ref;

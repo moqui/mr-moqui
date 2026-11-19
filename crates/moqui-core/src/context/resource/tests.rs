@@ -204,8 +204,8 @@ fn a_location_splits_into_its_scheme_path_and_version() {
 }
 
 /// A write, delete or move at a location with a `#` would change the file before the `#` (a reference cuts the
-/// location there), so it is refused, and the file there is left as it was; on `dbresource://` the `#` is part of the
-/// name and nothing is cut (SEC-PFS-82, SEC-BAP-82).
+/// location there), or on `dbresource://` write a file no read finds, so it is refused on every storage, and the file
+/// there is left as it was (SEC-PFS-82, SEC-BAP-82).
 #[test]
 fn a_write_at_a_location_with_a_hash_is_refused() {
     let root = format!("target/file-resource-hash-{}", std::process::id());
@@ -255,8 +255,8 @@ fn a_write_at_a_location_with_a_hash_is_refused() {
     assert!(outcome.applied.is_empty(), "{outcome:?}");
     assert_eq!(outcome.failures.len(), 1, "{outcome:?}");
     assert_eq!(resources.get(&file).unwrap().read_text().unwrap(), "<screen/>");
-    // the database tree keeps a '#' in the name, so it is not refused there
-    assert!(super::refuse_cut_write("dbresource://mantle/content/order/1/Invoice #1.pdf").is_ok());
+    // the database tree would keep the '#' in the name it writes, and every read stops at it
+    assert!(super::refuse_cut_write("dbresource://mantle/content/order/1/Invoice #1.pdf").is_err());
     assert!(super::refuse_cut_write(&file).is_ok());
     std::fs::remove_dir_all(root).unwrap();
 }
