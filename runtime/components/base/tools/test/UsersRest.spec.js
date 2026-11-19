@@ -1,7 +1,8 @@
 // PATCH /rest/s1/moqui/users/{userId} (tools/service/moqui.rest.xml) is org.moqui.impl.UserServices.update#UserAccount, not
 // the entity update (plans/Security-Review-Medium.md SEC-ADM-81): a member of ADMIN changes another account's email address
 // only when that account holds no access beyond theirs (Identity.js heldBeyond) and after a recent sign-in, as on the
-// account screens, while the full name changes as before.
+// account screens, while the full name changes as before. An empty value clears a stored one, and is a change like any
+// other: it does not re-enable such an account or lift its address rule.
 // Run: ./moq test tools --spec UsersRest
 const PASSWORD = "Users-rest-spec-7!"
 const ADMIN = "USERSREST_SPEC_ADMIN"
@@ -78,5 +79,27 @@ feature("an ADMIN's PATCH of a user takes the name, and changes an email address
         sealedAgain.status != 200
         account(SEALED).emailAddress == username(SEALED) + "@example.com"
         account(OTHER).emailAddress == "confirmed@example.net"
+    },
+})
+
+feature("an empty value given for a stored sign-in field is a change, refused on an account holding more access", {
+    when() {
+        sys(() => {
+            const row = ec.entity.find(ACCOUNT).condition("userId", SEALED).one()
+            row.setFields({disabled: "Y", ipAllowed: "10.9.8.7"}, true, null, null)
+            row.update()
+        })
+        return {
+            enabled: patch(SEALED, {disabled: ""}),
+            unbound: patch(SEALED, {ipAllowed: ""}),
+            unforced: patch(SEALED, {requirePasswordChange: ""}),
+        }
+    },
+    then({enabled, unbound, unforced}) {
+        enabled.status != 200
+        unbound.status != 200
+        unforced.status != 200
+        account(SEALED).disabled == "Y"
+        account(SEALED).ipAllowed == "10.9.8.7"
     },
 })
