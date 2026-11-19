@@ -155,7 +155,8 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
             .filter(|member| member.slot_id == slot.id && member.client != client)
             .count()
     });
-    if others >= caps.room_clients {
+    // the place is held before the join goes off, so joins in flight together count against the cap
+    let Some(reserved) = super::reserve(slot.id, &doc, others, caps.room_clients) else {
         return error(
             slot,
             &doc,
@@ -163,13 +164,14 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
             429,
             "this connection has as many clients on the page as it may",
         );
-    }
-    if !super::join_allowed(slot.id, caps.joins_per_minute) {
+    };
+    if !super::join_allowed(slot.id, &slot.user_id, &caps) {
         return error(slot, &doc, &client, 429, "too many joins; wait a minute");
     }
     let factory = Arc::clone(factory);
     let slot = Arc::clone(slot);
     tokio::spawn(async move {
+        let _reserved = reserved;
         let user_id = slot.user_id.clone();
         let job_doc = doc.clone();
         let joined = super::on_pool(&factory, move || Ok(moqui_collab::join(&job_doc, &user_id, &vector))).await;
@@ -186,23 +188,8 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
             name: joined.user_name.clone(),
             awareness: awareness.clone(),
         };
-        let peers: Vec<Json> = {
-            let mut all = lock(members());
-            let list = all.entry(doc.clone()).or_default();
-            // a join again (after a reconnect) replaces the client's place; the room counted it again, so it leaves once
-            let had = list
-                .iter()
-                .position(|known| known.client == client && known.slot_id == slot.id);
-            if let Some(index) = had {
-                list.remove(index);
-                moqui_collab::leave(&doc);
-            }
-            let peers = list
-                .iter()
-                .map(|peer| json!({"client": peer.client, "userId": peer.user_id, "name": peer.name, "awareness": peer.awareness}))
-                .collect();
-            list.push(member);
-            peers
+        let Some(peers) = admit(&factory, &slot, &doc, member) else {
+            return;
         };
         send(
             &slot,
@@ -214,6 +201,36 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
         broadcast(&doc, Some(&client), &peer);
         publish_remote(&factory, json!({"doc": doc, "frame": peer}));
     });
+}
+
+/// Put `member` among the members of `doc`, and answer the others there; none when the socket closed while the join
+/// was worked. Its close found no member to take away then, so the member leaves at once, or the room would count it
+/// for good and never close (SEC-TLS-111).
+fn admit(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, member: Member) -> Option<Vec<Json>> {
+    let client = member.client.clone();
+    let peers = {
+        let mut all = lock(members());
+        let list = all.entry(doc.to_string()).or_default();
+        // a join again (after a reconnect) replaces the client's place; the room counted it again, so it leaves once
+        let had = list
+            .iter()
+            .position(|known| known.client == client && known.slot_id == slot.id);
+        if let Some(index) = had {
+            list.remove(index);
+            moqui_collab::leave(doc);
+        }
+        let peers = list
+            .iter()
+            .map(|peer| json!({"client": peer.client, "userId": peer.user_id, "name": peer.name, "awareness": peer.awareness}))
+            .collect();
+        list.push(member);
+        peers
+    };
+    if slot.tx.is_closed() {
+        leave(factory, slot.id, doc, Some(&client));
+        return None;
+    }
+    Some(peers)
 }
 
 fn is_member(doc: &str, client: &str, slot_id: u64) -> bool {
@@ -491,5 +508,36 @@ mod tests {
         let refused: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
         assert_eq!(refused["code"], 413);
         assert!(rx.try_recv().is_err(), "nothing else was sent");
+    }
+
+    /// SEC-TLS-111: a join worked after its socket closed leaves no member, so the page's room can close.
+    #[test]
+    fn a_member_admitted_after_its_socket_closed_leaves_at_once() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        drop(rx);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "closer".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        let doc = "closed-before-joined";
+        let member = Member {
+            slot: Arc::downgrade(&slot),
+            slot_id: slot.id,
+            client: "c".into(),
+            user_id: "closer".into(),
+            name: "Closer".into(),
+            awareness: Json::Null,
+        };
+        assert!(admit(&factory, &slot, doc, member).is_none());
+        assert!(
+            lock(members()).get(doc).is_none(),
+            "no member is left of a closed socket"
+        );
     }
 }

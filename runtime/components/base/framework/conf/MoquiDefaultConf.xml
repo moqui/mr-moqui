@@ -459,6 +459,7 @@
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"
                 socket-room-clients="4" socket-awareness-bytes="4096" socket-joins-per-minute="60"
+                socket-user-joins-per-minute="240"
             app-redirect-uris="" app-loopback-redirect="true">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>

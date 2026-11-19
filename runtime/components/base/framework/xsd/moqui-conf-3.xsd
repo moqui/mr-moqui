@@ -782,8 +782,11 @@ along with this software (see the LICENSE.md file). If not, see
                 The largest co-editing awareness (a join's and an awareness frame's, as JSON) a notification socket may
                 send; a larger one is refused (413). Read on each frame (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="socket-joins-per-minute" type="xs:positiveInteger" default="60"><xs:annotation><xs:documentation>
-                The CalcGrid room and co-edited page joins one notification socket may make a minute; more are refused
-                (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+                The CalcGrid room and co-edited page joins one notification socket may make a minute, given back
+                evenly over the minute; more are refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-user-joins-per-minute" type="xs:positiveInteger" default="240"><xs:annotation><xs:documentation>
+                The joins one user's notification sockets may make a minute together, given back evenly over the
+                minute; more are refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

@@ -320,7 +320,8 @@ feature("a saved document is edited together: one room, edits in its log as type
         ec.artifactExecution.enableAuthz()
         // a view that polls is told nothing changed; two views of the document see each other's place
         const unchanged = read({since: String(afterEdits.json.seq)})
-        read({client: "spec-view-1", selectionJson: JSON.stringify({row: 2, column: 1, width: 1, height: 1})})
+        // a place is four numbers: what else the view sends is not kept for the others (SEC-TLS-113)
+        read({client: "spec-view-1", selectionJson: JSON.stringify({row: 2, column: 1, width: 1, height: 1, label: "<img src=x>"})})
         const seen = read({client: "spec-view-2"})
         // undo takes back the caller's own last edit, then the one before; redo applies it again
         const undone = edit([{op: "undo"}])
@@ -362,6 +363,7 @@ feature("a saved document is edited together: one room, edits in its log as type
         seen.json.peers.length == 1
         seen.json.peers[0].client == "spec-view-1"
         seen.json.peers[0].area.row == 2
+        Object.keys(seen.json.peers[0].area).sort().join(",") == "column,height,row,width"
         !undone.json.errors
         undone.json.canRedo === true
         afterUndo == "first"
