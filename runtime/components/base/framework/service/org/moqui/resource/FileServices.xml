@@ -1902,7 +1902,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="permissionEnumId" default-value="RspView"/>
             <parameter name="expireDate" type="Timestamp"/>
             <parameter name="password" allow-html="any"/>
-            <parameter name="note" allow-html="safe"/>
+            <parameter name="note" allow-html="app"/>
         </in-parameters>
         <out-parameters>
             <parameter name="shareId"/>
