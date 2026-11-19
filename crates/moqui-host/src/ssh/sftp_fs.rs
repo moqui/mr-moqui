@@ -347,9 +347,11 @@ impl SftpFs {
     }
 
     /// `len` bytes from `offset` of a file open for reading: from its window, or a new window read from its source
-    /// (with authorization off: the access was checked when it was opened).
+    /// (with authorization off: the access was checked when it was opened). A window is at most [`READ_WINDOW`]
+    /// whatever `len` the client asks, which answers short (SFTP allows it), and is counted in the user's bytes held
+    /// (SEC-FIL-84).
     async fn read_window(&mut self, id: u32, handle: &str, offset: u64, len: u32) -> Result<Data, StatusReply> {
-        let (source, size) = match self.handles.get(handle) {
+        let (source, size, held_now) = match self.handles.get(handle) {
             Some(Open::Read {
                 source,
                 size,
@@ -367,13 +369,15 @@ impl SftpFs {
                         data: window[start..stop].to_vec(),
                     });
                 }
-                (Arc::clone(source), *size)
+                (Arc::clone(source), *size, window.len())
             }
             _ => return Err(StatusCode::Failure.with_message("not a file handle")),
         };
-        let want = usize::try_from(size - offset)
-            .unwrap_or(usize::MAX)
-            .min(READ_WINDOW.max(len as usize));
+        let want = usize::try_from(size - offset).unwrap_or(usize::MAX).min(READ_WINDOW);
+        // the new window takes the old one's place, and what it needs more must fit the user's room
+        if want.saturating_sub(held_now) > self.room() {
+            return Err(Self::too_much_held());
+        }
         let fetched = self
             .run(move |_store| {
                 let _authz = moqui_core::context::ExecutionContext::with_current(
@@ -817,6 +821,54 @@ mod tests {
         assert!(read == content, "the bytes read are the file's");
         fs.close(2, "r".to_string()).await.unwrap();
         assert_eq!(fs.held.mine, 0);
+    }
+
+    /// SEC-FIL-84: a read asking for far more than a window gets at most READ_WINDOW bytes, and the handle holds at
+    /// most a window; a window the user's room does not hold is refused, and one that fits is read.
+    #[tokio::test]
+    async fn a_read_window_is_at_most_its_size_and_within_the_users_room() {
+        use moqui_core::resource::source::{MemorySource, READ_WINDOW};
+        let context = moqui_core::context::ExecutionContextFactory::test_context();
+        let factory = std::sync::Arc::clone(context.factory());
+        factory.request_pool().start(1, 4).unwrap();
+        let content: Vec<u8> = (0..READ_WINDOW * 3).map(|at| (at % 251) as u8).collect();
+        let reader = |fs: &mut SftpFs| {
+            fs.handles.insert(
+                "r".to_string(),
+                Open::Read {
+                    size: content.len() as u64,
+                    source: std::sync::Arc::new(MemorySource::new(content.clone())),
+                    window_at: 0,
+                    window: Vec::new(),
+                },
+            );
+        };
+        let mut fs = SftpFs::new(
+            std::sync::Arc::downgrade(&factory),
+            Backend::Root("runtime://sftp".to_string()),
+            READ_WINDOW,
+            Held::new("large-reader"),
+        );
+        reader(&mut fs);
+        let data = fs.read(1, "r".to_string(), 0, u32::MAX).await.unwrap();
+        assert_eq!(data.data.len(), READ_WINDOW, "a short read, not the whole file");
+        assert_eq!(data.data[..], content[..READ_WINDOW]);
+        assert_eq!(fs.held.mine, READ_WINDOW);
+        let data = fs.read(2, "r".to_string(), READ_WINDOW as u64, u32::MAX).await.unwrap();
+        assert_eq!(data.data[..], content[READ_WINDOW..READ_WINDOW * 2]);
+        assert_eq!(fs.held.mine, READ_WINDOW, "the new window took the old one's place");
+
+        // the user's room is one byte short of a window: refused
+        let mut short = SftpFs::new(
+            std::sync::Arc::downgrade(&factory),
+            Backend::Root("runtime://sftp".to_string()),
+            READ_WINDOW - 1,
+            Held::new("short-reader"),
+        );
+        reader(&mut short);
+        let refused = short.read(3, "r".to_string(), 0, 1024).await.unwrap_err();
+        assert!(message(&refused).contains("would hold more than"), "{refused:?}");
+        assert_eq!(short.held.mine, 0);
     }
 
     /// SEC-FIL-61: the bytes open files hold are counted per user over all of the user's channels, so a second channel
