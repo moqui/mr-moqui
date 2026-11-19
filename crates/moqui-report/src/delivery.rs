@@ -696,6 +696,7 @@ pub(crate) fn reason_text(code: &str) -> &'static str {
         "external" => "The account is not an internal user",
         "no-address" => "The account has no email address",
         "over-cap" => "The audience is larger than the recipient cap",
+        "topic" => "The alert's notification topic is no longer registered for alerts",
         "owner-unauthorized" => "The owner may not deliver to other users",
         "removed-audience" => "No longer a recipient of the schedule",
         "schedule-changed" => "The schedule changed before this delivery",

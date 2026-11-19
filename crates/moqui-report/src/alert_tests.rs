@@ -219,11 +219,31 @@ fn a_contact_is_asked_again_at_each_send_as_the_rules_owner() {
         account.set("username", Value::string("alert.owner"));
         account.set("disabled", Value::string("N"));
         account.create(&facade).unwrap();
+        for (topic, flag) in [("ReportAlert", "Y"), ("AppAlert", "Y"), ("VoiceAlert", "N")] {
+            let mut row = facade.make_value("moqui.security.user.NotificationTopic").unwrap();
+            row.set("topic", Value::string(topic));
+            row.set("reportAlertTopic", Value::string(flag));
+            row.create(&facade).unwrap();
+        }
     }
     let refusal = |contact: Json| contact_refusal_as(&ctx, "ALERT_OWNER", &contact);
+    // a topic is an alert topic by its registration, an app's as the framework's
+    assert_eq!(
+        refusal(json!({"type": "notification", "topic": "AppAlert", "userId": "ALERT_OWNER"})),
+        None
+    );
+    assert!(
+        refusal(json!({"type": "notification", "topic": "NoSuchTopic", "userId": "ALERT_OWNER"}))
+            .is_some_and(|why| why.contains("ALERT_TOPIC_UNAVAILABLE"))
+    );
     assert_eq!(refusal(json!({"type": "notification", "userId": "ALERT_OWNER"})), None);
-    assert!(refusal(json!({"type": "notification", "topic": "VoiceAlert", "userId": "ALERT_OWNER"}))
-        .is_some_and(|why| why.contains("ALERT_TOPIC_UNAVAILABLE")));
+    assert!(
+        refusal(json!({"type": "notification", "topic": "VoiceAlert", "userId": "ALERT_OWNER"}))
+            .is_some_and(|why| why.contains("ALERT_TOPIC_UNAVAILABLE"))
+    );
     assert!(contact_refusal_as(&ctx, "NO_SUCH_OWNER", &json!({"type": "notification"})).is_some());
-    assert_eq!(refusal(json!({"type": "webhook", "url": "https://example.test/hook"})), None);
+    assert_eq!(
+        refusal(json!({"type": "webhook", "url": "https://example.test/hook"})),
+        None
+    );
 }

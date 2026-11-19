@@ -339,40 +339,49 @@ fn property_name(name: &str) -> bool {
 /// The topic an alert's notification posts under when it names none: the alert topic.
 pub(crate) const CONTACT_TOPIC: &str = "ReportAlert";
 
-/// The topics an alert's notification may post under (a rule's contact and a business rule's audience):
-/// `report@alert-topics`, `ReportAlert` by default; an app that has a topic of its own for alerts adds it there.
-/// Another topic's subscribers would take the rule's message for that topic's own (a phone alert, an agent run).
-pub(crate) fn alert_topics() -> Vec<String> {
-    let listed = moqui_core::context::conf_env::setting("report@alert-topics");
-    let topics: Vec<String> = listed
-        .split([',', ' ', '\n', '\t'])
-        .map(str::trim)
-        .filter(|topic| !topic.is_empty())
-        .map(str::to_owned)
-        .collect();
-    if topics.is_empty() {
-        vec![CONTACT_TOPIC.to_owned()]
-    } else {
-        topics
-    }
+/// Whether an alert's notification may post under `topic` (a rule's contact and a business rule's audience, at save and
+/// at each send): a `NotificationTopic` registered for alerts by `reportAlertTopic` Y, as the framework's `ReportAlert`
+/// is and an app's data marks its own alert topic. Another topic's subscribers would take the rule's message for that
+/// topic's own (a phone alert, an agent run). Read in the current context, without its authorization.
+pub(crate) fn is_alert_topic(topic: &str) -> Result<bool, Error> {
+    let found = ExecutionContext::with_current(|ec| -> Result<bool, Error> {
+        let entity = ec
+            .factory()
+            .entity()
+            .ok_or_else(|| fail("entity facade is unavailable"))?;
+        let _authz = ec.disable_authz();
+        let row = entity
+            .find("moqui.security.user.NotificationTopic")?
+            .eq("topic", Value::string(topic))
+            .one()?;
+        Ok(row.and_then(|row| {
+            row.get("reportAlertTopic")
+                .and_then(Value::as_str)
+                .map(|flag| flag == "Y")
+        }) == Some(true))
+    });
+    found.unwrap_or_else(|| Err(fail("no execution context to read the notification topic in")))
+}
+
+/// The refusal of a topic [`is_alert_topic`] does not take.
+pub(crate) fn alert_topic_refusal(what: &str, topic: &str) -> String {
+    format!(
+        "ALERT_TOPIC_UNAVAILABLE: {what} posts under a notification topic registered for alerts (reportAlertTopic Y), \
+         as {CONTACT_TOPIC} is; {topic} is not one"
+    )
 }
 
 /// Why the current user may not have `contact` post where it says, or None (SEC-TLS-106): a `topic` not one of
-/// [`alert_topics`], a `userId` other than `owner` without the group delivery grant (`delivery::GROUP_ARTIFACT`), a
+/// [`is_alert_topic`], a `userId` other than `owner` without the group delivery grant (`delivery::GROUP_ARTIFACT`), a
 /// `userGroupId` the user may not share with (`definitions::may_share_with`).
 fn contact_refusal(contact: &Json, owner: &str) -> Result<Option<String>, Error> {
     if text(contact, "type", "notification") != "notification" {
         return Ok(None);
     }
     if let Some(topic) = contact.get("topic").filter(|topic| !topic.is_null()) {
-        if !topic
-            .as_str()
-            .is_some_and(|topic| alert_topics().iter().any(|allowed| allowed == topic))
-        {
-            return Ok(Some(format!(
-                "ALERT_TOPIC_UNAVAILABLE: a notification contact posts under {}",
-                alert_topics().join(" or ")
-            )));
+        let name = topic.as_str().unwrap_or_default();
+        if name.is_empty() || !is_alert_topic(name)? {
+            return Ok(Some(alert_topic_refusal("a notification contact", name)));
         }
     }
     if let Some(user) = contact["userId"]

@@ -729,6 +729,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="alertNoAutoHide" type="text-indicator"/>
         <field name="persistOnSend" type="text-indicator"/>
         <field name="isPrivate" type="text-indicator"><description>If Y user must be associated to see it or receive notifications.</description></field>
+        <field name="reportAlertTopic" type="text-indicator"><description>Y for a topic an alert rule's notification contact
+            and a business rule's audience may post under (moqui-report alert.rs is_alert_topic, asked at save and at each
+            send): the framework's ReportAlert, and an app's own alert topic by its data. Another topic's subscribers would
+            take an alert for that topic's own message.</description></field>
         <field name="receiveNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.receiveNotifications value then use this as the default, this defaults to N.</description></field>
         <field name="emailNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.emailNotifications value then use this as the default, this defaults to N.</description></field>
         <field name="emailTemplateId" type="id"><description>If is specified use this template to send a notification email to each user with emailNotifications=Y</description></field>

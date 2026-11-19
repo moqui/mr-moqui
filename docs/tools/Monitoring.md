@@ -1031,7 +1031,9 @@ evaluated and delivered to its contact points as before.
   active here. Its owner activates it by saving it with `paused` false, which is the save above.
 - **At each notification** every recipient is checked again and told separately, one notification or message a recipient;
   one whose scope changed is skipped with `scope-differs` (and the other codes of report delivery), one past the cap with
-  `over-cap`, and one whose message fails is recorded and tried again at the next evaluation, while a recipient already told
+  `over-cap`, every in-app one with `topic` when the audience's topic is no longer registered for alerts
+  (`NotificationTopic.reportAlertTopic` Y, as `ReportAlert` is; an app registers its own alert topic so in its data), and
+  one whose message fails is recorded and tried again at the next evaluation, while a recipient already told
   that state is not told it again until the repeat interval. Each recipient's last outcome for a notification group on a
   channel is a `moqui.report.AlertRecipientDelivery` row: the outcome, a safe reason code and, for one it was sent to, the
   state's name; never a value or a series label, and no state for one skipped. A business rule's notification row keeps no

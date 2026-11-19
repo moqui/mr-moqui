@@ -217,11 +217,8 @@ pub(super) fn prepare(ec: &ExecutionContext, body: &mut Json) -> Result<bool, Er
     }
     let topic = name("topic")?.unwrap_or_else(|| DEFAULT_TOPIC.to_owned());
     // the audience's notifications post under an alert topic only (SEC-TLS-106)
-    if !crate::alert::alert_topics().contains(&topic) {
-        return Err(fail(format!(
-            "ALERT_TOPIC_UNAVAILABLE: an alert audience posts under {}",
-            crate::alert::alert_topics().join(" or ")
-        )));
+    if !crate::alert::is_alert_topic(&topic)? {
+        return Err(fail(crate::alert::alert_topic_refusal("an alert audience", &topic)));
     }
     if !exists(ec, "moqui.security.user.NotificationTopic", "topic", &topic)? {
         return Err(fail(format!("notification topic {topic} does not exist")));
@@ -544,15 +541,21 @@ impl<'a> Pass<'a> {
                 } else {
                     reason
                 };
+                // the audience's topic is asked again at each send, as a rule's contacts are (SEC-TLS-106): a topic
+                // no longer registered for alerts posts nothing
+                let topic = jtext(audience, "topic", DEFAULT_TOPIC);
+                let topic_refused = channel != "email" && !crate::alert::is_alert_topic(topic).unwrap_or(false);
                 if !reason.is_empty() {
                     (delivery::SKIPPED, reason, String::new())
+                } else if topic_refused {
+                    (delivery::SKIPPED, "topic", String::new())
                 } else {
                     let target = if channel == "email" {
                         json!({"type": "email", "emailTemplateId": audience["emailTemplateId"],
                             "toAddresses": recipient.address})
                     } else {
                         // to this one user: nobody receives it by a subscription to the whole topic
-                        json!({"type": "notification", "topic": jtext(audience, "topic", DEFAULT_TOPIC),
+                        json!({"type": "notification", "topic": topic,
                             "userId": recipient.user_id, "direct": true})
                     };
                     match crate::alert::send_contact(&target, payload) {

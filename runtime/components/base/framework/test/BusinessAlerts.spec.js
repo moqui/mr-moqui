@@ -589,3 +589,30 @@ feature("a business rule's audience posts under an alert topic only (SEC-TLS-106
         error.includes("ALERT_TOPIC_UNAVAILABLE")
     }
 })
+
+feature("an app's topic registered for alerts is taken, and a topic no longer registered posts nothing at the send (SEC-TLS-106)", {
+    when() {
+        sys(() => make("moqui.security.user.NotificationTopic", {topic: "RbaAppAlert", description: "An app's alert topic",
+            reportAlertTopic: "Y", isPrivate: "Y"}))
+        const saved = as("rda.next", "save#Definition", rule("rba-app-topic", {audience: Object.assign({topic: "RbaAppAlert"}, team)}))
+        // the app stops registering the topic for alerts after the rule was saved
+        sys(() => {
+            const topic = ec.entity.find("moqui.security.user.NotificationTopic").condition("topic", "RbaAppAlert").one()
+            topic.reportAlertTopic = "N"
+            topic.update()
+        })
+        notes.clear()
+        const run = evaluate("rda.next", "rba-app-topic")
+        const posted = Array.from(notes.getMessages("RbaAppAlert")).length
+        const deliveries = Array.from(as("rda.next", "find#AlertDeliveries", {definitionId: "rba-app-topic"}).out?.deliveries || [])
+        return {saved: saved.error || "", run: run.error || "", posted,
+            reasons: deliveries.map(delivery => delivery.statusId + ":" + delivery.reasonCode).sort().join(",")}
+    },
+    then({saved, run, posted, reasons}) {
+        saved == ""
+        run == ""
+        posted == 0
+        reasons.includes("RptDlvSkipped:topic")
+        !reasons.includes("RptDlvSent")
+    }
+})
