@@ -229,8 +229,11 @@ mod driver {
             }
         }
 
-        /// Which addresses the host may resolve to, checked before each connection (SEC-TLS-101). The client looks the
-        /// name up again as it connects, so the check holds unless the name's answer changes in between.
+        /// Which addresses the host may resolve to, checked before each connection (SEC-TLS-101). The connection, and
+        /// its kill connection, then go to an address that was checked ([`Endpoint::pinned`]), except under
+        /// `verify-full`: there the client must name the host to check its certificate, so it looks the name up again
+        /// and a name whose answer changes between the check and the connect is not caught (the client takes no TLS
+        /// server name apart from the address it connects to).
         #[must_use]
         pub fn address_guard(mut self, guard: moqui_core::driver::AddressGuard) -> Self {
             self.guard = guard;
@@ -265,13 +268,25 @@ mod driver {
 
         /// Opens one [`mysql::Conn`]. The crate pool is not used.
         pub fn connect_mysql(&self) -> Result<MysqlConn, Error> {
-            if self.guard != moqui_core::driver::AddressGuard::Off {
-                self.guard.resolve(&self.endpoint.host, self.endpoint.port)?;
+            let mut last = None;
+            let mut opened = None;
+            for endpoint in self.endpoints()? {
+                match mysql::Conn::new(endpoint.opts()) {
+                    Ok(conn) => {
+                        opened = Some((conn, endpoint));
+                        break;
+                    }
+                    Err(error) => last = Some(error),
+                }
             }
-            let mut conn = mysql::Conn::new(self.endpoint.opts()).map_err(mysql_err)?;
+            let (mut conn, endpoint) = match (opened, last) {
+                (Some(opened), _) => opened,
+                (None, Some(error)) => return Err(mysql_err(error)),
+                (None, None) => return Err(Error::new(format!("{} has no address", self.endpoint.host))),
+            };
             let version: Option<String> = conn.query_first("SELECT VERSION()").map_err(mysql_err)?;
             let kill = Arc::new(KillState {
-                endpoint: self.endpoint.clone(),
+                endpoint,
                 connection_id: AtomicU32::new(conn.connection_id()),
                 busy: AtomicBool::new(false),
             });
@@ -284,6 +299,36 @@ mod driver {
                 lost: false,
                 conn: NonNull::from(Box::leak(Box::new(conn))),
             })
+        }
+    }
+
+    impl MysqlDriver {
+        /// The endpoints to try in order: the configured one with no guard, else one for each address the guard took
+        /// ([`Endpoint::pinned`]).
+        fn endpoints(&self) -> Result<Vec<Endpoint>, Error> {
+            if self.guard == moqui_core::driver::AddressGuard::Off {
+                return Ok(vec![self.endpoint.clone()]);
+            }
+            let addresses = self.guard.resolve(&self.endpoint.host, self.endpoint.port)?;
+            Ok(self.endpoint.pinned(&addresses))
+        }
+    }
+
+    impl Endpoint {
+        /// This endpoint at each of `addresses`, its host the address's text, so the client connects to an address
+        /// that was checked and looks no name up (SEC-TLS-101). Under `verify-full` the host name stays, once: the
+        /// client checks the certificate against the name it connects to.
+        fn pinned(&self, addresses: &[std::net::SocketAddr]) -> Vec<Endpoint> {
+            if self.tls && self.tls_verify == moqui_core::entity::datasource::TlsVerify::Full {
+                return vec![self.clone()];
+            }
+            addresses
+                .iter()
+                .map(|address| Endpoint {
+                    host: address.ip().to_string(),
+                    ..self.clone()
+                })
+                .collect()
         }
     }
 

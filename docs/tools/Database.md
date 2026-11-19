@@ -546,7 +546,10 @@ cancel, table maintenance or entity sources.
   on this machine or the private network (a test database beside the server), set
   `tools@external-database-private-network` to `true` in the runtime conf or as
   `moqui_conf__tools__external_database_private_network`. A link-local or cloud metadata address is refused either
-  way. The driver checks the addresses at each connection it opens and connects to an address it checked.
+  way. The driver checks the addresses at each connection it opens and connects to an address it checked. One gap is
+  left: MySQL under `verify-full` connects by the host name, so that the client can check the certificate against
+  it, and looks the name up again. A name whose answer changes between the check and the connect is not caught there;
+  closing it needs a TLS server-name option in the MySQL client fork.
 - **Read only by default.** A `readOnly` connection (the default) runs every statement in a read-only transaction and
   takes no changes.
 - **Pools.** One per connection, closed after ten idle minutes, through the host's conf connection factory. A pool is
