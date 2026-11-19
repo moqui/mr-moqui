@@ -166,6 +166,42 @@ fn nested_template_literals_past_the_limit_are_refused_in_a_small_stack() {
             .expect("checked in a 256 KiB stack");
         assert!(refused.unwrap_err().contains("deeper than 64"));
     }
+    // chains with no brackets, which oxc's parser recurses through too: an elseif chain is written flat and compiles; an
+    // expression is parsed on the parse stack, and one past MAX_EXPRESSION is refused before it is parsed
+    let small_stack = |source: String| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || check_template(&source).map_err(|err| err.message().to_string()))
+            .unwrap()
+            .join()
+            .expect("checked in a 256 KiB stack")
+    };
+    small_stack(format!("<#if a>x{}<#else>z</#if>", "<#elseif b>y".repeat(20_000))).unwrap();
+    for chain in ["!", "x=>", "a=", "a?b:"] {
+        let fits = chain.repeat(crate::script::parse::MAX_EXPRESSION / chain.len() - 1);
+        small_stack(format!("${{{fits}1}}")).unwrap_or_else(|err| panic!("{chain}: {err}"));
+        let long = chain.repeat(crate::script::parse::MAX_EXPRESSION);
+        let refused = small_stack(format!("${{{long}1}}")).unwrap_err();
+        assert!(refused.contains("longer than"), "{chain}: {refused}");
+    }
+}
+
+/// An elseif chain, written flat, renders the branch of the first condition that holds, and only that one.
+#[test]
+fn an_elseif_chain_runs_the_first_branch_that_holds() {
+    let source = "<#if n == 1>one<#elseif n == 2>two<#elseif (n >= 2)>many<#else>none</#if>";
+    for (n, want) in [(1, "one"), (2, "two"), (3, "many"), (0, "none")] {
+        let mut data = moqui_lib::object::ValueMap::default();
+        data.insert("n".into(), Value::I32(n));
+        let out = render_locked_until(
+            &compiled(source, Escape::None, Scope::Snapshot).unwrap(),
+            &snapshot_json(&Value::Map(data)),
+            std::time::Instant::now() + LOCKED_BUDGET.0,
+            LOCKED_BUDGET.1,
+        )
+        .unwrap();
+        assert_eq!(out, want, "n = {n}");
+    }
 }
 
 #[test]

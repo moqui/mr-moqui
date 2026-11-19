@@ -660,7 +660,13 @@ fn compile_body(source: &str, escape: Escape) -> Result<String, Error> {
     generate(&tokens, escape, source)
 }
 
+/// [`compile_on_stack`] on a thread with the parse stack: oxc's parser recurses for each level of an expression's
+/// nesting, with no stack check, and a template is untrusted text (SEC-SCR-82).
 fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> {
+    super::parse::on_parse_stack(|| compile_on_stack(source, escape, scope))?
+}
+
+fn compile_on_stack(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> {
     let body = compile_body(source, escape)?;
     // An `<#assign>` is a `var` of the function, and a `var` is hoisted: without this, the name reads `undefined`
     // before the assign instead of the context's value. The live form starts each assigned name from the context.
@@ -1227,12 +1233,25 @@ fn push_template_text(out: &mut String, text: &str) {
     }
 }
 
+/// An `<#if>` or `<#list>` being generated.
+struct Block {
+    list: bool,
+    else_seen: bool,
+    /// The if's number, for the flag of a chain.
+    id: usize,
+    /// Where the if starts in the output, and where its first branch's body starts.
+    at: usize,
+    body: usize,
+    /// The if has elseifs, so it is written as a chain ([`generate`]).
+    chain: bool,
+}
+
 fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Error> {
     let encode = if escape == Escape::Html { "$h" } else { "$s" };
     let mut out = String::new();
-    // `true` for an open list, `false` for an open if, with whether an else was seen.
-    let mut stack: Vec<(bool, bool)> = Vec::new();
+    let mut stack: Vec<Block> = Vec::new();
     let mut lists = 0usize;
+    let mut ifs = 0usize;
     let mut run = Run::default();
     for token in tokens {
         match token {
@@ -1261,15 +1280,40 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                     "template: <#if> and <#list> nest deeper than {MAX_NESTING}"
                 )));
             }
+            // An if with elseifs is written flat, a block for each branch after a flag that one ran, as
+            // `{ let $e1 = false; if (a) { $e1 = true; ... } if (!$e1 && (b)) { $e1 = true; ... } if (!$e1) { ... } }`:
+            // an `else if` chain nests in the parsed program, and oxc's parser recurses for each (SEC-SCR-82). An if
+            // with none is a plain `if` and `else`.
             Token::If(cond) => {
                 check_expression(cond, source)?;
+                ifs += 1;
+                let at = out.len();
                 out.push_str(&format!("if ({}) {{\n", line_closed(cond)));
-                stack.push((false, false));
+                stack.push(Block {
+                    list: false,
+                    else_seen: false,
+                    id: ifs,
+                    at,
+                    body: out.len(),
+                    chain: false,
+                });
             }
             Token::ElseIf(cond) => {
                 check_expression(cond, source)?;
-                match stack.last() {
-                    Some((false, false)) => out.push_str(&format!("}} else if ({}) {{\n", line_closed(cond))),
+                match stack.last_mut() {
+                    Some(block) if !block.list && !block.else_seen => {
+                        let id = block.id;
+                        if !block.chain {
+                            // the blocks inside the first branch are closed, so only this if's places move
+                            out.insert_str(block.body, &format!("$e{id} = true;\n"));
+                            out.insert_str(block.at, &format!("{{\nlet $e{id} = false;\n"));
+                            block.chain = true;
+                        }
+                        out.push_str(&format!(
+                            "}}\nif (!$e{id} && ({})) {{\n$e{id} = true;\n",
+                            line_closed(cond)
+                        ));
+                    }
                     _ => {
                         return Err(Error::new(
                             "template: <#elseif> without an open <#if>, or after <#else>",
@@ -1278,14 +1322,18 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                 }
             }
             Token::Else => match stack.last_mut() {
-                Some((false, seen @ false)) => {
-                    *seen = true;
-                    out.push_str("} else {\n");
+                Some(block) if !block.list && !block.else_seen => {
+                    block.else_seen = true;
+                    if block.chain {
+                        out.push_str(&format!("}}\nif (!$e{}) {{\n", block.id));
+                    } else {
+                        out.push_str("} else {\n");
+                    }
                 }
                 _ => return Err(Error::new("template: <#else> without an open <#if>, or twice")),
             },
             Token::EndIf => match stack.pop() {
-                Some((false, _)) => out.push_str("}\n"),
+                Some(block) if !block.list => out.push_str(if block.chain { "}\n}\n" } else { "}\n" }),
                 _ => return Err(Error::new("template: </#if> without an open <#if>")),
             },
             Token::List(items, name) => {
@@ -1295,10 +1343,17 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                     "{{\nconst $l{lists} = $list({});\nfor (let {name}_index = 0; {name}_index < $l{lists}.length; {name}_index++) {{\nconst {name} = $l{lists}[{name}_index];\nconst {name}_has_next = {name}_index < $l{lists}.length - 1;\n",
                     line_closed(items)
                 ));
-                stack.push((true, false));
+                stack.push(Block {
+                    list: true,
+                    else_seen: false,
+                    id: lists,
+                    at: 0,
+                    body: 0,
+                    chain: false,
+                });
             }
             Token::EndList => match stack.pop() {
-                Some((true, _)) => out.push_str("}\n}\n"),
+                Some(block) if block.list => out.push_str("}\n}\n"),
                 _ => return Err(Error::new("template: </#list> without an open <#list>")),
             },
             Token::Assign(name, value) => {
@@ -1308,8 +1363,8 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
         }
     }
     run.flush(&mut out);
-    if let Some((is_list, _)) = stack.last() {
-        let open = if *is_list { "<#list>" } else { "<#if>" };
+    if let Some(block) = stack.last() {
+        let open = if block.list { "<#list>" } else { "<#if>" };
         return Err(Error::new(format!("template: {open} is not closed")));
     }
     Ok(out)
@@ -1326,6 +1381,12 @@ fn line_closed(expr: &str) -> std::borrow::Cow<'_, str> {
 }
 
 fn check_expression(expr: &str, _source: &str) -> Result<(), Error> {
+    if expr.len() > super::parse::MAX_EXPRESSION {
+        return Err(Error::new(format!(
+            "template: an expression is longer than {} bytes",
+            super::parse::MAX_EXPRESSION
+        )));
+    }
     super::parse_js(expr).map_err(|err| Error::new(format!("template: {}", err.message())))
 }
 
