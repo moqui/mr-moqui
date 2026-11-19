@@ -1166,20 +1166,25 @@ fn bar_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
 /// The columns drawn: the frozen ones, then from the first shown so the active cell is on screen, as many as fit.
 fn columns_shown(view: &View, room: usize) -> Vec<i32> {
     let (_, frozen_columns) = view.frozen_counts();
-    // the frozen columns that fit, leaving room for one more (SEC-CLI-83)
+    // the frozen columns that fit in half the width, so the others, the active cell's among them, have the rest
+    // (SEC-CLI-83)
     let mut shown: Vec<i32> = Vec::new();
     let mut used: usize = 0;
     for column in 1..=frozen_columns {
         let width = view.width_of(column) + 1;
-        if used + width >= room.saturating_sub(4) {
+        if used + width > room / 2 {
             break;
         }
         used += width;
         shown.push(column);
     }
-    let mut start = view.left.max(frozen_columns + 1);
-    if view.column > frozen_columns {
-        // the active cell on screen: start further right while it does not fit
+    // a frozen column that did not fit scrolls as the others do, so the frozen ones are those drawn
+    let frozen_shown = i32::try_from(shown.len()).unwrap_or(frozen_columns);
+    let mut start = view.left.max(frozen_shown + 1);
+    if view.column > frozen_shown {
+        // the active cell on screen: back to it when it is left of the start (a frozen column not drawn, which
+        // moving does not scroll to), and further right while it does not fit
+        start = start.min(view.column);
         while start < view.column
             && used
                 + (start..=view.column)

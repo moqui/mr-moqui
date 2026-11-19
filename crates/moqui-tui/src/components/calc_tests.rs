@@ -299,3 +299,25 @@ fn a_workbooks_frozen_counts_are_held_to_what_a_terminal_shows() {
         }
     }
 }
+
+/// SEC-CLI-83: a frozen column that does not fit the width is not drawn, and scrolls as the others do: moving the
+/// active cell to it brings it on screen.
+#[test]
+fn a_frozen_column_past_the_width_scrolls_into_view() {
+    let (props, mut state) = loaded(true);
+    // the room as the view keeps it
+    state.local["room"]["sheets"][0]["frozenColumns"] = json!(50);
+    for _ in 1..30 {
+        CalcGrid.key(&props, &mut state, &KeyPress::plain(Key::Right), false);
+    }
+    let lines = texts(&props, &state, 60);
+    let header = &lines[1];
+    assert!(
+        header.split_whitespace().any(|name| name == column_name(30)),
+        "{header}"
+    );
+    assert!(
+        !header.split_whitespace().any(|name| name == column_name(50)),
+        "{header}"
+    );
+}
