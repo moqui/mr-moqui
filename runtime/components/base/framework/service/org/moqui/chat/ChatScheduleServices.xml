@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
             chatScheduledMessageId, scheduled (as get#ChatSchedule lists it).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
-            <parameter name="body" allow-html="safe"/>
+            <parameter name="body" allow-html="app"/>
             <parameter name="replyToEventSeq" type="Integer"/>
             <parameter name="threadRootEventSeq" type="Integer"/>
             <parameter name="chatAttachmentIdList" type="List"/>
@@ -55,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
             notScheduled (sent, or no longer waiting), notHolder, badTime.</description>
         <in-parameters>
             <parameter name="chatScheduledMessageId" required="true"/>
-            <parameter name="body" allow-html="safe"/>
+            <parameter name="body" allow-html="app"/>
             <parameter name="recordList" type="List"/>
             <parameter name="sendDate" type="Timestamp"/>
             <parameter name="deviceId"/>

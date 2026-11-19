@@ -512,3 +512,37 @@ fn a_file_root_is_not_served_in_production_and_a_data_root_is() {
     assert!(made.get("error").is_none(), "{made}");
     assert!(dir.0.join("sub/made").is_dir());
 }
+
+/// SEC-CLI-82: a write command runs only from the file manager's own request, its fetch or one with the session's
+/// token: never from another site, and never from a link or an image of this site in a stored text, which a reader's
+/// browser loads as a page or an image of this site with the session's cookie.
+#[test]
+fn a_file_change_runs_only_from_the_file_managers_own_request() {
+    let request = |headers: &[(&str, &str)]| {
+        let mut request = moqui_core::web::WebRequest::new("GET", "/resources");
+        request.set_header("Host", "app.example.com");
+        for (name, value) in headers {
+            request.set_header(*name, *value);
+        }
+        request
+    };
+    let refused = |headers: &[(&str, &str)]| super::file_change_refused(&request(headers), "");
+    let same = ("Sec-Fetch-Site", "same-origin");
+    assert!(
+        !refused(&[same, ("Sec-Fetch-Dest", "empty")]),
+        "the file manager's fetch"
+    );
+    assert!(
+        refused(&[same, ("Sec-Fetch-Dest", "document")]),
+        "a link clicked in a stored text"
+    );
+    assert!(
+        refused(&[same, ("Sec-Fetch-Dest", "image")]),
+        "an image in a stored text"
+    );
+    assert!(
+        refused(&[("Sec-Fetch-Site", "cross-site"), ("Sec-Fetch-Dest", "empty")]),
+        "another site"
+    );
+    assert!(refused(&[]), "no fetch headers and no session token");
+}

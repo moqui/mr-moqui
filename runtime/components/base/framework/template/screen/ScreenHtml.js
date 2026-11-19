@@ -599,6 +599,14 @@
         const currencyText = (value, unit, hideSymbol) =>
             hideSymbol ? ec.l10n.formatCurrencyNoSymbol(value, unit) : ec.l10n.formatCurrency(value, unit);
 
+        // The tags a label or an editable's text is written in, the XSD's list: another type is a span, so a type is never
+        // markup of its own (`type="img src=x @error=..."`).
+        const LABEL_TAGS = new Set(["p", "pre", "code", "div", "span", "strong", "i", "h1", "h2", "h3", "h4", "h5", "h6", "dt", "dd"]);
+        const labelTag = (n) => (LABEL_TAGS.has(at(n, "type")) ? at(n, "type") : "span");
+        // encode="false" writes text as markup, but not while the screen stands at a preview's proposed text
+        // (sri.isOverlaid()): the model's markup does not run in the application's origin (SEC-AI-82).
+        const rawText = (n) => at(n, "encode") === "false" && !sri.isOverlaid();
+
         // The attributes of a display element, read once for each element: a unit's elements are made once and frozen, and
         // a form-list row reads every one of its cells again.
         const displays = new WeakMap();
@@ -634,7 +642,7 @@
             // the value string, the plain value and its type (BigDecimal, Long...) of the field, from one lookup of it
             const texts = sri.getFieldValueTexts(n, !d.text && !unit);
             if (!d.text && !unit) value = texts[0];
-            const body = value ? (d.encode ? br(e(value)) : value) : "";
+            const body = value ? (d.encode || sri.isOverlaid() ? br(e(value)) : value) : "";
             // the value's type as a class, as Java's html display writes sri.getFieldValueClass; a class name needs no escaping
             const style = d.style ? xn(d.style) : "";
             let out = '<span class="display ' + texts[2] + (unit ? " currency" : "") + (style ? " " + e(style) : "") + '"' +
@@ -652,7 +660,7 @@
         const displayEntity = (n) => {
             const value = sri.getFieldEntityValue(n) || "";
             const alsoHidden = (!at(n, "also-hidden") || at(n, "also-hidden") === "true") && !st.skipForm;
-            const body = value ? (at(n, "encode") === "false" ? value : e(value).replace(/\n/g, "<br>")) : "";
+            const body = value ? (rawText(n) ? value : e(value).replace(/\n/g, "<br>")) : "";
             w("<span" + A({ class: cls("display", xn(at(n, "style"))) }) + ">" + body + "</span>" +
                 (alsoHidden ? "<input" + A({ type: "hidden", id: fid(n), name: fnm(n), value: sri.getFieldValuePlainString(fieldOf(n), ""), form: owner() }) + ">" : ""));
         };
@@ -675,11 +683,11 @@
 
         const label = (n) => {
             if (at(n, "condition") && !cond(at(n, "condition"))) return;
-            const type = at(n, "type") || "span";
+            const type = labelTag(n);
             const map = at(n, "text-map") ? ec.resource.expression(at(n, "text-map"), "") : null;
             let text = map ? ec.resource.expand(at(n, "text"), "", map) : ec.resource.expand(at(n, "text"), "");
             if (!(String(text).trim() || at(n, "condition"))) return;
-            if (at(n, "encode") !== "false") {
+            if (!rawText(n)) {
                 text = e(text);
                 if (type !== "code" && type !== "pre") text = text.replace(/\n/g, "<br>");
             }
@@ -735,7 +743,7 @@
             if (text === "null" || text === null || text === undefined) text = "";
             const img = l.image;
             if (!(text || img || l.icon)) return null;
-            if (l.encode) text = e(text);
+            if (l.encode || sri.isOverlaid()) text = e(text);
             let url = sri.makeUrlByType(l.url, l.urlType, n, l.expand);
             if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
             // link-type anchor and anchor-button are anchors whatever the URL (sri.isAnchorLink's first rule)
@@ -842,7 +850,7 @@
             const load = first(n, "editable-load");
             let loadUrl = null;
             if (load) loadUrl = sri.makeUrlByType(at(load, "transition"), "transition", load, "true");
-            const type = at(n, "type") || "span";
+            const type = labelTag(n);
             const widget = at(n, "widget-type") || "textarea";
             const options = [];
             if (widget === "select") sri.getFieldOptions(n).forEach((label, key) => options.push({ value: key, label }));
@@ -851,7 +859,7 @@
                 "data-widget": widget, "data-load-url": loadUrl ? loadUrl.url : null,
                 "data-load-params": loadUrl ? json(loadUrl.getParameterMap()) : null, "data-options": options.length ? json(options) : null,
                 "data-value": n.attrs && n.attrs.value !== undefined ? xn(at(n, "value")) : null, "data-empty": empty ? "true" : null, title: L("Click to edit")
-            }) + ">" + (empty ? '<span class="muted">' + e(L("Click to edit")) + "</span>" : at(n, "encode") === "false" ? text : e(text).replace(/\n/g, "<br>")) + "</" + type + ">");
+            }) + ">" + (empty ? '<span class="muted">' + e(L("Click to edit")) + "</span>" : rawText(n) ? text : e(text).replace(/\n/g, "<br>")) + "</" + type + ">");
         };
 
         // ---- containers ----
@@ -2342,7 +2350,7 @@
                 let $text = $map ? ec.resource.expand(${lit(attr(node, "text"))}, "", $map) : ec.resource.expand(${lit(attr(node, "text"))}, "");
                 if ($text === "null") $text = "";
                 if ($text || ${!!image} || ${!!attr(node, "icon")}) {
-                    if (${lit(attr(node, "encode"))} !== "false") $text = $h.e($text);
+                    if (${lit(attr(node, "encode"))} !== "false" || sri.isOverlaid()) $text = $h.e($text);
                     let $icon = ${lit(attr(node, "icon"))};
                     if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
                     const $badge = ec.resource.expand(${lit(attr(node, "badge"))}, "");

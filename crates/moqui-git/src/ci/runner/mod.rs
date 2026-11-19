@@ -701,7 +701,9 @@ fn shown_path(workspace: &Path, path: &Path) -> String {
     path.strip_prefix(workspace).unwrap_or(path).display().to_string()
 }
 
-/// A temporary file beside the workspace, removed when dropped.
+/// A temporary file beside the workspace, removed when dropped. It is made by [`create_new`] (never one that is
+/// there, never through a link), in the job's directory or the work directory, which the runner made and only it
+/// writes ([`work_dir`], [`job_dir`]).
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -710,8 +712,239 @@ impl Scratch {
     }
 
     fn in_dir(dir: &Path, name: &str) -> Self {
-        Self(dir.join(format!(".moqui-ci-{}-{name}", std::process::id())))
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(dir.join(format!(".moqui-ci-{}-{next}-{name}", std::process::id())))
     }
+}
+
+/// Create the file `path` to write: a new one (`create_new` refuses one that is there, a link among them), with
+/// `O_NOFOLLOW` and mode `0600` on unix. The runner, root with a step user, writes its scratch files and the collect
+/// children's output only this way, so a name another user made first is never written through (SEC-GIT-98).
+///
+/// # Errors
+///
+/// When the file is there or is not made.
+pub(crate) fn create_new(path: &Path) -> Result<std::fs::File, String> {
+    let mut options = moqui_lib::private_fs::file_options();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits().cast_signed());
+    }
+    options.open(path).map_err(|err| format!("{}: {err}", path.display()))
+}
+
+/// The mode of the runner's work directory and of each job's directory in it: the runner's alone (`0700`), or with a
+/// step user `0711`, through which the step user reaches the checkout and home handed to it and lists nothing.
+fn work_mode(step_user: bool) -> u32 {
+    if step_user {
+        0o711
+    } else {
+        0o700
+    }
+}
+
+fn dir_builder(mode: u32, recursive: bool) -> std::fs::DirBuilder {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(recursive);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    builder
+}
+
+/// The work directory of a registered runner (`moqui ci-run poll --work`), absolute (SEC-GIT-98). With `work`, that
+/// directory, made when missing: one that is there must be a directory (not a link) of this user that no group or
+/// other user may write, and is then set to the runner's mode ([`work_mode`]); another user's would let that user
+/// replace a job's checkout under its steps. With none, a new directory with a random name under the system's
+/// temporary directory, made by this call, so no other user can have made it first.
+///
+/// # Errors
+///
+/// Why the directory is refused or was not made.
+pub fn work_dir(work: Option<&Path>, step_user: bool) -> Result<WorkDir, String> {
+    let mode = work_mode(step_user);
+    let Some(work) = work else {
+        let temp = std::env::temp_dir();
+        for _ in 0..8 {
+            let mut random = [0u8; 8];
+            getrandom::fill(&mut random).map_err(|err| format!("could not read random bytes: {err}"))?;
+            let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+            let dir = temp.join(format!("moqui-ci-{name}"));
+            match dir_builder(mode, false).create(&dir) {
+                Ok(()) => {
+                    let path = std::path::absolute(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+                    return Ok(WorkDir { path, made: true });
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(err) => return Err(format!("{}: {err}", dir.display())),
+            }
+        }
+        return Err(format!("no new work directory was made in {}", temp.display()));
+    };
+    let work = std::path::absolute(work).map_err(|err| format!("{}: {err}", work.display()))?;
+    parents_safe(&work)?;
+    if std::fs::symlink_metadata(&work).is_err() {
+        dir_builder(mode, true)
+            .create(&work)
+            .map_err(|err| format!("{}: {err}", work.display()))?;
+    }
+    owned_private(&work, mode)?;
+    Ok(WorkDir {
+        path: work,
+        made: false,
+    })
+}
+
+/// The runner's work directory ([`work_dir`]); one it made with a random name is removed when this is dropped, as the
+/// runner ends.
+#[derive(Debug)]
+pub struct WorkDir {
+    path: PathBuf,
+    made: bool,
+}
+
+impl WorkDir {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Whether the runner made this directory (no `--work`), so it is removed as the runner ends: when this is dropped,
+    /// and on a signal that ends the runner.
+    #[must_use]
+    pub fn made(&self) -> bool {
+        self.made
+    }
+}
+
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        if self.made {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+/// The effective user id of this process (on unix; 0 elsewhere, where the checks that use it do not run).
+fn effective_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        rustix::process::geteuid().as_raw()
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+/// The effective group id of this process (on unix; 0 elsewhere).
+#[cfg(unix)]
+fn effective_gid() -> u32 {
+    rustix::process::getegid().as_raw()
+}
+
+/// That no other user can move or replace `work` through a directory above it: each existing parent is root's or this
+/// user's ([`parent_refusal`]) (SEC-GIT-98).
+fn parents_safe(work: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let (me, my_group) = (effective_uid(), effective_gid());
+        for parent in work.ancestors().skip(1) {
+            let Ok(meta) = std::fs::metadata(parent) else {
+                continue;
+            };
+            if let Some(why) = parent_refusal(meta.uid(), meta.gid(), meta.mode(), me, my_group) {
+                return Err(format!(
+                    "the work directory {} is under {}, which {why}: name a work directory under a directory of this user's",
+                    work.display(),
+                    parent.display()
+                ));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = work;
+    Ok(())
+}
+
+/// Why a directory of owner `uid`, group `gid` and `mode` may not stand above the work directory of a runner of user
+/// `me` and group `my_group`, if it may not: it is another user's than root's or the runner's, or users other than the
+/// runner may write in it with no sticky bit (as `/tmp` has, so only an entry's owner renames it): other users, or a
+/// group other than the runner's own (a group-writable directory of the runner's own group is a umask 002 user's).
+#[cfg(unix)]
+pub(crate) fn parent_refusal(uid: u32, gid: u32, mode: u32, me: u32, my_group: u32) -> Option<String> {
+    let sticky = mode & 0o1000 != 0;
+    if uid != 0 && uid != me {
+        Some(format!("is another user's (owner {uid})"))
+    } else if mode & 0o002 != 0 && !sticky {
+        Some(format!("other users may write with no sticky bit (mode {:o})", mode & 0o7777))
+    } else if mode & 0o020 != 0 && !sticky && gid != my_group {
+        Some(format!(
+            "group {gid}, not the runner's own, may write with no sticky bit (mode {:o})",
+            mode & 0o7777
+        ))
+    } else {
+        None
+    }
+}
+
+/// That `dir` is a directory, not a link, of this user (`geteuid`), that no group or other user may write; then set to
+/// `mode`.
+fn owned_private(dir: &Path, mode: u32) -> Result<(), String> {
+    let refused = |why: String| {
+        format!(
+            "the work directory {} {why}: remove it, or name another with --work",
+            dir.display()
+        )
+    };
+    let meta = std::fs::symlink_metadata(dir).map_err(|err| refused(err.to_string()))?;
+    if !meta.is_dir() {
+        return Err(refused("is not a directory (a link is not taken)".into()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        if meta.mode() & 0o022 != 0 {
+            return Err(refused(format!(
+                "may be written by a group or other users (mode {:o})",
+                meta.mode() & 0o7777
+            )));
+        }
+        if meta.uid() != effective_uid() {
+            return Err(refused(format!("is another user's (owner {})", meta.uid())));
+        }
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).map_err(|err| refused(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    Ok(())
+}
+
+/// A job's directory in the work directory `work`: `<work>/<job>`, what was there removed and the directory made new
+/// with the runner's mode ([`work_mode`]), which holds the checkout (`src`), the steps' home and the runner's scratch
+/// files. `job` is the claim's job run id, which must be an id: letters, digits, `_` and `-`.
+///
+/// # Errors
+///
+/// When `job` is not an id or the directory is not made.
+pub fn job_dir(work: &Path, job: &str, step_user: bool) -> Result<PathBuf, String> {
+    if job.is_empty() || job.len() > 128 || !job.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err(format!("the job run id {job:?} is not an id"));
+    }
+    let dir = work.join(job);
+    let _ = std::fs::remove_dir_all(&dir);
+    dir_builder(work_mode(step_user), false)
+        .create(&dir)
+        .map_err(|err| format!("{}: {err}", dir.display()))?;
+    Ok(dir)
 }
 
 impl Drop for Scratch {
@@ -768,7 +1001,8 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
             job["commitId"].as_str().unwrap_or_default()
         ),
     )?;
-    std::fs::create_dir_all(&options.workspace).map_err(|err| {
+    // the runner's alone until it is handed to the step user: no other user reads the checkout or its caches
+    moqui_lib::private_fs::create_dir_all(&options.workspace).map_err(|err| {
         Stop::Error(format!(
             "the workspace {} was not made: {err}",
             options.workspace.display()

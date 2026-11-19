@@ -64,7 +64,7 @@ use crate::notify::push_crypto;
 #[path = "chat_push_transport.rs"]
 mod transport;
 use transport::transport;
-pub use transport::{set_transport, web_outcome, Provider, PushTransport, Sent, WebPost};
+pub use transport::{set_transport, web_outcome, Provider, PushTransport, Sent, WebPost, SLOW_SEND, USER_ROUND_BUDGET};
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -118,6 +118,8 @@ pub const MAX_ATTEMPTS: i64 = 12;
 const JOB_ATTEMPTS: i64 = 5;
 const JOBS_PER_ROUND: i64 = 200;
 const PUSHES_PER_ROUND: i64 = 500;
+/// The times a round reads the pushes due again after it put off the rest of the users whose budget was spent.
+const DELIVERY_PASSES: usize = 4;
 /// How often the worker looks without being woken, while pushes wait.
 const SWEEP: Duration = Duration::from_secs(60);
 /// The rows done (sent, failed, dropped) are kept this long.
@@ -459,7 +461,7 @@ pub fn round(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64)
     let mut report = RoundReport::default();
     fan_out(facade, transport.as_ref(), &node, now, &mut report)?;
     release_held(facade, now);
-    deliver_due(facade, transport.as_ref(), &node, now, &mut report)?;
+    deliver_due(facade, transport.as_ref(), &node, now, PUSHES_PER_ROUND, &mut report)?;
     clean(&worker(factory), facade, now);
     let waiting = facade.find(JOB)?.disable_authz().count()?
         + facade
@@ -1116,33 +1118,99 @@ fn deliver_due(
     transport: &dyn PushTransport,
     node: &str,
     now: i64,
+    limit: i64,
     report: &mut RoundReport,
 ) -> Result<(), LibError> {
-    let rows = facade
-        .find(OUTBOX)?
-        .eq("statusEnumId", Value::string(PENDING))
-        .condition(Condition::or(vec![
-            Condition::is_null("nextAttemptDate"),
-            Condition::less_equal("nextAttemptDate", stamp(now)),
-        ]))
-        .order_by("createdDate", false)
-        .limit(PUSHES_PER_ROUND)
-        .disable_authz()
-        .list()?;
-    for row in rows.values() {
-        match deliver_one(facade, transport, row, node, now) {
-            Ok(Step::Sent) => report.sent += 1,
-            Ok(Step::Retried) => report.retried += 1,
-            Ok(Step::Failed) => report.failed += 1,
-            Ok(Step::Dropped) => report.dropped += 1,
-            Ok(Step::Skipped) => {}
-            Err(error) => tracing::error!(
-                "chat push {} could not be sent: {error}",
-                text_of(row, "pushOutboxId").unwrap_or_default()
-            ),
+    // each recipient's pushes take at most the transport's budget of the round. The rest of a user whose budget is
+    // spent wait for the next round, and the pushes due are read again, so a user with many old pushes does not hold
+    // every other user's for the round's whole read (SEC-COM-81)
+    let mut spent = UserBudget::new(transport.user_round_budget());
+    for _ in 0..DELIVERY_PASSES {
+        let rows = facade
+            .find(OUTBOX)?
+            .eq("statusEnumId", Value::string(PENDING))
+            .condition(Condition::or(vec![
+                Condition::is_null("nextAttemptDate"),
+                Condition::less_equal("nextAttemptDate", stamp(now)),
+            ]))
+            .order_by("createdDate", false)
+            .limit(limit)
+            .disable_authz()
+            .list()?;
+        let mut waiting = BTreeSet::new();
+        for row in rows.values() {
+            let user = text_of(row, "userId").unwrap_or_default();
+            if spent.exhausted(&user) {
+                waiting.insert(user);
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let step = deliver_one(facade, transport, row, node, now);
+            spent.add(&user, started.elapsed());
+            match step {
+                Ok(Step::Sent) => report.sent += 1,
+                Ok(Step::Retried) => report.retried += 1,
+                Ok(Step::Failed) => report.failed += 1,
+                Ok(Step::Dropped) => report.dropped += 1,
+                Ok(Step::Skipped) => {}
+                Err(error) => tracing::error!(
+                    "chat push {} could not be sent: {error}",
+                    text_of(row, "pushOutboxId").unwrap_or_default()
+                ),
+            }
+        }
+        if waiting.is_empty() {
+            break;
+        }
+        for user in &waiting {
+            put_off(facade, user, now);
         }
     }
     Ok(())
+}
+
+/// Put `user`'s pushes due at `now` off to the next round (just after `now`), so the round's next read and the
+/// next round's start with other users' pushes. A user whose pushes are not put off is logged; the others go on.
+fn put_off(facade: &EntityFacade, user: &str, now: i64) {
+    let moved = force_new(facade, OUTBOX, || {
+        facade
+            .find(OUTBOX)?
+            .eq("userId", Value::string(user))
+            .eq("statusEnumId", Value::string(PENDING))
+            .condition(Condition::or(vec![
+                Condition::is_null("nextAttemptDate"),
+                Condition::less_equal("nextAttemptDate", stamp(now)),
+            ]))
+            .disable_authz()
+            .update_all([("nextAttemptDate".to_string(), stamp(now + 1))])
+    });
+    if let Err(error) = moved {
+        tracing::error!("the chat pushes of user {user} were not put off to the next round: {error}");
+    }
+}
+
+/// The time each user's pushes took of a delivery round, against a budget per user.
+pub(crate) struct UserBudget {
+    budget: std::time::Duration,
+    spent: std::collections::HashMap<String, std::time::Duration>,
+}
+
+impl UserBudget {
+    pub(crate) fn new(budget: std::time::Duration) -> Self {
+        Self {
+            budget,
+            spent: std::collections::HashMap::new(),
+        }
+    }
+
+    pub(crate) fn add(&mut self, user: &str, took: std::time::Duration) {
+        *self.spent.entry(user.to_string()).or_default() += took;
+    }
+
+    /// Whether `user`'s pushes have taken the whole budget of this round.
+    pub(crate) fn exhausted(&self, user: &str) -> bool {
+        self.spent.get(user).is_some_and(|spent| *spent >= self.budget)
+    }
 }
 
 /// The FCM `messages:send` body of a chat push: a data message of its kind (`chat` or `clear`) and `pushId`, the
@@ -1294,6 +1362,7 @@ fn deliver_one(
     } else {
         room_id.clone()
     };
+    let started = std::time::Instant::now();
     let sent = match (provider, sealed) {
         (Provider::Fcm, sealed) => transport.fcm(
             &subscription,
@@ -1323,7 +1392,16 @@ fn deliver_one(
     match sent {
         Sent::Delivered => {
             finish_sent(facade, row, attempt, now)?;
-            device_result(facade, &subscription, DeviceResult::Delivered, now);
+            // an endpoint that holds the one push worker most of its timeout counts as failing, toward its disabling,
+            // as one that never answers does: a host a browser names cannot stall every user's pushes by answering late
+            // (plans/Security-Review-Medium.md SEC-COM-81)
+            let slow = provider != Provider::Fcm && started.elapsed() >= transport.slow_after();
+            if slow {
+                let took = started.elapsed();
+                tracing::info!(subscription_id = %subscription, "chat push {id} was taken only after {took:?}");
+            }
+            let result = if slow { DeviceResult::Failed } else { DeviceResult::Delivered };
+            device_result(facade, &subscription, result, now);
             Ok(Step::Sent)
         }
         Sent::Gone => {
@@ -1856,9 +1934,9 @@ pub(crate) fn test_too_soon(facade: &EntityFacade, subscriptions: &[String], now
 
 /// `send#TestPush`: a test notification to the calling device, through the full path (the outbox, encrypted, the push
 /// service): the registrations of this request's device key (the app), else the current user's browser with
-/// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice, or one had
-/// a test in the last [`TEST_EVERY_MS`]: `reasonCode` tooSoon), `queuedDate` (Unix milliseconds); the worker is woken
-/// after the commit.
+/// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice, or a device
+/// of the user's had a test in the last [`TEST_EVERY_MS`]: `reasonCode` tooSoon), `queuedDate` (Unix milliseconds);
+/// the worker is woken after the commit.
 fn send_test_push(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -1903,7 +1981,18 @@ fn send_test_push(
         .iter()
         .filter_map(|row| text_of(row, "subscriptionId"))
         .collect();
-    if test_too_soon(facade, &subscriptions, now)? {
+    // one test a user in that time, whichever device asks: a test per endpoint let one user queue a post to each of
+    // their endpoints every ten seconds (plans/Security-Review-Medium.md SEC-COM-81)
+    let all_devices: Vec<String> = facade
+        .find(DEVICE)?
+        .eq("userId", Value::string(&user))
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .filter_map(|row| text_of(row, "subscriptionId"))
+        .collect();
+    if !subscriptions.is_empty() && test_too_soon(facade, &all_devices, now)? {
         let mut out = BTreeMap::from([
             ("ackIdList".to_string(), Value::List(Vec::new())),
             ("queuedDate".to_string(), Value::I64(now)),

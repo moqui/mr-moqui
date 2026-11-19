@@ -1630,6 +1630,8 @@ interface MoquiScreenRenderer {
     getRenderMode(): string;
     /** The render is an agent's (an Assist screen session, the data tool, agent-apps) or runs inside one: an `ai-opt-out` field, section or screen writes its placeholder. */
     isAgentRender(): boolean;
+    /** The screen rendering now stands at a preview's proposed text (a dev-aide change set, a screen-xml canvas): the macros write a placeholder for its render-mode text, qvt and templates. */
+    isOverlaid(): boolean;
     doBoundaryComments(): boolean;
     encodeHtml(text: unknown): string;
     getActiveScreenDef(): MoquiScreenDefInfo;

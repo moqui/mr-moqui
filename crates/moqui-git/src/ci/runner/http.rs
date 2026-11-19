@@ -156,7 +156,7 @@ impl Transport for HttpTransport {
         };
         let mut response = self.client.open(request).map_err(|err| err.to_string())?;
         if response.status == 200 {
-            let mut file = std::fs::File::create(to).map_err(|err| format!("{}: {err}", to.display()))?;
+            let mut file = super::create_new(to)?;
             std::io::copy(&mut response.reader, &mut file).map_err(|err| format!("{}: {err}", to.display()))?;
         }
         Ok(response.status)

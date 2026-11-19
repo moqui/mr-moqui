@@ -455,6 +455,26 @@ fn the_errors_name_the_section_and_the_reported_problems_map_to_theirs() {
 
 #[test]
 fn the_frame_document_loads_only_the_runtime_and_has_no_network() {
+    // SEC-AI-81: the document that frames the canvas lets its frame load only the sandbox, which holds the frame's own
+    // navigations to this site's sandbox; it runs only the host script
+    let host = host_document("http://localhost:8080", "3.1<x>");
+    assert!(
+        host.csp.contains("frame-src http://localhost:8080/assist/sandbox;")
+            && host
+                .csp
+                .contains("script-src http://localhost:8080/js/WebrootAssistSandboxHost.js;")
+            && host.csp.contains("default-src 'none'")
+            && host.csp.contains("frame-ancestors 'self' http://localhost:8080;"),
+        "{}",
+        host.csp
+    );
+    assert!(!host.csp.contains("https:") && !host.csp.contains('*'), "{}", host.csp);
+    assert_eq!(host.html.matches("<script").count(), 1, "{}", host.html);
+    assert!(
+        host.html.contains("/js/WebrootAssistSandboxHost.js?v=3.1x"),
+        "{}",
+        host.html
+    );
     let document = frame_document("http://localhost:8080", "3.1<script>", false);
     assert!(
         document
@@ -471,6 +491,8 @@ fn the_frame_document_loads_only_the_runtime_and_has_no_network() {
     );
     assert!(document.csp.starts_with("sandbox allow-scripts; default-src 'none';"));
     assert!(document.csp.contains("connect-src 'none'") && document.csp.contains("form-action 'none'"));
+    // SEC-AI-81: no WebRTC, where the browser knows the directive (the frame's runtime also deletes its constructors)
+    assert!(document.csp.ends_with("; webrtc 'block'"), "{}", document.csp);
     assert!(!document.csp.contains("https:"), "{}", document.csp);
     assert!(frame_document("http://localhost:8080", "", true)
         .csp

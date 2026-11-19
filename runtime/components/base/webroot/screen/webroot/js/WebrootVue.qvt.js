@@ -4569,6 +4569,8 @@
                 if (!editor) return;
                 const value = this.askValue.trim();
                 if (kind === "image") {
+                    // the server keeps an outside image in public text (a page, a mail) and takes it out of app text
+                    // (allow-html="app", SEC-CLI-82)
                     if (/^(https?:)?\/\//i.test(value) || value.startsWith("/")) editor.chain().focus().setImage({ src: value }).run();
                     else if (value) moqui.notifyMessages(null, this.t("An image address starts with https:// or /"));
                     return;

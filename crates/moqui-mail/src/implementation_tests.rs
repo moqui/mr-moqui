@@ -1568,3 +1568,104 @@ fn bare_addresses_and_message_ids() {
     assert!(!super::is_message_id("<ab.cd>"));
     assert!(!super::is_message_id("<é@b.c>"));
 }
+
+/// SEC-MAIL-82: a mail client message gets the node's DKIM signature only from an account delivered here (hosted or
+/// shared, its server with no incoming host) sending as its own address or one of its identities. An account of another
+/// server, a hosted kind with a store elsewhere, and an address of the hosted domain the account does not hold are sent
+/// unsigned, whatever the From domain.
+#[test]
+fn only_an_account_hosted_here_is_signed_and_only_as_its_own_addresses() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailServer",
+        &[("emailServerId", "M82_EDGE"), ("smtpHost", "edge:")],
+    );
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailServer",
+        &[
+            ("emailServerId", "M82_ELSEWHERE"),
+            ("smtpHost", "smtp.evil.example"),
+            ("storeHost", "imap.evil.example"),
+        ],
+    );
+    for (account, kind, server, address) in [
+        ("M82_HOSTED", "EakHosted", "M82_EDGE", "ann@hosted.example"),
+        ("M82_SHARED", "EakShared", "", "team@hosted.example"),
+        ("M82_EXTERNAL", "EakExternal", "M82_ELSEWHERE", "ceo@hosted.example"),
+        ("M82_STORED", "EakHosted", "M82_ELSEWHERE", "cfo@stored.example"),
+    ] {
+        seed(
+            &facade,
+            &context,
+            "moqui.basic.email.EmailAccount",
+            &[
+                ("emailAccountId", account),
+                ("accountKindEnumId", kind),
+                ("emailServerId", server),
+                ("emailAddress", address),
+            ],
+        );
+    }
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailIdentity",
+        &[
+            ("emailIdentityId", "M82_SALES"),
+            ("emailAccountId", "M82_HOSTED"),
+            ("emailAddress", "sales@hosted.example"),
+        ],
+    );
+    let signs = |account: &str, from: &str| super::client_signs(&facade, account, from);
+    assert!(signs("M82_HOSTED", "Ann@Hosted.example") && signs("M82_HOSTED", "sales@hosted.example"));
+    assert!(signs("M82_SHARED", "team@hosted.example"));
+    assert!(!signs("M82_HOSTED", "ceo@hosted.example"));
+    assert!(!signs("M82_EXTERNAL", "ceo@hosted.example") && !signs("M82_STORED", "cfo@stored.example"));
+    assert!(!signs("M82_NONE", "ann@hosted.example"));
+    // the domains the node signs its own mail for are those of the accounts delivered here only
+    #[cfg(feature = "imap")]
+    {
+        let hosted = super::super::auth::hosted_domains(&facade, moqui_core::edge::NodeRole::Normal).unwrap();
+        assert!(
+            hosted.contains("hosted.example") && !hosted.contains("stored.example"),
+            "{hosted:?}"
+        );
+    }
+    // a message that may not be signed is not given to the edge node, which signs for the hosted domains
+    let letter = super::Letter {
+        subject: "Hello".to_string(),
+        from_address: "ceo@hosted.example".to_string(),
+        from_name: String::new(),
+        to: vec!["someone@example.org".to_string()],
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        reply_to: Vec::new(),
+        bounce: String::new(),
+        body: String::new(),
+        body_text: "Hello".to_string(),
+        attachments: Vec::new(),
+        inline: Vec::new(),
+        message_id: "<m82@hosted.example>".to_string(),
+        in_reply_to: String::new(),
+        references: String::new(),
+        date: None,
+        extra_headers: Vec::new(),
+    };
+    let edge = {
+        let _authz = context.disable_authz();
+        super::find_one(&facade, super::SERVER, "emailServerId", "M82_EDGE")
+            .unwrap()
+            .unwrap()
+    };
+    let refused = super::deliver(&facade, &letter, &edge, "", false).unwrap_err();
+    assert!(
+        refused.to_string().contains("not sent through the edge node"),
+        "{refused}"
+    );
+}

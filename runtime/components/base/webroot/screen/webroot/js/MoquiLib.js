@@ -405,7 +405,7 @@
         // (window.moquiDesktop.drafts, kept with the account's data and its files), else localStorage under scopedKey. get and
         // keys answer at once from what is read (in the desktop client nothing until ready() resolves: callers wait for it);
         // ready() resolves once the host's drafts are read, and the drafts this browser kept before (the prefixes of
-        // IMPORTED) moved into the host once. put and remove resolve when kept.
+        // IMPORTED) dropped (dropLocal). put and remove resolve when kept.
         drafts: {
             IMPORTED: ["boss.chat.draft.", "ironstone.compose."],
             cache: null,
@@ -437,7 +437,7 @@
                         (Array.isArray(list) ? list : []).forEach((draft) => cache.set(draft.key, { value: draft.value, files: draft.files || [],
                             updatedMs: Number(draft.updatedMs) || 0 }));
                         moqui.drafts.cache = cache;
-                        return moqui.drafts.importLocal(host);
+                        moqui.drafts.dropLocal();
                     }).catch((err) => {
                         console.info("drafts not read from the app", err);
                         if (!moqui.drafts.cache) moqui.drafts.cache = new Map();
@@ -445,32 +445,16 @@
                 }
                 return moqui.drafts.loading;
             },
-            // The drafts this browser kept before the host did, moved once: each removed here once the host has it, or the
-            // host's own kept when it is newer (a draft's JSON with its time, at, is newer than the host's only after it), or
-            // dropped with a warning when the host refuses it for good.
-            importLocal(host) {
+            // The drafts this browser kept (IMPORTED, under the scope) are dropped, never moved into the host: in the apps every
+            // server's pages share one origin, so another server's page may have written them under this account's key and
+            // Compose would show them as the user's own (plans/Security-Review-Medium.md SEC-CLI-81). Answers how many.
+            dropLocal() {
                 const storage = moqui.drafts.local();
-                if (!storage) return Promise.resolve(0);
+                if (!storage) return 0;
                 const keys = [].concat(...moqui.drafts.IMPORTED.map((prefix) => moqui.drafts.localKeys(prefix)));
-                return keys.reduce((previous, key) => previous.then((count) => {
-                    let value = null;
-                    try { value = storage.getItem(moqui.scopedKey(key)); } catch (err) { value = null; }
-                    const drop = () => { try { storage.removeItem(moqui.scopedKey(key)); } catch (err) { /* no storage */ } };
-                    if (value === null) return count;
-                    const kept = moqui.drafts.cache.get(key);
-                    if (kept) {
-                        let at = 0;
-                        try { at = Number(JSON.parse(value).at) || 0; } catch (err) { at = 0; }
-                        if (!(at > kept.updatedMs)) { drop(); return count; }
-                    }
-                    return host.put(key, value, []).then(() => { moqui.drafts.cache.set(key, { value, files: [], updatedMs: Date.now() }); drop(); return count + 1; },
-                        (err) => {
-                            if (moqui.hostBusy(err)) { console.info("draft " + key + " not moved to the app yet", err); return count; }
-                            console.warn("draft " + key + " not taken by the app, dropped", err);
-                            drop();
-                            return count;
-                        });
-                }), Promise.resolve(0));
+                keys.forEach((key) => { try { storage.removeItem(moqui.scopedKey(key)); } catch (err) { /* no storage */ } });
+                if (keys.length) console.warn("drafts of this browser dropped, not moved to the app: " + keys.join(", "));
+                return keys.length;
             },
             get(key) {
                 if (moqui.drafts.host()) {

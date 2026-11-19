@@ -63,12 +63,16 @@ const MAX_APP_ID: usize = 255;
 const SEND_SERVICE: &str = "org.moqui.ui.NotificationServices.send#WebPush";
 const KEY_PROPERTY: &str = "push/web@vapid-key";
 const SUBJECT_PROPERTY: &str = "push/web@subject";
+const MAX_SUBSCRIPTIONS_PROPERTY: &str = "push/web@max-subscriptions";
+const DEFAULT_MAX_SUBSCRIPTIONS: usize = 10;
 /// A subscription is disabled after this many failed pushes in a row.
 pub(crate) const MAX_FAILURES: i64 = 5;
 /// How long a push service keeps an undelivered message, at most (a call's ring asks for less).
 const TTL_SECONDS: u32 = 86_400;
+/// A Web Push or UnifiedPush POST's whole time: a push service answers in well under a second, and one endpoint a
+/// user names holds the one push worker no longer (SEC-COM-81).
 #[cfg(feature = "web-push")]
-const TIMEOUT: Duration = Duration::from_secs(10);
+const TIMEOUT: Duration = Duration::from_secs(3);
 /// The longest title and link put in a payload, in characters.
 const MAX_TITLE: usize = 300;
 const MAX_LINK: usize = 1000;
@@ -258,8 +262,7 @@ fn store_subscription(
             Value::string(&visit_id)
         },
     );
-    row.set("failureCount", Value::I64(0));
-    row.set("disabledDate", Value::Null);
+    keep_failures(&mut row, existing.as_ref(), &user_id);
     row.set("lastRegisteredDate", crate::user::now_value());
     let subscription_id = field(&row, "subscriptionId");
     if existing.is_some() {
@@ -267,10 +270,61 @@ fn store_subscription(
     } else {
         row.create(facade)?;
     }
+    cap_subscriptions(facade, &user_id)?;
     Ok(BTreeMap::from([(
         "subscriptionId".to_string(),
         Value::string(subscription_id),
     )]))
+}
+
+/// A registration stored again by its user keeps its failures in a row, so storing an endpoint again does not undo the
+/// late or failed answers that count toward its disabling, and one disabled for [`MAX_FAILURES`] stays disabled; only a
+/// delivery that was not slow resets the count (`chat_push::device_result`). A new row, or one another user had, starts
+/// with none (plans/Security-Review-Medium.md SEC-COM-81).
+fn keep_failures(row: &mut EntityValue, existing: Option<&EntityValue>, user_id: &str) {
+    let failures = existing
+        .filter(|kept| field(kept, "userId") == user_id)
+        .map_or(0, |kept| field(kept, "failureCount").parse::<i64>().unwrap_or(0));
+    row.set("failureCount", Value::I64(failures));
+    if failures < MAX_FAILURES {
+        row.set("disabledDate", Value::Null);
+    }
+}
+
+/// The most Web Push subscriptions one user keeps active: `push/web@max-subscriptions` (10; 0 for no cap).
+fn max_subscriptions() -> usize {
+    crate::context::conf_env::setting(MAX_SUBSCRIPTIONS_PROPERTY)
+        .trim()
+        .parse()
+        .unwrap_or(DEFAULT_MAX_SUBSCRIPTIONS)
+}
+
+/// Disable `user_id`'s active Web Push subscriptions past [`max_subscriptions`], the longest unregistered first, and
+/// forget their queued pushes: a user's endpoints, which may be any https host, do not fill the push worker's rounds or
+/// have the server post to a host of the user's choice once for each of them on every message without bound
+/// (plans/Security-Review-Medium.md SEC-COM-81).
+fn cap_subscriptions(facade: &EntityFacade, user_id: &str) -> Result<(), LibError> {
+    let max = max_subscriptions();
+    if max == 0 {
+        return Ok(());
+    }
+    let active = facade
+        .find(SUBSCRIPTION)?
+        .eq("userId", Value::string(user_id))
+        .condition(web_provider())
+        .condition(moqui_db::sql::Condition::is_null("disabledDate"))
+        .order_by("lastRegisteredDate", true)
+        .order_by("subscriptionId", true)
+        .disable_authz()
+        .list()?;
+    for mut row in active.values().iter().skip(max).cloned() {
+        let subscription = field(&row, "subscriptionId");
+        tracing::info!(subscription_id = %subscription, "Web Push subscription past the user's {max}; disabled");
+        row.set("disabledDate", crate::user::now_value());
+        row.update(facade)?;
+        super::chat_push::forget_device_pushes(facade, &subscription);
+    }
+    Ok(())
 }
 
 /// `delete#WebPushSubscription`: forget the current user's subscription with `endpoint`. An endpoint that is not the
@@ -455,8 +509,7 @@ fn register_device(
     for unused in ["userAgent", "visitId"] {
         row.set(unused, Value::Null);
     }
-    row.set("failureCount", Value::I64(0));
-    row.set("disabledDate", Value::Null);
+    keep_failures(&mut row, existing.as_ref(), &user_id);
     row.set("lastRegisteredDate", crate::user::now_value());
     if existing.is_some() {
         row.update(facade)?;

@@ -653,8 +653,10 @@ Options
                                   (repeatable).
   --once                          poll: ask once, run the job if there is one, and exit with its code.
   --interval SECONDS              poll: the wait between asks with no job (10).
-  --work DIR                      poll: where each job gets a directory, removed after it
-                                  (moqui-ci in the temporary directory).
+  --work DIR                      poll: where each job gets a directory, removed after it; a
+                                  directory of the runner's user no one else may write, made when
+                                  missing and set to mode 700 (711 with --step-user). Without it a
+                                  new moqui-ci-<random> in the temporary directory.
   --step-user USER                poll (unix): run each step as USER, not as the runner, which then
                                   runs as root; the checkout and the steps' home are handed to USER,
                                   and USER's processes a job left are killed after it.

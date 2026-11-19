@@ -2180,6 +2180,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" name="web"><xs:complexType>
                     <xs:attribute name="vapid-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="subject" type="xs:string" default="mailto:admin@localhost"/>
+                    <xs:attribute name="max-subscriptions" type="xs:integer" default="10"><xs:annotation><xs:documentation>
+                        The most browser subscriptions one user keeps active (0: no cap); past it the longest unregistered is disabled.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="fcm"><xs:complexType>
                     <xs:attribute name="service-account" type="xs:string"><xs:annotation><xs:documentation>A secret: the service account key's JSON file path, or the JSON.</xs:documentation></xs:annotation></xs:attribute>

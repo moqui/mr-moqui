@@ -205,7 +205,9 @@ The SMTP listener runs in internet mode (`moqui_conf__smtp_server__internet=true
 (or `::`) and `smtp-server@hostname` (the MX name, also the authserv-id of its `Authentication-Results`) in the edge node's
 `.env`. It offers STARTTLS with the web certificate, limits each address (`max-connections-per-ip`,
 `connections-per-minute`), checks SPF, DKIM, DMARC and ARC after the data, removes any `Authentication-Results`
-claiming its name, refuses a DMARC failure whose policy is reject (550) and files a quarantine one in Junk.
+claiming its name, refuses a DMARC failure whose policy is reject (550) and files a quarantine one in Junk. A message
+whose author is not one domain (two `From` fields, no `From` address, or `From` addresses of two domains), which DMARC
+cannot judge, is refused (550 5.7.1, RFC 7489 section 6.6.1).
 
 - **Hourly limits.** `smtp-server` `internet-messages-per-hour` (1000) and `internet-bytes-per-hour` (1073741824, 1 GiB)
   limit the messages stored in an hour from one client address (IPv6 by its /64), over all its connections, and from

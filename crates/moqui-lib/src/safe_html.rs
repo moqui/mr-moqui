@@ -19,9 +19,18 @@
 use pulldown_cmark::{Event, Options, Parser, Tag};
 
 /// `text` cleaned to the safe set: tags and attributes not on the list removed, script and style content gone with
-/// its element, and links without unsafe URLs.
+/// its element, and links without unsafe URLs. Images of any `http` or `https` address stay: public pages, a shop's
+/// descriptions, a theme and outgoing mail show them as written. App text read by signed-in users is [`clean_app`].
 pub fn clean(text: &str) -> String {
     cleaner().clean(text).to_string()
+}
+
+/// `text` cleaned to the safe set for app text read by signed-in users (a note, a comment, a review, a chat-like
+/// message): as [`clean`], and an image keeps its `src` only when it is a path of this server ([`own_image_src`]). An
+/// outside image would tell its host each reader's address and when they read (plans/Security-Review-Medium.md
+/// SEC-CLI-82). What an `allow-html="app"` service parameter takes.
+pub fn clean_app(text: &str) -> String {
+    app_cleaner().clean(text).to_string()
 }
 
 /// How many times [`clean_markdown`] cleans before it writes the raw HTML left as text: removing a tag joins the text
@@ -269,21 +278,46 @@ fn clean_raw_html(raw: &str, inline: bool) -> String {
 /// cleaned; any other class (a layout class of the page's own CSS) is taken out, and `style` and `id` stay out.
 fn cleaner() -> &'static ammonia::Builder<'static> {
     static CLEANER: std::sync::OnceLock<ammonia::Builder<'static>> = std::sync::OnceLock::new();
-    CLEANER.get_or_init(|| {
-        let mut builder = ammonia::Builder::default();
-        builder.add_tag_attributes("span", &["data-mention-id", "data-record-entity", "data-record-id"]);
-        for tag in ["code", "pre", "span"] {
-            builder.add_tag_attributes(tag, &["class"]);
+    CLEANER.get_or_init(|| safe_builder(false))
+}
+
+fn app_cleaner() -> &'static ammonia::Builder<'static> {
+    static CLEANER: std::sync::OnceLock<ammonia::Builder<'static>> = std::sync::OnceLock::new();
+    CLEANER.get_or_init(|| safe_builder(true))
+}
+
+/// The safe set's builder; with `own_images` an image keeps only a `src` of this server ([`clean_app`]).
+fn safe_builder(own_images: bool) -> ammonia::Builder<'static> {
+    let mut builder = ammonia::Builder::default();
+    builder.add_tag_attributes("span", &["data-mention-id", "data-record-entity", "data-record-id"]);
+    for tag in ["code", "pre", "span"] {
+        builder.add_tag_attributes(tag, &["class"]);
+    }
+    builder.attribute_filter(move |element, attribute, value| {
+        if own_images && element == "img" && attribute == "src" {
+            return own_image_src(value).then(|| value.into());
         }
-        builder.attribute_filter(|_element, attribute, value| {
-            if attribute != "class" {
-                return Some(value.into());
-            }
-            let kept: Vec<&str> = value.split_ascii_whitespace().filter(|name| code_class(name)).collect();
-            (!kept.is_empty()).then(|| kept.join(" ").into())
-        });
-        builder
-    })
+        if attribute != "class" {
+            return Some(value.into());
+        }
+        let kept: Vec<&str> = value.split_ascii_whitespace().filter(|name| code_class(name)).collect();
+        (!kept.is_empty()).then(|| kept.join(" ").into())
+    });
+    builder
+}
+
+/// Whether an image `src` of [`clean_app`] is this server's: a path with no scheme or host (`/apps/...`,
+/// `/richTextImage/1`, `a.png`), never `https://`, `//host` or a backslash. A browser's URL parser takes tabs and line
+/// ends out anywhere and spaces and C0 controls off both ends before it reads a URL, so `/\t/evil.example/x.png` would be
+/// another host's: a `src` with any control or white space character is refused whole (plans/Security-Review-Medium.md
+/// SEC-CLI-82). A path of this server is a same-origin GET, which a transition that writes refuses when the browser
+/// loads it as an image (`moqui_core::web::loaded_as_subresource`).
+fn own_image_src(src: &str) -> bool {
+    if src.is_empty() || src.chars().any(|ch| ch.is_control() || ch.is_whitespace()) {
+        return false;
+    }
+    let before_path = src.split(['/', '?', '#']).next().unwrap_or_default();
+    !src.starts_with("//") && !src.contains('\\') && !before_path.contains(':')
 }
 
 /// Whether `name` is a code block's language or highlighting class: `language-` or `lang-` and a name of letters,
@@ -357,11 +391,44 @@ mod tests {
             assert!(!cleaned.contains("src="), "{outside}: {cleaned}");
             assert!(cleaned.contains("hi"), "{cleaned}");
         }
-        // the safe set keeps an outside image, as any allow-html="safe" text does
-        assert!(clean(r#"<img src="https://host.example/x.png">"#).contains("src="));
         // mentions survive
         let mention = r#"<p><span data-mention-id="john.doe">@John</span></p>"#;
         assert_eq!(clean_chat(mention), mention);
+    }
+
+    /// SEC-CLI-82: app text keeps an image only from this server: an outside one, which would tell the writer who
+    /// read the text and when, loses its `src`, also one a browser would read as another host's once it takes tabs,
+    /// line ends and end controls out; a path of this server is kept (a transition that writes refuses it as an image,
+    /// `moqui_core::web::loaded_as_subresource`). The public safe set keeps an outside image.
+    #[test]
+    fn app_text_keeps_only_this_servers_images() {
+        for own in [
+            "/richTextImage/100123",
+            "/apps/wiki/attachment?name=a.png",
+            "a.png",
+            "Page/_attachments/b.png",
+        ] {
+            let html = format!(r#"<p><img src="{own}" alt="a"></p>"#);
+            assert!(clean_app(&html).contains("src="), "{own}: {}", clean_app(&html));
+        }
+        for outside in [
+            "https://host.example/x.png?u=1",
+            "http://host.example/x.png",
+            "//host.example/x.png",
+            "HTTPS://host.example/x.png",
+            "\\\\host.example\\x.png",
+            "data:image/png;base64,AAAA",
+            "/&#9;/evil.example/x.png",
+            "/&#10;/evil.example/x.png",
+            "&#1;//evil.example/x.png",
+            " //evil.example/x.png",
+            "&#0;https://evil.example/x.png",
+        ] {
+            let cleaned = clean_app(&format!(r#"<p>hi <img src="{outside}" alt="a"></p>"#));
+            assert!(!cleaned.contains("src="), "{outside}: {cleaned}");
+        }
+        // public HTML (a shop's description, a theme, an outgoing mail) keeps an outside image
+        assert!(clean(r#"<img src="https://host.example/x.png">"#).contains(r#"src="https://host.example/x.png""#));
     }
 
     /// A code block keeps its language and highlighting classes; any other class, a `style` and an `id` go.

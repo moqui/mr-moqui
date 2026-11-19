@@ -83,7 +83,23 @@ pub trait PushTransport: Send + Sync {
     fn fcm(&self, device: &str, message: &serde_json::Value) -> Sent;
     /// POST to a Web Push or UnifiedPush endpoint.
     fn web(&self, device: &str, provider: Provider, post: &WebPost<'_>) -> Sent;
+    /// How long a Web Push or UnifiedPush send may take before it counts as a failure of its endpoint, though taken:
+    /// most of the request's timeout (SEC-COM-81).
+    fn slow_after(&self) -> std::time::Duration {
+        SLOW_SEND
+    }
+
+    /// The most time one user's pushes take of a delivery round; that user's other pushes wait for the next round, so
+    /// the endpoints one user names do not hold every other user's pushes (SEC-COM-81).
+    fn user_round_budget(&self) -> std::time::Duration {
+        USER_ROUND_BUDGET
+    }
 }
+
+/// [`PushTransport::slow_after`] of the push services: two of `web_push`'s three seconds a request.
+pub const SLOW_SEND: std::time::Duration = std::time::Duration::from_secs(2);
+/// [`PushTransport::user_round_budget`] of the push services.
+pub const USER_ROUND_BUDGET: std::time::Duration = std::time::Duration::from_secs(6);
 
 /// The push services: FCM's HTTP v1 API ([`fcm`]) and a Web Push POST ([`web_push::post`]), with the server's VAPID
 /// token (required for a browser, given to a UnifiedPush distributor when the key is set).

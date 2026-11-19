@@ -235,7 +235,7 @@ pub(super) fn send_template(
             }
         }
     }
-    if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
+    if let Err(err) = deliver(facade, &letter, &server, &email_message_id, true) {
         note_message(format!("Error sending email: {err}"));
         let outcome = delivery_outcome(&server, &err);
         record_send_failure(facade, &email_message_id, &err, outcome);
@@ -417,7 +417,10 @@ pub(super) fn send_message(
             ));
         }
     }
-    if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
+    // a client message is signed only as its account's own address on an account hosted here (SEC-MAIL-82); system
+    // mail as before
+    let signs = !client || client_signs(facade, &account_id, &letter.from_address);
+    if let Err(err) = deliver(facade, &letter, &server, &email_message_id, signs) {
         let outcome = delivery_outcome(&server, &err);
         // a client message's result is the mail client's to write (record#SendResult, which keeps the outcome too): its
         // row may be locked by the transaction this runs in
@@ -1541,12 +1544,26 @@ pub(super) fn header_value(headers: &str, name: &str) -> String {
 
 /// Send `letter` (of message `email_message_id`, when it has a row) through `server`: by SMTP, or through the edge
 /// node for a server whose `smtpHost` is `edge:` (queued, in the caller's transaction; the edge node's answer comes
-/// back to the row, `edge_mail.rs`).
-fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue, email_message_id: &str) -> Result<(), Error> {
+/// back to the row, `edge_mail.rs`). `signs`: whether the sender may have the node's DKIM signature on its From
+/// ([`client_signs`]); the edge node signs what it is given for the hosted domains, so a message that may not be
+/// signed is not given to it.
+fn deliver(
+    facade: &EntityFacade,
+    letter: &Letter,
+    server: &EntityValue,
+    email_message_id: &str,
+    signs: bool,
+) -> Result<(), Error> {
     if captured(letter) {
         return Ok(());
     }
     if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) {
+        if !signs {
+            return Err(Error::new(format!(
+                "{} is not this account's own address or one of its identities: it is not sent through the edge node",
+                letter.from_address
+            )));
+        }
         let message = build_lettre(letter)?;
         let to: Vec<String> = message.envelope().to().iter().map(ToString::to_string).collect();
         let from = message.envelope().from().map(ToString::to_string).unwrap_or_default();
@@ -1559,7 +1576,49 @@ fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue, email_m
             message.formatted(),
         );
     }
-    lettre_send(facade, letter, server)
+    lettre_send(facade, letter, server, signs)
+}
+
+/// Whether the node's DKIM signature may go on a mail client message of account `account_id` From `from`
+/// (plans/Security-Review-Medium.md SEC-MAIL-82): only when the account is delivered here (hosted or shared, its server
+/// with no incoming host, which only a mail administrator makes, SEC-MAIL-01) and `from` is its own address or the
+/// address of one of its identities (one of a hosted domain is a mail administrator's to make). An account of another
+/// server is the user's, whose From the node does not vouch for: its mail goes out unsigned. Read with authorization
+/// off, as the decision is the node's; an account that cannot be read signs nothing.
+fn client_signs(facade: &EntityFacade, account_id: &str, from: &str) -> bool {
+    let read = || -> Result<bool, LibError> {
+        let Some(account) = facade.find(ACCOUNT)?.eq("emailAccountId", Value::string(account_id)).disable_authz().one()?
+        else {
+            return Ok(false);
+        };
+        if !matches!(field_text(&account, "accountKindEnumId").as_str(), "EakHosted" | "EakShared") {
+            return Ok(false);
+        }
+        let server_id = field_text(&account, "emailServerId");
+        if !server_id.is_empty() {
+            let server = facade.find(SERVER)?.eq("emailServerId", Value::string(&server_id)).disable_authz().one()?;
+            if server.is_some_and(|server| !field_text(&server, "storeHost").trim().is_empty()) {
+                return Ok(false);
+            }
+        }
+        let from = from.trim();
+        if field_text(&account, "emailAddress").trim().eq_ignore_ascii_case(from) {
+            return Ok(true);
+        }
+        let identities = facade
+            .find(IDENTITY)?
+            .eq("emailAccountId", Value::string(account_id))
+            .disable_authz()
+            .list()?;
+        Ok(identities
+            .values()
+            .iter()
+            .any(|identity| field_text(identity, "emailAddress").trim().eq_ignore_ascii_case(from)))
+    };
+    read().unwrap_or_else(|err| {
+        tracing::warn!(account = %account_id, "The mail account was not read to sign its message: {err}");
+        false
+    })
 }
 
 /// A message built whole (the SMTP listener's delivered notice, `delivery.rs`), sent from the null reverse path to
@@ -1655,15 +1714,18 @@ fn captured(letter: &Letter) -> bool {
     false
 }
 
-/// Send `letter` by SMTP through `server`, DKIM-signed with the node's key when its From domain is a hosted account's
+/// Send `letter` by SMTP through `server`, DKIM-signed with the node's key when `signs` (the sender may be signed for,
+/// [`client_signs`]) and its From domain is a hosted account's
 /// (or one of `mail-delivery/dkim@domains`: `auth.rs`), so mail between the hosted accounts carries the same signature as mail
 /// out (plans/archive/Edge-Node.md §5.4, "the same standards inside"). Only when the key is configured (so its record can be
 /// published), or when the server is this node's own SMTP listener, where the node verifies its own key: a node that
 /// sends through another provider's server sends no signature of a key nobody published.
-fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {
+fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue, signs: bool) -> Result<(), Error> {
     let message = build_lettre(letter)?;
+    #[cfg(not(feature = "imap"))]
+    let _ = signs;
     #[cfg(feature = "imap")]
-    if super::auth::key_configured() || own_listener(server) {
+    if signs && (super::auth::key_configured() || own_listener(server)) {
         let formatted = message.formatted();
         let signed = super::auth::sign_for(formatted.clone(), |domain| {
             super::auth::is_hosted_domain(facade, domain)

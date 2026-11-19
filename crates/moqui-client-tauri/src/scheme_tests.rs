@@ -87,6 +87,20 @@ fn the_shell_takes_the_servers_data_not_its_pages_or_scripts() {
     )])));
 }
 
+/// SEC-CLI-81: every account's server pages share the app's origin, so no server's worker runs there: a service
+/// worker one server's page registered would answer the next account's requests.
+#[test]
+fn no_servers_worker_runs_on_the_apps_origin() {
+    use super::worker_request;
+    for dest in ["worker", "sharedworker", "serviceworker", "ServiceWorker"] {
+        assert!(worker_request(&headers(&[("sec-fetch-dest", dest)])), "{dest}");
+    }
+    assert!(worker_request(&headers(&[("service-worker", "script")])));
+    for dest in ["document", "iframe", "script", "style", "image", "empty", ""] {
+        assert!(!worker_request(&headers(&[("sec-fetch-dest", dest)])), "{dest}");
+    }
+}
+
 #[test]
 fn the_chat_store_key_is_kept_from_the_servers_answer_and_dropped_on_revocation() {
     use super::{store_key_change, store_key_device};

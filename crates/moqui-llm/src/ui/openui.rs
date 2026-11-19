@@ -885,7 +885,7 @@ fn literal_path(options: &Json) -> Option<String> {
 
 /// Whether `path` is a plain path from the root of the apps: `/apps/…` or `/qapps/…` with no scheme, host, `..`,
 /// `//`, backslash or control character.
-fn plain_app_path(path: &str) -> bool {
+pub(crate) fn plain_app_path(path: &str) -> bool {
     let bare = path.split(['?', '#']).next().unwrap_or_default();
     (bare == "/apps" || bare.starts_with("/apps/") || bare == "/qapps" || bare.starts_with("/qapps/"))
         && !bare.contains("//")
