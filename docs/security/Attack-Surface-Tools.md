@@ -50,9 +50,15 @@ The Tools database sections ([Database](../tools/Database.md), `crates/moqui-too
 - **Password and identity fields.** Browse's `create` and `update` (`AutoFind.xml`, `AutoEditMaster.xml`,
   `AutoEditDetail.xml`) and Record's `update` pass the entity-auto service only the entity's fields the request has,
   without those `WebUtilities.isGenericWriteRefused(entity, field)` names: a password field, and `UserAccount`'s identity
-  fields, which REST strips too. Those keep their stored values and are named in a warning, so an `ADMIN` does not set
-  another account's password, email address or disabled flag there (SEC-TLS-81). `run_entity` strips nothing: the account
-  services (`UserServices.xml`) write the same fields through `update#moqui.security.UserAccount`.
+  fields, which REST strips too. Those keep their stored values and are named in a warning: Browse and Record no longer
+  set any account's `username`, `emailAddress`, `disabled` or password, and identity changes go through the account
+  screens (SEC-TLS-81). The grid's save (`gridSave`, `grid.rs` `check_change`) refuses an existing account's identity
+  fields with a field error, as it refuses the password fields, and an ETL target that may update an account (a store
+  or an update, or such an entity-auto service) refuses them as target fields (`etl/mapping.rs` `validate`); a new
+  account may set them in both. CalcGrid's `calcSave` saves only its own definition and writes no rows. `run_entity`
+  strips nothing: the account services (`UserServices.xml`) write the same fields through
+  `update#moqui.security.UserAccount`, and Tools › Service Run's entity-auto call takes them as it takes any service's
+  parameters ([Service Run](#service-run)).
 - **Views by origin.** `sensitive::is_restricted_entity_or_view` treats a view as restricted when any member is
   (`UserAccountAndGroup`, `UserGroupMemberUser`). `sensitive::secret_fields` follows each view alias to its member
   field, so an alias that renames a `UserAccount` password field is a secret too. The grid, ETL sources and lookups,

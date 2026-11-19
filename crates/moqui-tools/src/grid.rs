@@ -312,6 +312,12 @@ fn is_secret(field: &str) -> bool {
     sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field)
 }
 
+/// An identity field of `UserAccount` (`username`, `emailAddress`, `disabled` and the rest), which the grid does not
+/// change on an account that is there.
+fn is_account_identity(entity_name: &str, field: &str) -> bool {
+    sensitive::is_user_account_entity(entity_name) && sensitive::USER_ACCOUNT_IDENTITY_FIELDS.contains(&field)
+}
+
 /// A field the grid never sorts, filters or puts a condition on: a secret or an encrypted one.
 fn hidden_value(entity: &EntityDefinition, field: &str) -> bool {
     is_secret(field) || entity.field(field).is_some_and(|field| field.encrypt)
@@ -1838,8 +1844,8 @@ const CONFLICT: &str = "The row was changed or removed by someone else since you
 /// update or delete must send the stamp the grid read, and a row whose stamp differs (read `for update`), or that is
 /// gone, is refused as a conflict. A refused row rolls back every other: the answer lists the refused rows with their
 /// field errors. Every row is checked before any is written, so all the conflicts and field refusals show at once; a
-/// refusal of the entity-auto service stops the rest. Restricted entities, views, `UserAccount` secrets and encrypted
-/// fields are refused. Writes a `DbaGridSave` audit row with the entity and the counts.
+/// refusal of the entity-auto service stops the rest. Restricted entities, views, `UserAccount` secrets, an existing
+/// account's identity fields and encrypted fields are refused. Writes a `DbaGridSave` audit row with the entity and the counts.
 ///
 /// # Errors
 ///
@@ -1998,6 +2004,13 @@ fn check_change(
             refused
                 .field_errors
                 .insert(name.clone(), format!("{name} is not written through the data grid"));
+        } else if kind == "update" && is_account_identity(&entity.full_name, name) {
+            // an account's username, email address or disabled flag: an ADMIN would point another account's email at
+            // their own mailbox and take it by a reset (plans/Security-Review.md SEC-TLS-81); a new account may set them
+            refused.field_errors.insert(
+                name.clone(),
+                format!("{name} of an account is changed in the account screens, not the data grid"),
+            );
         } else if field.encrypt {
             refused.field_errors.insert(
                 name.clone(),
@@ -2116,6 +2129,10 @@ fn apply_change(
     }
     Err(refused)
 }
+
+#[cfg(test)]
+#[path = "grid_save_tests.rs"]
+mod save_tests;
 
 #[cfg(test)]
 mod tests {

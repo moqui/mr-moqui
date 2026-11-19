@@ -344,19 +344,24 @@ impl Mapping {
 
     /// Refuse what no mapping may reach ([`super::access`]), by name: a restricted entity as the source, the target or
     /// a lookup; a service target that deletes (`delete#`), or an entity-auto service (`verb#Entity`) of a restricted
-    /// entity; and a `UserAccount` password field as a target field or a lookup's match or result field. See
+    /// entity; a `UserAccount` password field as a target field or a lookup's match or result field; and a `UserAccount`
+    /// identity field as a target field of a target that may update an account (all but a create). See
     /// [`Self::validate_with`] for views.
     ///
     /// # Errors
     ///
     /// An error naming what is refused.
     pub fn validate(&self) -> Result<(), Error> {
-        use super::access::{is_secret_field, refuse_restricted, service_target_parts};
+        use super::access::{is_account_identity, is_secret_field, refuse_restricted, service_target_parts};
         if self.source_kind == SourceKind::Entity {
             refuse_restricted(&self.source_entity_name, "source")?;
         }
-        match self.target_kind {
-            TargetKind::Entity => refuse_restricted(&self.target_name, "target")?,
+        // the entity a target writes and whether it may update a record that is there (any write but a create)
+        let written: Option<(String, bool)> = match self.target_kind {
+            TargetKind::Entity => {
+                refuse_restricted(&self.target_name, "target")?;
+                Some((self.target_name.clone(), self.load_mode != LoadMode::Create))
+            }
             TargetKind::Service => {
                 let (verb, noun, entity_auto) = service_target_parts(&self.target_name);
                 if verb == "delete" {
@@ -368,14 +373,23 @@ impl Mapping {
                 if entity_auto {
                     refuse_restricted(&noun, "target")?;
                 }
+                entity_auto.then(|| (noun, verb != "create"))
             }
-        }
+        };
         for field in &self.fields {
             if is_secret_field(&field.target_field) {
                 return Err(Error::new(format!(
                     "{} is not available as an ETL target field",
                     field.target_field
                 )));
+            }
+            if let Some((entity, true)) = &written {
+                if is_account_identity(entity, &field.target_field) {
+                    return Err(Error::new(format!(
+                        "{} of an existing {entity} is changed in the account screens, not by an ETL target",
+                        field.target_field
+                    )));
+                }
             }
             if let Some(entity) = &field.lookup_entity_name {
                 refuse_restricted(entity, "lookup")?;
