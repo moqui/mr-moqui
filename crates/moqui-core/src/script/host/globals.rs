@@ -78,7 +78,8 @@ const GLOBALS_JS: &str = concat!(
         newDeviceCode: hidden.newDeviceCode,
         redeemDeviceCode: hidden.redeemDeviceCode,
         displayAccountRefusal: hidden.displayAccountRefusal,
-        currentDevice: hidden.currentDevice
+        currentDevice: hidden.currentDevice,
+        seedLoadRunning: hidden.seedLoadRunning
     };
     collection.flattenNestedMap = hidden.flattenNestedMap;
     collection.getMapArrayListValues = hidden.getMapArrayListValues;
@@ -319,6 +320,7 @@ pub(crate) static SHIM: Shim = Shim {
         method!("ec.transaction", "getStatus", [], None, leaf, super::transaction::status),
         method!("ec.transaction", "beginNew", [OptValue], super::transaction::begin_new),
         // they read the entities, so not leaves
+        method!("UserSecurityChecks", "seedLoadRunning", [], None, leaf, seed_load_running),
         method!("UserSecurityChecks", "assertPrivilegedGroupMembership", [OptValue], None, assert_privileged_group),
         method!("UserSecurityChecks", "assertSealedPermissionGrant", [OptValue], None, assert_sealed_grant),
         method!("UserSecurityChecks", "assertDocumentExpression", [OptValue], None, assert_document_expression),
@@ -347,6 +349,12 @@ pub(crate) static SHIM: Shim = Shim {
 /// An id argument as text, empty when missing, null or undefined (`runtime/ec_extra.rs` `opt_id_text`).
 fn id_text(call: &Call<'_>, index: usize) -> String {
     call.opt_text(index).unwrap_or_default()
+}
+
+/// `UserSecurityChecks.seedLoadRunning()`: whether a seed or install load runs here
+/// ([`crate::entity::load_feed::seed_load_running`]), which the endpoint-change rule lets keep a stored secret.
+fn seed_load_running(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(crate::entity::load_feed::seed_load_running()))
 }
 
 /// `UserSecurityChecks.assertPrivilegedGroupMembership(userGroupId)`, `Security.eecas.xml`'s check before a write of
