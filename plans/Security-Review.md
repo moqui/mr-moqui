@@ -375,11 +375,11 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Forum and Smithy (`PFS`) | 0 | 2 | 4 | 22 | 12 | 0 | 40 |
 | BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 37 | 14 | 0 | 75 |
 | BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 16 | 29 | 20 | 0 | 68 |
-| Clients (`CLI`) | 0 | 0 | 5 | 14 | 10 | 0 | 29 |
+| Clients (`CLI`) | 0 | 0 | 5 | 20 | 29 | 0 | 54 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 168 | 401 | 143 | 0 | 736 |
+| **All** | 0 | 24 | 168 | 407 | 162 | 0 | 761 |
 
 ## Findings by area
 
@@ -1177,6 +1177,31 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | SEC-CLI-98 | `scripts/moq/desktop.sh:366-367`; `tauri-plugin-updater` `src/updater.rs:1932-1940` | The updater does not require the signed version | Info | reported (confirmed in code) |
 | SEC-CLI-99 | `crates/moqui-mobile/gen/android/app/src/main/AndroidManifest.xml:83-88`; `crates/moqui-mobile/src/host.rs:358-375` | A web page can switch the phone app's current account through the join link | Info | reported (confirmed in code) |
 | SEC-CLI-100 | `crates/moqui-mobile/src/host.rs:741-750`; `ChatNotifications.kt:367-384` | A signed-out account's chat notifications and conversation shortcuts stay on the phone | Info | reported (confirmed in code) |
+| SEC-CLI-101 | `crates/moqui-desktop/src/node/mod.rs:133-141`; `crates/moqui-core/src/user/setup.rs:40-68` | In sidecar mode, or with the tray's ports on, any local user may create the desktop node's first administrator until the owner does (the rest of SEC-CLI-01) | Low | confirmed (second check) |
+| SEC-CLI-102 | `crates/moqui-client/src/proxy.rs:35-52`, `:201-206`; `crates/moqui-mobile/src/scheme.rs:129-131`; `crates/moqui-desktop/src/node/scheme.rs:111-116` | The app schemes get no `Sec-Fetch-*` and the proxy passes no `Referer`, so a GET a cross-origin frame in a server page starts runs a writing transition as the user | Low | likely (second check) |
+| SEC-CLI-103 | tauri-runtime-cef 3.0.0-alpha.6 `src/sandbox.rs:33-40`, `:84-92`; `crates/moqui-desktop/README.md:237-239` | The desktop AppImage runs Chromium with no process sandbox where unprivileged user namespaces are restricted, and a Windows build would always | Low | confirmed (second check) |
+| SEC-CLI-104 | `.gitignore:118-125`; `scripts/moq/desktop.sh:50-54`; `deny.toml:6-7`; `crates/moqui-mobile/gen/android/gradle/wrapper/gradle-wrapper.properties:3`; download-cef 3.0.0 `src/lib.rs:256-262` | The apps' dependencies are resolved anew at each build, checked by no advisory scan and no Gradle verification, and CEF's archive by a SHA-1 from its own index, so a build is not reproducible | Low | confirmed (second check) |
+| SEC-CLI-105 | `crates/moqui-client-tauri/src/lib.rs:62`; `crates/moqui-client-tauri/src/scheme.rs:324-326`; `crates/moqui-desktop/src/lib.rs:160-178` | On the desktop a server page's `http://` subresources load in clear text, with no mixed-content blocking and no upgrade | Low | likely (second check) |
+| SEC-CLI-106 | `crates/moqui-desktop/src/client/mod.rs:251-261`; `runtime/components/base/webroot/screen/webroot/js/WebrootCrypto.js:205-213`; `runtime/components/base/framework/service/org/moqui/chat/ChatKeys.js:464-470` | The desktop names its device for the computer's host name, and every user who shares a room or a call is told it | Low | confirmed (second check) |
+| SEC-CLI-107 | `crates/moqui-client/src/http.rs:26-38`; `crates/moqui-client/src/proxy.rs:61-72`; `crates/moqui-core/src/user/login.rs:1339-1393` | In the apps a re-authentication the server asks for never counts, so every action behind it fails there, a lost device's key revocation among them | Info | likely (second check) |
+| SEC-CLI-108 | `crates/moqui-client-tauri/src/commands.rs:407-423`; `crates/moqui-client/src/login.rs:46-67` | A sign-out the server does not hear of leaves the device key valid there for up to 90 days, with no retry | Info | confirmed (second check) |
+| SEC-CLI-109 | `crates/moqui-client/src/account.rs:186-206` | A release build takes plain `http://` to `localhost`, `127.0.0.1` or `[::1]` as a server | Info | confirmed (second check) |
+| SEC-CLI-110 | `crates/moqui-mobile/patches/wry/src/android/kotlin/RustWebChromeClient.kt:388-401` | A video captured from a page's file input is left where the camera app puts it | Info | confirmed (second check) |
+| SEC-CLI-111 | `crates/moqui-desktop/src/client/keystore.rs:112-132`; `crates/moqui-client-tauri/src/commands.rs:500`, `:560` | On the desktop a device key in the file fallback outlives the move to the OS key store, in plain text | Info | confirmed (second check) |
+| SEC-CLI-112 | `crates/moqui-mobile/src/lib.rs:158-165`, `:317`; `crates/moqui-client-tauri/src/scheme.rs:258`; `crates/moqui-client/src/proxy.rs:184` | The phone's release build logs a failed request's whole URL and a refused navigation's URL to logcat | Info | confirmed (second check) |
+| SEC-CLI-113 | `KeyVault.kt:22-33`; `docs/ui/Mobile-Client.md:68-72` | The phone's keys and data are not tied to a secure lock screen, and neither app has a lock of its own | Info | confirmed (second check) |
+| SEC-CLI-114 | `crates/moqui-desktop/src/backup.rs:18-23`, `:75-82`, `:140-148`, `:284-291` | The desktop dumps the whole node every night, in clear, into a Documents folder by default, without saying so, and the tray cannot turn it off | Info | confirmed (second check) |
+| SEC-CLI-115 | `ChatNotifications.kt:246-256` | A text's one-time code shows on a lock screen left at its default | Info | likely (second check) |
+| SEC-CLI-116 | `crates/moqui-mobile/gen/android/app/build.gradle.kts:47` | The phone app installs on Android 8 and 9, which receive no security updates, and has no overlay defence below Android 12 | Info | confirmed (second check) |
+| SEC-CLI-117 | `crates/moqui-desktop/src/bridge.js:240-260` | The desktop has no screen protection for a view-once photo | Info | confirmed (second check) |
+| SEC-CLI-118 | tauri-plugin-updater 3.0.0-alpha.3 `src/updater.rs:625`, `:885-890` | The desktop updater reads the feed and the whole artifact into memory with no size limit | Info | confirmed (second check) |
+| SEC-CLI-119 | `crates/moqui-mobile/patches/wry/src/android/kotlin/RustWebChromeClient.kt:141-240`; `crates/moqui-mobile/src/commands.rs:100-127` | A server page's native dialogs and notifications on the phone carry no origin | Info | confirmed (second check) |
+| SEC-CLI-120 | `MainActivity.kt:335-376`; `crates/moqui-mobile/src/commands.rs:117-127` | The phone asks for the microphone at the first start after sign-in with no reason of its own, and any page's notification raises the notifications question | Info | confirmed (second check) |
+| SEC-CLI-121 | `MainActivity.kt:110-114`; `Push.kt:30-42`; `src/fcm/java/org/moqui/mobile/PushService.kt:29-35` | A Firebase build reaches Google on every launch, before any account signs in | Info | confirmed (second check) |
+| SEC-CLI-122 | `docs/Build-Test.md:541-546` | Neither app has a privacy notice, and the Play Data safety draft leaves out location, photos and videos, the device name and UnifiedPush | Info | confirmed (second check) |
+| SEC-CLI-123 | `crates/moqui-desktop/src/lib.rs:160-178`; tauri-runtime-cef 3.0.0-alpha.6 `src/runtime.rs:1024-1068` | The apps leave Chromium's and the WebView's background requests to Google on and unmentioned | Info | confirmed (second check) |
+| SEC-CLI-124 | `crates/moqui-desktop/src/bridge.rs:412-439`; tauri-runtime-cef 3.0.0-alpha.6 `src/cef_impl/client/permission.rs:188-195` | On the desktop a frame a page delegates the camera or microphone to gets them by the window's URL, with no prompt (the desktop half of SEC-CLI-90) | Info | likely (second check) |
+| SEC-CLI-125 | `UnifiedPushes.kt:99-121`; `crates/moqui-client/src/account.rs:215-232` | Each account's UnifiedPush instance is its account id, a host and an unsalted hash of the server and username, given to the distributor app | Info | likely (second check) |
 
 ### Script engine, templates and parsers
 

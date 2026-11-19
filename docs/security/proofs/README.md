@@ -100,6 +100,8 @@ PASS, the public application, and BOSS, the business applications, have their ow
 [mr-boss ASVS matrix](https://github.com/moqui/mr-boss/blob/master/docs/ASVS-Matrix.md). A requirement the framework
 meets is marked inherited there and links here.
 
+The desktop and mobile apps are held to another standard, OWASP MASVS: [the clients' matrix](clients/README.md).
+
 ## The standard and its license
 
 ASVS is © The OWASP Foundation and published under the [Creative Commons Attribution-ShareAlike 4.0

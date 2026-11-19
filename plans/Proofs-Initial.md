@@ -235,6 +235,20 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   `moqui-client-tauri`, with `moqui-client`) against OWASP MASVS 2.x (CC BY-SA 4.0, ids and links only): storage,
   cryptography, authentication, network, platform, code, resilience and privacy. A matrix of its own, since MASVS is a
   standard of its own; proofs as Rust tests and the clients' own test harnesses, as these are not served pages.
+  The owner's decisions (2026-11-19): MASVS v2.1.0 (January 2024), its 24 controls, against the MAS testing profiles
+  L1, L2 and P; R (resilience against reverse engineering) is N/A by decision, as the apps are open source and CC0;
+  the mobile app is held to MASVS as written and the desktop app by analogy, each row saying which. Steps:
+  - **P8a, read and file.** Four readers, by MASVS group, read the clients' code for each control (the parts the
+    security review did not reach first: the mobile Kotlin code, the updater's signature check, the rest of
+    `moqui-client`) and give each control a status for mobile and for desktop: App (the client's own code), Platform
+    (the OS, WebView or Tauri default), Configuration (a build, signing or store setting), Gap, N/A. The matrix goes in
+    `docs/security/proofs/clients/`; findings go to the register as SEC-CLI entries.
+  - **P8b, proofs.** Rust tests in the crates, named and doc-commented by control (key and store handling, the TLS
+    check, IPC and scheme guards, navigation), static checks of the Android manifest and settings, and Kotlin or
+    emulator tests only where nothing else reaches.
+  - **P8c, where they run.** A `./moq` task runs the clients' proof tests (the desktop, mobile and Tauri crates are
+    outside the workspace, so `./moq test-framework` does not), and the certifier's guide, the index and the
+    cross-references gain the clients.
 
 ## Decisions
 
