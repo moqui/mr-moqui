@@ -1686,6 +1686,7 @@ impl ClientHost {
                     "server": self.server.to_json(),
                     "params": self.params,
                     "profile": self.profile.name(),
+                    "insecure": self.insecure,
                     "timeout": self.timeout.as_secs_f64(),
                     "inServer": self.in_server.is_some(),
                     "threadToken": token,

@@ -559,3 +559,266 @@ fn the_address_index_follows_a_moved_peer_and_forgets_one_that_left() {
     );
     assert!(!net.sfu.deadline_of.contains_key(&a) && !net.sfu.pending.contains(&a));
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-17.2.3 (docs/security/proofs/V17-WebRTC.md), in-process: the media
+/// server checks SRTP authentication, so an RTP packet that was not sealed with a peer's keys is not forwarded. On the
+/// in-memory network with two browsers in a call, a packet of A's audio held back on its way to the SFU and sent on with
+/// one bit of its payload flipped is dropped there (str0m's `SrtpContext::unprotect_rtp` fails its tag), and so is one
+/// with that packet's header and a payload and tag of the attacker's: B gets no frame for that packet. Another held
+/// packet sent on with a bit flipped and then unchanged is forwarded once, and B goes on hearing A after both. A real
+/// packet of A's from an address no peer's ICE session has is not taken (`handle_receive` false). The SIP legs' own SRTP
+/// (moqui-sip `srtp.rs`) refuses a changed packet and a replay:
+/// `packets_round_trip_across_a_rollover_and_tampering_and_replays_are_refused`.
+#[test]
+fn rtp_that_fails_its_srtp_authentication_is_dropped_at_the_sfu() {
+    use super::Proto;
+
+    let mut net = Net::new();
+    net.join("A", false);
+    net.join("B", false);
+    net.client_mut("B").keep_audio = true;
+    net.run(secs(1));
+    assert!(net.client("A").connected && net.client("B").connected);
+    let pt = net.opus_pt("A");
+    let header_len = |packet: &[u8]| {
+        let mut len = 12 + 4 * usize::from(packet[0] & 0x0f);
+        if packet[0] & 0x10 != 0 {
+            len += 4 + 4 * usize::from(u16::from_be_bytes([packet[len + 2], packet[len + 3]]));
+        }
+        len
+    };
+    let hold = |net: &mut Net| loop {
+        if let Some(held) = net.take_rtp_to_sfu("A", pt) {
+            break held;
+        }
+        net.run(Duration::from_millis(2));
+    };
+    let send = |net: &mut Net, source, packet: &[u8]| {
+        let (now, to) = (net.now, net.sfu_addr);
+        net.sfu.handle_receive(now, Proto::Udp, source, to, packet)
+    };
+
+    // one packet changed and one forged in its place; the packet itself never arrives
+    let (source, dropped) = hold(&mut net);
+    let mut changed = dropped.clone();
+    let last_payload_byte = changed.len() - 17;
+    changed[last_payload_byte] ^= 0x01;
+    assert!(send(&mut net, source, &changed), "A's ICE session takes it");
+    let mut forged = dropped[..header_len(&dropped)].to_vec();
+    forged.extend_from_slice(b"attacker audio");
+    forged.extend_from_slice(&[0x5a; 16]);
+    assert!(send(&mut net, source, &forged));
+    net.run(Duration::from_millis(100));
+
+    // another changed, then sent on as it was
+    let (source, kept) = hold(&mut net);
+    let mut changed = kept.clone();
+    let last_payload_byte = changed.len() - 17;
+    changed[last_payload_byte] ^= 0x01;
+    assert!(send(&mut net, source, &changed));
+    assert!(send(&mut net, source, &kept));
+    net.run(Duration::from_millis(100));
+
+    // a real packet from another address, then from A's
+    let (source, real) = hold(&mut net);
+    let stranger: std::net::SocketAddr = "10.66.0.9:40000".parse().unwrap();
+    assert!(
+        !send(&mut net, stranger, &real),
+        "no peer's ICE session has that address"
+    );
+    assert!(send(&mut net, source, &real));
+    net.run(Duration::from_millis(500));
+
+    // B's frames from A, by RTP time: one frame step (960) apart but for the one packet that never arrived
+    let mut times: Vec<u64> = net.client("B").audio_frames["A"]
+        .iter()
+        .map(|(time, _)| *time)
+        .collect();
+    times.sort_unstable();
+    let steps: Vec<u64> = times.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    assert_eq!(
+        steps.iter().filter(|step| **step == 1920).count(),
+        1,
+        "only the dropped packet's frame is missing: {steps:?}"
+    );
+    assert!(steps.iter().all(|step| *step == 960 || *step == 1920), "{steps:?}");
+    assert!(
+        net.client("B").audio_frames["A"]
+            .iter()
+            .all(|(_, payload)| payload.as_slice() == b"audio:A"),
+        "no frame of the attacker's"
+    );
+    let after = net.client("B").audio_in["A"].last().map(|(at, _)| *at).unwrap();
+    assert!(net.now - after < Duration::from_millis(100), "B still hears A");
+}
+
+/// The extensions of a DTLS 1.2 ClientHello or ServerHello `body` from `at` (the extensions' length), by type.
+fn hello_extensions(body: &[u8], mut at: usize) -> Vec<(u16, Vec<u8>)> {
+    let read16 = |at: usize| usize::from(u16::from_be_bytes([body[at], body[at + 1]]));
+    let end = at + 2 + read16(at);
+    at += 2;
+    let mut found = Vec::new();
+    while at + 4 <= end {
+        let (kind, len) = (read16(at) as u16, read16(at + 2));
+        found.push((kind, body[at + 4..at + 4 + len].to_vec()));
+        at += 4 + len;
+    }
+    found
+}
+
+/// A DTLS 1.2 ClientHello record offering `suites` and, in `use_srtp`, `profiles`, with the extensions WebRTC needs
+/// (an EC group, EC point formats, ECDSA and RSA signatures, the extended master secret).
+fn client_hello(suites: &[u16], profiles: &[u16]) -> Vec<u8> {
+    let mut extensions = Vec::new();
+    let mut extension = |kind: u16, data: &[u8]| {
+        extensions.extend_from_slice(&kind.to_be_bytes());
+        extensions.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        extensions.extend_from_slice(data);
+    };
+    extension(0x000a, &[0x00, 0x04, 0x00, 0x1d, 0x00, 0x17]);
+    extension(0x000b, &[0x01, 0x00]);
+    extension(0x000d, &[0x00, 0x06, 0x04, 0x03, 0x08, 0x04, 0x04, 0x01]);
+    let mut srtp = ((profiles.len() * 2) as u16).to_be_bytes().to_vec();
+    for profile in profiles {
+        srtp.extend_from_slice(&profile.to_be_bytes());
+    }
+    srtp.push(0);
+    extension(0x000e, &srtp);
+    extension(0x0017, &[]);
+    let mut body = vec![0xfe, 0xfd];
+    body.extend_from_slice(&[0x42; 32]);
+    body.extend_from_slice(&[0, 0]); // no session id, no cookie
+    body.extend_from_slice(&((suites.len() * 2) as u16).to_be_bytes());
+    for suite in suites {
+        body.extend_from_slice(&suite.to_be_bytes());
+    }
+    body.extend_from_slice(&[1, 0]);
+    body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+    body.extend_from_slice(&extensions);
+    let length = (body.len() as u32).to_be_bytes();
+    let mut handshake = vec![1, length[1], length[2], length[3], 0, 0, 0, 0, 0];
+    handshake.extend_from_slice(&length[1..]);
+    handshake.extend_from_slice(&body);
+    let mut record = vec![22, 0xfe, 0xff, 0, 0, 0, 0, 0, 0, 0, 0];
+    record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+    record.extend_from_slice(&handshake);
+    record
+}
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-17.2.2 (docs/security/proofs/V17-WebRTC.md), in-process: the media
+/// server's DTLS and SRTP take only strong suites. The SFU builds each peer with str0m's defaults (no crypto provider
+/// or DTLS version of its own, `sfu/mod.rs`), so DTLS 1.2 on str0m's aws-lc-rs provider (dimpl). In the client role its
+/// ClientHello offers only ECDHE-ECDSA with AES-GCM or ChaCha20-Poly1305 (forward secret, AEAD), asks for the extended
+/// master secret, and offers the SRTP profiles AEAD_AES_256_GCM, AEAD_AES_128_GCM and AES128_CM_HMAC_SHA1_80 only. In
+/// the server role it answers no ClientHello that offers only weak suites (RSA key exchange, CBC, a null cipher, the
+/// PSK suite with its short tag), while one that also offers a strong suite gets a ServerHello choosing it; the SRTP
+/// profile it picks is the strongest offered, AEAD_AES_256_GCM, and an offer of only the weak profiles (the 32-bit tag
+/// and the null ciphers) gets none. Among the strong DTLS suites the client's order decides (dimpl picks by it).
+#[test]
+fn the_media_servers_dtls_and_srtp_take_only_strong_suites() {
+    use str0m::crypto::dtls::{DtlsInstance, DtlsOutput};
+
+    const STRONG_SUITES: [u16; 3] = [0xc02b, 0xc02c, 0xcca9];
+    const STRONG_PROFILES: [u16; 3] = [0x0008, 0x0007, 0x0001];
+    let provider = str0m::crypto::from_feature_flags();
+    let cert = provider
+        .dtls_provider
+        .generate_certificate()
+        .expect("a DTLS certificate");
+    let version = str0m::Rtc::builder().dtls_version();
+    let now = std::time::Instant::now();
+    let instance = |active: bool| {
+        let mut dtls = provider
+            .dtls_provider
+            .new_dtls(&cert, now, version, None)
+            .expect("a DTLS instance");
+        dtls.set_active(active);
+        dtls.handle_timeout(now).expect("its first timeout");
+        dtls
+    };
+    let output = |dtls: &mut Box<dyn DtlsInstance>| {
+        let mut packets = Vec::new();
+        let mut buffer = vec![0_u8; 4096];
+        loop {
+            match dtls.poll_output(&mut buffer) {
+                DtlsOutput::Packet(packet) => packets.push(packet.to_vec()),
+                DtlsOutput::Timeout(_) => break,
+                _ => {}
+            }
+        }
+        packets
+    };
+    let read16 = |bytes: &[u8], at: usize| u16::from_be_bytes([bytes[at], bytes[at + 1]]);
+
+    // the client role: what its ClientHello offers
+    let mut client = instance(true);
+    let hello = output(&mut client).into_iter().next().expect("a ClientHello");
+    assert_eq!(
+        (hello[0], hello[13]),
+        (22, 1),
+        "a handshake record holding a ClientHello"
+    );
+    let body = &hello[25..];
+    let mut at = 2 + 32;
+    at += 1 + usize::from(body[at]); // session id
+    at += 1 + usize::from(body[at]); // cookie
+    let suites: Vec<u16> = (0..usize::from(read16(body, at)) / 2)
+        .map(|n| read16(body, at + 2 + 2 * n))
+        .collect();
+    at += 2 + usize::from(read16(body, at));
+    at += 1 + usize::from(body[at]); // compression methods
+    let extensions = hello_extensions(body, at);
+    assert!(
+        !suites.is_empty() && suites.iter().all(|suite| STRONG_SUITES.contains(suite)),
+        "{suites:04x?}"
+    );
+    let srtp = &extensions.iter().find(|(kind, _)| *kind == 0x000e).expect("use_srtp").1;
+    let profiles: Vec<u16> = (0..usize::from(read16(srtp, 0)) / 2)
+        .map(|n| read16(srtp, 2 + 2 * n))
+        .collect();
+    assert_eq!(profiles, STRONG_PROFILES, "{profiles:04x?}");
+    assert!(
+        extensions.iter().any(|(kind, _)| *kind == 0x0017),
+        "the extended master secret"
+    );
+
+    // the server role: what it answers
+    let answer = |suites: &[u16], profiles: &[u16]| {
+        let mut server = instance(false);
+        let taken = server.handle_packet(&client_hello(suites, profiles)).is_ok();
+        let _ = server.handle_timeout(now);
+        let packets = if taken { output(&mut server) } else { Vec::new() };
+        packets
+            .into_iter()
+            .find(|packet| packet.len() > 25 && packet[0] == 22 && packet[13] == 2)
+            .map(|hello| {
+                let body = hello[25..].to_vec();
+                let at = 2 + 32;
+                let at = at + 1 + usize::from(body[at]);
+                let suite = read16(&body, at);
+                let profile = hello_extensions(&body, at + 3)
+                    .into_iter()
+                    .find(|(kind, _)| *kind == 0x000e)
+                    .map(|(_, data)| read16(&data, 2));
+                (suite, profile)
+            })
+    };
+    let weak_suites = [0x002f, 0x009c, 0xc009, 0xc006, 0xc0a8];
+    assert_eq!(
+        answer(&weak_suites, &STRONG_PROFILES),
+        None,
+        "weak suites only: no ServerHello"
+    );
+    let mut offered = weak_suites.to_vec();
+    offered.push(0xc02b);
+    assert_eq!(
+        answer(&offered, &[0x0001, 0x0007, 0x0008]),
+        Some((0xc02b, Some(0x0008))),
+        "the strong suite, and the strongest SRTP profile offered"
+    );
+    let chosen = answer(&[0xc02b], &[0x0002, 0x0005, 0x0006]);
+    assert!(
+        matches!(chosen, None | Some((_, None))),
+        "weak SRTP profiles only: none is chosen ({chosen:04x?})"
+    );
+}

@@ -520,6 +520,30 @@ impl Net {
         self.clients.iter_mut().find(|c| &*c.key.leg == leg).expect("a client")
     }
 
+    /// The payload type `leg` sends its Opus audio with.
+    pub fn opus_pt(&mut self, leg: &str) -> u8 {
+        let c = self.client_mut(leg);
+        let mid = c.audio_mid.expect("an audio mid");
+        let writer = c.rtc.writer(mid).expect("a writer");
+        let pt = writer
+            .payload_params()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .map(|p| *p.pt())
+            .expect("Opus");
+        pt
+    }
+
+    /// Takes out of the origin's queue the first datagram `leg` sent that is still on its way and is an RTP packet of
+    /// payload type `pt`, as one on the path could hold it back: the address it came from and its bytes (the SRTP proof).
+    pub fn take_rtp_to_sfu(&mut self, leg: &str, pt: u8) -> Option<(SocketAddr, Vec<u8>)> {
+        let source = self.client(leg).public;
+        let at = self.to_sfu.iter().position(|p| {
+            p.source == source && p.contents.len() > 12 && p.contents[0] >> 6 == 2 && p.contents[1] & 0x7f == pt
+        })?;
+        let p = self.to_sfu.remove(at)?;
+        Some((p.source, p.contents))
+    }
+
     pub fn received(&self, at: &str, from: &str, kind: MediaKind) -> usize {
         self.client(at)
             .received

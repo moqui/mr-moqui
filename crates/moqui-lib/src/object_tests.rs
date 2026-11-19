@@ -296,3 +296,71 @@ fn compare_equals_takes_numbers_by_value() {
     assert!(!compare_equals(&Value::string("10"), &Value::string("10.0")));
     assert!(!java_equals(&decimal("10.0"), &decimal("10.00")));
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-1.4.2 (docs/security/proofs/V1-Encoding-and-Sanitization.md),
+/// in-process: a number that comes in as input never wraps or clamps. Text, a long, a decimal or a double put to an
+/// `Integer` or `Long` outside the type's range does not convert (`convert_checked` says no, so a service parameter of
+/// that type refuses it, `service/validate.rs`), whole numbers that add past their type are an error, and so is decimal
+/// arithmetic past the decimal type (the scripts' decimal objects and money amounts, `script/runtime/decimal.rs`), as
+/// the payroll expressions say OVERFLOW; each beside a value at the edge of the range, which converts or adds. It does
+/// not cover arithmetic the Rust code does on its own counts and sizes: a release build has no `overflow-checks`
+/// (`.cargo/config.toml`), so such arithmetic wraps where it is not checked, and it has not been swept.
+#[test]
+fn input_numbers_out_of_their_range_are_refused_never_wrapped() {
+    let d = |text: &str| Decimal::from_str(text).unwrap();
+    // text, as a request or a data file gives it
+    assert_eq!(
+        convert_checked(&Value::string("2147483647"), "Integer"),
+        Some(Value::I32(i32::MAX))
+    );
+    assert_eq!(
+        convert_checked(&Value::string("-2147483648"), "java.lang.Integer"),
+        Some(Value::I32(i32::MIN))
+    );
+    for text in ["2147483648", "-2147483649", "4294967296", "99999999999999999999"] {
+        assert_eq!(convert_checked(&Value::string(text), "Integer"), None, "{text}");
+    }
+    assert_eq!(
+        convert_checked(&Value::string("9223372036854775807"), "Long"),
+        Some(Value::I64(i64::MAX))
+    );
+    for text in ["9223372036854775808", "-9223372036854775809", "18446744073709551616"] {
+        assert_eq!(convert_checked(&Value::string(text), "Long"), None, "{text}");
+    }
+    // a number of a wider type
+    assert_eq!(
+        convert_checked(&Value::I64(i64::from(i32::MAX)), "Integer"),
+        Some(Value::I32(i32::MAX))
+    );
+    assert_eq!(convert_checked(&Value::I64(i64::from(i32::MAX) + 1), "Integer"), None);
+    assert_eq!(convert_checked(&Value::I64(i64::from(i32::MIN) - 1), "Integer"), None);
+    assert_eq!(convert_checked(&Value::Decimal(d("9223372036854775808")), "Long"), None);
+    assert_eq!(convert_checked(&Value::Decimal(d("-2147483649")), "Integer"), None);
+    assert_eq!(convert_checked(&Value::F64(1e19), "Long"), None);
+    assert_eq!(convert_checked(&Value::F64(-3e9), "Integer"), None);
+    // sums of whole numbers
+    assert_eq!(
+        add_numbers(&Value::I32(i32::MAX - 1), &Value::I32(1)).unwrap(),
+        Value::I32(i32::MAX)
+    );
+    assert!(add_numbers(&Value::I32(i32::MAX), &Value::I32(1)).is_err());
+    assert!(add_numbers(&Value::I32(i32::MIN), &Value::I32(-1)).is_err());
+    assert!(add_numbers(&Value::I64(i64::MAX), &Value::I32(1)).is_err());
+    // decimal arithmetic, the scripts' and the amounts'
+    assert_eq!(
+        decimal_add(Decimal::MAX - Decimal::ONE, Decimal::ONE).unwrap(),
+        Decimal::MAX
+    );
+    assert!(decimal_add(Decimal::MAX, Decimal::ONE).is_err());
+    assert!(decimal_subtract(Decimal::MIN, Decimal::ONE).is_err());
+    assert!(decimal_multiply(Decimal::MAX, d("2")).is_err());
+    assert!(decimal_divide(Decimal::MAX, d("0.1")).is_err());
+    assert!(decimal_divide(Decimal::ONE, Decimal::ZERO).is_err());
+    // a payroll formula over an input at the top of the range
+    let inputs = std::collections::BTreeMap::from([("a".to_string(), Decimal::MAX)]);
+    assert_eq!(crate::decimal_expr::evaluate("a * 1", &inputs).unwrap(), Decimal::MAX);
+    assert_eq!(
+        crate::decimal_expr::evaluate("a + 1", &inputs).unwrap_err().code,
+        "OVERFLOW"
+    );
+}

@@ -33,4 +33,4 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-2.4.1 | 2 | Rate limits against automated excessive calls | Configuration | `webapp-list/webapp[webroot]/web-protection@enabled` (or `webapp-list/webapp[webroot]@trusted-proxies`) turns on per-client rate limits and bans (`moqui-host/src/guard.rs`); on by default: global limits, `user-facade/login@max-failures`, LLM tarpits (`AgentTypeData.xml`); open SEC-WEB-81, SEC-WEB-83 | - |
+| v5.0.0-2.4.1 | 2 | Rate limits against automated excessive calls | Configuration | `webapp-list/webapp[webroot]/web-protection@enabled` (or `webapp-list/webapp[webroot]@trusted-proxies`) turns on per-client rate limits and bans (`moqui-host/src/guard.rs`); on by default: global limits, `user-facade/login@max-failures`, LLM tarpits (`AgentTypeData.xml`); open SEC-WEB-81, SEC-WEB-83 | V2Validation "v5.0.0-2.4.1: a burst of requests from one client is answered 429 past its limit" (a deployment's, opt-in: --param flood=yes) |

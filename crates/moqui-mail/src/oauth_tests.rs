@@ -1543,3 +1543,47 @@ fn discover_names_the_provider_by_domain_or_mx() {
     );
     assert!(errors().contains("not set up"));
 }
+
+/// The audience half of the security proof of OWASP ASVS 5.0.0 v5.0.0-9.2.3 (docs/security/proofs/V9-Self-contained-Tokens.md),
+/// in-process (the SSO half is `an_id_token_is_taken_only_when_its_audience_is_this_client`, moqui-host): the mail
+/// client's sign-in takes the provider's ID token only when its `aud` is this deployment's client id. A token for
+/// another client, and one whose `aud` list leaves this client out, are refused at the code exchange before anything is
+/// stored; one whose list holds this client is taken.
+#[test]
+fn a_mail_id_token_for_another_client_is_refused() {
+    let _serial = serial();
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let _properties = Properties::set();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    user(&facade, "alice");
+    login("alice");
+    let fake = FakeProvider::start(CLIENT, SECRET, REDIRECT);
+    provider_row(&facade, "EopTest", &fake, (993, 465), true);
+    let exchange = |audience: serde_json::Value| {
+        let (started, _) = begin(&[("emailAddress", text("alice@gmail.test"))]);
+        let mut claims = claims(&started, "alice@gmail.test");
+        claims["aud"] = audience;
+        let code = code_for(&fake, &started, claims, MAIL_SCOPE);
+        callback(&[("state", &started["state"]), ("code", &code)])
+    };
+    for audience in [json!("another-client"), json!(["another-client", "a-third-client"])] {
+        let refused = exchange(audience.clone());
+        assert_eq!(
+            out_text(&refused, "errorCode"),
+            "exchangeFailed",
+            "{audience}: {refused:?}"
+        );
+        assert!(
+            out_text(&refused, "message").contains("not for this server's client"),
+            "{audience}: {refused:?}"
+        );
+    }
+    assert!(
+        facade.find(ACCOUNT).unwrap().list().unwrap().is_empty(),
+        "nothing was stored"
+    );
+    let taken = exchange(json!(["another-client", CLIENT]));
+    assert_eq!(out_text(&taken, "status"), "success", "{taken:?}");
+}

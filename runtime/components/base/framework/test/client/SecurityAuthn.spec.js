@@ -440,3 +440,49 @@ feature("A07 failed logins lock the dedicated user", {
         after.text.toLowerCase().includes(SHARED_TEXT)
     },
 })
+
+// sec.mfa.proof: two single-use codes, which ClientFixtures makes again, with the account unlocked, on every run.
+const CODE_USER = "sec.mfa.proof"
+const CODE_PW = "SecMfaProof1!!"
+const codeSignIn = (s) => s.post("/rest/login", { json: { username: CODE_USER, password: CODE_PW }, accept: "json", csrf: false })
+const verifyCode = (s, code) => s.post("/rest/verifyOtp", { form: { code }, accept: "json" })
+const factorAsked = (res) => res.status == 200 && res.json().secondFactorRequired == true
+
+// A code sent by mail or text is a single-use code (send#ExternalAuthcCode), checked as these are. A wrong code counts as
+// a failed sign-in of the account, as a wrong password does, and a new sign-in by password does not clear the count; on
+// the fourth failure (user-facade/login@max-failures 3) the account locks for login@disable-minutes, and then the right
+// code is refused too.
+// A regression test, not a security proof (test/proofs), while OWASP ASVS v5.0.0-6.6.3 is a Gap in the matrix: guesses
+// sent at once are not bounded today (increment#UserAccountFailedLogins reads and writes the count with no lock, and the
+// code check has no gate like the password's: twelve wrong codes at once were all checked and counted as three). It
+// moves to test/proofs when that is fixed (SEC-WEB-87). It does not show the sending (one code a factor each 30 s), a
+// per-client limit (web protection's login limit leaves /rest/verifyOtp out), or the code's entropy (six digits, eight
+// for a backup code).
+feature("A07 wrong codes in turn lock the account across sign-ins; then the right code fails", {
+    given() { needsFixtures(`the user ${CODE_USER}`) },
+    when() {
+        // the control: the password asks for a code, and a right code signs in, clearing any count
+        const first = session()
+        const asked = codeSignIn(first)
+        const signedIn = verifyCode(first, "70316001")
+        // two wrong codes, a new sign-in by password, two more: four failures
+        const second = session()
+        const askedAgain = codeSignIn(second)
+        const wrong = [verifyCode(second, "11111111"), verifyCode(second, "22222222")]
+        const third = session()
+        const askedThird = codeSignIn(third)
+        wrong.push(verifyCode(third, "33333333"), verifyCode(third, "44444444"))
+        const right = verifyCode(third, "70316002")
+        return { asked, signedIn, askedAgain, askedThird, wrong, right, after: codeSignIn(session()) }
+    },
+    then({ asked, signedIn, askedAgain, askedThird, wrong, right, after }) {
+        factorAsked(asked)
+        signedIn.status == 200 && signedIn.json().loggedIn == true
+        factorAsked(askedAgain)
+        factorAsked(askedThird)
+        wrong.every((res) => res.status == 403)
+        right.status == 403
+        // locked: the right password is refused as well
+        after.status == 401
+    },
+})

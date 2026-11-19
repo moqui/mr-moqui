@@ -27,7 +27,8 @@
         ["screenTest", "http.get on the screen path, or browser"],
         ["uploadedFile", "http.post with multipart: { name: { fileName, text, contentType } }"],
     ]) define(name, () => { throw new Error(`${name}() is the server's: ${OUTSIDE}; use ${instead}`); });
-    define("server", Object.freeze(config.server));
+    // insecure: --insecure, so that a spec knows a certificate was not checked
+    define("server", Object.freeze(Object.assign({}, config.server, { insecure: !!config.insecure })));
     define("params", Object.freeze(config.params));
     // The run's profile (--profile): "fixtures" when the server has the suites' fixture data (--serve made it), else
     // "deployment", a server the project did not set up, where a spec uses only the accounts its params give.

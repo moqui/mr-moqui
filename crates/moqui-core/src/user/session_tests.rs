@@ -1477,6 +1477,51 @@ fn a_bounded_session_flush_resumes_where_the_last_pass_stopped() {
     );
 }
 
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-7.2.3 (docs/security/proofs/V7-Session-Management.md), the generator
+/// half, in-process: a new session's id and its session token ([`resolve_id`]) are each [`SESSION_ID_BYTES`] and
+/// [`SESSION_TOKEN_BYTES`] (20, so 160 bits, at least the 128 asked) read from the operating system's random source
+/// (`getrandom`, in [`random_hex`]), written as lowercase hex. A thousand sessions made in a row have a thousand
+/// different ids and tokens, and their bytes take every one of the 256 values. It does not judge the operating system's
+/// generator; what a client sees of the id (the signed cookie) is the black-box proof's.
+#[test]
+fn session_ids_and_tokens_are_160_bits_from_the_operating_systems_random_source() {
+    const { assert!(SESSION_ID_BYTES >= 16 && SESSION_TOKEN_BYTES >= 16) };
+    let ctx = ExecutionContextFactory::test_context();
+    let factory = Arc::clone(ctx.factory());
+    let mut ids = std::collections::HashSet::new();
+    let mut tokens = std::collections::HashSet::new();
+    let mut values = [false; 256];
+    for _ in 0..1000 {
+        let (id, made) = resolve_id(&factory, None).unwrap();
+        assert!(made, "with no id presented a new session is made");
+        let token = lock_sessions(&factory)
+            .sessions
+            .get(&id)
+            .and_then(|live| live.columns.session_token.clone())
+            .expect("a new session has its token");
+        for (text, size) in [(&id, SESSION_ID_BYTES), (&token, SESSION_TOKEN_BYTES)] {
+            assert_eq!(text.len(), size * 2, "{text}");
+            let bytes: Vec<u8> = (0..size)
+                .map(|at| u8::from_str_radix(&text[at * 2..at * 2 + 2], 16).unwrap())
+                .collect();
+            assert_eq!(
+                moqui_lib::codec::hex_encode(&bytes),
+                *text,
+                "lowercase hex of {size} bytes"
+            );
+            for byte in bytes {
+                values[usize::from(byte)] = true;
+            }
+        }
+        ids.insert(id);
+        tokens.insert(token);
+    }
+    assert_eq!(ids.len(), 1000, "every id is new");
+    assert_eq!(tokens.len(), 1000, "every token is new");
+    assert!(values.iter().all(|seen| *seen), "the bytes take every value");
+    clear_sessions(&factory);
+}
+
 /// Holds the flushes of one session id at [`flush_hook`] until released.
 struct BlockedFlush {
     entered: mpsc::Receiver<()>,

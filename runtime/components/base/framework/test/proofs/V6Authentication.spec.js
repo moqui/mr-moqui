@@ -157,6 +157,33 @@ feature("v5.0.0-6.3.2: no initial administrator can be created over HTTP once ac
     },
 })
 
+// Configuration in the matrix: an account locks after user-facade/login@max-failures (on by default, test/client
+// SecurityAuthn "A07 failed logins lock the dedicated user"), and the per-client sign-in limit, the login rate limit of
+// webapp-list/webapp[webroot]/web-protection (ten a minute), is on only with web-protection@enabled or trusted-proxies.
+// Loopback is exempt, so this is a deployment's proof, and opt-in: it gets this client's sign-ins limited for a minute,
+// and its ten unknown users count toward the auth-failure ban (twenty in ten minutes bans the client for fifteen), so
+// run it alone, once: --spec V6Authentication --feature v5.0.0-6.3.1 --param bruteForce=yes.
+// Does not prove: a limit per account across clients (credential stuffing from many addresses), which SEC-WEB-81 and
+// SEC-WEB-83 leave open.
+feature("v5.0.0-6.3.1: one client's sign-ins are limited after ten tries a minute", {
+    given() {
+        if (profile == "fixtures") skip("the project's test server takes its clients as loopback, which the per-client limits exempt: a deployment's proof")
+        if (params.bruteForce != "yes") skip("opt-in, as it limits this client's sign-ins: --param bruteForce=yes, alone (--spec V6Authentication --feature v5.0.0-6.3.1)")
+    },
+    when() {
+        const statuses = []
+        for (let i = 0; i < 11; i++) {
+            statuses.push(restLogin(`proof.unknown.${Date.now()}.${i}`, "NotAPassword1!").status)
+        }
+        return { statuses }
+    },
+    then({ statuses }) {
+        // the control: the first tries are answered, as an unknown user
+        statuses[0] == 401
+        statuses.includes(429)
+    },
+})
+
 // A password hint or a secret question would be a second, weaker secret. The sign-in page's forms (sign in, reset,
 // change) ask for none; a reset asks only for the account and sends a temporary password.
 // Does not prove: an application's own registration or account forms.
@@ -171,6 +198,56 @@ feature("v5.0.0-6.4.2: no form of the sign-in page asks for a password hint or a
         names.includes("password") && names.includes("newPassword")
         !names.some((name) => /hint|question|answer|secret/i.test(name))
         !/password hint|security question|secret question/i.test(res.text)
+    },
+})
+
+// sec.pw.long's password, which the 6.2.9 proof changes and ClientFixtures sets again on every run.
+const LONG_USER = "sec.pw.long"
+const LONG_PW = "SecPwLong1!!"
+
+// A long password is set through the sign-in page's change form and signs in whole; the first 64 or 72 of its
+// characters (where a hash that cuts long passwords would stop) do not.
+// Does not prove: the longest password taken (none is set), nor the admin and REST paths, which call the same service.
+feature("v5.0.0-6.2.9: a 128-character password is set and signs in whole, never cut short", {
+    given() { needsFixtures(`the user ${LONG_USER}`) },
+    when() {
+        const long = `SecPwLong${Date.now()}!`.padEnd(128, "-abcdefghijklmnopqrstuvwxyz")
+        const inputs = loginInputs(["password", "oldPassword", "newPassword", "newPasswordVerify"])
+        const res = changePassword({ username: LONG_USER, oldPassword: LONG_PW, newPassword: long, newPasswordVerify: long })
+        // the cut ones first, each a failed sign-in; the whole one then clears the count
+        const first64 = restLogin(LONG_USER, long.slice(0, 64))
+        const first72 = restLogin(LONG_USER, long.slice(0, 72))
+        return { long, inputs, res, first64, first72, whole: restLogin(LONG_USER, long) }
+    },
+    then({ long, inputs, res, first64, first72, whole }) {
+        long.length == 128
+        // the form's fields set no shorter limit
+        inputs.length == 4
+        inputs.every((tag) => attribute(tag, "maxlength") == null || Number(attribute(tag, "maxlength")) >= 128)
+        res.text.toLowerCase().includes("password updated")
+        loggedIn(whole)
+        first64.status == 401
+        first72.status == 401
+    },
+})
+
+// Configuration in the matrix: moqui.security.UserGroup.requireAuthcFactor Y on ALL_USERS (a data step) asks every password
+// sign-in for a second factor; it is off by default. A deployment's proof with its account (--param user=NAME, the password
+// in MOQUI_TEST_PASSWORD): the password alone does not sign it in. The project's test server asks no factor of every
+// account, so in the fixtures profile it skips.
+// Does not prove: other accounts than the one given, nor sign-ins without a password (login keys, app passwords, SSO),
+// which ask no second factor. Where it holds, the proofs that sign in with --param user cannot: the harness sends no code.
+feature("v5.0.0-6.3.3: the deployment's account is not signed in by its password alone", {
+    given() {
+        if (profile == "fixtures") skip("the project's test server asks no second factor of every account: a deployment's proof")
+        if (!params.user) skip("needs the deployment's account: --param user=NAME, its password in MOQUI_TEST_PASSWORD")
+    },
+    when() { return { res: restLogin(params.user, params.password ?? "") } },
+    then({ res }) {
+        // the password was right (a wrong one is 401), and the answer asks for a factor instead of signing in
+        res.status == 200
+        res.json().secondFactorRequired == true
+        res.json().loggedIn != true
     },
 })
 

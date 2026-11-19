@@ -236,3 +236,176 @@ feature("v5.0.0-3.7.2: the sign-in does not redirect off the site under a forged
         !(split.location ?? "").includes("/phish")
     },
 })
+
+// Configuration in the matrix: none ships; a response-header of type screen-render named Referrer-Policy under
+// webapp-list/webapp[webroot] sets one on every screen. A deployment's proof: the sign-in page's policy, by its header or
+// a meta tag (which a browser takes over the header), sends no path or query to another site. The project's test server
+// sets none, so in the fixtures profile it skips.
+// Does not prove: the host name an origin policy still sends (no-referrer or same-origin keep it for an internal site),
+// nor answers that are not screens, nor a link an application marks itself.
+const SAFE_REFERRER = ["no-referrer", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin"]
+const KNOWN_REFERRER = SAFE_REFERRER.concat(["unsafe-url", "no-referrer-when-downgrade"])
+feature("v5.0.0-3.4.5: the pages' referrer policy sends no path or query to other sites", {
+    given() {
+        if (profile == "fixtures") skip("the project's test server sets no Referrer-Policy (none ships): a deployment's proof")
+    },
+    when() {
+        const res = session().get("/Login")
+        // of a list, a browser takes the last policy it knows
+        const last = (text) => text.split(",").map((p) => p.trim().toLowerCase()).filter((p) => KNOWN_REFERRER.includes(p)).pop() ?? null
+        const meta = (res.text.match(/<meta\b[^>]*\bname="referrer"[^>]*\bcontent="([^"]*)"/i) ?? [])[1] ?? ""
+        return { res, policy: last(meta) ?? last(res.headers("Referrer-Policy").join(",")) }
+    },
+    then({ res, policy }) {
+        res.status == 200
+        SAFE_REFERRER.includes(policy)
+    },
+})
+
+// Configuration in the matrix: an application on a host of its own is a root-screen for that host with
+// framework-routes="refuse" (runtime/conf/MoquiSitesConf.xml, a PASS site's); by default every app shares the server's
+// origin. A deployment's proof: --param siteUrl=https://<the host of another application> names such a host. There the
+// framework's apps, REST and socket are not found while the server's host serves them, and the session cookie of each host
+// names no Domain, so the browser sends it to that host alone.
+// Does not prove: that each other application of the deployment has a host (it checks the one named), nor the apps under
+// /apps, which share the server's host by design.
+feature("v5.0.0-3.5.4: another application's host serves none of the framework's apps; cookies stay per host", {
+    given() {
+        if (!params.siteUrl) skip("a deployment's proof: --param siteUrl=https://<the host of another application of the deployment>")
+    },
+    when() {
+        const site = params.siteUrl.replace(/\/+$/, "")
+        const paths = ["/apps/tools/Home", "/qapps/tools/Home", "/rest/e1/moqui.basic.Enumeration", "/rest/s1/moqui/basic/enums"]
+        const socket = ws.connect(site + "/notws", { session: session() })
+        socket.close()
+        return {
+            there: paths.map((path) => ({ path, res: session().get(site + path) })),
+            here: paths.map((path) => ({ path, res: session().get(path) })),
+            socket,
+            cookies: [session().get("/Login"), session().get(site + "/")].flatMap((res) => res.cookies),
+        }
+    },
+    then({ there, here, socket, cookies }) {
+        // the control: the server's host has them, sending an anonymous client to sign in
+        here.every(({ res }) => res.status == 302 || res.status == 401)
+        there.every(({ res }) => res.status == 404)
+        !socket.open
+        cookies.every((cookie) => cookie.domain == null || cookie.domain == "")
+    },
+})
+
+// The framework's two postMessage listeners, run in a browser on the scripts the server serves. The email sign-in window's
+// answer (MoquiLib.js oauthPopup) is taken only from the window it opened, on the page's own origin, typed
+// moqui-email-oauth and naming its sign-in; each message here is the MessageEvent a browser would make, with its origin
+// and source. The Assist canvas frame (/assist/sandbox, WebrootAssistSandbox.js, an opaque origin) takes its port only from
+// its parent window with the frame's nonce; those messages are posted, from the parent and from another window.
+// Does not prove: the listeners of an application's own scripts, nor the sign-in answer's BroadcastChannel, which the
+// browser keeps to the page's origin, nor the frame's refusal of another window where the page's policy forbids eval.
+feature("v5.0.0-3.5.5: postMessage from another origin or window, or malformed, is dropped", {
+    when() {
+        const page = browser.newPage()
+        page.goto("/Login")
+        page.addScript("/js/MoquiLib.js")
+        const oauth = page.evaluate(async () => {
+            const tick = () => new Promise((resolve) => setTimeout(resolve, 30))
+            let answer = null
+            const signIn = window.moqui.oauthPopup(() => ({ signInId: "S1", authUrl: location.origin + "/favicon.ico" }),
+                () => ({ status: "pending" }), { statusPollMs: 600000, pollMs: 600000 })
+            signIn.then((result) => { answer = result })
+            await tick()
+            const popup = window.open("", "moquiOAuth")
+            const send = (origin, source, data) => window.dispatchEvent(new MessageEvent("message", { origin, source, data }))
+            const good = { type: "moqui-email-oauth", signInId: "S1", status: "success", emailAddress: "proof@example.com" }
+            send("https://evil.example", popup, good)
+            send(location.origin, window, good)
+            send(location.origin, popup, Object.assign({}, good, { type: "moqui-other" }))
+            send(location.origin, popup, Object.assign({}, good, { signInId: "S2" }))
+            send(location.origin, popup, JSON.stringify(good))
+            await tick()
+            const dropped = answer
+            send(location.origin, popup, good)
+            await tick()
+            signIn.cancel()
+            return { popup: !!popup, dropped, taken: answer }
+        })
+        const frame = page.evaluate(async (nonce) => {
+            const sandbox = document.createElement("iframe")
+            sandbox.setAttribute("sandbox", "allow-scripts")
+            sandbox.src = "/assist/sandbox#n=" + nonce
+            const loaded = new Promise((resolve) => sandbox.addEventListener("load", resolve))
+            document.body.appendChild(sandbox)
+            await loaded
+            const got = {}
+            const offer = (name, data) => {
+                const channel = new MessageChannel()
+                channel.port1.onmessage = (event) => { got[name] = event.data && event.data.t }
+                sandbox.contentWindow.postMessage(data, "*", [channel.port2])
+            }
+            offer("wrongNonce", { t: "port", nonce: "f".repeat(32) })
+            offer("noNonce", { t: "port" })
+            offer("wrongType", { t: "ports", nonce })
+            // the same message from another window of this origin, not the frame's parent: a function of that window's
+            // realm posts it (made by eval, which a page policy without 'unsafe-eval' refuses: then it is not tried)
+            try {
+                const other = document.createElement("iframe")
+                document.body.appendChild(other)
+                const postFromOther = other.contentWindow.eval(
+                    "(target, data) => { const channel = new MessageChannel(); target.postMessage(data, '*', [channel.port2]); return channel.port1 }")
+                postFromOther(sandbox.contentWindow, { t: "port", nonce }).onmessage = (event) => { got.otherWindow = event.data && event.data.t }
+            } catch (err) {
+                got.otherWindow = "not tried: " + err.message
+            }
+            // last, the control: the parent's message with the nonce opens the port
+            offer("parent", { t: "port", nonce })
+            for (let i = 0; i < 100 && !got.parent; i++) await new Promise((resolve) => setTimeout(resolve, 20))
+            await new Promise((resolve) => setTimeout(resolve, 50))
+            return got
+        }, "0123456789abcdef0123456789abcdef")
+        return { oauth, frame }
+    },
+    then({ oauth, frame }) {
+        oauth.popup
+        oauth.dropped == null
+        // the control: the window's own well-formed answer is taken
+        oauth.taken != null && oauth.taken.status == "success" && oauth.taken.signInId == "S1"
+        frame.parent == "ready"
+        frame.wrongNonce == null && frame.noNonce == null && frame.wrongType == null
+        frame.otherWindow == null || frame.otherWindow.startsWith("not tried")
+    },
+})
+
+// The tags of a page that embed a plugin, and attributes naming a plugin's file (Flash, Java applets, Silverlight,
+// Shockwave).
+const PLUGIN_TAG = /<(object|embed|applet)\b/i
+const PLUGIN_FILE = /\b(src|data|href|code|archive)="[^"]*\.(swf|jar|xap|class|dcr)\b/i
+// The major version a library's banner names in its first lines: "vue v3.5.44", "Quasar Framework v2.35.1".
+const bannerMajor = (text, name) => Number((text.slice(0, 400).match(new RegExp(`${name} v(\\d+)\\.\\d+\\.\\d+`, "i")) ?? [])[1] ?? NaN)
+
+// The pages run on Vue 3 and Quasar 2, both supported lines (Vue 2 ended on 2023-12-31, Quasar 1 with it), and embed no
+// plugin. The versions are read from the banners of the files the signed-in shell loads.
+// Does not prove: that every library under /libs is current (the list is libs/MANIFEST.json; Font Awesome is its old 4.7
+// line, a style sheet and font), nor an application's own scripts.
+feature("v5.0.0-3.7.1: pages embed no plugin; the shell runs on supported Vue 3 and Quasar 2", {
+    when() {
+        const { username, password } = account()
+        const s = session({ user: username, password })
+        const login = session().get("/Login")
+        const shell = s.get("/qapps")
+        const sources = [...shell.text.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/gi)].map((match) => match[1])
+        const vue = sources.find((src) => /\/vue[^/]*\.js/i.test(src))
+        const quasar = sources.find((src) => /\/quasar[^/]*\.umd[^/]*\.js/i.test(src))
+        return {
+            login, shell, vue, quasar,
+            vueMajor: vue ? bannerMajor(s.get(vue).text, "vue") : NaN,
+            quasarMajor: quasar ? bannerMajor(s.get(quasar).text, "Quasar Framework") : NaN,
+        }
+    },
+    then({ login, shell, vue, quasar, vueMajor, quasarMajor }) {
+        login.status == 200
+        shell.status == 200
+        [login.text, shell.text].every((text) => !PLUGIN_TAG.test(text) && !PLUGIN_FILE.test(text))
+        vue != null && quasar != null
+        vueMajor == 3
+        quasarMajor == 2
+    },
+})

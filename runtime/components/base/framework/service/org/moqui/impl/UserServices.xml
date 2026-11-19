@@ -377,6 +377,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <message public="true" type="danger">New password is same as current password</message>
                 <set field="passwordIssues" from="true"/>
             </if>
+            <!-- a reset password reset#Password mailed is good once, to change the password, and never becomes it: it went
+                out in a mail (OWASP ASVS v5.0.0-6.4.1). Always argon2; an empty hash matches nothing. -->
+            <if condition="ec.user.passwordsMatch(newPassword, userAccount.get('resetPassword'), 'argon2', '', false)">
+                <message public="true" type="danger">New password is the reset password that was sent; choose one of your own</message>
+                <set field="passwordIssues" from="true"/>
+            </if>
 
             <!-- if password is in the history don't allow it -->
             <set field="historyLimit" from="ec.user.loginRules.historyLimit"/>

@@ -380,3 +380,104 @@ fn the_main_stack_declared_is_the_limit_less_what_is_above_main() {
     );
     assert_eq!(main_stack_size(Some(512 * 1024), 0), None);
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-1.4.1 and v5.0.0-1.4.3 (docs/security/proofs/V1-Encoding-and-Sanitization.md),
+/// in-process: the server is safe Rust but for a few named sites. In the sources of the crates the server binary links
+/// (the workspace crates less the browser, desktop and mobile clients, and the dev components), not counting tests,
+/// `unsafe` code is in exactly the files listed here, as many times each, and each site says why it holds in a
+/// `// SAFETY:` comment just above it: detaching the process and the systemd clock (`libc` calls), `moqui test`'s
+/// effective uid, the embedded Postgres handle's one drop, and the MySQL driver's connection, a leaked box its streaming
+/// result borrows and that only `Drop` frees. Everywhere else the compiler bounds-checks every buffer and string (1.4.1)
+/// and ownership frees each allocation once with no reference left to it (1.4.3), and a new `unsafe` fails this test
+/// until it is reviewed and listed. It does not prove the listed sites right, nor cover the dependencies' unsafe code or
+/// the C of aws-lc; the script engine, quickjs-oxide, forbids `unsafe_code` in its own workspace lints (not read here).
+#[test]
+fn the_server_has_unsafe_code_only_at_the_listed_reviewed_sites() {
+    const CLIENTS: [&str; 5] = [
+        "moqui-browser",
+        "moqui-client",
+        "moqui-client-tauri",
+        "moqui-desktop",
+        "moqui-mobile",
+    ];
+    let listed: std::collections::BTreeMap<&str, usize> = [
+        ("crates/moqui-drivers/src/embedded.rs", 1),
+        ("crates/moqui-drivers/src/mysql.rs", 4),
+        ("crates/moqui-host/src/detach.rs", 3),
+        ("crates/moqui-host/src/systemd_notify.rs", 1),
+        ("crates/moqui-host/src/test_cmd/interrupt.rs", 1),
+    ]
+    .into_iter()
+    .collect();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut sources = Vec::new();
+    let mut walk = vec![root.join("runtime/components/dev")];
+    for entry in std::fs::read_dir(root.join("crates")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if !CLIENTS.contains(&name.as_str()) {
+            walk.push(path.join("src"));
+        }
+    }
+    while let Some(dir) = walk.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if path.is_dir() {
+                if name != "tests" && name != "target" && name != "node_modules" {
+                    walk.push(path);
+                }
+            } else if name.ends_with(".rs")
+                && name != "tests.rs"
+                && !name.ends_with("_tests.rs")
+                && name != "testnet.rs"
+            {
+                sources.push(path);
+            }
+        }
+    }
+    assert!(sources.len() > 1000, "the sources were found: {}", sources.len());
+
+    let word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut found: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for path in &sources {
+        let text = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let shown = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        for (at, line) in lines.iter().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            let bytes = code.as_bytes();
+            let mut sites = 0;
+            for (start, _) in code.match_indices("unsafe") {
+                let end = start + "unsafe".len();
+                if (start > 0 && word(bytes[start - 1])) || bytes.get(end).is_some_and(|byte| word(*byte)) {
+                    continue;
+                }
+                let after = code[end..].trim_start();
+                let attribute = code[..start].trim_end().ends_with("#[") && after.starts_with('(');
+                if attribute
+                    || after.starts_with('{')
+                    || ["fn ", "impl ", "impl<", "extern ", "trait "]
+                        .iter()
+                        .any(|keyword| after.starts_with(keyword))
+                {
+                    sites += 1;
+                }
+            }
+            if code.contains("unsafe_code") {
+                sites += 1;
+            }
+            if sites == 0 {
+                continue;
+            }
+            let reasoned = lines[at.saturating_sub(8)..=at]
+                .iter()
+                .any(|above| above.contains("// SAFETY:"));
+            assert!(reasoned, "{shown}:{} has no SAFETY comment: {line}", at + 1);
+            *found.entry(shown.clone()).or_default() += sites;
+        }
+    }
+    let found: std::collections::BTreeMap<&str, usize> = found.iter().map(|(path, n)| (path.as_str(), *n)).collect();
+    assert_eq!(found, listed, "unsafe code in the server's crates");
+}

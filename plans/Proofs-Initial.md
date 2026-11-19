@@ -1,6 +1,6 @@
 # Security proofs: the initial plan
 
-Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`); phase P2, the harness (`moqui test-client --proofs`, the profiles and the summary by requirement), is built; phase P3 moved the security client specs that prove a requirement into the framework's `test/proofs/` (42 features under 20 requirements); phase P4 is under way (51 features under 29 requirements).
+Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`); phase P2, the harness (`moqui test-client --proofs`, the profiles and the summary by requirement), is built; phase P3 moved the security client specs that prove a requirement into the framework's `test/proofs/` (42 features under 20 requirements); phase P4 gave every level 1 row that can take one a proof (56 framework features under 34 requirements, eight of PASS's).
 
 This plan is for a public library of security proofs: executable tests that show mr-moqui meets a published security
 standard's requirements. The library is organized by a standard, as the OWASP lists are. Its readers are the project,
@@ -180,13 +180,39 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   refusals a control. Every proof that signs in takes the deployment's account or calls `needsFixtures`. The
   framework's `test/budget` split its client budget, its total kept: `client = 3.5`, `proofs = 2.5`. The matrix rows
   for the findings fixed since P1 (SEC-PFS-82, SEC-TLS-81, SEC-TLS-82) were corrected, PASS's V5.3.1 to Inherited.
-- **P4.** New proofs for the level 1 requirements with none: the framework's, then PASS's. First batch (2026-11-18):
-  nine black-box proofs, 2.2.2 (`V2Validation`), 3.5.2, 6.2.2, 6.2.3, 6.2.8, 6.4.2, 7.2.1, 7.2.2 and 7.2.3, on a new
-  fixture user `sec.pw.proof` whose password ClientFixtures sets again on each run, and an in-process proof of 12.1.1
-  (`tls_tests.rs`). Left at level 1 for the framework: 9.1.2 and 9.1.3 (the OIDC client's token checks, in-process
-  against a mocked provider), 6.4.1 (a reset password's randomness and single use), 6.1.1 (a document, not a test),
-  and the generator half of 7.2.3.
-- **P5.** The same for level 2.
+- **P4** (done). New proofs for the level 1 requirements with none: the framework's, then PASS's. As done
+  (2026-11-18): every level 1 row of either matrix that is Framework, Configuration or PASS has a proof, except the
+  documentation rows (6.1.1, PASS's 8.1.1), which a test does not show.
+  - The framework, black-box: 2.2.2 (`V2Validation`), 3.5.2, 6.2.2, 6.2.3, 6.2.8, 6.4.2, 7.2.1, 7.2.2 and 7.2.3, the
+    password proofs on a fixture user `sec.pw.proof` whose password ClientFixtures sets again on each run.
+  - The framework's Configuration rows, proved against a deployment: 13.4.1 (no `.git` served) runs everywhere; 4.4.1,
+    12.2.1 and 12.2.2 need a deployment over https and skip otherwise; 6.3.1's per-client sign-in limit is opt-in
+    (`--param bruteForce=yes`), as it limits the client. Specs read `server.insecure` for 12.2.2.
+  - The framework, in-process: 12.1.1 (`tls_tests.rs`), 9.1.2 and 9.1.3 (`sso_tests.rs`, against a mocked provider),
+    the generator half of 7.2.3 (`session_tests.rs`), 6.4.1 (`ResetPassword`, a framework spec reading the mailed
+    reset password from the capture). V1.3.2 and V5.3.1 became Framework when SEC-SCR-81 was fixed, proved by the
+    `WikiPageTypes` spec.
+  - What the proofs found: a mailed reset password could be set as the new long-term password (6.4.1), since
+    `update#PasswordInternal` did not compare the new password with `resetPassword`: fixed the same day, and
+    `ResetPassword` proves the refusal; a missing required field of
+    the password change is answered HTTP 500; the OIDC allowlist is the provider's metadata, not the deployer's; a
+    `discoveryUri` over plain http to another host is not refused.
+  - PASS (mr-pass `test/proofs`): 3.2.2, 3.5.1 (twice), 6.2.2, 6.4.1 (a registration code), 7.4.1, 6.3.1 (PASS's own
+    limit by account name, and the opt-in per-client limit at its route) and 1.3.2 (`Forum/TextNotCode`, in-process).
+- **P5** (done). The same for level 2. Framework part done (2026-11-18): every level 2 row of the framework that is
+  Framework or Configuration has a proof, 19 black-box features (13.4.3, 14.2.3, 3.5.5, 3.7.1, 4.2.1, 6.2.9, and the
+  Configuration rows 13.4.4, 3.4.5, 3.5.4, 4.1.3, 15.3.4, 2.4.1, 6.3.3, 15.2.3, against a deployment) and 23 Rust tests
+  (encoding, unsafe sites, cryptography, TLS suites and clients, the cluster port, egress, logging, the SFU's DTLS and
+  SRTP, OIDC signatures and audiences). 15.3.3 is Framework since SEC-RTE-81 was fixed (`MultiPin`). The proofs found
+  four rows not met, now Gap: 6.6.3 (wrong codes sent at once are not all counted), 12.1.2 (the listener does not
+  prefer its own suite order), 6.8.2 (the mail client's OAuth sign-in does not check the ID token's signature), and,
+  noted with their rows, a TLS failure logged without its reason (16.3.4), TRACE rendering screens (13.4.4), an
+  IP-allowed refusal that confirms the password, and forwarded headers read from their first value behind a proxy.
+  PASS part (mr-pass `899c04e`, `b0829a1`): every PASS level 2 row that can take a proof has one (black-box in its
+  `test/proofs`, 3.5.5 in Chromium; in-process in `SourceRules`, `Transport` and mr-moqui's authority client test for
+  12.3.2); the documentation rows 6.1.3 and 7.1.3 are not tests; 16.2.2, 16.4.2 and 16.4.3 are Inherited. 3.4.3 stays a
+  Gap (`base-uri 'self'`). The findings of P4 and P5 are in the register (SEC-WEB-87 to 93 and the others its status
+  paragraph names), and the matrix rows cite them.
 - **P6.** Cross-references (the API Top 10 for `/rest`, the LLM Top 10 for the agents, NIST 800-63B for
   authentication, the CWE Top 25), the certifier's guide; then BOSS and the clients (MASVS).
 

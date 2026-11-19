@@ -349,3 +349,75 @@ fn a_url_is_under_a_base_only_on_its_origin_and_below_its_path() {
     assert!(!url_under_base("https://pass.example.com/other", pathed));
     assert!(!url_under_base("https://pass.example.com/x", "edge:"));
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-16.5.2 (docs/security/proofs/V16-Security-Logging-and-Error-Handling.md),
+/// in-process: the framework's outbound HTTP client (`RestClient`, under the remote service calls, `http(s)://`
+/// locations, webhooks and the OTLP export) does not wait on a service that stops answering. A call to a server that
+/// takes the connection and never answers fails with an error once its timeout passes, and so does one to a server
+/// that sends its headers and then stalls in the body; a server that answers is read as before. A call whose caller
+/// sets no bound has 30 seconds for the whole exchange and 10 to connect. What a caller does with the error (a service's
+/// error in the message facade, a retry, a dropped batch) is the caller's; the OTLP export's bounded queue, which drops
+/// rather than holds up the node, is `a_stalled_collector_never_blocks_local_export` (moqui-core `telemetry/otlp.rs`).
+#[test]
+fn a_call_to_a_service_that_stops_answering_fails_at_its_timeout() {
+    let client = RestClient::new();
+    assert_eq!(client.timeout, Duration::from_secs(30));
+    assert_eq!(client.connect_timeout, Duration::from_secs(10));
+    let prepared = client.get("https://example.com/").prepare(false).unwrap();
+    assert_eq!(
+        prepared.timeout(),
+        Duration::from_secs(30),
+        "a call's bound when its caller sets none"
+    );
+
+    // takes each connection and never answers
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let silent_url = format!("http://{}/never", silent.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in silent.incoming() {
+            held.push(stream);
+        }
+    });
+    // answers its headers, then one byte of a ten-byte body, and stalls
+    let stalling = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let stalling_url = format!("http://{}/half", stalling.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in stalling.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buffer = [0_u8; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut buffer);
+            let _ = std::io::Write::write_all(&mut stream, b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nx");
+            held.push(stream);
+        }
+    });
+    let bounded = RestClient::new().timeout(Duration::from_millis(400));
+    for url in [&silent_url, &stalling_url] {
+        let started = std::time::Instant::now();
+        let err = bounded.get(url).send(false).expect_err("no whole answer");
+        let waited = started.elapsed();
+        assert!(err.message().contains("failed"), "{url}: {err}");
+        assert!(
+            waited >= Duration::from_millis(300) && waited < Duration::from_secs(5),
+            "{url}: waited {waited:?}"
+        );
+    }
+    // a call's own bound
+    let started = std::time::Instant::now();
+    assert!(RestClient::new()
+        .get(&silent_url)
+        .timeout(Duration::from_millis(300))
+        .send(false)
+        .is_err());
+    assert!(started.elapsed() < Duration::from_secs(5));
+
+    let answering = serve(vec![
+        "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok".to_string(),
+    ]);
+    let response = bounded
+        .get(format!("http://127.0.0.1:{answering}/"))
+        .send(false)
+        .expect("a server that answers");
+    assert_eq!((response.status(), response.body()), (200, "ok"));
+}

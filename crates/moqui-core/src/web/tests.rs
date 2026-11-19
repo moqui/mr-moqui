@@ -683,3 +683,228 @@ fn a_request_another_site_started_is_told_by_its_fetch_site_or_referer() {
     assert!(!request(&[("Referer", "https://APP.example.com/apps/tools")]));
     assert!(!request(&[]));
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-1.5.2 (docs/security/proofs/V1-Encoding-and-Sanitization.md),
+/// in-process: untrusted data is deserialized only into plain values or fixed types. A JSON request body becomes maps,
+/// lists, text, numbers, booleans and null and nothing else: the keys other serializers read a type from (`@class`,
+/// `$type`, `__proto__`, `constructor`, `@type`) are parameters like any other, holding what the body gave, and add no
+/// others. A body nested past serde_json's depth limit (128) is a parse error the screen or service answers
+/// (`_requestBodyJsonParseError`), not a stack overflow, while one nested 100 deep reads. The build links no serializer
+/// that names types in the data or is documented as unsafe for untrusted input (none of bincode, serde_yaml,
+/// serde_yml, typetag, serde_pickle, ron, rmp-serde, ciborium or serde_cbor in Cargo.lock); the one binary object
+/// format linked, IronCalc's bitcode workbook (bitcode), which a calc document's stored overlay is read with
+/// (moqui-calc `fill::open_stored`), decodes into its fixed workbook type and refuses bytes that are not one. gRPC
+/// messages are prost's generated fixed types. Availability is not covered (SEC-TLS-95).
+#[test]
+fn untrusted_data_is_deserialized_only_into_plain_values_and_fixed_types() {
+    let parse = |body: &str| {
+        let mut request = super::WebRequest::new("POST", "/rest/s1/proof");
+        request.set_header("content-type", "application/json");
+        request.body = body.as_bytes().to_vec();
+        match super::parse_body(&request) {
+            Ok(parsed) => parsed.parameters,
+            Err(_) => panic!("the body was refused before parsing"),
+        }
+    };
+    let typed = parse(
+        r#"{"@class":"java.lang.Runtime","$type":"System.Diagnostics.Process, System","@type":"com.sun.rowset.JdbcRowSetImpl",
+            "__proto__":{"admin":true},"constructor":{"prototype":{"admin":true}},"orderId":"O1"}"#,
+    );
+    assert_eq!(typed.get("@class"), Some(&Value::string("java.lang.Runtime")));
+    assert_eq!(
+        typed.get("$type"),
+        Some(&Value::string("System.Diagnostics.Process, System"))
+    );
+    assert_eq!(
+        typed.get("@type"),
+        Some(&Value::string("com.sun.rowset.JdbcRowSetImpl"))
+    );
+    let admin = Value::Map([("admin".to_string(), Value::Bool(true))].into_iter().collect());
+    assert_eq!(typed.get("__proto__"), Some(&admin));
+    assert_eq!(
+        typed.get("constructor"),
+        Some(&Value::Map(
+            [("prototype".to_string(), admin.clone())].into_iter().collect()
+        ))
+    );
+    assert_eq!(typed.get("orderId"), Some(&Value::string("O1")));
+    assert!(
+        !typed.contains_key("admin") && !typed.contains_key("_requestBodyJsonParseError"),
+        "{typed:?}"
+    );
+
+    let nested = |depth: usize| format!("{}1{}", r#"{"a":"#.repeat(depth), "}".repeat(depth));
+    let shallow = parse(&nested(100));
+    assert!(shallow.contains_key("a") && !shallow.contains_key("_requestBodyJsonParseError"));
+    for deep in [
+        nested(129),
+        nested(100_000),
+        format!("{}{}", "[".repeat(100_000), "]".repeat(100_000)),
+    ] {
+        let parameters = parse(&deep);
+        let error = parameters
+            .get("_requestBodyJsonParseError")
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default();
+        assert!(error.contains("recursion limit"), "{error}");
+        assert!(!parameters.contains_key("a"));
+    }
+
+    let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock")).unwrap();
+    for name in [
+        "bincode",
+        "serde_yaml",
+        "serde_yml",
+        "yaml-rust",
+        "yaml-rust2",
+        "typetag",
+        "serde_pickle",
+        "serde-pickle",
+        "ron",
+        "rmp-serde",
+        "ciborium",
+        "serde_cbor",
+    ] {
+        assert!(!lock.contains(&format!("\nname = \"{name}\"\n")), "{name} is linked");
+    }
+    for garbage in [&b""[..], b"not a workbook", &[0xff; 64], &[0u8; 4096]] {
+        assert!(crate::workbook::ironcalc::base::Model::from_bytes(garbage, "en").is_err());
+    }
+    let mut model = crate::workbook::ironcalc::base::Model::new_empty("proof", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "42".to_string()).unwrap();
+    let stored = model.to_bytes();
+    assert!(crate::workbook::ironcalc::base::Model::from_bytes(&stored, "en").is_ok());
+    for cut in [1, stored.len() / 2, stored.len() - 1] {
+        assert!(
+            crate::workbook::ironcalc::base::Model::from_bytes(&stored[..cut], "en").is_err(),
+            "cut at {cut}"
+        );
+    }
+}
+
+/// Each error-level event's message and fields, while it is the thread's subscriber.
+struct ErrorLines(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl tracing::Subscriber for ErrorLines {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Text(String);
+        impl tracing::field::Visit for Text {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0.push_str(&format!("{}={value:?} ", field.name()));
+            }
+        }
+        if *event.metadata().level() == tracing::Level::ERROR {
+            let mut text = Text(String::new());
+            event.record(&mut text);
+            self.0.lock().unwrap().push(text.0);
+        }
+    }
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-16.3.4 (docs/security/proofs/V16-Security-Logging-and-Error-Handling.md),
+/// in-process, the unexpected errors and a backend TLS failure: a request that fails with an internal error (a 500) is
+/// logged at error level with its whole detail, on a production instance under the error id that is all the client
+/// gets, and off production as well; a refusal the client caused (a 400) is not an unexpected error and is not logged
+/// so. A remote service whose TLS handshake fails (a server that answers the hello in clear text) fails the call, with
+/// the failure in the message facade, and is logged at error level naming the service and the address it called; the
+/// line does not give the transport's reason, which `service/call.rs` drops when it rebuilds a remote-rest service's
+/// error from its message, so it does not show that TLS was what failed. The security control part is `an_authz_record_that_does_not_evaluate_is_logged_at_error_naming_it` (user/authz_tests.rs).
+#[test]
+fn an_unexpected_error_and_a_backend_tls_failure_are_logged_at_error() {
+    use crate::context::{Error, ErrorKind};
+    use std::sync::{Arc, Mutex};
+
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let err = Error::new("SELECT * FROM PROOF_SECRET_TABLE failed");
+    let (hidden, shown, not_production) = tracing::subscriber::with_default(ErrorLines(lines.clone()), || {
+        super::TEST_PRODUCTION.with(|production| production.set(Some(true)));
+        let hidden = super::error_text(500, &err);
+        let shown = super::error_text(400, &Error::of_kind(ErrorKind::BadRequest, "proof bad name"));
+        super::TEST_PRODUCTION.with(|production| production.set(Some(false)));
+        let not_production = super::error_text(500, &err);
+        super::TEST_PRODUCTION.with(|production| production.set(None));
+        (hidden, shown, not_production)
+    });
+    let id = hidden
+        .strip_prefix("internal error, id ")
+        .expect("only an id")
+        .to_string();
+    assert!(!hidden.contains("PROOF_SECRET_TABLE"), "{hidden}");
+    assert_eq!(
+        (shown.as_str(), not_production.as_str()),
+        ("proof bad name", "SELECT * FROM PROOF_SECRET_TABLE failed")
+    );
+    let logged = lines.lock().unwrap().clone();
+    assert!(
+        logged
+            .iter()
+            .any(|line| line.contains(&format!("error id {id}:")) && line.contains("PROOF_SECRET_TABLE")),
+        "{logged:?}"
+    );
+    assert_eq!(
+        logged.iter().filter(|line| line.contains("PROOF_SECRET_TABLE")).count(),
+        2,
+        "on production and off: {logged:?}"
+    );
+    assert!(!logged.iter().any(|line| line.contains("proof bad name")), "{logged:?}");
+
+    // a server that answers a TLS client hello in clear text
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut buffer = [0_u8; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut buffer);
+            let _ = std::io::Write::write_all(&mut stream, b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
+        }
+    });
+    let path = std::env::temp_dir().join(format!("moqui-svc-tls-proof-{}.xml", std::process::id()));
+    std::fs::write(
+        &path,
+        format!(
+            r#"<services><service verb="call" noun="TlsProof" type="remote-rest" authenticate="false"
+                location="https://127.0.0.1:{port}/tls-proof"/></services>"#
+        ),
+    )
+    .unwrap();
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    ctx.factory().set_entity(crate::testing::open());
+    let _entered = ctx.enter();
+    let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let _authz = ctx.disable_authz();
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let out = tracing::subscriber::with_default(ErrorLines(lines.clone()), || {
+        crate::service::sync("call#TlsProof", &std::collections::BTreeMap::new())
+    });
+    let _ = std::fs::remove_file(&path);
+    assert!(out.map_or(true, |results| results.is_empty()));
+    let errors = ctx.message().errors().join("\n");
+    assert!(
+        errors.contains(&format!("https://127.0.0.1:{port}/tls-proof")),
+        "{errors}"
+    );
+    let logged = lines.lock().unwrap().clone();
+    assert!(
+        logged.iter().any(|line| line.contains("call#TlsProof")
+            && line.contains(&format!("https://127.0.0.1:{port}/tls-proof"))),
+        "{logged:?}"
+    );
+}

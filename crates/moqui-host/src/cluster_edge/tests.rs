@@ -223,6 +223,58 @@ mod on_the_port {
         assert!(lock(&seen).is_empty());
     }
 
+    /// The security proof of OWASP ASVS 5.0.0 v5.0.0-12.3.3 (docs/security/proofs/V12-Secure-Communication.md),
+    /// in-process, of a Configuration row: the cluster's own HTTP service between members speaks TLS only and does not
+    /// fall back. A member's post in clear text to the cluster port gets no HTTP answer and is not applied; a sender
+    /// given an `http://` member URL refuses it (the HTTP/1.1 sender) or fails the batch (the gRPC one) rather than send
+    /// in clear text; the same post over TLS with the cluster certificate is applied, and a member without the
+    /// certificate is refused (`a_member_without_the_cluster_certificate_is_refused`). The edge link is TLS as well.
+    /// The deployer's: OpenSearch over `https` (`search-facade/cluster@url`, `http://127.0.0.1:9200` by default), a
+    /// PASS authority over `grpcs` (not `pass-authority@grpc-insecure`), and the Postfix relay and SIP trunks on TLS.
+    #[test]
+    fn the_cluster_port_speaks_only_tls_and_no_sender_falls_back_to_clear_text() {
+        use std::io::Read as _;
+
+        let material = material();
+        let (apply, seen) = recording();
+        let (_edge, base) = start(&material, Protocol::Rest, apply);
+        let address = base.trim_start_matches("https://").to_string();
+
+        let mut clear = std::net::TcpStream::connect(&address).unwrap();
+        clear.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        write!(
+            clear,
+            "POST /cluster/collab-update HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: 5\r\n\r\nclear"
+        )
+        .unwrap();
+        clear.flush().unwrap();
+        let mut answer = Vec::new();
+        let _ = clear.read_to_end(&mut answer);
+        assert!(!answer.starts_with(b"HTTP/"), "{:?}", String::from_utf8_lossy(&answer));
+
+        let plain = format!("http://{address}");
+        let rest = PeerSender {
+            config: client_config(&material).unwrap(),
+            live: Mutex::default(),
+        };
+        let refused = rest.post(&plain, "collab-update", b"plain").unwrap_err();
+        assert!(refused.to_string().contains("not https"), "{refused}");
+        let grpc = super::super::grpc_sender(&client_config(&material).unwrap(), Arc::new(Rest::default()));
+        let outcome = grpc.post_batch(&plain, &[("collab-update", b"plain")]);
+        assert!(outcome.outcomes.is_empty() && outcome.failed.is_some());
+        assert!(
+            lock(&seen).is_empty(),
+            "nothing in clear text was applied: {:?}",
+            lock(&seen)
+        );
+
+        assert_eq!(
+            rest.post(&base, "collab-update", b"tls").unwrap(),
+            PostOutcome::Accepted
+        );
+        assert_eq!(*lock(&seen), ["collab-update tls"]);
+    }
+
     #[test]
     fn a_member_without_the_cluster_certificate_is_refused() {
         let material = material();

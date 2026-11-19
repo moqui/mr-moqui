@@ -1241,3 +1241,150 @@ fn a_key_ended_this_millisecond_is_ended() {
     assert!(super::key_ended(1_000, 1_001));
     assert!(!super::key_ended(1_001, 1_000));
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-6.5.3 (docs/security/proofs/V6-Authentication.md), in-process: the
+/// seeds and codes of the second factors are drawn from the operating system's random source (`getrandom`, in
+/// `factor.rs` `totp_secret` and `random_code`), never a seeded or time-based generator. A TOTP seed
+/// (`create#UserAuthcFactorTotp`, `ec.user.totpSecret()`) is 20 random bytes in base32, 160 bits; a code sent by email
+/// or SMS (`create#SingleUseAuthcFactor`, `ec.user.randomCode(6)`) is six digits and a printed recovery code
+/// (`create#SingleUseAuthcCodes`, `ec.user.randomCode(8)`) eight, each a uniform draw (the top of the `u32` range that
+/// would bias the remainder is drawn again). Two thousand seeds are all different and their bytes take every value; two
+/// thousand codes of each width are of that width, take every digit in every place, and spread their leading digit
+/// evenly. The scripts' calls give the same, and `UserServices.xml` makes its seeds and codes with them and has no
+/// `Math.random`. It does not judge the operating system's generator.
+#[test]
+fn factor_seeds_and_codes_come_from_the_operating_systems_random_source() {
+    let mut seeds = std::collections::HashSet::new();
+    let mut byte_values = [false; 256];
+    for _ in 0..2000 {
+        let seed = crate::user::totp_secret();
+        assert_eq!(seed.len(), 32, "{seed}");
+        let bytes = super::super::totp::key(&seed).expect("base32");
+        assert_eq!(bytes.len(), 20, "{seed}");
+        for byte in bytes {
+            byte_values[usize::from(byte)] = true;
+        }
+        seeds.insert(seed);
+    }
+    assert_eq!(seeds.len(), 2000, "every seed is new");
+    assert!(
+        byte_values.iter().all(|seen| *seen),
+        "the seeds' bytes take every value"
+    );
+
+    for width in [6, 8] {
+        let mut codes = std::collections::HashSet::new();
+        let mut digits = vec![[0_u32; 10]; width];
+        for _ in 0..2000 {
+            let code = crate::user::random_code(width).unwrap();
+            assert_eq!(code.len(), width, "{code}");
+            for (place, digit) in code.chars().enumerate() {
+                let digit = digit.to_digit(10).expect("a digit") as usize;
+                digits[place][digit] += 1;
+            }
+            codes.insert(code);
+        }
+        // 2000 draws of 10^6 or more values: a repeat is possible, many are not
+        assert!(codes.len() >= 1990, "width {width}: {} distinct", codes.len());
+        for (place, counts) in digits.iter().enumerate() {
+            assert!(
+                counts.iter().all(|count| *count > 0),
+                "width {width}, place {place}: {counts:?}"
+            );
+        }
+        // about 200 each; a generator stuck on a few values, or one biased to low digits, falls outside
+        assert!(
+            digits[0].iter().all(|count| (100..=320).contains(count)),
+            "width {width}, leading digit: {:?}",
+            digits[0]
+        );
+    }
+
+    let ctx = ExecutionContextFactory::test_context();
+    let _entered = ctx.enter();
+    let script = |expression: &str| moqui_lib::object::to_plain_string(&crate::script::eval_value(expression).unwrap());
+    for width in [6, 8] {
+        let code = script(&format!("ec.user.randomCode({width})"));
+        assert!(
+            code.len() == width && code.chars().all(|ch| ch.is_ascii_digit()),
+            "{code}"
+        );
+    }
+    let seed = script("ec.user.totpSecret()");
+    assert_eq!(
+        super::super::totp::key(&seed).map(|bytes| bytes.len()),
+        Some(20),
+        "{seed}"
+    );
+    assert_ne!(seed, script("ec.user.totpSecret()"));
+    crate::script::clear_context_stack();
+
+    let services = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/components/base/framework/service/org/moqui/impl/UserServices.xml"
+    ))
+    .unwrap();
+    let body = |noun: &str| {
+        let start = services
+            .find(&format!("noun=\"{noun}\""))
+            .unwrap_or_else(|| panic!("{noun}"));
+        let end = services[start..].find("</service>").expect("its end") + start;
+        services[start..end].to_string()
+    };
+    assert!(body("SingleUseAuthcCodes").contains("ec.user.randomCode(8)"));
+    assert!(body("SingleUseAuthcFactor").contains("ec.user.randomCode(6)"));
+    assert!(body("UserAuthcFactorTotp").contains("ec.user.totpSecret()"));
+    assert!(
+        !services.contains("Math.random"),
+        "no code from the script engine's own generator"
+    );
+}
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-6.2.10 (docs/security/proofs/V6-Authentication.md), in-process, of
+/// a Configuration row: a password stays valid until it is changed when `user-facade/password@change-weeks` is 0, a
+/// password set ten years ago signing in as one set today does; under the value `MoquiDefaultConf.xml` ships (104, read
+/// from the file) the same account is refused once its password is older than that many weeks, and signs in while it
+/// is not. So the deployer must set `change-weeks` to 0 (a `moqui_conf__user_facade__password__change_weeks` of 0, or
+/// the attribute in the runtime conf) for no periodic rotation.
+#[test]
+fn a_password_stays_valid_with_change_weeks_zero_and_the_shipped_default_rotates_it() {
+    let shipped_conf = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/components/base/framework/conf/MoquiDefaultConf.xml"
+    ))
+    .unwrap();
+    let (_, after) = shipped_conf
+        .split_once("change-weeks=\"")
+        .expect("the shipped change-weeks");
+    let shipped: i64 = after.split('"').next().unwrap().parse().unwrap();
+    assert!(shipped > 0, "the shipped default expires a password: {shipped}");
+
+    let sign_in = |change_weeks: i64, set_weeks_ago: i64| {
+        session::reset_session();
+        let ctx = ExecutionContextFactory::test_context_with_conf(&format!(
+            r#"<moqui-conf><user-facade><password change-weeks="{change_weeks}"/></user-facade></moqui-conf>"#
+        ));
+        let facade = crate::testing::open();
+        ctx.factory().set_entity(facade.clone());
+        let _guard = ctx.enter();
+        assert_eq!(policy::change_weeks(), change_weeks);
+        create_user(&facade, "rotate", "Secret1!", |value| {
+            value.set("passwordSetDate", stamp(now_millis() - set_weeks_ago * WEEK_MILLIS));
+        });
+        let outcome = login_user("rotate", "Secret1!").map_err(|err| err.to_string());
+        if outcome.is_ok() {
+            logout().unwrap();
+        }
+        session::reset_session();
+        outcome
+    };
+    assert_eq!(sign_in(0, 520), Ok(()), "ten years old, with change-weeks 0");
+    assert_eq!(sign_in(0, 0), Ok(()));
+    let expired = sign_in(shipped, shipped + 1).expect_err("older than the shipped default");
+    assert!(expired.contains("must be changed"), "{expired}");
+    assert_eq!(
+        sign_in(shipped, shipped - 1),
+        Ok(()),
+        "younger than the shipped default"
+    );
+}

@@ -22,7 +22,7 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-5.3.1 | 1 | Stored uploads never run as server code | Gap | SEC-SCR-81 (a wiki page saved with a template extension runs as server script; fix merged 2026-11-18, not yet recorded); the cut at `#` (SEC-PFS-82's cause) is fixed: `context/resource.rs` `refuse_cut_write` refuses a write at a location holding `#` | - |
+| v5.0.0-5.3.1 | 1 | Stored uploads never run as server code | Framework | a `.fancy` file is not written, moved, copied or uploaded under a wiki space without `DATABASE_ADMIN`, and a script page runs only from its space's own database place (`WikiServices.xml`, `Wiki.eecas.xml`; SEC-SCR-81 fixed); a screen's templated text renders only a component's own file (`screen/sri/sections.rs` `template_location_allowed`); a write at a location holding `#` is refused (`context/resource.rs` `refuse_cut_write`; SEC-PFS-82 fixed) | `WikiPageTypes` (framework spec) "with DATABASE_ADMIN a script page is written, and a user without it may not change or move it", "script pages run only from a space's own place in the database ..."; `resource/tests.rs` `a_write_at_a_location_with_a_hash_is_refused` (in-process) |
 | v5.0.0-5.3.2 | 1 | File paths built from trusted data, not names | Gap | SEC-RTE-83 (`print#ResourceDocument` reads any location); `context/resource.rs` `runtime_ref` joins `..`; met in the drive, DAV, SFTP and elFinder checks and `multipart.rs` `base_name` | - |
 
 ## V5.4 File Download
