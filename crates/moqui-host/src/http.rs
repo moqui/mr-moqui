@@ -1138,7 +1138,8 @@ async fn dispatch_screen(
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok());
-    // an upload that may be larger than an anonymous request may send needs a user (SEC-RTE-07)
+    // a body that may be larger than an anonymous request may send (an upload, a servlet's larger max-body) needs a
+    // user (SEC-RTE-07, SEC-RTE-84)
     if let Some(anonymous) = moqui_core::web::anonymous_upload_limit(Some(&state.factory), &web) {
         if declared.is_none_or(|length| length > anonymous)
             && !upload_has_user(&state, &parts.headers, web.https, client).await
