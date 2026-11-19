@@ -569,6 +569,24 @@ fn room_of(parameters: &BTreeMap<String, Value>, access: &Access, facade: &Entit
     Some(room)
 }
 
+/// Whether `room` holds the rows of the caller's scope under `access` now: a saved document's shared room is the room of
+/// one scope ([`crate::room::document_room_id`]), and its rows are read again only by a member of that scope. A
+/// member whose scope changed since they joined (an active organization chosen, a time zone) reads the room's rows
+/// as they were and leaves it before reading any of their own into it (SEC-TLS-94). A scratch room is its one
+/// person's.
+fn in_callers_scope(facade: &EntityFacade, room: &SharedRoom, access: &Access) -> bool {
+    let (definition_id, room_id, sheets) = {
+        let room = moqui_lib::sync::lock(room);
+        match room.definition_id.clone().filter(|_| room.shared) {
+            Some(definition_id) => (definition_id, room.id.clone(), room.data_sheets.clone()),
+            None => return true,
+        }
+    };
+    // the scope is read with the room unlocked: a viewport of it is answered meanwhile
+    let scope = crate::scope::fingerprint(facade, &sheets, access);
+    crate::room::document_room_id(&definition_id, access.profile_id().as_deref(), &scope) == room_id
+}
+
 /// The caller's user id, for the rooms and the log.
 fn user_id() -> String {
     moqui_core::user::current_user_id().ok().flatten().unwrap_or_default()
@@ -853,13 +871,21 @@ fn refresh_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFa
     let Some(room) = room_of(parameters, &access, facade) else {
         return Ok(BTreeMap::new());
     };
+    let user = user_id();
+    if !in_callers_scope(facade, &room, &access) {
+        // the view opens the document again, in the room of the caller's scope
+        let id = moqui_lib::sync::lock(&room).id.clone();
+        if let Some(rooms) = ExecutionContext::with_current(|ec| Rooms::of(ec.factory())) {
+            rooms.close(&user, &id);
+        }
+        return refused(ROOM_GONE);
+    }
     let sheets = moqui_lib::sync::lock(&room).data_sheets.clone();
     // read with the room unlocked: a viewport of it is still answered meanwhile
     let rows = match read_sheets(facade, &sheets, &access, true) {
         Ok(rows) => rows,
         Err(message) => return refused(message),
     };
-    let user = user_id();
     let mut room = moqui_lib::sync::lock(&room);
     match room.refresh(rows) {
         Ok(()) => {
@@ -1004,7 +1030,15 @@ fn save_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     let (scratch_id, sheets) = (room.id.clone(), room.data_sheets.clone());
     drop(room);
     // the room is now the document's for the saver's scope, at the start of its log (one of a document saved over
-    // begins again, and its rooms are opened anew)
+    // begins again, and its rooms are opened anew); its rows, read when it was opened, are read again in that scope
+    // first, so the readers of the scope who join it find their rows (SEC-TLS-94)
+    let refreshed = read_sheets(facade, &sheets, &access, true)
+        .map_err(Error::new)
+        .and_then(|rows| moqui_lib::sync::lock(&shared_room).refresh(rows));
+    if let Err(err) = refreshed {
+        tracing::warn!(document = %id, error = %err, "A saved CalcGrid document's rows were not read again; its room stays its saver's");
+        return Ok(out(&id, version, &title, &scratch_id));
+    }
     let scope = crate::scope::fingerprint(facade, &sheets, &access);
     let shared_id = crate::room::document_room_id(&id, access.profile_id().as_deref(), &scope);
     match together::begin_again(facade, &id, &user, version) {
@@ -1259,7 +1293,18 @@ fn get_calc_frame(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         return refused("no execution context is entered");
     };
     let profile_id = access.profile_id();
-    let room = match rooms.find_document(&user_id, &definition_id, profile_id.as_deref()) {
+    // a room of the document the caller is in is read only while it is of their scope now; one of another scope is
+    // left, and the document opened in theirs (SEC-TLS-94)
+    let found = match rooms.find_document(&user_id, &definition_id, profile_id.as_deref()) {
+        Some(room) if in_callers_scope(facade, &room, &access) => Some(room),
+        Some(room) => {
+            let id = moqui_lib::sync::lock(&room).id.clone();
+            rooms.close(&user_id, &id);
+            None
+        }
+        None => None,
+    };
+    let room = match found {
         Some(room) => {
             let (stale, sheets) = {
                 let room = moqui_lib::sync::lock(&room);

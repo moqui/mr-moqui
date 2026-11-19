@@ -467,3 +467,44 @@ feature("a range of a saved document is added to a dashboard of the viewer's own
         String(badKind.json.errors).includes("A panel of a range is")
     },
 })
+
+// The room of a saved document is the room of one scope: a member whose scope changed (here the time zone, part of the
+// scope's fingerprint) reads no rows of theirs into it. A refresh leaves it and asks the view to open the document again,
+// in the room of their scope; a report's frame leaves it and reads the document in theirs (SEC-TLS-94).
+feature("a member whose scope changed reads no rows of theirs into a saved document's room: a refresh and a frame leave it", {
+    when() {
+        const zone = ec.user.timeZone
+        const other = zone === "Pacific/Auckland" ? "America/Denver" : "Pacific/Auckland"
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source)}, "post")
+        const saved = call("calcSave", {roomId: opened.json.roomId, title: "Scoped", definitionId: "spec-calcgrid-scope"}, "post")
+        const first = saved.json.roomId
+        const cells = roomId => call("calcCells", {roomId, sheet: 0, row: 1, column: 1, width: 1, height: 1})
+        let refreshed, afterRefresh, reopened, framed, afterFrame
+        try {
+            ec.user.setTimeZone(other)
+            refreshed = call("calcRefresh", {roomId: first}, "post")
+            afterRefresh = cells(first)
+            reopened = call("calcOpen", {definitionId: "spec-calcgrid-scope"}, "post")
+            ec.user.setTimeZone(zone)
+            framed = ec.service.sync().name("org.moqui.calc.CalcServices.get#CalcFrame")
+                .parameters({definitionId: "spec-calcgrid-scope", range: "Enumeration!A1:A2"}).call() || {}
+            ec.message.clearErrors()
+            afterFrame = cells(reopened.json.roomId)
+        } finally {
+            ec.user.setTimeZone(zone)
+        }
+        call("calcDelete", {definitionId: "spec-calcgrid-scope"}, "post")
+        ec.message.clearErrors()
+        return {saved, first, refreshed, afterRefresh, reopened, framed: JSON.stringify(framed.frame || {}), afterFrame}
+    },
+    then({saved, first, refreshed, afterRefresh, reopened, framed, afterFrame}) {
+        !saved.json.errors
+        String(first).startsWith("d")
+        String(refreshed.json.errors).includes("ROOM_GONE")
+        String(afterRefresh.json.errors).includes("ROOM_GONE")
+        !reopened.json.errors
+        reopened.json.roomId != first
+        framed.includes('"name":"enumId"')
+        String(afterFrame.json.errors).includes("ROOM_GONE")
+    },
+})
