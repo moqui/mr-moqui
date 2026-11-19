@@ -601,6 +601,11 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
         })
         const resumed = as("rda.next", "pause#Schedule", {screenScheduledId: scheduleId, paused: false})
         const after = one("moqui.screen.ScreenScheduled", {screenScheduledId: scheduleId})
+        // the rule was this feature's: RDA_NEXT's alert rules are BusinessAlerts' (its owned-rule lookup lists them)
+        sys(() => {
+            ec.entity.find("moqui.report.DefinitionReference").condition("referencedId", "rda-alert").deleteAll()
+            ec.entity.find("moqui.report.Definition").condition("definitionId", "rda-alert").deleteAll()
+        })
         return {
             lookup: owned({out: lookup}),
             scheduleId,
