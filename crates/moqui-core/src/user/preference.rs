@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use moqui_db::sql::Condition;
 use moqui_lib::object::{compare_obj, to_plain_string, Value};
 
-use super::login::{entity_facade, now_value};
+use super::login::{entity_facade, now_effective_value, now_value};
 use super::session;
 use crate::context::{Error, ExecutionContext};
 use crate::entity::EntityValue;
@@ -155,29 +155,34 @@ pub fn set_preference(key: &str, value: Option<&str>) -> Result<(), Error> {
     Ok(())
 }
 
-/// `ALL_USERS` and each group `user_id` has an open membership in.
+/// `ALL_USERS` and each group `user_id` has an open membership in now, by the clock, as Java's `getUserGroupIdSet`
+/// (the groups authorization reads).
 ///
 /// # Errors
 ///
 /// Returns an error when the membership rows cannot be read.
 pub fn user_group_ids(user_id: Option<&str>) -> Result<BTreeSet<String>, Error> {
     let mut groups = BTreeSet::from([ALL_USERS.to_string()]);
-    let Some(user_id) = user_id.filter(|id| !id.is_empty()) else {
-        return Ok(groups);
-    };
-    let _authz = without_authz();
-    let facade = entity_facade()?;
-    let now = now_value();
-    let rows = facade.find(GROUP_MEMBER)?.eq("userId", Value::string(user_id)).list()?;
-    for row in rows.iter().filter(|row| date_open(row, "fromDate", "thruDate", &now)) {
-        if let Some(group) = text(row, "userGroupId").filter(|id| !id.is_empty()) {
-            groups.insert(group);
-        }
+    if let Some(user_id) = user_id.filter(|id| !id.is_empty()) {
+        groups.extend(groups_at(user_id, &now_value())?);
     }
     Ok(groups)
 }
 
-/// True when the logged-in user is in `user_group_id`. Everyone is in `ALL_USERS`.
+/// The groups `user_id` has a membership in at `now`.
+fn groups_at(user_id: &str, now: &Value) -> Result<BTreeSet<String>, Error> {
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let rows = facade.find(GROUP_MEMBER)?.eq("userId", Value::string(user_id)).list()?;
+    Ok(rows
+        .iter()
+        .filter(|row| date_open(row, "fromDate", "thruDate", now))
+        .filter_map(|row| text(row, "userGroupId").filter(|id| !id.is_empty()))
+        .collect())
+}
+
+/// True when the logged-in user is in `user_group_id` at the effective time (`ec.user.nowTimestamp`), as Java's
+/// `isInGroup`. Everyone is in `ALL_USERS`.
 ///
 /// # Errors
 ///
@@ -186,13 +191,14 @@ pub fn is_in_group(user_group_id: &str) -> Result<bool, Error> {
     if user_group_id == ALL_USERS {
         return Ok(true);
     }
-    let Some(user_id) = session::current_user_id()? else {
+    let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
         return Ok(false);
     };
-    Ok(user_group_ids(Some(&user_id))?.contains(user_group_id))
+    Ok(groups_at(&user_id, &now_effective_value())?.contains(user_group_id))
 }
 
-/// True when a group the logged-in user is in grants `user_permission_id`, both rows in date.
+/// True when a group the logged-in user is in grants `user_permission_id`, both rows in date at the effective time
+/// (`ec.user.nowTimestamp`), as Java's `hasPermission`.
 ///
 /// Java reads the `UserPermissionCheck` view. This reads its two member entities.
 ///
@@ -266,11 +272,12 @@ pub fn current_user_external() -> bool {
     }
 }
 
-/// Whether a group `user_id` is in grants `user_permission_id`, both rows in date.
+/// Whether a group `user_id` is in grants `user_permission_id`, both rows in date at the effective time, as Java's
+/// `hasPermissionById` with `nowTimestamp` (found while fixing SEC-BOS-97: this read the clock).
 fn user_granted(user_id: &str, user_permission_id: &str) -> Result<bool, Error> {
     let _authz = without_authz();
     let facade = entity_facade()?;
-    let now = now_value();
+    let now = now_effective_value();
     let members = facade.find(GROUP_MEMBER)?.eq("userId", Value::string(user_id)).list()?;
     for member in members
         .iter()
