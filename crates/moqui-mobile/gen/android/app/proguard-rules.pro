@@ -49,6 +49,11 @@
 }
 # ... and whether the phone has a secure lock screen (src/android.rs device_secure; SEC-CLI-113)
 -keep class org.moqui.mobile.DeviceLock { *; }
+# ... and the server whose pages the app origin shows, for their dialogs' title (src/android.rs page_server; wry's
+# RustWebChromeClient, crates/moqui-mobile/patches; SEC-CLI-119)
+-keep class org.moqui.mobile.RustWebChromeClient {
+    public static void pageServer(java.lang.String);
+}
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
 

@@ -55,6 +55,9 @@ struct Shown {
     to: Option<String>,
     /// The account the server pages were opened for (`open_remote`), until the account changes.
     app_account: Option<String>,
+    /// The host (and port) of that account's server, which the app origin does not name: the title of the pages'
+    /// dialogs and notifications (SEC-CLI-119).
+    app_server: Option<String>,
     /// The nonce of the shell's current load, handed to its document once it loaded; none while it loads, after a
     /// navigation, and on any other origin.
     nonce: Option<String>,
@@ -118,9 +121,11 @@ impl PageState {
         moqui_lib::sync::lock(&self.shown).nonce.is_some()
     }
 
-    /// The server pages about to open are `account`'s.
-    pub(crate) fn bind_app(&self, account: &str) {
-        moqui_lib::sync::lock(&self.shown).app_account = Some(account.to_string());
+    /// The server pages about to open are `account`'s, of the server at `server` (its host and port).
+    pub(crate) fn bind_app(&self, account: &str, server: Option<&str>) {
+        let mut shown = moqui_lib::sync::lock(&self.shown);
+        shown.app_account = Some(account.to_string());
+        shown.app_server = server.map(str::to_string);
     }
 
     /// The server pages of `account`, or of any account, are no account's any more (a switch, a sign-out): whether they
@@ -134,8 +139,14 @@ impl PageState {
         };
         if theirs {
             shown.app_account = None;
+            shown.app_server = None;
         }
         theirs
+    }
+
+    /// The host of the server the server pages were opened for, while they are bound to its account.
+    pub(crate) fn app_server(&self) -> Option<String> {
+        moqui_lib::sync::lock(&self.shown).app_server.clone()
     }
 
     /// The origin shown, once a load began.
@@ -682,6 +693,9 @@ impl ShellHost for MobileHost {
     fn close_remotes(&self, account: Option<&str>) {
         // the server pages are the bound account's: they are no account's, and go, before the current account changes
         let theirs = self.page.unbind_app(account);
+        if theirs {
+            tell_page_server(None);
+        }
         if theirs && self.page.origin().as_deref() != Some(SHELL_ORIGIN) {
             self.navigate(&moqui_client_tauri::shell_url(None, None));
         }
@@ -696,7 +710,13 @@ impl ShellHost for MobileHost {
         }
         let account = self.signed_in().ok_or("No account is signed in")?;
         let url = Url::parse(&format!("{APP_ORIGIN}{path}")).map_err(|err| err.to_string())?;
-        self.page.bind_app(&account);
+        // the pages' dialogs and notifications name their server, which the app origin does not (SEC-CLI-119)
+        let server = self
+            .core()
+            .and_then(|core| core.account(&account))
+            .and_then(|(account, _)| crate::join::server_host(&account));
+        self.page.bind_app(&account, server.as_deref());
+        tell_page_server(server.as_deref());
         self.navigate(&url);
         Ok(())
     }
@@ -757,6 +777,17 @@ impl ShellHost for MobileHost {
         }
         unified_register_all();
     }
+}
+
+/// The server whose pages the app origin shows, or none, for the title of their alert and confirm dialogs (wry's
+/// `RustWebChromeClient.pageServer`, SEC-CLI-119).
+fn tell_page_server(server: Option<&str>) {
+    #[cfg(target_os = "android")]
+    if let Err(err) = crate::android::page_server(server) {
+        log::warn!("The page dialogs were not told the server: {err}");
+    }
+    #[cfg(not(target_os = "android"))]
+    log::debug!("The server pages' server: {server:?}");
 }
 
 /// The UnifiedPush instances follow the accounts signed in here (`UnifiedPushes.registerAll`): one for an account that

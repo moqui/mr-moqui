@@ -236,7 +236,9 @@ macOS, `~/.local/share/org.moqui.desktop/runtime` on Linux):
 
 Chromium's process sandbox: the `.deb` installs `chrome-sandbox` setuid root, so it has one. An AppImage cannot (its
 image is mounted `nosuid`), and where AppArmor restricts unprivileged user namespaces (Ubuntu 23.10 and later),
-tauri-runtime-cef starts it with `--no-sandbox` ([Build-Test](../../docs/Build-Test.md#desktop-app)).
+tauri-runtime-cef starts it with `--no-sandbox` ([Build-Test](../../docs/Build-Test.md#desktop-app)). The app then
+says so once, in a dialog that names the `.deb` as the way to keep it (`src/os/sandbox.rs`, the file `sandbox-warned`
+in the config directory), and logs it at every start.
 
 ## Test
 

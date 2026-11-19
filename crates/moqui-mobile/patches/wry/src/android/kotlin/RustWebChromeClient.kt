@@ -17,7 +17,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
 import android.view.View
 import android.webkit.*
@@ -29,10 +28,35 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 class RustWebChromeClient(private val activity: WryActivity, private val webViewId: String) : WebChromeClient() {
-  private companion object {
-    const val PERMISSION_REQUEST_DEFAULT = 0
-    const val PERMISSION_REQUEST_ALLOW = 1
-    const val PERMISSION_REQUEST_DENY = 2
+  companion object {
+    private const val PERMISSION_REQUEST_DEFAULT = 0
+    private const val PERMISSION_REQUEST_ALLOW = 1
+    private const val PERMISSION_REQUEST_DENY = 2
+
+    // MR Moqui patch (crates/moqui-mobile/patches/README.md, SEC-CLI-119): the app's own origins, as RustWebView's
+    // PAGE_ORIGINS: the shell's, and every account's server pages'
+    private const val SHELL_ORIGIN = "http://moqui-shell.localhost"
+    private const val APP_ORIGIN = "http://moqui-app.localhost"
+
+    // MR Moqui patch (SEC-CLI-89, SEC-CLI-110): the folder of the app's cache a camera capture is written to, the
+    // FileProvider's one path (res/xml/file_paths.xml)
+    private const val CAPTURES = "captures"
+
+    // MR Moqui patch (SEC-CLI-119): the host of the server whose pages the app origin shows, which its URL does not
+    // name; set by Rust as it opens them and cleared as they close (crates/moqui-mobile/src/host.rs open_remote)
+    @Volatile private var appServer: String? = null
+
+    /** MR Moqui patch (SEC-CLI-119): the server whose pages the app origin shows, or none. Called by Rust (JNI). */
+    @JvmStatic
+    fun pageServer(host: String?) {
+      appServer = host?.trim()?.takeIf { it.isNotEmpty() }
+    }
+  }
+
+  init {
+    // MR Moqui patch (SEC-CLI-89, SEC-CLI-110): the captures a page was handed went with its webview; a new one finds
+    // none (a capture is not deleted when handed over: the WebView reads it only when the page reads or uploads it)
+    sweepCaptures()
   }
 
   /**
@@ -144,6 +168,8 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     }
     val builder = AlertDialog.Builder(view.context)
     builder
+      // MR Moqui patch (SEC-CLI-119): the dialog names who asks (dialogTitle)
+      .setTitle(dialogTitle(url))
       .setMessage(message)
       .setPositiveButton(
         "OK"
@@ -176,6 +202,8 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     }
     val builder = AlertDialog.Builder(view.context)
     builder
+      // MR Moqui patch (SEC-CLI-119): the dialog names who asks (dialogTitle)
+      .setTitle(dialogTitle(url))
       .setMessage(message)
       .setPositiveButton(
         "OK"
@@ -216,12 +244,22 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     defaultValue: String,
     result: JsPromptResult
   ): Boolean {
+    // MR Moqui patch (SEC-CLI-119): no prompt on the app's own origins: a page of one account's server could ask there,
+    // in the app's own dialog, for another account's password
+    val origin = pageOrigin(url)
+    if (origin == SHELL_ORIGIN || origin == APP_ORIGIN) {
+      Logger.warn(Logger.tags("Dialog"), "A page's prompt on the app's origin is refused")
+      result.cancel()
+      return true
+    }
     if (activity.isFinishing) {
       return true
     }
     val builder = AlertDialog.Builder(view.context)
     val input = EditText(view.context)
     builder
+      // MR Moqui patch (SEC-CLI-119): the dialog names who asks (dialogTitle)
+      .setTitle(dialogTitle(url))
       .setMessage(message)
       .setView(input)
       .setPositiveButton(
@@ -246,6 +284,33 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     // MR Moqui patch: no touch through another app's window over the page's dialog (RustWebView.refuseObscuredTouches)
     RustWebView.refuseObscuredTouches(dialog.window?.decorView)
     return true
+  }
+
+  /**
+   * MR Moqui patch (SEC-CLI-119): the origin (`scheme://host[:port]`) of the page at `url`, as the WebView names a page
+   * that asks for a dialog; none when it has no host (`about:blank`, `data:`).
+   */
+  private fun pageOrigin(url: String): String? {
+    val uri = Uri.parse(url)
+    val scheme = uri.scheme?.lowercase() ?: return null
+    val host = uri.host?.lowercase()?.takeIf { it.isNotEmpty() } ?: return null
+    return if (uri.port == -1) "$scheme://$host" else "$scheme://$host:${uri.port}"
+  }
+
+  /**
+   * MR Moqui patch (SEC-CLI-119): the title of a page's alert, confirm or prompt, which names who asks, since the
+   * dialogs are the app's own: the shell's the app's name; a server page's (every account's are on the one app origin)
+   * the host of the server Rust opened them for ([pageServer]); any other page's (a frame of a server page) its own
+   * host.
+   */
+  private fun dialogTitle(url: String): String {
+    val origin = pageOrigin(url)
+    return when {
+      origin == SHELL_ORIGIN -> activity.applicationInfo.loadLabel(activity.packageManager).toString()
+      origin == APP_ORIGIN -> appServer ?: "A server page"
+      origin == null -> "A web page"
+      else -> Uri.parse(url).host ?: "A web page"
+    }
   }
 
   /**
@@ -374,8 +439,10 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     if (takePictureIntent.resolveActivity(activity.packageManager) == null) {
       return false
     }
-    val imageFileUri: Uri = try {
-      createImageFileUri()
+    // MR Moqui patch (SEC-CLI-89): the photo goes to the app's cache (createCaptureFile), not to shared storage
+    val (imageFile, imageFileUri) = try {
+      val file = createCaptureFile("JPEG_", ".jpg")
+      file to captureUri(file)
     } catch (ex: Exception) {
       Logger.error("Unable to create temporary media capture file: " + ex.message)
       return false
@@ -383,8 +450,11 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, imageFileUri)
     activity.launchActivityForResult(takePictureIntent) { result ->
       var res: Array<Uri?>? = null
-      if (result?.resultCode == Activity.RESULT_OK) {
+      if (result?.resultCode == Activity.RESULT_OK && imageFile.length() > 0) {
         res = arrayOf(imageFileUri)
+      } else {
+        // cancelled, or the camera wrote nothing: the file goes now
+        imageFile.delete()
       }
       filePathCallback.onReceiveValue(res)
     }
@@ -396,10 +466,28 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     if (takeVideoIntent.resolveActivity(activity.packageManager) == null) {
       return false
     }
+    // MR Moqui patch (SEC-CLI-110): the video goes to the app's cache as a photo does (EXTRA_OUTPUT), not where the
+    // camera app puts its videos (shared storage, the gallery)
+    val (videoFile, videoFileUri) = try {
+      val file = createCaptureFile("VID_", ".mp4")
+      file to captureUri(file)
+    } catch (ex: Exception) {
+      Logger.error("Unable to create temporary media capture file: " + ex.message)
+      return false
+    }
+    takeVideoIntent.putExtra(MediaStore.EXTRA_OUTPUT, videoFileUri)
     activity.launchActivityForResult(takeVideoIntent) { result ->
       var res: Array<Uri?>? = null
       if (result?.resultCode == Activity.RESULT_OK) {
-        res = arrayOf(result.data!!.data)
+        // a camera app that ignores EXTRA_OUTPUT leaves the file empty and says where its video went, if anywhere
+        val taken: Uri? = if (videoFile.length() > 0) videoFileUri else result.data?.data
+        if (taken != null) {
+          res = arrayOf(taken)
+        }
+      }
+      if (res == null || res[0] != videoFileUri) {
+        // cancelled, or the video is elsewhere: the file goes now
+        videoFile.delete()
       }
       filePathCallback.onReceiveValue(res)
     }
@@ -495,23 +583,33 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
       msg.equals("console.groupEnd", ignoreCase = true))
   }
 
+  /**
+   * MR Moqui patch (SEC-CLI-89, SEC-CLI-110): a new file for a camera capture (`prefix`, `suffix`: `JPEG_`, `.jpg`) in
+   * the app's cache, `captures/`, which neither another app nor a backup reads, and the FileProvider's one path; a
+   * cancelled capture's goes at once, a taken one at the next webview's start ([sweepCaptures]).
+   */
   @Throws(IOException::class)
-  private fun createImageFileUri(): Uri {
-    val photoFile = createImageFile(activity)
-    return FileProvider.getUriForFile(
-      activity,
-      activity.packageName.toString() + ".fileprovider",
-      photoFile
-    )
+  private fun createCaptureFile(prefix: String, suffix: String): File {
+    val dir = File(activity.cacheDir, CAPTURES)
+    if (!dir.isDirectory && !dir.mkdirs()) {
+      throw IOException("The folder $dir was not made")
+    }
+    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
+    return File.createTempFile(prefix + timeStamp + "_", suffix, dir)
   }
 
-  @Throws(IOException::class)
-  private fun createImageFile(activity: Activity): File {
-    // Create an image file name
-    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
-    val imageFileName = "JPEG_" + timeStamp + "_"
-    val storageDir = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-    return File.createTempFile(imageFileName, ".jpg", storageDir)
+  /** The `content:` URI of a capture file, which the camera app is let write. */
+  private fun captureUri(file: File): Uri {
+    return FileProvider.getUriForFile(activity, activity.packageName + ".fileprovider", file)
+  }
+
+  /** MR Moqui patch (SEC-CLI-89, SEC-CLI-110): the captures of the pages before this webview go. */
+  private fun sweepCaptures() {
+    try {
+      File(activity.cacheDir, CAPTURES).listFiles()?.forEach { it.delete() }
+    } catch (ex: SecurityException) {
+      Logger.error("The camera captures were not deleted: " + ex.message)
+    }
   }
 
   override fun onReceivedTitle(

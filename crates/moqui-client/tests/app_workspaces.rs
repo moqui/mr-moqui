@@ -18,7 +18,9 @@
 //! releases they replace, yrs without SEC-TLS-95's depth limit among them (plans/Security-Review.md SEC-CLI-126). The
 //! generated crate of `./moq build` copies the root's table as it writes itself (`root_patch_table`,
 //! scripts/moq/build.sh; checked in scripts/moq-test.sh). The apps are outside the workspace, so their manifests are
-//! read here by path, and `./moq test-framework` checks them on every push.
+//! read here by path, and `./moq test-framework` checks them on every push. The mobile app's and the Tauri glue's
+//! `Cargo.lock` are committed, and must hold the repository's versions of the crates they share with it
+//! (`./moq update-app-locks`; SEC-CLI-104).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -116,4 +118,79 @@ fn an_app_that_builds_the_framework_in_its_own_workspace_takes_every_patch_of_th
             );
         }
     }
+}
+
+/// A lock file's crates.io packages, as name and version.
+fn registry_packages(lock: &Path) -> Vec<(String, String)> {
+    let mut packages = Vec::new();
+    let (mut name, mut version, mut registry) = (String::new(), String::new(), false);
+    let mut flush = |name: &mut String, version: &mut String, registry: &mut bool| {
+        if !name.is_empty() && *registry {
+            packages.push((std::mem::take(name), std::mem::take(version)));
+        }
+        name.clear();
+        version.clear();
+        *registry = false;
+    };
+    for line in read(lock).lines().map(str::trim) {
+        if line == "[[package]]" {
+            flush(&mut name, &mut version, &mut registry);
+        } else if let Some(value) = line.strip_prefix("name = ") {
+            name = value.trim_matches('"').to_string();
+        } else if let Some(value) = line.strip_prefix("version = ") {
+            version = value.trim_matches('"').to_string();
+        } else if let Some(value) = line.strip_prefix("source = ") {
+            registry = value.trim_matches('"').starts_with("registry+");
+        }
+    }
+    flush(&mut name, &mut version, &mut registry);
+    packages
+}
+
+/// The semver range a version is compatible within: its major, else `0.<minor>`, else `0.0.<patch>`.
+fn range(version: &str) -> String {
+    let parts: Vec<&str> = version.split(['.', '+', '-']).collect();
+    let part = |index: usize| parts.get(index).copied().unwrap_or("0");
+    if part(0) != "0" {
+        part(0).to_string()
+    } else if part(1) != "0" {
+        format!("0.{}", part(1))
+    } else {
+        format!("0.0.{}", part(2))
+    }
+}
+
+#[test]
+fn the_mobile_app_and_the_glue_commit_locks_with_the_repositorys_versions_of_the_crates_they_share() {
+    let ignored = read(&root().join(".gitignore"));
+    let repository: BTreeMap<(String, String), String> = registry_packages(&root().join("Cargo.lock"))
+        .into_iter()
+        .map(|(name, version)| ((name, range(&version)), version))
+        .collect();
+    for app in ["crates/moqui-client-tauri", "crates/moqui-mobile"] {
+        assert!(
+            !ignored.lines().any(|line| line.trim() == format!("/{app}/Cargo.lock")),
+            "{app}/Cargo.lock is committed (SEC-CLI-104), not ignored"
+        );
+        let drift: Vec<String> = registry_packages(&root().join(app).join("Cargo.lock"))
+            .into_iter()
+            .filter_map(|(name, version)| {
+                let theirs = repository.get(&(name.clone(), range(&version)))?;
+                (theirs != &version).then(|| format!("{name} {version}, the repository's {theirs}"))
+            })
+            .collect();
+        assert!(
+            drift.is_empty(),
+            "{app}/Cargo.lock has other versions than the repository's of crates they share: {drift:?}; run \
+             ./moq update-app-locks and commit it"
+        );
+    }
+}
+
+#[test]
+fn a_semver_range_is_the_first_part_that_is_not_zero() {
+    assert_eq!(range("1.0.229"), "1");
+    assert_eq!(range("0.12.4"), "0.12");
+    assert_eq!(range("0.0.3"), "0.0.3");
+    assert_eq!(range("3.0.0-alpha.7"), "3");
 }

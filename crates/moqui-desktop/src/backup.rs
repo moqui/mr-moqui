@@ -24,7 +24,10 @@
 //! - **The tray's Backups menu.** Back up now (a `pg_dump` of the live database, `moqui save-db`, which leaves the
 //!   node's Postgres running), choose and open the folder, restore from a dump, and the last backup's time. A backup
 //!   taken from the menu is named outside the ladder (`moqui-<stamp>-manual.dump`), so the nightly rotation neither
-//!   counts nor removes it.
+//!   counts nor removes it. Nightly backup turns the scheduled one on and off, which starts the node again.
+//! - **Told.** The first start that has the nightly backup on tells the user what it holds and where it goes (the whole
+//!   node, in clear, into a folder their own backup or a cloud may sync), and how to turn it off; the `backups` file
+//!   notes that it did (plans/Security-Review.md SEC-CLI-114).
 //! - **Restore** stops the node and runs `moqui load-save` (`pg_restore --clean`), the proven restore path, then
 //!   starts the node again. It first takes a backup of the data it replaces (`-before-restore`), and does not restore
 //!   when that fails.
@@ -39,7 +42,7 @@ use std::sync::Mutex;
 
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
-use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
@@ -62,6 +65,7 @@ const CHOOSE_ITEM: &str = "backup-choose";
 const OPEN_ITEM: &str = "backup-open";
 const RESTORE_ITEM: &str = "backup-restore";
 const LAST_ITEM: &str = "backup-last";
+const NIGHTLY_ITEM: &str = "backup-nightly";
 
 /// What the `backups` file says. A line is `name=value`; `#` starts a comment.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +74,8 @@ pub(crate) struct Settings {
     pub(crate) folder: Option<PathBuf>,
     /// Whether the nightly backup runs; on unless the file says `scheduled=false`.
     pub(crate) scheduled: bool,
+    /// Whether the user was told what the nightly backup holds and where it goes ([`NOTICE`]).
+    pub(crate) told: bool,
 }
 
 impl Default for Settings {
@@ -77,8 +83,21 @@ impl Default for Settings {
         Self {
             folder: None,
             scheduled: true,
+            told: false,
         }
     }
+}
+
+/// What the user is told once, at the first start with the nightly backup on: what a dump holds, where it goes, and
+/// how to stop it (SEC-CLI-114).
+pub(crate) const NOTICE: &str = "Each night MR Moqui backs up all its data (every record, with the accounts' password \
+     hashes) to this folder, not encrypted. A folder your own backup or a cloud service syncs takes a copy of it. Choose \
+     another folder, or turn Nightly backup off, in the tray's Backups menu.";
+
+/// Whether this start tells the user of the nightly backup: it is on, they were not told, and it is not a development
+/// run.
+pub(crate) fn notice_due(settings: &Settings, dev: bool) -> bool {
+    settings.scheduled && !settings.told && !dev
 }
 
 impl Settings {
@@ -101,6 +120,7 @@ impl Settings {
                     "false" => settings.scheduled = false,
                     _ => tracing::warn!("{SETTINGS_FILE}: scheduled is {value:?}, not true or false"),
                 },
+                "told" => settings.told = value == "true",
                 other => tracing::warn!("{SETTINGS_FILE}: {other:?} is not a setting; it is passed over"),
             }
         }
@@ -115,8 +135,9 @@ impl Settings {
             .map(|path| path.display().to_string())
             .unwrap_or_default();
         format!(
-            "# MR Moqui backups: the folder (empty for the default) and whether the nightly backup runs\nfolder={folder}\nscheduled={}\n",
-            self.scheduled
+            "# MR Moqui backups: the folder (empty for the default), whether the nightly backup runs, and whether the \
+             user was told of it\nfolder={folder}\nscheduled={}\ntold={}\n",
+            self.scheduled, self.told
         )
     }
 }
@@ -254,6 +275,7 @@ pub(crate) fn partial_of(path: &Path) -> PathBuf {
 /// The tray's Backups menu and whether a backup or restore runs.
 struct Backups {
     last: MenuItem<tauri::DynRuntime>,
+    nightly: CheckMenuItem<tauri::DynRuntime>,
     busy: AtomicBool,
     /// The settings of this run, as the node got them; a new folder changes them.
     settings: Mutex<Settings>,
@@ -261,9 +283,24 @@ struct Backups {
 
 /// The node's backup properties, from the settings in the app's config directory.
 pub(crate) fn node_properties(app: &AppHandle) -> Vec<(&'static str, String)> {
-    let settings = app.path().app_config_dir().map(|dir| load(&dir)).unwrap_or_default();
+    let mut settings = app.path().app_config_dir().map(|dir| load(&dir)).unwrap_or_default();
     if !settings.scheduled {
         tracing::info!("The nightly backup is off ({SETTINGS_FILE}: scheduled=false)");
+    }
+    if notice_due(&settings, tauri::is_dev()) {
+        let place = settings
+            .folder
+            .clone()
+            .or_else(|| default_folder_of(app))
+            .map(|folder| folder.display().to_string())
+            .unwrap_or_default();
+        notify(app, "Nightly backups go to", Some(&format!("{place}\n{NOTICE}")));
+        settings.told = true;
+        if let Err(err) = app.path().app_config_dir().map_err(|err| err.to_string()).and_then(|dir| {
+            save(&dir, &settings).map_err(|err| err.to_string())
+        }) {
+            tracing::warn!("{SETTINGS_FILE}: not written, so the nightly backup's note shows again: {err}");
+        }
     }
     let mut properties = properties(&settings, default_folder_of(app));
     // A development run is on this repository's runtime: its job row keeps whatever the developer set, as the
@@ -286,13 +323,15 @@ pub(crate) fn add_tray_items(app: &AppHandle, menu: &Menu<tauri::DynRuntime>) ->
     let open = MenuItem::with_id(app, OPEN_ITEM, "Open backup folder", true, None::<&str>)?;
     let restore = MenuItem::with_id(app, RESTORE_ITEM, "Restore from backup…", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
+    let nightly = CheckMenuItem::with_id(app, NIGHTLY_ITEM, "Nightly backup", true, settings.scheduled, None::<&str>)?;
     let last = MenuItem::with_id(app, LAST_ITEM, "Last backup: none", false, None::<&str>)?;
-    let items: [&dyn IsMenuItem<_>; 6] = [&now, &choose, &open, &restore, &separator, &last];
+    let items: [&dyn IsMenuItem<_>; 7] = [&now, &nightly, &choose, &open, &restore, &separator, &last];
     let submenu = Submenu::with_items(app, "Backups", true, &items)?;
     let position = menu.items()?.len().saturating_sub(1);
     menu.insert(&submenu, position)?;
     app.manage(Backups {
         last,
+        nightly,
         busy: AtomicBool::new(false),
         settings: Mutex::new(settings),
     });
@@ -306,6 +345,7 @@ pub(crate) fn on_menu_event(app: &AppHandle, id: &str) -> bool {
         CHOOSE_ITEM => choose_folder(app),
         OPEN_ITEM => open_folder(app),
         RESTORE_ITEM => choose_restore(app),
+        NIGHTLY_ITEM => toggle_nightly(app),
         _ => return false,
     }
     true
@@ -495,6 +535,48 @@ fn folder_chosen(app: &AppHandle, chosen: PathBuf) {
     }
     notify(app, "Backups go to", Some(&chosen.display().to_string()));
     refresh_last(app);
+}
+
+/// The tray's Nightly backup: the scheduled backup on or off, kept in the `backups` file, and the node started again, as
+/// it reads the switch at its start (SEC-CLI-114).
+fn toggle_nightly(app: &AppHandle) {
+    let Some(backups) = app.try_state::<Backups>() else {
+        return;
+    };
+    let settings = {
+        let mut settings = moqui_lib::sync::lock(&backups.settings);
+        settings.scheduled = !settings.scheduled;
+        settings.told = true;
+        settings.clone()
+    };
+    if let Err(err) = backups.nightly.set_checked(settings.scheduled) {
+        tracing::warn!("The Nightly backup item was not updated: {err}");
+    }
+    let saved = app
+        .path()
+        .app_config_dir()
+        .map_err(|err| err.to_string())
+        .and_then(|dir| save(&dir, &settings).map_err(|err| err.to_string()));
+    if let Err(err) = saved {
+        tracing::error!("Could not keep the nightly backup's switch: {err}");
+        notify(app, "The nightly backup is not changed", Some(&err));
+        return;
+    }
+    let properties = properties(&settings, default_folder_of(app));
+    {
+        let state = app.state::<NodeState>();
+        let mut started = moqui_lib::sync::lock(&state.started_with);
+        if let Some(start) = started.as_mut() {
+            start
+                .properties
+                .retain(|(name, _)| *name != DIR_PROPERTY && *name != SCHEDULED_PROPERTY);
+            start.properties.extend(properties.iter().cloned());
+        }
+    }
+    let state = if settings.scheduled { "on" } else { "off" };
+    tracing::info!("The nightly backup is {state}");
+    notify(app, &format!("Nightly backups are {state}"), Some("The node starts again to take it."));
+    crate::restart(app);
 }
 
 /// The tray's Open backup folder, in the system's file manager.

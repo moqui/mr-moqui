@@ -34,6 +34,16 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 /// The tray item's id.
 pub(crate) const ITEM: &str = "check-updates";
 
+/// The largest update the app takes: the plugin collects the artifact in memory before it checks the signature, so
+/// whoever answers for the feed's host could make the app allocate without end; a bundle with Chromium is a few hundred
+/// MB (plans/Security-Review.md SEC-CLI-118).
+pub(crate) const MAX_UPDATE_BYTES: u64 = 1 << 30;
+
+/// Whether a download that has `received` bytes, of `announced` in all, is past [`MAX_UPDATE_BYTES`].
+pub(crate) fn too_large(received: u64, announced: Option<u64>) -> bool {
+    received > MAX_UPDATE_BYTES || announced.is_some_and(|total| total > MAX_UPDATE_BYTES)
+}
+
 /// The app was built with an update feed: the updater plugin is registered.
 struct Feed;
 
@@ -185,7 +195,24 @@ fn install(app: &AppHandle, version: String) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tracing::info!("Downloading update {version}");
-        let bytes = match update.download(|_, _| {}, || {}).await {
+        // past the ceiling (announced, or as it comes), the download is dropped, and its buffer with it
+        let over = std::sync::Arc::new(tokio::sync::Notify::new());
+        let signal = std::sync::Arc::clone(&over);
+        let mut received: u64 = 0;
+        let download = update.download(
+            move |chunk, announced| {
+                received = received.saturating_add(chunk as u64);
+                if too_large(received, announced) {
+                    signal.notify_one();
+                }
+            },
+            || {},
+        );
+        let downloaded = tokio::select! {
+            downloaded = download => downloaded.map_err(|err| err.to_string()),
+            () = over.notified() => Err(format!("the update is larger than {} MB", MAX_UPDATE_BYTES >> 20)),
+        };
+        let bytes = match downloaded {
             Ok(bytes) => bytes,
             Err(err) => {
                 tracing::error!("Could not download update {version}: {err}");

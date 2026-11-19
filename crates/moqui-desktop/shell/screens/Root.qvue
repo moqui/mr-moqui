@@ -81,6 +81,10 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-section avatar><q-icon name="sym_o_notifications"></q-icon></q-item-section>
                             <q-item-section>{{t('Notifications on this device')}}</q-item-section>
                         </q-item>
+                        <q-item clickable v-close-popup @click="openPrivacy">
+                            <q-item-section avatar><q-icon name="sym_o_privacy_tip"></q-icon></q-item-section>
+                            <q-item-section>{{t('Privacy')}}</q-item-section>
+                        </q-item>
                         <q-item clickable v-close-popup @click="signOut">
                             <q-item-section avatar><q-icon name="sym_o_logout"></q-icon></q-item-section>
                             <q-item-section>{{t('Sign out of this account')}}</q-item-section>
@@ -657,6 +661,8 @@ module.exports = {
                 desktop.dialAccount(!!json.phoneActive && Array.isArray(json.callerIdList) && json.callerIdList.length > 0);
             }, () => null);
         },
+        // the apps' privacy notice (docs/Privacy.md, SEC-CLI-122), outside the app
+        openPrivacy() { moqui.shellPrivacy(); },
         openDevices() {
             this.devicesOpen = true;
             this.devicesLoaded = false;

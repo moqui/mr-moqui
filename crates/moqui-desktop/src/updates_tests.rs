@@ -57,3 +57,12 @@ fn notification_names_the_version_and_the_item() {
     assert!(body.contains("\"Install update 0.2.0…\""), "{body}");
     assert!(body.contains("restarts"), "{body}");
 }
+
+/// SEC-CLI-118: an update past the ceiling, as it comes or as announced, is dropped before it is all in memory.
+#[test]
+fn an_update_past_the_ceiling_is_dropped() {
+    assert!(!too_large(0, None));
+    assert!(!too_large(300 << 20, Some(300 << 20)));
+    assert!(too_large(MAX_UPDATE_BYTES + 1, None));
+    assert!(too_large(1, Some(MAX_UPDATE_BYTES + 1)), "an announced size past it stops at the first chunk");
+}

@@ -1588,6 +1588,8 @@ module.exports = {
                 desktop.dialAccount(!!json.phoneActive && Array.isArray(json.callerIdList) && json.callerIdList.length > 0);
             }, () => null);
         },
+        // the apps' privacy notice (docs/Privacy.md, SEC-CLI-122), outside the app
+        openPrivacy() { moqui.shellPrivacy(); },
         openDevices() {
             this.devicesOpen = true;
             this.devicesLoaded = false;
@@ -2085,6 +2087,28 @@ module.exports = {
                                                 [_directive_close_popup]
                                               ])
                                             : _createCommentVNode("", true),
+                                          _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            clickable: "",
+                                            onClick: _ctx.openPrivacy
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, { name: "sym_o_privacy_tip" })
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Privacy')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"])), [
+                                            [_directive_close_popup]
+                                          ]),
                                           _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                             clickable: "",
                                             onClick: _ctx.signOut
@@ -2757,6 +2781,8 @@ module.exports = {
         canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
     },
     methods: {
+        // the apps' privacy notice (docs/Privacy.md, SEC-CLI-122), before an account signs in too
+        openPrivacy() { moqui.shellPrivacy(); },
         t,
         submit() {
             if (!this.ready || this.busy) return;
@@ -3065,6 +3091,16 @@ module.exports = {
                       ]),
                       _: 1
                     }, 8, ["onSubmit"]),
+                    _createElementVNode("div", { class: "text-center q-mt-sm" }, [
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        "no-caps": "",
+                        size: "sm",
+                        label: _ctx.t('Privacy'),
+                        onClick: _ctx.openPrivacy
+                      }, null, 8, ["label", "onClick"])
+                    ]),
                     (_ctx.accounts.length)
                       ? (_openBlock(), _createBlock(_component_q_card, {
                           key: 0,

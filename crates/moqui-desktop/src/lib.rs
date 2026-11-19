@@ -86,6 +86,7 @@ pub fn run() {
     );
     let app = builder.manage(NodeState::default()).setup(|app| {
         let handle = app.handle().clone();
+        os::sandbox::warn_once(&handle);
         let mode = node::mode_of_run(&handle.path().app_config_dir()?);
         if mode == node::Mode::Client {
             install_logging();

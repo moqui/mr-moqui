@@ -333,7 +333,9 @@ class MainActivity : TauriActivity() {
   /**
    * What calls need, asked once an account is signed in (the ring is that account's), not at the first start's
    * sign-in screen: Android 13+'s notifications, without which a ring is not shown, and the microphone, which a
-   * permission dialog could not ask for on a locked phone at the Answer (it asks for the unlock first).
+   * permission dialog could not ask for on a locked phone at the Answer (it asks for the unlock first). Each is asked
+   * only after a dialog that says why (SEC-CLI-120): the microphone's reason, answering a call on a locked phone, and
+   * the notifications' when those are missing too.
    */
   private fun askForCallsOnce() {
     val wanted = mutableListOf(Manifest.permission.RECORD_AUDIO)
@@ -351,29 +353,40 @@ class MainActivity : TauriActivity() {
           if (isFinishing || isDestroyed) return@post
           prefs.edit().putBoolean("askedForCalls", true).apply()
           Log.i(CallManager.TAG, "Asking for what calls need: $missing")
-          // the reason first (plans/Comms-Messaging.md §7.4, Permissions), then the system's question; "Not now" leaves
-          // out only the notifications. The full-screen intent's question comes after the system's dialog has gone
-          // (onRequestPermissionsResult), never over it.
-          if (Manifest.permission.POST_NOTIFICATIONS in missing) {
-            val others = missing - Manifest.permission.POST_NOTIFICATIONS
-            var asked = false
-            ObscuredTouches.show(
-              android.app.AlertDialog.Builder(this)
-                .setTitle(R.string.ask_notifications_title)
-                .setMessage(R.string.ask_notifications_reason)
-                .setPositiveButton(R.string.ask_continue) { _, _ ->
-                  asked = true
-                  requestPermissions(missing.toTypedArray(), ASK_CALLS)
-                }
-                .setNegativeButton(R.string.ask_not_now) { _, _ ->
-                  asked = true
-                  if (others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) else askForFullScreenOnce()
-                }
-                .setOnDismissListener { if (!asked && others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) }
-            )
-          } else {
-            requestPermissions(missing.toTypedArray(), ASK_CALLS)
+          // the reason first (plans/Comms-Messaging.md §7.4, Permissions), then the system's question, asked only from
+          // the dialog's buttons. "Not now" leaves out only the notifications: the microphone, whose reason the dialog
+          // gave with theirs, is still asked; when the dialog asked for the microphone alone, nothing is. The
+          // full-screen intent's question comes after the system's dialog has gone (onRequestPermissionsResult), never
+          // over it.
+          val microphone = Manifest.permission.RECORD_AUDIO in missing
+          val notifications = Manifest.permission.POST_NOTIFICATIONS in missing
+          val others = missing - Manifest.permission.POST_NOTIFICATIONS
+          val (heading, reason) = when {
+            microphone && notifications -> R.string.ask_calls_title to R.string.ask_calls_reason
+            microphone -> R.string.ask_microphone_title to R.string.ask_microphone_reason
+            else -> R.string.ask_notifications_title to R.string.ask_notifications_reason
           }
+          var asked = false
+          ObscuredTouches.show(
+            android.app.AlertDialog.Builder(this)
+              .setTitle(heading)
+              .setMessage(reason)
+              .setPositiveButton(R.string.ask_continue) { _, _ ->
+                asked = true
+                requestPermissions(missing.toTypedArray(), ASK_CALLS)
+              }
+              .setNegativeButton(R.string.ask_not_now) { _, _ ->
+                asked = true
+                if (notifications && others.isNotEmpty()) {
+                  requestPermissions(others.toTypedArray(), ASK_CALLS)
+                } else {
+                  askForFullScreenOnce()
+                }
+              }
+              .setOnDismissListener {
+                if (!asked && notifications && others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS)
+              }
+          )
         }
       }
     }

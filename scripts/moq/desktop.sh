@@ -60,6 +60,8 @@ task_desktop() {
         [ -z "$updater" ] || tauri_args+=(--config "$updater")
         desktop_signing_info
     fi
+    # the CEF archive a build takes, by its pinned SHA-256: one there now, and one the build downloads (after it)
+    check_cef_archives "$app/Cargo.lock"
     # The repository's target directory, so the framework crates are built once for the server and the app.
     export_var CARGO_TARGET_DIR "$ROOT/target"
     if [ "$command" = build ] && [ "$(uname -s)" = Linux ]; then
@@ -80,10 +82,54 @@ task_desktop() {
             run_cmd cargo tauri bundle ${tauri_args[@]+"${tauri_args[@]}"}) \
             || die "cargo tauri bundle failed"
         remake_appimage_without_namespaces_hook "$ROOT/target/release/bundle/appimage"
+        check_cef_archives "$app/Cargo.lock"
         return
     fi
     (cd "$app" && run_cmd cargo tauri "$command" ${tauri_args[@]+"${tauri_args[@]}"} -- ${cargo_args[@]+"${cargo_args[@]}"}) \
         || die "cargo tauri $command failed"
+    check_cef_archives "$app/Cargo.lock"
+}
+
+# The SHA-256 of each CEF archive the desktop app was built from, by its file name (plans/Security-Review.md
+# SEC-CLI-104): download-cef checks an archive only against a SHA-1 from the index of the CDN it downloads it from, so the
+# repository pins it. An archive with no entry yet (a new CEF version, another platform) is recorded on its first
+# build here, for the developer to commit; one whose hash differs stops the build.
+CEF_ARCHIVE_SUMS=crates/moqui-desktop/cef-archives.sha256
+
+# The CEF distributions' directory: CEF_PATH, else tauri-cef's cache.
+cef_distribution_dir() {
+    if [ -n "${CEF_PATH:-}" ]; then
+        printf '%s\n' "$CEF_PATH"
+    elif [ "$(uname -s)" = Darwin ]; then
+        printf '%s\n' "$HOME/Library/Caches/tauri-cef"
+    else
+        printf '%s\n' "${XDG_CACHE_HOME:-$HOME/.cache}/tauri-cef"
+    fi
+}
+
+# Each CEF archive of the cef crate the app's Cargo.lock ($1) names, in the distributions' directory, against
+# CEF_ARCHIVE_SUMS.
+check_cef_archives() {
+    local lock=$1 version dir archive name sum pinned
+    [ -f "$lock" ] || return 0
+    version=$(awk '$0 == "name = \"cef\"" { getline; sub(/.*\+/, ""); sub(/".*/, ""); print; exit }' "$lock")
+    [ -n "$version" ] || return 0
+    dir=$(cef_distribution_dir)/$version
+    for archive in "$dir"/cef_binary_*.tar.bz2; do
+        [ -f "$archive" ] || continue
+        name=$(basename "$archive")
+        sum=$(sha256_line "$archive" | awk '{print $1}')
+        pinned=$(awk -v name="$name" '$2 == name { print $1 }' "$ROOT/$CEF_ARCHIVE_SUMS" 2>/dev/null)
+        if [ -z "$pinned" ]; then
+            if ! dry_run; then
+                printf '%s  %s\n' "$sum" "$name" >>"$ROOT/$CEF_ARCHIVE_SUMS" || die "could not write $CEF_ARCHIVE_SUMS"
+            fi
+            warn "$name has no pinned SHA-256: $sum is recorded in $CEF_ARCHIVE_SUMS; commit it"
+        elif [ "$pinned" != "$sum" ]; then
+            die "$name is not the CEF archive $CEF_ARCHIVE_SUMS pins (SHA-256 $sum, pinned $pinned): delete it and its \
+extracted directory from $dir, and build again"
+        fi
+    done
 }
 
 # target/moqui-app, the crate that links the framework and the component crates, which the desktop app depends on: the
@@ -148,10 +194,8 @@ task_android() {
     need_tauri_cli
     [ -n "${JAVA_HOME:-}" ] || die "no JDK: set JAVA_HOME, or put a JDK's javac on the PATH"
     local app=$ROOT/crates/moqui-mobile
-    # Seeded from the repository's lock file, as the desktop app's, so the client crate builds with the same versions.
-    if [ ! -f "$app/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$app/Cargo.lock" ]; then
-        run_cmd cp "$ROOT/Cargo.lock" "$app/Cargo.lock" || die "could not copy Cargo.lock"
-    fi
+    # its committed lock, with the repository's versions of the crates they share (./moq update-app-locks)
+    seed_app_lock crates/moqui-mobile
     export_var CARGO_TARGET_DIR "$ROOT/target"
     # The app's wry is its patched copy, whose IPC is the main frame's only (crates/moqui-mobile/patches/README.md): a
     # Tauri or wry update that the patch no longer applies to fails here, never builds with the unpatched wry.
@@ -473,13 +517,7 @@ stage_desktop_notices() {
     local lock=$1 stage=$2 version source credits
     version=$(awk '$0 == "name = \"cef\"" { getline; sub(/.*\+/, ""); sub(/".*/, ""); print; exit }' "$lock")
     [ -n "$version" ] || die "no cef crate in $(rel "$lock")"
-    if [ -n "${CEF_PATH:-}" ]; then
-        source=$CEF_PATH
-    elif [ "$(uname -s)" = Darwin ]; then
-        source=$HOME/Library/Caches/tauri-cef
-    else
-        source=${XDG_CACHE_HOME:-$HOME/.cache}/tauri-cef
-    fi
+    source=$(cef_distribution_dir)
     credits=$(find "$source" -maxdepth 3 -name CREDITS.html -path "*$version*" 2>/dev/null | head -n 1)
     [ -n "$credits" ] || credits=$(find "$source" -maxdepth 1 -name CREDITS.html 2>/dev/null | head -n 1)
     [ -n "$credits" ] || die "no CREDITS.html of CEF $version under $source"

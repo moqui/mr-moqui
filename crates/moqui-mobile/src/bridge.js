@@ -223,9 +223,13 @@
         remove: (key) => ask("draft_remove", { key: String(key || "") }),
         saveFile: (file, name) => base64Of(file).then((data) => ask("file_save", { name: String(name || (file && file.name) || "file"), data }))
     });
+    // the shell's notifications carry its nonce, so the host shows them as the app's; a server page's title names its
+    // server (commands.rs notification_title, SEC-CLI-119)
     const notify = (options) => {
         const given = options || {};
-        return invoke("notify", { title: String(given.title || ""), body: text(given.body), link: text(given.link), tag: text(given.tag) });
+        const args = { title: String(given.title || ""), body: text(given.body), link: text(given.link), tag: text(given.tag) };
+        if (!shell) return invoke("notify", args);
+        return nonceReady.then(() => invoke("notify", Object.assign(args, { nonce: shellNonce })));
     };
     const windowSeen = () => !document.hidden;
     // the room the page shows now (none: no room): its pushes show no notification while the app is in front, and a

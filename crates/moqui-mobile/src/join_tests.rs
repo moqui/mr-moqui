@@ -86,3 +86,20 @@ fn a_join_link_opens_in_the_current_account_on_its_host_else_the_first_and_none_
     assert_eq!(account_for(&accounts, None, "localhost"), None);
     assert_eq!(account_for(&accounts, None, "nowhere.example.com"), None);
 }
+
+/// An account's server by its host and port, as a join link names it and as its server pages' dialogs and notifications
+/// are titled (SEC-CLI-119): no scheme, path or default port.
+#[test]
+fn an_accounts_server_is_named_by_its_host_and_port() {
+    let named = |server: &str| server_host(&account("a", server));
+    assert_eq!(
+        named("https://Chat.Example.com/moqui").as_deref(),
+        Some("chat.example.com")
+    );
+    assert_eq!(
+        named("https://chat.example.com:443").as_deref(),
+        Some("chat.example.com")
+    );
+    assert_eq!(named("http://localhost:8080").as_deref(), Some("localhost:8080"));
+    assert_eq!(named("not a server"), None);
+}

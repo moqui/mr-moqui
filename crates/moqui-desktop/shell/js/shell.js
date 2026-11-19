@@ -21,6 +21,14 @@
     // cannot show here, so the Inbox offers no Show images
     moqui.remoteImages = false;
 
+    // The apps' privacy notice (docs/Privacy.md; plans/Security-Review.md SEC-CLI-122), in the system browser, from the
+    // account menu and the sign-in: the store listings link the same page.
+    const PRIVACY_URL = "https://github.com/moqui/mr-moqui/blob/master/docs/Privacy.md";
+    moqui.shellPrivacy = () => {
+        if (host && typeof host.openExternal === "function") host.openExternal(PRIVACY_URL);
+        else window.open(PRIVACY_URL, "_blank", "noopener");
+    };
+
     // The comms app of the server (its clientConfig's calls.appRoot, under /qapps), and the bundled BasicComms screens named
     // under it, as the server's paths, so their requests go to its transitions (an app such as BOSS that mounts them under
     // its own root, with its transitions added by screen-extend, gets those): ChatPanel, which opens a room with Chat's room

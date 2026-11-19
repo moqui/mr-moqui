@@ -621,6 +621,19 @@ check "test-clients passes cargo test's arguments on" 0 \
 check "test-clients unknown crate" 1 'no client crate server' -- "$M" test-clients server
 check "test-clients unknown option" 1 'unknown option --release' -- "$M" test-clients --release
 lacks "test-framework runs no crate outside the workspace" 'manifest-path|moqui-desktop' -- dry "$M" test-framework
+# the committed app locks (SEC-CLI-104): kept as they are, and brought to the repository's versions by update-app-locks
+mkdir -p "$R/crates/moqui-mobile"
+printf '[[package]]\nname = "serde"\nversion = "1.0.1"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' \
+    >"$R/crates/moqui-mobile/Cargo.lock"
+printf '[[package]]\nname = "serde"\nversion = "1.0.9"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' \
+    >"$R/Cargo.lock"
+lacks "test-clients keeps a committed app lock" "cp $R/Cargo.lock $R/crates/moqui-mobile/Cargo.lock" -- dry "$M" test-clients mobile
+check "update-app-locks brings the repository's version in" 0 \
+    'cargo update --manifest-path .*/crates/moqui-mobile/Cargo.toml -p serde@1.0.1 --precise 1.0.9$' -- dry "$M" update-app-locks
+check "deny-apps checks each app for its targets" 0 \
+    'cargo deny --manifest-path .*/crates/moqui-mobile/Cargo.toml --target aarch64-linux-android check advisories sources$' -- \
+    dry "$M" deny-apps
+rm -rf "$R/crates/moqui-mobile" "$R/Cargo.lock"
 check "test-client is still test-client" 0 'moqui test-client$' -- dry "$M" test-client
 # an app component and a framework component with specs, a served client suite and an offline one
 mkdir -p "$R/runtime/components/addon/app-x/test/client" "$R/runtime/components/base/fw-x/test/client" \

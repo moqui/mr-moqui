@@ -25,6 +25,17 @@ invoke key and could call the app's commands as the page, with the account's dev
   dialogs once shown, drop a touch that came through another app's window (`filterTouchesWhenObscured`, through
   `RustWebView.refuseObscuredTouches`), the overlay defence Android has itself only from 12 (SEC-CLI-116); the app's
   activities and dialogs do the same (`ObscuredTouches.kt`).
+- `src/android/kotlin/RustWebChromeClient.kt`: a page's alert, confirm and prompt dialogs have a title that names who
+  asks (the shell's the app's name; the server pages', which share one origin, the server's host that Rust sets with
+  `pageServer` as it opens them; another origin's, a frame's, its own host), and a prompt on the app's own origins is
+  refused, so a page of one account's server cannot ask as the app for another account's password (SEC-CLI-119).
+  `pageServer` is called by the app's Rust (`src/android.rs`), so its keep rule is in the app's `proguard-rules.pro`.
+- `src/android/kotlin/RustWebChromeClient.kt`: a camera capture from a page's file input, photo or video, is written
+  to `captures/` in the app's cache (`createCaptureFile`), the FileProvider's one path (`res/xml/file_paths.xml`), not
+  to the external files folder or, for a video, where the camera app puts it; the video takes `EXTRA_OUTPUT` and no
+  longer fails on a camera that returns no data. A cancelled capture's file goes at once; one handed to the page stays
+  until the next webview's chrome client starts, which empties the folder, since the WebView reads it only when the
+  page reads or uploads it (SEC-CLI-89, SEC-CLI-110).
 
 `./moq android dev` and `build` stop when `cargo tree -i wry` shows a wry that is not this copy (cargo builds a wry the
 patch no longer matches from crates.io with only a warning), so a Tauri update cannot drop the patch unseen.

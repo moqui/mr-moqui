@@ -544,11 +544,19 @@ In the Play Console, once:
 - **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), and the
   foreground service of type `phoneCall` (`FOREGROUND_SERVICE_PHONE_CALL`, an ongoing call the user answered), each
   with a short video or description of the incoming call.
-- **Data safety:** the app keeps on the device, not shared with anyone but the user's own server: chat messages and
+- **Privacy policy:** [docs/Privacy.md](Privacy.md), at its GitHub address, which the app's account menu and sign-in
+  open (plans/Security-Review.md SEC-CLI-122).
+- **Data safety**, from the merged manifest's permissions (`app/build/intermediates/merged_manifest/release/`, which has
+  the libraries' too): the app keeps on the device, not shared with anyone but the user's own server, chat messages and
   mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a
   credential, sealed by the Android Keystore); it records audio (and video) in calls only, sent to the user's server;
-  it shows notifications; with Firebase, the FCM token goes to the user's server and Google. Data in transit is
-  encrypted (TLS); the user can delete it by signing out on a shared device or removing the account. No backup is made
+  photos and videos the user takes or picks to send, and the precise or approximate location of a place the user
+  shares, go to the user's server; the device's name in the user's device list and as a chat encryption device, which
+  room members see, is the phone's model; the phone's contacts are read on the phone to search the dialer and never
+  sent; it shows notifications; with Firebase, the FCM token goes to the user's server and Google; with a UnifiedPush
+  distributor, that app gets an endpoint for each account under a random name; pushes are sealed to the account's keys.
+  The WebView sends no metrics (`MetricsOptOut`) and keeps Android's Safe Browsing. Data in transit is encrypted
+  (TLS); the user can delete it by signing out on a shared device or removing the account. No backup is made
   (`allowBackup` off).
 - **Remote code:** the app shows the user's server's screens in its WebView; whether that is fine under Play's device
   and network abuse policy is a decision for the release ([Mobile-Desktop §9](../plans/Mobile-Desktop.md), Android,
@@ -608,7 +616,7 @@ its rows; a check named twice runs once.
 | What changed | Run |
 |---|---|
 | Rust in a workspace crate (`crates/*`, a component's `src/`) | `cargo lint` (clippy on the workspace, warnings denied); `cargo lint-min` (the host and every crate it links built with no default features, so feature-gated code and its off stubs are checked); `cargo test -p <crate>` for each crate touched while working; then `./moq test-framework` |
-| Feature-gated code (`#[cfg(feature = ...)]`), a crate's `[features]` or dependencies, `Cargo.toml` or `Cargo.lock` | also `scripts/check-packages.sh` (clippy on each package's feature set) |
+| Feature-gated code (`#[cfg(feature = ...)]`), a crate's `[features]` or dependencies, `Cargo.toml` or `Cargo.lock` | also `scripts/check-packages.sh` (clippy on each package's feature set); for the repository's `Cargo.lock`, `./moq update-app-locks`, which brings its versions into the mobile app's and the Tauri glue's committed locks (`crates/moqui-client/tests/app_workspaces.rs` fails until they match), and for a dependency of the apps `./moq deny-apps` (their advisories, by `cargo deny`) |
 | A crate outside the workspace (`moqui-desktop`, `moqui-mobile`, `moqui-client-tauri`) or the Android targets | `./moq test-clients` (or its crate alone, `./moq test-clients desktop`; it writes `target/moqui-app` for the desktop), which also runs `moqui-client`'s tests and the clients' security proofs; `scripts/check-android.sh` for the Android targets |
 | Something a golden or generated file holds: a host member (`moqui-host.d.ts`), a proto, the bundled screens, a typegen fixture | the file rewritten by its variable and its diff read: `UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`, `MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib the_checked_in_code_is_what_the_proto_generates`, `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled` |
 | The framework's components (`runtime/components/base`, `runtime/components/dev`), the conf (`MoquiDefaultConf.xml`, the XSDs, `runtime/conf/**`), `moq` or `scripts/` | `./moq test-framework` (its cargo run holds the conf tests: every runtime conf parsed, merged and checked against the XSD) |

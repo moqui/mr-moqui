@@ -152,6 +152,8 @@ test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the applic
 test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of components/base and components/dev
 test-all|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the whole regression suite: test-framework, then test-apps
 test-clients|Run|[client/tauri/mobile/desktop...] [-- cargo args]|Run the tests of the client crates: moqui-client, the Tauri glue, and the mobile and desktop apps
+update-app-locks|Run||Bring the root Cargo.lock versions of shared crates into the committed locks of the mobile app and the Tauri glue
+deny-apps|Run||Check the dependencies of the apps against the RustSec advisories (cargo deny), for their targets
 accept|Run|[component...] [--spec Name] [--junit dir] [opts]|Run the acceptance suite (test/acceptance/) of the components, or of all
 accept-all|Run|[--junit dir] [opts]|Run every acceptance test: the specs of test/acceptance/ and the Rust opt-in and ignored tests
 autodoc|Run|[--out dir] [--kinds k,...] [opts]|Markdown docs of the artifacts with Mermaid diagrams, into ./autodoc (moqui autodoc)

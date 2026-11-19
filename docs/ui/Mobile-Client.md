@@ -47,6 +47,17 @@ own `/qapps`), never both:
   System WebView) has no IPC at all: the bridge then shows "This app needs a newer Android System WebView".
 - **No window without a gesture.** The patch also turns off `javaScriptCanOpenWindowsAutomatically`, which wry turns
   on, so a page opens no window (and so sends the phone to the web or another app) on its own.
+- **A page's dialogs and notifications say whose they are.** A page's `alert` and `confirm` are the app's own native
+  dialogs, so each has a title naming who asks: the shell's the app's name, a server page's the host of its account's
+  server (every account's pages share the one app origin, so the host tells wry's chrome client as it opens them,
+  `RustWebChromeClient.pageServer`), a frame of another origin its own host. `prompt` is refused on the app's two
+  origins, so a page of one account's server cannot ask in the app's dialog for another account's password. A page's
+  `notify` is titled after its server too (`commands.rs` `notification_title`); only the shell's, which carries its
+  nonce, shows as the app's (SEC-CLI-119).
+- **A camera capture stays in the app.** A page's file input with `capture` (Chat's camera input) has the camera app
+  write the photo or video to `captures/` in the app's cache, the FileProvider's one path, never to shared storage or
+  the camera app's own place; a cancelled capture's file goes at once, the rest when the next webview starts (wry's
+  patch, SEC-CLI-89, SEC-CLI-110).
 - **A server page's storage scope** (MoquiLib `scopedKey`) and the scopes it is to clear are asked of the host as the
   page starts (`/__moqui-app/page`, the host's own path on the app origin), since one init script serves every page.
 
@@ -191,9 +202,11 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
   off from 30 seconds), which tries until each account's server answers; it is not scheduled at every start, which
   would start the process again after the user backed out.
 - **Permissions:** `POST_NOTIFICATIONS` (Android 13+) and `RECORD_AUDIO` are asked once an account is signed in, not at
-  the first start's sign-in, notifications after a dialog that says why (messages, mentions and calls); Android's
-  permission dialog asks for the unlock first, so on a locked phone the Answer does not ask and the page asks after the
-  unlock. `CAMERA` is asked at a video call's Answer or by the page. `READ_CONTACTS` is asked at the first contacts
+  the first start's sign-in, after a dialog that says why: the microphone so a call can be answered on a locked phone,
+  and notifications (messages, mentions and calls) when those are missing too; its Not now leaves out the
+  notifications, and asks nothing when the dialog named the microphone alone (SEC-CLI-120). Android's permission
+  dialog asks for the unlock first, so on a locked phone the Answer does not ask and the page asks after the unlock.
+  `CAMERA` is asked at a video call's Answer or by the page. `READ_CONTACTS` is asked at the first contacts
   search ([The phone's dialer and contacts](#the-phones-dialer-and-contacts)). `MANAGE_OWN_CALLS`,
   `FOREGROUND_SERVICE_PHONE_CALL` and `USE_FULL_SCREEN_INTENT` are granted at install; Android 14+ lets the user (and
   Google Play's policy) turn the full-screen intent off, so after the notifications question the app says why calls

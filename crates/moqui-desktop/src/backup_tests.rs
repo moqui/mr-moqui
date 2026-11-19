@@ -28,6 +28,7 @@ fn the_settings_file_reads_back_what_it_keeps() {
     let settings = Settings {
         folder: Some(PathBuf::from("/Users/me/Documents/MR-Moqui Backups")),
         scheduled: false,
+        told: true,
     };
     assert_eq!(Settings::parse(&settings.to_text()), settings);
     assert_eq!(Settings::parse(&Settings::default().to_text()), Settings::default());
@@ -57,6 +58,7 @@ fn the_node_gets_the_schedule_and_the_folder_unless_it_is_the_frameworks() {
     let chosen = Settings {
         folder: Some(PathBuf::from("/b")),
         scheduled: true,
+        told: false,
     };
     assert_eq!(
         properties(&chosen, Some(PathBuf::from("/d"))),
@@ -73,6 +75,7 @@ fn the_node_gets_the_schedule_and_the_folder_unless_it_is_the_frameworks() {
     let off = Settings {
         folder: None,
         scheduled: false,
+        told: false,
     };
     assert_eq!(
         properties(&off, None),
@@ -86,6 +89,7 @@ fn the_folder_is_the_chosen_then_the_default_then_the_runtimes() {
     let chosen = Settings {
         folder: Some(PathBuf::from("/b")),
         scheduled: true,
+        told: false,
     };
     assert_eq!(
         folder_of(&chosen, Some(PathBuf::from("/d")), runtime),
@@ -206,8 +210,23 @@ fn the_settings_are_kept_in_the_config_directory() {
     let settings = Settings {
         folder: Some(PathBuf::from("/b")),
         scheduled: true,
+        told: false,
     };
     save(&dir, &settings).unwrap();
     assert_eq!(load(&dir), settings);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// SEC-CLI-114: the first start with the nightly backup on tells the user what it holds and where it goes, once; a
+/// development run and a switched-off backup do not.
+#[test]
+fn the_nightly_backup_is_told_once() {
+    let mut settings = Settings::default();
+    assert!(notice_due(&settings, false));
+    assert!(!notice_due(&settings, true), "a development run keeps the framework's folder");
+    settings.told = true;
+    assert!(!notice_due(&settings, false));
+    assert!(!notice_due(&Settings { scheduled: false, ..Settings::default() }, false));
+    assert!(Settings::parse(&settings.to_text()).told);
+    assert!(NOTICE.contains("not encrypted") && NOTICE.contains("Nightly backup off"));
 }
