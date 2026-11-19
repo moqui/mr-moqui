@@ -401,3 +401,70 @@ fn rules_parse_and_refuse() {
     assert!(Rule::parse("FREQ=DAILY;INTERVAL=0").is_err());
     assert!(Rule::parse("COUNT=3").unwrap_err().contains("not an RRULE"));
 }
+
+/// SEC-FIL-85: one expansion does at most its work of periods and candidates: a COUNT rule walked from DTSTART to a
+/// range far after it stops at the budget with what it found, and finds the range's instances within it. A rule a
+/// calendar file holds is kept only when it parses and is not overlong.
+#[test]
+fn an_expansion_stops_at_its_work_budget_and_a_stored_rule_is_checked() {
+    let utc = TimeZone::UTC;
+    let rule = Rule::parse("FREQ=DAILY;COUNT=100000").unwrap();
+    let dtstart = at(&utc, "20260101T090000");
+    let range = (Some(at(&utc, "20280101T000000")), Some(at(&utc, "20280110T000000")));
+    let found = expand_within(&rule, dtstart, &utc, range, MAX_INSTANCES, 10_000);
+    assert_eq!(found.len(), 9, "within the budget: {found:?}");
+    let cut = expand_within(&rule, dtstart, &utc, range, MAX_INSTANCES, 500);
+    assert!(cut.is_empty(), "past the budget: {cut:?}");
+    assert_eq!(expand(&rule, dtstart, &utc, range.0, range.1, MAX_INSTANCES), found);
+    // the thread's script deadline ends an expansion too, so the events of one read share it
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    moqui_core::script::interrupt_thread_on(Some(stop));
+    let interrupted = expand(&rule, dtstart, &utc, range.0, range.1, MAX_INSTANCES);
+    moqui_core::script::interrupt_thread_on(None);
+    assert!(interrupted.is_empty(), "{interrupted:?}");
+
+    assert_eq!(
+        checked("FREQ=WEEKLY;BYDAY=MO".to_string()).as_deref(),
+        Some("FREQ=WEEKLY;BYDAY=MO")
+    );
+    assert_eq!(checked("FREQ=FORTNIGHTLY".to_string()), None);
+    assert_eq!(checked(format!("FREQ=DAILY;BYHOUR={}", ["1"; 1100].join(","))), None);
+}
+
+/// SEC-FIL-85: one period gives at most `MAX_PERIOD_CANDIDATES` date-times, its first, so a yearly rule of every
+/// weekday, hour, minute and second builds 100,000 of them, not 31.5 million; a period under the limit (every quarter
+/// hour of a year, 35,040) is built whole. A BYxxx list given many times over is kept once.
+#[test]
+fn one_period_holds_at_most_its_limit() {
+    let all = |count: i64| (0..count).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
+    let every = format!(
+        "FREQ=YEARLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR={};BYMINUTE={};BYSECOND={}",
+        all(24),
+        all(60),
+        all(60)
+    );
+    let rule = Rule::parse(&every).unwrap();
+    let start = DateTime::from_parts(Date::new(2026, 1, 1).unwrap(), Time::midnight());
+    let period = Plan::new(&rule, start).period(0).unwrap();
+    assert_eq!(period.len(), MAX_PERIOD_CANDIDATES);
+    assert_eq!(period[1], start.checked_add(1.second()).unwrap());
+    let quarters = format!(
+        "FREQ=YEARLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR={};BYMINUTE=0,15,30,45",
+        all(24)
+    );
+    let quarters = Rule::parse(&quarters).unwrap();
+    assert_eq!(Plan::new(&quarters, start).period(0).unwrap().len(), 365 * 96);
+    let utc = TimeZone::UTC;
+    let dtstart = start.to_zoned(utc.clone()).unwrap().timestamp();
+    let instances = expand(&rule, dtstart, &utc, None, None, MAX_INSTANCES);
+    assert!(instances.len() <= MAX_INSTANCES, "{}", instances.len());
+    assert_eq!(instances[1], dtstart.checked_add(1.second()).unwrap());
+    let repeated = Rule::parse(&format!(
+        "FREQ=DAILY;BYHOUR={};BYDAY={}",
+        ["9"; 10_000].join(","),
+        ["MO"; 10_000].join(",")
+    ))
+    .unwrap();
+    assert_eq!(repeated.by_hour, [9]);
+    assert_eq!(repeated.by_day, [(0, Weekday::Monday)]);
+}

@@ -53,6 +53,7 @@ const DENIED: &[&str] = &[
     "getPrototypeOf",
     "Reflect",
     "Proxy",
+    "Promise",
     "Symbol",
     "arguments",
     "require",
@@ -73,7 +74,9 @@ pub(crate) fn is_denied_name(name: &str) -> bool {
     name.starts_with('$') || DENIED.contains(&name)
 }
 
-/// The problems of one expression; none when it may run.
+/// The problems of one expression; none when it may run. It is parsed, written as ESTree and walked on the parse
+/// stack, and one longer than `MAX_EXPRESSION` is refused first: each of those recurses for each level of nesting
+/// (SEC-SCR-82).
 pub(crate) fn check(expression: &str) -> Vec<Problem> {
     let trimmed = expression.trim();
     if trimmed.is_empty() {
@@ -82,6 +85,24 @@ pub(crate) fn check(expression: &str) -> Vec<Problem> {
             message: "the expression is empty".to_string(),
         }];
     }
+    if trimmed.len() > crate::script::parse::MAX_EXPRESSION {
+        return vec![Problem {
+            code: "syntax",
+            message: format!(
+                "the expression is longer than {} bytes",
+                crate::script::parse::MAX_EXPRESSION
+            ),
+        }];
+    }
+    crate::script::parse::on_parse_stack(|| check_on_stack(trimmed)).unwrap_or_else(|err| {
+        vec![Problem {
+            code: "syntax",
+            message: err.message().to_string(),
+        }]
+    })
+}
+
+fn check_on_stack(trimmed: &str) -> Vec<Problem> {
     let source = format!("({trimmed}\n)");
     let allocator = oxc_allocator::Allocator::default();
     let parsed = Parser::new(&allocator, &source, oxc_span::SourceType::default())

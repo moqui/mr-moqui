@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use moqui_tui::{
     gallery_link, run_session, AppView, Depth, FakeLink, Key, KeyPress, RawBody, Screen, ScreenLink, ScreenModel,
-    SessionEvent, SessionOptions, Theme, ENTER, GALLERY_LIST_PATH, LEAVE, MOUSE_OFF, MOUSE_ON,
+    SessionEvent, SessionOptions, Theme, ENTER, GALLERY_LIST_PATH, LEAVE, MAX_SIDE, MOUSE_OFF, MOUSE_ON,
 };
 
 /// The part of a terminal the encoder speaks to: cursor moves, clears, SGR (ignored), OSC 8, and characters.
@@ -310,6 +310,11 @@ fn start(link: FakeLink, path: &str, columns: u16, rows: u16) -> Running {
 }
 
 fn start_with(link: FakeLink, path: &str, columns: u16, rows: u16, log: bool) -> Running {
+    start_noted(link, path, (columns, rows), log, None)
+}
+
+fn start_noted(link: FakeLink, path: &str, size: (u16, u16), log: bool, notes: Option<fn(&str)>) -> Running {
+    let (columns, rows) = size;
     let (tx, rx) = mpsc::channel();
     let replies = tx.clone();
     let out = Shared::default();
@@ -319,7 +324,7 @@ fn start_with(link: FakeLink, path: &str, columns: u16, rows: u16, log: bool) ->
         theme: Theme::default(),
         columns,
         rows,
-        notes: None,
+        notes,
         log,
         login_name: None,
     };
@@ -371,6 +376,62 @@ fn a_session_runs_keys_answers_sizes_and_the_close_over_a_channel() {
     running.tx.send(SessionEvent::Close).unwrap();
     running.done.join().unwrap().unwrap();
     assert!(running.out.bytes().ends_with(LEAVE));
+}
+
+/// SEC-FIL-81, SEC-FIL-100: a session draws at most `MAX_SIDE` a side, whatever size the transport gives at the start or
+/// the input asks for with `CSI 8 ; rows ; cols t`; the replay at `MAX_SIDE` by `MAX_SIDE` fails on a write past it. A
+/// size of `MAX_SIDE` itself is drawn whole.
+#[test]
+fn a_size_past_the_limit_is_drawn_at_the_limit() {
+    static NOTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn note(text: &str) {
+        if text.contains("drawn at") {
+            NOTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let side = MAX_SIDE;
+    let running = start_noted(
+        gallery_link(),
+        GALLERY_LIST_PATH,
+        (u16::MAX, side + 1),
+        false,
+        Some(note),
+    );
+    let shown = running.out.wait_for("Open detail", side, side);
+    assert_eq!(shown.lines().count(), usize::from(side), "the last row is drawn");
+    let redrawn = |before: usize| {
+        let until = Instant::now() + Duration::from_secs(10);
+        while running.out.bytes()[before..].windows(4).all(|w| w != b"\x1b[2J") {
+            assert!(Instant::now() < until, "no redraw after the resize");
+            thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // smaller, then a report in the input past the limit
+    let before = running.out.bytes().len();
+    running
+        .tx
+        .send(SessionEvent::Input(b"\x1b[8;40;100t".to_vec()))
+        .unwrap();
+    redrawn(before);
+    let before = running.out.bytes().len();
+    let report = format!("\x1b[8;{};{}t", u16::MAX, side + 1);
+    running.tx.send(SessionEvent::Input(report.into_bytes())).unwrap();
+    redrawn(before);
+    let shown = running.out.wait_for("Open detail", side, side);
+    assert_eq!(shown.lines().count(), usize::from(side));
+    // the same size again and again is drawn at the limit and noted for the log once a session
+    for _ in 0..20 {
+        running
+            .tx
+            .send(SessionEvent::Resize {
+                columns: u16::MAX,
+                rows: u16::MAX,
+            })
+            .unwrap();
+    }
+    running.tx.send(SessionEvent::Close).unwrap();
+    running.done.join().unwrap().unwrap();
+    assert_eq!(NOTED.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]

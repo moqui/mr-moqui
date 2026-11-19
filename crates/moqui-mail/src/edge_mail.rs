@@ -66,6 +66,8 @@ pub const RECIPIENT_SET: &str = "mailRecipients";
 pub const EDGE_HOST: &str = "edge:";
 /// How long the relay to the MTA beside the edge node may take.
 const RELAY_TIMEOUT: Duration = Duration::from_secs(30);
+/// The longest one relay session takes, its commands and the message together (SEC-MAIL-83).
+const RELAY_SESSION: Duration = Duration::from_secs(10 * 60);
 /// The local part of a VERP envelope sender, before the `mailOut` item's id.
 const BOUNCE_PREFIX: &str = "bounce+";
 
@@ -537,11 +539,28 @@ fn relay(from: &str, to: &[String], raw: &[u8]) -> Relayed {
         Ok(envelope) => envelope,
         Err(err) => return Relayed::Refused(err.to_string()),
     };
-    let transport = lettre::SmtpTransport::builder_dangerous(&host)
-        .port(port)
+    // through a relay that ends the session at its deadline and bounds what the MTA sends (SEC-MAIL-83)
+    let addresses: Vec<std::net::SocketAddr> = match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), port)) {
+        Ok(found) => found.collect(),
+        Err(err) => return Relayed::NotNow(format!("the relay {host}:{port}: {err}")),
+    };
+    let relay = match super::relay::Relay::start(
+        &addresses,
+        RELAY_TIMEOUT,
+        std::time::Instant::now() + RELAY_SESSION,
+        super::relay::MAX_REPLIES,
+        &format!("relay {host}:{port}"),
+    ) {
+        Ok(relay) => relay,
+        Err(err) => return Relayed::NotNow(format!("the relay {host}:{port}: {err}")),
+    };
+    let transport = lettre::SmtpTransport::builder_dangerous(relay.local.ip().to_string())
+        .port(relay.local.port())
         .timeout(Some(RELAY_TIMEOUT))
         .build();
-    match lettre::Transport::send_raw(&transport, &envelope, raw) {
+    let sent = lettre::Transport::send_raw(&transport, &envelope, raw);
+    drop(relay);
+    match sent {
         Ok(response) => Relayed::Accepted(format!(
             "{} {}",
             response.code(),

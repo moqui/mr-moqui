@@ -47,6 +47,7 @@ pub mod dns;
 #[cfg(feature = "imap")]
 pub mod edge_dns;
 pub mod edge_mail;
+mod relay;
 #[cfg(feature = "imap")]
 mod export;
 #[cfg(feature = "imap")]

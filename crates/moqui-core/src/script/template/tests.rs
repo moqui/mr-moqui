@@ -122,6 +122,88 @@ fn compile_errors_name_the_line() {
     }
 }
 
+/// SEC-SCR-82: `${` in template literals, brackets, and `<#if>` and `<#list>` blocks nested past `MAX_NESTING` are
+/// refused, in a small stack, before any parser sees them (the scan recursed a level for each `${`, and oxc's parser
+/// for each bracket and block, and overflowed the native stack); `MAX_NESTING` levels still compile.
+#[test]
+fn nested_template_literals_past_the_limit_are_refused_in_a_small_stack() {
+    let nested = |levels: usize| {
+        let mut expression = "1".to_string();
+        for _ in 0..levels {
+            expression = format!("`${{{expression}}}`");
+        }
+        format!("a ${{{expression}}} b")
+    };
+    let tokens = tokens_at(&nested(MAX_NESTING)).unwrap();
+    assert!(tokens.iter().any(|(_, token)| matches!(token, Token::Interp(_))));
+    let err = tokens_at(&nested(MAX_NESTING + 1)).unwrap_err();
+    assert!(err.message().contains("deeper than 64"), "{}", err.message());
+    let brackets = |levels: usize| format!("${{{}1{}}}", "(".repeat(levels), ")".repeat(levels));
+    check_template(&brackets(MAX_NESTING)).unwrap();
+    let err = check_template(&brackets(MAX_NESTING + 1)).unwrap_err();
+    assert!(err.message().contains("deeper than 64"), "{}", err.message());
+    let blocks = |levels: usize| format!("{}x{}", "<#if true>".repeat(levels), "</#if>".repeat(levels));
+    check_template(&blocks(MAX_NESTING)).unwrap();
+    let err = check_template(&blocks(MAX_NESTING + 1)).unwrap_err();
+    assert!(err.message().contains("nest deeper than 64"), "{}", err.message());
+    let tag = format!("<#if `${{{}`>x</#if>", "`${".repeat(MAX_NESTING + 1));
+    let err = tokens_at(&tag).unwrap_err();
+    assert!(
+        err.message().contains("<#if> nests brackets or template literals"),
+        "{}",
+        err.message()
+    );
+    for deep in [
+        format!("${{{}", "`${".repeat(200_000)),
+        brackets(100_000),
+        blocks(100_000),
+    ] {
+        let refused = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || check_template(&deep).map_err(|err| err.message().to_string()))
+            .unwrap()
+            .join()
+            .expect("checked in a 256 KiB stack");
+        assert!(refused.unwrap_err().contains("deeper than 64"));
+    }
+    // chains with no brackets, which oxc's parser recurses through too: an elseif chain is written flat and compiles; an
+    // expression is parsed on the parse stack, and one past MAX_EXPRESSION is refused before it is parsed
+    let small_stack = |source: String| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || check_template(&source).map_err(|err| err.message().to_string()))
+            .unwrap()
+            .join()
+            .expect("checked in a 256 KiB stack")
+    };
+    small_stack(format!("<#if a>x{}<#else>z</#if>", "<#elseif b>y".repeat(20_000))).unwrap();
+    for chain in ["!", "x=>", "a=", "a?b:"] {
+        let fits = chain.repeat(crate::script::parse::MAX_EXPRESSION / chain.len() - 1);
+        small_stack(format!("${{{fits}1}}")).unwrap_or_else(|err| panic!("{chain}: {err}"));
+        let long = chain.repeat(crate::script::parse::MAX_EXPRESSION);
+        let refused = small_stack(format!("${{{long}1}}")).unwrap_err();
+        assert!(refused.contains("longer than"), "{chain}: {refused}");
+    }
+}
+
+/// An elseif chain, written flat, renders the branch of the first condition that holds, and only that one.
+#[test]
+fn an_elseif_chain_runs_the_first_branch_that_holds() {
+    let source = "<#if n == 1>one<#elseif n == 2>two<#elseif (n >= 2)>many<#else>none</#if>";
+    for (n, want) in [(1, "one"), (2, "two"), (3, "many"), (0, "none")] {
+        let mut data = moqui_lib::object::ValueMap::default();
+        data.insert("n".into(), Value::I32(n));
+        let out = render_locked_until(
+            &compiled(source, Escape::None, Scope::Snapshot).unwrap(),
+            &snapshot_json(&Value::Map(data)),
+            std::time::Instant::now() + LOCKED_BUDGET.0,
+            LOCKED_BUDGET.1,
+        )
+        .unwrap();
+        assert_eq!(out, want, "n = {n}");
+    }
+}
+
 #[test]
 fn tag_only_lines_leave_no_blank_lines() {
     on_template_engines(tag_only_lines_leave_no_blank_lines_on);

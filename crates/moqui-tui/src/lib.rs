@@ -78,5 +78,5 @@ pub use theme::{Depth, Glyph, Role, Theme};
 pub use ui::{
     from_revue, render_text, run_local, run_session, save_download, snapshot, Agent, AgentAnswer, AgentSnapshot,
     AppView, ChangedField, Hit, Hits, LocalOptions, Screen, Selection, SessionEvent, SessionOptions, AGENT_HELP, ENTER,
-    LEAVE, MOUSE_OFF, MOUSE_ON,
+    LEAVE, MAX_SIDE, MOUSE_OFF, MOUSE_ON,
 };

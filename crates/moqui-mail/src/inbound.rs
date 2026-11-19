@@ -114,6 +114,7 @@ pub(super) fn poll_server(
         delete: field_text(&server, "storeDelete") == "Y",
         allow_plain: field_text(&server, "storeAllowPlain") == "Y",
         deny_internal: private_network_denied(&server),
+        session_deadline: None,
     };
     let mut store = match open_store(&settings) {
         Ok(store) => store,
@@ -129,7 +130,27 @@ pub(super) fn poll_server(
     // is rolled back and left as it is, so the next poll sees it again. The errors are reported once all are done, so
     // one message's errors do not stop the services the next one's rules call.
     let mut errors = Vec::new();
+    let max_message = max_message();
     for id in ids {
+        // a message over the largest size is left on the server, as its read would fail the poll each time
+        match store.size(&id) {
+            Ok(Some(size)) if size > max_message => {
+                tracing::warn!(
+                    "Message {id} on {} is {size} bytes, over email-client max-message-size ({max_message}); left \
+                    on the server",
+                    settings.host
+                );
+                continue;
+            }
+            Ok(_) => {}
+            Err(text) => {
+                errors.push(format!(
+                    "Error reading the size of message {id} from {}: {text}",
+                    settings.host
+                ));
+                break;
+            }
+        }
         let message = match store.fetch(&id) {
             Ok(message) => message,
             Err(text) => {
@@ -284,6 +305,7 @@ pub(super) fn store_steps(
         delete: false,
         allow_plain: field_text(server, "storeAllowPlain") == "Y",
         deny_internal: private_network_denied(server),
+        session_deadline: None,
     };
     // the connection the sync makes: TLS from the start on imaps or port 993, else STARTTLS when the server offers it
     // (without it, refused unless the server allows plain text or is on this machine)
@@ -299,6 +321,7 @@ pub(super) fn store_steps(
         allow_plain: settings.allow_plain,
         deny_internal: settings.deny_internal,
         access_token: None,
+        session_deadline: None,
     };
     // this server's own refusal of a store with no TLS is shown as it is; any other failure as its kind only
     let own = [plain_refused("POP3", &host, "STLS"), plain_refused("IMAP", &host, "STARTTLS")];
@@ -418,6 +441,8 @@ pub(super) struct StoreSettings {
     pub(super) allow_plain: bool,
     /// The server may reach no internal address (`implementation::private_network_denied`).
     pub(super) deny_internal: bool,
+    /// When the session must end, its answers together (`sync::ServerInfo::session_deadline`).
+    pub(super) session_deadline: Option<std::time::Instant>,
 }
 
 fn eca_fields(message: &Inbound, server_id: &str) -> BTreeMap<String, Value> {
@@ -520,6 +545,10 @@ impl Inbound {
 trait Mailbox {
     /// The ids of the messages to look at, in server order.
     fn list_ids(&mut self) -> Result<Vec<String>, Error>;
+    /// The size the server gives for a message, when it gives one.
+    fn size(&mut self, _id: &str) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
     /// One message, with its flags.
     fn fetch(&mut self, id: &str) -> Result<Inbound, Error>;
     fn mark_seen(&mut self, id: &str) -> Result<(), Error>;
@@ -536,6 +565,14 @@ struct FakeBox {
 impl Mailbox for FakeBox {
     fn list_ids(&mut self) -> Result<Vec<String>, Error> {
         Ok(self.messages.iter().map(|message| message.id.clone()).collect())
+    }
+
+    fn size(&mut self, id: &str) -> Result<Option<u64>, Error> {
+        Ok(self
+            .messages
+            .iter()
+            .find(|message| message.id == id)
+            .map(|message| message.raw.len() as u64))
     }
 
     fn fetch(&mut self, id: &str) -> Result<Inbound, Error> {
@@ -661,6 +698,7 @@ impl ImapBox {
             allow_plain: settings.allow_plain,
             deny_internal: settings.deny_internal,
             access_token: None,
+            session_deadline: None,
         };
         let mut session = super::sync::open_imap(&info)
             .map_err(|err| Error::new(err.to_string()))?
@@ -692,6 +730,14 @@ impl Mailbox for ImapBox {
             .collect();
         ids.sort_unstable();
         Ok(ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
+    fn size(&mut self, id: &str) -> Result<Option<u64>, Error> {
+        let fetches = self
+            .session
+            .fetch(id, "RFC822.SIZE")
+            .map_err(|err| Error::new(err.to_string()))?;
+        Ok(fetches.iter().next().and_then(|fetch| fetch.size).map(u64::from))
     }
 
     fn fetch(&mut self, id: &str) -> Result<Inbound, Error> {
@@ -785,6 +831,12 @@ impl Pop3 {
             .collect())
     }
 
+    /// `LIST n`: the size the server gives for one message, None when it gives none.
+    pub(super) fn size(&mut self, number: u32) -> Result<Option<u64>, Error> {
+        let answer = self.command(&format!("LIST {number}"))?;
+        Ok(answer.split_whitespace().nth(2).and_then(|size| size.parse().ok()))
+    }
+
     /// `RETR`: one message as it is on the server.
     pub(super) fn retrieve(&mut self, number: u32) -> Result<Vec<u8>, Error> {
         self.command(&format!("RETR {number}"))?;
@@ -828,12 +880,14 @@ impl Pop3 {
             return Err(Error::new("the POP3 username or password has a line break"));
         }
         let tls = use_tls(&settings.protocol, settings.port);
-        let net = connect_net(&settings.host, settings.port, tls, settings.deny_internal)?;
+        let mut net = connect_net(&settings.host, settings.port, tls, settings.deny_internal)?;
+        net.set_deadline(settings.session_deadline);
         let mut reader = BufReader::new(net);
         let greeting = read_line(&mut reader)?;
         expect_ok(&greeting)?;
         if !tls {
             reader = pop_start_tls(reader, settings)?;
+            reader.get_mut().set_deadline(settings.session_deadline);
         }
         let mut client = Self { reader, closed: false };
         match token {
@@ -926,7 +980,7 @@ fn pop_start_tls(mut reader: BufReader<Net>, settings: &StoreSettings) -> Result
     if capabilities.lines().any(|line| line.trim() == "STLS") {
         expect_ok(&pop_exchange(&mut reader, "STLS")?)?;
         // the server sends nothing more before the handshake, so the buffer holds nothing
-        let Net::Plain(tcp) = reader.into_inner() else {
+        let Some(tcp) = reader.into_inner().into_plain() else {
             return Err(Error::new("POP3 STLS on a connection already in TLS"));
         };
         return Ok(BufReader::new(wrap_tls(tcp, &settings.host)?));
@@ -945,6 +999,13 @@ fn pop_start_tls(mut reader: BufReader<Net>, settings: &StoreSettings) -> Result
 }
 
 impl Mailbox for Pop3 {
+    fn size(&mut self, id: &str) -> Result<Option<u64>, Error> {
+        match id.parse::<u32>() {
+            Ok(number) => Pop3::size(self, number),
+            Err(_) => Ok(None),
+        }
+    }
+
     fn list_ids(&mut self) -> Result<Vec<String>, Error> {
         self.command("LIST")?;
         let listing = self.read_dot()?;
@@ -992,32 +1053,145 @@ impl Drop for Pop3 {
     }
 }
 
-pub(super) enum Net {
+/// A connection to an IMAP or POP3 server. What the server sends in answer to one command, counted from the client's
+/// last write, is at most [`answer_limit`] bytes (SEC-MAIL-85): the IMAP client holds a whole response, a literal
+/// included, and the POP3 client a whole line and a whole multi-line answer, so a server that sends without end would
+/// otherwise grow the process's memory until it fails. An answer also takes at most `email-client` `answer-timeout`
+/// from the client's last write: a read times out only after a minute with no byte at all, so a server that sends a
+/// byte now and then would hold a sync or IDLE worker without end. Past either limit a read fails, and the connection
+/// with it.
+pub(super) struct Net {
+    stream: Stream,
+    /// The bytes read since the last write.
+    read: u64,
+    limit: u64,
+    /// When the last write was (or the connection was made), and how long its answer may take.
+    since: std::time::Instant,
+    answer_time: Duration,
+    /// When the whole session must end, for a session that has one ([`Net::set_deadline`]).
+    deadline: Option<std::time::Instant>,
+}
+
+enum Stream {
     Plain(TcpStream),
     Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
 }
 
+/// Room for what an answer holds beside its message: the lines and flags around a body fetch.
+const ANSWER_MARGIN: u64 = 1024 * 1024;
+
+/// A batch of the sync's body fetches is at most this, by the sizes the server gave (`sync.rs` `FETCH_BYTES`), so an
+/// answer may be this large whatever `max-message-size` is.
+const BATCH_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The largest message read from an IMAP or POP3 server: `email-client` `max-message-size`. A larger one, by the size
+/// the server gives, is skipped.
+pub(super) fn max_message() -> u64 {
+    u64::try_from(super::sync::property_number("max-message-size", 64 * 1024 * 1024)).unwrap_or(u64::MAX)
+}
+
+/// The most bytes one answer of a mail server may be: the larger of [`max_message`] and [`BATCH_BYTES`], and
+/// [`ANSWER_MARGIN`].
+fn answer_limit() -> u64 {
+    max_message().max(BATCH_BYTES).saturating_add(ANSWER_MARGIN)
+}
+
+/// How long one answer of a mail server may take: `email-client` `answer-timeout`, seconds. It is longer than an IDLE,
+/// whose answer lasts until the client ends it (`idle.rs` `IDLE_RENEW`, 10 minutes), and shorter than a sync's lease.
+pub(super) fn answer_time() -> Duration {
+    Duration::from_secs(u64::try_from(super::sync::property_number("answer-timeout", 660)).unwrap_or(660))
+}
+
+impl Net {
+    pub(super) fn plain(tcp: TcpStream) -> Net {
+        Net::over(Stream::Plain(tcp))
+    }
+
+    fn over(stream: Stream) -> Net {
+        Net {
+            stream,
+            read: 0,
+            limit: answer_limit(),
+            since: std::time::Instant::now(),
+            answer_time: answer_time(),
+            deadline: None,
+        }
+    }
+
+    /// End the session at `deadline`, its answers together: a sync's lease (SEC-MAIL-85). None for no end of its own.
+    pub(super) fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.deadline = deadline;
+    }
+
+    /// The TCP connection, when no TLS is on it yet (for STARTTLS).
+    pub(super) fn into_plain(self) -> Option<TcpStream> {
+        match self.stream {
+            Stream::Plain(tcp) => Some(tcp),
+            Stream::Tls(_) => None,
+        }
+    }
+}
+
 impl Read for Net {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            Net::Plain(stream) => stream.read(buf),
-            Net::Tls(stream) => stream.read(buf),
+        let left = self.limit.saturating_sub(self.read);
+        if left == 0 {
+            tracing::warn!(
+                "a mail server sent more than {} bytes in answer to one command; the connection is closed",
+                self.limit
+            );
+            return Err(std::io::Error::other(format!(
+                "the mail server's answer is larger than {} bytes (email-client max-message-size)",
+                self.limit
+            )));
         }
+        if self.since.elapsed() > self.answer_time {
+            tracing::warn!(
+                "a mail server took more than {} seconds to answer one command; the connection is closed",
+                self.answer_time.as_secs()
+            );
+            return Err(std::io::Error::other(format!(
+                "the mail server's answer took more than {} seconds (email-client answer-timeout)",
+                self.answer_time.as_secs()
+            )));
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() > deadline)
+        {
+            tracing::warn!("a mail server session passed its deadline (the sync's lease); the connection is closed");
+            return Err(std::io::Error::other(
+                "the mail server session took longer than the sync's lease; the next sync goes on",
+            ));
+        }
+        let room = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        let read = match &mut self.stream {
+            Stream::Plain(stream) => stream.read(&mut buf[..room]),
+            Stream::Tls(stream) => stream.read(&mut buf[..room]),
+        }?;
+        self.read = self.read.saturating_add(read as u64);
+        Ok(read)
     }
 }
 
 impl Write for Net {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            Net::Plain(stream) => stream.write(buf),
-            Net::Tls(stream) => stream.write(buf),
+        let written = match &mut self.stream {
+            Stream::Plain(stream) => stream.write(buf),
+            Stream::Tls(stream) => stream.write(buf),
+        }?;
+        if written > 0 {
+            // a command (or a literal of one): what comes next is its answer
+            self.read = 0;
+            self.since = std::time::Instant::now();
         }
+        Ok(written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        match self {
-            Net::Plain(stream) => stream.flush(),
-            Net::Tls(stream) => stream.flush(),
+        match &mut self.stream {
+            Stream::Plain(stream) => stream.flush(),
+            Stream::Tls(stream) => stream.flush(),
         }
     }
 }
@@ -1025,7 +1199,7 @@ impl Write for Net {
 fn connect_net(host: &str, port: u16, tls: bool, deny_internal: bool) -> Result<Net, Error> {
     let tcp = connect_tcp(host, port, deny_internal)?;
     if !tls {
-        return Ok(Net::Plain(tcp));
+        return Ok(Net::plain(tcp));
     }
     wrap_tls(tcp, host)
 }
@@ -1078,15 +1252,15 @@ pub(super) fn wrap_tls(tcp: TcpStream, host: &str) -> Result<Net, Error> {
         .map_err(|_| Error::new(format!("email host {host} is not a DNS name")))?;
     let config = tls_config()?;
     let conn = rustls::ClientConnection::new(config, name).map_err(|err| Error::new(err.to_string()))?;
-    Ok(Net::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
+    Ok(Net::over(Stream::Tls(Box::new(rustls::StreamOwned::new(conn, tcp)))))
 }
 
 impl Net {
     /// The TCP connection under the stream, for its timeouts.
     pub(super) fn socket(&self) -> &TcpStream {
-        match self {
-            Net::Plain(stream) => stream,
-            Net::Tls(stream) => &stream.sock,
+        match &self.stream {
+            Stream::Plain(stream) => stream,
+            Stream::Tls(stream) => &stream.sock,
         }
     }
 }

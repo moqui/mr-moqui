@@ -41,7 +41,7 @@ pub use agent::{Agent, AgentAnswer, ChangedField, Snapshot as AgentSnapshot, AGE
 pub use encode::{Screen, ENTER, LEAVE, MOUSE_OFF, MOUSE_ON};
 pub use paint::{Hit, Hits};
 pub use run::{from_revue, run_local, save_download, snapshot, LocalOptions};
-pub use session_loop::{run_session, SessionEvent, SessionOptions};
+pub use session_loop::{run_session, SessionEvent, SessionOptions, MAX_SIDE};
 
 pub struct AppView<L: ScreenLink = FakeLink> {
     session: Session,

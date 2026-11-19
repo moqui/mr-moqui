@@ -29,6 +29,13 @@ use crate::keys::{Key, KeyPress, Mouse, MouseKind};
 /// Terminals send a sequence in one write, so a gap this long means a person pressed Escape.
 pub const ESC_WAIT: Duration = Duration::from_millis(50);
 
+/// The most bytes of one bracketed paste kept (SEC-FIL-99), the prompt's line limit: past it the rest of the paste is
+/// read to its end marker and dropped, so a paste that never ends holds this much and no more.
+pub const MAX_PASTE: usize = 1024 * 1024;
+
+/// The end of a bracketed paste.
+const PASTE_END: &[u8] = b"\x1b[201~";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoded {
     Key(KeyPress),
@@ -49,9 +56,35 @@ pub enum Decoded {
 #[derive(Debug)]
 pub struct Decoder {
     pending: Vec<u8>,
-    paste: Option<Vec<u8>>,
+    paste: Option<Paste>,
     /// When the bytes still pending stopped short of a whole sequence.
     waiting: Option<Instant>,
+    /// Pastes cut to [`MAX_PASTE`] since [`Self::take_cut`].
+    cut: usize,
+}
+
+/// A bracketed paste under way.
+#[derive(Debug, Default)]
+struct Paste {
+    /// At most [`MAX_PASTE`] bytes of it, then the last bytes read, which may be the start of the end marker.
+    bytes: Vec<u8>,
+    /// The bytes already searched for the end marker, so each read searches only what is new.
+    searched: usize,
+    /// More than [`MAX_PASTE`] bytes came.
+    cut: bool,
+}
+
+impl Paste {
+    /// Keep the first [`MAX_PASTE`] bytes and the end marker's length less one after them.
+    fn keep_within(&mut self) {
+        let tail = PASTE_END.len() - 1;
+        if self.bytes.len() > MAX_PASTE + tail {
+            let from = self.bytes.len() - tail;
+            self.bytes.drain(MAX_PASTE..from);
+            self.cut = true;
+        }
+        self.searched = self.bytes.len();
+    }
 }
 
 impl Default for Decoder {
@@ -66,11 +99,17 @@ impl Decoder {
             pending: Vec::new(),
             paste: None,
             waiting: None,
+            cut: 0,
         }
     }
 
+    /// Whether a paste was cut to [`MAX_PASTE`] since the last call, for the caller's log.
+    pub fn take_cut(&mut self) -> bool {
+        std::mem::take(&mut self.cut) > 0
+    }
+
     /// When [`Self::flush`] should run: an unfinished sequence has waited [`ESC_WAIT`]. None inside a paste, which
-    /// waits for its end however long it takes.
+    /// waits for its end however long it takes, holding at most [`MAX_PASTE`] bytes of it.
     pub fn deadline(&self) -> Option<Instant> {
         self.waiting.map(|since| since + ESC_WAIT)
     }
@@ -90,19 +129,24 @@ impl Decoder {
 
     pub fn push(&mut self, bytes: &[u8]) -> Vec<Decoded> {
         if let Some(paste) = &mut self.paste {
-            paste.extend_from_slice(bytes);
+            paste.bytes.extend_from_slice(bytes);
         } else {
             self.pending.extend_from_slice(bytes);
         }
         let mut out = Vec::new();
-        let paste_end: &[u8] = b"\x1b[201~";
         loop {
-            if let Some(buf) = &self.paste {
-                let Some(at) = find_sub(buf, paste_end) else {
+            if let Some(paste) = &mut self.paste {
+                // the marker may start in the bytes searched before, at most its length less one back
+                let from = paste.searched.saturating_sub(PASTE_END.len() - 1);
+                let Some(at) = find_sub(&paste.bytes[from..], PASTE_END).map(|at| from + at) else {
+                    paste.keep_within();
                     break;
                 };
-                let text = String::from_utf8_lossy(&buf[..at]).into_owned();
-                let rest = buf[at + paste_end.len()..].to_vec();
+                let text = String::from_utf8_lossy(&paste.bytes[..kept(&paste.bytes, at)]).into_owned();
+                let rest = paste.bytes[at + PASTE_END.len()..].to_vec();
+                if paste.cut || at > MAX_PASTE {
+                    self.cut += 1;
+                }
                 self.paste = None;
                 self.pending = rest;
                 out.push(Decoded::Paste(text));
@@ -114,7 +158,10 @@ impl Decoder {
                     let start = matches!(take_one(&self.pending), Take::PasteStart(_));
                     self.pending.drain(..len);
                     if start {
-                        self.paste = Some(std::mem::take(&mut self.pending));
+                        self.paste = Some(Paste {
+                            bytes: std::mem::take(&mut self.pending),
+                            ..Paste::default()
+                        });
                     }
                 }
                 Take::One(decoded, len) => {
@@ -468,157 +515,23 @@ fn ctrl(key: Key) -> Decoded {
     Decoded::Key(KeyPress::with_ctrl(key))
 }
 
+/// How much of a paste of `end` bytes is delivered: all of it, or at most [`MAX_PASTE`], back to the start of a UTF-8
+/// character so the cut does not split one.
+fn kept(bytes: &[u8], end: usize) -> usize {
+    if end <= MAX_PASTE {
+        return end;
+    }
+    let mut at = MAX_PASTE;
+    while at > 0 && bytes.get(at).is_some_and(|byte| byte & 0xC0 == 0x80) {
+        at -= 1;
+    }
+    at
+}
+
 fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|window| window == needle)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn keys(bytes: &[u8]) -> Vec<Decoded> {
-        Decoder::new().push(bytes)
-    }
-
-    #[test]
-    fn xterm_and_gnome_function_keys() {
-        assert_eq!(keys(b"\x1bOP"), vec![key(Key::F(1))]);
-        assert_eq!(keys(b"\x1bOS"), vec![key(Key::F(4))]);
-        assert_eq!(keys(b"\x1b[15~"), vec![key(Key::F(5))]);
-        assert_eq!(keys(b"\x1b[18~"), vec![key(Key::F(7))]);
-        assert_eq!(keys(b"\x1b[24~"), vec![key(Key::F(12))]);
-        assert_eq!(keys(b"\x1b[A"), vec![key(Key::Up)]);
-    }
-
-    #[test]
-    fn kitty_unicode_keys_and_alt() {
-        assert_eq!(keys(b"\x1b[13u"), vec![key(Key::Enter)]);
-        assert_eq!(keys(b"\x1b[97;3u"), vec![alt(Key::Char('a'))]);
-    }
-
-    #[test]
-    fn linux_console_function_key() {
-        assert_eq!(keys(b"\x1b[[A"), vec![key(Key::F(1))]);
-    }
-
-    #[test]
-    fn tmux_and_xterm_alt_is_an_escape_prefix() {
-        assert_eq!(keys(b"\x1ba"), vec![alt(Key::Char('a'))]);
-        assert_eq!(keys(b"\x1b[1;3A"), vec![alt(Key::Up)]);
-    }
-
-    #[test]
-    fn paste_keeps_a_newline_as_one_event() {
-        let decoded = keys(b"\x1b[200~hello\nworld\x1b[201~");
-        assert_eq!(decoded, vec![Decoded::Paste("hello\nworld".to_string())]);
-    }
-
-    #[test]
-    fn a_sequence_split_across_reads_still_parses() {
-        let mut decoder = Decoder::new();
-        assert!(decoder.push(b"\x1b[1").is_empty());
-        assert_eq!(decoder.push(b"5~"), vec![key(Key::F(5))]);
-    }
-
-    #[test]
-    fn a_lone_escape_waits_then_is_the_escape_key() {
-        let mut decoder = Decoder::new();
-        assert!(decoder.push(b"\x1b").is_empty());
-        assert!(decoder.deadline().is_some());
-        assert_eq!(decoder.flush(), vec![key(Key::Escape)]);
-        assert_eq!(decoder.deadline(), None);
-        // An ESC and `[` in two reads, before the wait ends, are still one sequence.
-        assert!(decoder.push(b"\x1b").is_empty());
-        assert!(decoder.push(b"[").is_empty());
-        assert_eq!(decoder.push(b"B"), vec![key(Key::Down)]);
-        assert_eq!(decoder.deadline(), None);
-        // A paste waits for its end without a deadline.
-        assert!(decoder.push(b"\x1b[200~part").is_empty());
-        assert_eq!(decoder.deadline(), None);
-    }
-
-    #[test]
-    fn control_letters_alt_enter_and_home_end() {
-        assert_eq!(keys(b"\x0b"), vec![ctrl(Key::Char('k'))]);
-        assert_eq!(keys(b"\x13"), vec![ctrl(Key::Char('s'))]);
-        assert_eq!(keys(b"\t"), vec![key(Key::Tab)]);
-        assert_eq!(keys(b"\x1b\r"), vec![alt(Key::Enter)]);
-        assert_eq!(keys(b"\x1b[1~\x1b[4~"), vec![key(Key::Home), key(Key::End)]);
-        assert_eq!(keys(b"\x1bOH"), vec![key(Key::Home)]);
-    }
-
-    #[test]
-    fn function_keys_one_to_four_take_their_modifiers() {
-        let shifted = |key: Key| KeyPress {
-            shift: true,
-            ..KeyPress::plain(key)
-        };
-        assert_eq!(keys(b"\x1b[1;2R"), vec![Decoded::Key(shifted(Key::F(3)))]);
-        assert_eq!(keys(b"\x1b[13;2~"), vec![Decoded::Key(shifted(Key::F(3)))]);
-        assert_eq!(keys(b"\x1b[19;2~"), vec![Decoded::Key(shifted(Key::F(8)))]);
-        assert_eq!(keys(b"\x1bOR"), vec![key(Key::F(3))]);
-        assert_eq!(keys(b"\x00"), vec![ctrl(Key::Char(' '))]);
-    }
-
-    #[test]
-    fn resize_report_is_columns_then_rows() {
-        assert_eq!(
-            keys(b"\x1b[8;50;180t"),
-            vec![Decoded::Resize { columns: 180, rows: 50 }]
-        );
-    }
-
-    #[test]
-    fn the_background_answer_is_read_and_other_commands_dropped() {
-        assert_eq!(
-            keys(b"\x1b]11;rgb:0000/0000/0000\x07"),
-            vec![Decoded::Background { dark: true }]
-        );
-        assert_eq!(
-            keys(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\x"),
-            vec![Decoded::Background { dark: false }, key(Key::Char('x'))]
-        );
-        let mut decoder = Decoder::new();
-        assert!(decoder.push(b"\x1b]11;rgb:fa").is_empty(), "a split answer waits");
-        assert_eq!(
-            decoder.push(b"fa/fafa/fafa\x07"),
-            vec![Decoded::Background { dark: false }]
-        );
-        assert_eq!(keys(b"\x1b]52;c;aGk=\x07z"), vec![key(Key::Char('z'))]);
-        assert_eq!(keys(b"\x1b]a"), vec![alt(Key::Char(']')), key(Key::Char('a'))]);
-    }
-
-    fn mouse(kind: MouseKind, column: u16, row: u16) -> Decoded {
-        Decoded::Mouse(Mouse::at(kind, column, row))
-    }
-
-    #[test]
-    fn sgr_mouse_press_drag_release_and_wheel() {
-        assert_eq!(keys(b"\x1b[<0;10;5M"), vec![mouse(MouseKind::Press, 9, 4)]);
-        assert_eq!(keys(b"\x1b[<32;11;5M"), vec![mouse(MouseKind::Drag, 10, 4)]);
-        assert_eq!(keys(b"\x1b[<0;11;5m"), vec![mouse(MouseKind::Release, 10, 4)]);
-        assert_eq!(keys(b"\x1b[<64;1;1M"), vec![mouse(MouseKind::WheelUp, 0, 0)]);
-        assert_eq!(keys(b"\x1b[<65;1;1M"), vec![mouse(MouseKind::WheelDown, 0, 0)]);
-        // Shift 4, Alt 8, Ctrl 16; the right button is 2.
-        let Decoded::Mouse(with) = keys(b"\x1b[<30;3;4M").remove(0) else {
-            panic!("a mouse report");
-        };
-        assert!(with.shift && with.alt && with.ctrl && with.button == 2, "{with:?}");
-        // Motion with no button is not reported, and the keys after it still are.
-        assert_eq!(keys(b"\x1b[<35;3;4Mx"), vec![key(Key::Char('x'))]);
-        // SGR has no coordinate limit, unlike X10's 223.
-        assert_eq!(keys(b"\x1b[<0;300;80M"), vec![mouse(MouseKind::Press, 299, 79)]);
-    }
-
-    #[test]
-    fn x10_mouse_and_reports_split_across_reads() {
-        // Button 0 at column 1, row 1: 32, 33, 33. A release is code 3.
-        assert_eq!(keys(b"\x1b[M !!"), vec![mouse(MouseKind::Press, 0, 0)]);
-        assert_eq!(keys(b"\x1b[M#*%"), vec![mouse(MouseKind::Release, 9, 4)]);
-        let mut decoder = Decoder::new();
-        assert!(decoder.push(b"\x1b[M ").is_empty());
-        assert_eq!(decoder.push(b"!!"), vec![mouse(MouseKind::Press, 0, 0)]);
-        assert!(decoder.push(b"\x1b[<0;1").is_empty());
-        assert_eq!(decoder.push(b"0;5M"), vec![mouse(MouseKind::Press, 9, 4)]);
-    }
-}
+#[path = "decode_tests.rs"]
+mod tests;

@@ -236,8 +236,7 @@ pub fn markdown_fancy_source_with_base(source: &str, base: Option<&str>) -> Resu
                 .ok_or_else(|| fail(source, index, "comment is not closed"))?;
             Some((index + end + 3, true))
         } else if rest.starts_with("${") {
-            let end =
-                scan_expression(source, index + 2, b'}').ok_or_else(|| fail(source, index, "${ has no closing }"))?;
+            let end = interp_end(source, index)?;
             Some((end + 1, false))
         } else if rest.starts_with("<#") || rest.starts_with("</#") || rest.starts_with("<@") || rest.starts_with("</@")
         {
@@ -661,7 +660,13 @@ fn compile_body(source: &str, escape: Escape) -> Result<String, Error> {
     generate(&tokens, escape, source)
 }
 
+/// [`compile_on_stack`] on a thread with the parse stack: oxc's parser recurses for each level of an expression's
+/// nesting, with no stack check, and a template is untrusted text (SEC-SCR-82).
 fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> {
+    super::parse::on_parse_stack(|| compile_on_stack(source, escape, scope))?
+}
+
+fn compile_on_stack(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> {
     let body = compile_body(source, escape)?;
     // An `<#assign>` is a `var` of the function, and a `var` is hoisted: without this, the name reads `undefined`
     // before the assign instead of the context's value. The live form starts each assigned name from the context.
@@ -798,10 +803,38 @@ enum Unclosed {
     End,
     /// A `//` comment in a tag, which would run past the tag's `>`.
     LineCommentInTag,
+    /// Brackets and `${` inside template literals nested deeper than [`MAX_NESTING`].
+    TooDeep,
+}
+
+/// The deepest an expression the tokenizer scans may nest, its brackets and its `${` inside template literals together
+/// (SEC-SCR-82). [`scan`] calls itself for each `${` in a template literal, so a source of `` `${ `` repeated would
+/// overflow the native stack and end the process; and oxc's parser, which each expression and the generated program
+/// go through, recurses for each bracket (10,000 overflow a service worker's stack). Real templates nest a few.
+const MAX_NESTING: usize = 64;
+
+/// The end of the `${` at `index`: the offset of its `}`.
+fn interp_end(source: &str, index: usize) -> Result<usize, Error> {
+    scan(source, index + 2, b'}').map_err(|why| match why {
+        Unclosed::TooDeep => fail(
+            source,
+            index,
+            &format!("${{ nests brackets or template literals deeper than {MAX_NESTING}"),
+        ),
+        Unclosed::End | Unclosed::LineCommentInTag => fail(source, index, "${ has no closing }"),
+    })
 }
 
 /// [`scan_expression`], saying why it found no end.
 fn scan(source: &str, from: usize, terminator: u8) -> Result<usize, Unclosed> {
+    scan_nested(source, from, terminator, 0)
+}
+
+/// [`scan`] inside `nesting` levels of brackets and `${` in template literals.
+fn scan_nested(source: &str, from: usize, terminator: u8, nesting: usize) -> Result<usize, Unclosed> {
+    if nesting > MAX_NESTING {
+        return Err(Unclosed::TooDeep);
+    }
     let bytes = source.as_bytes();
     let mut depth = 0usize;
     let mut index = from;
@@ -830,7 +863,7 @@ fn scan(source: &str, from: usize, terminator: u8) -> Result<usize, Unclosed> {
                     if bytes[index] == b'\\' {
                         index += 1;
                     } else if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{') {
-                        index = scan(source, index + 2, b'}')?;
+                        index = scan_nested(source, index + 2, b'}', nesting + depth + 1)?;
                     }
                     index += 1;
                 }
@@ -870,6 +903,9 @@ fn scan(source: &str, from: usize, terminator: u8) -> Result<usize, Unclosed> {
             }
             b'(' | b'[' | b'{' => {
                 depth += 1;
+                if nesting + depth > MAX_NESTING {
+                    return Err(Unclosed::TooDeep);
+                }
                 operand_next = true;
             }
             b')' | b']' => {
@@ -978,8 +1014,7 @@ pub(crate) fn tokens_at(source: &str) -> Result<Vec<(usize, Token)>, Error> {
             tokens.push((index, Token::Comment));
             index += end + 3;
         } else if rest.starts_with("${") {
-            let end =
-                scan_expression(source, index + 2, b'}').ok_or_else(|| fail(source, index, "${ has no closing }"))?;
+            let end = interp_end(source, index)?;
             flush!();
             tokens.push((index, Token::Interp(source[index + 2..end].to_string())));
             index = end + 1;
@@ -1043,6 +1078,11 @@ fn tag(source: &str, start: usize) -> Result<(Token, usize), Error> {
     let end = scan(source, name_end, b'>').map_err(|why| match why {
         Unclosed::LineCommentInTag => fail(source, start, &format!("a // comment in a tag (<#{name}>): use /* */")),
         Unclosed::End => fail(source, start, &format!("<#{name} has no closing >")),
+        Unclosed::TooDeep => fail(
+            source,
+            start,
+            &format!("<#{name}> nests brackets or template literals deeper than {MAX_NESTING}"),
+        ),
     })?;
     let argument = source[name_end..end].trim().to_string();
     if argument.is_empty() {
@@ -1193,12 +1233,25 @@ fn push_template_text(out: &mut String, text: &str) {
     }
 }
 
+/// An `<#if>` or `<#list>` being generated.
+struct Block {
+    list: bool,
+    else_seen: bool,
+    /// The if's number, for the flag of a chain.
+    id: usize,
+    /// Where the if starts in the output, and where its first branch's body starts.
+    at: usize,
+    body: usize,
+    /// The if has elseifs, so it is written as a chain ([`generate`]).
+    chain: bool,
+}
+
 fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Error> {
     let encode = if escape == Escape::Html { "$h" } else { "$s" };
     let mut out = String::new();
-    // `true` for an open list, `false` for an open if, with whether an else was seen.
-    let mut stack: Vec<(bool, bool)> = Vec::new();
+    let mut stack: Vec<Block> = Vec::new();
     let mut lists = 0usize;
+    let mut ifs = 0usize;
     let mut run = Run::default();
     for token in tokens {
         match token {
@@ -1221,15 +1274,46 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
         }
         match token {
             Token::Text(_) | Token::Interp(_) | Token::Comment => {}
+            Token::If(_) | Token::List(..) if stack.len() >= MAX_NESTING => {
+                // the generated program nests a block (two for a list) for each, which oxc's parser recurses through
+                return Err(Error::new(format!(
+                    "template: <#if> and <#list> nest deeper than {MAX_NESTING}"
+                )));
+            }
+            // An if with elseifs is written flat, a block for each branch after a flag that one ran, as
+            // `{ let $e1 = false; if (a) { $e1 = true; ... } if (!$e1 && (b)) { $e1 = true; ... } if (!$e1) { ... } }`:
+            // an `else if` chain nests in the parsed program, and oxc's parser recurses for each (SEC-SCR-82). An if
+            // with none is a plain `if` and `else`.
             Token::If(cond) => {
                 check_expression(cond, source)?;
+                ifs += 1;
+                let at = out.len();
                 out.push_str(&format!("if ({}) {{\n", line_closed(cond)));
-                stack.push((false, false));
+                stack.push(Block {
+                    list: false,
+                    else_seen: false,
+                    id: ifs,
+                    at,
+                    body: out.len(),
+                    chain: false,
+                });
             }
             Token::ElseIf(cond) => {
                 check_expression(cond, source)?;
-                match stack.last() {
-                    Some((false, false)) => out.push_str(&format!("}} else if ({}) {{\n", line_closed(cond))),
+                match stack.last_mut() {
+                    Some(block) if !block.list && !block.else_seen => {
+                        let id = block.id;
+                        if !block.chain {
+                            // the blocks inside the first branch are closed, so only this if's places move
+                            out.insert_str(block.body, &format!("$e{id} = true;\n"));
+                            out.insert_str(block.at, &format!("{{\nlet $e{id} = false;\n"));
+                            block.chain = true;
+                        }
+                        out.push_str(&format!(
+                            "}}\nif (!$e{id} && ({})) {{\n$e{id} = true;\n",
+                            line_closed(cond)
+                        ));
+                    }
                     _ => {
                         return Err(Error::new(
                             "template: <#elseif> without an open <#if>, or after <#else>",
@@ -1238,14 +1322,18 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                 }
             }
             Token::Else => match stack.last_mut() {
-                Some((false, seen @ false)) => {
-                    *seen = true;
-                    out.push_str("} else {\n");
+                Some(block) if !block.list && !block.else_seen => {
+                    block.else_seen = true;
+                    if block.chain {
+                        out.push_str(&format!("}}\nif (!$e{}) {{\n", block.id));
+                    } else {
+                        out.push_str("} else {\n");
+                    }
                 }
                 _ => return Err(Error::new("template: <#else> without an open <#if>, or twice")),
             },
             Token::EndIf => match stack.pop() {
-                Some((false, _)) => out.push_str("}\n"),
+                Some(block) if !block.list => out.push_str(if block.chain { "}\n}\n" } else { "}\n" }),
                 _ => return Err(Error::new("template: </#if> without an open <#if>")),
             },
             Token::List(items, name) => {
@@ -1255,10 +1343,17 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                     "{{\nconst $l{lists} = $list({});\nfor (let {name}_index = 0; {name}_index < $l{lists}.length; {name}_index++) {{\nconst {name} = $l{lists}[{name}_index];\nconst {name}_has_next = {name}_index < $l{lists}.length - 1;\n",
                     line_closed(items)
                 ));
-                stack.push((true, false));
+                stack.push(Block {
+                    list: true,
+                    else_seen: false,
+                    id: lists,
+                    at: 0,
+                    body: 0,
+                    chain: false,
+                });
             }
             Token::EndList => match stack.pop() {
-                Some((true, _)) => out.push_str("}\n}\n"),
+                Some(block) if block.list => out.push_str("}\n}\n"),
                 _ => return Err(Error::new("template: </#list> without an open <#list>")),
             },
             Token::Assign(name, value) => {
@@ -1268,8 +1363,8 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
         }
     }
     run.flush(&mut out);
-    if let Some((is_list, _)) = stack.last() {
-        let open = if *is_list { "<#list>" } else { "<#if>" };
+    if let Some(block) = stack.last() {
+        let open = if block.list { "<#list>" } else { "<#if>" };
         return Err(Error::new(format!("template: {open} is not closed")));
     }
     Ok(out)
@@ -1286,6 +1381,12 @@ fn line_closed(expr: &str) -> std::borrow::Cow<'_, str> {
 }
 
 fn check_expression(expr: &str, _source: &str) -> Result<(), Error> {
+    if expr.len() > super::parse::MAX_EXPRESSION {
+        return Err(Error::new(format!(
+            "template: an expression is longer than {} bytes",
+            super::parse::MAX_EXPRESSION
+        )));
+    }
     super::parse_js(expr).map_err(|err| Error::new(format!("template: {}", err.message())))
 }
 
@@ -1473,6 +1574,10 @@ pub(super) const SANDBOX_LOCKDOWN: &str = r#"
         () => Object.getOwnPropertyDescriptor(Function.prototype, "caller").get,
         () => (function () { "use strict"; return Object.getOwnPropertyDescriptor(arguments, "callee").get; })(),
     ];
+    // A template has no use for promises, and a job one queues is never run (SEC-SCR-83): the constructor goes, frozen
+    // first, since an async function still reaches its prototype.
+    freeze(Promise);
+    delete globalThis.Promise;
     freeze(globalThis);
     for (const make of hidden) {
         let item;

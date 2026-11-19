@@ -41,6 +41,33 @@ pub fn parse_js(expr: &str) -> Result<(), Error> {
     }))
 }
 
+/// The stack a parse of untrusted text runs on ([`on_parse_stack`]): oxc's parser recurses for each level of nesting
+/// with no stack check (an arrow, an assignment, a `?:` or an `else if` chain, brackets), and so does its ESTree
+/// writer, so an expression nested deep enough would overflow a worker's stack and end the process (SEC-SCR-82). The
+/// stack is reserved, not used: only the pages a parse touches are taken.
+const PARSE_STACK: usize = 64 * 1024 * 1024;
+
+/// The longest expression of untrusted text (a template's, a theme's) parsed (SEC-SCR-82): with [`PARSE_STACK`] it
+/// bounds how deep oxc's parser recurses, at about a kilobyte of stack for each byte of the deepest chain in a debug
+/// build.
+pub(crate) const MAX_EXPRESSION: usize = 16 * 1024;
+
+/// Run `body` on a thread of its own with a [`PARSE_STACK`] stack, for a parse of untrusted text.
+///
+/// # Errors
+///
+/// The thread did not start, or `body` panicked.
+pub(crate) fn on_parse_stack<R: Send>(body: impl FnOnce() -> R + Send) -> Result<R, Error> {
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new()
+            .name("moqui-parse".to_string())
+            .stack_size(PARSE_STACK)
+            .spawn_scoped(scope, body)
+            .map_err(|err| Error::new(format!("the parse thread did not start: {err}")))?;
+        thread.join().map_err(|_| Error::new("the parse stopped"))
+    })
+}
+
 /// An arena past this after a parse is let go rather than kept for the next.
 const ARENA_KEEP: usize = 4 << 20;
 

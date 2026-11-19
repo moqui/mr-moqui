@@ -564,3 +564,59 @@ fn a_vcard_keeps_its_uid() {
         vcard::parse("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:card-77\r\nFN:Una Uid\r\nN:Uid;Una;;;\r\nEND:VCARD\r\n");
     assert_eq!(text(&cards[0], "uid"), "card-77");
 }
+
+/// SEC-FIL-82: a file of nested BEGIN lines with no END reads in a small stack (the drop of a deep tree recursed a
+/// level for each, past any stack), and what it holds past the depth limit is left out: the event before it and the
+/// calendar after it are read. The levels a real calendar uses (an alarm in an event) are kept.
+#[test]
+fn nested_components_past_the_depth_limit_are_left_out_in_a_small_stack() {
+    let source = format!(
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:kept\r\nDTSTART:20261005T090000Z\r\nSUMMARY:Kept\r\n\
+        BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\nEND:VEVENT\r\n{}END:VCALENDAR\r\n\
+        BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:after\r\nDTSTART:20261006T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        "BEGIN:X\r\n".repeat(200_000)
+    );
+    let parsed = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || ics::parse(&source, 2026))
+        .unwrap()
+        .join()
+        .expect("read in a 256 KiB stack");
+    let Some(Value::List(events)) = parsed.get("events") else {
+        panic!("{parsed:?}")
+    };
+    let uids: Vec<String> = events
+        .iter()
+        .map(|event| match event {
+            Value::Map(event) => text(event, "uid"),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(uids, ["kept", "after"]);
+    let Value::Map(kept) = &events[0] else { panic!() };
+    assert!(
+        matches!(kept.get("alarms"), Some(Value::List(alarms)) if alarms.len() == 1),
+        "{kept:?}"
+    );
+}
+
+/// SEC-FIL-82: a file holds at most `MAX_COMPONENTS` components; the rest of it is left out.
+#[test]
+fn a_calendar_file_holds_at_most_its_component_count() {
+    let file = |empty: usize| {
+        format!(
+            "{}BEGIN:VEVENT\r\nUID:last\r\nDTSTART:20261005T090000Z\r\nEND:VEVENT\r\n",
+            "BEGIN:X\r\nEND:X\r\n".repeat(empty)
+        )
+    };
+    let events = |text: &str| match ics::parse(text, 2026).get("events") {
+        Some(Value::List(events)) => events.len(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        events(&file(ics::MAX_COMPONENTS - 1)),
+        1,
+        "the last of the limit is read"
+    );
+    assert_eq!(events(&file(ics::MAX_COMPONENTS)), 0, "one past it is not");
+}

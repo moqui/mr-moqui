@@ -572,8 +572,9 @@
             -->
             <!-- enabled: true or false turns the per-client web-protection on or off whatever the proxies; empty follows
                 trusted-proxies. max-upload: the largest multipart/form-data request body, in bytes or with a k, m or g
-                suffix (other request bodies stop at max-body). An upload is read as it arrives, a file over 256 KiB into
-                a file in runtime/tmp/upload, and is cut off when nothing arrives for upload-idle-timeout seconds. An
+                suffix (other request bodies stop at max-body). An upload is read as it arrives, a file over 256 KiB (or
+                any file once the upload's files hold 4 MiB in memory) into a file in runtime/tmp/upload, its text fields
+                at most max-body together, and is cut off when nothing arrives for upload-idle-timeout seconds. An
                 upload with no user (no session signed in, no key, no Basic credentials that hold) stops at max-body, but
                 under anonymous-upload-paths (path prefixes, comma separated: the public share's file drop). The files of
                 the uploads being read hold at most max-spool bytes together; an upload past it is answered 503. -->
@@ -1002,6 +1003,13 @@
         no syncIntervalMinutes. sync-batch: the most new messages a folder brings in one sync. flag-scan: minutes
         between reading every message's flags, on a server without CONDSTORE. sync-push-now: make a local change (read,
         move, delete) on the server right after it commits; false waits for the next sync.
+        max-message-size: the largest message, in bytes, a sync or poll reads from an IMAP or POP3 server, 64 MiB; a
+        larger one, by the size the server gives (RFC822.SIZE, POP3 LIST), is skipped (a poll leaves it on the server)
+        and logged, and what a server sends in answer to one command is at most this (or 8 MiB, a batch of the sync's
+        fetches, when that is more) and 1 MiB more, past which the connection is closed. answer-timeout: the seconds one
+        answer of an IMAP or POP3 server may take from the command, 11 minutes: longer than an IDLE's 10 minute
+        renewal, shorter than a sync's 15 minute lease, which also ends a sync's whole session. Past either the
+        connection is closed, so a server that sends a byte now and then does not hold a sync, a poll or an IDLE.
         mailbox-quota: the bytes of mail (the sum of its messages' messageSize, attachments included) a hosted or shared
         account keeps when its EmailAccount.quotaBytes is empty, 10 GiB; once an account has that much, the SMTP listener
         answers its recipients 452 4.2.2 and holds mail an edge node queued for it until it is under (a warning is
@@ -1024,7 +1032,7 @@
         work, school and personal accounts), organizations, consumers or a tenant id.
     -->
     <email-client allowed-hosts="" idle-enabled="true" idle-max="8" sync-interval="5" sync-batch="500" flag-scan="15"
-            sync-push-now="true" mailbox-quota="10737418240" autoconfig-urls="" dns-server="" tls-ca-file=""
+            sync-push-now="true" max-message-size="67108864" answer-timeout="660" mailbox-quota="10737418240" autoconfig-urls="" dns-server="" tls-ca-file=""
             oauth-redirect-uri="" capture-sends="false"
             contact-service="">
         <oauth-provider id="google" client-id="" client-secret=""/>
