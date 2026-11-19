@@ -504,7 +504,21 @@ fn a_remote_for_one_type_takes_only_that_type() {
                 ("messageAuthEnumId", "SmatNone"),
             ],
         );
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageRemote",
+            &[
+                ("systemMessageRemoteId", "SmsgUntypedHmac"),
+                ("messageAuthEnumId", "SmatHmacSha256"),
+                ("sharedSecret", "s3cret"),
+            ],
+        );
     }
+    // an untyped remote checked by a secret is still served, and named at startup so it is given its type
+    assert_eq!(
+        super::warn_untyped_remotes(setup.context.factory()),
+        vec!["SmsgUntypedHmac".to_string()]
+    );
     let body = r#"{"note":"from the peer"}"#;
     let receive = |type_id: &str, remote: &str| {
         let mut request = crate::web::WebRequest::new("POST", format!("/rest/sm/{type_id}/{remote}"));
