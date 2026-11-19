@@ -586,7 +586,9 @@
                 any file once the upload's files hold 4 MiB in memory) into a file in runtime/tmp/upload, its text fields
                 at most max-body together, and is cut off when nothing arrives for upload-idle-timeout seconds, or when
                 after body-timeout seconds it has averaged less than upload-min-rate bytes a second (SEC-RTE-91); at most
-                max-uploads arrive at once, and another is answered 503. An
+                max-uploads arrive at once (an upload with no user only three quarters of them) and at most
+                max-uploads-per-client of one client, whether or not the per-client parts are on, and another is answered
+                503. An
                 upload with no user (no session signed in, no key, no Basic credentials that hold) stops at max-body, but
                 under anonymous-upload-paths (path prefixes, comma separated: the public share's file drop). The files of
                 the uploads being read hold at most max-spool bytes together; an upload past it is answered 503. -->
@@ -597,6 +599,7 @@
                         max-header-bytes="65536" max-headers="100" max-body="10485760"
                         max-upload="2147483648" anonymous-upload-paths="/s/" max-spool="4294967296"
                         body-timeout="60" upload-idle-timeout="60" upload-min-rate="1024" max-uploads="1024"
+                        max-uploads-per-client="16"
                         request-timeout="300"/>
                 <overload queue-timeout="10" retry-after="5"/>
 

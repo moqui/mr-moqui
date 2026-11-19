@@ -835,7 +835,12 @@ along with this software (see the LICENSE.md file). If not, see
                         it off.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-uploads" type="xs:string"><xs:annotation><xs:documentation>
                         Uploads arriving at once (webapp-list/webapp[webroot]/web-protection/requests@max-uploads, 1024);
-                        another is answered 503, so uploads never take every connection.</xs:documentation></xs:annotation></xs:attribute>
+                        another is answered 503, so uploads never take every connection. An upload whose request names no
+                        user takes only three quarters of them.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="max-uploads-per-client" type="xs:string"><xs:annotation><xs:documentation>
+                        Uploads one client (an IPv6 one by its /64) has arriving at once
+                        (webapp-list/webapp[webroot]/web-protection/requests@max-uploads-per-client, 16), whether or not
+                        the per-client parts are on; another is answered 503.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="request-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds from the request head to the response head (webapp-list/webapp[webroot]/web-protection/requests@request-timeout, 300); then 504.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>

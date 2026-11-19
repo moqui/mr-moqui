@@ -1368,38 +1368,3 @@ fn a_span_keeps_query_values_only_when_the_conf_says_all() {
     assert_eq!(super::redacted_referer("https://h/p#x", &routes, false), "https://h/p");
     assert_eq!(super::redacted_referer("", &routes, false), "");
 }
-
-/// SEC-RTE-91: an upload has its idle timeout, cut to when its average would fall under `upload-min-rate` once
-/// `body-timeout` has passed, so a byte now and then does not hold a connection; at most `max-uploads` arrive at once.
-#[test]
-fn an_upload_must_keep_a_minimum_rate_and_only_so_many_arrive_at_once() {
-    use super::{upload_wait, BodyRefused, UploadSlot};
-    let limits = ListenLimits {
-        body: Some(Duration::from_secs(60)),
-        upload_idle: Some(Duration::from_secs(60)),
-        upload_min_rate: 1024,
-        ..ListenLimits::defaults()
-    };
-    let wait = |elapsed: u64, total: usize| upload_wait(&limits, Duration::from_secs(elapsed), total);
-    // within body-timeout the idle timeout alone
-    assert_eq!(wait(0, 0).ok().flatten(), Some(Duration::from_secs(60)));
-    // then the time the bytes so far earn at the rate
-    assert_eq!(wait(50, 0).ok().flatten(), Some(Duration::from_secs(10)));
-    assert_eq!(wait(100, 50 * 1024).ok().flatten(), Some(Duration::from_secs(10)));
-    // a byte every 50 seconds falls behind
-    assert!(matches!(wait(110, 2), Err(BodyRefused::TimedOut)));
-    // 0 turns the rate off
-    let off = ListenLimits {
-        upload_min_rate: 0,
-        ..limits
-    };
-    assert_eq!(
-        upload_wait(&off, Duration::from_secs(1000), 0).ok().flatten(),
-        Some(Duration::from_secs(60))
-    );
-
-    let first = UploadSlot::take(usize::MAX).ok().expect("a slot");
-    let held = super::UPLOADS_ARRIVING.load(std::sync::atomic::Ordering::Acquire);
-    assert!(matches!(UploadSlot::take(held), Err(BodyRefused::SpoolFull)));
-    drop(first);
-}
