@@ -1105,6 +1105,42 @@ fn scheduled_runs_run_as_the_owner(
     );
     assert!(no_etl_run(facade, &job_run));
 
+    // SEC-TLS-103: a job manager who made the owner a user of their job may not run the owner's mapping as them, and a
+    // mapping that reads another user's value map is not run as its owner
+    let mut planter = facade.make_value("moqui.security.UserAccount").unwrap();
+    planter.set("userId", Value::string("ETL_PLANTER"));
+    planter.set("username", Value::string("etl.planter"));
+    planter.set("disabled", Value::string("N"));
+    planter.create(facade).unwrap();
+    etl_job(facade, "EtlHostPlantedJob", "ETL_PLANTER", &[("mappingId", mapping_id)]);
+    moqui_core::user::internal_login_user("etl.planter").unwrap();
+    job_user_of(facade, "EtlHostPlantedJob", "EX_JOHN_DOE");
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let job_run = run_without_user(factory, "EtlHostPlantedJob");
+    let errors = job_run_errors(facade, &job_run);
+    assert!(errors.contains("may not run it as them"), "{errors}");
+    assert!(no_etl_run(facade, &job_run));
+    let mut value_map = facade.make_value("moqui.etl.EtlValueMap").unwrap();
+    value_map.set("valueMapId", Value::string("EtlHostOtherMap"));
+    value_map.set("ownerUserId", Value::string("ETL_PLANTER"));
+    value_map.create(facade).unwrap();
+    owned_mapping(facade, "EtlHostMapped", "EX_JOHN_DOE");
+    let mut field = facade
+        .find("moqui.etl.EtlMappingField")
+        .unwrap()
+        .eq("mappingId", Value::string("EtlHostMapped"))
+        .eq("fieldSeqId", Value::string("000003"))
+        .one()
+        .unwrap()
+        .unwrap();
+    field.set("valueMapId", Value::string("EtlHostOtherMap"));
+    field.update(facade).unwrap();
+    etl_job(facade, "EtlHostMappedJob", "EX_JOHN_DOE", &[("mappingId", "EtlHostMapped")]);
+    let job_run = run_without_user(factory, "EtlHostMappedJob");
+    let errors = job_run_errors(facade, &job_run);
+    assert!(errors.contains("which is not its owner's"), "{errors}");
+    assert!(no_etl_run(facade, &job_run));
+
     // a second owner, an ADMIN as john.doe is, and a job both owners are users of
     let mut user = facade.make_value("moqui.security.UserAccount").unwrap();
     user.set("userId", Value::string("ETL_SECOND_U"));
