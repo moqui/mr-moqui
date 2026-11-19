@@ -21,11 +21,14 @@ const create = (name, p) => {
     v.create()
     return v
 }
+/* Counts one attempt of `key` in its window and answers whether it is within `limit`. With `peek` it counts nothing and
+   answers whether one more would be: a caller that counts only failures asks first, then records a failure. */
 function recordAttempt(p) {
     const duration = Number(p.windowMillis),
         bucketId = digest(p.key + ':' + Math.floor(now() / duration)),
-        old = find('AccountAttempt', { bucketId }).forUpdate(true).one(),
-        count = Number(old?.attemptCount || 0) + 1
+        old = find('AccountAttempt', { bucketId }).forUpdate(!p.peek).one()
+    if (p.peek) return { allowed: Number(old?.attemptCount || 0) < Number(p.limit) }
+    const count = Number(old?.attemptCount || 0) + 1
     if (old) {
         old.set('attemptCount', count)
         old.update()
