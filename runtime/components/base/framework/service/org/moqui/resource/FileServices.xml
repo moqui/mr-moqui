@@ -417,7 +417,7 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.addError(ec.l10n.localize('Only an administrator changes the URL of a mirror')); return }
                 const userinfo = (/^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)@/i.exec(String(remoteUrl)) || [])[1]
                 if (userinfo != null && (userinfo.includes(':') || /^https?:/i.test(String(remoteUrl)))) {
-                    ec.message.addError('A mirror URL has no user or password in it: give them as the username and access token'); return }
+                    ec.message.addError(ec.l10n.localize('A mirror URL has no user or password in it: give them as the username and access token')); return }
             }
             const row = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).one()
             if (driveName) row.driveName = driveName
