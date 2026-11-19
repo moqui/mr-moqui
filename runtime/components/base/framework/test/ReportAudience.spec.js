@@ -1028,3 +1028,23 @@ feature("an owner-mode schedule to another user or a group needs the group deliv
         !!ownId
     }
 })
+
+feature("a notification contact reaches another user, a group or another topic only as its saver may name them (SEC-TLS-106)", {
+    when() {
+        const contact = (id, body) =>
+            as("rda.other", "save#Definition", {definition: {id, type: "contactPoint", title: "Spec contact", body}})
+        const out = {
+            group: contact("rda-contact-group", {type: "notification", userGroupId: "RDA_TEAM"}).error || "",
+            user: contact("rda-contact-user", {type: "notification", userId: "RDA_EQUAL"}).error || "",
+            topic: contact("rda-contact-topic", {type: "notification", topic: "VoiceAlert"}).error || "",
+            own: contact("rda-contact-own", {type: "notification", userId: "RDA_OTHER", topic: "ReportAlert"}).error || ""
+        }
+        return out
+    },
+    then({group, user, topic, own}) {
+        group.includes("SHARE_GROUP_UNAVAILABLE")
+        user.includes("GROUP_DELIVERY_DENIED")
+        topic.includes("ALERT_TOPIC_UNAVAILABLE")
+        own == ""
+    }
+})

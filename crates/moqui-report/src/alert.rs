@@ -336,6 +336,57 @@ fn property_name(name: &str) -> bool {
         && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
 }
 
+/// The topic a technical rule's notification contact posts under: the alert topic. Another topic's subscribers would
+/// take the rule's message for that topic's own (a phone alert, an agent run).
+pub(crate) const CONTACT_TOPIC: &str = "ReportAlert";
+
+/// The notification contacts of a rule (`kind` `alert`) or a shared contact point (`contactPoint`) as the saver
+/// `saver` may name them (SEC-TLS-106): a `userId` other than the saver's own needs the group delivery grant
+/// (`delivery::GROUP_ARTIFACT`), a `userGroupId` one the saver may share with (`definitions::may_share_with`), and a
+/// `topic` is [`CONTACT_TOPIC`]. A contact kept as `previous` stored it is not asked again, so an owner who left a
+/// group still saves their rule.
+pub(super) fn authorize_contacts(kind: &str, body: &Json, previous: Option<&Json>, saver: &str) -> Result<(), Error> {
+    let contacts = |body: &Json| -> Vec<Json> {
+        match kind {
+            "alert" => body["contactPoints"].as_array().cloned().unwrap_or_default(),
+            "contactPoint" => vec![body.clone()],
+            _ => Vec::new(),
+        }
+    };
+    let kept = previous.map(contacts).unwrap_or_default();
+    for contact in contacts(body) {
+        if text(&contact, "type", "notification") != "notification" || kept.contains(&contact) {
+            continue;
+        }
+        if contact
+            .get("topic")
+            .is_some_and(|topic| !topic.is_null() && topic.as_str() != Some(CONTACT_TOPIC))
+        {
+            return Err(fail(format!(
+                "ALERT_TOPIC_UNAVAILABLE: a notification contact posts under the {CONTACT_TOPIC} topic"
+            )));
+        }
+        if let Some(user) = contact["userId"]
+            .as_str()
+            .filter(|user| !user.is_empty() && *user != saver)
+        {
+            moqui_core::user::authorize_own("AT_SERVICE", super::delivery::GROUP_ARTIFACT, "create").map_err(|_| {
+                fail(format!(
+                    "GROUP_DELIVERY_DENIED: notifying {user} needs the group delivery grant"
+                ))
+            })?;
+        }
+        if let Some(group) = contact["userGroupId"].as_str().filter(|group| !group.is_empty()) {
+            if !super::definitions::may_share_with(group)? {
+                return Err(fail(
+                    "SHARE_GROUP_UNAVAILABLE: notify only a group you belong to or may share with",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_contacts(body: &Json) -> Result<(), Error> {
     for contact in body["contactPoints"]
         .as_array()
@@ -580,7 +631,7 @@ pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> 
                 (None, None) => "/apps/dashboards/Alerts".to_string(),
             };
             let mut note = moqui_core::notify::NotificationMessage::new();
-            note.topic(text(contact, "topic", "ReportAlert"))
+            note.topic(text(contact, "topic", CONTACT_TOPIC))
                 .title(title)
                 .link(link)
                 .notification_type(tone)
