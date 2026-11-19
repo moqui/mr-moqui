@@ -116,6 +116,74 @@ fn a_server_not_reached_is_retryable() {
     );
 }
 
+/// A plain SMTP session to 127.0.0.1:`port`, as `smtp_transport` makes one.
+fn plain_session(port: u16, timeout: std::time::Duration) -> super::SmtpSession {
+    super::SmtpSession {
+        host: "127.0.0.1".to_string(),
+        connect_host: "127.0.0.1".to_string(),
+        port,
+        tls: None,
+        timeout: Some(timeout),
+        credentials: None,
+    }
+}
+
+/// SEC-MAIL-83: an account's own SMTP server that sends its greeting a byte at a time, each well within a command's
+/// timeout, is closed at the session's deadline, so the session's thread does not stay; one that sends a line with
+/// no end is closed past `relay::MAX_REPLIES`. A server not reached is retryable, as nothing was sent.
+#[test]
+fn an_smtp_server_that_never_ends_a_reply_is_closed_at_the_deadline_or_the_byte_limit() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    let serve = |first: &'static [u8], each: Vec<u8>, pause: Duration| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (closed, seen) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            if stream.write_all(first).is_ok() {
+                while stream.write_all(&each).is_ok() {
+                    std::thread::sleep(pause);
+                }
+            }
+            let _ = closed.send(());
+        });
+        (port, seen)
+    };
+    let payload = std::sync::Arc::new(super::Payload::Message(
+        lettre::Message::builder()
+            .from("a@example.com".parse().unwrap())
+            .to("b@example.com".parse().unwrap())
+            .subject("x")
+            .body("x".to_string())
+            .unwrap(),
+    ));
+    let (slow, slow_closed) = serve(b"2", b"2".to_vec(), Duration::from_millis(50));
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(1);
+    assert!(super::send_within(&plain_session(slow, Duration::from_secs(30)), &payload, deadline).is_err());
+    slow_closed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the server's connection is closed at the deadline, not held");
+    let (endless, endless_closed) = serve(b"220", vec![b'x'; 64 * 1024], Duration::ZERO);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    assert!(super::send_within(&plain_session(endless, Duration::from_secs(30)), &payload, deadline).is_err());
+    endless_closed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("closed past the byte limit");
+
+    let gone = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let refused = plain_session(gone, Duration::from_secs(2))
+        .open(Instant::now() + Duration::from_secs(5))
+        .err()
+        .expect("not reached");
+    assert!(refused.to_string().contains(super::SERVER_NOT_REACHED), "{refused}");
+}
+
 /// Admin P12: a delivery that failed keeps its outcome and error on the stored message, for the mail queue; the Sent status
 /// clears the outcome, and a send with no stored message keeps nothing.
 #[test]

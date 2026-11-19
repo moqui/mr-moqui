@@ -50,13 +50,13 @@
 //! `*` for any), skipping MX lookup and MTA-STS.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, SocketAddr};
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
+use crate::relay::Relay;
 use lettre::transport::smtp::client::{SmtpConnection, TlsParameters};
 use lettre::transport::smtp::commands::{Data, Mail, Quit, Rcpt};
 use lettre::transport::smtp::extension::{ClientId, Extension, MailBodyParameter, MailParameter};
@@ -96,7 +96,7 @@ const IDLE: Duration = Duration::from_secs(30);
 const SMTP_TIMEOUT: Duration = Duration::from_secs(60);
 /// The most bytes an MX sends in one session, its replies together (SEC-MAIL-83): a session's replies are a few KiB,
 /// and lettre reads a reply line to its end before it tests the line's length.
-const MAX_SESSION_REPLIES: u64 = 1024 * 1024;
+const MAX_SESSION_REPLIES: u64 = crate::relay::MAX_REPLIES;
 /// The longest retry wait.
 const MAX_RETRY: Duration = Duration::from_secs(4 * 3600);
 /// The SMTP port of an MX.
@@ -1158,131 +1158,6 @@ impl Target<'_> {
     }
 }
 
-/// A session's connection to an MX through a relay this process holds both ends of (SEC-MAIL-83). lettre makes its own
-/// socket and reads a reply with `read_line`, whose timeout is one read's, so an MX that sends a byte now and then, or
-/// a line with no end, would hold the session (and its row in `Flight`) for the life of the process, or fill its
-/// memory. lettre connects to the relay on 127.0.0.1; the relay's thread passes the bytes on, ends the session at the
-/// target's deadline and past [`MAX_SESSION_REPLIES`] bytes from the MX, logged, by shutting both sockets, which
-/// fails lettre's read. Dropped, it shuts the MX's socket, which ends the thread.
-struct Relay {
-    /// Where lettre connects.
-    local: SocketAddr,
-    /// The connection to the MX.
-    upstream: TcpStream,
-}
-
-impl Drop for Relay {
-    fn drop(&mut self) {
-        let _ = self.upstream.shutdown(Shutdown::Both);
-    }
-}
-
-impl Relay {
-    /// Connect to `target` and start the relay to it.
-    fn start(target: &Target<'_>) -> Result<Relay, String> {
-        let step = target.step()?;
-        let upstream =
-            TcpStream::connect_timeout(&target.address, step).map_err(|err| format!("Connection error: {err}"))?;
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|err| format!("the MX relay: {err}"))?;
-        let local = listener.local_addr().map_err(|err| format!("the MX relay: {err}"))?;
-        let (from_mx, to_mx) = match (upstream.try_clone(), upstream.try_clone()) {
-            (Ok(from), Ok(to)) => (from, to),
-            (Err(err), _) | (_, Err(err)) => return Err(format!("the MX relay: {err}")),
-        };
-        let name = format!("{} [{}]", target.host, target.address);
-        let deadline = target.deadline;
-        std::thread::Builder::new()
-            .name("mx-relay".to_string())
-            .spawn(move || relay(&listener, from_mx, to_mx, deadline, step, &name))
-            .map_err(|err| format!("the MX relay: {err}"))?;
-        Ok(Relay { local, upstream })
-    }
-}
-
-/// The relay's thread: take lettre's connection, then pass what it writes to the MX (on a thread of its own) and what
-/// the MX sends back to it, at most [`MAX_SESSION_REPLIES`] bytes and up to `deadline`.
-fn relay(
-    listener: &TcpListener,
-    mut from_mx: TcpStream,
-    mut to_mx: TcpStream,
-    deadline: Instant,
-    wait: Duration,
-    name: &str,
-) {
-    let Some(session) = accept_local(listener, Instant::now() + wait) else {
-        let _ = from_mx.shutdown(Shutdown::Both);
-        return;
-    };
-    let (mut to_session, mut from_session) = match session.try_clone() {
-        Ok(clone) => (session, clone),
-        Err(_) => {
-            let _ = from_mx.shutdown(Shutdown::Both);
-            return;
-        }
-    };
-    let writes = std::thread::Builder::new()
-        .name("mx-relay-out".to_string())
-        .spawn(move || {
-            let _ = std::io::copy(&mut from_session, &mut to_mx);
-            let _ = to_mx.shutdown(Shutdown::Write);
-        });
-    let mut buffer = [0u8; 16 * 1024];
-    let mut sent = 0u64;
-    loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            tracing::warn!("MX {name}: the session passed its deadline and was closed");
-            break;
-        }
-        let _ = from_mx.set_read_timeout(Some(left));
-        match from_mx.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(read) => {
-                sent = sent.saturating_add(read as u64);
-                if sent > MAX_SESSION_REPLIES {
-                    tracing::warn!(
-                        "MX {name} sent more than {MAX_SESSION_REPLIES} bytes in one session; it was closed"
-                    );
-                    break;
-                }
-                if to_session.write_all(&buffer[..read]).is_err() {
-                    break;
-                }
-            }
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(_) => break,
-        }
-    }
-    let _ = from_mx.shutdown(Shutdown::Both);
-    let _ = to_session.shutdown(Shutdown::Both);
-    if let Ok(writes) = writes {
-        let _ = writes.join();
-    }
-}
-
-/// The relay's one connection from this machine, waited for until `until`.
-fn accept_local(listener: &TcpListener, until: Instant) -> Option<TcpStream> {
-    listener.set_nonblocking(true).ok()?;
-    while Instant::now() < until {
-        match listener.accept() {
-            Ok((stream, peer)) if peer.ip().is_loopback() => {
-                stream.set_nonblocking(false).ok()?;
-                return Some(stream);
-            }
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            Err(_) => return None,
-        }
-    }
-    None
-}
-
 /// One SMTP session with `target`: each recipient's answer, or why the host gave none (not reached, the greeting or
 /// MAIL refused for now, TLS that MTA-STS requires missing, the try's time out), so the next host is tried. Each
 /// command waits at most a minute, and all of them together end by the target's deadline.
@@ -1296,8 +1171,15 @@ fn session(
     let client = ClientId::Domain(hostname());
     // through a relay that ends the session at its deadline and bounds what the MX sends (SEC-MAIL-83)
     let connect = || {
-        let relay = Relay::start(target)?;
         let step = target.step()?;
+        let relay = Relay::start(
+            &[address],
+            step,
+            target.deadline,
+            MAX_SESSION_REPLIES,
+            &format!("MX {host} [{address}]"),
+        )
+        .map_err(|err| format!("Connection error: {err}"))?;
         SmtpConnection::connect(relay.local, Some(step), &client, None, None)
             .map(|connection| (connection, relay))
             .map_err(|err| reply_text(&err))
