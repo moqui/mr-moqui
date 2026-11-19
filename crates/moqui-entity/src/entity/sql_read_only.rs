@@ -20,8 +20,15 @@
 //! `SELECT … INTO OUTFILE` and `LOAD_FILE` (SEC-TLS-86). So a read-only run takes only a query ([`refusal`]), refuses
 //! the calls that reach the server's files and programs, other sessions, the cluster's notify channel, the session's
 //! settings and role, or run SQL text of their own, and on Postgres a superuser's run becomes [`READER_ROLE`] for its
-//! transaction when the cluster has it ([`reduce`]): the embedded cluster makes it at its start ([`READER_ROLE_SQL`]),
-//! and an external server's administrator may make it the same way.
+//! transaction ([`reduce`]): the embedded cluster makes it at its start ([`READER_ROLE_SQL`]), and an external
+//! server's administrator makes it the same way, or a superuser's read-only run is refused.
+//!
+//! The refused calls are load-bearing with the role too: the session's authenticated user is still the superuser, so
+//! `set_config('session_authorization', …)` (or `role`), alone or inside SQL text a function runs, switches back to it
+//! within the statement (Postgres 18). And the role reads more than the application's tables: `pg_read_all_data` reads
+//! every table, `pg_authid`'s password verifiers among them, and `pg_monitor` every setting (`pg_read_all_settings`)
+//! and every session's statement. A holder of `SQL_RUNNER_WEB` reads all of that; what the role takes away is the
+//! server's files, programs and signals.
 
 use moqui_lib::error::Error;
 
@@ -29,7 +36,8 @@ use super::exec::{blank_sql, SqlSyntax};
 use crate::driver::DbConnection;
 
 /// The role a superuser's read-only run takes for its transaction: no login and no superuser, reading every table
-/// (`pg_read_all_data`) and the statistics views (`pg_monitor`), and none of the server's files or programs.
+/// (`pg_read_all_data`, the catalogs' `pg_authid` among them) and the settings and statistics views (`pg_monitor`),
+/// and none of the server's files or programs.
 pub const READER_ROLE: &str = "moqui_sql_reader";
 
 /// The statements that make [`READER_ROLE`], run again at each start of the embedded cluster.
@@ -100,7 +108,12 @@ const MYSQL_WORDS: &[&str] = &["load_file", "outfile", "dumpfile", "get_lock"];
 /// `U&"…"` name, whose escapes would hide one.
 #[must_use]
 pub fn refusal(sql: &str, syntax: SqlSyntax) -> Option<String> {
-    if !super::info::is_query(sql) {
+    let blanked = blank_sql(sql, syntax);
+    // MySQL and MariaDB run the inside of a `/*! … */` or `/*M! … */` comment, which the blanked text has as a comment
+    if syntax == SqlSyntax::Mysql && executable_comment(sql, &blanked) {
+        return Some("a /*! … */ comment runs on MySQL and MariaDB, and does not run read only".to_string());
+    }
+    if !is_query(&blanked) {
         return Some(match syntax {
             SqlSyntax::Mysql => {
                 "only a query runs read only on MySQL and MariaDB, where other statements can commit the transaction"
@@ -113,7 +126,6 @@ pub fn refusal(sql: &str, syntax: SqlSyntax) -> Option<String> {
             }
         });
     }
-    let blanked = blank_sql(sql, syntax);
     if syntax == SqlSyntax::Postgres && blanked.to_ascii_lowercase().contains("u&\"") {
         return Some("a U&\"…\" name does not run read only".to_string());
     }
@@ -127,6 +139,22 @@ pub fn refusal(sql: &str, syntax: SqlSyntax) -> Option<String> {
         .into_iter()
         .find(|word| refused(word))
         .map(|word| format!("{word} does not run read only: it reaches past the database's tables"))
+}
+
+/// Whether the blanked text `blanked` reads rows by its first word, past comments and opening parentheses: `SELECT`,
+/// `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN`, `DESCRIBE` ([`super::info::is_query`] on the statement's own words).
+fn is_query(blanked: &str) -> bool {
+    super::info::is_query(blanked.trim_start_matches(|ch: char| ch.is_whitespace() || ch == '('))
+}
+
+/// Whether `sql` has a MySQL executable comment (`/*!`, `/*M!`) where `blanked` has a comment.
+fn executable_comment(sql: &str, blanked: &str) -> bool {
+    let lower = sql.to_ascii_lowercase();
+    ["/*!", "/*m!"].iter().any(|start| {
+        lower
+            .match_indices(start)
+            .any(|(at, _)| blanked.as_bytes().get(at) == Some(&b' '))
+    })
 }
 
 /// The words of `sql` outside its comments and text, with the inside of each quoted name, all lowercase.
@@ -164,21 +192,38 @@ fn names(sql: &str, blanked: &str, syntax: SqlSyntax) -> Vec<String> {
 }
 
 /// On Postgres, make the read-only transaction just begun on `conn` [`READER_ROLE`]'s when the connection is a
-/// superuser's and the role is there (`SET LOCAL SESSION AUTHORIZATION`, which ends with the transaction; the
-/// connection is closed after it anyway). Nothing for any other connection.
+/// superuser's (`SET LOCAL SESSION AUTHORIZATION`, which ends with the transaction; the connection is closed after it
+/// anyway). Nothing for a connection of any other role.
 ///
 /// # Errors
 ///
-/// Returns the database's error.
+/// Returns the database's error, and a refusal for a superuser's connection to a server without the role: the run
+/// does not go on as the superuser.
 pub(crate) fn reduce(conn: &mut dyn DbConnection) -> Result<(), Error> {
     let rows = conn.query(
         &format!(
-            "SELECT 1 AS reduce FROM pg_roles WHERE rolname = '{READER_ROLE}' AND current_setting('is_superuser') = 'on'"
+            "SELECT current_setting('is_superuser') AS superuser, \
+             (SELECT count(*) FROM pg_roles WHERE rolname = '{READER_ROLE}')::text AS reader"
         ),
         &[],
     )?;
-    if rows.is_empty() {
+    let column = |name: &str| {
+        rows.first()
+            .and_then(|row| row.get(name))
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    if column("superuser") != "on" {
         return Ok(());
+    }
+    if column("reader") == "0" {
+        tracing::error!(
+            "A read-only SQL run on a superuser's connection was refused: the server has no role {READER_ROLE}"
+        );
+        return Err(Error::new(format!(
+            "a read-only run on this connection needs the role {READER_ROLE}, which the server does not have: its \
+             administrator makes it (NOLOGIN, granted pg_read_all_data and pg_monitor)"
+        )));
     }
     conn.execute(&format!("SET LOCAL SESSION AUTHORIZATION {READER_ROLE}"), &[])
         .map(|_| ())

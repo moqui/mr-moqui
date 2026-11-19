@@ -284,7 +284,8 @@ both whatever calls them.
   calls that reach past the tables (the server's files, other sessions, `pg_notify`, `set_config`, the functions that
   run SQL text, MySQL's `LOAD_FILE` and `INTO OUTFILE`), and on Postgres a superuser's run is the role
   `moqui_sql_reader`'s (`pg_read_all_data`, `pg_monitor`), which the embedded cluster makes at its start and an external
-  server's administrator may make too. A run with changes is the connection's own role, the bootstrap superuser's on
+  server's administrator makes; without it a superuser's read-only run is refused. A MySQL `/*! … */` comment is refused
+  too, since MySQL runs it. A run with changes is the connection's own role, the bootstrap superuser's on
   the embedded cluster. That is why SQL is an `ADMIN_ADV` permission.
 - **Allow changes:**
   - With the switch on, Run first asks `classify#Sql`, which lists the statements that may change data.

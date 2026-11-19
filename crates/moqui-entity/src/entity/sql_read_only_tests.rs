@@ -29,6 +29,9 @@ fn a_read_only_run_takes_only_a_query_without_the_calls_past_the_tables() {
         "show search_path",
         "select pg_size_pretty(pg_database_size(current_database()))",
         "select \"Test_Id\" from test_entity",
+        "-- the open ones\nselect test_id from test_entity",
+        "/* a note */ select 1",
+        "(select 1) union (select 2)",
     ] {
         assert_eq!(refusal(sql, pg), None, "{sql}");
     }
@@ -57,11 +60,15 @@ fn a_read_only_run_takes_only_a_query_without_the_calls_past_the_tables() {
     }
     let mysql = SqlSyntax::Mysql;
     assert_eq!(refusal("SELECT enum_id INTO @id FROM ENUMERATION", mysql), None);
+    assert_eq!(refusal("# a note\nSELECT '/*!' AS said", mysql), None);
     for sql in [
         "SELECT * FROM ENUMERATION INTO OUTFILE '/tmp/out'",
         "SELECT 1 INTO DUMPFILE '/tmp/out'",
         "SELECT LOAD_FILE('/etc/passwd')",
         "SELECT `load_file`('/etc/passwd')",
+        "SELECT 1 /*!INTO OUTFILE '/tmp/x'*/",
+        "SELECT 1 /*!50110 INTO DUMPFILE '/tmp/x'*/",
+        "SELECT 1 /*M! INTO OUTFILE '/tmp/x'*/",
         "CALL nothing()",
     ] {
         assert!(refusal(sql, mysql).is_some(), "{sql}");

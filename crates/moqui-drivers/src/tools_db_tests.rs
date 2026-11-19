@@ -427,6 +427,10 @@ fn a_read_only_run_on_the_embedded_cluster_is_the_reader_roles() {
     assert!(err.to_string().contains("permission denied"), "{err}");
     let back = run(&facade, "select current_setting('is_superuser')");
     assert_eq!(back.records[0][0], Value::string("on"));
+    // without the role a superuser's read-only run is refused, never run as the superuser
+    run(&facade, "drop role moqui_sql_reader");
+    let err = read_only("select 1").unwrap_err();
+    assert!(err.to_string().contains("needs the role moqui_sql_reader"), "{err}");
 }
 
 fn pid_of(value: &Value) -> i64 {
