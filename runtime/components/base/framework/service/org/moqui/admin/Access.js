@@ -116,23 +116,22 @@ function isCustom(group, purposeIds = new Set(purposes().map(row => row.enumId))
     return !!group?.groupTypeEnumId && purposeIds.has(group.groupTypeEnumId)
 }
 // A privileged bundle is not the actor's to give their own account (SEC-ADM-90): a privileged group (ADMIN among them), a
-// group that grants a sealed permission, even one the actor holds, or a bundle that registers a sensitive capability
-// (CpkSensitive: BOSS_ACCOUNTING_ADMIN, BOSS_PRODUCTS_ADMIN, BOSS_ADMIN_IDENTITY) is given to them by another access
-// administrator, so holding ADMIN_ACCESS_MANAGE does not make a second seal or an administrator's reach for oneself. Any
-// other group whose grants they hold already they may join, as SEC-ADM-06 chose (an access administrator changes their own
-// memberships; an identity operator does not), with the reason in the audit log. The refusal, or null.
-//
-// Nor a group that grants now a permission or an artifact binding the actor does not hold already: a custom group given a
-// bundle's permissions first (apply#Grants on a group the actor is not in) and joined second is the same widening as the
-// other order, which OWN_GROUP refuses.
+// group that grants a sealed permission, even one the actor holds, a bundle that registers a sensitive capability
+// (CpkSensitive: BOSS_ACCOUNTING_ADMIN, BOSS_PRODUCTS_ADMIN, BOSS_ADMIN_IDENTITY), or a group that grants now a sensitive
+// permission or binding the actor does not hold already ([`unheldSensitive`]: a custom group given a sensitive bundle's
+// grants first and joined second is the same widening as the other order, which OWN_GROUP refuses). It is given to them
+// by another access administrator, so holding ADMIN_ACCESS_MANAGE does not make a second seal or an administrator's
+// reach for oneself. Any other bundle they may delegate, a plain reader bundle such as BOSS_PEOPLE_READ among them, they
+// may also hold, as SEC-ADM-06 chose (an access administrator changes their own memberships; an identity operator does
+// not), with the reason in the audit log. The refusal, or null.
 //
 // A member of ADMIN, who holds every grant there is to give and is the only one who changes ADMIN itself, is exempt from
 // this and from OWN_GROUP; each such change of their own access is marked on the audit log's reason ([`ownAuditReason`]).
 function ownPrivilegedRefusal(account, groupId, privileged = privilegedIds(), sealed = sealedIds()) {
     if (!account || account.userId !== ec.user.userId || adminMember()) return null
     const sealedGrant = rows(GRANT, {userGroupId: groupId}).some(row => current(row) && sealed.has(row.userPermissionId))
-    const sensitive = rows(BUNDLE_PERMISSION, {userGroupId: groupId, capabilityKindEnumId: "CpkSensitive"}).length > 0
-    const unheld = unheldGrant(groupId)
+    const sensitive = sensitiveBundle(groupId)
+    const unheld = unheldSensitive(groupId, sealed)
     if (!privileged.has(groupId) && !sealedGrant && !sensitive && !unheld) return null
     const what = privileged.has(groupId)
         ? " is a privileged group"
@@ -144,23 +143,40 @@ function ownPrivilegedRefusal(account, groupId, privileged = privilegedIds(), se
     return {reasonCode: "OWN_ACCOUNT", reason: groupId + what + ": another access administrator gives it to your own account"}
 }
 const adminMember = () => ec.user.isInGroup("ADMIN")
-// A current permission or allowing artifact binding of groupId the actor does not hold already (a binding is held through
-// a group of theirs with the same artifact group and type), or null.
-function unheldGrant(groupId) {
+// Whether groupId is a bundle that registers a sensitive capability (a CpkSensitive permission).
+const sensitiveBundle = groupId => rows(BUNDLE_PERMISSION, {userGroupId: groupId, capabilityKindEnumId: "CpkSensitive"}).length > 0
+// A current grant of groupId the actor does not hold already and that is sensitive, or null: a permission that is sealed
+// or that a bundle registers as CpkSensitive, or an allowing artifact binding that only CpkSensitive bundles register
+// (a binding a plain bundle registers too, a reader's, is not). A binding is held through a group of the actor's with a
+// binding of the same artifact group that reaches as far: the same type (or ALWAYS for ALLOW), the same action (or
+// ALL), and no row rule the target's has not.
+function unheldSensitive(groupId, sealed = sealedIds()) {
     const at = nowMs()
+    const sensitivePermission = permissionId =>
+        sealed.has(permissionId) ||
+        rows(BUNDLE_PERMISSION, {userPermissionId: permissionId, capabilityKindEnumId: "CpkSensitive"}).length > 0
     const permission = rows(GRANT, {userGroupId: groupId}).find(
-        row => current(row, at) && open(row, at) && !ec.user.hasPermission(row.userPermissionId)
+        row => current(row, at) && sensitivePermission(row.userPermissionId) && !ec.user.hasPermission(row.userPermissionId)
     )
     if (permission) return permission.userPermissionId
+    const sensitiveBinding = artifactGroupId => {
+        const registered = rows(BUNDLE_ARTIFACT, {artifactGroupId})
+        return registered.length > 0 && registered.every(row => sensitiveBundle(row.userGroupId))
+    }
+    const filtersOf = row => new Set(rows(AUTHZ_FILTER, {artifactAuthzId: row.artifactAuthzId}).map(filter => filter.entityFilterSetId))
     const mine = new Set(Array.from(ec.user.getUserGroupIdSet() || []).map(String))
+    const reaches = (held, row) => {
+        const type = held.authzTypeEnumId === row.authzTypeEnumId || held.authzTypeEnumId === "AUTHZT_ALWAYS"
+        const action = held.authzActionEnumId === row.authzActionEnumId || held.authzActionEnumId === "AUTHZA_ALL"
+        if (!type || !action) return false
+        const wanted = filtersOf(row)
+        return Array.from(filtersOf(held)).every(filterSetId => wanted.has(filterSetId))
+    }
     const binding = rows(AUTHZ, {userGroupId: groupId}).find(
         row =>
             row.authzTypeEnumId !== "AUTHZT_DENY" &&
-            !rows(AUTHZ, {artifactGroupId: row.artifactGroupId}).some(
-                held =>
-                    mine.has(String(held.userGroupId)) &&
-                    (held.authzTypeEnumId === row.authzTypeEnumId || held.authzTypeEnumId === "AUTHZT_ALWAYS")
-            )
+            sensitiveBinding(row.artifactGroupId) &&
+            !rows(AUTHZ, {artifactGroupId: row.artifactGroupId}).some(held => mine.has(String(held.userGroupId)) && reaches(held, row))
     )
     return binding ? "the artifact group " + binding.artifactGroupId : null
 }
@@ -1243,6 +1259,8 @@ const lib = {
     delegable,
     privilegedIds,
     sealedIds,
+    sensitiveBundle,
+    adminMember,
     isCustom,
     purposes,
     groupRefusal,
