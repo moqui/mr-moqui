@@ -469,6 +469,53 @@ fn the_rest_sender_posts_the_text_with_an_hmac_header_and_reads_the_remote_id() 
     assert_eq!(message_field(facade, "SMS1", "remoteMessageId"), "REMOTE9");
 }
 
+/// SEC-RTE-86: a remote for one type delivers that type alone, and an unauthenticated remote must name its type.
+#[test]
+fn a_remote_for_one_type_takes_only_that_type() {
+    let setup = setup("sm-remote-type");
+    let _entered = setup.context.enter();
+    install(&setup);
+    let facade = &setup.facade;
+    {
+        let _authz = setup.context.disable_authz();
+        for type_id in ["SmsgTestIn", "SmsgTestOther"] {
+            seed(
+                facade,
+                "moqui.service.message.SystemMessageType",
+                &[("systemMessageTypeId", type_id)],
+            );
+        }
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageRemote",
+            &[
+                ("systemMessageRemoteId", "SmsgTyped"),
+                ("systemMessageTypeId", "SmsgTestIn"),
+                ("messageAuthEnumId", "SmatHmacSha256"),
+                ("authHeaderName", "X-Test-Signature"),
+                ("sharedSecret", "s3cret"),
+            ],
+        );
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageRemote",
+            &[("systemMessageRemoteId", "SmsgOpenUntyped"), ("messageAuthEnumId", "SmatNone")],
+        );
+    }
+    let body = r#"{"note":"from the peer"}"#;
+    let receive = |type_id: &str, remote: &str| {
+        let mut request = crate::web::WebRequest::new("POST", format!("/rest/sm/{type_id}/{remote}"));
+        request.set_header("X-Test-Signature", super::message::hmac_base64_for_test("s3cret", body));
+        request.body = body.as_bytes().to_vec();
+        let _web = crate::web::install(BTreeMap::new());
+        super::message::receive_rest_message(&request, &[type_id.to_string(), remote.to_string()]).unwrap();
+        crate::web::output_status()
+    };
+    assert_eq!(receive("SmsgTestOther", "SmsgTyped"), 403);
+    assert_eq!(receive("SmsgTestIn", "SmsgTyped"), 200, "{}", errors(&setup.context));
+    assert_eq!(receive("SmsgTestIn", "SmsgOpenUntyped"), 403);
+}
+
 #[test]
 fn an_hmac_receive_is_refused_when_the_remote_has_no_shared_secret() {
     let setup = setup("hmac-empty");

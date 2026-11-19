@@ -263,8 +263,23 @@ fn receive_checked(
         refuse(&format!("remote system {remote_id} not valid"));
         return Ok(());
     };
-
     let auth = field(&remote, "messageAuthEnumId");
+    // A remote for one type (`systemMessageTypeId`) delivers that type alone, so passing its check does not deliver an
+    // order import, an EDI interchange or a git webhook; an unauthenticated remote (SmatNone) must name its type, as
+    // anyone passes its check (SEC-RTE-86).
+    let remote_type = field(&remote, "systemMessageTypeId");
+    if !remote_type.is_empty() && remote_type != type_id {
+        refuse(&format!(
+            "remote system {remote_id} is for message type {remote_type}, not {type_id}"
+        ));
+        return Ok(());
+    }
+    if remote_type.is_empty() && auth == "SmatNone" {
+        refuse(&format!(
+            "remote system {remote_id} takes no message: an unauthenticated remote needs its systemMessageTypeId"
+        ));
+        return Ok(());
+    }
     // The replay key a timestamped HMAC spent, given back when the message is not kept, so the provider's retry of a
     // delivery that failed here (a 500) is not refused as a replay.
     let mut spent_key: Option<String> = None;
