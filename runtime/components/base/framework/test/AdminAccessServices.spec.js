@@ -16,6 +16,10 @@ const teamId = "SPEC_ACC_TEAM"
 const unregisteredId = "SPEC_ACC_UNREGISTERED"
 const sealedGroupId = "SPEC_ACC_SEALED"
 const sealedBundleId = "SPEC_ACC_SEALED_BUNDLE"
+// an access administrator outside ADMIN who holds the sealed ADMIN_PASSWORD and is in the privileged ADMIN_ADV
+const admin2User = "spec.access.admin2"
+const admin2Id = "SPEC_ACC_ADMIN2"
+const admins2Id = "SPEC_ACC_ADMINS2"
 const appGroupId = "SPEC_ACC_APP"
 const preferenceKey = "SPEC_ACC_PAGE_SIZE"
 const viewPermission = "SPEC_ACC_VIEW"
@@ -115,7 +119,7 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, sealedBundleId, "SPEC_ACC_ADMINS"]
+        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, sealedBundleId, "SPEC_ACC_ADMINS", admins2Id]
         for (const authz of rows("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}))
             find("moqui.security.ArtifactAuthzFilter", {artifactAuthzId: authz.artifactAuthzId}).deleteAll()
         find("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}).deleteAll()
@@ -134,11 +138,11 @@ spec({
             "moqui.security.UserGroupMember"
         ])
             ec.entity.find(entityName).condition("userGroupId", "in", groups).deleteAll()
-        ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", [adminId, targetId]).deleteAll()
+        ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", [adminId, targetId, admin2Id]).deleteAll()
         ec.entity.find("moqui.security.UserGroup").condition("userGroupId", "in", groups).deleteAll()
         find("moqui.security.ArtifactGroup", {artifactGroupId: appGroupId}).deleteAll()
         find("moqui.basic.Enumeration", {enumId: preferenceKey}).deleteAll()
-        ec.entity.find("moqui.security.UserAccount").condition("userId", "in", [adminId, targetId]).deleteAll()
+        ec.entity.find("moqui.security.UserAccount").condition("userId", "in", [adminId, targetId, admin2Id]).deleteAll()
         ec.artifactExecution.enableAuthz()
     }
 })
@@ -306,7 +310,7 @@ feature(
 // SEC-ADM-90: an access administrator gives their own account no privileged bundle (a privileged group, or one that grants a
 // sealed permission, even one they hold), by a membership or a grant proposal; they give it to another account, and a plain
 // bundle to their own
-feature("an access administrator gives their own account no privileged bundle, and a group they are in no grant", {
+feature("an access administrator gives their own account no privileged bundle nor one whose grants they lack, and a group they are in no grant; a member of ADMIN does, marked", {
     when() {
         const now = ec.user.timestampMillis(ec.user.nowTimestamp)
         const advFrom = now - 1000
@@ -317,60 +321,76 @@ feature("an access administrator gives their own account no privileged bundle, a
         // a permission of the bundle the team does not have yet
         make("moqui.security.CapabilityBundlePermission", {userGroupId: bundleId, userPermissionId: "SPEC_ACC_TEAM_RUN",
             capabilityKindEnumId: "CpkEdit"})
-        // john.doe in the privileged ADMIN_ADV until tomorrow
-        make("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE", fromDate: advFrom, thruDate: now + 86400000})
+        make("moqui.security.UserAccount", {userId: admin2Id, username: admin2User, userFullName: "Spec access administrator 2"})
+        make("moqui.security.UserGroup", {userGroupId: admins2Id, description: "Spec access administrators 2"})
+        for (const permission of ["ADMIN_ACCESS_VIEW", "ADMIN_ACCESS_MANAGE", "ADMIN_PASSWORD"])
+            make("moqui.security.UserGroupPermission", {userGroupId: admins2Id, userPermissionId: permission, fromDate: 0})
+        make("moqui.security.UserGroupMember", {userGroupId: admins2Id, userId: admin2Id, fromDate: 0})
+        make("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: admin2Id, fromDate: advFrom, thruDate: now + 86400000})
         ec.artifactExecution.enableAuthz()
-        const advRow = () => rows("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE"})
+        const advRow = () => rows("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: admin2Id})
             .find(row => ec.user.timestampMillis(row.fromDate) === advFrom)
         const advRevision = () => String(ec.user.timestampMillis(advRow().lastUpdatedStamp))
-        // john.doe (ADMIN) holds ADMIN_PASSWORD and ADMIN_ACCESS_MANAGE
-        const holder = as("john.doe", () => ({
-            own: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: "EX_JOHN_DOE", reason: "Spec own"}),
-            ownProposal: invoke(S + "apply#GrantProposal", {userId: "EX_JOHN_DOE", bundleGroupIdList: [sealedBundleId], reason: "Spec own"}),
+        // an access administrator outside ADMIN who holds ADMIN_PASSWORD and is in ADMIN_ADV
+        const holder = as(admin2User, () => ({
+            own: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: admin2Id, reason: "Spec own"}),
+            ownProposal: invoke(S + "apply#GrantProposal", {userId: admin2Id, bundleGroupIdList: [sealedBundleId], reason: "Spec own"}),
             other: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: targetId, reason: "Spec other"}),
-            // the privileged group he is in: kept longer refused, ended sooner allowed
-            extended: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE", fromDate: advFrom,
+            // the privileged group they are in: kept longer refused, ended sooner allowed
+            extended: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: admin2Id, fromDate: advFrom,
                 thruDate: now + 2 * 86400000, expectedRevision: advRevision(), reason: "Spec longer"}),
-            shortened: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE", fromDate: advFrom,
+            shortened: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: admin2Id, fromDate: advFrom,
                 thruDate: now + 3600000, expectedRevision: advRevision(), reason: "Spec shorter"})
         }))
-        const plain = as(adminUser, () => {
+        const plain = as(adminUser, () => ({
             // a bundle with a sensitive capability (ADMIN_PASSWORD, CpkSensitive) is not one's own to take
-            const sensitive = invoke(S + "store#Membership", {userGroupId: bundleId, userId: adminId, reason: "Spec own sensitive"})
-            // a plain custom group is
-            const added = invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId, reason: "Spec own plain"})
-            // and a group one is in gets no grant added by oneself
-            const grant = [{action: "add", userPermissionId: "SPEC_ACC_TEAM_RUN"}]
+            sensitive: invoke(S + "store#Membership", {userGroupId: bundleId, userId: adminId, reason: "Spec own sensitive"}),
+            // nor a custom group given a permission first that one does not hold (the team grants SPEC_ACC_VIEW)
+            unheld: invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId, reason: "Spec own unheld"})
+        }))
+        // a membership of the team that starts tomorrow, which an administrator gives them
+        const future = as("john.doe", () =>
+            invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId, fromDate: now + 86400000, reason: "Spec future"}))
+        const grant = [{action: "add", userPermissionId: "SPEC_ACC_TEAM_RUN"}]
+        const ownGroup = as(adminUser, () => {
             const preview = invoke(S + "preview#Grants", {userGroupId: teamId, grantList: grant})
-            const ownGrant = invoke(S + "apply#Grants", {userGroupId: teamId, grantList: grant, expectedRevision: preview.revision})
-            const ended = invoke(S + "end#Membership", {userGroupId: teamId, userId: adminId, fromDate: added.fromDate,
-                expectedRevision: added.revision})
-            return {sensitive, added, preview, ownGrant, ended}
+            const applied = invoke(S + "apply#Grants", {userGroupId: teamId, grantList: grant, expectedRevision: preview.revision})
+            return {preview, applied}
+        })
+        // a member of ADMIN takes a sealed bundle, and adds to a group they are in, marked on the audit log
+        const admin = as("john.doe", () => {
+            const own = invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: "EX_JOHN_DOE", reason: "Spec admin own"})
+            const team = invoke(S + "store#Membership", {userGroupId: teamId, userId: "EX_JOHN_DOE", reason: "Spec admin team"})
+            const preview = invoke(S + "preview#Grants", {userGroupId: teamId, grantList: grant})
+            return {own, team, preview}
         })
         const members = userId => rows("moqui.security.UserGroupMember", {userGroupId: sealedBundleId, userId}).length
-        const adv = advRow()
-        const advThru = ec.user.timestampMillis(adv.thruDate)
+        const advThru = ec.user.timestampMillis(advRow().thruDate)
         ec.artifactExecution.disableAuthz()
-        adv.delete()
+        advRow().delete()
         ec.artifactExecution.enableAuthz()
-        return Object.assign(holder, plain, {ownRows: members("EX_JOHN_DOE"), otherRows: members(targetId), advThru,
-            now, teamGrants: rows("moqui.security.UserGroupPermission", {userGroupId: teamId, userPermissionId: viewPermission})
-                .filter(row => row.thruDate == null).length})
+        return {holder, plain, future, ownGroup, admin, ownRows: members(admin2Id), otherRows: members(targetId), advThru, now,
+            marked: audits("moqui.security.UserGroupMember", "fromDate", sealedBundleId)
+                .some(row => String(row.changeReason || "").includes("[own access, ADMIN member]"))}
     },
     then(r) {
-        r.own.applied == false && r.own.reasonCode == "OWN_ACCOUNT"
-        r.ownProposal.applied == false && r.ownProposal.reasonCode == "OWN_ACCOUNT"
+        r.holder.own.applied == false && r.holder.own.reasonCode == "OWN_ACCOUNT"
+        r.holder.ownProposal.applied == false && r.holder.ownProposal.reasonCode == "OWN_ACCOUNT"
         r.ownRows == 0
-        r.other.applied == true
+        r.holder.other.applied == true
         r.otherRows == 1
-        r.extended.applied == false && r.extended.reasonCode == "OWN_ACCOUNT"
-        r.shortened.applied == true
+        r.holder.extended.applied == false && r.holder.extended.reasonCode == "OWN_ACCOUNT"
+        r.holder.shortened.applied == true
         r.advThru <= r.now + 3600000
-        r.sensitive.applied == false && r.sensitive.reasonCode == "OWN_ACCOUNT"
-        r.added.applied == true
-        r.preview.allowed == false && r.preview.reasonCode == "OWN_GROUP"
-        r.ownGrant.applied == false && r.ownGrant.reasonCode == "OWN_GROUP"
-        r.ended.applied == true
+        r.plain.sensitive.applied == false && r.plain.sensitive.reasonCode == "OWN_ACCOUNT"
+        r.plain.unheld.applied == false && r.plain.unheld.reasonCode == "OWN_ACCOUNT" && r.plain.unheld.reason.includes("SPEC_ACC_VIEW")
+        r.future.applied == true
+        r.ownGroup.preview.allowed == false && r.ownGroup.preview.reasonCode == "OWN_GROUP"
+        r.ownGroup.applied.applied == false && r.ownGroup.applied.reasonCode == "OWN_GROUP"
+        r.admin.own.applied == true
+        r.admin.team.applied == true
+        r.admin.preview.allowed == true
+        r.marked
     }
 })
 
@@ -406,13 +426,18 @@ feature("the last administration path is refused with a reason", {
 
 feature("a membership change is seen at once by the session it changes", {
     when() {
-        return as(adminUser, () => {
+        // a member of ADMIN, who may change their own memberships (an access administrator outside it may not take a
+        // group whose grants they lack, SEC-ADM-90)
+        ec.artifactExecution.disableAuthz()
+        find("moqui.security.UserGroupMember", {userGroupId: teamId, userId: "EX_JOHN_DOE"}).deleteAll()
+        ec.artifactExecution.enableAuthz()
+        return as("john.doe", () => {
             const before = ec.user.isInGroup(teamId)
-            const added = invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId})
+            const added = invoke(S + "store#Membership", {userGroupId: teamId, userId: "EX_JOHN_DOE"})
             const during = {member: ec.user.isInGroup(teamId), permission: ec.user.hasPermission(viewPermission)}
             const ended = invoke(S + "end#Membership", {
                 userGroupId: teamId,
-                userId: adminId,
+                userId: "EX_JOHN_DOE",
                 fromDate: added.fromDate,
                 expectedRevision: added.revision
             })
