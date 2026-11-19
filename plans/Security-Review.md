@@ -14,6 +14,13 @@ findings 158 are fixed and 5 deferred, none refuted, and 52 (12 Low, 40 Info) ar
 
 A third round, 2026-11-17 and 18, read the code the first two did not reach (the "not reached" of the [coverage](#coverage) table and the map files' open questions) in 60 units, and recorded what it found without fixing it: 406 findings with ids from 81 up in each area, 12 High, 89 Medium, 224 Low and 81 Info, none Critical. The lead read the cited lines of every High (8 confirmed, 4 likely) and of 54 of the Medium (23 confirmed, 31 likely); the other 35 Medium, and every Low and Info, are as their reviewer reported them. Round 3's High findings are listed under [the findings that matter most](#round-3); all twelve were fixed on 2026-11-18, each with its regression tests and a reviewer's reading of the fix, and its **Fix** says how; the [counts](#counts) are of all three rounds. [Method](#method) step 7 says how the round was run.
 
+Writing the security proofs ([Proofs-Initial](Proofs-Initial.md), phases P4 and P5, 2026-11-18) found 15 more, each
+read in code by a second reader and recorded with the round-3 numbering (SEC-WEB-87 to 93, SEC-RTE-89 and 90,
+SEC-MAIL-98, SEC-OUT-92 and 93, SEC-PSF-90, SEC-PFS-112, SEC-PSA-81): one Medium (SEC-WEB-87, second-factor codes sent
+at once are not bounded by the lockout), five Low and nine Info. Each entry says "Report: the security proofs". A
+sixteenth, a reset password that could become the new password, was fixed the day it was found and is not listed.
+The counts include them.
+
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
 [Attack-Surface](../docs/security/Attack-Surface.md) and its area files; this document holds what looks wrong with
@@ -341,28 +348,28 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 
 | Area | Critical | High | Medium | Low | Info | Refuted | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Web authentication and controls (`WEB`) | 0 | 1 | 4 | 15 | 0 | 0 | 20 |
-| Routes, screens and REST (`RTE`) | 0 | 2 | 8 | 15 | 1 | 0 | 26 |
+| Web authentication and controls (`WEB`) | 0 | 1 | 5 | 19 | 2 | 0 | 27 |
+| Routes, screens and REST (`RTE`) | 0 | 2 | 8 | 15 | 3 | 0 | 28 |
 | Administration, identity and sign-in (`ADM`) | 0 | 1 | 8 | 11 | 1 | 0 | 21 |
 | Tools, System, Monitor and Dashboards (`TLS`) | 0 | 4 | 20 | 27 | 3 | 0 | 54 |
 | LLM, A2A, MCP and Assist (`AI`) | 0 | 0 | 5 | 25 | 4 | 0 | 34 |
 | Git hosting and pipelines (`GIT`) | 0 | 3 | 8 | 24 | 4 | 0 | 39 |
-| Mail (`MAIL`) | 0 | 3 | 10 | 17 | 5 | 0 | 35 |
+| Mail (`MAIL`) | 0 | 3 | 10 | 17 | 6 | 0 | 36 |
 | Files, DAV, SSH and the terminal (`FIL`) | 0 | 0 | 14 | 16 | 8 | 0 | 38 |
 | Calls, chat and messaging (`COM`) | 0 | 0 | 9 | 28 | 14 | 0 | 51 |
 | Cluster and edge node (`CLU`) | 0 | 0 | 0 | 18 | 4 | 0 | 22 |
 | Data layer and stored secrets (`DAT`) | 0 | 0 | 7 | 19 | 4 | 0 | 30 |
-| PASS frontend (mr-pass) (`PSF`) | 0 | 0 | 1 | 8 | 9 | 0 | 18 |
-| PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 2 | 0 | 13 |
+| PASS frontend (mr-pass) (`PSF`) | 0 | 0 | 1 | 8 | 10 | 0 | 19 |
+| PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 3 | 0 | 14 |
 | PASS application services (Mantle) (`PSS`) | 0 | 0 | 8 | 26 | 9 | 0 | 43 |
-| Forum and Smithy (`PFS`) | 0 | 2 | 4 | 22 | 11 | 0 | 39 |
+| Forum and Smithy (`PFS`) | 0 | 2 | 4 | 22 | 12 | 0 | 40 |
 | BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 36 | 9 | 0 | 69 |
 | BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 15 | 27 | 19 | 0 | 64 |
 | Clients (`CLI`) | 0 | 0 | 5 | 14 | 10 | 0 | 29 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
-| Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 3 | 0 | 25 |
+| Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 166 | 393 | 127 | 0 | 710 |
+| **All** | 0 | 24 | 167 | 397 | 137 | 0 | 725 |
 
 ## Findings by area
 
@@ -392,6 +399,13 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 | SEC-WEB-84 | `runtime/components/base/webroot/screen/webroot/sso.xml:19-27`; `crates/moqui-core/src/service/sso.rs:309-318`, `:522-530` | With an OAuth 2 provider the recent sign-in check is met by a cross-site `GET /sso/login?...&reauth=true` | Low | reported (confirmed in code) |
 | SEC-WEB-85 | `crates/moqui-core/src/user/login.rs:158-163`, `:307-336`, `:359-364`, `:486-498`; `Security.eecas.xml:154-155` | The new-device notice is not sent for a sign-in that passes a second factor, or one made within a minute of another login attempt on the account | Low | reported (confirmed in code) |
 | SEC-WEB-86 | `crates/moqui-host/src/sso.rs:557-565` | User info claims are merged into the profile without comparing the user info `sub` with the ID token's | Low | reported (confirmed in code) |
+| SEC-WEB-87 | `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:169-189`, `:808-877`; `crates/moqui-core/src/screen/dispatch.rs:250-281`; `runtime/components/base/framework/conf/MoquiDefaultConf.xml:592` | Wrong second-factor codes sent at once are all checked, and the failed-login count loses most of them, so the lockout does not bound code guesses | Medium | confirmed (second check) |
+| SEC-WEB-88 | `crates/moqui-host/src/tls.rs:154-163` | The HTTPS listener takes the client's order of cipher suites | Info | confirmed (second check) |
+| SEC-WEB-89 | `crates/moqui-core/src/screen/render.rs:868-872`; `crates/moqui-core/src/screen/definition.rs:1191-1200`; `crates/moqui-host/src/guard.rs:107-112`, `:973-975`, `:1002-1008`; `MoquiDefaultConf.xml:583`, `:592-593` | A screen, and a transition of method `any`, runs for any HTTP method: TRACE renders the screen, a PUT of the sign-in form passes the `login` limit, and the default `methods` list refuses WebDAV's | Low | confirmed (second check) |
+| SEC-WEB-90 | `crates/moqui-core/src/user/login.rs:1641`, `:1717-1742`; `crates/moqui-core/src/screen/dispatch.rs:210-213` | An `ipAllowed` refusal comes after the password check and says so, so a client outside the list learns the password is right | Low | confirmed (second check) |
+| SEC-WEB-91 | `crates/moqui-host/src/http.rs:1795-1814`; `crates/moqui-core/src/web/origin.rs:74-99`; `crates/moqui-host/src/llm/sandbox.rs:61-88` | Behind a trusted proxy, `X-Forwarded-Proto`, `-Host` and `-Port` are read from their first value, the one a client may have sent | Low | confirmed (second check) |
+| SEC-WEB-92 | `crates/moqui-core/src/user/policy.rs:65-68`; `MoquiDefaultConf.xml:633`; `moqui-conf-3.xsd:1021` | The password change interval has a default in three places: 104 weeks in the shipped conf, 12 in the code and the XSD | Info | confirmed (second check) |
+| SEC-WEB-93 | `crates/moqui-host/src/sso.rs:292-309`, `:376-428` | The OIDC sign-in takes its ID token algorithms from the provider's discovery document, and nothing requires https for that document or its `jwks_uri` | Low | confirmed (second check) |
 
 ### Routes, screens and REST
 
@@ -425,6 +439,8 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-86 | `crates/moqui-core/src/service/system_sync/message.rs:257-264`, `:397-408` | `/rest/sm/{type}/{remote}` takes any message type on any remote's check | Low | reported (confirmed in code) |
 | SEC-RTE-87 | `crates/moqui-core/src/service/tools.rs:518-562`; `moqui.rest.xml:175-176` | `get#ServerPrinters` connects to any host and port with the internal-address guard off, on a `GET` | Low | reported (confirmed in code) |
 | SEC-RTE-88 | `crates/moqui-core/src/screen/url.rs:567-577`; `crates/moqui-core/src/screen/cache.rs:308-311`, `:607-618` | The `//` screen path search keeps every miss in a map with no limit | Low | reported (to check) |
+| SEC-RTE-89 | `runtime/components/base/webroot/screen/webroot/echopath.xml:15-22` | `/echopath/<anything>`, a sample screen kept from Moqui Java, answers 500 to anyone on every instance | Info | confirmed (second check) |
+| SEC-RTE-90 | `crates/moqui-core/src/web/mod.rs:1120-1166`; `crates/moqui-core/src/screen/render.rs:2247-2254`, `:2472-2475` | A service's validation error in a screen transition answered as JSON is a 500 | Info | confirmed (second check) |
 
 ### Administration, identity and sign-in
 
@@ -643,6 +659,7 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 | SEC-MAIL-95 | `crates/moqui-mail/src/edge_mail.rs:967-1010` (`queue_back`) | Mail queued back to the local node keeps any Authentication-Results that claims the edge node's name | Info | reported (to check) |
 | SEC-MAIL-96 | `crates/moqui-host/src/smtp_queue.rs:490-496`, 508-519, 108-131 | Every RCPT and every message of an edge node's listener waits on one lock held across database work | Info | reported (confirmed in code) |
 | SEC-MAIL-97 | `crates/moqui-mail/src/oauth.rs:1360`, 1799-1803, 1817; `EmailClientServices.xml:263-267` | The OAuth callback makes an account with authorization disabled, so a shared account needs no mail administrator when the provider row has no IMAP host | Info | reported (to check) |
+| SEC-MAIL-98 | `crates/moqui-mail/src/oauth.rs:1517-1525`, `:1548-1570`, `:1592-1600` | The mail OAuth sign-in reads the ID token's claims without checking its signature, and nothing holds the token endpoint to https | Info | confirmed (second check) |
 
 ### Files, DAV, SSH and the terminal
 
@@ -837,6 +854,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 | SEC-PSF-87 | `screen/Shop/Catalog.js:84-87` | A `$'` or `` $` `` in a product's text copies the page into the head's structured data | Info | reported (confirmed in code) |
 | SEC-PSF-88 | `screen/Shop/ShopCheckout.js:449-471`; `screen/Shop/ShopAccount.js:445`, `:463` | A shop theme reads the visiting shopper's order id, invoice id or subscription name on the account pages | Info | reported (confirmed in code) |
 | SEC-PSF-89 | `mr-mantle/service/mantle/public/AccountHub.js:236-255`, `:331-338` | The signed-in email preferences page shows and ends the account's list memberships of every organization | Info | reported (confirmed in code) |
+| SEC-PSF-90 | `screen/Shared/Headers.js:21` | The shell's CSP allows `base-uri 'self'` where no PASS page needs a `<base>` | Info | confirmed (second check) |
 
 ### PASS authority and public accounts
 
@@ -857,6 +875,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../docs/security/Attack-Surface-Apps-PAS
 | SEC-PSA-11 | `FW/service/org/moqui/public/Account.js:149-159, 255-264` | Public accounts are ordinary accounts on the business host | Low | reported (to check) |
 | SEC-PSA-12 | `MM/service/mantle/pass/PassAuthorityServices.xml:8-33` | `handle#Call` trusts `clientVerified` from its caller | Info | reported (confirmed in code) |
 | SEC-PSA-13 | `MM/script/PassApi.js:318-327` | Account action names are looked up in plain objects | Info | reported (confirmed in code) |
+| SEC-PSA-81 | `FW/service/org/moqui/public/Account.js:40-55`; `crates/moqui-core/src/script/host/globals.rs:648-660` | The authority accepts a client secret of `CHANGEME`, which the frontend treats as unset | Info | confirmed (second check) |
 
 ### PASS application services (Mantle)
 
@@ -953,6 +972,7 @@ Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../docs/security/Attack-Sur
 | SEC-PFS-109 | `runtime/components/addon/mr-mantle/service/mantle/smithy/Smithy.js:871-881`, `:901` | The Branches page gives the numbers of hidden merge requests | Info | reported (confirmed in code) |
 | SEC-PFS-110 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyAgreements.js:296-300`; `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyImport.js:287-289`, `:1606-1609` | In a repository a group Owner imported from GitHub, a commit's author address alone makes a signature of the agreement its author's own | Info | reported (confirmed in code) |
 | SEC-PFS-111 | `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyHosting.js:147-165`; `runtime/components/addon/mr-mantle/service/mantle/smithy/SmithyAgreements.js:908-921` | The agreement check tells any viewer whether an address belongs to a member who signed | Info | reported (confirmed in code) |
+| SEC-PFS-112 | `runtime/components/addon/mr-mantle/service/mantle/forum/ForumImport.js:366-400` | The Discourse import unpacks the operator's archive with the framework's default limits (4 GiB and a million entries, and 4 GiB more for the dump) | Info | confirmed (second check) |
 
 ### BOSS access model; Admin, Commons, People, Accounting
 
@@ -1200,6 +1220,8 @@ Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.
 | SEC-OUT-89 | `crates/moqui-core/src/script/host/tools.rs:1973-1982` | A data load's CSV or JSON text is written to `runtime/tmp` with the process umask | Low | reported (confirmed in code) |
 | SEC-OUT-90 | `podman/build.sh:34-35`; `scripts/moq/build.sh:160` | The image script builds the release package with the dev tools, which Run-Deploy says a production image leaves out | Info | reported (confirmed in code) |
 | SEC-OUT-91 | `scripts/moq/opensearch.sh:186-189`; `scripts/pg-payload.sh:63-80`; `podman/Containerfile.build:49-50`; `scripts/moq/desktop.sh:401-408` | Some downloads that are run or embedded are checked only against a sum from the same place, or not at all | Info | reported (confirmed in code) |
+| SEC-OUT-92 | `crates/moqui-core/src/service/call.rs:1492-1504`; `crates/moqui-lib/src/http.rs:404-407` | A remote-rest service's transport failure, a TLS refusal included, is logged without its reason | Info | confirmed (second check) |
+| SEC-OUT-93 | `crates/moqui-host/src/pass_authority/client.rs:205-219` | The PASS authority client trusts only the WebPKI roots over `grpcs://`, with no setting for a private CA | Info | confirmed (second check) |
 
 ### Development tools
 
