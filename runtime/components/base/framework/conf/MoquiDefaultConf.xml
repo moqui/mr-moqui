@@ -96,13 +96,15 @@
         generated into runtime/.env (moqui_conf__push__web__vapid_key) and shared by the cluster's members (a new key makes
         every browser subscribe again); the public key is derived from it and given to the browser. subject is the contact
         the push services see: a mailto: or https: URL, which a production instance should set to its operator's address.
+        max-subscriptions is the most browser subscriptions one user keeps active (0: no cap); a new one past it disables
+        the longest unregistered, since each is a post to a host the browser names on every message.
         fcm: native push to the mobile apps (FCM's HTTP v1 API; plans/Mobile-Desktop.md §5): service-account is a
         Firebase project's service account key, its JSON file's path or the JSON itself, a secret kept like the others
         (moqui_conf__push__fcm__service_account in the environment or runtime/.env; not generated). project-id is the
         Firebase project, by default the key's project_id. Unset, nothing goes to FCM and the log says so once. base-url
         replaces https://fcm.googleapis.com, for a test stand-in only. -->
     <push>
-        <web vapid-key="CHANGEME" subject="mailto:admin@localhost"/>
+        <web vapid-key="CHANGEME" subject="mailto:admin@localhost" max-subscriptions="10"/>
         <fcm service-account="" project-id="" base-url=""/>
     </push>
 

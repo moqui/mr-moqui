@@ -64,7 +64,7 @@ use crate::notify::push_crypto;
 #[path = "chat_push_transport.rs"]
 mod transport;
 use transport::transport;
-pub use transport::{set_transport, web_outcome, Provider, PushTransport, Sent, WebPost};
+pub use transport::{set_transport, web_outcome, Provider, PushTransport, Sent, WebPost, SLOW_SEND};
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -1294,6 +1294,7 @@ fn deliver_one(
     } else {
         room_id.clone()
     };
+    let started = std::time::Instant::now();
     let sent = match (provider, sealed) {
         (Provider::Fcm, sealed) => transport.fcm(
             &subscription,
@@ -1323,7 +1324,16 @@ fn deliver_one(
     match sent {
         Sent::Delivered => {
             finish_sent(facade, row, attempt, now)?;
-            device_result(facade, &subscription, DeviceResult::Delivered, now);
+            // an endpoint that holds the one push worker most of its timeout counts as failing, toward its disabling,
+            // as one that never answers does: a host a browser names cannot stall every user's pushes by answering late
+            // (plans/Security-Review-Medium.md SEC-COM-81)
+            let slow = provider != Provider::Fcm && started.elapsed() >= transport.slow_after();
+            if slow {
+                let took = started.elapsed();
+                tracing::info!(subscription_id = %subscription, "chat push {id} was taken only after {took:?}");
+            }
+            let result = if slow { DeviceResult::Failed } else { DeviceResult::Delivered };
+            device_result(facade, &subscription, result, now);
             Ok(Step::Sent)
         }
         Sent::Gone => {
@@ -1856,9 +1866,9 @@ pub(crate) fn test_too_soon(facade: &EntityFacade, subscriptions: &[String], now
 
 /// `send#TestPush`: a test notification to the calling device, through the full path (the outbox, encrypted, the push
 /// service): the registrations of this request's device key (the app), else the current user's browser with
-/// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice, or one had
-/// a test in the last [`TEST_EVERY_MS`]: `reasonCode` tooSoon), `queuedDate` (Unix milliseconds); the worker is woken
-/// after the commit.
+/// `endpoint`. Out: `ackIdList` (empty when the request is no device of the user's: `reasonCode` noDevice, or a device
+/// of the user's had a test in the last [`TEST_EVERY_MS`]: `reasonCode` tooSoon), `queuedDate` (Unix milliseconds);
+/// the worker is woken after the commit.
 fn send_test_push(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -1903,7 +1913,18 @@ fn send_test_push(
         .iter()
         .filter_map(|row| text_of(row, "subscriptionId"))
         .collect();
-    if test_too_soon(facade, &subscriptions, now)? {
+    // one test a user in that time, whichever device asks: a test per endpoint let one user queue a post to each of
+    // their endpoints every ten seconds (plans/Security-Review-Medium.md SEC-COM-81)
+    let all_devices: Vec<String> = facade
+        .find(DEVICE)?
+        .eq("userId", Value::string(&user))
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .filter_map(|row| text_of(row, "subscriptionId"))
+        .collect();
+    if !subscriptions.is_empty() && test_too_soon(facade, &all_devices, now)? {
         let mut out = BTreeMap::from([
             ("ackIdList".to_string(), Value::List(Vec::new())),
             ("queuedDate".to_string(), Value::I64(now)),

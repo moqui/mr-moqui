@@ -60,6 +60,8 @@ struct Post {
 struct Recorder {
     posts: Mutex<Vec<Post>>,
     script: Mutex<HashMap<String, VecDeque<Sent>>>,
+    /// A Web Push answer held this long, and the time past which a send counts as slow (none: the push services').
+    slow: Mutex<Option<(std::time::Duration, std::time::Duration)>>,
 }
 
 impl Recorder {
@@ -112,7 +114,15 @@ impl PushTransport for Recorder {
             urgency: post.urgency.to_string(),
             topic: post.topic.to_string(),
         });
+        let held = *self.slow.lock().unwrap();
+        if let Some((hold, _)) = held {
+            std::thread::sleep(hold);
+        }
         self.next(device)
+    }
+
+    fn slow_after(&self) -> std::time::Duration {
+        self.slow.lock().unwrap().map_or(SLOW_SEND, |(_, after)| after)
     }
 }
 
@@ -807,6 +817,71 @@ fn a_gone_device_is_deleted_or_disabled() {
     send(&bed.room, "<p>Again</p>", &[]);
     run(bed.now + 1_000);
     assert!(bed.net.take().is_empty());
+}
+
+/// SEC-COM-81: a Web Push endpoint that takes most of the request's timeout to answer counts as failing though it took
+/// the push, and is disabled after [`super::super::web_push::MAX_FAILURES`] such answers, as one that never answers: a
+/// host a browser names does not hold the one push worker for every user. An FCM phone is not held to it.
+#[test]
+fn a_web_endpoint_that_answers_late_is_disabled_as_failing() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    *bed.net.slow.lock().unwrap() = Some((
+        std::time::Duration::from_millis(30),
+        std::time::Duration::from_millis(10),
+    ));
+    login("alice");
+    for round in 0..super::super::web_push::MAX_FAILURES {
+        send(&bed.room, &format!("<p>Message {round}</p>"), &[]);
+        run(bed.now + round * 1_000);
+    }
+    assert!(devices(&bed.net.take()).contains("BOB-WEB"));
+    let web = rows(&bed.facade, DEVICE, &[("subscriptionId", "BOB-WEB")]).remove(0);
+    assert!(millis_of(&web, "disabledDate").is_some());
+    assert_eq!(count_of(&web, "sentCount"), 0);
+    let phone = rows(&bed.facade, DEVICE, &[("subscriptionId", "BOB-PHONE")]).remove(0);
+    assert!(millis_of(&phone, "disabledDate").is_none());
+}
+
+/// SEC-COM-81: a user keeps at most `push/web@max-subscriptions` (10) browser subscriptions active, each an endpoint
+/// of any https host; a new one past it disables the longest unregistered. And a test push is one a user in ten
+/// seconds, whichever of the user's endpoints asks.
+#[test]
+fn a_user_keeps_ten_browser_subscriptions_and_one_test_push_at_a_time() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("carol");
+    let endpoint = |n: usize| format!("https://push.attacker.example/{n}");
+    for n in 0..12 {
+        ok(
+            "org.moqui.ui.NotificationServices.store#WebPushSubscription",
+            &[
+                ("endpoint", text(&endpoint(n))),
+                ("p256dhKey", text(UA_PUBLIC)),
+                ("authSecret", text(AUTH)),
+            ],
+        );
+    }
+    let web: Vec<EntityValue> = rows(&bed.facade, DEVICE, &[("userId", "carol")])
+        .into_iter()
+        .filter(|row| field(row, "pushProviderEnumId") == "PushWeb")
+        .collect();
+    let active: Vec<String> = web
+        .iter()
+        .filter(|row| millis_of(row, "disabledDate").is_none())
+        .map(|row| field(row, "endpoint"))
+        .collect();
+    assert_eq!((web.len(), active.len()), (12, 10), "{active:?}");
+    assert!(active.contains(&endpoint(11)), "{active:?}");
+    let test = |n: usize| {
+        let out = ok(
+            "org.moqui.ui.NotificationServices.send#TestPush",
+            &[("endpoint", text(&endpoint(n)))],
+        );
+        field_of(&out, "reasonCode")
+    };
+    assert_eq!(test(11), "");
+    assert_eq!(test(10), "tooSoon");
 }
 
 /// A message lives 4 weeks with the room's collapse key at high priority; one not taken by then fails.
