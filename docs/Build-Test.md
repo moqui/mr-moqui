@@ -96,6 +96,7 @@ with 0.8.5.
 |---|---|---|
 | mysql 28.0.4 | [moqui/rust-mysql-simple](https://github.com/moqui/rust-mysql-simple) `moqui/28.0.4-no-webpki` (`pr/no-webpki-0.22`) | `rustls` no longer pulls webpki 0.22 (unmaintained, links ring) for two error types: `TlsError::InvalidDnsName` holds rustls's own error, and the unused `TlsError::Pki` is gone |
 | stun-proto, stun-types 2.0.5 (through turn-server-proto) | [moqui/stun-proto](https://github.com/moqui/stun-proto) `main` (`moqui-nonce-bound`), by `[patch.crates-io]` | A change to `LongTermServerAuth`'s nonce handling, to be offered upstream. Both crates come from the fork's workspace so the graph has one stun-types |
+| yrs 0.28.1 (moqui-collab, moqui-host) | The published source in [`patches/yrs`](../patches/README.md), by `[patch.crates-io]` with a `path` | `Any::decode` reads at most 128 levels of maps and arrays, so a co-editing update nested deeper is refused, not a stack overflow (SEC-TLS-95). To move to a GitHub fork when one is made |
 
 Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
 

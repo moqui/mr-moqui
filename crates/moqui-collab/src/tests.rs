@@ -372,3 +372,80 @@ fn the_services_register_at_the_locations_the_service_file_names() {
     named.dedup();
     assert_eq!(registered, named);
 }
+
+/// An update whose attribute value nests arrays far past any editor's, two bytes a level: yrs decoded a value by a
+/// recursion once a level, so applying it overflowed the worker's stack and aborted the process. The patched yrs
+/// (patches/yrs) refuses a value nested deeper than 128, so the update is refused as not one, on a small stack too
+/// (plans/Security-Review-Medium.md SEC-TLS-95).
+#[test]
+fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
+    use yrs::{Any, Xml};
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "deep");
+    login("deep");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("DEEP")),
+            ("description", Value::string("Deep")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("DEEP")),
+            ("pageName", Value::string("Nested")),
+            ("pageText", Value::string("Text.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    let joined = super::join(&key, "deep", &[]).unwrap();
+    let doc = client(&joined);
+    // an attribute whose value is an array holding a marker string: [117 (array), 1 (length), 119 (string), 12, marker]
+    let before = doc.transact().state_vector();
+    {
+        let fragment = doc.get_or_insert_xml_fragment(super::markdown::FRAGMENT);
+        let mut txn = doc.transact_mut();
+        let paragraph = fragment.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+        paragraph.insert_attribute(&mut txn, "deep", Any::Array(vec![Any::from("NESTEDMARKER")].into()));
+    }
+    let plain = doc.transact().encode_state_as_update_v1(&before);
+    let marker: Vec<u8> = [117, 1, 119, 12].iter().copied().chain(*b"NESTEDMARKER").collect();
+    let at = plain
+        .windows(marker.len())
+        .position(|window| window == marker.as_slice())
+        .expect("the attribute's value in the update");
+    // the same update with the array nested 100,000 deep around the marker
+    let mut nested = plain[..at].to_vec();
+    for _ in 0..100_000 {
+        nested.extend_from_slice(&[117, 1]);
+    }
+    nested.extend_from_slice(&marker[2..]);
+    nested.extend_from_slice(&plain[at + marker.len()..]);
+    // just past the limit is refused too, and the plain update is taken
+    let mut past = plain[..at].to_vec();
+    for _ in 0..129 {
+        past.extend_from_slice(&[117, 1]);
+    }
+    past.extend_from_slice(&marker[2..]);
+    past.extend_from_slice(&plain[at + marker.len()..]);
+    let applied = {
+        let key = key.clone();
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                (
+                    super::apply(&key, "deep", &nested).map_err(|refusal| refusal.code),
+                    super::apply(&key, "deep", &past).map_err(|refusal| refusal.code),
+                    super::apply(&key, "deep", &plain).map_err(|refusal| refusal.code),
+                )
+            })
+            .unwrap()
+            .join()
+            .expect("no stack overflow")
+    };
+    assert_eq!(applied, (Err(400), Err(400), Ok(())));
+    super::leave(&key);
+}
