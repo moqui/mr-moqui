@@ -8,6 +8,7 @@ area. Designs, status and reviews are in [`plans/`](../plans/README.md). The sec
 |---|---|
 | [Build-Test.md](Build-Test.md) | Building from source, native code and C libraries, Windows, the build packages and their features, the `./moq` tasks, the Rust tests and the component specs of `moqui test` |
 | [Run-Deploy.md](Run-Deploy.md) | Running and deploying: the runtime and conf, data and databases, HTTPS, one server, containers, clusters, PASS servers with a BOSS server, and dev instances with a group server |
+| [Privacy.md](Privacy.md) | What the desktop and mobile apps keep and send where: the user's server, the device, Google (Firebase, the WebView, Chromium), a UnifiedPush distributor; their permissions; removing the data |
 
 ## data: Data and Resources
 

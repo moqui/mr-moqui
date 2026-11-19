@@ -37,9 +37,10 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
 - **`patches/wry`**: wry with Tauri's scripts and IPC for the main frame of the app's own origins only, through
   `[patch.crates-io]` ([patches/README.md](patches/README.md)).
 
-The crate is not a member of the repository's workspace. Its `Cargo.lock` is copied from the repository's by
-`./moq android`, as the desktop app's, and `.cargo/config.toml` builds it into the repository's `target/`, so a
-`cargo clean` at the root cleans it too. The Gradle output in `gen/android` (`app/build`, `.gradle`) is Gradle's own.
+The crate is not a member of the repository's workspace. Its `Cargo.lock` is committed, with the repository's
+versions of the crates they share (`./moq update-app-locks` brings them in after the repository's lock changes, and
+`crates/moqui-client/tests/app_workspaces.rs` fails until it does), and `.cargo/config.toml` builds it into the
+repository's `target/`, so a `cargo clean` at the root cleans it too. The Gradle output in `gen/android` (`app/build`, `.gradle`) is Gradle's own.
 
 ## Run
 

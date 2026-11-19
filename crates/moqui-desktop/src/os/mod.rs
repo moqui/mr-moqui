@@ -24,6 +24,7 @@ mod first_run;
 mod handlers;
 mod instance;
 mod links;
+pub(crate) mod sandbox;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

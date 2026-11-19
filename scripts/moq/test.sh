@@ -442,6 +442,117 @@ client_crate_named() {
     return 1
 }
 
+# The app crates whose Cargo.lock is committed (SEC-CLI-104): the mobile app and the Tauri glue. The desktop app's is
+# not, as it links the generated target/moqui-app, which differs from one checkout to the next.
+LOCKED_APPS="crates/moqui-client-tauri crates/moqui-mobile"
+
+# Whether the app crate in $1 (a path under the root) keeps a committed lock.
+locked_app() {
+    case " $LOCKED_APPS " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+# The lock of the app crate in $1 (a path under the root), before a build: a committed one as it is, seeded from the
+# repository's only when it is missing (./moq update-app-locks brings the repository's versions in); the desktop app's
+# copied from the repository's whenever that is newer, so the crates it shares are the reviewed versions.
+seed_app_lock() {
+    local dir=$1
+    if locked_app "$dir"; then
+        [ -f "$ROOT/$dir/Cargo.lock" ] || run_cmd cp "$ROOT/Cargo.lock" "$ROOT/$dir/Cargo.lock" \
+            || die "could not copy Cargo.lock to $dir"
+        return 0
+    fi
+    if [ ! -f "$ROOT/$dir/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$ROOT/$dir/Cargo.lock" ]; then
+        run_cmd cp "$ROOT/Cargo.lock" "$ROOT/$dir/Cargo.lock" || die "could not copy Cargo.lock to $dir"
+    fi
+}
+
+# Each package of the lock file $1, one a line: name, version and source (- for a path).
+lock_packages() {
+    awk '/^\[\[package\]\]/ { if (n != "") print n, v, s; n = ""; v = ""; s = "-" }
+         /^name = / { n = $3; gsub(/"/, "", n) }
+         /^version = / { v = $3; gsub(/"/, "", v) }
+         /^source = / { s = $3; gsub(/"/, "", s) }
+         END { if (n != "") print n, v, s }' "$1"
+}
+
+# The crates.io packages of the app lock $1 at another version than the repository's lock has in the same semver
+# range: name, the app's version and the repository's, one a line. crates/moqui-client/tests/app_workspaces.rs makes
+# the same check on every push.
+app_lock_drift() {
+    awk 'function range(version, part) {
+             split(version, part, /[.+-]/)
+             return part[1] > 0 ? part[1] : (part[2] > 0 ? "0." part[2] : "0.0." part[3])
+         }
+         FNR == NR { if ($3 ~ /^registry/) root[$1 " " range($2)] = $2; next }
+         $3 ~ /^registry/ { key = $1 " " range($2); if ((key in root) && root[key] != $2) print $1, $2, root[key] }' \
+        <(lock_packages "$ROOT/Cargo.lock") <(lock_packages "$1")
+}
+
+# The repository's versions of the crates the committed app locks share with it, each brought in by cargo update
+# --precise, so the apps build what the workspace reviewed and the rest of their locks stays (SEC-CLI-104).
+task_update_app_locks() {
+    [ $# -eq 0 ] || die "update-app-locks takes no arguments"
+    need_cargo
+    local dir name old new changed=
+    for dir in $LOCKED_APPS; do
+        seed_app_lock "$dir"
+        while read -r name old new; do
+            [ -n "$name" ] || continue
+            info "$dir: $name $old -> $new" >&2
+            run_cmd cargo update --manifest-path "$ROOT/$dir/Cargo.toml" -p "$name@$old" --precise "$new" \
+                || die "could not update $name in $dir/Cargo.lock"
+            changed=1
+        done < <(app_lock_drift "$ROOT/$dir/Cargo.lock")
+    done
+    [ -n "$changed" ] || info "The app locks have the repository's versions of the crates they share"
+}
+
+help_update_app_locks() {
+    cat <<EOF
+Brings the repository's versions of the crates the committed app locks share with it into them:
+crates/moqui-client-tauri/Cargo.lock and crates/moqui-mobile/Cargo.lock, each crates.io package that
+the repository's Cargo.lock has at another version in the same semver range, by cargo update
+--precise, so the apps build the versions the workspace reviewed and the rest of their locks stays.
+crates/moqui-client/tests/app_workspaces.rs fails on every push while one differs. Run it after the
+repository's Cargo.lock changes, then commit the app locks. The desktop app's lock is not committed
+(it links the generated target/moqui-app) and is copied from the repository's at each build.
+  ./moq update-app-locks
+EOF
+}
+
+# The apps' dependencies checked against the RustSec advisory database (cargo deny), for the targets they build for:
+# their crates are outside the workspace, whose deny.toml covers it for one Linux target (SEC-CLI-104).
+task_deny_apps() {
+    [ $# -eq 0 ] || die "deny-apps takes no arguments"
+    need_cargo
+    command -v cargo-deny >/dev/null 2>&1 || dry_run || die "no cargo-deny: cargo install --locked cargo-deny"
+    local line dir target failed=
+    for line in "crates/moqui-client-tauri|x86_64-unknown-linux-gnu" "crates/moqui-mobile|aarch64-linux-android" \
+        "crates/moqui-desktop|aarch64-apple-darwin" "crates/moqui-desktop|x86_64-unknown-linux-gnu"; do
+        dir=${line%%|*}
+        target=${line#*|}
+        seed_app_lock "$dir"
+        [ "$dir" != crates/moqui-desktop ] || write_desktop_app_crate
+        info "cargo deny: $dir for $target" >&2
+        run_cmd cargo deny --manifest-path "$ROOT/$dir/Cargo.toml" --target "$target" check advisories sources \
+            || failed="$failed $dir ($target)"
+    done
+    [ -z "$failed" ] || die "cargo deny found advisories, or a source it does not take, in:$failed"
+}
+
+help_deny_apps() {
+    cat <<EOF
+Checks the dependencies of the mobile app, the desktop app and the Tauri glue against the RustSec
+advisory database and the allowed sources (cargo deny check advisories sources, with the repository's
+deny.toml), each for the targets it builds for: their crates are outside the workspace, whose own
+check covers the repository's crates. Needs cargo-deny (cargo install --locked cargo-deny) and the
+network. Not the bans or licenses checks: the apps' Tauri stack brings ring and MPL-2.0 crates that
+the workspace refuses.
+  ./moq deny-apps
+EOF
+}
+
 # The tests of the client crates, the clients' MASVS proofs among them (docs/security/proofs/clients/README.md).
 task_test_clients() {
     local arg line name dir known
@@ -486,11 +597,9 @@ task_test_clients() {
             suite "cargo test -p moqui-client" cargo test -p moqui-client ${cargo_args[@]+"${cargo_args[@]}"}
             continue
         fi
-        # its lock starts from the repository's, as the apps' builds seed theirs, so the shared crates' versions are
-        # the reviewed ones; cargo adds what the crate alone needs
-        if [ ! -f "$ROOT/$dir/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$ROOT/$dir/Cargo.lock" ]; then
-            run_cmd cp "$ROOT/Cargo.lock" "$ROOT/$dir/Cargo.lock" || die "could not copy Cargo.lock to $dir"
-        fi
+        # a committed lock as it is (the shared crates' versions are the repository's, ./moq update-app-locks); the
+        # desktop app's from the repository's, and cargo adds what the crate alone needs
+        seed_app_lock "$dir"
         if [ "$name" = desktop ]; then
             # the desktop app links the framework and the component crates through target/moqui-app, with the
             # embedded Postgres of its node
@@ -655,8 +764,9 @@ All four by default, or those named:
   desktop   cargo test in crates/moqui-desktop  after writing target/moqui-app (the crate that links the
                                                 framework and the component crates), as ./moq desktop does
 The last three are workspaces of their own, outside the repository's, so cargo test --workspace and
-test-framework do not reach them. Each starts its Cargo.lock from the repository's when it has none or
-an older one, and builds into target/. A run of its own, not part of test-framework or test-all: it
+test-framework do not reach them. The glue's and the mobile app's Cargo.lock are committed and used as
+they are (./moq update-app-locks brings the repository's versions in); the desktop app's starts from the
+repository's when it has none or an older one. Each builds into target/. A run of its own, not part of test-framework or test-all: it
 builds Tauri, and for the desktop app CEF and the framework again; the first run downloads CEF (about
 1 GB) and needs the desktop app's prerequisites (docs/Build-Test.md#desktop-app). For a change to these
 crates, or to what they link from the workspace, before a commit.

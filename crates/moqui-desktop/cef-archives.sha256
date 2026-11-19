@@ -1,0 +1,4 @@
+# The SHA-256 of each CEF archive the desktop app is built from, by file name (scripts/moq/desktop.sh
+# check_cef_archives; plans/Security-Review.md SEC-CLI-104). A build records an archive with no entry, to commit;
+# one whose hash differs stops it.
+b7efb24bcce34b94e836a9f545005aea210e08abdf4ee1483ea03b8daf93f080  cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_macosarm64_minimal.tar.bz2

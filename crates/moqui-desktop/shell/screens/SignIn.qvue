@@ -65,6 +65,7 @@ along with this software (see the LICENSE.md file). If not, see
         </q-card-actions>
     </q-card>
     </q-form>
+    <div class="text-center q-mt-sm"><q-btn flat dense no-caps size="sm" :label="t('Privacy')" @click="openPrivacy"></q-btn></div>
     <q-card v-if="accounts.length" flat bordered class="q-mt-md">
         <q-list separator>
             <q-item-label header>{{t('Accounts on this computer')}}</q-item-label>
@@ -112,6 +113,8 @@ module.exports = {
         canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
     },
     methods: {
+        // the apps' privacy notice (docs/Privacy.md, SEC-CLI-122), before an account signs in too
+        openPrivacy() { moqui.shellPrivacy(); },
         t,
         submit() {
             if (!this.ready || this.busy) return;
