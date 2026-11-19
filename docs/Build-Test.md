@@ -481,8 +481,8 @@ adb reverse tcp:8080 tcp:8080                # ./moq run on this machine as the 
 
 `./moq android` (but `init`) first stages the client's shell into `target/mobile-shell`, the same step and layout as
 the desktop bundle's (`stage_client_shell`), which the app embeds as its Tauri assets. The app's host logic is tested on
-the desktop: `cd crates/moqui-mobile && cargo test` (a placeholder page stands in for an
-unstaged shell), and the Tauri glue it shares with the desktop app in `crates/moqui-client-tauri` the same way. How the
+the desktop: `./moq test-clients mobile` (a placeholder page stands in for an unstaged shell), and the Tauri glue it
+shares with the desktop app with `./moq test-clients tauri`. How the
 app works on Android is [Mobile-Client](ui/Mobile-Client.md).
 
 `scripts/android-env.sh`, which `./moq android` and `scripts/check-android.sh` source, finds the SDK, the newest NDK
@@ -603,7 +603,7 @@ its rows; a check named twice runs once.
 |---|---|
 | Rust in a workspace crate (`crates/*`, a component's `src/`) | `cargo lint` (clippy on the workspace, warnings denied); `cargo lint-min` (the host and every crate it links built with no default features, so feature-gated code and its off stubs are checked); `cargo test -p <crate>` for each crate touched while working; then `./moq test-framework` |
 | Feature-gated code (`#[cfg(feature = ...)]`), a crate's `[features]` or dependencies, `Cargo.toml` or `Cargo.lock` | also `scripts/check-packages.sh` (clippy on each package's feature set) |
-| A crate outside the workspace (`moqui-desktop`, `moqui-mobile`, `moqui-client-tauri`) or the Android targets | the tests in its README (the desktop's need `target/moqui-app`, which `./moq build` writes); `scripts/check-android.sh` for the Android targets |
+| A crate outside the workspace (`moqui-desktop`, `moqui-mobile`, `moqui-client-tauri`) or the Android targets | `./moq test-clients` (or its crate alone, `./moq test-clients desktop`; it writes `target/moqui-app` for the desktop), which also runs `moqui-client`'s tests and the clients' security proofs; `scripts/check-android.sh` for the Android targets |
 | Something a golden or generated file holds: a host member (`moqui-host.d.ts`), a proto, the bundled screens, a typegen fixture | the file rewritten by its variable and its diff read: `UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`, `MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib the_checked_in_code_is_what_the_proto_generates`, `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled` |
 | The framework's components (`runtime/components/base`, `runtime/components/dev`), the conf (`MoquiDefaultConf.xml`, the XSDs, `runtime/conf/**`), `moq` or `scripts/` | `./moq test-framework` (its cargo run holds the conf tests: every runtime conf parsed, merged and checked against the XSD) |
 | An application (`runtime/components/addon/*`, `runtime/components/test`) | `./moq test-apps`; for a changed screen `moqui lint --screens` with a report file (`./moq run lint --screens <file>`), its idiom count not grown |

@@ -16,7 +16,7 @@ procedure.
    - Rust: `cargo lint`, `cargo lint-min`, then `./moq test-framework`. Both lints, for any crate: `lint-min` builds
      the host's whole graph with no default features and is what catches an item only a feature uses.
    - Feature gates, features or dependencies: also `scripts/check-packages.sh`.
-   - The desktop, mobile or client-tauri crate: its README's tests (the desktop's after `./moq build`), and
+   - The desktop, mobile or client-tauri crate: `./moq test-clients` (its crate alone: `./moq test-clients desktop`), and
      `scripts/check-android.sh` for Android.
    - A golden's source (`moqui-host.d.ts`, a proto, the bundled screens): rewrite it by its variable, read the diff.
    - The framework's components, the conf or its XSDs, `moq`, `scripts/`: `./moq test-framework`.

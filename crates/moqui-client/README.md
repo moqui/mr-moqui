@@ -78,6 +78,10 @@ The threads are plain threads with blocking requests. The patterns follow `moqui
 
 ```sh
 cargo test -p moqui-client
+./moq test-clients         # this crate's tests, then the Tauri glue's and the two apps' (outside the workspace)
 scripts/check-android.sh   # clippy on this crate and moqui-mobile for both Android targets (an NDK, ~/Android/Sdk)
                            # (ANDROID_NDK_HOME, an SDK's, or brew install --cask android-ndk)
 ```
+
+`tests/android_settings.rs` reads the mobile app's Android settings (`crates/moqui-mobile/gen/android`) that this
+crate's TLS on the phone relies on, so the workspace's `cargo test` checks them on every push.

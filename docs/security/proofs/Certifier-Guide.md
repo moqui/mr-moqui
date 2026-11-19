@@ -112,6 +112,14 @@ cargo test -p moqui-host --lib tls::tests          # a Rust module's proofs, by 
 Some requirements ask for a document, not a behavior (6.1.1, 6.1.3, 7.1.3, 8.1.1). Their rows name the document that
 meets them, in [docs/security](..) and in PASS's `docs/`; read it as part of the evidence.
 
+## The desktop and mobile apps
+
+The apps are held to OWASP MASVS, not ASVS: [the clients' matrix](clients/README.md) gives each control a status for
+the mobile app and for the desktop app (profiles L1, L2 and P; R is not covered). Their proofs are tests, not specs a
+run takes against a server: `./moq test-clients` runs the client crates' tests, the shared client's TLS proofs and the
+static checks of the Android app's settings among them (those two also in every `./moq test-framework`). Most rows are
+Gaps today, each naming the part not met and its register entry; a certifier of an app build reads those first.
+
 ## What this does not cover
 
 - **Level 3.** The matrix covers levels 1 and 2.

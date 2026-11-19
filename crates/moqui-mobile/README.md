@@ -58,7 +58,7 @@ adb logcat -s moqui-mobile                    # the app's log
 ## Test
 
 ```sh
-cd crates/moqui-mobile && cargo test   # the host logic, on the desktop
+./moq test-clients mobile     # the host logic, on the desktop (cd crates/moqui-mobile && cargo test)
 scripts/check-android.sh      # clippy for aarch64-linux-android and x86_64-linux-android
 scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready line, the frame check, a relaunch
                               # (MOQUI_MOBILE_APK=<a release APK>: what R8 kept for JNI instead of the frame check)

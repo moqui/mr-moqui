@@ -36,16 +36,7 @@ task_desktop() {
     done
     need_tauri_cli
     ensure_pg_archive
-    # The component crates, as build_binary finds them; the generated crate is written even when there are none.
-    local -a addons
-    local addon
-    addons=()
-    while IFS= read -r addon; do addons+=("$addon"); done \
-        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/$TEST_SET")
-    while IFS= read -r addon; do
-        framework_dev_crate "$addon" || { addons+=("$addon"); }
-    done < <(component_crate_dirs "$ROOT/runtime/$DEV_SET")
-    write_app_crate "$ROOT/target/moqui-app" ${addons[@]+"${addons[@]}"}
+    write_desktop_app_crate
     local app=$ROOT/crates/moqui-desktop
     if [ ! -f "$app/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$app/Cargo.lock" ]; then
         run_cmd cp "$ROOT/Cargo.lock" "$app/Cargo.lock" || die "could not copy Cargo.lock"
@@ -93,6 +84,20 @@ task_desktop() {
     fi
     (cd "$app" && run_cmd cargo tauri "$command" ${tauri_args[@]+"${tauri_args[@]}"} -- ${cargo_args[@]+"${cargo_args[@]}"}) \
         || die "cargo tauri $command failed"
+}
+
+# target/moqui-app, the crate that links the framework and the component crates, which the desktop app depends on: the
+# component crates as build_binary finds them; the generated crate is written even when there are none.
+write_desktop_app_crate() {
+    local -a addons
+    local addon
+    addons=()
+    while IFS= read -r addon; do addons+=("$addon"); done \
+        < <(component_crate_dirs "$RUNTIME_DIR/$ADDON_SET" "$RUNTIME_DIR/$TEST_SET")
+    while IFS= read -r addon; do
+        framework_dev_crate "$addon" || { addons+=("$addon"); }
+    done < <(component_crate_dirs "$ROOT/runtime/$DEV_SET")
+    write_app_crate "$ROOT/target/moqui-app" ${addons[@]+"${addons[@]}"}
 }
 
 # The emulator's AVD and the API of the system image it is made from (with Play services, for FCM).

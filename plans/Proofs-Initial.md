@@ -249,6 +249,14 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   - **P8c, where they run.** A `./moq` task runs the clients' proof tests (the desktop, mobile and Tauri crates are
     outside the workspace, so `./moq test-framework` does not), and the certifier's guide, the index and the
     cross-references gain the clients.
+  - **As done (2026-11-19).** P8a: the matrix `docs/security/proofs/clients/README.md` (mobile 1 App, 1 Configuration,
+    17 Gap, 5 N/A; desktop 19 Gap, 5 N/A), and SEC-CLI-101 to 125 in the register. P8b: the two rows a proof can be
+    filed under: NETWORK-1 (mobile) by `moqui-client`'s TLS tests (requests and sockets refuse an untrusted
+    certificate and another name before sending anything) and `tests/android_settings.rs` (clear text only in the
+    debug build, no user authority or clear text by network configuration, no code turning a check off), both in
+    every `./moq test-framework`; CRYPTO-1 (mobile) by the tests it cites, a device test of `KeyVault` left. P8c:
+    `./moq test-clients` runs the four client crates' tests (about 14 minutes with CEF cached; its own run, not
+    test-framework's); the certifier's guide, the indexes, Build-Test and the pre-commit skill name it.
 
 ## Decisions
 

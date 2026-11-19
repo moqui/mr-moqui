@@ -27,5 +27,9 @@ tracing = { workspace = true }
 tungstenite = { workspace = true }
 url = { workspace = true }
 
+[dev-dependencies]
+# The test servers' certificates of the TLS proofs (src/tls_tests.rs), as the host's tests make theirs.
+rcgen = { workspace = true }
+
 [lints]
 workspace = true
