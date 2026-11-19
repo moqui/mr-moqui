@@ -452,3 +452,34 @@ fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
     super::tick();
     let _ = super::take_events();
 }
+
+/// SEC-TLS-111: a join whose state vector does not decode is no member, so the room still closes when it is left.
+#[test]
+fn a_refused_join_is_no_member() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "rejoin");
+    login("rejoin");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("REJOIN")),
+            ("description", Value::string("Rejoin")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("REJOIN")),
+            ("pageName", Value::string("Kept")),
+            ("pageText", Value::string("Text.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    let bad = [0xff_u8; 11];
+    assert_eq!(super::join(&key, "rejoin", &bad).unwrap_err().code, 400);
+    super::tick();
+    assert!(!super::open_documents().contains(&key), "the refused join left the room open");
+    let _ = super::take_events();
+}

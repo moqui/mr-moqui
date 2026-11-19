@@ -584,16 +584,17 @@ pub fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Result<Join
     if !can_view {
         return Err(Refusal::new(404, format!("{key} not found")));
     }
-    let room = load(key, page_id, on_database)?;
-    let mut room = lock(&room);
-    room.members += 1;
-    room.can_edit.insert(user_id.to_string(), can_edit);
+    // the client's state vector first: a refused join is no member, which no leave would ever take away (SEC-TLS-111)
     let vector = if client_state_vector.is_empty() {
         StateVector::default()
     } else {
         StateVector::decode_v1(client_state_vector)
             .map_err(|err| Refusal::new(400, format!("not a Yjs state vector: {err}")))?
     };
+    let room = load(key, page_id, on_database)?;
+    let mut room = lock(&room);
+    room.members += 1;
+    room.can_edit.insert(user_id.to_string(), can_edit);
     let txn = room.doc.transact();
     let update = txn.encode_state_as_update_v1(&vector);
     let state_vector = txn.state_vector().encode_v1();
