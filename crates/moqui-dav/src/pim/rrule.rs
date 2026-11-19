@@ -34,6 +34,10 @@ use jiff::{Timestamp, ToSpan};
 /// SECONDLY rule over years cannot run away.
 pub(crate) const MAX_INSTANCES: usize = 100_000;
 const MAX_PERIODS: usize = 2_000_000;
+/// The most candidates one period gives (SEC-FIL-85): a yearly rule with every weekday and every hour, minute and
+/// second would build 31.5 million date-times before any other limit applied. A period is built in order, so the
+/// candidates kept are its first ones; BYSETPOS then counts within them.
+const MAX_PERIOD_CANDIDATES: usize = MAX_INSTANCES;
 /// Without COUNT, UNTIL or the end of a range, the instances given.
 pub(crate) const OPEN_ENDED_INSTANCES: usize = 1_000;
 
@@ -102,8 +106,13 @@ pub(crate) fn weekday_code(day: Weekday) -> &'static str {
     }
 }
 
-fn numbers<T: std::str::FromStr + Copy>(key: &str, value: &str, valid: impl Fn(i64) -> bool) -> Result<Vec<T>, String> {
-    value
+/// The numbers of a BYxxx list, sorted and each once, so a list is never longer than its range of values.
+fn numbers<T: std::str::FromStr + Copy + Ord>(
+    key: &str,
+    value: &str,
+    valid: impl Fn(i64) -> bool,
+) -> Result<Vec<T>, String> {
+    let mut numbers = value
         .split(',')
         .map(str::trim)
         .filter(|part| !part.is_empty())
@@ -119,7 +128,10 @@ fn numbers<T: std::str::FromStr + Copy>(key: &str, value: &str, valid: impl Fn(i
                 .parse::<T>()
                 .map_err(|_| format!("{key} has {part}, out of range"))
         })
-        .collect()
+        .collect::<Result<Vec<T>, String>>()?;
+    numbers.sort_unstable();
+    numbers.dedup();
+    Ok(numbers)
 }
 
 /// An RFC 5545 DATE (`20261020`), floating DATE-TIME (`20261020T090000`) or UTC DATE-TIME (`...Z`); dashes and colons
@@ -236,7 +248,9 @@ impl Rule {
                                 .filter(|n| *n != 0 && (-53..=53).contains(n))
                                 .ok_or_else(|| format!("BYDAY has {item}"))?
                         };
-                        rule.by_day.push((ordinal, day));
+                        if !rule.by_day.contains(&(ordinal, day)) {
+                            rule.by_day.push((ordinal, day));
+                        }
                     }
                 }
                 "WKST" => rule.wkst = weekday_of(value).ok_or_else(|| format!("WKST {value} is not a weekday"))?,
@@ -319,6 +333,8 @@ struct Plan<'a> {
     nth_weekday: Vec<(i16, Weekday)>,
     /// The times of a day for DAILY and longer, sorted.
     times: Vec<Time>,
+    /// A period was cut to [`MAX_PERIOD_CANDIDATES`], logged once.
+    cut: std::cell::Cell<bool>,
 }
 
 impl<'a> Plan<'a> {
@@ -385,6 +401,7 @@ impl<'a> Plan<'a> {
             every_weekday,
             nth_weekday,
             times,
+            cut: std::cell::Cell::new(false),
         }
     }
 
@@ -454,6 +471,15 @@ impl<'a> Plan<'a> {
         let add_day = |date: Date, out: &mut Vec<DateTime>| {
             if self.day_matches(date) {
                 for time in &self.times {
+                    if out.len() >= MAX_PERIOD_CANDIDATES {
+                        if !self.cut.replace(true) {
+                            tracing::warn!(
+                                "a recurrence rule gives more than {MAX_PERIOD_CANDIDATES} times in one period; \
+                                its first ones are used"
+                            );
+                        }
+                        return;
+                    }
                     out.push(DateTime::from_parts(date, *time));
                 }
             }

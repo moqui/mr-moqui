@@ -401,3 +401,41 @@ fn rules_parse_and_refuse() {
     assert!(Rule::parse("FREQ=DAILY;INTERVAL=0").is_err());
     assert!(Rule::parse("COUNT=3").unwrap_err().contains("not an RRULE"));
 }
+
+/// SEC-FIL-85: one period gives at most `MAX_PERIOD_CANDIDATES` date-times, its first, so a yearly rule of every
+/// weekday, hour, minute and second builds 100,000 of them, not 31.5 million; a period under the limit (every quarter
+/// hour of a year, 35,040) is built whole. A BYxxx list given many times over is kept once.
+#[test]
+fn one_period_holds_at_most_its_limit() {
+    let all = |count: i64| (0..count).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
+    let every = format!(
+        "FREQ=YEARLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR={};BYMINUTE={};BYSECOND={}",
+        all(24),
+        all(60),
+        all(60)
+    );
+    let rule = Rule::parse(&every).unwrap();
+    let start = DateTime::from_parts(Date::new(2026, 1, 1).unwrap(), Time::midnight());
+    let period = Plan::new(&rule, start).period(0).unwrap();
+    assert_eq!(period.len(), MAX_PERIOD_CANDIDATES);
+    assert_eq!(period[1], start.checked_add(1.second()).unwrap());
+    let quarters = format!(
+        "FREQ=YEARLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR={};BYMINUTE=0,15,30,45",
+        all(24)
+    );
+    let quarters = Rule::parse(&quarters).unwrap();
+    assert_eq!(Plan::new(&quarters, start).period(0).unwrap().len(), 365 * 96);
+    let utc = TimeZone::UTC;
+    let dtstart = start.to_zoned(utc.clone()).unwrap().timestamp();
+    let instances = expand(&rule, dtstart, &utc, None, None, MAX_INSTANCES);
+    assert!(instances.len() <= MAX_INSTANCES, "{}", instances.len());
+    assert_eq!(instances[1], dtstart.checked_add(1.second()).unwrap());
+    let repeated = Rule::parse(&format!(
+        "FREQ=DAILY;BYHOUR={};BYDAY={}",
+        ["9"; 10_000].join(","),
+        ["MO"; 10_000].join(",")
+    ))
+    .unwrap();
+    assert_eq!(repeated.by_hour, [9]);
+    assert_eq!(repeated.by_day, [(0, Weekday::Monday)]);
+}
