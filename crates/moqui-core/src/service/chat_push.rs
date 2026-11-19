@@ -118,6 +118,8 @@ pub const MAX_ATTEMPTS: i64 = 12;
 const JOB_ATTEMPTS: i64 = 5;
 const JOBS_PER_ROUND: i64 = 200;
 const PUSHES_PER_ROUND: i64 = 500;
+/// The times a round reads the pushes due again after it put off the rest of the users whose budget was spent.
+const DELIVERY_PASSES: usize = 4;
 /// How often the worker looks without being woken, while pushes wait.
 const SWEEP: Duration = Duration::from_secs(60);
 /// The rows done (sent, failed, dropped) are kept this long.
@@ -459,7 +461,7 @@ pub fn round(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64)
     let mut report = RoundReport::default();
     fan_out(facade, transport.as_ref(), &node, now, &mut report)?;
     release_held(facade, now);
-    deliver_due(facade, transport.as_ref(), &node, now, &mut report)?;
+    deliver_due(facade, transport.as_ref(), &node, now, PUSHES_PER_ROUND, &mut report)?;
     clean(&worker(factory), facade, now);
     let waiting = facade.find(JOB)?.disable_authz().count()?
         + facade
@@ -1116,43 +1118,75 @@ fn deliver_due(
     transport: &dyn PushTransport,
     node: &str,
     now: i64,
+    limit: i64,
     report: &mut RoundReport,
 ) -> Result<(), LibError> {
-    let rows = facade
-        .find(OUTBOX)?
-        .eq("statusEnumId", Value::string(PENDING))
-        .condition(Condition::or(vec![
-            Condition::is_null("nextAttemptDate"),
-            Condition::less_equal("nextAttemptDate", stamp(now)),
-        ]))
-        .order_by("createdDate", false)
-        .limit(PUSHES_PER_ROUND)
-        .disable_authz()
-        .list()?;
-    // each recipient's pushes take at most the transport's budget of the round; the rest of a user's wait for the next
-    // round (SEC-COM-81)
+    // each recipient's pushes take at most the transport's budget of the round. The rest of a user whose budget is
+    // spent wait for the next round, and the pushes due are read again, so a user with many old pushes does not hold
+    // every other user's for the round's whole read (SEC-COM-81)
     let mut spent = UserBudget::new(transport.user_round_budget());
-    for row in rows.values() {
-        let user = text_of(row, "userId").unwrap_or_default();
-        if spent.exhausted(&user) {
-            continue;
+    for _ in 0..DELIVERY_PASSES {
+        let rows = facade
+            .find(OUTBOX)?
+            .eq("statusEnumId", Value::string(PENDING))
+            .condition(Condition::or(vec![
+                Condition::is_null("nextAttemptDate"),
+                Condition::less_equal("nextAttemptDate", stamp(now)),
+            ]))
+            .order_by("createdDate", false)
+            .limit(limit)
+            .disable_authz()
+            .list()?;
+        let mut waiting = BTreeSet::new();
+        for row in rows.values() {
+            let user = text_of(row, "userId").unwrap_or_default();
+            if spent.exhausted(&user) {
+                waiting.insert(user);
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let step = deliver_one(facade, transport, row, node, now);
+            spent.add(&user, started.elapsed());
+            match step {
+                Ok(Step::Sent) => report.sent += 1,
+                Ok(Step::Retried) => report.retried += 1,
+                Ok(Step::Failed) => report.failed += 1,
+                Ok(Step::Dropped) => report.dropped += 1,
+                Ok(Step::Skipped) => {}
+                Err(error) => tracing::error!(
+                    "chat push {} could not be sent: {error}",
+                    text_of(row, "pushOutboxId").unwrap_or_default()
+                ),
+            }
         }
-        let started = std::time::Instant::now();
-        let step = deliver_one(facade, transport, row, node, now);
-        spent.add(&user, started.elapsed());
-        match step {
-            Ok(Step::Sent) => report.sent += 1,
-            Ok(Step::Retried) => report.retried += 1,
-            Ok(Step::Failed) => report.failed += 1,
-            Ok(Step::Dropped) => report.dropped += 1,
-            Ok(Step::Skipped) => {}
-            Err(error) => tracing::error!(
-                "chat push {} could not be sent: {error}",
-                text_of(row, "pushOutboxId").unwrap_or_default()
-            ),
+        if waiting.is_empty() {
+            break;
+        }
+        for user in &waiting {
+            put_off(facade, user, now);
         }
     }
     Ok(())
+}
+
+/// Put `user`'s pushes due at `now` off to the next round (just after `now`), so the round's next read and the
+/// next round's start with other users' pushes. A user whose pushes are not put off is logged; the others go on.
+fn put_off(facade: &EntityFacade, user: &str, now: i64) {
+    let moved = force_new(facade, OUTBOX, || {
+        facade
+            .find(OUTBOX)?
+            .eq("userId", Value::string(user))
+            .eq("statusEnumId", Value::string(PENDING))
+            .condition(Condition::or(vec![
+                Condition::is_null("nextAttemptDate"),
+                Condition::less_equal("nextAttemptDate", stamp(now)),
+            ]))
+            .disable_authz()
+            .update_all([("nextAttemptDate".to_string(), stamp(now + 1))])
+    });
+    if let Err(error) = moved {
+        tracing::error!("the chat pushes of user {user} were not put off to the next round: {error}");
+    }
 }
 
 /// The time each user's pushes took of a delivery round, against a budget per user.

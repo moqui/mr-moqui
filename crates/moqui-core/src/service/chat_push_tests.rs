@@ -62,6 +62,8 @@ struct Recorder {
     script: Mutex<HashMap<String, VecDeque<Sent>>>,
     /// A Web Push answer held this long, and the time past which a send counts as slow (none: the push services').
     slow: Mutex<Option<(std::time::Duration, std::time::Duration)>>,
+    /// Each user's budget of a delivery round (none: the push services').
+    budget: Mutex<Option<std::time::Duration>>,
 }
 
 impl Recorder {
@@ -123,6 +125,10 @@ impl PushTransport for Recorder {
 
     fn slow_after(&self) -> std::time::Duration {
         self.slow.lock().unwrap().map_or(SLOW_SEND, |(_, after)| after)
+    }
+
+    fn user_round_budget(&self) -> std::time::Duration {
+        self.budget.lock().unwrap().unwrap_or(USER_ROUND_BUDGET)
     }
 }
 
@@ -935,6 +941,51 @@ fn each_user_has_a_budget_of_a_delivery_round() {
     spent.add("mallory", std::time::Duration::from_millis(60));
     assert!(spent.exhausted("mallory") && !spent.exhausted("ann"));
     assert!(USER_ROUND_BUDGET > SLOW_SEND);
+}
+
+/// SEC-COM-81: the rest of the pushes of a user whose budget of the round is spent are put off to the next round, and
+/// the round reads the pushes due again, so a user with many old pushes does not hold everyone else's.
+#[test]
+fn a_user_whose_budget_is_spent_waits_and_the_others_are_pushed() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("alice");
+    send(&bed.room, "<p>Hello all</p>", &[]);
+    let mut report = RoundReport::default();
+    fan_out(&bed.facade, bed.net.as_ref(), "node-1", bed.now, &mut report).unwrap();
+    bed.net.take();
+    // bob's two pushes (his phone and browser) are the oldest, and each user's budget ends at a push
+    update(
+        &bed.facade,
+        OUTBOX,
+        &[("userId", "bob")],
+        &[("createdDate", stamp(bed.now - 60_000))],
+    );
+    *bed.net.budget.lock().unwrap() = Some(std::time::Duration::ZERO);
+    let pushed = |at: i64| {
+        let mut report = RoundReport::default();
+        deliver_due(&bed.facade, bed.net.as_ref(), "node-1", at, 2, &mut report).unwrap();
+        bed.net.take().into_iter().map(|post| post.device).collect::<Vec<_>>()
+    };
+    let first = pushed(bed.now);
+    assert_eq!(
+        first.iter().filter(|device| device.starts_with("BOB-")).count(),
+        1,
+        "{first:?}"
+    );
+    assert!(
+        first.iter().any(|device| device == "DAVE-UP"),
+        "dave is pushed in the same round: {first:?}"
+    );
+    let put_off = rows(&bed.facade, OUTBOX, &[("userId", "bob"), ("statusEnumId", PENDING)]);
+    assert_eq!(put_off.len(), 1);
+    assert!(put_off
+        .iter()
+        .all(|row| millis_of(row, "nextAttemptDate").is_some_and(|at| at > bed.now)));
+    // the next round sends it
+    assert_eq!(pushed(bed.now).len(), 0, "not again in this round");
+    let next = pushed(bed.now + 1);
+    assert!(next.len() == 1 && next[0].starts_with("BOB-"), "{next:?}");
 }
 
 /// A message lives 4 weeks with the room's collapse key at high priority; one not taken by then fails.
