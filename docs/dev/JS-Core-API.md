@@ -874,6 +874,7 @@ Service calls, jobs and the HTTP client.
 | `multi(flag)` | One call for each row of `name_N` parameters, in one transaction |
 | `throwOnError(flag)` | A failed call throws an error with its kind, in place of error messages |
 | `noRememberParameters()` | The artifact hit of the call does not keep its parameters |
+| `generic(flag)` | The call is a generic tool's, of a service a request names (Tools › Service Run): an entity-auto service of an entity no generic write takes (`WebUtilities.isGenericWriteRefused`; a secret-config one but for a member of `ADMIN`) is an error message and does not run, as Service REST refuses it. A defined service runs as any call does |
 | `distribute(flag)` | Accepted; the call runs on this server |
 | `getServiceName()` | The name set |
 | `getCurrentParameters()` | The parameters set so far |

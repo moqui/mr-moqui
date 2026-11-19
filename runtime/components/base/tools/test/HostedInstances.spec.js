@@ -65,3 +65,42 @@ feature("the generic tools do not write an InstanceImage, whose authTokenCmd run
         written == 0
     },
 })
+
+// Service Run calls the service a request names: an entity-auto service of an entity no generic write takes is refused
+// there too, as Service REST refuses it, and other services still run (plans/Security-Review-Medium.md SEC-TLS-85)
+feature("Service Run does not call the entity-auto services of a hosted-instance row or a service-written row", {
+    when() {
+        const run = (parameters) => {
+            ec.user.internalLoginUser("spec.hi.admin")
+            ec.message.clearAll()
+            const res = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml").render("Service/ServiceRun/run", parameters, "post")
+            const out = { errors: res.errorMessages.join(" ") + " " + ec.message.errors.join(" ") }
+            ec.message.clearAll()
+            ec.user.logoutUser()
+            return out
+        }
+        // a host type names the services a hosted instance runs
+        const hostType = run({ serviceName: "create#moqui.server.instance.InstanceHostType", hostTypeId: "SPEC_HI_HOST",
+            startService: "org.moqui.impl.SystemMessageServices.send#AllProducedSystemMessages" })
+        const ingest = run({ serviceName: "create#moqui.monitor.IngestKey", keyId: "SPEC_HI_KEY", source: "spec" })
+        const allowed = run({ serviceName: "create#moqui.basic.EnumerationType", enumTypeId: "SPEC_HI_RUN", description: "Spec Service Run" })
+        ec.artifactExecution.disableAuthz()
+        const count = (entityName, field, value) => ec.entity.find(entityName).condition(field, value).count()
+        const written = { hostType: count("moqui.server.instance.InstanceHostType", "hostTypeId", "SPEC_HI_HOST"),
+            ingest: count("moqui.monitor.IngestKey", "keyId", "SPEC_HI_KEY"),
+            type: count("moqui.basic.EnumerationType", "enumTypeId", "SPEC_HI_RUN") }
+        ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "SPEC_HI_RUN").deleteAll()
+        ec.entity.find("moqui.server.instance.InstanceHostType").condition("hostTypeId", "SPEC_HI_HOST").deleteAll()
+        ec.entity.find("moqui.monitor.IngestKey").condition("keyId", "SPEC_HI_KEY").deleteAll()
+        ec.artifactExecution.enableAuthz()
+        return { hostType, ingest, allowed, written }
+    },
+    then({ hostType, ingest, allowed, written }) {
+        written.hostType == 0
+        written.ingest == 0
+        hostType.errors.includes("written only by its own services")
+        ingest.errors.includes("written only by its own services")
+        allowed.errors.trim() == ""
+        written.type == 1
+    },
+})

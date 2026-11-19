@@ -52,6 +52,10 @@ pub struct CallOptions {
     /// A rollback of this call will be retried (a scheduled job's run): its operation's outcome is `retry`, not
     /// `rollback` (plans/archive/Monitoring.md, Later: Business operations).
     pub operation_retry: bool,
+    /// `generic()`: a generic tool's call of a service a request names (Tools › Service Run). An entity-auto service of
+    /// an entity no generic write takes is refused, as Service REST and the other generic tools refuse its write
+    /// ([`generic_entity_refusal`]); a defined service, which checks its own permissions, runs as any call does.
+    pub generic: bool,
 }
 
 impl CallOptions {
@@ -547,6 +551,15 @@ fn sync_input(
     let Some(def) = def else {
         return Err(Error::new(format!("Service {name} not found")));
     };
+    if options.generic && def.kind == ServiceKind::EntityAuto {
+        if let Some(facade) = facade.as_ref() {
+            if let Some(refusal) = generic_entity_refusal(facade, &def.noun, &parameters)? {
+                tracing::warn!(service = %def.name, "{refusal}");
+                add_error(&refusal);
+                return Ok(BTreeMap::new());
+            }
+        }
+    }
     let _profile = crate::telemetry::profile::operation(&def.name);
     super::coverage::record(&def.name);
     // Java's `currentParameters`: what a pre-validate rule sets is what is validated.
@@ -1578,6 +1591,33 @@ fn project(def: &ServiceDef, values: BTreeMap<String, Value>) -> BTreeMap<String
         .into_iter()
         .filter(|(name, _)| names.contains(&name.as_str()))
         .collect()
+}
+
+/// Why a generic tool may not call the entity-auto service of `entity_name` with `parameters`, or None: the entities a
+/// generic write refuses (identity, audit, hosted-instance and service-written; a secret-config one but to a member of
+/// `ADMIN`), and a mail account's own server, as Service REST refuses them (plans/Security-Review-Medium.md
+/// SEC-TLS-85). Its own services, and the framework's calls, still write them.
+///
+/// # Errors
+///
+/// Returns an error when the entity or the account's server cannot be read.
+pub fn generic_entity_refusal(
+    facade: &EntityFacade,
+    entity_name: &str,
+    parameters: &BTreeMap<String, Value>,
+) -> Result<Option<String>, Error> {
+    use crate::entity::sensitive;
+    let full_name = facade
+        .with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone()))
+        .unwrap_or_else(|_| entity_name.to_string());
+    let refused = (sensitive::is_generic_write_refused(&full_name) || sensitive::is_generic_write_refused(entity_name))
+        && !(sensitive::is_secret_config_entity(&full_name) && crate::user::is_in_group("ADMIN")?);
+    if refused || sensitive::account_owned_email_server(facade, &full_name, parameters)? {
+        return Ok(Some(format!(
+            "Entity {full_name} is written only by its own services, not by a generic call of its entity-auto services"
+        )));
+    }
+    Ok(None)
 }
 
 fn run_entity(

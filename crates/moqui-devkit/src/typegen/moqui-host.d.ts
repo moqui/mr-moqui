@@ -517,6 +517,8 @@ interface ServiceCallOptions<Self> {
     /** The call runs though the caller has error messages. */
     ignorePreviousError(flag?: boolean): Self;
     noRememberParameters(): Self;
+    /** A generic tool's call of a service a request names: an entity-auto service of an entity no generic write takes is refused. */
+    generic(flag?: boolean): Self;
     getServiceName(): string;
     /** The parameters set so far. */
     getCurrentParameters(): MoquiMap;
