@@ -95,9 +95,10 @@ address as `--param httpUrl=http://<host>[:port]` when it is not port 80, and 12
 sign-in limit (6.3.1) is opt-in, since it gets the client's sign-ins limited for a minute: run it alone, once, with
 `--spec V6Authentication --feature v5.0.0-6.3.1 --param bruteForce=yes`.
 
-PASS, the public application, has its own matrix in its repository:
-[mr-pass ASVS matrix](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md). A PASS requirement the
-framework meets is marked inherited there and links here.
+PASS, the public application, and BOSS, the business applications, have their own matrices in their repositories:
+[mr-pass ASVS matrix](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md) and
+[mr-boss ASVS matrix](https://github.com/moqui/mr-boss/blob/master/docs/ASVS-Matrix.md). A requirement the framework
+meets is marked inherited there and links here.
 
 ## The standard and its license
 

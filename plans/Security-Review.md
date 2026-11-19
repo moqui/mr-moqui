@@ -9,7 +9,7 @@ and SEC-OUT-08 finished later the same day), each entry's **Fix** in [Security-R
 saying how. The Low findings that were confirmed in code were then fixed in batches the same day, each entry's **Fix**
 in [Security-Review-Low](Security-Review-Low.md) saying how, and two batches of the owner's decisions on the ones they
 left were carried out after them, and on 2026-11-17 the ones fixed in part were finished: of the 215 Low and Info
-findings 158 are fixed and 5 deferred, none refuted, and 52 (12 Low, 40 Info) are as reported. What is left is under
+findings 159 are fixed and 5 deferred, none refuted, and 51 (12 Low, 39 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
 A third round, 2026-11-17 and 18, read the code the first two did not reach (the "not reached" of the [coverage](#coverage) table and the map files' open questions) in 60 units, and recorded what it found without fixing it: 406 findings with ids from 81 up in each area, 12 High, 89 Medium, 224 Low and 81 Info, none Critical. The lead read the cited lines of every High (8 confirmed, 4 likely) and of 54 of the Medium (23 confirmed, 31 likely); the other 35 Medium, and every Low and Info, are as their reviewer reported them. Round 3's High findings are listed under [the findings that matter most](#round-3); all twelve were fixed on 2026-11-18, each with its regression tests and a reviewer's reading of the fix, and its **Fix** says how; the [counts](#counts) are of all three rounds. [Method](#method) step 7 says how the round was run.
@@ -19,7 +19,9 @@ read in code by a second reader and recorded with the round-3 numbering (SEC-WEB
 SEC-MAIL-98, SEC-OUT-92 and 93, SEC-PSF-90, SEC-PFS-112, SEC-PSA-81): one Medium (SEC-WEB-87, second-factor codes sent
 at once are not bounded by the lockout), five Low and nine Info. Each entry says "Report: the security proofs". A
 sixteenth, a reset password that could become the new password, was fixed the day it was found and is not listed.
-The counts include them.
+Reading BOSS against the standard (phase P7, 2026-11-19) found 11 more (SEC-BAP-136 to 139, SEC-BOS-141 to 146,
+SEC-FIL-101): one Medium (SEC-BAP-138, a catalog user's content location read by mr-marble's catalog download), four
+Low and six Info; SEC-BOS-146 is the part of SEC-BOS-03 its fix left. The counts include them.
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
@@ -303,8 +305,8 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 2. **What each slice did not reach.** Round 3 read it (2026-11-17 and 18); its coverage, under [Round 3](#round-3-1) in the coverage section, says for each area what is still not reached, and each map file's open questions what is not settled. Its twelve High findings are fixed (2026-11-18); the Medium ones are the next batch of fixes, and its 35 Medium entries with no Re-check, with every Low and Info one, have had no second reading.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones (2026-11-16).
    Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the 169 Low and 46
-   Info findings, 158 are fixed (152 Low, 6 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
-   are in part); 12 Low and 40 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
+   Info findings, 159 are fixed (152 Low, 7 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
+   are in part); 12 Low and 39 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
    of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10, SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11,
    SEC-PSS-26, SEC-PSS-27, SEC-PSS-28, SEC-PSS-44 and SEC-OUT-13. The second (2026-11-17) finished 7: SEC-MAIL-06,
    SEC-MAIL-07, SEC-CLU-02, SEC-CLU-04, SEC-PSF-04, SEC-PSS-05 and SEC-PSS-23. A third (2026-11-17) finished the five
@@ -355,7 +357,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | LLM, A2A, MCP and Assist (`AI`) | 0 | 0 | 5 | 25 | 4 | 0 | 34 |
 | Git hosting and pipelines (`GIT`) | 0 | 3 | 8 | 24 | 4 | 0 | 39 |
 | Mail (`MAIL`) | 0 | 3 | 10 | 17 | 6 | 0 | 36 |
-| Files, DAV, SSH and the terminal (`FIL`) | 0 | 0 | 14 | 16 | 8 | 0 | 38 |
+| Files, DAV, SSH and the terminal (`FIL`) | 0 | 0 | 14 | 17 | 8 | 0 | 39 |
 | Calls, chat and messaging (`COM`) | 0 | 0 | 9 | 28 | 14 | 0 | 51 |
 | Cluster and edge node (`CLU`) | 0 | 0 | 0 | 18 | 4 | 0 | 22 |
 | Data layer and stored secrets (`DAT`) | 0 | 0 | 7 | 19 | 4 | 0 | 30 |
@@ -363,13 +365,13 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 3 | 0 | 14 |
 | PASS application services (Mantle) (`PSS`) | 0 | 0 | 8 | 26 | 9 | 0 | 43 |
 | Forum and Smithy (`PFS`) | 0 | 2 | 4 | 22 | 12 | 0 | 40 |
-| BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 36 | 9 | 0 | 69 |
-| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 15 | 27 | 19 | 0 | 64 |
+| BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 37 | 14 | 0 | 75 |
+| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 16 | 29 | 20 | 0 | 68 |
 | Clients (`CLI`) | 0 | 0 | 5 | 14 | 10 | 0 | 29 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 167 | 397 | 137 | 0 | 725 |
+| **All** | 0 | 24 | 168 | 401 | 143 | 0 | 736 |
 
 ## Findings by area
 
@@ -679,7 +681,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-62 | crates/moqui-host/src/command/shell.rs:87 | The admin shell's `service`, `entity`, `cache` and `js` commands leave no audit record | Low | fixed |
 | SEC-FIL-63 | crates/moqui-host/src/command/shell.rs:185 | Admin shell error text and C1 controls reach the administrator's terminal unescaped | Low | fixed |
 | SEC-FIL-67 | crates/moqui-dav/src/pim/rrule.rs:35 | Calendar and contact objects have no parser limit of their own; the bound is the 256 MiB DAV body | Low | fixed |
-| SEC-FIL-09 | `runtime/components/addon/mr-boss/screen/PublicShare.xml:28,56` | `PublicShare.xml` `open` and `upload` name no method | Info | reported (confirmed in code) |
+| SEC-FIL-09 | `runtime/components/addon/mr-boss/screen/PublicShare.xml:28,56` | `PublicShare.xml` `open` and `upload` name no method | Info | fixed |
 | SEC-FIL-10 | `FileServices.xml:2649-2655` | A link or share stays valid after its maker loses access | Info | reported (confirmed in code) |
 | SEC-FIL-11 | `crates/moqui-host/src/ssh/server.rs:746-763`, `:1073`, `:1196` | SSH permissions are fixed for the life of a connection | Info | reported (confirmed in code) |
 | SEC-FIL-64 | crates/moqui-host/src/term/registry.rs:96 | A terminal ticket is reusable for 300 seconds and travels in the `/termws` query string | Info | reported (confirmed in code) |
@@ -705,6 +707,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 | SEC-FIL-98 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:1545-1551`, `:1476-1481` | A drive's `.trash` is guarded in four services only | Info | reported (confirmed in code) |
 | SEC-FIL-99 | `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`; `crates/moqui-host/src/term/apps.rs:304`, `:389-393` | A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login | Medium | confirmed (lead) |
 | SEC-FIL-100 | `crates/moqui-tui/src/decode.rs:300-305`; `crates/moqui-tui/src/ui/session_loop.rs:240-241`, `:251-257`; `crates/moqui-host/src/termws.rs:274-284` | The browser terminal's 500 by 500 limit does not hold: the session takes a window size from its input bytes, which brings SEC-FIL-81 to every signed-in user | Medium | confirmed (lead) |
+| SEC-FIL-101 | `runtime/components/base/framework/service/org/moqui/resource/FileServices.xml:328-333`, `:417-419`; `crates/moqui-git/src/fs.rs:440-454` | A drive mirror's URL may be plain `http://`, and the mirror's stored token is offered to it | Low | likely (second check) |
 
 ### Calls, chat and messaging
 
@@ -1049,6 +1052,12 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 | SEC-BOS-138 | `runtime/components/addon/mr-boss/service/ironstone/accounting/Accounting.js:278-283`, `:406-417` | An Accounting administrator lists every user account and user group of the instance | Info | reported (confirmed in code) |
 | SEC-BOS-139 | `runtime/components/addon/mr-boss/service/ironstone/accounting/Demo.js:1625-1628`, `:1746-1800` | The portal demo issues fixed pay-link and bill-link tokens and PASS accounts with the demo password (SEC-BOS-09 covers the data files' accounts only) | Info | reported (confirmed in code) |
 | SEC-BOS-140 | `runtime/components/addon/mr-mantle/service/mantle/ledger/PostingGuard.js:292-297` | The posting guard lets any `ACCOUNTING_ADMIN` holder post to another organization (SEC-BOS-02's fix does not reach it) | Info | reported (confirmed in code) |
+| SEC-BOS-141 | `runtime/components/addon/mr-boss/screen/Commons/Settings/Account.xml:47-53`, `:195` | Commons Account signs out one of the user's sessions with no fresh sign-in, and lists at most 10 sessions of the last 30 days | Info | confirmed (second check) |
+| SEC-BOS-142 | `runtime/components/addon/mr-boss/screen/Accounting/Payments/GatewayTransactions.xml:170`; `runtime/components/addon/mr-boss/screen/Accounting/Payments/PaymentDetail/Gateway.xml:106`; `runtime/components/addon/mr-boss/screen/Manufacturing/WorkCenters/Centers.xml:242` | An html-mode `<text>` prints a value as it is where the qvt branch beside it encodes the same value | Info | confirmed (second check) |
+| SEC-BOS-143 | `runtime/components/addon/mr-boss/screen/PublicShare.qvue:204`, `:240` | A public share's grant travels in the query string of every file URL, and the request log keeps it | Info | confirmed (second check) |
+| SEC-BOS-144 | `runtime/components/addon/mr-mantle/service/mantle/request/RequestServices.xml:879`; `runtime/components/addon/mr-mantle/service/mantle/product/Content.js:232-234` | BOSS's staff and visitor uploads are typed by their file name and never scanned | Info | confirmed (second check) |
+| SEC-BOS-145 | `runtime/components/addon/mr-mantle/service/mantle/party/Identity.js:724-744`; `runtime/components/addon/mr-boss/screen/Commons/Settings/Account.xml:338-343` | An administrator's reset of a lost factor lets the password alone enrol a new one, and the text-message factor is offered with no word of its risk | Info | confirmed (second check) |
+| SEC-BOS-146 | `runtime/components/addon/mr-boss/screen/AcceptInvitation.xml:35`; `crates/moqui-core/src/web/mod.rs:663-675` | An invitation is still accepted by a GET a mail client or a page of the same origin starts (SEC-BOS-03's fix stops only a GET another site starts) | Low | likely (second check) |
 
 ### BOSS business apps and the Mantle REST root
 
@@ -1120,6 +1129,10 @@ Map file: [Attack-Surface-Apps-BOSS.md](../docs/security/Attack-Surface-Apps-BOS
 | SEC-BAP-133 | `runtime/components/addon/mr-mantle/service/mantle/order/OrderChanges.js:663-664`; `runtime/components/addon/mr-boss/screen/Shared/OrderChangeDetail.xml:47-50` | Sales' change filing keeps any request id as the change's case | Info | reported (likely) |
 | SEC-BAP-134 | `runtime/components/addon/mr-mantle/service/mantle/ext/party/GooglePartyServices.xml:94`, `:117-127` | The Google place search writes the API key to the log | Info | reported (confirmed in code) |
 | SEC-BAP-135 | `runtime/components/addon/mr-mantle/entity/EdiEntities.xml:85-86`; `runtime/components/addon/mr-mantle/service/mantle/edi/X12Lib.js:118-122`; `crates/moqui-core/src/script/host/edi.rs:105-110` | EDI profile rows name a script file and a service, and the generic entity tools write them | Info | reported (to check) |
+| SEC-BAP-136 | `runtime/components/addon/mr-mantle/service/mantle/ext/account/gateway/PayTrace.js:181-208` | PayTrace's cached token is sealed with a home-made keystream of one fast hash of the API password, so whoever reads the cache tests password guesses offline | Low | confirmed (second check) |
+| SEC-BAP-137 | `runtime/components/addon/mr-boss/screen/Sales/Reports/SalesSummaryStats.fancy:16-18`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Accounting/Reports/SalesSummaryStats.html.fancy:2-4` | Sales Summary loads Chart.js 2.9.3 from cdnjs with no `integrity` in its html and vuet modes | Low | confirmed (second check) |
+| SEC-BAP-138 | `runtime/components/addon/mr-mantle/service/mantle/product/Content.js:175`, `:203-208`; `runtime/components/addon/mr-mantle/service/mantle/product/ProductServices.xml:947`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Catalog/Product/Content/ContentList.xml:27-33`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Catalog/Category/Content/ContentList.xml:22-28` | A catalog content row of any type but a download or the Shop's texts takes any location, and mr-marble's Catalog screens stream it with no location rule (SEC-PSS-82's fix covers the Shop's types only) | Medium | confirmed (second check) |
+| SEC-BAP-139 | `runtime/components/addon/mr-mantle/service/mantle/work/ShipmentWorkServices.xml:176-210` | The shipment load filter quotes category ids into SQL after refusing only `'`, so on MySQL a category id ending in a backslash breaks out of its quote | Info | likely (second check) |
 
 ### Clients
 
