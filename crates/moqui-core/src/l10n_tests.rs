@@ -678,3 +678,67 @@ fn a_set_value_is_not_localized_and_a_message_is() {
     assert!(messages.iter().any(|text| text == "Opened (localized)"), "{messages:?}");
     crate::script::clear_context_stack();
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-1.3.10 (docs/security/proofs/V1-Encoding-and-Sanitization.md),
+/// in-process: a format string from untrusted text resolves to nothing but its own text. `ec.l10n.format`
+/// ([`format_value`], and the script call over it) gives a string value back as it is, whatever printf, ICU,
+/// MessageFormat or expression directives it holds and whatever pattern comes with it. A number or date pattern is only
+/// that: the directives in a number pattern are literal text around the one number given (a `%` scales it by 100 and a
+/// `.` is the decimal point, as in Java's DecimalFormat), never another argument or an expanded expression, so the
+/// signed-in user's name in the context never shows; and a letter a date pattern does not have is refused. Rust format strings are literals checked
+/// at compile time and the script engine has no printf, so this covers the formatting the framework does with a
+/// pattern from data. Localized message templates are `a_translation_that_adds_an_expression_is_not_used`.
+#[test]
+fn a_format_string_from_untrusted_text_resolves_to_nothing_but_its_text() {
+    let context = entity_context();
+    let _entered = context.enter();
+    crate::user::session::set_time_zone(Some("UTC"));
+    crate::user::session::set_user("FMT_PROOF", "format.proof.user");
+    let hostile = "%s %n %x %08d %1$s %p {0} {0,number} ${ec.user.username} ${1+1} #{x}";
+    for pattern in [None, Some(""), Some("#,##0.00"), Some("yyyy-MM-dd"), Some(hostile)] {
+        assert_eq!(
+            format_value(&Value::string(hostile), pattern).unwrap(),
+            hostile,
+            "{pattern:?}"
+        );
+    }
+    let amount = Value::Decimal("1234.5".parse().unwrap());
+    assert_eq!(
+        format_value(&amount, Some("%s %n {x} ${username} #,##0.00")).unwrap(),
+        "%s %n {x} ${username} 123,450.00"
+    );
+    assert_eq!(format_value(&amount, Some("#,##0.00")).unwrap(), "1,234.50");
+    // an expression's dots are a number pattern's decimal points: still only the pattern's characters and the digits
+    let pattern = "${ec.user.username} %s #,##0.00";
+    let formatted = format_value(&amount, Some(pattern)).unwrap();
+    assert!(
+        formatted.chars().all(|ch| pattern.contains(ch) || ch.is_ascii_digit()),
+        "{formatted}"
+    );
+    assert!(!formatted.contains("format.proof.user"), "{formatted}");
+    let stamp = Value::Timestamp("2024-03-05T14:07:09Z".parse().unwrap());
+    assert_eq!(
+        format_value(&stamp, Some("yyyy-MM-dd '%s ${ec.user.username}'")).unwrap(),
+        "2024-03-05 %s ${ec.user.username}"
+    );
+    for pattern in ["%n", "{0,number}", "yyyy ${ec.user.username}"] {
+        let err = format_value(&stamp, Some(pattern)).unwrap_err();
+        assert!(err.message().contains("is not supported"), "{pattern}: {err}");
+    }
+    // the same through the call a script makes
+    let script = |expression: &str| moqui_lib::object::to_plain_string(&crate::script::eval_value(expression).unwrap());
+    assert_eq!(
+        script("ec.l10n.format('%s %n ${ec.user.username} {0}', '#,##0')"),
+        "%s %n ${ec.user.username} {0}"
+    );
+    assert_eq!(
+        script("ec.l10n.format(1234.5, '%n {x} ${username} #,##0.00')"),
+        "%n {x} ${username} 123,450.00"
+    );
+    assert_eq!(
+        script("ec.user.username"),
+        "format.proof.user",
+        "the user the checks above never show"
+    );
+    crate::script::clear_context_stack();
+}

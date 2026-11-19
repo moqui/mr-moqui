@@ -17,7 +17,7 @@ table, and what a status claims, is in the [index](README.md).
 | --- | --- | --- | --- | --- | --- |
 | v5.0.0-14.2.1 | 1 | Secrets never in URLs or query strings | Gap | seen: `screen/mod.rs:1164-1165` signs in from `authUsername`/`authPassword` in the query; SEC-FIL-64; `api_key` in the query is refused | - |
 | v5.0.0-14.2.2 | 2 | Server-side caches keep no sensitive data | Gap | likely: the entity cache keeps decrypted encrypted fields with no expiry (Attack-Surface-Data "Where a decrypted value goes" (map); `entity/cache.rs` excludes none); proxies held off by `screen-render` `Cache-Control` | - |
-| v5.0.0-14.2.3 | 2 | No sensitive data to third-party trackers | Framework | no third-party script in the shell; RUM posts to the server's own `/rum/*` with inputs and text masked (`WebrootRum.js`); mail remote images hidden, `no-referrer` (map) | to write: black-box |
+| v5.0.0-14.2.3 | 2 | No sensitive data to third-party trackers | Framework | no third-party script in the shell; RUM posts to the server's own `/rum/*` with inputs and text masked (`WebrootRum.js`); mail remote images hidden, `no-referrer` (map) | V14DataProtection "v5.0.0-14.2.3: the sign-in page loads nothing from another site"; V14DataProtection "v5.0.0-14.2.3: the signed-in shell and app pages load nothing from another site" |
 | v5.0.0-14.2.4 | 2 | Data protection controls implemented as documented | Gap | `known_gap_a_changed_ciphertext_is_not_detected`, `known_gap_the_key_is_aes_128_from_10_pbkdf2_iterations_and_a_fixed_salt` (`crypto_tests.rs`); `ServiceJobRun.parameters` kept unencrypted (map) | - |
 
 ## V14.3 Client-side Data Protection

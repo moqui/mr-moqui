@@ -101,3 +101,118 @@ feature("v5.0.0-4.4.4: a /notws upgrade without a signed-in session is refused",
         socket.status == 401
     },
 })
+
+const SESSION_COOKIE = server.secure ? "__Host-moqui.session" : "moqui.session"
+
+// Configuration in the matrix: webapp-list/webapp[webroot]@client-ip-header names the header a proxy in front sets, and
+// with @trusted-proxies the forwarding headers (the client address, X-Forwarded-Proto, -Host and -Port) are believed only
+// from those proxies; by default none is believed. So the forwarding headers a client sends itself must not change what the
+// server takes: a scheme it names changes neither the session cookie (__Host- and Secure over https, neither over http)
+// nor HSTS, and a host it names is not taken as the server's own origin. Against a deployment behind a proxy it fails
+// where the proxy passes a client's header on to a server that believes it.
+// Does not prove: the client's address (15.3.4's proofs), nor a header an application reads itself.
+feature("v5.0.0-4.1.3: a client's own forwarding headers change neither its scheme nor its host", {
+    when() {
+        const flipped = server.secure ? "http" : "https"
+        const evil = `${server.secure ? "https" : "http"}://evil.example`
+        return {
+            plain: session().get("/Login"),
+            scheme: session().get("/Login", {
+                headers: { "X-Forwarded-Proto": flipped, "X-Forwarded-Ssl": server.secure ? "off" : "on", Forwarded: `proto=${flipped}` },
+            }),
+            host: session().get("/Login", {
+                headers: {
+                    Origin: evil, "X-Forwarded-Host": "evil.example", "X-Forwarded-Port": server.secure ? "443" : "80",
+                    "X-Forwarded-Server": "evil.example", Forwarded: "host=evil.example",
+                },
+            }),
+            own: session().get("/Login", { headers: { Origin: OWN_ORIGIN } }),
+        }
+    },
+    then({ plain, scheme, host, own }) {
+        plain.status == 200
+        scheme.status == 200
+        // the session cookie keeps the name and flags of the request's own scheme, and HSTS comes only over https
+        plain.cookie(SESSION_COOKIE) != null
+        scheme.cookie(SESSION_COOKIE) != null
+        scheme.cookie(SESSION_COOKIE).secure == plain.cookie(SESSION_COOKIE).secure
+        (scheme.header("Strict-Transport-Security") == null) == (plain.header("Strict-Transport-Security") == null)
+        host.status == 401
+        host.header("Access-Control-Allow-Origin") == null
+        // the control: the server's own origin is taken
+        own.status == 200
+    },
+})
+
+// A header naming a user, as a proxy that signs people in sets (X-Remote-User, X-User-ID), signs nobody in: the framework
+// takes a user only from its own session, a key or Basic credentials.
+// Does not prove: a proxy sign-in an application adds itself.
+feature("v5.0.0-4.1.3: a header naming a user signs nobody in; the user's own session does", {
+    when() {
+        const { username, password } = account()
+        const headers = {}
+        for (const name of ["X-Remote-User", "Remote-User", "X-Forwarded-User", "X-User-ID", "X-Auth-Request-User",
+            "X-Authenticated-User", "X-Forwarded-Preferred-Username"]) headers[name] = username
+        return { named: session().get("/qapps", { headers }), own: session({ user: username, password }).get("/qapps") }
+    },
+    then({ named, own }) {
+        named.status == 302
+        (named.location ?? "").includes("/Login")
+        // the control: the user's own session opens the shell
+        own.status == 200
+    },
+})
+
+// Each request is sent raw on a connection of its own to the internal error page, which shows the errorMessage of the body
+// it read, so its answer says how the server framed the body. Content-Length alone and chunked coding alone are read
+// (and a short Content-Length is taken as given, so the page shows less); given both, in either order, the chunks are read
+// and the Content-Length ignored, also one longer than the body, which a server reading it would wait on; two lengths
+// that differ, a coding that does not end in chunked and chunked coding in HTTP/1.0 are refused (or, through a proxy that
+// drops the header, never read as the body).
+// Does not prove: HTTP/2 framing (a Content-Length against the DATA frames), nor how a proxy in front frames what it
+// forwards, which is the deployment's; through one these answers are its own.
+feature("v5.0.0-4.2.1: a body is framed by its chunks when lengths disagree; malformed framing is refused", {
+    when() {
+        const s = session()
+        s.get("/Login")
+        const marker = `PROOF${Date.now()}`
+        const body = `errorMessage=${marker}`
+        const chunks = `${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`
+        const port = server.port == (server.secure ? 443 : 80) ? "" : `:${server.port}`
+        const host = (server.host.includes(":") ? `[${server.host}]` : server.host) + port
+        const send = (framing, payload, version) => {
+            try {
+                const res = s.raw(`POST /error/InternalError HTTP/${version ?? "1.1"}\r\nHost: ${host}\r\nX-CSRF-Token: ${s.token()}\r\n` +
+                    `Content-Type: application/x-www-form-urlencoded\r\n${framing}Connection: close\r\n\r\n${payload}`, { timeout: 5 })
+                return { status: res.status, echo: res.text.includes(marker) }
+            } catch (err) {
+                return { status: 0, echo: false, error: String(err.message ?? err) }
+            }
+        }
+        return {
+            length: send(`Content-Length: ${body.length}\r\n`, body),
+            short: send("Content-Length: 5\r\n", body),
+            chunked: send("Transfer-Encoding: chunked\r\n", chunks),
+            both: [
+                send("Content-Length: 5\r\nTransfer-Encoding: chunked\r\n", chunks),
+                send("Transfer-Encoding: chunked\r\nContent-Length: 5\r\n", chunks),
+                send("Content-Length: 200\r\nTransfer-Encoding: chunked\r\n", chunks),
+            ],
+            malformed: [
+                send(`Content-Length: ${body.length}\r\nContent-Length: 5\r\n`, body),
+                send("Transfer-Encoding: chunked, identity\r\n", chunks),
+                send("Transfer-Encoding: xchunked\r\n", chunks),
+                send("Transfer-Encoding : chunked\r\n", chunks),
+                send("Transfer-Encoding: chunked\r\n", chunks, "1.0"),
+            ],
+        }
+    },
+    then({ length, short, chunked, both, malformed }) {
+        // the controls: each framing alone is read as it says
+        length.status == 200 && length.echo
+        chunked.status == 200 && chunked.echo
+        short.status == 200 && !short.echo
+        both.every((res) => res.status == 400 || (res.status == 200 && res.echo))
+        malformed.every((res) => res.status == 400 || (res.status > 0 && !res.echo))
+    },
+})

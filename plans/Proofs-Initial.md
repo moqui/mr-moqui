@@ -199,7 +199,15 @@ Those that check an internal rule with no standard behind it stay in `test/clien
     `discoveryUri` over plain http to another host is not refused.
   - PASS (mr-pass `test/proofs`): 3.2.2, 3.5.1 (twice), 6.2.2, 6.4.1 (a registration code), 7.4.1, 6.3.1 (PASS's own
     limit by account name, and the opt-in per-client limit at its route) and 1.3.2 (`Forum/TextNotCode`, in-process).
-- **P5.** The same for level 2.
+- **P5.** The same for level 2. Framework part done (2026-11-18): every level 2 row of the framework that is
+  Framework or Configuration has a proof, 19 black-box features (13.4.3, 14.2.3, 3.5.5, 3.7.1, 4.2.1, 6.2.9, and the
+  Configuration rows 13.4.4, 3.4.5, 3.5.4, 4.1.3, 15.3.4, 2.4.1, 6.3.3, 15.2.3, against a deployment) and 23 Rust tests
+  (encoding, unsafe sites, cryptography, TLS suites and clients, the cluster port, egress, logging, the SFU's DTLS and
+  SRTP, OIDC signatures and audiences). 15.3.3 is Framework since SEC-RTE-81 was fixed (`MultiPin`). The proofs found
+  four rows not met, now Gap: 6.6.3 (wrong codes sent at once are not all counted), 12.1.2 (the listener does not
+  prefer its own suite order), 6.8.2 (the mail client's OAuth sign-in does not check the ID token's signature), and,
+  noted with their rows, a TLS failure logged without its reason (16.3.4), TRACE rendering screens (13.4.4), an
+  IP-allowed refusal that confirms the password, and forwarded headers read from their first value behind a proxy.
 - **P6.** Cross-references (the API Top 10 for `/rest`, the LLM Top 10 for the agents, NIST 800-63B for
   authentication, the CWE Top 25), the certifier's guide; then BOSS and the clients (MASVS).
 

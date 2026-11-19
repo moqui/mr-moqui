@@ -201,6 +201,56 @@ feature("v5.0.0-6.4.2: no form of the sign-in page asks for a password hint or a
     },
 })
 
+// sec.pw.long's password, which the 6.2.9 proof changes and ClientFixtures sets again on every run.
+const LONG_USER = "sec.pw.long"
+const LONG_PW = "SecPwLong1!!"
+
+// A long password is set through the sign-in page's change form and signs in whole; the first 64 or 72 of its
+// characters (where a hash that cuts long passwords would stop) do not.
+// Does not prove: the longest password taken (none is set), nor the admin and REST paths, which call the same service.
+feature("v5.0.0-6.2.9: a 128-character password is set and signs in whole, never cut short", {
+    given() { needsFixtures(`the user ${LONG_USER}`) },
+    when() {
+        const long = `SecPwLong${Date.now()}!`.padEnd(128, "-abcdefghijklmnopqrstuvwxyz")
+        const inputs = loginInputs(["password", "oldPassword", "newPassword", "newPasswordVerify"])
+        const res = changePassword({ username: LONG_USER, oldPassword: LONG_PW, newPassword: long, newPasswordVerify: long })
+        // the cut ones first, each a failed sign-in; the whole one then clears the count
+        const first64 = restLogin(LONG_USER, long.slice(0, 64))
+        const first72 = restLogin(LONG_USER, long.slice(0, 72))
+        return { long, inputs, res, first64, first72, whole: restLogin(LONG_USER, long) }
+    },
+    then({ long, inputs, res, first64, first72, whole }) {
+        long.length == 128
+        // the form's fields set no shorter limit
+        inputs.length == 4
+        inputs.every((tag) => attribute(tag, "maxlength") == null || Number(attribute(tag, "maxlength")) >= 128)
+        res.text.toLowerCase().includes("password updated")
+        loggedIn(whole)
+        first64.status == 401
+        first72.status == 401
+    },
+})
+
+// Configuration in the matrix: moqui.security.UserGroup.requireAuthcFactor Y on ALL_USERS (a data step) asks every password
+// sign-in for a second factor; it is off by default. A deployment's proof with its account (--param user=NAME, the password
+// in MOQUI_TEST_PASSWORD): the password alone does not sign it in. The project's test server asks no factor of every
+// account, so in the fixtures profile it skips.
+// Does not prove: other accounts than the one given, nor sign-ins without a password (login keys, app passwords, SSO),
+// which ask no second factor. Where it holds, the proofs that sign in with --param user cannot: the harness sends no code.
+feature("v5.0.0-6.3.3: the deployment's account is not signed in by its password alone", {
+    given() {
+        if (profile == "fixtures") skip("the project's test server asks no second factor of every account: a deployment's proof")
+        if (!params.user) skip("needs the deployment's account: --param user=NAME, its password in MOQUI_TEST_PASSWORD")
+    },
+    when() { return { res: restLogin(params.user, params.password ?? "") } },
+    then({ res }) {
+        // the password was right (a wrong one is 401), and the answer asks for a factor instead of signing in
+        res.status == 200
+        res.json().secondFactorRequired == true
+        res.json().loggedIn != true
+    },
+})
+
 // Last in the file: it changes sec.pw.proof's password, which ClientFixtures sets again on the next run.
 // Does not prove: the change in an application's own account screens, which call the same service.
 feature("v5.0.0-6.2.2: a user changes their password, and only the new one signs in after", {

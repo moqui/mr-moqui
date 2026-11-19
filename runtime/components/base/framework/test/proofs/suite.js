@@ -4,7 +4,8 @@
 // against any other server in the deployment profile. matrix is the responsibility matrix the run's summary
 // (proofs.json, proofs.md) joins its results to, relative to this component's directory.
 suite(["V1Encoding", "V2Validation", "V3WebFrontend", "V4ApiWebService", "V5FileHandling", "V6Authentication", "V7SessionManagement",
-    "V8Authorization", "V9SelfContainedTokens", "V12SecureCommunication", "V13Configuration", "V14DataProtection", "V16Logging"], {
+    "V8Authorization", "V9SelfContainedTokens", "V12SecureCommunication", "V13Configuration", "V14DataProtection", "V15SecureCoding",
+    "V16Logging"], {
     server: { components: ["framework"], specs: ["ClientFixtures"], conf: "conf/MoquiLoadTestConf.xml" },
     matrix: "../../../../docs/security/proofs",
 })

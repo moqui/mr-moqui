@@ -6,8 +6,9 @@
 // sec.ent.all (narrow and catch-all AT_ENTITY), sec.api.view and sec.api.all (MOQUI_API), sec.ip.v4 and sec.ip.loop
 // (ipAllowed only; login is not tried here), sec.key.http (a known login key), sec.mfa.totp (a single-use factor;
 // password login is not tried here) and sec.tap.user (a service tarpit and the setPreference transition), plus the
-// SEC_SMT_TEST system-message remotes. The security proofs (test/proofs) also get sec.pw.proof, whose password they
-// change, so it is set again on every run. moqui test-client framework --serve runs this spec on
+// SEC_SMT_TEST system-message remotes. The security proofs (test/proofs) also get sec.pw.proof and sec.pw.long, whose
+// passwords they change, and sec.mfa.proof (two single-use codes), which they lock with wrong codes, so these are set
+// again on every run. moqui test-client framework --serve runs this spec on
 // its server's scratch database; for another server run it on that server's database:
 //     moqui test framework --spec ClientFixtures --db existing
 // Each row is made only when it is missing, so a database kept between runs takes it again. These users are not demo
@@ -26,8 +27,9 @@ const USERS = [
     { username: "sec.api.all", password: "SecApiAll1!!", group: "SEC_API_ALL_GROUP" },
     { username: "sec.key.http", password: "SecKeyHttp1!!", group: "SEC_ENT_VIEW_GROUP" },
     { username: "sec.tap.user", password: "SecTapUser1!!", group: "SEC_TAP_GROUP" },
-    // the security proofs' password user (test/proofs/V6Authentication), whose password they change: set again below
+    // the security proofs' password users (test/proofs/V6Authentication), whose passwords they change: set again below
     { username: "sec.pw.proof", password: "SecPwProof1!!", group: "SEC_NONE_GROUP" },
+    { username: "sec.pw.long", password: "SecPwLong1!!", group: "SEC_NONE_GROUP" },
 ]
 
 // hash_login_key("sec-test-login-key-fixed-40-chars-value"): SHA-256 hex, empty salt (login-key/@encrypt-hash-type,
@@ -35,6 +37,9 @@ const USERS = [
 // with SaltySalt, so neither is the hash login_user_key looks up. The api_key / login_key header sends the plaintext.
 const LOGIN_KEY_HASH = "27d4afeaef1da1588baac5f07ee8feaecf7e67e10947764177bd98c8e234357b"
 const MFA_CODE = "87654321"
+// sec.mfa.proof's two single-use codes (test/proofs/V6Authentication 6.6.3): one signs in, the other is refused once wrong
+// codes have locked the account
+const MFA_PROOF_CODES = { SEC_MFA_PROOF_A: "70316001", SEC_MFA_PROOF_B: "70316002" }
 // AT_SERVICE push name is the service's own name. The transition frame for POST /apps/setPreference is
 // "{screen.location}/{transition}" (screen/render.rs), this location, not the "location#name" artifact-hit name.
 const TAP_SVC = "org.moqui.impl.UserServices.set#Preference"
@@ -92,13 +97,13 @@ const ensureLoginKey = (userId) => {
     row.create()
 }
 // Consuming the code sets thruDate; a later run puts the same hash back and clears thruDate.
-const ensureMfa = (userId) => {
-    const hashed = ec.user.singleUseCodeHash(MFA_CODE)
-    const existing = one("moqui.security.UserAuthcFactor", { factorId: "SEC_MFA_TOTP_FACTOR" })
+const ensureMfa = (userId, factorId = "SEC_MFA_TOTP_FACTOR", code = MFA_CODE) => {
+    const hashed = ec.user.singleUseCodeHash(code)
+    const existing = one("moqui.security.UserAuthcFactor", { factorId })
     if (existing == null) {
         const row = ec.entity.makeValue("moqui.security.UserAuthcFactor")
         row.setFields({
-            factorId: "SEC_MFA_TOTP_FACTOR", userId, factorTypeEnumId: "UafSingleUse", factorOption: hashed,
+            factorId, userId, factorTypeEnumId: "UafSingleUse", factorOption: hashed,
             fromDate: ec.user.nowTimestamp, needsValidation: "N",
         }, true, null, null)
         row.create()
@@ -162,14 +167,16 @@ spec({
             ensureAuthz("TEST_LOAD_ENUM_AUTHZ", "TEST_LOAD_GROUP", "TEST_LOAD_ENUM", "AUTHZA_VIEW")
 
             for (const user of USERS) ensureUser(user)
-            // the proofs change sec.pw.proof's password and try wrong ones: its password and its count of failed
-            // logins are set again on every run, so a database kept between runs takes the proofs again
-            const pwId = one("moqui.security.UserAccount", { username: "sec.pw.proof" }).userId
-            updateAccount({
-                userId: pwId, currentPassword: ec.user.hashPassword("SecPwProof1!!"), passwordSalt: "",
-                passwordHashType: "argon2", passwordBase64: "N", requirePasswordChange: "N", disabled: "N",
-                successiveFailedLogins: 0, disabledDateTime: null,
-            })
+            // the proofs change sec.pw.proof's and sec.pw.long's passwords and try wrong ones: their passwords and their
+            // counts of failed logins are set again on every run, so a database kept between runs takes the proofs again
+            for (const [username, password] of [["sec.pw.proof", "SecPwProof1!!"], ["sec.pw.long", "SecPwLong1!!"]]) {
+                updateAccount({
+                    userId: one("moqui.security.UserAccount", { username }).userId,
+                    currentPassword: ec.user.hashPassword(password), passwordSalt: "", passwordHashType: "argon2",
+                    passwordBase64: "N", requirePasswordChange: "N", disabled: "N", successiveFailedLogins: 0,
+                    disabledDateTime: null,
+                })
+            }
             const ipV4 = ensureUser({ username: "sec.ip.v4", password: "SecIpV41!!", group: "SEC_NONE_GROUP" })
             const ipLoop = ensureUser({ username: "sec.ip.loop", password: "SecIpLoop1!!", group: "SEC_NONE_GROUP" })
             updateAccount({ userId: ipV4, ipAllowed: "10.99.99.99" })
@@ -177,6 +184,11 @@ spec({
             ensureLoginKey(one("moqui.security.UserAccount", { username: "sec.key.http" }).userId)
             const mfaId = ensureUser({ username: "sec.mfa.totp", password: "SecMfaTotp1!!", group: "SEC_NONE_GROUP" })
             ensureMfa(mfaId)
+            // the code proof (6.6.3) uses one code and locks the account with wrong ones: both codes come back and the
+            // account is unlocked on every run
+            const mfaProofId = ensureUser({ username: "sec.mfa.proof", password: "SecMfaProof1!!", group: "SEC_NONE_GROUP" })
+            for (const [factorId, code] of Object.entries(MFA_PROOF_CODES)) ensureMfa(mfaProofId, factorId, code)
+            updateAccount({ userId: mfaProofId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
 
             ensure("moqui.service.message.SystemMessageType", { systemMessageTypeId: "SEC_SMT_TEST" },
                 { description: "Security test message type" })
@@ -272,6 +284,27 @@ feature("the single-use factor is restored and a password alone is not logged in
         factor.factorOption == hashed
         factor.needsValidation == "N"
         factor.thruDate == null
+    },
+})
+
+feature("the code proof user is unlocked with both its single-use codes back", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        try {
+            const account = one("moqui.security.UserAccount", { username: "sec.mfa.proof" })
+            const factors = Object.entries(MFA_PROOF_CODES).map(([factorId, code]) =>
+                ({ factor: one("moqui.security.UserAuthcFactor", { factorId }), hashed: ec.user.singleUseCodeHash(code) }))
+            return { account, factors }
+        } finally {
+            ec.artifactExecution.enableAuthz()
+        }
+    },
+    then({ account, factors }) {
+        account != null
+        account.disabled != "Y"
+        account.successiveFailedLogins == 0
+        factors.every(({ factor, hashed }) => factor != null && factor.userId == account.userId &&
+            factor.factorTypeEnumId == "UafSingleUse" && factor.factorOption == hashed && factor.thruDate == null)
     },
 })
 

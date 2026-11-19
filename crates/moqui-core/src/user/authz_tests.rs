@@ -1020,3 +1020,85 @@ fn temp_dir(label: &str) -> TempDir {
     std::fs::create_dir_all(&path).unwrap();
     TempDir(path)
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-16.3.4 (docs/security/proofs/V16-Security-Logging-and-Error-Handling.md),
+/// in-process, the part of a security control that fails: an authorization record that cannot be evaluated (a
+/// `filterMap` that is no expression, a name pattern that is no regular expression) is logged naming the record, by the
+/// error-level line `authz.rs` writes for it, beside failing closed (`a_deny_whose_filter_map_fails_denies_despite_an_allow`,
+/// `a_deny_whose_name_pattern_is_invalid_denies`); a record that evaluates logs nothing of the kind. The unexpected
+/// errors and a backend TLS failure are `an_unexpected_error_and_a_backend_tls_failure_are_logged_at_error`
+/// (web/tests.rs).
+#[test]
+fn an_authz_record_that_does_not_evaluate_is_logged_at_error_naming_it() {
+    use std::sync::{Arc, Mutex};
+
+    let world = world();
+    let _entered = world.context.enter();
+    session::set_user("nobody", "nobody");
+    let parameters = filter_parameters();
+    let check = |service: &str| {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let allowed = tracing::subscriber::with_default(crate::testing::LogSubscriber(lines.clone()), || {
+            let pushed = world.context.push_checked(
+                "AT_SERVICE",
+                service,
+                "all",
+                Authz::Required,
+                Tarpit::Skip,
+                Some(&parameters),
+            );
+            if pushed.is_ok() {
+                world.context.pop().unwrap();
+            }
+            pushed.is_ok()
+        });
+        let lines = lines.lock().unwrap().clone();
+        let failed: Vec<String> = lines
+            .into_iter()
+            .filter(|line| line.contains("authz record did not evaluate"))
+            .collect();
+        (allowed, failed)
+    };
+    grant_member(
+        &world,
+        "LOGGED_GOOD_ALLOW",
+        "AT_SERVICE",
+        "test.LoggedGood#Row",
+        "AUTHZT_ALLOW",
+        &[("filterMap", "{orderId: 'O1'}")],
+    );
+    session::set_user("nobody", "nobody");
+    assert_eq!(
+        check("test.LoggedGood#Row"),
+        (true, Vec::new()),
+        "a record that evaluates"
+    );
+
+    grant_member(
+        &world,
+        "LOGGED_BAD_ALLOW",
+        "AT_SERVICE",
+        "test.LoggedBad#Row",
+        "AUTHZT_ALLOW",
+        &[("filterMap", BAD_FILTER)],
+    );
+    grant_member(
+        &world,
+        "LOGGED_BAD_DENY",
+        "AT_SERVICE",
+        "test.Logged(",
+        "AUTHZT_DENY",
+        &[("nameIsPattern", "Y")],
+    );
+    session::set_user("nobody", "nobody");
+    let (allowed, failed) = check("test.LoggedBad#Row");
+    assert!(!allowed, "both fail closed");
+    for id in ["LOGGED_BAD_ALLOW", "LOGGED_BAD_DENY"] {
+        assert!(
+            failed
+                .iter()
+                .any(|line| line.contains(&format!("artifact_authz_id={id}"))),
+            "{id}: {failed:?}"
+        );
+    }
+}

@@ -260,3 +260,53 @@ fn a_write_at_a_location_with_a_hash_is_refused() {
     assert!(super::refuse_cut_write(&file).is_ok());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-13.2.5 (docs/security/proofs/V13-Configuration.md), in-process, of a
+/// Configuration row: the framework's part in keeping the server from loading what it should not. An `http(s)://`
+/// resource location (the content location a record holds, a screen's or a script's) is read on a production instance
+/// only from a public address: one at a loopback, private or link-local address (the metadata service's
+/// 169.254.169.254 among them) is refused before a request is sent, while off production the same location is read. The
+/// framework keeps no allowlist of the hosts a location may name, and the data loader takes any path: the deployer's
+/// allowlist is an egress firewall or proxy that lets the server reach only the systems it is meant to, with
+/// `instance@purpose` production.
+#[test]
+fn an_http_location_reaches_an_internal_address_only_off_production() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/inside.txt", listener.local_addr().unwrap());
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&asked);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            counted.fetch_add(1, Ordering::SeqCst);
+            let mut buffer = [0_u8; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut buffer);
+            let _ = std::io::Write::write_all(
+                &mut stream,
+                b"HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: close\r\n\r\ninside",
+            );
+        }
+    });
+    let read = |production: bool, url: &str| {
+        crate::web::TEST_PRODUCTION.with(|flag| flag.set(Some(production)));
+        let got = super::http_get(url, false);
+        crate::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+        got
+    };
+    let refused = read(true, &url).unwrap_err();
+    assert!(refused.contains("internal address"), "{refused}");
+    for inside in [
+        "http://169.254.169.254/latest/meta-data/",
+        "http://10.1.2.3/x",
+        "https://[::1]:9/x",
+        "http://0x7f.1:9/x",
+    ] {
+        let refused = read(true, inside).unwrap_err();
+        assert!(refused.contains("address"), "{inside}: {refused}");
+    }
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "nothing was sent");
+    assert_eq!(read(false, &url).as_deref(), Ok("inside"), "off production");
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+}

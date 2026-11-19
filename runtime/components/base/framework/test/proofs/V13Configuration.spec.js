@@ -53,3 +53,54 @@ feature("v5.0.0-13.4.5: the entity REST schema is served only with REST_SCHEMA: 
         status == 200 || !res.text.includes("\"enumId\"")
     },
 })
+
+// A static file is sent only when the path names a regular file (screen/static_files.rs file_under); a directory of
+// /js, /css, /libs or /images has no index page. WebDAV lists folders, but only to a signed-in user, by design.
+// Does not prove: the WebDAV and /resources listings for signed-in users (intended), nor what a proxy in front serves from
+// a document root of its own.
+feature("v5.0.0-13.4.3: a static directory's path lists nothing; its files are served", {
+    when() {
+        const s = session()
+        return {
+            files: ["/js/MoquiLib.js", "/favicon.ico"].map((path) => ({ path, res: s.get(path) })),
+            dirs: ["/js", "/js/", "/css/", "/libs/", "/libs/vue/", "/libs/quasar/lang/", "/libs/fontawesome/css/", "/images/"]
+                .map((path) => ({ path, res: s.get(path) })),
+            dav: s.request("PROPFIND", "/dav/", { headers: { Depth: "1" } }),
+        }
+    },
+    then({ files, dirs, dav }) {
+        // the control: the files in those directories are served
+        files.every(({ res }) => res.status == 200)
+        dirs.every(({ res }) => res.status >= 400)
+        dirs.every(({ res }) => !/MoquiLib\.js|vue\.global|Index of|<a href=/i.test(res.text))
+        dav.status >= 400
+        !dav.text.includes("multistatus")
+    },
+})
+
+// Configuration in the matrix: web protection's requests@methods list refuses any other method 405, on when
+// webapp-list/webapp[webroot]/web-protection@enabled is true or @trusted-proxies is set, and not for a client a client-rule
+// exempts (loopback, by default). Without it a TRACE to a screen is rendered as a GET would be (REST and static files
+// refuse it), so this is a deployment's proof, and in the fixtures profile it skips.
+// Does not prove: the other listeners (gRPC, the cluster's), nor a client the deployment exempts.
+feature("v5.0.0-13.4.4: a TRACE request is refused, not answered with the page or the request", {
+    given() {
+        if (profile == "fixtures") skip("the project's test server takes its clients as loopback and has web protection off, so a TRACE to a screen renders it there: a deployment's proof")
+    },
+    when() {
+        const marker = `proof-trace-${Date.now()}`
+        const s = session()
+        return {
+            page: s.get("/Login"),
+            traces: ["/Login", "/", "/rest/login", "/js/MoquiLib.js"].map((path) =>
+                ({ path, res: s.request("TRACE", path, { headers: { "X-Proof-Trace": marker } }) })),
+            marker,
+        }
+    },
+    then({ page, traces, marker }) {
+        // the control: the page is there for a GET
+        page.status == 200
+        traces.every(({ res }) => res.status >= 400)
+        traces.every(({ res }) => !res.text.includes(marker) && !res.text.includes("<title>"))
+    },
+})

@@ -476,3 +476,208 @@ fn the_keys_of_an_id_token_come_only_from_the_providers_jwks_never_its_header() 
     });
     assert_eq!(taken.id, "proof-user");
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-6.8.2 (docs/security/proofs/V6-Authentication.md), in-process: the
+/// OIDC sign-in takes an ID token only when its signature is there and verifies with the provider's key. Against a
+/// provider the test plays, through the real start and callback, a token signed with the provider's key is taken, and
+/// the same token is refused with its claims changed after signing (another `sub`), with a bit of its signature
+/// flipped, with its signature cut short, emptied or left off, and with the provider's own signature of other claims
+/// put on it; an unsigned token (`none`) is refused too
+/// (`an_id_token_is_taken_only_signed_with_an_algorithm_of_the_allowlist_never_none`). The OAuth 2 flows carry no
+/// assertion and there is no SAML. Not covered: the mail client's OAuth sign-in (moqui-mail `oauth.rs`), which reads
+/// its ID token's claims without checking the signature, the token coming straight from the provider's token endpoint
+/// over TLS (OpenID Connect Core 3.1.3.7).
+#[test]
+fn an_id_token_is_taken_only_when_its_signature_is_there_and_verifies() {
+    let keys = Keys::new();
+    let sso = HuskarlSso::default();
+    let idp = Idp::start(&["ES256"], &keys);
+    let flow = idp.flow("PROOF_SIGNATURE");
+    let header = json!({"alg": "ES256", "kid": "k1", "typ": "JWT"});
+    let signed = |claims: &Json| jws(&header, claims, |input| es256_sign(&keys.es256, input));
+    let parts = |token: &str| -> (String, String, String) {
+        let mut parts = token.split('.').map(str::to_string);
+        (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap())
+    };
+    let other_claims = |claims: &Json| {
+        let mut other = claims.clone();
+        other["sub"] = json!("someone-else");
+        other["preferred_username"] = json!("someone.else");
+        other
+    };
+
+    let taken = idp.sign_in(&sso, &flow, signed);
+    assert_eq!(taken.id, "proof-user");
+
+    /// An ID token the provider's callback answers, made from the claims a valid one carries.
+    type MakeToken<'a> = Box<dyn Fn(&Json) -> String + 'a>;
+    let mut reasons = Vec::new();
+    let cases: Vec<(&str, MakeToken<'_>)> = vec![
+        (
+            "claims changed after signing",
+            Box::new(|claims: &Json| {
+                let (head, _, signature) = parts(&signed(claims));
+                format!(
+                    "{head}.{}.{signature}",
+                    b64(other_claims(claims).to_string().as_bytes())
+                )
+            }),
+        ),
+        (
+            "a bit of the signature flipped",
+            Box::new(|claims: &Json| {
+                let (head, payload, signature) = parts(&signed(claims));
+                let mut bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(signature)
+                    .unwrap();
+                bytes[10] ^= 0x01;
+                format!("{head}.{payload}.{}", b64(&bytes))
+            }),
+        ),
+        (
+            "the signature cut short",
+            Box::new(|claims: &Json| {
+                let (head, payload, signature) = parts(&signed(claims));
+                let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(signature)
+                    .unwrap();
+                format!("{head}.{payload}.{}", b64(&bytes[..32]))
+            }),
+        ),
+        (
+            "the signature empty",
+            Box::new(|claims: &Json| {
+                let (head, payload, _) = parts(&signed(claims));
+                format!("{head}.{payload}.")
+            }),
+        ),
+        (
+            "another token's signature",
+            Box::new(|claims: &Json| {
+                let (head, payload, _) = parts(&signed(claims));
+                let (_, _, borrowed) = parts(&signed(&other_claims(claims)));
+                format!("{head}.{payload}.{borrowed}")
+            }),
+        ),
+    ];
+    for (case, make) in &cases {
+        let reason = idp.refusal(&sso, &flow, |claims| make(claims));
+        reasons.push(format!("{case}: {reason}"));
+    }
+    // with no signature segment at all the token is not even a JWS: refused at the callback, whatever the stage
+    let (started, callback) = idp.begin(&sso, &flow, |claims| {
+        let (head, payload, _) = parts(&signed(claims));
+        format!("{head}.{payload}")
+    });
+    assert!(
+        sso.complete(&flow, &started.pending, &callback).is_err(),
+        "no signature segment"
+    );
+    for reason in &reasons {
+        assert!(
+            reason.contains("signature") || reason.contains("malformed") || reason.contains("invalid"),
+            "{reasons:?}"
+        );
+    }
+
+    let again = idp.sign_in(&sso, &flow, signed);
+    assert_eq!(again.id, "proof-user", "the provider's signature is taken still");
+}
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-9.2.3 (docs/security/proofs/V9-Self-contained-Tokens.md), in-process:
+/// the OIDC sign-in takes an ID token only when it is meant for this relying party, its `aud` the flow's client id.
+/// Against a provider the test plays, through the real start and callback, signed with the provider's key and valid
+/// otherwise, a token for another client is refused, and so are one whose `aud` list leaves this client out and one with
+/// no `aud`; one for this client is taken. The mail client's sign-in checks its ID token's `aud` the same way
+/// (`a_mail_id_token_for_another_client_is_refused`, moqui-mail `oauth_tests.rs`); a Git LFS token is taken only for
+/// the repository it names (`lfs_objects_are_uploaded_downloaded_and_locked_over_the_batch_api`, moqui-git
+/// `server/tests.rs`: "a token is for its repository").
+#[test]
+fn an_id_token_is_taken_only_when_its_audience_is_this_client() {
+    let keys = Keys::new();
+    let sso = HuskarlSso::default();
+    let idp = Idp::start(&["ES256"], &keys);
+    let flow = idp.flow("PROOF_AUDIENCE");
+    let header = json!({"alg": "ES256", "kid": "k1", "typ": "JWT"});
+    let with_audience = |audience: Option<Json>| {
+        let header = header.clone();
+        let keys = &keys;
+        move |claims: &Json| {
+            let mut claims = claims.clone();
+            match &audience {
+                Some(audience) => claims["aud"] = audience.clone(),
+                None => {
+                    claims.as_object_mut().unwrap().remove("aud");
+                }
+            }
+            jws(&header, &claims, |input| es256_sign(&keys.es256, input))
+        }
+    };
+    for audience in [
+        Some(json!("another-client")),
+        Some(json!(["another-client", "a-third-client"])),
+        Some(json!("")),
+        None,
+    ] {
+        let reason = idp.refusal(&sso, &flow, with_audience(audience.clone()));
+        assert!(!reason.is_empty(), "{audience:?}");
+    }
+    let taken = idp.sign_in(&sso, &flow, with_audience(Some(json!(CLIENT))));
+    assert_eq!(taken.id, "proof-user");
+}
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-9.2.4 (docs/security/proofs/V9-Self-contained-Tokens.md), in-process:
+/// the JWTs the framework signs name their audience. Apple's client secret, an ES256 JWT from the team signed with the
+/// key its OidcFlow holds, carries `aud` `https://appleid.apple.com`, its client as `sub`, the team as `iss` and a day's
+/// life, and verifies with that key. The others are proved where they are made: the Web Push VAPID token's `aud` is the
+/// push service's origin (`the_vapid_header_is_an_es256_token_for_the_endpoint_origin`, moqui-core
+/// `notify/push_crypto_tests.rs`), the FCM grant's is Google's token endpoint
+/// (`the_jwt_asks_for_the_messaging_scope_at_the_token_endpoint_and_is_signed_rs256`, `service/fcm_tests.rs`); the
+/// tokens signed with the server's own keys have a key of their own or one derived for their purpose and name what they
+/// are for: an LFS token its repository and operation (`lfs_objects_are_uploaded_downloaded_and_locked_over_the_batch_api`,
+/// moqui-git), a script's server grant its purpose (`a_server_grant_checks_for_its_purpose_and_subject_until_it_expires`,
+/// moqui-core `script/host/tests.rs`).
+#[test]
+fn the_apple_client_secret_names_apple_as_its_audience() {
+    use p256::ecdsa::signature::Verifier;
+    use p256::pkcs8::EncodePrivateKey;
+
+    let key = es256_key(11);
+    let pem = key.to_pkcs8_pem(Default::default()).unwrap().to_string();
+    let config = OidcConfig {
+        client_type: "OctApple".to_string(),
+        client_id: "com.example.proof".to_string(),
+        secret: pem,
+        apple_team_id: "PROOFTEAM1".to_string(),
+        apple_key_id: "PROOFKEY1".to_string(),
+        ..OidcConfig::default()
+    };
+    let token = super::apple_client_secret(&config).unwrap();
+    let segments: Vec<&str> = token.split('.').collect();
+    assert_eq!(segments.len(), 3, "{token}");
+    let decode = |segment: &str| -> Json {
+        serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(segment)
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    assert_eq!(decode(segments[0]), json!({"alg": "ES256", "kid": "PROOFKEY1"}));
+    let claims = decode(segments[1]);
+    assert_eq!(claims["aud"], "https://appleid.apple.com");
+    assert_eq!(claims["sub"], "com.example.proof");
+    assert_eq!(claims["iss"], "PROOFTEAM1");
+    assert_eq!(
+        claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap(),
+        86_400
+    );
+    let signature = p256::ecdsa::Signature::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(segments[2])
+            .unwrap(),
+    )
+    .unwrap();
+    let signed = format!("{}.{}", segments[0], segments[1]);
+    assert!(key.verifying_key().verify(signed.as_bytes(), &signature).is_ok());
+}
