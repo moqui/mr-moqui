@@ -176,20 +176,6 @@ along with this software (see the LICENSE.md file). If not, see
         // if user not logged in save current path and params then redirect to Login
         if (!ec.user.userId) { ec.web.saveScreenLastInfo(null, null); sri.sendRedirectAndStopRender('/Login'); return }
 
-        // A Vue SFC canvas runs the model's component in a frame that can navigate itself to another site with what it
-        // read. While an agent may write one (canvasDialects naming vue-sfc), the app's pages let frames load only from
-        // this server and the trusted Constitution reference origins, which holds the frame's own navigations too; the
-        // conf's policy is kept and the directive added. A frame of another host (a shop's theme preview) is then not
-        // shown (plans/Security-Review-Medium.md SEC-AI-81).
-        if (ec.entity.find('moqui.agent.AgentDefinition').condition('canvasDialects', 'like', '%vue-sfc%').disableAuthz().count() > 0) {
-            const policy = String(ec.web.response.getHeader('Content-Security-Policy')
-                    || ec.factory.getConfValue('webapp-list/webapp[webroot]/response-header[screen-render,Content-Security-Policy]@value') || '').trim()
-            const trusted = Array.from(ec.service.sync().name('org.moqui.admin.ConstitutionServices.get#ReferenceOrigins').disableAuthz()
-                    .call().originList || []).map(String).filter((origin) => /^https:\/\/[a-z0-9.-]+(:[0-9]+)?$/i.test(origin))
-            if (!/(^|;)\s*frame-src\s/.test(policy)) ec.web.response.setHeader('Content-Security-Policy',
-                    (policy ? policy.replace(/;?\s*$/, '; ') : '') + ["frame-src 'self'"].concat(trusted).join(' ') + ';')
-        }
-
         // The libraries and the client, in the order they load. footer_scripts is written by Footer.html.fancy after the page.
         // vue.global.prod.js is the build with the template compiler, which server-merged qvt and the string templates of the m-* components need
         // (and unsafe-eval in a CSP). vue.runtime.global.prod.js has no compiler: the webroot webapp's qvt-static-only="true" loads it, for a deployment whose pages

@@ -40,12 +40,25 @@ fn origin_of(host: &str, https: bool) -> Option<String> {
 
 /// The response for `host`, `https` and the query: the document, its policy and the frame headers.
 fn response_for(host: &str, https: bool, query: &HashMap<String, String>) -> Response {
+    document_for(host, https, query, false)
+}
+
+/// The response of `GET /assist/sandboxHost`, the document that frames the canvas (`vue_sfc::host_document`).
+fn host_response_for(host: &str, https: bool, query: &HashMap<String, String>) -> Response {
+    document_for(host, https, query, true)
+}
+
+fn document_for(host: &str, https: bool, query: &HashMap<String, String>, holder: bool) -> Response {
     let Some(origin) = origin_of(host, https) else {
         return plain(400, "the Host of the request is not a plain host name");
     };
     let version = query.get("v").map(String::as_str).unwrap_or_default();
     let external = query.get("x").is_some_and(|value| value == "1");
-    let document = vue_sfc::frame_document(&origin, version, external);
+    let document = if holder {
+        vue_sfc::host_document(&origin, version)
+    } else {
+        vue_sfc::frame_document(&origin, version, external)
+    };
     let mut builder = Response::builder()
         .status(200)
         .header("content-type", "text/html; charset=utf-8")
@@ -87,12 +100,30 @@ fn frame_host(
     }
 }
 
+/// `GET /assist/sandboxHost`: the document that holds the canvas's frame, whose policy keeps the frame's navigations on
+/// this site's sandbox (SEC-AI-81).
+pub(crate) async fn host(
+    State(state): State<Arc<HttpState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(query): Query<HashMap<String, String>>,
+    request: Request,
+) -> Response {
+    let (host, https) = public_host(&state, peer, &request);
+    host_response_for(&host, https, &query)
+}
+
 pub(crate) async fn frame(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<HashMap<String, String>>,
     request: Request,
 ) -> Response {
+    let (host, https) = public_host(&state, peer, &request);
+    response_for(&host, https, &query)
+}
+
+/// The public host of `request` and whether it came over HTTPS.
+fn public_host(state: &HttpState, peer: SocketAddr, request: &Request) -> (String, bool) {
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
     let https = over_tls || forwarded_https(request.headers(), peer.ip(), state.guard.conf().addressing());
     let header = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
@@ -107,7 +138,7 @@ pub(crate) async fn frame(
         ),
         https,
     );
-    response_for(&host, https, &query)
+    (host, https)
 }
 
 #[cfg(test)]
@@ -121,6 +152,19 @@ mod tests {
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default()
             .to_string()
+    }
+
+    /// SEC-AI-81: the holder of the canvas's frame lets it load only this site's sandbox.
+    #[test]
+    fn the_holder_document_keeps_the_frame_on_the_sandbox() {
+        let response = host_response_for("moqui.example.com:8443", true, &HashMap::new());
+        assert_eq!(response.status(), 200);
+        let csp = header(&response, "content-security-policy");
+        assert!(
+            csp.contains("frame-src https://moqui.example.com:8443/assist/sandbox;"),
+            "{csp}"
+        );
+        assert!(!csp.contains("sandbox allow-scripts"), "{csp}");
     }
 
     #[test]

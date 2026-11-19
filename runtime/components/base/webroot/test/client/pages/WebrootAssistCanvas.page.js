@@ -1,5 +1,5 @@
 // The Assist canvas, in the page. Was js/WebrootAssistCanvas.test.js.
-// "sandbox" here is the Vue SFC frame (sandbox: "allow-scripts", frameUrl), and the source assertions stay.
+// "sandbox" here is the Vue SFC frame (held by /assist/sandboxHost, frameUrl), and the source assertions stay.
 // The library returns before moqui.assist.canvas when Vue is absent, and these tests keep the renderer off
 // (the vue-sfc dialect stays unregistered). The Node file used the require() return, which is module.exports.
 const assist = moqui.assist;
@@ -319,6 +319,28 @@ test("a submit counts only with the user's activation in the frame, once every t
     assert.equal(reads.begin(1001), null, "a new window");
 });
 
+// SEC-AI-82: a screen-xml canvas frames only a plain path of the apps, and only once the user asks, again for each
+// version. SEC-AI-81: the Vue SFC frame is held by /assist/sandboxHost, which frames the sandbox and leaves when the
+// sandbox loads again (a navigation the component made), so the drawer's watchdog closes the canvas.
+test("a screen-xml preview frames a plain path of the apps after a click, and the sandbox's holder", async () => {
+    const source = await sourceOf("WebrootAssistCanvas.js");
+    const found = /canvas\.plainAppPath = (\(path\) => \{[\s\S]*?\n {8}\});/.exec(source);
+    assert.ok(found, "plainAppPath");
+    const plain = (0, eval)(found[1]);
+    for (const path of ["/qapps/example/Gallery?x=1", "/apps/system", "/qapps"]) assert.equal(plain(path), true, path);
+    for (const path of ["javascript:parent.alert(1)//", "https://other.example/x", "//other.example/qapps", "/qapps/../Login/logout",
+        "/qapps//x", "/qapps\\x", "/Login/logout", "", "/qapps/\tx"]) assert.equal(plain(path), false, path);
+    assert.match(source, /if \(this\.src && this\.shown\) kids\.push\(h\("iframe"/);
+    assert.match(source, /watch: \{ version\(\) \{ this\.shown = false; \}, program\(\) \{ this\.shown = false; \} \}/);
+    assert.match(source, /sandbox: "allow-scripts allow-same-origin", referrerpolicy: "no-referrer"/);
+    assert.match(source, /String\(base \|\| "\/assist\/sandboxHost"\)/);
+    const holder = await sourceOf("WebrootAssistSandboxHost.js");
+    assert.match(holder, /frame\.setAttribute\("sandbox", "allow-scripts"\)/);
+    assert.match(holder, /frame\.src = "\/assist\/sandbox" \+ window\.location\.search \+ window\.location\.hash/);
+    assert.match(holder, /if \(loads > 1\) \{ window\.location\.replace\("about:blank"\); return; \}/);
+    assert.match(holder, /event\.source !== window\.parent/);
+});
+
 test("the frame runtime takes its port once, from its parent, with its nonce, and removes what CSP does not govern", async () => {
     const source = await sourceOf("WebrootAssistSandbox.js");
     assert.match(source, /if \(port \|\| event\.source !== window\.parent\) return;/);
@@ -335,8 +357,11 @@ test("the frame runtime takes its port once, from its parent, with its nonce, an
     const parent = await sourceOf("WebrootAssistCanvas.js");
     assert.match(parent, /postMessage\(\{ t: "port", nonce: this\.nonce \}, "\*", \[channel\.port2\]\)/);
     assert.doesNotMatch(parent, /addEventListener\("message"/);
-    assert.match(parent, /sandbox: "allow-scripts"/);
-    assert.doesNotMatch(parent, /allow-same-origin/);
+    // the drawer frames the holder (this site's origin, our script only); the holder frames the sandbox with
+    // allow-scripts alone, an opaque origin (SEC-AI-81)
+    assert.match(parent, /sandbox: "allow-scripts allow-same-origin", referrerpolicy/);
+    const holder = await sourceOf("WebrootAssistSandboxHost.js");
+    assert.doesNotMatch(holder, /allow-same-origin/);
     // the Save of a submit's confirm is dead for a moment (anti-clickjacking) and reads are off while other sites are on
     assert.ok(sfc.LIMITS.confirmArmMs >= 300, "the confirm arms after a delay");
     assert.match(parent, /this\.confirmArmed = false;/);

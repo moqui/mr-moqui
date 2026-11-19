@@ -4110,7 +4110,7 @@ module.exports = {
         browser.wait_for("the canvas's frame", &format!("!!{frame}"), WAIT);
         assert_eq!(
             browser.eval(&format!("{frame}.getAttribute('sandbox')")),
-            "allow-scripts"
+            "allow-scripts allow-same-origin"
         );
         assert_eq!(browser.eval(&format!("{frame}.hasAttribute('srcdoc')")), false);
         assert_eq!(
@@ -4118,7 +4118,7 @@ module.exports = {
             "no-referrer"
         );
         assert_eq!(
-            browser.eval(&format!("{frame}.getAttribute('src').indexOf('/assist/sandbox?v=')")),
+            browser.eval(&format!("{frame}.getAttribute('src').indexOf('/assist/sandboxHost?v=')")),
             0
         );
 

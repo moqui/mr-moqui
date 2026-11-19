@@ -89,12 +89,3 @@ feature("attaching a live scorer and a scorer of another service need AgentAudit
  then({attach,other,own,judge,audited,auditedOther,logs}){attach.includes('AgentAudit');other.includes('AgentAudit');own=='';judge==''
   audited=='';auditedOther=='';logs.length==1},
 })
-// SEC-AI-81: while an agent may write Vue SFC canvases, the app's pages (the qapps shell, which holds the Assist drawer)
-// let frames load only from this server, the conf's policy kept
-feature("a Vue SFC agent keeps the app pages' frames on this server",{
- when(){login('john.doe');ec.artifactExecution.disableAuthz()
-  const agent=ec.entity.find('moqui.agent.AgentDefinition').condition({agentId:'EVAL_T_AGENT'}).one();agent.set('canvasDialects','openui,vue-sfc');agent.update()
-  let render;try{render=screenTest('qapps').render('system/Llm/Evals/Runs',{agentId:'EVAL_T_AGENT'},'get')}finally{agent.set('canvasDialects',null);agent.update()}
-  return{status:render.status,csp:String(render.header('Content-Security-Policy')||'')}},
- then({status,csp}){status==200;csp.includes("frame-src 'self'");csp.includes('frame-ancestors')},
-})

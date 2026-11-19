@@ -454,9 +454,9 @@
     };
     // The version the frame document's scripts are loaded with (?v=), so a page caches Vue and Quasar once: change it
     // when WebrootAssistSandbox.js changes.
-    sfc.RUNTIME_VERSION = "13.8.1";
+    sfc.RUNTIME_VERSION = "13.8.2";
     sfc.frameUrl = (base, version, nonce, external) =>
-        String(base || "/assist/sandbox") + "?v=" + encodeURIComponent(version || "") + (external ? "&x=1" : "") + "#n=" + nonce;
+        String(base || "/assist/sandboxHost") + "?v=" + encodeURIComponent(version || "") + (external ? "&x=1" : "") + "#n=" + nonce;
     // A flat value of the canvas: text, a number, true or false, null, or a list of those.
     const flatValue = (value) => {
         if (value === null || typeof value === "boolean") return true;
@@ -1107,7 +1107,7 @@
                 actionList() { return sfc.actions(this.program || ""); },
                 src() {
                     const boot = (moqui.assist && moqui.assist.state && moqui.assist.state.bootstrap) || {};
-                    const base = (boot.paths && boot.paths.sandbox) || "/assist/sandbox";
+                    const base = (boot.paths && boot.paths.sandbox) || "/assist/sandboxHost";
                     // frameKey: a new frame (a new element, a new nonce) for each version and each restart
                     return this.frameKey >= 0 ? sfc.frameUrl(base, sfc.RUNTIME_VERSION, this.nonce, this.external) : "";
                 },
@@ -1315,7 +1315,7 @@
                     kids.push(h(R("q-banner"), { dense: true, rounded: true, class: "bg-red-1 text-red-10 q-my-sm", "data-assist-sfc-killed": this.killed.reason },
                         { default: () => this.killed.message, action: () => [h(R("q-btn"), { flat: true, dense: true, noCaps: true, label: "Show again", "data-assist-sfc-reload": "", onClick: () => this.restart() })] }));
                 } else {
-                    kids.push(h("iframe", { key: this.frameKey, ref: "frame", sandbox: "allow-scripts", referrerpolicy: "no-referrer", allow: "", title: "Canvas",
+                    kids.push(h("iframe", { key: this.frameKey, ref: "frame", sandbox: "allow-scripts allow-same-origin", referrerpolicy: "no-referrer", allow: "", title: "Canvas",
                         class: "m-assist-sfc-frame", "data-assist-sfc-frame": "", src: this.src, onLoad: () => this.onLoad(),
                         style: { width: "100%", height: this.height + "px", border: "0", display: "block", colorScheme: "normal" } }));
                 }

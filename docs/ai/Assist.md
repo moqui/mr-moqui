@@ -1066,8 +1066,9 @@ action name; a height clamped to 60–4000). What fails is dropped (a read or su
   And it does **not read at all while the user lets it reach other sites** (`ASSIST_CANVAS_EXTERNAL`): the proxy refuses
   every read then, and the client refuses it too, so the "Other sites" option and proxy reads are never on together
   (their combination is the only way an image of another site could carry a read's data out). The frame's own
-  navigation is the other way: while any agent names `vue-sfc`, the qapps pages send `frame-src 'self'` (with the
-  trusted Constitution reference origins), so the frame cannot navigate to another site (SEC-AI-81).
+  navigation is the other way: the sandbox is framed by `/assist/sandboxHost`, whose `frame-src` keeps the frame's
+  navigations on `/assist/sandbox` (SEC-AI-81). WebRTC is a known limit where a browser does not enforce
+  `webrtc 'block'`.
 - **Writes** (J11). A `submit` counts only when the page has the user's transient activation (`navigator.userActivation
   .isActive`: a click in a child frame activates its ancestors), the frame has the focus (`document.activeElement` is the
   iframe, so the activation came from a click in the frame and not from typing in the drawer), the action is the
