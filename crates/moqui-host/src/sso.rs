@@ -308,6 +308,17 @@ fn discovery_uri(config: &OidcConfig) -> Result<String, Error> {
     }
 }
 
+/// An OpenID user info answer is taken only for the ID token's subject: its `sub` there and equal to the ID token's
+/// (OpenID Connect Core 5.3.2), else its claims (the email, the username, the roles) could be another user's (SEC-WEB-86).
+fn same_subject(auth_flow_id: &str, id_token_sub: Option<&Json>, user_info_sub: Option<&Json>) -> Result<(), Error> {
+    match (id_token_sub.and_then(Json::as_str), user_info_sub.and_then(Json::as_str)) {
+        (Some(token), Some(info)) if token == info => Ok(()),
+        _ => Err(Error::new(format!(
+            "SSO flow {auth_flow_id}: the user info answer is not for the ID token's subject"
+        ))),
+    }
+}
+
 /// The ID token algorithms a flow takes when its row names none: the asymmetric ones huskarl verifies, so whoever
 /// writes the discovery document cannot widen them, and a symmetric one never borrows the client secret.
 const ID_TOKEN_ALGORITHMS: [&str; 9] = [
@@ -626,6 +637,9 @@ impl Inner {
             let info = self
                 .user_info(user_info, &access_token, post, flow.deny_internal)
                 .await?;
+            if matches!(flow.kind, FlowKind::Oidc(_)) {
+                same_subject(&flow.auth_flow_id, attributes.get("sub"), info.get("sub"))?;
+            }
             for (name, value) in info {
                 attributes.entry(name).or_insert(value);
             }

@@ -723,3 +723,16 @@ fn the_apple_client_secret_names_apple_as_its_audience() {
     let signed = format!("{}.{}", segments[0], segments[1]);
     assert!(key.verifying_key().verify(signed.as_bytes(), &signature).is_ok());
 }
+
+/// SEC-WEB-86: an OpenID user info answer is merged into the profile only when its `sub` is the ID token's.
+#[test]
+fn a_user_info_answer_is_taken_only_for_the_id_tokens_subject() {
+    use super::same_subject;
+    let sub = |text: &str| json!(text);
+    assert!(same_subject("F", Some(&sub("u1")), Some(&sub("u1"))).is_ok());
+    for (token, info) in [(Some(sub("u1")), Some(sub("u2"))), (Some(sub("u1")), None), (None, Some(sub("u1")))] {
+        let err = same_subject("F", token.as_ref(), info.as_ref()).unwrap_err();
+        assert!(err.to_string().contains("not for the ID token's subject"), "{err}");
+    }
+    assert!(same_subject("F", Some(&sub("u1")), Some(&json!(1))).is_err());
+}
