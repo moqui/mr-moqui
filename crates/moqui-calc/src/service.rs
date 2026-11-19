@@ -546,19 +546,30 @@ const ROOM_GONE: &str = "ROOM_GONE: this document is no longer open on the serve
 
 /// The room of the call's `roomId`: one the caller has open, opened the way the call is made (the same profile, or
 /// none), and brought up to its document's edit log ([`together::catch_up`]). A room that cannot follow its log is
-/// dropped, and the view opens the document again.
+/// dropped, and the view opens the document again. A saved document's room is the caller's only while it is of their
+/// scope: that is read again about once a minute and after the room's rows were read again ([`Rooms::scope_due`]),
+/// and a caller whose scope is no longer the room's leaves it and opens the document in theirs (SEC-TLS-94).
 fn room_of(parameters: &BTreeMap<String, Value>, access: &Access, facade: &EntityFacade) -> Option<SharedRoom> {
     let user_id = moqui_core::user::current_user_id().ok().flatten()?;
     let rooms = ExecutionContext::with_current(|ec| Rooms::of(ec.factory()))?;
     let id = text(parameters, "roomId");
-    let room = rooms
-        .get(&user_id, &id)
-        .filter(|room| moqui_lib::sync::lock(room).profile_id == access.profile_id());
-    let Some(room) = room else {
+    let room = rooms.get(&user_id, &id).and_then(|room| {
+        let filled_at = {
+            let held = moqui_lib::sync::lock(&room);
+            (held.profile_id == access.profile_id()).then(|| held.filled_at())?
+        };
+        Some((room, filled_at))
+    });
+    let Some((room, filled_at)) = room else {
         // the view opens the document again on this error
         add_error(ROOM_GONE);
         return None;
     };
+    if rooms.scope_due(&user_id, &id, filled_at) && !in_callers_scope(facade, &room, access) {
+        rooms.close(&user_id, &id);
+        add_error(ROOM_GONE);
+        return None;
+    }
     let caught = together::catch_up(facade, &mut moqui_lib::sync::lock(&room));
     if let Err(err) = caught {
         tracing::info!(room = %id, error = %err, "A CalcGrid room is opened anew");
@@ -1029,9 +1040,18 @@ fn save_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     room.title = title.clone();
     let (scratch_id, sheets) = (room.id.clone(), room.data_sheets.clone());
     drop(room);
+    rooms.set_document(&scratch_id, &id);
     // the room is now the document's for the saver's scope, at the start of its log (one of a document saved over
-    // begins again, and its rooms are opened anew); its rows, read when it was opened, are read again in that scope
-    // first, so the readers of the scope who join it find their rows (SEC-TLS-94)
+    // begins again, and its rooms are opened anew)
+    let seq = match together::begin_again(facade, &id, &user, version) {
+        Ok(seq) => seq,
+        Err(err) => {
+            tracing::warn!(document = %id, error = %err, "A saved CalcGrid document's log did not begin; its room stays its saver's");
+            return Ok(out(&id, version, &title, &scratch_id));
+        }
+    };
+    // its rows, read when it was opened, are read again in that scope first, so the readers of the scope who join it
+    // find their rows (SEC-TLS-94); a room whose rows are not read again stays its saver's
     let refreshed = read_sheets(facade, &sheets, &access, true)
         .map_err(Error::new)
         .and_then(|rows| moqui_lib::sync::lock(&shared_room).refresh(rows));
@@ -1041,13 +1061,7 @@ fn save_calc_document(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     }
     let scope = crate::scope::fingerprint(facade, &sheets, &access);
     let shared_id = crate::room::document_room_id(&id, access.profile_id().as_deref(), &scope);
-    match together::begin_again(facade, &id, &user, version) {
-        Ok(seq) => rooms.make_shared(&scratch_id, &shared_id, seq),
-        Err(err) => {
-            tracing::warn!(document = %id, error = %err, "A saved CalcGrid document's log did not begin; its room stays its saver's");
-            return Ok(out(&id, version, &title, &scratch_id));
-        }
-    }
+    rooms.make_shared(&scratch_id, &shared_id, seq);
     Ok(out(&id, version, &title, &shared_id))
 }
 
