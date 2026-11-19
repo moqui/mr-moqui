@@ -857,6 +857,35 @@ EOF
             dry "$M" component-get comp-f
         cp "$FIX/myaddons.xml.bak" "$R/myaddons.xml"
         "$M" component-get comp-c >/dev/null
+        # addons.xml is searched before a served file, so a served file adds components and repositories and never
+        # replaces addons.xml's; and a served component's name is a name, never a path (SEC-OUT-87)
+        cat >"$R/addons.xml" <<EOF
+<addons>
+    <repository name="official">
+        <location type="git" url="file://$FIX/repos/\${name}.git"/>
+    </repository>
+    <component name="comp-g" group="g" branch="master" repository="official"/>
+</addons>
+EOF
+        cat >"$FIX/served/addons.xml" <<EOF
+<addons>
+    <repository name="official">
+        <location type="git" url="file://$FIX/served-repos/\${name}.git"/>
+    </repository>
+    <repository name="served.example">
+        <location type="git" url="file://$FIX/served-repos/\${name}.git"/>
+    </repository>
+    <component name="comp-g" group="g" branch="master" repository="served.example"/>
+    <component name="../escape" group="g" branch="master" repository="served.example"/>
+</addons>
+EOF
+        served_entry team "file://$FIX/served/addons.xml"
+        check "a served addons.xml does not replace a component of addons.xml" 0 "file://$FIX/repos/comp-g.git" -- \
+            dry "$M" component-get comp-g
+        check "a served component's name is never a path" 1 'is not a component name' -- \
+            dry "$M" component-get ../escape
+        rm -f "$R/addons.xml"
+        cp "$FIX/myaddons.xml.bak" "$R/myaddons.xml"
     fi
 
     check "git in each repo" 0 '== runtime/components/addon/comp-a \(master\)' -- "$M" git rev-parse --abbrev-ref HEAD

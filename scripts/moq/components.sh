@@ -36,7 +36,7 @@ xml_attr() {
     printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2=\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
 }
 
-# The element of type $1 with name $2, from myaddons.xml first, then the served addons.xml files, then addons.xml.
+# The element of type $1 with name $2, from myaddons.xml first, then addons.xml, then the served addons.xml files.
 addons_find() {
     local file line
     for file in "${ADDONS_FILES[@]}"; do
@@ -65,8 +65,8 @@ addons_root_attr() {
     [ -n "$line" ] && xml_attr "$line" "$2"
 }
 
-# The url template of location type $2 in repository $1, from myaddons.xml first, then the served addons.xml files,
-# then addons.xml.
+# The url template of location type $2 in repository $1, from myaddons.xml first, then addons.xml, then the served
+# addons.xml files.
 addons_location() {
     local file url
     for file in "${ADDONS_FILES[@]}"; do
@@ -167,12 +167,13 @@ download_component() {
     fi
     need_tool curl unzip
     if dry_run; then
-        show_cmd curl -fL -o "$target.zip" "$url"
+        show_cmd curl -fL --proto '=https,file' --proto-redir '=https' -o "$target.zip" --url "$url"
         show_cmd unzip -q "$target.zip" -d "<temp>"
         show_cmd mv "<temp>/<top>" "$target"
         return 0
     fi
-    curl -fL --progress-bar -o "$target.zip" "$url" || {
+    # https (or a local file: location), redirected to https only; --url so a URL that starts with `-` is no option
+    curl -fL --proto '=https,file' --proto-redir '=https' --progress-bar -o "$target.zip" --url "$url" || {
         rm -f "$target.zip"
         die "download of $name failed"
     }
@@ -245,6 +246,8 @@ component_dir_named() {
 component_get_one() {
     local name type=$2 element target base=${3:-$RUNTIME_DIR/$ADDON_SET}
     name=$(addons_name_for "$1")
+    # the name is a directory of runtime/components: a served addons.xml's `../x` is no path outside it (SEC-OUT-87)
+    template_name "$name" || die "'$name' is not a component name (a letter, then letters, digits, '-' and '_')"
     case $COMPONENTS_CHECKED in *" $name "*) return 0 ;; esac
     element=$(addons_find component "$name") || die "component $name is not in myaddons.xml or addons.xml"
     if [ "$(xml_attr "$element" skip-get)" = true ]; then
@@ -328,10 +331,10 @@ require_addons() {
 
 # A server's addons.xml (a group of a hosting server serves one, of its public components with their clone addresses):
 # a myaddons.xml repository's <location type="addons" url="..."/>. Each is fetched once per run, over https (http only
-# to a loopback address, or a file: URL), and searched after myaddons.xml and before addons.xml, so its components and
-# its repositories (the server's git, current and release locations) are found as if they were in myaddons.xml. Only
-# its components and repositories are read: never its root's default or default-repository. One that cannot be
-# fetched is skipped with a warning.
+# to a loopback address, or a file: URL), and searched after myaddons.xml and addons.xml, so it adds components and
+# repositories (the server's git, current and release locations) and never replaces one those files define: a served
+# `mr-mantle`, `apps` or `github` is the official one still (SEC-OUT-87). Only its components and repositories are
+# read: never its root's default or default-repository. One that cannot be fetched is skipped with a warning.
 SERVED_ADDONS_DIR=
 served_addons_load() {
     local url file n=0
@@ -367,7 +370,7 @@ served_addons_load() {
             warn "myaddons.xml: could not read an addons.xml from $url; skipped"
         fi
     done
-    ADDONS_FILES=("$MYADDONS" ${served[@]+"${served[@]}"} "$ADDONS")
+    ADDONS_FILES=("$MYADDONS" "$ADDONS" ${served[@]+"${served[@]}"})
 }
 
 task_component_get() {
