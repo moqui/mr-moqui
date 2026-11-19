@@ -527,6 +527,19 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
     let args_span = crate::telemetry::profile::span("phase", "host.args");
     let args = convert_args(binder, scope, method.args, &mut callbacks)?;
     drop(args_span);
+    // a preview's proposed screen text calls none of the members that reach past entity authorization (SEC-AI-102)
+    let first = match args.get(0) {
+        Some(crate::script::host::Arg::Text(text)) => Some(text.as_str()),
+        Some(crate::script::host::Arg::Value(moqui_lib::object::Value::String(text))) => Some(&text[..]),
+        _ => None,
+    };
+    if crate::script::host::refused_while_proposed(method.path, method.name, first) {
+        return Err(throw(
+            scope,
+            crate::script::host::HostError::message(crate::script::host::LOCKED_AUTHZ),
+            None,
+        ));
+    }
     // the receiver's datum read from the call, with no handle; the receiver itself lifted only when returned
     let held = scope.this_host_data::<OxideHost>()?;
     let state = match held {

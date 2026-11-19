@@ -1724,7 +1724,31 @@ fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// The SQL runner's statement: `{columns, records, limitReached, rowsAffected}`, values formatted as text.
+/// Who may run SQL past the entity facade (`runSqlStatement`, `testConfConnection`, `runSqlCountConf`,
+/// `runSqlUpdateConf`): a service's own code (Mantle's account number migration, the instance database setup); work
+/// with authorization disabled outside a screen render (a job, a load, a test's setup); or a holder of the sealed
+/// `SQL_RUNNER_WEB`, the SQL runner's permission. A screen's actions and widgets, a REST resource or a web script
+/// otherwise reach no row past entity authorization and filters by it (plans/Security-Review-Low.md SEC-AI-102).
+fn sql_allowed() -> Result<(), HostError> {
+    let (service_body, unchecked) = with_ec(|ec| {
+        (
+            ec.in_service_body(),
+            ec.authz_disabled() && crate::screen::active_depth() == 0,
+        )
+    })?;
+    if service_body
+        || unchecked
+        || crate::user::has_permission("SQL_RUNNER_WEB").map_err(|err| HostError::message(err.message()))?
+    {
+        return Ok(());
+    }
+    Err(HostError::message(
+        "Raw SQL runs only in a service's own code, or for a holder of SQL_RUNNER_WEB",
+    ))
+}
+
 fn run_sql_statement(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let group = call.text_or_empty(0);
     let sql = call.text_or_empty(1);
     let limit = call.value(2).cloned();
@@ -2601,6 +2625,7 @@ fn conf_connection(conf: &Value) -> Result<Box<dyn crate::driver::DbConnection>,
 
 /// `testConfConnection(conf)`: whether a connection opens. A failure is logged, as the Java scripts did.
 fn test_conf_connection(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let conf = call.value_or_null(0);
     let conf = conf_db_of(&conf)?;
     match crate::driver::conf_driver(&conf).and_then(|driver| driver.connect()) {
@@ -2614,6 +2639,7 @@ fn test_conf_connection(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `runSqlCountConf(table, where, conf)`: `SELECT COUNT(*) FROM table WHERE where` on that database.
 fn run_sql_count_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let table = call.text_or_empty(0);
     let where_text = call.text_or_empty(1);
     let conf = call.value_or_null(2);
@@ -2636,6 +2662,7 @@ fn run_sql_count_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `runSqlUpdateConf(sql, conf)`: run one statement outside a transaction (`CREATE DATABASE` cannot run inside one)
 /// and return the rows it changed.
 fn run_sql_update_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let sql = call.text_or_empty(0);
     let conf = call.value_or_null(1);
     let mut conn = conf_connection(&conf)?;

@@ -473,7 +473,7 @@ context.
 | `disableAuthz()` | Authorization is not checked in this execution context until `enableAuthz()`. Returns whether it was already disabled |
 | `enableAuthz()` | Checks authorization again |
 | `authzDisabled()` | Whether authorization is disabled, by a script or by the caller (a call with `disableAuthz()`, a job); changes nothing |
-| `authzLocked()` | Whether `disableAuthz()`, a find's or a service call's, and a change of user are refused here: while a preview's proposed screen text runs (its actions, widgets, forms, trees and transitions). Framework template code asks it before a read it would otherwise make with authorization off |
+| `authzLocked()` | Whether `disableAuthz()`, a find's or a service call's, and a change of user are refused here: while a preview's proposed screen text runs (its actions, widgets, forms, trees and transitions, told by the nearest screen frame above the last service frame). The members that reach past entity authorization are refused then too: raw SQL and conf connections, data exports and loads, a resource outside `component://`, the caches, the search index's raw queries, the factory's tools, `System` properties, the session and request switches, `setEffectiveTime`, `runAsUser` and artifact frames (`script/host/mod.rs` `REFUSED_WHILE_PROPOSED`). Framework template code asks it before a read it would otherwise make with authorization off |
 | `disableEntityEca()` | Entity ECA rules do not run for this execution context's writes. Returns whether they were already disabled |
 | `enableEntityEca()`, `entityEcaDisabled()` | Runs them again; whether they are disabled |
 | `disableTarpit()` | No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled |
@@ -832,7 +832,7 @@ These serve the Tools screens and generic services.
 | `getEecaRuleCount()`, `eecaRulesByEntityName.get(entityName)` | How many entity ECA rules there are; the rules of an entity |
 | `getQueryStatsList(orderByField, entityFilter, sqlFilter)` | The statement statistics of this server, when `entity-facade@query-stats` is on |
 | `clearQueryStats()` | Clears them |
-| `runSqlStatement(groupName, sql, limit)` | Runs one statement on a group's database: `{columns, records, limitReached, rowsAffected}`, values as text (500 rows) |
+| `runSqlStatement(groupName, sql, limit)` | Runs one statement on a group's database: `{columns, records, limitReached, rowsAffected}`, values as text (500 rows). It and the three below run only in a service's own code, with authorization disabled outside a screen render (a job, a load, a test), or for a holder of `SQL_RUNNER_WEB`; never in a preview's proposed screen text |
 | `testConfConnection(conf)` | Whether a connection opens to another database, named by a map of `entity_ds_db_conf`, `entity_ds_host`, `entity_ds_port`, `entity_ds_database`, `entity_ds_user` and `entity_ds_password` |
 | `runSqlCountConf(table, where, conf)` | `SELECT COUNT(*)` on that database |
 | `runSqlUpdateConf(sql, conf)` | One statement outside a transaction on that database; the rows it changed |

@@ -261,6 +261,19 @@ impl ArtifactStack {
         })
     }
 
+    /// The location of the nearest screen frame above the last service frame: the screen whose code runs now, or none
+    /// when a service's own code runs (a service frame comes first) or no screen is on the stack.
+    pub(super) fn screen_above_service(&self) -> Option<Arc<str>> {
+        for frame in self.frames.iter().rev() {
+            match &*frame.artifact_type {
+                "AT_SERVICE" => return None,
+                "AT_XML_SCREEN" => return Some(Arc::clone(&frame.name)),
+                _ => {}
+            }
+        }
+        None
+    }
+
     pub(super) fn top_info_mut(&mut self) -> Option<&mut AuthInfo> {
         self.frames.last_mut().map(|frame| &mut frame.info)
     }

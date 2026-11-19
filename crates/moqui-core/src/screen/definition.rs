@@ -1601,16 +1601,26 @@ impl ScreenDef {
             shell_providers: super::shell::ShellProviders::of(node, location),
             ext_items: super::ext::of(node, location),
             source: XmlFragment::of(node),
-            proposed: super::overlay::active()
-                && sources
-                    .iter()
-                    .any(|source| super::overlay::text_of(&source.location).is_some()),
+            proposed: proposed_build(location, &sources),
             sources,
             checked_at: std::sync::atomic::AtomicI64::new(super::cache::now_millis()),
             config_generation,
             generated: super::generate::Generated::default(),
         })
     }
+}
+
+/// Whether the screen being built stands at a preview's proposed text (its own or a screen-extend's); marks its location
+/// on the overlay when it does, so its frame is known for one ([`super::overlay::is_proposed`], SEC-AI-102).
+fn proposed_build(location: &str, sources: &[Source]) -> bool {
+    let proposed = super::overlay::active()
+        && sources
+            .iter()
+            .any(|source| super::overlay::text_of(&source.location).is_some());
+    if proposed {
+        super::overlay::mark_proposed(location);
+    }
+    proposed
 }
 
 /// Elements of a `screen-extend` file that the base screen load needs after the merge.

@@ -543,14 +543,22 @@ pub(super) fn with_qvt_render<R>(
 }
 
 /// Whether the code running now is a preview's proposed text (plans/Security-Review-Low.md SEC-AI-102): an overlay is
-/// held, the screen the render is at stands at its text ([`super::definition::ScreenDef::proposed`]), and no service
-/// call runs its own code since (a service the text calls is the service's). Its actions, widget and condition
-/// expressions, forms, trees and transitions alike: a script's `disableAuthz()`, of a find or a service call too, and a
-/// change of user are refused then (`script::host::refuse_locked_authz`), and authorization is required while it
-/// renders.
+/// held and the screen whose code runs is one built from its text. That screen is the nearest screen frame above the
+/// last service frame, so a service the text calls runs its own code as ever, and any path that runs the screen's
+/// actions under its frame (a render, a transition, the menu data, a form or tree's data) is covered; or, with no
+/// service running its own code, the screen the render is at ([`super::definition::ScreenDef::proposed`]). Its
+/// actions, widget and condition expressions, forms, trees and transitions alike: a script's `disableAuthz()`, of a
+/// find or a service call too, raw SQL, a resource read outside `component://`, a change of user or of the effective
+/// time are refused then (`script::host::refuse_locked_authz`), and authorization is required while it renders.
 pub(crate) fn proposed_running() -> bool {
     if !super::overlay::active() {
         return false;
+    }
+    let on_stack = ExecutionContext::with_current(ExecutionContext::screen_above_service)
+        .flatten()
+        .is_some_and(|location| super::overlay::is_proposed(&location));
+    if on_stack {
+        return true;
     }
     let proposed = with_current_render(|state| {
         let defs = &state.url_info.path_defs;

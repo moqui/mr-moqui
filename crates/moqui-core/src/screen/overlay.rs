@@ -19,7 +19,7 @@
 //! neither come from nor go to the caches, so a draft never reaches another request and the cache never hides a draft.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 /// The texts that stand at their locations: each by its `component://` location and by its file path, as a screen is
@@ -27,6 +27,8 @@ use std::rc::Rc;
 #[derive(Clone, Debug, Default)]
 pub struct Overlay {
     texts: HashMap<String, Rc<str>>,
+    /// The locations of the screens built from its texts ([`mark_proposed`]): a screen whose screen-extend is a text.
+    proposed: Rc<RefCell<HashSet<String>>>,
 }
 
 impl Overlay {
@@ -88,6 +90,28 @@ pub fn with<R>(overlay: Overlay, body: impl FnOnce() -> R) -> R {
 #[must_use]
 pub fn active() -> bool {
     ACTIVE.with(|active| active.borrow().as_ref().is_some_and(|overlay| !overlay.is_empty()))
+}
+
+/// Note that the screen at `location` was built from the held overlay's texts (its own or a screen-extend's), so its
+/// frame is a proposed screen's ([`is_proposed`]).
+pub(crate) fn mark_proposed(location: &str) {
+    ACTIVE.with(|active| {
+        if let Some(overlay) = active.borrow().as_ref() {
+            overlay.proposed.borrow_mut().insert(location.to_string());
+        }
+    });
+}
+
+/// Whether the screen at `location` stands at the held overlay's text: the overlaid file itself, or a screen built from
+/// one ([`mark_proposed`]).
+#[must_use]
+pub(crate) fn is_proposed(location: &str) -> bool {
+    ACTIVE.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .is_some_and(|overlay| overlay.texts.contains_key(location) || overlay.proposed.borrow().contains(location))
+    })
 }
 
 /// The overlaid text of a location or file path, when there is one.

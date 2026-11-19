@@ -148,6 +148,10 @@ fn script_value(scope: &mut Scope<'_>) -> Result<Value, Conv> {
             None,
         ))
     };
+    // a preview's proposed text runs no file but a component's (SEC-AI-102)
+    if let Err(err) = crate::script::host::refuse_locked_location(&location) {
+        return Err(Conv::Js(super::bind::throw(scope, err, None)));
+    }
     let (text, inert) = match crate::script::runtime::read_module(&location) {
         Ok(read) => read,
         Err(err) => return Err(marked(scope, err)),
