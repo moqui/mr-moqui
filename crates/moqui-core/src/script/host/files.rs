@@ -39,11 +39,13 @@
 //! ec.resource.extractText(location, cacheKey, maxChars, cacheOnly) -> the text of a PDF, spreadsheet or text file,
 //!                                             kept in runtime://tmp/file-text/<cacheKey>.txt; "" when it has none;
 //!                                             null with cacheOnly when it was not extracted yet
-//! ec.resource.writeZip(target, [{path, location}]) -> {count, size, failures: [{path, error}]}
+//! ec.resource.writeZip(target, [{path, location}]) -> {count, size, failures: [{path, error}]}: built in a file, each
+//!                                             file read as a stream, never whole in memory
 //! ec.resource.makeGrant(key, subject, ttlSeconds)  -> token;  ec.resource.checkGrant(key, subject, token) -> boolean
 //! ```
 
-use std::io::{Cursor, Write};
+#[cfg(feature = "image")]
+use std::io::Cursor;
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -848,54 +850,36 @@ fn sheet_text(_bytes: &[u8], _max_chars: usize) -> Result<String, String> {
 
 /// A zip of the files at the entries' locations, each under its `path`, written to `target`. An entry that cannot be
 /// read is reported and left out; the others are still written.
+/// `writeZip(target, entries)`: the zip is built in a file under `runtime/tmp/drive-zip/.building`, each entry copied
+/// from its source a window at a time, so neither a file nor the archive is ever whole in memory (SEC-BOS-83: a share
+/// link's folder zip), then written to the target from that file. A file that cannot be read is left out and reported.
 fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let target = call.text_or_empty(0);
     let files: Vec<(String, String)> = entries_of(call.value_or_null(1))
         .iter()
         .map(|item| (text_field(item, "path"), text_field(item, "location")))
         .collect();
-    let mut failures = Vec::new();
-    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let mut count = 0i64;
-    let mut seen = std::collections::HashSet::new();
-    for (path, location) in files {
-        let path = path.trim_matches('/').to_string();
-        if path.is_empty() || path.split('/').any(|part| part == ".." || part == ".") || !seen.insert(path.clone()) {
-            failures.push((path, "bad or repeated path in the zip".to_string()));
-            continue;
-        }
-        let bytes = match with_ec(|ec| {
-            ec.factory()
-                .resource()
-                .get(&location)
-                .and_then(|found| found.read_bytes())
-        })? {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                tracing::error!(location = %location, "cannot read a file for a zip: {err}");
-                failures.push((path, err.message().to_string()));
-                continue;
-            }
-        };
-        let written = writer
-            .start_file(path.as_str(), options)
-            .map_err(|err| err.to_string())
-            .and_then(|()| writer.write_all(&bytes).map_err(|err| err.to_string()));
-        match written {
-            Ok(()) => count += 1,
-            Err(err) => return Err(HostError::message(format!("writing the zip: {err}"))),
+    let building = with_ec(|ec| ec.factory().resource().runtime_dir().join("tmp/drive-zip/.building"))?;
+    std::fs::create_dir_all(&building).map_err(|err| HostError::message(format!("writing the zip: {err}")))?;
+    let part = building.join(format!("{}-{}.part", std::process::id(), next_part_number()));
+    let written = write_zip_file(&part, files).and_then(|(count, failures)| {
+        let size = std::fs::metadata(&part)
+            .map_err(|err| HostError::message(format!("writing the zip: {err}")))?
+            .len();
+        let mut file =
+            std::fs::File::open(&part).map_err(|err| HostError::message(format!("writing the zip: {err}")))?;
+        with_resources(|resources| resources.write_from(&target, &mut file, Some(size)))?;
+        Ok((count, size, failures))
+    });
+    if let Err(err) = std::fs::remove_file(&part) {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(part = %part.display(), "a zip's part file was not removed: {err}");
         }
     }
-    let data = writer
-        .finish()
-        .map_err(|err| HostError::message(format!("writing the zip: {err}")))?
-        .into_inner();
-    let size = i64::try_from(data.len()).unwrap_or(i64::MAX);
-    with_resources(|resources| resources.write_bytes(&target, &data))?;
+    let (count, size, failures) = written?;
     let mut map = indexmap::IndexMap::default();
     map.insert("count".to_string(), Value::I64(count));
-    map.insert("size".to_string(), Value::I64(size));
+    map.insert("size".to_string(), Value::I64(i64::try_from(size).unwrap_or(i64::MAX)));
     map.insert(
         "failures".to_string(),
         Value::List(
@@ -911,6 +895,68 @@ fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
         ),
     );
     Ok(Ret::Value(Value::Map(map)))
+}
+
+/// A number for a zip's part file, distinct within the process.
+fn next_part_number() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The zip of `files` (`(path in the zip, location)`) written to the file at `part`, each source read as a stream: the
+/// entries written and the `(path, error)` of each left out (a bad or repeated path, a file that is not there or cannot
+/// be read).
+fn write_zip_file(
+    part: &std::path::Path,
+    files: Vec<(String, String)>,
+) -> Result<(i64, Vec<(String, String)>), HostError> {
+    let fail = |err: &dyn std::fmt::Display| HostError::message(format!("writing the zip: {err}"));
+    let file = std::fs::File::create(part).map_err(|err| fail(&err))?;
+    let mut writer = zip::ZipWriter::new(std::io::BufWriter::new(file));
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let mut failures = Vec::new();
+    let mut count = 0i64;
+    let mut seen = std::collections::HashSet::new();
+    for (path, location) in files {
+        let path = path.trim_matches('/').to_string();
+        if path.is_empty() || path.split('/').any(|part| part == ".." || part == ".") || !seen.insert(path.clone()) {
+            failures.push((path, "bad or repeated path in the zip".to_string()));
+            continue;
+        }
+        let opened = match with_ec(|ec| ec.factory().resource().open(&location))? {
+            Ok(Some(opened)) => opened,
+            Ok(None) => {
+                failures.push((path, format!("no file at {location}")));
+                continue;
+            }
+            Err(err) => {
+                tracing::error!(location = %location, "cannot read a file for a zip: {err}");
+                failures.push((path, err.message().to_string()));
+                continue;
+            }
+        };
+        let large = opened.stat.size > u64::from(u32::MAX);
+        writer
+            .start_file(path.as_str(), options.large_file(large))
+            .map_err(|err| fail(&err))?;
+        let mut reader = crate::resource::source::SourceReader::new(opened.source);
+        match std::io::copy(&mut reader, &mut writer) {
+            Ok(_) => count += 1,
+            Err(err) => {
+                tracing::error!(location = %location, "cannot read a file for a zip: {err}");
+                writer.abort_file().map_err(|err| fail(&err))?;
+                failures.push((path, err.to_string()));
+            }
+        }
+    }
+    writer
+        .finish()
+        .map_err(|err| fail(&err))?
+        .into_inner()
+        .map_err(|err| fail(&err))?
+        .sync_all()
+        .map_err(|err| fail(&err))?;
+    Ok((count, failures))
 }
 
 type GrantMac = Hmac<Sha256>;

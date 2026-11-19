@@ -2807,7 +2807,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="download" noun="PublicShare" authenticate="anonymous-all">
         <description>A file of a share to send (location, fileName, contentType), or for a folder (path empty: the whole
             share) a zip of it (location under runtime://tmp/drive-zip). The token is checked first, then the grant when
-            the link has a password. Refused for an upload-only link.
+            the link has a password. Refused for an upload-only link. A folder's zip (SEC-BOS-83) is counted, 20 in ten
+            minutes for a link and 30 for a requester ("too many downloads" past that), refused past a gigabyte or 20,000
+            files, and kept for the link while its files are unchanged, so asking again sends the same zip.
 
             The visitor of a public page has no user, and a file on the database tree is entity rows the visitor may not
             read, so a token route's transition does not send the location itself: with sendResponse true this service
@@ -2856,19 +2858,52 @@ along with this software (see the LICENSE.md file). If not, see
                 fileName = name
                 contentType = ec.resource.contentTypeOf(name) ?? 'application/octet-stream'
             } else {
+                // a folder's zip (SEC-BOS-83): counted by the link and by the requester before anything is read, as open#PublicShare
+                // counts password tries; at most a gigabyte in 20,000 files, refused past that rather than cut; and one zip kept
+                // for the link and the folder's files as they are, made again only when one changed (clean#DriveTempFiles
+                // removes it after a day). writeZip streams each file into a file, never the whole folder in memory.
+                const attempt = (key, limit) => ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
+                        .parameters({input: {key, limit, windowMillis: 600000}}).requireNewTransaction(true).disableAuthz().call().result.allowed
+                const requester = ec.resource.script('component://framework/service/org/moqui/public/Account.js').requesterKey()
+                if (!attempt('share-zip:share:' + row.shareId, 20) || !attempt('share-zip:ip:' + requester, 30)) {
+                    ec.message.addError(ec.l10n.localize('Too many downloads of this folder; wait a few minutes and try again'))
+                    return
+                }
+                const MAX_BYTES = 1024 * 1024 * 1024
+                const MAX_FILES = 20000
                 const entries = []
+                const marks = []
+                let bytes = 0
+                let tooLarge = false
                 const walk = (folder, zipPath, depth) => {
-                    if (entries.length >= 20000 || depth > 32) return
+                    if (tooLarge || depth > 32) return
                     for (const child of ec.resource.getChildChanges(folder)) {
                         if (child.name === '.gitkeep' || (folder === root && child.name === '.trash')) continue
                         const childZip = zipPath ? `${zipPath}/${child.name}` : child.name
-                        if (child.isFile) entries.push({path: childZip, location: `${folder}/${child.name}`})
-                        else walk(`${folder}/${child.name}`, childZip, depth + 1)
+                        if (child.isFile) {
+                            bytes += Number(child.size || 0)
+                            if (entries.length >= MAX_FILES || bytes > MAX_BYTES) { tooLarge = true; return }
+                            entries.push({path: childZip, location: `${folder}/${child.name}`})
+                            marks.push(`${childZip}\t${child.size ?? ''}\t${child.versionName ?? ''}\t${child.date ?? ''}`)
+                        } else walk(`${folder}/${child.name}`, childZip, depth + 1)
+                        if (tooLarge) return
                     }
                 }
                 walk(target, '', 0)
-                location = `runtime://tmp/drive-zip/${ec.user.randomString(16)}.zip`
-                ec.resource.writeZip(location, entries)
+                if (tooLarge) {
+                    ec.message.addError(ec.l10n.localize('This folder is too large to download as one zip; download its folders or files one at a time'))
+                    return
+                }
+                const key = ec.resource.digestText(`${row.shareId}\n${target}\n${marks.join('\n')}`, 'sha256')
+                location = `runtime://tmp/drive-zip/share-${key}.zip`
+                if (ec.resource.getLastChange(location) == null) {
+                    // made under its own name and then moved, so a download at the same time never reads a part-written zip
+                    const building = `runtime://tmp/drive-zip/${ec.user.randomString(16)}.zip`
+                    ec.resource.writeZip(building, entries)
+                    const built = ec.resource.getLocationReference(building)
+                    if (ec.resource.getLastChange(location) == null) built.move(location)
+                    else built.delete()
+                }
                 fileName = `${String(name).replace(/[\\/:*?"<>|]/g, '_')}.zip`
                 contentType = 'application/zip'
             }

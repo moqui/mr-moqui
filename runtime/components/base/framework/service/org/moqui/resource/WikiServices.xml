@@ -226,7 +226,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="WikiPageFile" allow-remote="false">
         <description>The file of a page at its exact path in its space: in the directory named as the root page without its
             extension, then the directories of the parent path, the file named as the page, with an extension or without
-            (move#WikiPage finds it the same way). Never a file of that name elsewhere in the space, as findChildFile's
+            (move#WikiPage finds it the same way), and only a file whose name less one extension is the page's name, so a
+            path that names a page's file with its extension (Restricted.md) is no page and an error (SEC-BOS-85). Never a file of that name elsewhere in the space, as findChildFile's
             search of the directory tree would find: a new top-level page Travel would write over Policies/Travel. When
             no file is there, the location a new page gets (with wikiType as its extension), exists false. A path with a
             . or .. segment, or with an _attachments one (a page's attachments are no page: one named .fancy would run as
@@ -276,18 +277,28 @@ along with this software (see the LICENSE.md file). If not, see
                 const name = parts.pop()
                 const dirLocation = [rootDir.replace(/\/+$/, '')].concat(parts).join('/')
                 const dir = ec.resource.getLocationReference(dirLocation)
+                // a file is a page's only when named as the page with one extension or none, as get#WikiPageChildren names
+                // a file's page: Restricted.md is page Restricted's file, never a page Restricted.md of its own whose
+                // record (none) and access rules are not Restricted's (SEC-BOS-85)
+                const pageNameOf = (fileName) => { const dot = String(fileName).lastIndexOf('.'); return dot > 0 ? String(fileName).substring(0, dot) : String(fileName) }
                 let found = null
                 // the usual names first, then the directory's files
                 for (const fileName of [name, `${name}.md`, `${name}.html`]) {
                     const direct = ec.resource.getLocationReference(`${dirLocation}/${fileName}`)
-                    if (direct.exists && direct.isFile()) { found = direct; break }
+                    if (direct.exists && direct.isFile() && pageNameOf(direct.fileName) === name) { found = direct; break }
                 }
                 if (found == null && dir.exists && dir.isDirectory()) {
                     const files = Array.from(dir.getDirectoryEntries()).filter((entry) => entry.isFile())
-                    found = files.find((entry) => entry.fileName === name) ||
-                            files.find((entry) => entry.fileName.replace(/\.[^.]*$/, '') === name) || null
+                    found = files.find((entry) => pageNameOf(entry.fileName) === name) || null
                 }
-                pageReference = found || ec.resource.getLocationReference(`${dirLocation}/${name}${wikiType ? '.' + wikiType : ''}`)
+                if (found == null) {
+                    const fallback = ec.resource.getLocationReference(`${dirLocation}/${name}${wikiType ? '.' + wikiType : ''}`)
+                    // the file of another page at the location a new page would get: no page of this name
+                    if (fallback.exists && fallback.isFile() && pageNameOf(fallback.fileName) !== name) {
+                        ec.message.addError(ec.l10n.localize('A page is named without its file\'s extension')); return }
+                    found = fallback
+                }
+                pageReference = found
             }
             pageLocation = pageReference.location
             exists = !!pageReference.exists
