@@ -38,6 +38,10 @@ const MAX_PERIODS: usize = 2_000_000;
 /// second would build 31.5 million date-times before any other limit applied. A period is built in order, so the
 /// candidates kept are its first ones; BYSETPOS then counts within them.
 const MAX_PERIOD_CANDIDATES: usize = MAX_INSTANCES;
+/// The most work one expansion does, its periods and their candidates together (SEC-FIL-85): with COUNT a rule is
+/// walked from DTSTART, so a range far after it would otherwise look at up to `MAX_PERIODS` periods of up to
+/// `MAX_PERIOD_CANDIDATES` each. Past it the expansion ends with what it found, logged.
+const MAX_EXPAND_WORK: usize = 4_000_000;
 /// Without COUNT, UNTIL or the end of a range, the instances given.
 pub(crate) const OPEN_ENDED_INSTANCES: usize = 1_000;
 
@@ -265,6 +269,26 @@ impl Rule {
         rule.by_second.sort_unstable();
         rule.by_second.dedup();
         Ok(rule)
+    }
+}
+
+/// The longest RRULE text a calendar file's event keeps: a real rule is a few dozen bytes, one that lists every hour,
+/// minute and second a few hundred.
+const MAX_RULE_TEXT: usize = 2048;
+
+/// `text` when it is a rule this module expands, else None, logged: what a calendar file read (a DAV PUT, an import,
+/// a subscribed feed) gives to be stored never holds a rule that fails at every read of a range (SEC-FIL-85).
+pub(crate) fn checked(text: String) -> Option<String> {
+    if text.len() > MAX_RULE_TEXT {
+        tracing::warn!("a calendar event's RRULE is longer than {MAX_RULE_TEXT} bytes; it was left out");
+        return None;
+    }
+    match Rule::parse(&text) {
+        Ok(_) => Some(text),
+        Err(err) => {
+            tracing::warn!("a calendar event's RRULE was left out: {err}");
+            None
+        }
     }
 }
 
@@ -632,6 +656,18 @@ pub(crate) fn expand(
     range_end: Option<Timestamp>,
     limit: usize,
 ) -> Vec<Timestamp> {
+    expand_within(rule, dtstart, tz, (range_start, range_end), limit, MAX_EXPAND_WORK)
+}
+
+/// [`expand`] doing at most `work` periods and candidates together.
+fn expand_within(
+    rule: &Rule,
+    dtstart: Timestamp,
+    tz: &TimeZone,
+    (range_start, range_end): (Option<Timestamp>, Option<Timestamp>),
+    limit: usize,
+    work: usize,
+) -> Vec<Timestamp> {
     let start = dtstart.to_zoned(tz.clone()).datetime();
     let plan = Plan::new(rule, start);
     let in_range = |at: Timestamp| range_start.is_none_or(|from| at >= from) && range_end.is_none_or(|to| at <= to);
@@ -664,9 +700,17 @@ pub(crate) fn expand(
     }
     let end_local = range_end.map(|to| to.to_zoned(tz.clone()).datetime());
     let mut empty_periods = 0;
+    let mut done = 0usize;
     for _ in 0..MAX_PERIODS {
         let Some(candidates) = plan.period(index) else { break };
         index += rule.interval;
+        done = done.saturating_add(candidates.len() + 1);
+        if done > work {
+            tracing::warn!(
+                "a recurrence rule took more than {work} periods and candidates to expand; it was cut there"
+            );
+            break;
+        }
         if candidates.is_empty() {
             empty_periods += 1;
             // a rule that gives nothing for a long time (BYMONTHDAY=30;BYMONTH=2) has ended

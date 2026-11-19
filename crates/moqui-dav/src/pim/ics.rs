@@ -355,7 +355,8 @@ fn event(reader: &Reader<'_>, component: &Component) -> moqui_lib::object::Value
             component
                 .first("RRULE")
                 .map(|rule| rule.value.trim().to_string())
-                .filter(|rule| !rule.is_empty()),
+                .filter(|rule| !rule.is_empty())
+                .and_then(|rule| rrule::checked(rule)),
         ),
     );
     out.insert(

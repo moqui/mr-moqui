@@ -402,6 +402,29 @@ fn rules_parse_and_refuse() {
     assert!(Rule::parse("COUNT=3").unwrap_err().contains("not an RRULE"));
 }
 
+/// SEC-FIL-85: one expansion does at most its work of periods and candidates: a COUNT rule walked from DTSTART to a
+/// range far after it stops at the budget with what it found, and finds the range's instances within it. A rule a
+/// calendar file holds is kept only when it parses and is not overlong.
+#[test]
+fn an_expansion_stops_at_its_work_budget_and_a_stored_rule_is_checked() {
+    let utc = TimeZone::UTC;
+    let rule = Rule::parse("FREQ=DAILY;COUNT=100000").unwrap();
+    let dtstart = at(&utc, "20260101T090000");
+    let range = (Some(at(&utc, "20280101T000000")), Some(at(&utc, "20280110T000000")));
+    let found = expand_within(&rule, dtstart, &utc, range, MAX_INSTANCES, 10_000);
+    assert_eq!(found.len(), 9, "within the budget: {found:?}");
+    let cut = expand_within(&rule, dtstart, &utc, range, MAX_INSTANCES, 500);
+    assert!(cut.is_empty(), "past the budget: {cut:?}");
+    assert_eq!(expand(&rule, dtstart, &utc, range.0, range.1, MAX_INSTANCES), found);
+
+    assert_eq!(
+        checked("FREQ=WEEKLY;BYDAY=MO".to_string()).as_deref(),
+        Some("FREQ=WEEKLY;BYDAY=MO")
+    );
+    assert_eq!(checked("FREQ=FORTNIGHTLY".to_string()), None);
+    assert_eq!(checked(format!("FREQ=DAILY;BYHOUR={}", ["1"; 1100].join(","))), None);
+}
+
 /// SEC-FIL-85: one period gives at most `MAX_PERIOD_CANDIDATES` date-times, its first, so a yearly rule of every
 /// weekday, hour, minute and second builds 100,000 of them, not 31.5 million; a period under the limit (every quarter
 /// hour of a year, 35,040) is built whole. A BYxxx list given many times over is kept once.
