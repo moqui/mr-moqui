@@ -46,7 +46,10 @@ fn an_alert_opens_an_incident_only_for_an_owner_who_holds_monitor_incident() {
                 ],
             );
         }
-        make("moqui.security.UserGroup", &[("userGroupId", Value::string("INC_GROUP"))]);
+        make(
+            "moqui.security.UserGroup",
+            &[("userGroupId", Value::string("INC_GROUP"))],
+        );
         let from = Value::Timestamp(jiff::Timestamp::UNIX_EPOCH);
         make(
             "moqui.security.UserGroupMember",

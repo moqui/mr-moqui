@@ -302,7 +302,10 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("the search backend is attached at boot"),
     )
     // read at each search
-    .attrs(&[("query-timeout-seconds", Class::Live), ("query-max-clauses", Class::Live)])
+    .attrs(&[
+        ("query-timeout-seconds", Class::Live),
+        ("query-max-clauses", Class::Live),
+    ])
     .children(&[
         single("cluster", Class::Restart("the search backend is attached at boot"))
             .secrets(&[("password", Secret::Kept)]),

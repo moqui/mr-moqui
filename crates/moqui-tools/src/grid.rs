@@ -1893,7 +1893,10 @@ pub fn save(
     let entity = definition(facade, entity_name)?;
     // the entity audit log and Monitor's recovery and ingest rows: read here, written only by their own services
     if !sensitive::generic_access(facade, &entity.full_name).write {
-        return Err(refusal(format!("{} is written only by its own services", entity.full_name)));
+        return Err(refusal(format!(
+            "{} is written only by its own services",
+            entity.full_name
+        )));
     }
     // a data document's definition holds expressions that run as whoever reads the document: changed on its own
     // screens, not by any Tools viewer through the grid

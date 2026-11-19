@@ -1135,7 +1135,12 @@ fn scheduled_runs_run_as_the_owner(
         .unwrap();
     field.set("valueMapId", Value::string("EtlHostOtherMap"));
     field.update(facade).unwrap();
-    etl_job(facade, "EtlHostMappedJob", "EX_JOHN_DOE", &[("mappingId", "EtlHostMapped")]);
+    etl_job(
+        facade,
+        "EtlHostMappedJob",
+        "EX_JOHN_DOE",
+        &[("mappingId", "EtlHostMapped")],
+    );
     let job_run = run_without_user(factory, "EtlHostMappedJob");
     let errors = job_run_errors(facade, &job_run);
     assert!(errors.contains("which is not its owner's"), "{errors}");

@@ -66,7 +66,9 @@ fn steward_of(id: &str) -> Result<(), Error> {
 fn reads_document(ec: &ExecutionContext, document: &str) -> Result<bool, Error> {
     let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
         .map_err(fail)?;
-    Ok(document_groups(ec, document)?.iter().any(|group| groups.contains(group)))
+    Ok(document_groups(ec, document)?
+        .iter()
+        .any(|group| groups.contains(group)))
 }
 
 /// The groups that read `document`: its `DataDocumentUserGroup` rows.

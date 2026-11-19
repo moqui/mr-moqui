@@ -683,7 +683,9 @@ fn bounded_query(tx: &TransactionManager, sql: &Sql) -> Result<Vec<DbRow>, Error
                         .map(|(_, value)| to_plain_string(value))
                         .and_then(|value| value.trim().parse::<u128>().ok());
                     let ours = timeout.as_millis().max(1);
-                    let armed = earlier.filter(|earlier| *earlier > 0).map_or(ours, |earlier| earlier.min(ours));
+                    let armed = earlier
+                        .filter(|earlier| *earlier > 0)
+                        .map_or(ours, |earlier| earlier.min(ours));
                     connection.execute(&format!("SET LOCAL statement_timeout = '{armed}'"), &[])?;
                     let rows = connection.query(&sql.text, &sql.params)?;
                     match earlier {

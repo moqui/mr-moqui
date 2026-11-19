@@ -223,8 +223,8 @@ pub fn replay_take(bridge_id: &str, signature: &str) -> Result<Replay, String> {
     // table's, so a webhook sent again to another cluster member is a replay there too (SEC-DAT-90)
     let held = replay_cache()?.info().expire_live_ms;
     let held = if held > 0 { held } else { 600_000 };
-    let taken =
-        crate::service::replay_store::take(&replay_key(bridge_id, signature), held).map_err(|error| error.to_string())?;
+    let taken = crate::service::replay_store::take(&replay_key(bridge_id, signature), held)
+        .map_err(|error| error.to_string())?;
     Ok(match taken {
         crate::service::replay_store::Taken::New => Replay::New,
         crate::service::replay_store::Taken::Working => Replay::Working,

@@ -210,8 +210,7 @@ fn sign_in_owner(facade: &EntityFacade, mapping_id: &str, job_name: &str) -> Res
             .list()?
             .iter()
         {
-            let Some(value_map_id) = field.get("valueMapId").map(to_plain_string).filter(|id| !id.is_empty())
-            else {
+            let Some(value_map_id) = field.get("valueMapId").map(to_plain_string).filter(|id| !id.is_empty()) else {
                 continue;
             };
             let map_owner = facade
@@ -272,7 +271,9 @@ fn may_act_as(facade: &EntityFacade, actor: &str, owner: &str) -> Result<bool, L
         return Ok(false);
     }
     Ok(moqui_core::user::has_permission("ADMIN_LOGIN_AS").unwrap_or(false)
-        && moqui_core::user::held_beyond(owner).map_err(|err| LibError::new(err.to_string()))?.is_none())
+        && moqui_core::user::held_beyond(owner)
+            .map_err(|err| LibError::new(err.to_string()))?
+            .is_none())
 }
 
 /// [`may_change_owned`] of a saved mapping.

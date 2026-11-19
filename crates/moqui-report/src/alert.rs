@@ -365,14 +365,20 @@ fn contact_refusal(contact: &Json, owner: &str) -> Result<Option<String>, Error>
         return Ok(None);
     }
     if let Some(topic) = contact.get("topic").filter(|topic| !topic.is_null()) {
-        if !topic.as_str().is_some_and(|topic| alert_topics().iter().any(|allowed| allowed == topic)) {
+        if !topic
+            .as_str()
+            .is_some_and(|topic| alert_topics().iter().any(|allowed| allowed == topic))
+        {
             return Ok(Some(format!(
                 "ALERT_TOPIC_UNAVAILABLE: a notification contact posts under {}",
                 alert_topics().join(" or ")
             )));
         }
     }
-    if let Some(user) = contact["userId"].as_str().filter(|user| !user.is_empty() && *user != owner) {
+    if let Some(user) = contact["userId"]
+        .as_str()
+        .filter(|user| !user.is_empty() && *user != owner)
+    {
         if moqui_core::user::authorize_own("AT_SERVICE", super::delivery::GROUP_ARTIFACT, "create").is_err() {
             return Ok(Some(format!(
                 "GROUP_DELIVERY_DENIED: notifying {user} needs the group delivery grant"

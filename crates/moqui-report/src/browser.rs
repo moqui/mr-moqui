@@ -175,7 +175,11 @@ impl UserReplayBytes {
                 entries.remove(&oldest);
             }
         }
-        let entry = entries.entry(user.into()).or_insert(Spending { hour, bytes: 0, last: now });
+        let entry = entries.entry(user.into()).or_insert(Spending {
+            hour,
+            bytes: 0,
+            last: now,
+        });
         if entry.bytes.saturating_add(bytes) > max {
             return Err(Error::new("this user's replays reached their size limit for the hour"));
         }
@@ -205,7 +209,12 @@ fn first_chunks(hits: &[moqui_core::search::SearchHit]) -> Vec<&moqui_core::sear
     };
     let mut first: HashMap<String, (i64, usize)> = HashMap::new();
     for (index, hit) in hits.iter().enumerate() {
-        let id = hit.body.get("replay_id").and_then(Value::as_str).unwrap_or_default().to_string();
+        let id = hit
+            .body
+            .get("replay_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let at = received(hit);
         first
             .entry(id)
@@ -217,7 +226,11 @@ fn first_chunks(hits: &[moqui_core::search::SearchHit]) -> Vec<&moqui_core::sear
             .or_insert((at, index));
     }
     let kept: std::collections::HashSet<usize> = first.values().map(|(_, index)| *index).collect();
-    hits.iter().enumerate().filter(|(index, _)| kept.contains(index)).map(|(_, hit)| hit).collect()
+    hits.iter()
+        .enumerate()
+        .filter(|(index, _)| kept.contains(index))
+        .map(|(_, hit)| hit)
+        .collect()
 }
 
 /// The chunks of one replay that are its owner's: the session (user and visit) of its first chunk, by seq and then by
@@ -277,10 +290,7 @@ fn receive_browser(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
     };
     let refused = scrub(signal, &mut json, &identity, MAX_RECORDS);
     // a token route's or token path's token is its credential: a page URL, span name or log body has `:token` instead
-    moqui_core::screen::token_route::redact_json(
-        &moqui_core::screen::token_route::redaction(ec.factory()),
-        &mut json,
-    );
+    moqui_core::screen::token_route::redact_json(&moqui_core::screen::token_route::redaction(ec.factory()), &mut json);
     let telemetry = moqui_core::telemetry::for_factory(ec.factory());
     if !telemetry.accepting() {
         return Err(Error::new("telemetry is disabled"));
