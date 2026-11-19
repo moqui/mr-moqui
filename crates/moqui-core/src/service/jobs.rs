@@ -1012,9 +1012,10 @@ pub(crate) fn run_job(job: JobRun) {
         disable_authz: true,
         timeout: Some(job.timeout),
         operation_retry: job.retries,
-        // the service a stored row names, run with authorization off: an entity-auto one is refused where a generic
-        // write is (plans/Security-Review-Medium.md SEC-TLS-85)
-        generic: true,
+        // the service a job row names, run with authorization off: an entity-auto one is refused where a generic write
+        // is (plans/Security-Review-Medium.md SEC-TLS-85). A queued call the service queue spilled into a row
+        // (persist_queued, QUEUE_PREFIX) is the framework's own call, as it was before it was queued.
+        generic: !job.job_name.starts_with(QUEUE_PREFIX),
         ..CallOptions::default()
     };
     // The job's time bounds its scripts even when the service begins no transaction; a transaction inside keeps the
