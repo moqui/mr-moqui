@@ -1519,6 +1519,12 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:sequence>
         <xs:attribute name="backend" type="xs:string" default="postgres"><xs:annotation><xs:documentation>
             postgres or opensearch.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="query-timeout-seconds" type="xs:positiveInteger" default="10"><xs:annotation><xs:documentation>
+            How long one search statement (postgres) or request (opensearch) may run when no report's own limit is
+            in force; a search past it fails.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="query-max-clauses" type="xs:positiveInteger" default="64"><xs:annotation><xs:documentation>
+            The most terms (words, phrases and ranges) a query string may hold; a longer one is refused before it
+            runs.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
 
     <!-- ===================== LLM Facade Conf Root ===================== -->

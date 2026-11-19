@@ -985,9 +985,9 @@ impl OpenSearchBackend {
     /// hits, total, and aggregations miss those shards' documents, and no caller can tell.
     fn searched(&self, path: &str, body: Json) -> Result<Json, Error> {
         let mut body = body;
-        if let Some(timeout) = super::limits::remaining()? {
-            body["timeout"] = json!(format!("{}ms", timeout.as_millis().max(1)));
-        }
+        // a report's budget, else the search's own time limit (SEC-DAT-84)
+        let timeout = super::limits::remaining()?.unwrap_or_else(super::limits::search_timeout);
+        body["timeout"] = json!(format!("{}ms", timeout.as_millis().max(1)));
         let response = self.checked("POST", path, Some(Body::Json(body)))?;
         if response["timed_out"] == true {
             return Err(Error::new("report query timeout exceeded"));

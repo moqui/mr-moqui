@@ -365,3 +365,91 @@ fn a_day_partitioned_table_conflicts_on_its_key_and_does_not_set_it() {
     assert!(!statement.contains(r#""f_start" = EXCLUDED"#), "{statement}");
     assert!(statement.contains(r#""f_name" = EXCLUDED."f_name""#), "{statement}");
 }
+
+/// A database with no rows that records the statements it is sent.
+struct Recording(Arc<std::sync::Mutex<Vec<String>>>);
+
+struct RecordingConn(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl crate::driver::DbDriver for Recording {
+    fn connect(&self) -> Result<Box<dyn crate::driver::DbConnection>, Error> {
+        Ok(Box::new(RecordingConn(Arc::clone(&self.0))))
+    }
+}
+
+impl crate::driver::DbConnection for RecordingConn {
+    fn execute(&mut self, sql: &str, _params: &[Value]) -> Result<u64, Error> {
+        lock(&self.0).push(sql.to_string());
+        Ok(0)
+    }
+    fn query(&mut self, sql: &str, _params: &[Value]) -> Result<Vec<DbRow>, Error> {
+        lock(&self.0).push(sql.to_string());
+        Ok(Vec::new())
+    }
+    fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
+        self.query(sql, params)
+    }
+    fn open_stream(&mut self, _sql: &str, _params: &[Value]) -> Result<(), Error> {
+        Ok(())
+    }
+    fn next_row(&mut self) -> Result<Option<DbRow>, Error> {
+        Ok(None)
+    }
+    fn close_stream(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn stream_open(&self) -> bool {
+        false
+    }
+    fn begin(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn commit(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn savepoint(&mut self, _name: &str) -> Result<(), Error> {
+        Ok(())
+    }
+    fn rollback_to_savepoint(&mut self, _name: &str) -> Result<(), Error> {
+        Ok(())
+    }
+    fn release_savepoint(&mut self, _name: &str) -> Result<(), Error> {
+        Ok(())
+    }
+    fn canceller(&self) -> Box<dyn crate::driver::DbCancel> {
+        Box::new(NoCancel)
+    }
+}
+
+/// SEC-DAT-84: a search statement outside a report's budget runs under the search's own statement timeout
+/// (search-facade@query-timeout-seconds, 10 by default), put back after it.
+#[test]
+fn a_search_statement_runs_under_its_own_time_limit() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let tx = TransactionManager::new(
+        Arc::new(Recording(Arc::clone(&seen))),
+        crate::transaction::PoolConfig {
+            min: 0,
+            max: 2,
+            reserve: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let sql = super::compile::Sql {
+        text: "SELECT 1".to_string(),
+        params: Vec::new(),
+    };
+    super::bounded_query(&tx, &sql).unwrap();
+    assert_eq!(
+        *lock(&seen),
+        [
+            "SET LOCAL statement_timeout = '10000'",
+            "SELECT 1",
+            "SET LOCAL statement_timeout TO DEFAULT"
+        ]
+    );
+}

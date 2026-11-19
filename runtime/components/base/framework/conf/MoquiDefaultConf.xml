@@ -864,7 +864,9 @@
         embedded cluster when the entity database is not Postgres) or opensearch (the cluster below). With no postgres
         element the postgres backend uses the search schema of the entity Postgres; a postgres element with a url points
         it at another Postgres. -->
-    <search-facade backend="postgres">
+    <!-- query-timeout-seconds: how long one search statement may run outside a report's own budget; query-max-clauses:
+        the most terms a query string may hold. -->
+    <search-facade backend="postgres" query-timeout-seconds="10" query-max-clauses="64">
         <!-- The OpenSearch (or ElasticSearch 7+) cluster of the opensearch backend, and of the SearchProxy servlet.
             run: on the opensearch backend, when the url is this host and nothing answers there, start the install in
             runtime/opensearch (unless it has a pid file, a node run outside the server) and stop it on shutdown; false

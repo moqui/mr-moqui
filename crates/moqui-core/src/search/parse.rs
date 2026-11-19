@@ -43,6 +43,17 @@ use super::query::{Query, TextFields, TextMatch};
 /// Returns an error naming the clause that is not in the supported subset.
 pub fn parse_query_string(input: &str) -> Result<Query, Error> {
     let tokens = tokenize(input)?;
+    // each clause is a condition the backend runs, a wildcard one on every field served by no index (SEC-DAT-84)
+    let clauses = tokens
+        .iter()
+        .filter(|(token, _)| matches!(token, Token::Word { .. } | Token::Range { .. }))
+        .count();
+    let max = super::limits::max_clauses();
+    if clauses > max {
+        return Err(Error::new(format!(
+            "the query has {clauses} terms; a query string takes at most {max}"
+        )));
+    }
     let mut parser = Parser { tokens, pos: 0, input };
     let query = parser.query(None, 0)?;
     if parser.pos < parser.tokens.len() {
@@ -549,6 +560,20 @@ mod tests {
             fields: field.map_or(TextFields::All, |name| TextFields::Only(vec![name.into()])),
             kind,
         }
+    }
+
+    /// SEC-DAT-84: a query string holds at most search-facade@query-max-clauses terms (64 by default).
+    #[test]
+    fn a_query_string_past_the_clause_limit_is_refused() {
+        let words = |count: usize| {
+            (0..count)
+                .map(|index| format!("*w{index}*"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        parse(&words(64));
+        let refused = parse_query_string(&words(65)).unwrap_err();
+        assert!(refused.message().contains("at most 64"), "{refused}");
     }
 
     #[test]

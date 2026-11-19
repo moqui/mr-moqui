@@ -669,7 +669,22 @@ impl PostgresBackend {
 
 fn bounded_query(tx: &TransactionManager, sql: &Sql) -> Result<Vec<DbRow>, Error> {
     match super::limits::remaining()? {
-        None => tx.with_connection(|connection| connection.query(&sql.text, &sql.params)),
+        // no report's budget: the search's own time limit, set for this statement in the transaction it runs in and
+        // put back after it (SEC-DAT-84); a contains or wildcard word on all fields is served by no index
+        None => {
+            let timeout = super::limits::search_timeout();
+            tx.run(TransactionAttribute::UseOrBegin, Some(timeout), || {
+                tx.with_connection(|connection| {
+                    connection.execute(
+                        &format!("SET LOCAL statement_timeout = '{}'", timeout.as_millis().max(1)),
+                        &[],
+                    )?;
+                    let rows = connection.query(&sql.text, &sql.params)?;
+                    connection.execute("SET LOCAL statement_timeout TO DEFAULT", &[])?;
+                    Ok(rows)
+                })
+            })
+        }
         Some(timeout) => tx.run(TransactionAttribute::ForceNew, Some(timeout), || {
             tx.with_connection(|connection| {
                 connection.execute(
