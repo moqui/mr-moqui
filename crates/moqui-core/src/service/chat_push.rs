@@ -64,7 +64,7 @@ use crate::notify::push_crypto;
 #[path = "chat_push_transport.rs"]
 mod transport;
 use transport::transport;
-pub use transport::{set_transport, web_outcome, Provider, PushTransport, Sent, WebPost, SLOW_SEND};
+pub use transport::{set_transport, web_outcome, Provider, PushTransport, Sent, WebPost, SLOW_SEND, USER_ROUND_BUDGET};
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -1129,8 +1129,18 @@ fn deliver_due(
         .limit(PUSHES_PER_ROUND)
         .disable_authz()
         .list()?;
+    // each recipient's pushes take at most the transport's budget of the round; the rest of a user's wait for the next
+    // round (SEC-COM-81)
+    let mut spent = UserBudget::new(transport.user_round_budget());
     for row in rows.values() {
-        match deliver_one(facade, transport, row, node, now) {
+        let user = text_of(row, "userId").unwrap_or_default();
+        if spent.exhausted(&user) {
+            continue;
+        }
+        let started = std::time::Instant::now();
+        let step = deliver_one(facade, transport, row, node, now);
+        spent.add(&user, started.elapsed());
+        match step {
             Ok(Step::Sent) => report.sent += 1,
             Ok(Step::Retried) => report.retried += 1,
             Ok(Step::Failed) => report.failed += 1,
@@ -1143,6 +1153,30 @@ fn deliver_due(
         }
     }
     Ok(())
+}
+
+/// The time each user's pushes took of a delivery round, against a budget per user.
+pub(crate) struct UserBudget {
+    budget: std::time::Duration,
+    spent: std::collections::HashMap<String, std::time::Duration>,
+}
+
+impl UserBudget {
+    pub(crate) fn new(budget: std::time::Duration) -> Self {
+        Self {
+            budget,
+            spent: std::collections::HashMap::new(),
+        }
+    }
+
+    pub(crate) fn add(&mut self, user: &str, took: std::time::Duration) {
+        *self.spent.entry(user.to_string()).or_default() += took;
+    }
+
+    /// Whether `user`'s pushes have taken the whole budget of this round.
+    pub(crate) fn exhausted(&self, user: &str) -> bool {
+        self.spent.get(user).is_some_and(|spent| *spent >= self.budget)
+    }
 }
 
 /// The FCM `messages:send` body of a chat push: a data message of its kind (`chat` or `clear`) and `pushId`, the

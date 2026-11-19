@@ -882,6 +882,59 @@ fn a_user_keeps_ten_browser_subscriptions_and_one_test_push_at_a_time() {
     };
     assert_eq!(test(11), "");
     assert_eq!(test(10), "tooSoon");
+    // an endpoint stored again keeps its failures: one disabled for them stays disabled, one short of them is still
+    // counting
+    let stored = |n: usize| {
+        let row = rows(&bed.facade, DEVICE, &[("userId", "carol")])
+            .into_iter()
+            .find(|row| field(row, "endpoint") == endpoint(n))
+            .unwrap();
+        (
+            count_of(&row, "failureCount"),
+            millis_of(&row, "disabledDate").is_some(),
+        )
+    };
+    let store = |n: usize| {
+        ok(
+            "org.moqui.ui.NotificationServices.store#WebPushSubscription",
+            &[
+                ("endpoint", text(&endpoint(n))),
+                ("p256dhKey", text(UA_PUBLIC)),
+                ("authSecret", text(AUTH)),
+            ],
+        );
+    };
+    let failing = |n: usize, failures: i64, disabled: bool| {
+        let hash = super::super::web_push::endpoint_hash(&endpoint(n));
+        update(
+            &bed.facade,
+            DEVICE,
+            &[("endpointHash", hash.as_str())],
+            &[
+                ("failureCount", Value::I64(failures)),
+                ("disabledDate", if disabled { stamp(bed.now) } else { Value::Null }),
+            ],
+        );
+    };
+    failing(11, super::super::web_push::MAX_FAILURES, true);
+    failing(10, 3, false);
+    store(11);
+    store(10);
+    assert_eq!(stored(11), (super::super::web_push::MAX_FAILURES, true));
+    assert_eq!(stored(10), (3, false));
+}
+
+/// SEC-COM-81: a delivery round gives each user's pushes at most a budget of its time; that user's other pushes wait
+/// for the next round, so the endpoints one user names do not hold the others'.
+#[test]
+fn each_user_has_a_budget_of_a_delivery_round() {
+    let mut spent = UserBudget::new(std::time::Duration::from_millis(100));
+    assert!(!spent.exhausted("mallory"));
+    spent.add("mallory", std::time::Duration::from_millis(60));
+    assert!(!spent.exhausted("mallory"));
+    spent.add("mallory", std::time::Duration::from_millis(60));
+    assert!(spent.exhausted("mallory") && !spent.exhausted("ann"));
+    assert!(USER_ROUND_BUDGET > SLOW_SEND);
 }
 
 /// A message lives 4 weeks with the room's collapse key at high priority; one not taken by then fails.
