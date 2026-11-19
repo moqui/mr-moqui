@@ -146,6 +146,63 @@ impl SessionRate {
     }
 }
 
+/// The replay bytes each user sent this hour, for at most 4096 users an hour: one session cannot fill the replay index
+/// under fresh replay ids (SEC-TLS-110).
+#[derive(Default)]
+struct UserReplayBytes(Mutex<HashMap<String, (i64, u64)>>);
+
+impl UserReplayBytes {
+    fn charge(&self, user: &str, bytes: u64, max: u64) -> Result<(), Error> {
+        let hour = moqui_core::user::now_millis() / 3_600_000;
+        let mut entries = moqui_lib::sync::lock(&self.0);
+        entries.retain(|_, (at, _)| *at == hour);
+        if entries.len() >= 4096 && !entries.contains_key(user) {
+            return Err(Error::new("too many replays are being recorded this hour"));
+        }
+        let entry = entries.entry(user.into()).or_insert((hour, 0));
+        if entry.1.saturating_add(bytes) > max {
+            return Err(Error::new("this user's replays reached their size limit for the hour"));
+        }
+        entry.1 += bytes;
+        Ok(())
+    }
+}
+
+/// The part of a replay chunk's document id that names its session: a chunk another session sends under the same
+/// replay id and seq is a document of its own, never one that replaces the owner's (SEC-TLS-110).
+fn owner_tag(owner: &str) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(owner.as_bytes())
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The chunks of one replay that are its owner's: the session (user and visit) of its first chunk, by seq and then by
+/// when the server received it. A chunk another session sent under the same id is left out (SEC-TLS-110).
+fn owners_chunks(hits: &[moqui_core::search::SearchHit]) -> Vec<&moqui_core::search::SearchHit> {
+    let session = |hit: &moqui_core::search::SearchHit| {
+        (
+            hit.body.get("user.id").cloned().unwrap_or(Value::Null),
+            hit.body.get("moqui.visit.id").cloned().unwrap_or(Value::Null),
+        )
+    };
+    let number = |hit: &moqui_core::search::SearchHit, name: &str| match hit.body.get(name) {
+        Some(Value::I64(number)) => *number,
+        Some(Value::I32(number)) => i64::from(*number),
+        _ => 0,
+    };
+    let Some(first) = hits
+        .iter()
+        .min_by_key(|hit| (number(hit, "seq"), number(hit, "received")))
+    else {
+        return Vec::new();
+    };
+    let owner = session(first);
+    hits.iter().filter(|hit| session(hit) == owner).collect()
+}
+
 fn service_name(ec: &ExecutionContext) -> String {
     match setting(ec, "service-name") {
         name if !name.is_empty() => name,
@@ -287,6 +344,12 @@ fn receive_replay(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     moqui_core::screen::token_route::redact_json(&token_routes, &mut chunk["events"]);
     moqui_core::screen::token_route::redact_json(&token_routes, &mut chunk["url"]);
     let events = serde_json::to_vec(&chunk["events"]).map_err(|error| Error::new(error.to_string()))?;
+    ec.factory().extension(|_| UserReplayBytes::default()).charge(
+        &user,
+        events.len() as u64,
+        ec.factory()
+            .conf_number(BROWSER, "replay-user-bytes-per-hour", 52_428_800_u64),
+    )?;
     ec.factory().extension(|_| ReplayBudget::default()).charge(
         &replay,
         &format!("{user}/{visit}"),
@@ -309,7 +372,11 @@ fn receive_replay(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         .map(Value::string)
         .collect();
     let mut document = Document::from_iter([
-        ("_id".into(), Value::String(format!("{replay}-{seq:06}"))),
+        (
+            "_id".into(),
+            Value::String(format!("{replay}-{}-{seq:06}", owner_tag(&format!("{user}/{visit}")))),
+        ),
+        ("received".into(), Value::I64(now)),
         ("replay_id".into(), Value::string(&replay)),
         ("seq".into(), Value::I64(seq as i64)),
         ("start".into(), Value::I64(start)),
@@ -407,10 +474,11 @@ fn get_replay(_ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Re
     }];
     request.limit = 2000;
     let page = search::current()?.search(&Target::Index(REPLAYS.into()), &request)?;
-    tracing::info!(replay, viewer, chunks = page.hits.len(), "session replay viewed");
+    let hits = owners_chunks(&page.hits);
+    tracing::info!(replay, viewer, chunks = hits.len(), "session replay viewed");
     let mut events = Vec::new();
     let mut traces = Vec::new();
-    for hit in &page.hits {
+    for hit in &hits {
         let packed = hit.body.get("events").and_then(Value::as_str).unwrap_or("");
         let unpacked = base64::engine::general_purpose::STANDARD
             .decode(packed)
@@ -435,10 +503,9 @@ fn get_replay(_ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Re
             traces.extend(ids.iter().cloned());
         }
     }
-    let first = page.hits.first().map(|hit| &hit.body);
+    let first = hits.first().map(|hit| &hit.body);
     let field = |name: &str| first.and_then(|body| body.get(name)).cloned().unwrap_or(Value::Null);
-    let end = page
-        .hits
+    let end = hits
         .last()
         .and_then(|hit| hit.body.get("end"))
         .cloned()

@@ -392,6 +392,9 @@
         <operations record="default" max-names="500">
             <operation service="org\.moqui\..*" record="false"/>
         </operations>
+        <!-- Browser telemetry (off unless enabled): replay-user-bytes-per-hour holds the replay bytes one user sends an
+             hour, whatever replay ids the page picks. -->
+        <browser replay-user-bytes-per-hour="52428800"/>
     </telemetry>
     <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
          spans are written inside a trace, so a scheduler poll or a data load writes none; so are transaction spans

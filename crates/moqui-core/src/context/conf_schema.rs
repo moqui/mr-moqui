@@ -185,6 +185,8 @@ pub static CATALOG: &[Unit] = &[
         keyed("artifact", &["type"], TELEMETRY),
         keyed("metric", &["name"], TELEMETRY),
         single("operations", TELEMETRY).children(&[keyed("operation", &["service"], TELEMETRY)]),
+        // read on each post (moqui-report browser.rs)
+        single("browser", Class::Live),
     ]),
     // only read at boot for deprecation warnings
     single("server-stats", Class::Live).children(&[keyed("artifact-stats", &["type", "sub-type"], Class::Live)]),
