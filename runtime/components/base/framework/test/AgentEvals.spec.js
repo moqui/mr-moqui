@@ -116,3 +116,12 @@ feature("an agent experiment's runs have no policy approval unless the starter a
  then({held,allowed,saved}){held.length==3;held.every(c=>!c.includes('approval.policy'));allowed.length==3;allowed.every(c=>c.includes('approval.policy'))
   JSON.parse(saved.metadataJson).runUserId!=null},
 })
+// SEC-AI-96: a run that does not start fails its result and the experiment ends; the start's error is not left on the
+// message to refuse the write that records it, which kept the experiment running for ever
+feature("an agent experiment whose runs do not start ends failed",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  call('create#moqui.agent.AgentDefinition',{agentId:'EVAL_T_DRAWER',agentName:'Drawer only',surfaces:'drawer'})
+  const started=call(S+'start#Experiment',{datasetId:'EVAL_T_DS',agentId:'EVAL_T_DRAWER',trials:1})
+  return{e:one('moqui.agent.AgentExperiment',{experimentId:started.experimentId}),results:list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId})}},
+ then({e,results}){e.statusId=='EvFailed';results.length==3;results.every(r=>r.statusId==='EvrFailed'&&r.errorText.includes('does not serve'))},
+})

@@ -4,7 +4,11 @@ const P='moqui.agent.'
 const find=(n,c={})=>ec.entity.find(P+n).condition(c).disableAuthz(),one=(n,c)=>find(n,c).one(),rows=(n,c={},order)=>Array.from((order?find(n,c).orderBy(order):find(n,c)).list())
 const map=r=>r?.getMap?r.getMap():Object.assign({},r||{}),num=v=>v==null||v===''?null:typeof v=='object'&&v.toNumber?v.toNumber():Number(String(v))
 const ms=v=>v==null||v===''?null:Number.isFinite(Number(String(v)))?Number(String(v)):Date.parse(String(v)),now=()=>ec.user.nowTimestamp
-const call=(n,p)=>{const out=ec.service.sync().name(n).parameters(p).disableAuthz().call()||{};if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
+// The errors a call left, taken off ec.message into the Error thrown, so the writes after it (the catch that marks a
+// result failed) are not refused by them; an Error the call threw keeps its own text.
+function taken(err){const text=ec.message.hasError()?ec.message.getErrorsString():'';ec.message.clearErrors();return err||new Error(text)}
+const call=(n,p)=>{let out;try{out=ec.service.sync().name(n).parameters(p).disableAuthz().call()||{}}catch(err){throw taken(err)}
+ if(ec.message.hasError())throw taken();return out}
 const create=(n,p)=>call('create#'+P+n,p),update=(n,p)=>call('update#'+P+n,p)
 const json=t=>{if(t==null||t==='')return null;if(typeof t!='string')return t;try{return JSON.parse(t)}catch(e){return null}}
 const text=v=>v==null?'':typeof v=='string'?v:JSON.stringify(v)
@@ -23,8 +27,9 @@ function checkScorer(p){return{refusal:scorerRefusal(p)}}
 // A service an eval names by free text (an experiment's target, a scorer of another service) runs with authorization on
 // as the current user, whatever disabled it (the evals' own disableAuthz, a job's), under the System screen they reach
 // Evals through; never as the system for whoever named it (SEC-AI-95). With no user (in a job) it is refused.
-function asPerson(n,p){let out={};ec.artifactExecution.runAsUser('component://tools/screen/System.xml',()=>{out=ec.service.sync().name(n).parameters(p).call()||{}})
- if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
+function asPerson(n,p){let out={}
+ try{ec.artifactExecution.runAsUser('component://tools/screen/System.xml',()=>{out=ec.service.sync().name(n).parameters(p).call()||{}})}catch(err){throw taken(err)}
+ if(ec.message.hasError())throw taken();return out}
 // body() as the experiment's starter: in a job, which has no user, the starter is signed in for it, so the job does what
 // the starter's own Check now would; a user calling does it as themselves.
 function asStarter(e,body){if(ec.user.userId)return body()
