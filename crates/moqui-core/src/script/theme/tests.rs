@@ -703,6 +703,41 @@ fn svg_and_css_assets() {
     assert_eq!(sanitize_rich_text("<p onclick=x>a<script>b</script></p>"), "<p>a</p>");
 }
 
+/// A CSS comment cannot start inside a string or an unquoted `url()`, where the browser reads none, to hide a URL or
+/// an `@import` from the check; an escaped quote or parenthesis, which would end a URL early for the check, is refused
+/// (SEC-SCR-90).
+#[test]
+fn a_css_comment_in_a_string_hides_nothing() {
+    let css_errors = |css: &str| errors(&validate_stone(&[("assets/store.css", Some(css))]));
+    for css in [
+        ".a { background: url(\"/*\"), url(https://evil.example/x), url(\"*/\") }",
+        ".a { background: url('/*'), url(https://evil.example/x), url('*/') }",
+        ".a { background: url(/*), url(https://evil.example/x), url(*/) }",
+        ".a { content: \"/*\" }\n@import url(/x.css);\n.b { content: \"*/\" }",
+    ] {
+        let found = css_errors(css);
+        assert!(
+            found
+                .iter()
+                .any(|error| error.starts_with("unsafe-css") && (error.contains("origin") || error.contains("@import"))),
+            "{css}: {found:?}"
+        );
+    }
+    for css in [
+        ".a { background: url(\"//cdn.example\\\"@evil.example/x\") }",
+        ".a { background: url(\"//cdn.example\\22@evil.example/x\") }",
+    ] {
+        let found = css_errors(css);
+        assert!(
+            found.iter().any(|error| error.contains("an escaped")),
+            "{css}: {found:?}"
+        );
+    }
+    // a comment outside strings is still a comment, and a string may hold `*/` or a URL-like text
+    let found = css_errors(".a { color: red /* url(https://evil.example/x) */ }\n.b { content: \"*/\" }");
+    assert_eq!(found, Vec::<String>::new());
+}
+
 /// IE's `behavior` property is refused only as a property of its own: `scroll-behavior` passes (Shop F131), and
 /// `behavior:` stays refused with whitespace, a comment, an escape or an IE hack around it.
 #[test]

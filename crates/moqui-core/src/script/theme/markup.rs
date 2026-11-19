@@ -828,11 +828,23 @@ pub(crate) fn check_css(css: &str, policy: &Policy<'_>, resolve: Option<&dyn Fn(
     found
 }
 
-/// CSS with its comments removed and its escapes decoded, with the line of each byte of the result.
+/// CSS with its comments removed and its escapes decoded, with the line of each byte of the result. As the CSS
+/// tokenizer reads it, a comment starts only outside a string and outside an unquoted `url(...)`, so `/*` in a
+/// string cannot hide what follows it (SEC-SCR-90). An escape that stands for a quote or a parenthesis is refused:
+/// decoded, it would end a string or a `url()` early for the check, where the browser keeps it as a character of the
+/// URL.
 fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
+    /// Where the tokenizer is: a string ends at its quote or a line break, an unquoted `url(` at its `)`.
+    #[derive(Clone, Copy, PartialEq)]
+    enum In {
+        Rules,
+        Text(char),
+        Url,
+    }
     let mut out = String::with_capacity(css.len());
     let mut lines = Vec::with_capacity(css.len());
     let mut line = 1;
+    let mut state = In::Rules;
     let mut chars = css.char_indices().peekable();
     let push = |out: &mut String, lines: &mut Vec<usize>, ch: char, line: usize| {
         out.push(ch);
@@ -840,7 +852,7 @@ fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
     };
     while let Some((at, ch)) = chars.next() {
         match ch {
-            '/' if css[at..].starts_with("/*") => {
+            '/' if state == In::Rules && css[at..].starts_with("/*") => {
                 let Some(end) = css[at + 2..].find("*/") else {
                     return Err("a CSS comment is not closed".to_string());
                 };
@@ -862,11 +874,14 @@ fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
                         _ => break,
                     }
                 }
-                if hex.is_empty() {
+                let decoded = if hex.is_empty() {
                     match chars.next() {
-                        Some((_, '\n')) => line += 1,
-                        Some((_, escaped)) => push(&mut out, &mut lines, escaped, line),
-                        None => {}
+                        Some((_, '\n')) => {
+                            line += 1;
+                            continue;
+                        }
+                        Some((_, escaped)) => escaped,
+                        None => continue,
                     }
                 } else {
                     if chars.peek().is_some_and(|(_, space)| space.is_whitespace()) {
@@ -874,16 +889,48 @@ fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
                             line += 1;
                         }
                     }
-                    let decoded = u32::from_str_radix(&hex, 16)
+                    u32::from_str_radix(&hex, 16)
                         .ok()
                         .and_then(char::from_u32)
-                        .unwrap_or('\u{FFFD}');
-                    push(&mut out, &mut lines, decoded, line);
+                        .unwrap_or('\u{FFFD}')
+                };
+                if matches!(decoded, '"' | '\'' | '(' | ')') {
+                    return Err(format!("an escaped `{decoded}` is not allowed in theme CSS"));
                 }
+                push(&mut out, &mut lines, decoded, line);
             }
             '\n' => {
+                if matches!(state, In::Text(_)) {
+                    state = In::Rules;
+                }
                 push(&mut out, &mut lines, ch, line);
                 line += 1;
+            }
+            '"' | '\'' if state == In::Rules => {
+                state = In::Text(ch);
+                push(&mut out, &mut lines, ch, line);
+            }
+            '"' | '\'' if state == In::Text(ch) => {
+                state = In::Rules;
+                push(&mut out, &mut lines, ch, line);
+            }
+            '(' if state == In::Rules => {
+                // `url(` (its name escaped or not) not followed by a quote is one token up to its `)`
+                let tail = out.len().checked_sub(3).and_then(|from| out.get(from..));
+                let named = tail.is_some_and(|tail| tail.eq_ignore_ascii_case("url"))
+                    && !out[..out.len() - 3]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|before| before.is_alphanumeric() || matches!(before, '-' | '_'));
+                let quoted = css[at + 1..].trim_start().starts_with(['"', '\'']);
+                if named && !quoted {
+                    state = In::Url;
+                }
+                push(&mut out, &mut lines, ch, line);
+            }
+            ')' if state == In::Url => {
+                state = In::Rules;
+                push(&mut out, &mut lines, ch, line);
             }
             _ => push(&mut out, &mut lines, ch, line),
         }
