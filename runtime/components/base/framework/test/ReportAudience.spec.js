@@ -543,12 +543,17 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
         const paused = call(R + "pause#OwnedSchedules", {userId: "RDA_OWNER", reason: "Left the company"})
         const pausedOther = call(R + "pause#OwnedSchedules", {userId: "RDA_OTHER", reason: "On leave"})
         const equals = one("moqui.screen.ScreenScheduled", {reportOwnerId: "RDA_OTHER"})
-        // an alert rule the board references stays its author's: it acts on its own, and only transfer#AlertRuleOwner,
-        // which pauses it, hands it on (plans/Security-Review-Medium.md SEC-TLS-90)
+        // an alert rule the board's body names, which the new owner may not read: it stays its author's, as it acts on its
+        // own, and only transfer#AlertRuleOwner, which pauses it, hands it on; nor does the new owner's qualification read
+        // it (plans/Security-Review-Medium.md SEC-TLS-90)
+        const boardBody = String(one("moqui.report.Definition", {definitionId: "rda-board"}).bodyJson)
         sys(() => {
             make("moqui.report.Definition", {definitionId: "rda-alert", definitionType: "alert", title: "Audience alert",
                 bodyJson: "{}", ownerId: "RDA_OWNER", versionNumber: 1})
             make("moqui.report.DefinitionReference", {definitionId: "rda-board", referencedId: "rda-alert"})
+            const board = ec.entity.find("moqui.report.Definition").condition("definitionId", "rda-board").one()
+            board.bodyJson = JSON.stringify(Object.assign(JSON.parse(boardBody), {links: [{definitionId: "rda-alert"}]}))
+            board.update()
         })
         const transfer = toUserId => {
             try {
@@ -573,6 +578,16 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
             toUserId: "RDA_EQUAL"
         })
         const transferred = transfer("RDA_NEXT")
+        const alertOwner = String(one("moqui.report.Definition", {definitionId: "rda-alert"}).ownerId)
+        // mr-boss's next lifecycle participant: transfer#AlertRuleOwner hands the rule on, paused; the board goes back
+        sys(() => {
+            const alert = ec.entity.find("moqui.report.Definition").condition("definitionId", "rda-alert").one()
+            alert.ownerId = "RDA_NEXT"
+            alert.update()
+            const board = ec.entity.find("moqui.report.Definition").condition("definitionId", "rda-board").one()
+            board.bodyJson = boardBody
+            board.update()
+        })
         const pending = one("moqui.screen.ScreenScheduled", {screenScheduledId: scheduleId})
         const sendPaused = as("rda.next", "send#Report", {screenScheduledId: scheduleId})
         // the team still holds the member whose scope differs: the new owner's resume is refused until they are gone
@@ -601,7 +616,7 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
             transferError: transferred.error || "",
             pending: [pending.reportOwnerId, pending.paused, pending.pausedReason].join(","),
             boardOwner: String(one("moqui.report.Definition", {definitionId: "rda-board"}).ownerId),
-            alertOwner: String(one("moqui.report.Definition", {definitionId: "rda-alert"}).ownerId),
+            alertOwner,
             sendPaused: sendPaused.error || "",
             resumeRefused: resumeRefused.error || "",
             resumed: resumed.error || "",
