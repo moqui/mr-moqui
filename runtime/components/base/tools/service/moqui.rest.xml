@@ -240,10 +240,10 @@ along with this software (see the LICENSE.md file). If not, see
 
         <id name="userId">
             <method type="get"><entity name="users" operation="one"/></method>
-            <!-- the service, not the entity update: a change of another account's sign-in fields is refused when that account
-                holds access the caller lacks, and an email or provider link change needs a recent sign-in
-                (plans/Security-Review-Medium.md SEC-ADM-81) -->
-            <method type="patch"><service name="org.moqui.impl.UserServices.update#UserAccount"/></method>
+            <!-- the account service, not the entity update: a change of another account's sign-in fields is refused when that
+                account holds access the caller lacks, and an email or provider link change needs a recent sign-in
+                (plans/Security-Review-Medium.md SEC-ADM-81); the sign-in fields are an ADMIN's only, as Java's -->
+            <method type="patch"><service name="org.moqui.impl.UserServices.patch#UserAccount"/></method>
 
             <resource name="password">
                 <resource name="update"><method type="post">

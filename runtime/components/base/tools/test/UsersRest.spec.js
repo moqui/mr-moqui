@@ -1,4 +1,5 @@
-// PATCH /rest/s1/moqui/users/{userId} (tools/service/moqui.rest.xml) is org.moqui.impl.UserServices.update#UserAccount, not
+// PATCH /rest/s1/moqui/users/{userId} (tools/service/moqui.rest.xml) is org.moqui.impl.UserServices.update#UserAccount (through
+// patch#UserAccount, which takes the sign-in fields from a member of ADMIN only; framework SecurityRest.spec.js), not
 // the entity update (plans/Security-Review-Medium.md SEC-ADM-81): a member of ADMIN changes another account's email address
 // only when that account holds no access beyond theirs (Identity.js heldBeyond) and after a recent sign-in, as on the
 // account screens, while the full name changes as before. An empty value clears a stored one, and is a change like any
