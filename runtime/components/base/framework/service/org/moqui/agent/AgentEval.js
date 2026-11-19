@@ -58,7 +58,7 @@ function runReadable(p){return{readable:readsRun(one('AgentRun',{runId:p.runId})
 function otherUsers(runId){return new Error('Run '+runId+' is another user\'s: its content needs the AgentAudit permission')}
 function saveRun(p){need('MONITOR_EVAL');const run=one('AgentRun',{runId:p.runId});if(!run)throw new Error('Run '+p.runId+' is not available')
  if(!readsRun(run,'saved as a dataset item in Evals'))throw otherUsers(run.runId)
- return addItem({datasetId:p.datasetId,inputText:runInput(run.runId),groundTruth:p.groundTruth||(p.useOutput==='Y'?runOutput(run):null),metadataJson:JSON.stringify({agentId:run.agentId}),sourceRunId:run.runId})}
+ return addItem({datasetId:p.datasetId,inputText:runInput(run.runId),groundTruth:p.groundTruth||(p.useOutput==='Y'?runOutput(run):null),metadataJson:JSON.stringify({agentId:run.agentId,runUserId:run.userId}),sourceRunId:run.runId})}
 
 // ---- scoring
 const JUDGE='You grade the output of an AI agent. Read the rubric, the input, the expected answer (if any) and the output. Think about it in reasoning, then give score: a number from 0 (fails the rubric) to 1 (fully meets it).'
@@ -112,8 +112,11 @@ function start(p){
  for(const item of items)for(let t=1;t<=trials;t++){
   const r=create('AgentExperimentResult',{experimentId:e.experimentId,itemId:item.itemId,trialNum:t,statusId:'EvrPending'})
   if(!agentId)continue
-  // agent runs start now, as this user (ec.llm.startRun needs a user and AgentAdmin); the job reads them as they end
-  try{const runId=ec.llm.startRun(agentId,item.inputText);update('AgentExperimentResult',{resultId:r.resultId,runId,statusId:'EvrRunning',startedDate:now()})}
+  // agent runs start now, as this user (a job run needs AgentUse and AgentAdmin); the job reads them as they end. An
+  // item's text may be another user's (a saved run), so its agent's policy approves no write unless the starter said
+  // policyWrites=Y: the run is asked without approval.policy, and a write it needs a person for is refused (SEC-AI-96)
+  try{const runId=call('org.moqui.agent.AgentServices.start#AgentRun',{agentId,messageText:item.inputText,surface:'job',clientCaps:p.policyWrites==='Y'?null:'screen'}).runId
+   update('AgentExperimentResult',{resultId:r.resultId,runId,statusId:'EvrRunning',startedDate:now()})}
   catch(err){ec.logger.error('Experiment '+e.experimentId+' item '+item.itemId+' did not start: '+err);update('AgentExperimentResult',{resultId:r.resultId,statusId:'EvrFailed',errorText:String(err).slice(0,4000),endedDate:now()})}
  }
  const x=one('AgentExperiment',{experimentId:e.experimentId});if(!agentId)advanceOne(x,5);else summarize(x)

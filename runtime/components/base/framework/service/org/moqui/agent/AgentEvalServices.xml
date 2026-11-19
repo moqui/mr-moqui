@@ -67,9 +67,12 @@
         <description>Runs the current version of a dataset through agentId (default the dataset's agent; each item and
             trial an AgentRun on the job surface as the current user, so the agent must serve job and the user needs
             AgentAdmin) or serviceName (called with input and metadata; its output parameter is the output). At most 200
-            items × trials. advance#Experiments reads and scores the results.</description>
+            items × trials. advance#Experiments reads and scores the results. An item's text may be another user's (a
+            saved run), so the agent's policy approves none of a run's writes, which are refused, unless policyWrites is Y.</description>
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="agentId"/><parameter name="serviceName"/>
-            <parameter name="trials" type="Integer"/><parameter name="experimentName"/><parameter name="notes"/></in-parameters>
+            <parameter name="trials" type="Integer"/><parameter name="experimentName"/><parameter name="notes"/>
+            <parameter name="policyWrites" default-value="N"><description>Y lets the agent's tool policy approve the writes of
+                its runs, as for a job of its own; N (the default) refuses every write.</description></parameter></in-parameters>
         <out-parameters><parameter name="experimentId"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('start',context))</script></actions>
     </service>

@@ -103,3 +103,16 @@ feature("an experiment's target service runs with the starter's authorization, a
   return{results:list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId}),checked}},
  then({results,checked}){results.length==3;results.every(r=>r.statusId==='EvrFailed'&&r.outputText==null&&r.errorText.includes('not authorized'));checked.error.includes('MONITOR_EVAL_RUN')},
 })
+// SEC-AI-96: an item's text may be another user's (a saved run, whose owner the item names), so an agent experiment's
+// runs are asked without approval.policy, and the agent's policy approves none of their writes, unless policyWrites=Y
+feature("an agent experiment's runs have no policy approval unless the starter asks for it",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  const caps=(policyWrites)=>{const started=call(S+'start#Experiment',{datasetId:'EVAL_T_DS',agentId:'EVAL_T_AGENT',trials:1,policyWrites})
+   const runs=list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId}).map(r=>r.runId).filter(Boolean)
+   call(S+'cancel#Experiment',{experimentId:started.experimentId})
+   return runs.map(runId=>String(ec.entity.find('moqui.agent.AgentRun').condition({runId}).disableAuthz().one()?.capsText??''))}
+  const saved=list('moqui.agent.AgentDatasetItem',{datasetId:'EVAL_T_DS'}).find(i=>i.sourceRunId)
+  return{held:caps('N'),allowed:caps('Y'),saved}},
+ then({held,allowed,saved}){held.length==3;held.every(c=>!c.includes('approval.policy'));allowed.length==3;allowed.every(c=>c.includes('approval.policy'))
+  JSON.parse(saved.metadataJson).runUserId!=null},
+})

@@ -34,6 +34,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="tail" allow-html="any"><description>The context block of this message</description></parameter>
             <parameter name="clientRequestId"/>
             <parameter name="clientMessageId"/>
+            <parameter name="clientCaps"><description>What the client can do, a comma list of capabilities, which only
+                lowers the surface's: a job run without approval.policy has no write approved by its agent's policy.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="runId"/>
