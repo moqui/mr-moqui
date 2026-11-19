@@ -157,6 +157,33 @@ feature("v5.0.0-6.3.2: no initial administrator can be created over HTTP once ac
     },
 })
 
+// Configuration in the matrix: an account locks after user-facade/login@max-failures (on by default, test/client
+// SecurityAuthn "A07 failed logins lock the dedicated user"), and the per-client sign-in limit, the login rate limit of
+// webapp-list/webapp[webroot]/web-protection (ten a minute), is on only with web-protection@enabled or trusted-proxies.
+// Loopback is exempt, so this is a deployment's proof, and opt-in: it gets this client's sign-ins limited for a minute,
+// and its ten unknown users count toward the auth-failure ban (twenty in ten minutes bans the client for fifteen), so
+// run it alone, once: --spec V6Authentication --feature v5.0.0-6.3.1 --param bruteForce=yes.
+// Does not prove: a limit per account across clients (credential stuffing from many addresses), which SEC-WEB-81 and
+// SEC-WEB-83 leave open.
+feature("v5.0.0-6.3.1: one client's sign-ins are limited after ten tries a minute", {
+    given() {
+        if (profile == "fixtures") skip("the project's test server takes its clients as loopback, which the per-client limits exempt: a deployment's proof")
+        if (params.bruteForce != "yes") skip("opt-in, as it limits this client's sign-ins: --param bruteForce=yes, alone (--spec V6Authentication --feature v5.0.0-6.3.1)")
+    },
+    when() {
+        const statuses = []
+        for (let i = 0; i < 11; i++) {
+            statuses.push(restLogin(`proof.unknown.${Date.now()}.${i}`, "NotAPassword1!").status)
+        }
+        return { statuses }
+    },
+    then({ statuses }) {
+        // the control: the first tries are answered, as an unknown user
+        statuses[0] == 401
+        statuses.includes(429)
+    },
+})
+
 // A password hint or a secret question would be a second, weaker secret. The sign-in page's forms (sign in, reset,
 // change) ask for none; a reset asks only for the account and sends a temporary password.
 // Does not prove: an application's own registration or account forms.

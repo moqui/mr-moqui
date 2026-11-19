@@ -11,6 +11,26 @@ const requireFixture = (username, password) => {
     return res
 }
 
+// The matrix has this as Configuration: a deployment from ./moq archive or the binary has no .git, and a checkout's is
+// readable by server scripts; a name starting with "." is never served (screen/static_files.rs safe_segments).
+// Does not prove: what a proxy in front serves from its own document root.
+feature("v5.0.0-13.4.1: no source-control metadata is served: /.git and the like are not found", {
+    when() {
+        const s = session()
+        return {
+            page: s.get("/Login"),
+            answers: ["/.git/HEAD", "/.git/config", "/.git/index", "/.git/", "/.svn/entries", "/.hg/store/00manifest.i",
+                "/static/.git/HEAD"].map((path) => ({ path, res: s.get(path) })),
+        }
+    },
+    then({ page, answers }) {
+        // the control: the server serves its pages
+        page.status == 200
+        answers.every(({ res }) => res.status != 200 || !/ref: refs\/|\[core\]|repositoryformatversion/.test(res.text))
+        answers.every(({ res }) => res.status >= 300)
+    },
+})
+
 // test_api_rest.py: test_rest_schema_without_permission_is_403. The anonymous row stands for
 // test_rest_schema_anonymous_is_401, whose /rest/entity.swagger is not built here. /rest/entity.json checks the sign-in,
 // then REST_SCHEMA. sec.api.view has MOQUI_API VIEW and not REST_SCHEMA; the seed data grants REST_SCHEMA to ADMIN,

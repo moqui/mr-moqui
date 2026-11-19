@@ -16,8 +16,8 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-12.2.1 | 1 | TLS for all external HTTP, no clear-text fallback | Configuration | plain HTTP listener always binds `webapp-list/webapp[webroot]@http-port` (8080); set `webapp-list/webapp[webroot]@https-enabled` (screens redirect, `screen/render.rs` `redirect_to_https`) with the HTTPS listener (`@https-listen-port`, certificate in `runtime/cert`) or a TLS proxy, and do not publish the HTTP port; HSTS only on https screen answers (`screen-secure`) | - |
-| v5.0.0-12.2.2 | 1 | Publicly trusted certificates on public services | Configuration | ACME on System › Certificates (`acme@directory-url`, `org.moqui.admin.CertificateServices`) or an operator certificate in `runtime/cert`; a self-signed one is made only on `instance@purpose` `dev` (`tls.rs`) | - |
+| v5.0.0-12.2.1 | 1 | TLS for all external HTTP, no clear-text fallback | Configuration | plain HTTP listener always binds `webapp-list/webapp[webroot]@http-port` (8080); set `webapp-list/webapp[webroot]@https-enabled` (screens redirect, `screen/render.rs` `redirect_to_https`) with the HTTPS listener (`@https-listen-port`, certificate in `runtime/cert`) or a TLS proxy, and do not publish the HTTP port; HSTS only on https screen answers (`screen-secure`) | V12SecureCommunication "v5.0.0-12.2.1: the plain-http address serves nothing but a redirect to https" (a deployment over https; skips otherwise) |
+| v5.0.0-12.2.2 | 1 | Publicly trusted certificates on public services | Configuration | ACME on System › Certificates (`acme@directory-url`, `org.moqui.admin.CertificateServices`) or an operator certificate in `runtime/cert`; a self-signed one is made only on `instance@purpose` `dev` (`tls.rs`) | V12SecureCommunication "v5.0.0-12.2.2: the deployment's certificate is one a public root vouches for" (a deployment over https, without --insecure) |
 
 ## V12.3 General Service to Service Communication Security
 

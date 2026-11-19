@@ -19,6 +19,30 @@ const account = () => {
     return { username: "john.doe", password: "moqui" }
 }
 
+// Configuration in the matrix: the pages open wss when served over https, and plain http serves ws, so a deployment
+// meets it by serving nothing over plain http but a redirect (12.2.1). This checks a deployment over https
+// (--server https://...; its plain-http address --param httpUrl=http://host[:port], else port 80) and skips against any
+// other. A deployment that serves the app over plain http answers the upgrade 401 or opens it, and fails.
+// Does not prove: /callws and /termws, which the same listener serves.
+feature("v5.0.0-4.4.1: the plain-http address takes no WebSocket upgrade", {
+    given() { if (!server.secure) skip("a deployment's proof over https: run it with --server https://<host>") },
+    when() {
+        const httpUrl = params.httpUrl ?? `http://${server.host.includes(":") ? `[${server.host}]` : server.host}`
+        let socket = null
+        let refused = null
+        try {
+            socket = ws.connect(httpUrl + "/notws", { session: session() })
+            socket.close()
+        } catch (e) {
+            refused = String(e && e.message ? e.message : e)
+        }
+        return { socket, refused }
+    },
+    then({ socket, refused }) {
+        refused != null || (!socket.open && [301, 302, 307, 308].includes(socket.status))
+    },
+})
+
 // test_a01_ws.py: test_websocket_evil_origin_is_rejected
 // Does not prove: /xmpp-websocket, off by default, which checks no Origin; nor the origins a deployment lists.
 feature("v5.0.0-4.4.2: a /notws upgrade from a foreign Origin is refused, the own origin opens", {

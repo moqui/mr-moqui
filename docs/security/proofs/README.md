@@ -5,8 +5,8 @@ requirement, and the proofs that show it. The plan is [Proofs-Initial](../../../
 
 Status 2026-11-18: the responsibility matrix (phase P1) is written for levels 1 and 2, the harness that runs the
 proofs (P2) is built, the framework's security client specs that prove a requirement are moved into proofs (P3), and
-the first new proofs for level 1 are written (P4): 51 features under 29 requirements, in twelve chapter files, and an
-in-process proof of the TLS versions (12.1.1).
+every level 1 row that can take a proof has one (P4): 56 features under 34 requirements in thirteen chapter files, and
+in-process proofs (Rust tests and framework specs) where a client cannot see the claim.
 A status is one reading of the code at mr-moqui `bf7034ec9`, mr-pass `d2dfa67` and mr-mantle `dff2c9fe`. A Framework
 status is a claim until a proof shows it, and a Gap closes when its fix lands and a proof shows it.
 
@@ -45,12 +45,12 @@ A requirement met only in part takes the status of the part that is not met, and
 
 | Chapter | Requirements | Framework | Configuration | Application | Gap | N/A |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [V1 Encoding and Sanitization](V1-Encoding-and-Sanitization.md) | 27 | 12 | 0 | 3 | 7 | 5 |
+| [V1 Encoding and Sanitization](V1-Encoding-and-Sanitization.md) | 27 | 13 | 0 | 3 | 6 | 5 |
 | [V2 Validation and Business Logic](V2-Validation-and-Business-Logic.md) | 11 | 2 | 1 | 8 | 0 | 0 |
 | [V3 Web Frontend Security](V3-Web-Frontend-Security.md) | 19 | 9 | 2 | 1 | 7 | 0 |
 | [V4 API and Web Service](V4-API-and-Web-Service.md) | 10 | 4 | 2 | 0 | 2 | 2 |
-| [V5 File Handling](V5-File-Handling.md) | 9 | 2 | 0 | 2 | 5 | 0 |
-| [V6 Authentication](V6-Authentication.md) | 35 | 17 | 3 | 2 | 12 | 1 |
+| [V5 File Handling](V5-File-Handling.md) | 9 | 3 | 0 | 2 | 4 | 0 |
+| [V6 Authentication](V6-Authentication.md) | 35 | 16 | 3 | 2 | 13 | 1 |
 | [V7 Session Management](V7-Session-Management.md) | 18 | 8 | 0 | 3 | 7 | 0 |
 | [V8 Authorization](V8-Authorization.md) | 7 | 1 | 0 | 3 | 3 | 0 |
 | [V9 Self-contained Tokens](V9-Self-contained-Tokens.md) | 7 | 6 | 0 | 0 | 1 | 0 |
@@ -62,7 +62,7 @@ A requirement met only in part takes the status of the part that is not met, and
 | [V15 Secure Coding and Architecture](V15-Secure-Coding-and-Architecture.md) | 13 | 2 | 2 | 4 | 5 | 0 |
 | [V16 Security Logging and Error Handling](V16-Security-Logging-and-Error-Handling.md) | 16 | 7 | 3 | 0 | 6 | 0 |
 | [V17 WebRTC](V17-WebRTC.md) | 7 | 3 | 0 | 0 | 4 | 0 |
-| **All** | 253 | 89 | 22 | 28 | 85 | 29 |
+| **All** | 253 | 90 | 22 | 28 | 84 | 29 |
 
 ## Running the proofs
 
@@ -82,6 +82,12 @@ project's fixture data skips and says what it needs. Use a low-privilege account
 and out, and the 6.3.2 proof tries one sign-in of the demo data's well-known account. The run writes `proofs.md` and
 `proofs.json` into its output directory (`--out`): every row of this matrix with the run's proofs of it and their
 result, to attach as evidence. The harness is described in [JS-Test-Client](../../dev/JS-Test-Client.md#security-proofs).
+
+A Configuration row's proof checks the deployment's setting, so it runs only against a deployment and skips against
+the project's server: the TLS proofs (4.4.1, 12.2.1, 12.2.2) need `--server https://<host>`, with the plain-http
+address as `--param httpUrl=http://<host>[:port]` when it is not port 80, and 12.2.2 skips with `--insecure`. The
+sign-in limit (6.3.1) is opt-in, since it gets the client's sign-ins limited for a minute: run it alone, once, with
+`--spec V6Authentication --feature v5.0.0-6.3.1 --param bruteForce=yes`.
 
 PASS, the public application, has its own matrix in its repository:
 [mr-pass ASVS matrix](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md). A PASS requirement the

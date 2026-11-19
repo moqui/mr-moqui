@@ -262,7 +262,7 @@ Every call blocks until it is done; there is no `await`. Conditions are plain va
 
 | Global | |
 |---|---|
-| `server` | `{ url, host, port, secure, ssh }` of the server under test; `ssh` is `{ host, port }` of its SSH listener (`--ssh`, or the server `--serve` started), else null |
+| `server` | `{ url, host, port, secure, ssh, insecure }` of the server under test; `ssh` is `{ host, port }` of its SSH listener (`--ssh`, or the server `--serve` started), else null; `insecure` is `--insecure`, true when the server's certificate was not checked |
 | `params` | The `--param` values and `MOQUI_TEST_*` variables, as text |
 | `profile` | `"fixtures"` or `"deployment"` (`--profile`): whether the server has the suite's fixtures |
 | `needsFixtures(what)` | Unless the profile is `fixtures`, skip the feature (or in `setupSpec` the spec), naming `what` it needs, so that no spec signs in to someone's deployment with a fixture's password |
@@ -734,6 +734,10 @@ that a builder or a certifier runs against their own deployment. What a proof is
   database). A proof that needs an account takes one from the params in the deployment profile (`--param user=NAME`,
   with the password in `MOQUI_TEST_PASSWORD` so that it stays out of `ps`) and otherwise calls `needsFixtures`, as
   `framework/test/proofs/V7SessionManagement.spec.js` does; a proof that needs fixture data calls `needsFixtures`.
+- **Configuration rows.** A requirement the deployment meets by a setting is proved against the deployment: such a
+  proof skips when the run cannot show it (`server.secure` false for a TLS proof, `server.insecure` for a certificate
+  proof, the fixtures profile for a limit loopback is exempt from), and one that changes the client's standing (a rate
+  limit, a ban) is opt-in by a param (`--param bruteForce=yes`). Each says in its comment what it needs.
 - **The summary.** After the run, `proofs.json` and `proofs.md` in the output directory list, for each component, the
   rows of its matrix (the requirement, its level, topic and status) with the run's proofs of each requirement and a
   result: `passed`, `partial` (some passed, the rest skipped), `failed`, `skipped` or `none`. A row marked `Inherited`
