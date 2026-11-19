@@ -767,18 +767,22 @@ fn untrusted_data_is_deserialized_only_into_plain_values_and_fixed_types() {
     ] {
         assert!(!lock.contains(&format!("\nname = \"{name}\"\n")), "{name} is linked");
     }
-    for garbage in [&b""[..], b"not a workbook", &[0xff; 64], &[0u8; 4096]] {
-        assert!(crate::workbook::ironcalc::base::Model::from_bytes(garbage, "en").is_err());
-    }
-    let mut model = crate::workbook::ironcalc::base::Model::new_empty("proof", "en", "UTC", "en").unwrap();
-    model.set_user_input(0, 1, 1, "42".to_string()).unwrap();
-    let stored = model.to_bytes();
-    assert!(crate::workbook::ironcalc::base::Model::from_bytes(&stored, "en").is_ok());
-    for cut in [1, stored.len() / 2, stored.len() - 1] {
-        assert!(
-            crate::workbook::ironcalc::base::Model::from_bytes(&stored[..cut], "en").is_err(),
-            "cut at {cut}"
-        );
+    // the workbook engine is linked under the xlsx feature (lib.rs)
+    #[cfg(feature = "xlsx")]
+    {
+        for garbage in [&b""[..], b"not a workbook", &[0xff; 64], &[0u8; 4096]] {
+            assert!(crate::workbook::ironcalc::base::Model::from_bytes(garbage, "en").is_err());
+        }
+        let mut model = crate::workbook::ironcalc::base::Model::new_empty("proof", "en", "UTC", "en").unwrap();
+        model.set_user_input(0, 1, 1, "42".to_string()).unwrap();
+        let stored = model.to_bytes();
+        assert!(crate::workbook::ironcalc::base::Model::from_bytes(&stored, "en").is_ok());
+        for cut in [1, stored.len() / 2, stored.len() - 1] {
+            assert!(
+                crate::workbook::ironcalc::base::Model::from_bytes(&stored[..cut], "en").is_err(),
+                "cut at {cut}"
+            );
+        }
     }
 }
 
