@@ -1679,6 +1679,8 @@ fn a_spooled_upload_goes_when_its_request_ends_while_a_script_still_holds_it() {
         dir: dir.join("spool"),
         memory_limit: 100,
         field_limit: 1000,
+        fields_total: usize::MAX,
+        memory_total: usize::MAX,
         max_total: u64::MAX,
     };
     let big = "x".repeat(5000);

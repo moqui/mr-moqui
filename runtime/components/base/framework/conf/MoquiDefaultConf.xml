@@ -572,8 +572,9 @@
             -->
             <!-- enabled: true or false turns the per-client web-protection on or off whatever the proxies; empty follows
                 trusted-proxies. max-upload: the largest multipart/form-data request body, in bytes or with a k, m or g
-                suffix (other request bodies stop at max-body). An upload is read as it arrives, a file over 256 KiB into
-                a file in runtime/tmp/upload, and is cut off when nothing arrives for upload-idle-timeout seconds. An
+                suffix (other request bodies stop at max-body). An upload is read as it arrives, a file over 256 KiB (or
+                any file once the upload's files hold 4 MiB in memory) into a file in runtime/tmp/upload, its text fields
+                at most max-body together, and is cut off when nothing arrives for upload-idle-timeout seconds. An
                 upload with no user (no session signed in, no key, no Basic credentials that hold) stops at max-body, but
                 under anonymous-upload-paths (path prefixes, comma separated: the public share's file drop). The files of
                 the uploads being read hold at most max-spool bytes together; an upload past it is answered 503. -->

@@ -659,6 +659,8 @@ fn the_head_is_answered_before_the_body_and_a_put_takes_its_spooled_file() {
         dir: spool_dir.clone(),
         memory_limit: 16,
         field_limit: 16,
+        fields_total: usize::MAX,
+        memory_total: usize::MAX,
         max_total: u64::MAX,
     };
     let mut body = moqui_core::web::multipart::BodySpool::new(spool);

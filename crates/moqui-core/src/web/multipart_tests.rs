@@ -144,6 +144,8 @@ fn large_files_are_spooled_with_their_hash_and_removed_when_dropped() {
         dir: dir.clone(),
         memory_limit: 1000,
         field_limit: 100,
+        fields_total: usize::MAX,
+        memory_total: usize::MAX,
         max_total: u64::MAX,
     };
     let large: Vec<u8> = (0..50_000u32).map(|n| (n * 31 % 253) as u8).collect();
@@ -200,6 +202,8 @@ fn a_request_end_removes_its_spool_files_while_copies_are_held() {
         dir: dir.clone(),
         memory_limit: 100,
         field_limit: 100,
+        fields_total: usize::MAX,
+        memory_total: usize::MAX,
         max_total: u64::MAX,
     };
     let large = vec![b'z'; 5000];
@@ -297,6 +301,8 @@ fn the_spool_holds_at_most_its_total_and_a_body_spools_as_a_part_does() {
         dir: dir.clone(),
         memory_limit: 100,
         field_limit: 100,
+        fields_total: usize::MAX,
+        memory_total: usize::MAX,
         max_total: 1000,
     };
     let large = vec![b'q'; 3000];
@@ -317,6 +323,8 @@ fn the_spool_holds_at_most_its_total_and_a_body_spools_as_a_part_does() {
         dir: dir.clone(),
         memory_limit: 100,
         field_limit: 100,
+        fields_total: usize::MAX,
+        memory_total: usize::MAX,
         max_total: u64::MAX,
     };
     let mut put = BodySpool::new(open.clone());
@@ -336,6 +344,79 @@ fn the_spool_holds_at_most_its_total_and_a_body_spools_as_a_part_does() {
     let mut small = BodySpool::new(open);
     small.write(b"tiny").unwrap();
     assert!(small.finish("t.txt", "text/plain").unwrap().is_in_memory());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-RTE-82: the white space after a boundary is at most `MAX_BOUNDARY_LINE` bytes (it was kept and searched again on
+/// each feed, up to the whole upload), the text fields of a request hold at most `fields_total` together, and its file
+/// parts keep at most `memory_total` in memory together, the rest spooled. Under each limit the body reads as before.
+#[test]
+fn a_request_holds_bounded_memory_however_its_parts_are_shaped() {
+    let dir = std::env::temp_dir().join(format!("moqui-spool-memory-{}", std::process::id()));
+    let spool = Spool {
+        dir: dir.clone(),
+        memory_limit: 100,
+        field_limit: 100,
+        fields_total: 250,
+        memory_total: 300,
+        max_total: u64::MAX,
+    };
+    let spaced = |spaces: usize| {
+        let mut out = b"--XyZ".to_vec();
+        out.extend(std::iter::repeat_n(b' ', spaces));
+        out.extend_from_slice(b"\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nv\r\n--XyZ--\r\n");
+        out
+    };
+    assert_eq!(
+        fed(&spaced(MAX_BOUNDARY_LINE), 64, Some(spool.clone()))
+            .unwrap()
+            .fields
+            .len(),
+        1
+    );
+    assert_eq!(
+        fed(&spaced(MAX_BOUNDARY_LINE + 1), 64, Some(spool.clone())).unwrap_err(),
+        MultipartError::Malformed("a boundary line is too long".into())
+    );
+    assert!(
+        fed(&spaced(MAX_BOUNDARY_LINE + 1), 4096, Some(spool.clone())).is_err(),
+        "in one piece too"
+    );
+
+    let field = |name: &'static str, size: usize| (name, vec![b'f'; size]);
+    let form = |fields: &[(&'static str, Vec<u8>)]| {
+        let heads: Vec<String> = fields
+            .iter()
+            .map(|(name, _)| format!("Content-Disposition: form-data; name=\"{name}\""))
+            .collect();
+        let parts: Vec<(&str, &[u8])> = heads
+            .iter()
+            .zip(fields)
+            .map(|(head, (_, data))| (head.as_str(), data.as_slice()))
+            .collect();
+        body(&parts)
+    };
+    let under = form(&[field("a", 100), field("b", 100), field("c", 50)]);
+    assert_eq!(fed(&under, 30, Some(spool.clone())).unwrap().fields.len(), 3);
+    let over = form(&[field("a", 100), field("b", 100), field("c", 51)]);
+    assert_eq!(
+        fed(&over, 30, Some(spool.clone())).unwrap_err(),
+        MultipartError::FieldTooLarge("c".to_string())
+    );
+
+    let heads: Vec<String> = (0..5)
+        .map(|index| format!("Content-Disposition: form-data; name=\"f{index}\"; filename=\"f{index}.bin\""))
+        .collect();
+    let file = vec![b'b'; 100];
+    let parts: Vec<(&str, &[u8])> = heads.iter().map(|head| (head.as_str(), file.as_slice())).collect();
+    let parsed = fed(&body(&parts), 40, Some(spool)).unwrap();
+    let in_memory: Vec<bool> = parsed.files.iter().map(UploadedFile::is_in_memory).collect();
+    assert_eq!(in_memory, [true, true, true, false, false]);
+    assert!(parsed
+        .files
+        .iter()
+        .all(|file| file.read_bytes().unwrap() == vec![b'b'; 100]));
+    drop(parsed);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

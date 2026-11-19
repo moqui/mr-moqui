@@ -813,7 +813,7 @@ along with this software (see the LICENSE.md file). If not, see
                         Most header fields in a request (100); more is answered 431.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-body" type="xs:string"><xs:annotation><xs:documentation>
                         Largest request body that is not multipart, bytes or with a k, m or g suffix (webapp-list/webapp[webroot]/web-protection/requests@max-body,
-                        10m); larger is answered 413.</xs:documentation></xs:annotation></xs:attribute>
+                        10m); larger is answered 413. The text fields of a multipart body hold at most this together.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-upload" type="xs:string"><xs:annotation><xs:documentation>
                         Largest multipart/form-data body (webapp-list/webapp[webroot]/web-protection/requests@max-upload, 2g). A request with no user (no session
                         signed in, no api_key or login_key, no Basic credentials that hold) takes max-body instead,
