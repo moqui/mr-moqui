@@ -8,7 +8,7 @@ proofs (P2) is built, the framework's security client specs that prove a require
 every level 1 row that can take a proof has one (P4), and so does every level 2 Framework and Configuration row (P5):
 73 features under 48 requirements in fourteen chapter files, and in-process proofs (Rust tests and framework specs)
 where a client cannot see the claim. The cross-references to five other standards and the certifier's guide are
-written (P6); BOSS and the clients are the plan's next phases.
+written (P6); BOSS has its matrix and proofs (P7); the clients against MASVS are the plan's next phase.
 A status is one reading of the code at mr-moqui `bf7034ec9`, mr-pass `d2dfa67` and mr-mantle `dff2c9fe`. A Framework
 status is a claim until a proof shows it, and a Gap closes when its fix lands and a proof shows it.
 

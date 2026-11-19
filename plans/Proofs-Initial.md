@@ -220,7 +220,13 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   parameters, the opt-in proofs, reading `proofs.md`, the settings each Configuration row asks for, the in-process
   proofs from a checkout, what is not covered). The documentation rows (6.1.1; PASS's 6.1.1, 6.1.3, 7.1.3, 8.1.1)
   cite the document that meets them, and `Attack-Surface-Web.md` now names lockout abuse, which 6.1.1 asks for.
-- **P7, BOSS.** The business applications (mr-boss, with the Mantle services behind them) through the same steps as
+- **P7, BOSS** (done, 2026-11-19: mr-boss `c8c6e27e`, `d83325f6`, `bd2e0e27`). As done: the matrix (149 inherited,
+  22 met by BOSS, 52 gaps, 30 not applicable), read by four readers; proofs in mr-boss `test/proofs` for every BOSS row
+  a test can show (3.2.2 in Chromium, 5.4.2, 6.2.2, 6.2.6, 6.2.7, 6.3.2, 7.4.3, 15.3.6, 15.3.7) and in-process ones
+  (`InProcessProofs`: 1.2.9, 5.2.3); the documentation rows cite their documents. The proof of 6.2.7 found three
+  password fields closed to password managers by the framework's text-line default, fixed the same day; the reading
+  found 11 register entries (SEC-BAP-136 to 139, SEC-BOS-141 to 146, SEC-FIL-101), SEC-BAP-138 a Medium. The plan was:
+  the business applications (mr-boss, with the Mantle services behind them) through the same steps as
   PASS: a matrix at levels 1 and 2 in mr-boss `docs/` (statuses Inherited, BOSS, Configuration, Gap, N/A; most rows
   inherit the framework's), round 3's BOSS units and the Apps-BOSS map as its evidence, then proofs in mr-boss
   `test/proofs` for the rows BOSS meets with its own code (its staff access walks, the record files, the payroll and
