@@ -14,10 +14,11 @@
 
 //! Database jobs (plans/archive/Tools-Database.md §6): DDL and maintenance that run on a service worker, one statement
 //! after another. A job is only ever a plan the server made (`plan#SchemaChanges`, `plan#TableMaintenance`,
-//! `plan#LoadWrap`, [`create_plan_job`]): no service takes statement text from the caller, so a job is not a way
-//! around the SQL runner's own permission. Each statement runs on a connection of its own outside a transaction, which
-//! is closed after it, with no statement timeout and its backend id and backend start kept on its row so any cluster
-//! member can cancel it. A statement that is not one of the known light forms waits at most the job's lock timeout
+//! `plan#LoadWrap`, [`create_plan_job`]): no service takes statement text from the caller, and no generic tool, REST
+//! call, request load or entity-auto service reads or writes a job or its statements (`sensitive::is_audit_entity`;
+//! plans/Security-Review-Medium.md SEC-TLS-88), so a job is not a way around the SQL runner's own permission. Each
+//! statement runs on a connection of its own outside a transaction, which is closed after it, with no statement timeout
+//! and its backend id and backend start kept on its row so any cluster member can cancel it. A statement that is not one of the known light forms waits at most the job's lock timeout
 //! and is tried again [`LOCK_RETRIES`] times. A failed statement does not stop the ones that do not depend on it; one
 //! whose dependency did not finish is skipped. The statuses are written as the runner goes: there is no status flow.
 

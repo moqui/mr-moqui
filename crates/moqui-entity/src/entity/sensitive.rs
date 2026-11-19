@@ -68,11 +68,15 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// SQL runs with changes (§8.2), which a generic write could forge; and `DatabaseConnection`, an external database's
 /// host and password (§4.3), which a generic write could point at another host to have the password sent there; and
 /// the ETL mappings, value maps and runs (§10), whose `expression` fields run as the mapping's user, so a generic write
-/// could plant a script in another user's mapping or take it over. No entity-auto service writes them either.
+/// could plant a script in another user's mapping or take it over; and the database jobs and their statements (§6), whose
+/// text `run#DatabaseJob` executes as written, so a generic write would run any SQL past the SQL runner's permission
+/// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88). No entity-auto service writes them either.
 const AUDIT_ENTITY_KEYS: &[&str] = &[
     "databaseaudit",
     "sqlruntoken",
     "databaseconnection",
+    "databasejob",
+    "databasejobstatement",
     "etlmapping",
     "etlmappingfield",
     "etlvaluemap",
@@ -143,8 +147,9 @@ pub fn is_secret_config_entity(entity_name: &str) -> bool {
     SECRET_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
-/// `DatabaseAudit`, `SqlRunToken` and `DatabaseConnection`: read and written only by their own services, never through
-/// generic entity reads, writes or loads.
+/// `DatabaseAudit`, `SqlRunToken`, `DatabaseConnection`, the ETL mappings and runs and the database jobs
+/// ([`AUDIT_ENTITY_KEYS`]): read and written only by their own services, never through generic entity reads, writes or
+/// loads.
 pub fn is_audit_entity(entity_name: &str) -> bool {
     AUDIT_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
@@ -616,6 +621,17 @@ mod tests {
         assert!(!is_secret_config_entity("moqui.database.DatabaseConnection"));
         assert!(is_restricted_generic_entity("moqui.database.DatabaseConnection"));
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
+        // a database job's statements run as written: no generic read or write, whose text would run past the SQL
+        // runner's permission (SEC-TLS-88)
+        for name in [
+            "moqui.database.DatabaseJob",
+            "moqui.database.DatabaseJobStatement",
+            "DatabaseJobStatement",
+        ] {
+            assert!(is_audit_entity(name), "{name}");
+            assert!(is_generic_write_refused(name), "{name}");
+            assert!(is_restricted_generic_entity(name), "{name}");
+        }
         // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11)
         for name in [
             "moqui.entity.EntityAuditLog",
