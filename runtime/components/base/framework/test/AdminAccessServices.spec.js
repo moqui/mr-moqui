@@ -306,35 +306,71 @@ feature(
 // SEC-ADM-90: an access administrator gives their own account no privileged bundle (a privileged group, or one that grants a
 // sealed permission, even one they hold), by a membership or a grant proposal; they give it to another account, and a plain
 // bundle to their own
-feature("an access administrator gives their own account no privileged bundle", {
+feature("an access administrator gives their own account no privileged bundle, and a group they are in no grant", {
     when() {
+        const now = ec.user.timestampMillis(ec.user.nowTimestamp)
+        const advFrom = now - 1000
         ec.artifactExecution.disableAuthz()
         make("moqui.security.UserGroup", {userGroupId: sealedBundleId, description: "Spec sealed bundle"})
         make("moqui.security.CapabilityBundle", {userGroupId: sealedBundleId, appName: "Spec", description: "Spec sealed bundle"})
         make("moqui.security.UserGroupPermission", {userGroupId: sealedBundleId, userPermissionId: "ADMIN_PASSWORD", fromDate: 0})
+        // a permission of the bundle the team does not have yet
+        make("moqui.security.CapabilityBundlePermission", {userGroupId: bundleId, userPermissionId: "SPEC_ACC_TEAM_RUN",
+            capabilityKindEnumId: "CpkEdit"})
+        // john.doe in the privileged ADMIN_ADV until tomorrow
+        make("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE", fromDate: advFrom, thruDate: now + 86400000})
         ec.artifactExecution.enableAuthz()
+        const advRow = () => rows("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE"})
+            .find(row => ec.user.timestampMillis(row.fromDate) === advFrom)
+        const advRevision = () => String(ec.user.timestampMillis(advRow().lastUpdatedStamp))
         // john.doe (ADMIN) holds ADMIN_PASSWORD and ADMIN_ACCESS_MANAGE
         const holder = as("john.doe", () => ({
             own: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: "EX_JOHN_DOE", reason: "Spec own"}),
             ownProposal: invoke(S + "apply#GrantProposal", {userId: "EX_JOHN_DOE", bundleGroupIdList: [sealedBundleId], reason: "Spec own"}),
-            other: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: targetId, reason: "Spec other"})
+            other: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: targetId, reason: "Spec other"}),
+            // the privileged group he is in: kept longer refused, ended sooner allowed
+            extended: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE", fromDate: advFrom,
+                thruDate: now + 2 * 86400000, expectedRevision: advRevision(), reason: "Spec longer"}),
+            shortened: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: "EX_JOHN_DOE", fromDate: advFrom,
+                thruDate: now + 3600000, expectedRevision: advRevision(), reason: "Spec shorter"})
         }))
         const plain = as(adminUser, () => {
-            const added = invoke(S + "store#Membership", {userGroupId: bundleId, userId: adminId, reason: "Spec own plain"})
-            const ended = invoke(S + "end#Membership", {userGroupId: bundleId, userId: adminId, fromDate: added.fromDate,
+            // a bundle with a sensitive capability (ADMIN_PASSWORD, CpkSensitive) is not one's own to take
+            const sensitive = invoke(S + "store#Membership", {userGroupId: bundleId, userId: adminId, reason: "Spec own sensitive"})
+            // a plain custom group is
+            const added = invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId, reason: "Spec own plain"})
+            // and a group one is in gets no grant added by oneself
+            const grant = [{action: "add", userPermissionId: "SPEC_ACC_TEAM_RUN"}]
+            const preview = invoke(S + "preview#Grants", {userGroupId: teamId, grantList: grant})
+            const ownGrant = invoke(S + "apply#Grants", {userGroupId: teamId, grantList: grant, expectedRevision: preview.revision})
+            const ended = invoke(S + "end#Membership", {userGroupId: teamId, userId: adminId, fromDate: added.fromDate,
                 expectedRevision: added.revision})
-            return {added, ended}
+            return {sensitive, added, preview, ownGrant, ended}
         })
         const members = userId => rows("moqui.security.UserGroupMember", {userGroupId: sealedBundleId, userId}).length
-        return Object.assign(holder, plain, {ownRows: members("EX_JOHN_DOE"), otherRows: members(targetId)})
+        const adv = advRow()
+        const advThru = ec.user.timestampMillis(adv.thruDate)
+        ec.artifactExecution.disableAuthz()
+        adv.delete()
+        ec.artifactExecution.enableAuthz()
+        return Object.assign(holder, plain, {ownRows: members("EX_JOHN_DOE"), otherRows: members(targetId), advThru,
+            now, teamGrants: rows("moqui.security.UserGroupPermission", {userGroupId: teamId, userPermissionId: viewPermission})
+                .filter(row => row.thruDate == null).length})
     },
-    then({own, ownProposal, other, added, ended, ownRows, otherRows}) {
-        own.applied == false && own.reasonCode == "OWN_ACCOUNT"
-        ownProposal.applied == false && ownProposal.reasonCode == "OWN_ACCOUNT"
-        ownRows == 0
-        other.applied == true
-        otherRows == 1
-        added.applied == true && ended.applied == true
+    then(r) {
+        r.own.applied == false && r.own.reasonCode == "OWN_ACCOUNT"
+        r.ownProposal.applied == false && r.ownProposal.reasonCode == "OWN_ACCOUNT"
+        r.ownRows == 0
+        r.other.applied == true
+        r.otherRows == 1
+        r.extended.applied == false && r.extended.reasonCode == "OWN_ACCOUNT"
+        r.shortened.applied == true
+        r.advThru <= r.now + 3600000
+        r.sensitive.applied == false && r.sensitive.reasonCode == "OWN_ACCOUNT"
+        r.added.applied == true
+        r.preview.allowed == false && r.preview.reasonCode == "OWN_GROUP"
+        r.ownGrant.applied == false && r.ownGrant.reasonCode == "OWN_GROUP"
+        r.ended.applied == true
     }
 })
 

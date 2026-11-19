@@ -115,22 +115,23 @@ function purposes() {
 function isCustom(group, purposeIds = new Set(purposes().map(row => row.enumId))) {
     return !!group?.groupTypeEnumId && purposeIds.has(group.groupTypeEnumId)
 }
-// A privileged bundle is not the actor's to give their own account (SEC-ADM-90): a privileged group (ADMIN among them) or a
-// group that grants a sealed permission, even one the actor holds, is given to them by another access administrator, so
-// holding ADMIN_ACCESS_MANAGE does not make a second seal for oneself. Any other bundle they may delegate they may also
-// hold, as SEC-ADM-06 chose (an access administrator changes their own memberships; an identity operator does not), with
-// the reason in the audit log. The refusal, or null.
+// A privileged bundle is not the actor's to give their own account (SEC-ADM-90): a privileged group (ADMIN among them), a
+// group that grants a sealed permission, even one the actor holds, or a bundle that registers a sensitive capability
+// (CpkSensitive: BOSS_ACCOUNTING_ADMIN, BOSS_PRODUCTS_ADMIN, BOSS_ADMIN_IDENTITY) is given to them by another access
+// administrator, so holding ADMIN_ACCESS_MANAGE does not make a second seal or an administrator's reach for oneself. Any
+// other bundle they may delegate they may also hold, as SEC-ADM-06 chose (an access administrator changes their own
+// memberships; an identity operator does not), with the reason in the audit log. The refusal, or null.
 function ownPrivilegedRefusal(account, groupId, privileged = privilegedIds(), sealed = sealedIds()) {
     if (!account || account.userId !== ec.user.userId) return null
     const sealedGrant = rows(GRANT, {userGroupId: groupId}).some(row => current(row) && sealed.has(row.userPermissionId))
-    if (!privileged.has(groupId) && !sealedGrant) return null
-    return {
-        reasonCode: "OWN_ACCOUNT",
-        reason:
-            groupId +
-            (sealedGrant ? " grants a sealed permission" : " is a privileged group") +
-            ": another access administrator gives it to your own account"
-    }
+    const sensitive = rows(BUNDLE_PERMISSION, {userGroupId: groupId, capabilityKindEnumId: "CpkSensitive"}).length > 0
+    if (!privileged.has(groupId) && !sealedGrant && !sensitive) return null
+    const what = privileged.has(groupId)
+        ? " is a privileged group"
+        : sealedGrant
+          ? " grants a sealed permission"
+          : " offers a sensitive capability"
+    return {reasonCode: "OWN_ACCOUNT", reason: groupId + what + ": another access administrator gives it to your own account"}
 }
 // What the actor may change of a group: a registered bundle or a custom group, and for a privileged group only a member. The
 // reason code when not.
@@ -810,6 +811,16 @@ function grantPreview(p) {
     if (!group) throw new Error("Group " + p.userGroupId + " is not available")
     const refusal = groupRefusal(group)
     const changes = evaluate(group, requested(p))
+    // a group the actor is in now gets no permission or binding added by them: that would widen their own access, which
+    // another access administrator does (SEC-ADM-90). Ending one, and a row rule (which narrows), stay theirs.
+    if (ec.user.isInGroup(group.userGroupId))
+        for (const change of changes)
+            if (change.allowed && !change.noChange && change.action === "add" && change.kind !== "scope")
+                Object.assign(change, {
+                    allowed: false,
+                    reasonCode: "OWN_GROUP",
+                    reason: group.userGroupId + " is a group you are in: another access administrator adds to its grants"
+                })
     const memberCount = memberCounts().get(group.userGroupId) || 0
     const refusedChanges = changes.filter(change => !change.allowed)
     return {

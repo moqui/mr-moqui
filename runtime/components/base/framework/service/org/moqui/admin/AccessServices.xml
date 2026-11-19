@@ -122,8 +122,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A dated membership of a user in a registered bundle or a custom group, from fromDate (now when empty) to thruDate;
             with the fromDate of an existing membership and its revision, a change of its end date. Refused for an unregistered
             group (UNREGISTERED_BUNDLE), a bundle whose delegable permission the actor lacks, a privileged group the actor is not
-            in (PRIVILEGED_GROUP, before the EECA would refuse it), the actor's own account in a privileged group or one that
-            grants a sealed permission (OWN_ACCOUNT, SEC-ADM-90: another access administrator gives it), an overlapping
+            in (PRIVILEGED_GROUP, before the EECA would refuse it), the actor's own account in a privileged group, one that
+            grants a sealed permission or a bundle with a sensitive capability (OWN_ACCOUNT, SEC-ADM-90: another access
+            administrator gives it), an overlapping
             membership, a stale revision or a change that would leave no administration path. The dates are audit-logged with
             the reason; ended memberships are kept. Needs ADMIN_ACCESS_MANAGE.</description>
         <in-parameters>
@@ -172,7 +173,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="preview" noun="Grants" allow-remote="false">
         <description>The effective change of a grant request on a group, nothing written: each permission or artifact binding added or
             ended, before and after, the kind and bundle it comes from, whether the actor may make it and why not
-            (UNREGISTERED_GRANT, SEALED_PERMISSION, a group refusal), the current members it reaches, and the grant revision
+            (UNREGISTERED_GRANT, SEALED_PERMISSION, OWN_GROUP: a permission or binding added to a group the actor is in, which
+            another access administrator adds, SEC-ADM-90; a group refusal), the current members it reaches, and the grant revision
             apply#Grants expects. A row rule (a filter set bound to a registered binding) is allowed only when a registered
             bundle the actor may assign names the set for that artifact group (UNREGISTERED_SCOPE), the group has a binding of
             the registered type or the request adds it (SCOPE_UNBOUND) that carries no filter set of its own
