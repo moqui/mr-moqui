@@ -109,16 +109,17 @@ object PhoneBook {
                 return@post
             }
             var asked = false
-            android.app.AlertDialog.Builder(activity)
-                .setTitle(R.string.ask_contacts_title)
-                .setMessage(R.string.ask_contacts_reason)
-                .setPositiveButton(R.string.ask_continue) { _, _ ->
-                    asked = true
-                    activity.requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), ASK_CONTACTS)
-                }
-                .setNegativeButton(R.string.ask_not_now, null)
-                .setOnDismissListener { if (!asked) waiting.countDown() }
-                .show()
+            ObscuredTouches.show(
+                android.app.AlertDialog.Builder(activity)
+                    .setTitle(R.string.ask_contacts_title)
+                    .setMessage(R.string.ask_contacts_reason)
+                    .setPositiveButton(R.string.ask_continue) { _, _ ->
+                        asked = true
+                        activity.requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), ASK_CONTACTS)
+                    }
+                    .setNegativeButton(R.string.ask_not_now, null)
+                    .setOnDismissListener { if (!asked) waiting.countDown() }
+            )
         }
         waiting.await(ASK_WAIT_S, TimeUnit.SECONDS)
         answer = null

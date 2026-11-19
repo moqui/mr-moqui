@@ -102,6 +102,8 @@ class MainActivity : TauriActivity() {
     showOverLock(CallManager.ownsLink(intent?.data))
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // no touch through another app's window over the app (the overlay defence below Android 12, SEC-CLI-116)
+    ObscuredTouches.refuse(window.decorView)
     CallManager.know(this)
     CallManager.appScreenShown(this)
     // screenshots blocked while a reason holds it (a view-once photo open): kept over a new activity
@@ -189,11 +191,12 @@ class MainActivity : TauriActivity() {
       prefs.edit().putLong("forceStopSeen", stopped).apply()
       return
     }
-    android.app.AlertDialog.Builder(this)
-      .setTitle(R.string.force_stopped_title)
-      .setMessage(R.string.force_stopped_reason)
-      .setPositiveButton(R.string.ask_continue, null)
-      .show()
+    ObscuredTouches.show(
+      android.app.AlertDialog.Builder(this)
+        .setTitle(R.string.force_stopped_title)
+        .setMessage(R.string.force_stopped_reason)
+        .setPositiveButton(R.string.ask_continue, null)
+    )
   }
 
   override fun onStop() {
@@ -354,19 +357,20 @@ class MainActivity : TauriActivity() {
           if (Manifest.permission.POST_NOTIFICATIONS in missing) {
             val others = missing - Manifest.permission.POST_NOTIFICATIONS
             var asked = false
-            android.app.AlertDialog.Builder(this)
-              .setTitle(R.string.ask_notifications_title)
-              .setMessage(R.string.ask_notifications_reason)
-              .setPositiveButton(R.string.ask_continue) { _, _ ->
-                asked = true
-                requestPermissions(missing.toTypedArray(), ASK_CALLS)
-              }
-              .setNegativeButton(R.string.ask_not_now) { _, _ ->
-                asked = true
-                if (others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) else askForFullScreenOnce()
-              }
-              .setOnDismissListener { if (!asked && others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) }
-              .show()
+            ObscuredTouches.show(
+              android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.ask_notifications_title)
+                .setMessage(R.string.ask_notifications_reason)
+                .setPositiveButton(R.string.ask_continue) { _, _ ->
+                  asked = true
+                  requestPermissions(missing.toTypedArray(), ASK_CALLS)
+                }
+                .setNegativeButton(R.string.ask_not_now) { _, _ ->
+                  asked = true
+                  if (others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) else askForFullScreenOnce()
+                }
+                .setOnDismissListener { if (!asked && others.isNotEmpty()) requestPermissions(others.toTypedArray(), ASK_CALLS) }
+            )
           } else {
             requestPermissions(missing.toTypedArray(), ASK_CALLS)
           }
@@ -386,11 +390,12 @@ class MainActivity : TauriActivity() {
     val prefs = getSharedPreferences("moqui-calls", MODE_PRIVATE)
     if (prefs.getBoolean("askedForFullScreen", false)) return
     prefs.edit().putBoolean("askedForFullScreen", true).apply()
-    android.app.AlertDialog.Builder(this)
-      .setTitle(R.string.ask_full_screen_title)
-      .setMessage(R.string.ask_full_screen_reason)
-      .setPositiveButton(R.string.ask_open_settings) { _, _ -> PushCheck.fix(this, "fullScreen") }
-      .setNegativeButton(R.string.ask_not_now, null)
-      .show()
+    ObscuredTouches.show(
+      android.app.AlertDialog.Builder(this)
+        .setTitle(R.string.ask_full_screen_title)
+        .setMessage(R.string.ask_full_screen_reason)
+        .setPositiveButton(R.string.ask_open_settings) { _, _ -> PushCheck.fix(this, "fullScreen") }
+        .setNegativeButton(R.string.ask_not_now, null)
+    )
   }
 }

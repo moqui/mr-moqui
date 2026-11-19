@@ -732,6 +732,7 @@ impl ShellHost for MobileHost {
             .spawn(move || {
                 crate::native::register_or_retry(&core, &dir, Some(&account));
                 unified_register_all();
+                fcm_start();
             });
         if let Err(err) = started {
             log::warn!("Push: the registration did not start: {err}");
@@ -756,6 +757,15 @@ fn unified_register_all() {
     #[cfg(target_os = "android")]
     if let Err(err) = crate::android::unified_register_all() {
         log::warn!("Push: UnifiedPush was not told of the accounts: {err}");
+    }
+}
+
+/// Firebase asked for its token once an account signs in (`Push.startFcm`): the app's start asks only with an account
+/// signed in already, so a Firebase build reaches Google from the first sign-in, not the first start (SEC-CLI-121).
+fn fcm_start() {
+    #[cfg(target_os = "android")]
+    if let Err(err) = crate::android::fcm_start() {
+        log::warn!("Push: Firebase was not started for the sign-in: {err}");
     }
 }
 

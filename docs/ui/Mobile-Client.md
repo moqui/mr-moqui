@@ -453,8 +453,9 @@ the splash and the account list included.
 A chat push of a text with a one-time code carries `otp {code}` (plans/Comms-Messaging.md §18.3 phase 21, §7.2 rule
 10). `ChatNotifications.showRoom` then adds Copy code: a `COPY` broadcast to `ChatActionReceiver` with the code in the
 action's data, which puts it on the clipboard (`ClipDescription.EXTRA_IS_SENSITIVE` on Android 13 and later, a "Code
-copied" toast before it). The notification is `VISIBILITY_PRIVATE`, its public version "A code from …", so the lock screen
-shows no code. An APK before this change shows the message without the button. It answers whether the flag is on; the
+copied" toast before it). The notification is `VISIBILITY_SECRET`, so a secure lock screen shows nothing of it and Copy
+code needs the phone unlocked (a private one with a public version showed the code under Android's default lock screen
+setting, SEC-CLI-115). An APK before this change shows the message without the button. It answers whether the flag is on; the
 desktop app has no such member, and the viewer says a screenshot cannot be stopped there. The app's store deletes
 disappearing messages at their time as the desktop's does ([Desktop-Client](Desktop-Client.md)).
 

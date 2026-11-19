@@ -9,8 +9,8 @@
 # A release APK (not debuggable, so no DevTools socket) skips the frame check; instead the classes and methods Rust
 # calls by name through JNI are looked for in its dex files (R8 must keep them: proguard-rules.pro, wry's
 # proguard-wry.pro), and the log must have no JNI lookup failure (UnsatisfiedLinkError, NoSuchMethodError, ...).
-# With a server on this machine's 8080, `adb reverse` lets the app reach it as http://localhost:8080 for a sign-in by
-# hand. Not part of ./moq test-all; run it when asked:
+# With a server on this machine's 8080, `adb reverse` lets a debug build reach it as http://localhost:8080 for a sign-in
+# by hand (a release build takes https servers only, SEC-CLI-109). Not part of ./moq test-all; run it when asked:
 #   ./moq android emulator && ./moq android build --target x86_64 --apk
 #   scripts/android-smoke.sh [screenshot.png]
 #   MOQUI_MOBILE_APK=crates/moqui-mobile/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
@@ -57,6 +57,8 @@ JNI_NAMES=(
     org/moqui/mobile/Native#registerPending org/moqui/mobile/PushCheck#state org/moqui/mobile/PushCheck#fix
     org/moqui/mobile/CallManager#pageGone org/moqui/mobile/Native#dialLink org/moqui/mobile/DialAccount#set
     org/moqui/mobile/PhoneBook#search org/moqui/mobile/PhoneBook#names
+    org/moqui/mobile/ScreenSecurity#set org/moqui/mobile/CalendarIntent#insert org/moqui/mobile/Push#startFcm
+    org/moqui/mobile/CallManager#busyNow
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain

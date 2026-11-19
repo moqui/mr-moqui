@@ -7,6 +7,7 @@
 package {{package}}
 
 import android.annotation.SuppressLint
+import android.view.View
 import android.webkit.*
 import android.content.Context
 import androidx.webkit.WebViewCompat
@@ -26,6 +27,8 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
         // MR Moqui patch: no window.open without the user's gesture (wry sets true), so a page cannot send the phone to
         // the web or another app on its own
         settings.javaScriptCanOpenWindowsAutomatically = false
+        // MR Moqui patch: no touch through another app's window over the page (the overlay defence below Android 12)
+        refuseObscuredTouches(this)
 
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             isDocumentStartScriptEnabled = true
@@ -45,6 +48,12 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
         // MR Moqui patch (crates/moqui-mobile/patches/README.md): the app's own origins, its shell's and its server
         // pages' app schemes, the only ones that get the initialization scripts and the IPC.
         val PAGE_ORIGINS = setOf("http://moqui-shell.localhost", "http://moqui-app.localhost")
+
+        // MR Moqui patch (crates/moqui-mobile/patches/README.md): `view` (this view, or a page dialog's decor view once
+        // shown) drops a touch while another app's window covers it, which Android does itself only from 12 on.
+        fun refuseObscuredTouches(view: View?) {
+            view?.filterTouchesWhenObscured = true
+        }
     }
 
     fun loadUrlMainThread(url: String) {

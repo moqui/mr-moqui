@@ -14,6 +14,7 @@
 
 use moqui_client::assets::Assets;
 use moqui_client::conf::{ClientConf, DeviceMode};
+use tauri::Url;
 
 #[test]
 fn the_builds_client_conf_is_its_element_and_parses() {
@@ -94,4 +95,30 @@ fn every_command_of_the_handler_is_in_the_manifest_and_allowed() {
             "{allowed} is not in capabilities/main.json"
         );
     }
+}
+
+/// SEC-CLI-112: a refused navigation is logged by its URL's scheme and host only, and a path that did not open by its
+/// path less the query (and so is its error, which may name it again): logcat is read by adb and bug reports, and a
+/// share link's token or a query value may be in the rest.
+#[test]
+fn a_logged_url_has_only_its_scheme_and_host_and_a_logged_path_no_query() {
+    let url = Url::parse("https://ann:pw@chat.example.com:8443/share/abc123?token=s3cret#frag").unwrap();
+    assert_eq!(super::url_for_log(&url), "https://chat.example.com");
+    assert_eq!(
+        super::url_for_log(&Url::parse("javascript:alert(1)").unwrap()),
+        "javascript:"
+    );
+    assert_eq!(
+        super::url_for_log(&Url::parse("data:text/html,<p>s3cret</p>").unwrap()),
+        "data:"
+    );
+    assert_eq!(
+        super::without_query("/qapps/chat/room?token=s3cret&x=1"),
+        "/qapps/chat/room"
+    );
+    assert_eq!(super::without_query("/qapps/chat"), "/qapps/chat");
+    assert_eq!(
+        super::without_query("Not a path on the server: //x?token=s3cret"),
+        "Not a path on the server: //x"
+    );
 }

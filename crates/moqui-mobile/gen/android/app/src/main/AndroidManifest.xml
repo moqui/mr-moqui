@@ -46,6 +46,11 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.moqui_mobile"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <!-- The WebView sends Google no metrics of this app, even on a phone whose owner allows usage reports
+            (SEC-CLI-123). -->
+        <meta-data
+            android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
         <!-- Every configuration change the activity handles itself: one it did not would make it again, and the app's
             one webview and the client go with the activity's end (src/lib.rs; the process ends only when it finishes). -->
         <activity

@@ -405,6 +405,21 @@ pub(crate) fn unified_register_all() -> Result<(), String> {
     })
 }
 
+/// An account signed in: Firebase asked for its token (`Push.startFcm`; nothing in a build without Firebase), which the
+/// app's start asks only when an account is signed in already (SEC-CLI-121).
+pub(crate) fn fcm_start() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.Push"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("startFcm"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(app)],
+        )?;
+        Ok(())
+    })
+}
+
 /// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
 pub(crate) fn device_model() -> Result<String, String> {
     with_context(|env, _| {

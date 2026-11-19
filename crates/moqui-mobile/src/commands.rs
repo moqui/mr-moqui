@@ -99,8 +99,9 @@ pub(crate) fn chat_room_of(tag: &str) -> Option<&str> {
 }
 
 /// A native notification: `title`, and `body`, replacing the one of the same `tag` of the account signed in; a tap
-/// shows the app at `link` when it is a path of the account's server (`notification_opened`). Android 13 and later ask
-/// the user the first time (off the main thread: the plugin waits for the answer).
+/// shows the app at `link` when it is a path of the account's server (`notification_opened`). Without the notification
+/// permission it fails and never asks (SEC-CLI-120): any server page may call it, and Android's question comes with its
+/// reason once an account signs in (`MainActivity.askForCallsOnce`) or from the notification check's fix.
 #[tauri::command(async)]
 pub(crate) fn notify(
     app: AppHandle,
@@ -119,11 +120,7 @@ pub(crate) fn notify(
         .permission_state()
         .is_ok_and(|state| state != PermissionState::Granted)
     {
-        match notification.request_permission() {
-            Ok(PermissionState::Granted) => {}
-            Ok(_) => return Err("Notifications are off for this app".to_string()),
-            Err(err) => return Err(format!("Notifications are not allowed: {err}")),
-        }
+        return Err("Notifications are off for this app".to_string());
     }
     let mut builder = notification.builder().title(title);
     if let Some(body) = body.map(|body| clip(&body, BODY_MAX)).filter(|body| !body.is_empty()) {

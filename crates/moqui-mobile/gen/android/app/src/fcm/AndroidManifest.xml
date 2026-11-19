@@ -2,6 +2,11 @@
 <!-- Merged into the app's manifest only when the build has Firebase (google-services.json, app/build.gradle.kts). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <!-- FCM's auto-init off, so Firebase makes no token at the app's start (SEC-CLI-121): Push.startFcm asks for
+            one only once an account is signed in here. -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
         <service
             android:name=".PushService"
             android:exported="false">

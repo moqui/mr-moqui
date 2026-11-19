@@ -21,6 +21,10 @@ invoke key and could call the app's commands as the page, with the account's dev
 - `src/android/kotlin/proguard-wry.pro`: keeps `Ipc.attach`, which Rust calls.
 - `src/android/kotlin/RustWebView.kt`: `javaScriptCanOpenWindowsAutomatically` is off (wry turns it on), so a page
   opens no window, and so sends the phone nowhere, without the user's gesture.
+- `src/android/kotlin/RustWebView.kt` and `RustWebChromeClient.kt`: the view, and the page's alert, confirm and prompt
+  dialogs once shown, drop a touch that came through another app's window (`filterTouchesWhenObscured`, through
+  `RustWebView.refuseObscuredTouches`), the overlay defence Android has itself only from 12 (SEC-CLI-116); the app's
+  activities and dialogs do the same (`ObscuredTouches.kt`).
 
 `./moq android dev` and `build` stop when `cargo tree -i wry` shows a wry that is not this copy (cargo builds a wry the
 patch no longer matches from crates.io with only a warning), so a Tauri update cannot drop the patch unseen.

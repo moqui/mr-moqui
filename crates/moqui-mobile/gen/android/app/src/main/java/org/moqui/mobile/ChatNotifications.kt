@@ -243,17 +243,14 @@ object ChatNotifications {
                 .build()
         )
         builder.addAction(0, context.getString(R.string.chat_mute_hour), action(context, ChatActionReceiver.MUTE, room0, false))
-        // a text's one-time code (plans/Comms-Messaging.md §18.3 phase 21): Copy code, and a lock screen that shows no code
+        // a text's one-time code (plans/Comms-Messaging.md §18.3 phase 21): Copy code, and secret on a secure lock screen
+        // (SEC-CLI-115), which shows nothing of it, so Copy code needs the phone unlocked. Not VISIBILITY_PRIVATE with a
+        // public version: Android shows that version only when the user set the lock screen to hide sensitive content,
+        // so under its default, all content, the code would show.
         val code = payload.optJSONObject("otp")?.optString("code", "")?.takeIf { ChatActionReceiver.isCode(it) }
         if (code != null) {
             builder.addAction(0, context.getString(R.string.chat_copy_code), copyAction(context, room0, code))
-            builder.setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            builder.setPublicVersion(
-                NotificationCompat.Builder(context, channel)
-                    .setSmallIcon(R.mipmap.ic_launcher)
-                    .setContentTitle(context.getString(R.string.chat_code_received, sender))
-                    .build()
-            )
+            builder.setVisibility(NotificationCompat.VISIBILITY_SECRET)
         }
         notify(context, ChatRules.tag(account, room), ROOM_ID, builder)
         summary(context, account)

@@ -31,6 +31,9 @@ class IncomingCallActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // no touch through another app's window over Answer and Decline (the overlay defence below Android 12,
+        // SEC-CLI-116); the decor view stays when show() sets the content
+        ObscuredTouches.refuse(window.decorView)
         CallManager.know(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)

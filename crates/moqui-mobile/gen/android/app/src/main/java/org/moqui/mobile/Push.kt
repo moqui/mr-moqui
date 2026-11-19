@@ -23,9 +23,10 @@ object Push {
     private val main = Handler(Looper.getMainLooper())
 
     /**
-     * Ask Firebase for the current token (it also comes by `onNewToken` when it changes). What waits is registered by
-     * the app's start in Rust, which schedules [RegisterWorker] only when a registration fails (a worker scheduled at
-     * every start would start the process again after it ended).
+     * At the app's start: the channels, UnifiedPush, and Firebase only when an account is signed in here ([startFcm]),
+     * so a Firebase build reaches Google only once one is (SEC-CLI-121; `src/fcm`'s manifest turns FCM's own auto-init
+     * off). What waits is registered by the app's start in Rust, which schedules [RegisterWorker] only when a
+     * registration fails (a worker scheduled at every start would start the process again after it ended).
      */
     fun start(context: Context) {
         ChatNotifications.ensureChannels(context)
@@ -34,6 +35,21 @@ object Push {
             Log.i(TAG, "This build has no Firebase project (no google-services.json): FCM is off")
             return
         }
+        if (Native.accounts(context).isEmpty()) {
+            Log.i(TAG, "No account is signed in here: Firebase starts at the first sign-in")
+            return
+        }
+        startFcm(context)
+    }
+
+    /**
+     * Ask Firebase for the current token (it also comes by `onNewToken` when it changes; an explicit ask works with
+     * auto-init off): at the start with an account signed in ([start]), and from Rust when one signs in
+     * (src/android.rs fcm_start). Nothing in a build without Firebase.
+     */
+    @JvmStatic
+    fun startFcm(context: Context) {
+        if (!BuildConfig.FCM) return
         try {
             Class.forName("org.moqui.mobile.FcmPush").getMethod("start", Context::class.java).invoke(null, context)
         } catch (err: Throwable) {

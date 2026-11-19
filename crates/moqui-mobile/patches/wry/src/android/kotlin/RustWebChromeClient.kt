@@ -157,6 +157,8 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
       }
     val dialog = builder.create()
     dialog.show()
+    // MR Moqui patch: no touch through another app's window over the page's dialog (RustWebView.refuseObscuredTouches)
+    RustWebView.refuseObscuredTouches(dialog.window?.decorView)
     return true
   }
 
@@ -193,6 +195,8 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
       }
     val dialog = builder.create()
     dialog.show()
+    // MR Moqui patch: no touch through another app's window over the page's dialog (RustWebView.refuseObscuredTouches)
+    RustWebView.refuseObscuredTouches(dialog.window?.decorView)
     return true
   }
 
@@ -239,6 +243,8 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
       }
     val dialog = builder.create()
     dialog.show()
+    // MR Moqui patch: no touch through another app's window over the page's dialog (RustWebView.refuseObscuredTouches)
+    RustWebView.refuseObscuredTouches(dialog.window?.decorView)
     return true
   }
 

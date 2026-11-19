@@ -304,7 +304,8 @@ fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
             let host = Arc::clone(host);
             std::thread::spawn(move || {
                 if let Err(err) = host.open_remote(&path) {
-                    log::warn!("Could not open {path}: {err}");
+                    // the error may name the path again, its query with it
+                    log::warn!("Could not open {}: {}", without_query(&path), without_query(&err));
                 }
             });
             false
@@ -314,10 +315,24 @@ fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
             false
         }
         Goes::Nowhere => {
-            log::warn!("Navigation refused: {url}");
+            log::warn!("Navigation refused: {}", url_for_log(url));
             false
         }
     }
+}
+
+/// What a log line names of `url`: its scheme and host, never its user, path or query. Logcat is read by adb and bug
+/// reports, and a share link's token or a query value may be in the rest (SEC-CLI-112).
+fn url_for_log(url: &Url) -> String {
+    match url.host_str() {
+        Some(host) => format!("{}://{host}", url.scheme()),
+        None => format!("{}:", url.scheme()),
+    }
+}
+
+/// `text` (a server path, or an error naming one) up to its query, for a log line (SEC-CLI-112).
+fn without_query(text: &str) -> &str {
+    text.split_once('?').map_or(text, |(before, _)| before)
 }
 
 /// A call link taken before the app's host was made, opened once it is.

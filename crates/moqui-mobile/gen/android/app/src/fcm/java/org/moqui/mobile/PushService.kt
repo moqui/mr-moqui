@@ -25,7 +25,7 @@ class PushService : FirebaseMessagingService() {
     }
 }
 
-/** Called by name from [Push.start]: the current token, which Rust registers if it is new. */
+/** Called by name from [Push.startFcm]: the current token, which Rust registers if it is new. */
 object FcmPush {
     @JvmStatic
     fun start(context: Context) {

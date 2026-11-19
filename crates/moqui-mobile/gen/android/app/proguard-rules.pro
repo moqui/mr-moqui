@@ -39,6 +39,14 @@
 # ... and the phone's contacts and the calling account (src/android.rs contacts_search, contact_names, dial_account)
 -keep class org.moqui.mobile.PhoneBook { *; }
 -keep class org.moqui.mobile.DialAccount { *; }
+# ... and screen security and the calendar's new event (src/android.rs secure_screen, calendar_insert; SEC-CLI-127:
+# without these R8 may remove or rename ScreenSecurity.set and CalendarIntent.insert in a release build)
+-keep class org.moqui.mobile.ScreenSecurity { *; }
+-keep class org.moqui.mobile.CalendarIntent { *; }
+# ... and Firebase's start once an account signs in (src/android.rs fcm_start; SEC-CLI-121)
+-keep class org.moqui.mobile.Push {
+    public static void startFcm(android.content.Context);
+}
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
 

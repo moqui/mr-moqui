@@ -3,6 +3,7 @@
 package org.moqui.mobile
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -124,6 +125,19 @@ class ChatNotificationsTest {
         val sealed = shown(ChatRules.tag(A, "101"))!!.notification
         val text = sealed.extras.getCharSequence("android.text").toString()
         assertTrue(text, text.contains("open the app"))
+    }
+
+    /**
+     * SEC-CLI-115: a text's one-time code is secret on a secure lock screen, with no public version (shown only when the
+     * user set the lock screen to hide sensitive content, so the code would show under the default); Copy code is there.
+     */
+    @Test
+    fun aOneTimeCodeIsSecretOnTheLockScreen() {
+        ChatNotifications.show(context, payload().put("snippet", "Your code is 123456").put("otp", JSONObject().put("code", "123456")))
+        val coded = shown(TAG_A)!!.notification
+        assertEquals(Notification.VISIBILITY_SECRET, coded.visibility)
+        assertNull("no public version", coded.publicVersion)
+        assertTrue(coded.actions.map { it.title.toString() }.contains("Copy code"))
     }
 
     @Test
