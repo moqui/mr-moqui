@@ -272,8 +272,10 @@ fn ipv6_clients_share_their_prefix() {
     assert_eq!(status(&guard, "2001:db8:1:3::10", "GET", "/"), 200);
 }
 
+/// SEC-WEB-83: a new client takes the place of an idle one when the table is full, so it is still limited; with no
+/// idle client to drop (each has a connection or a ban) it is refused, never served without the limits.
 #[test]
-fn a_full_table_serves_new_clients_untracked() {
+fn a_full_table_drops_an_idle_client_and_refuses_when_none_is_idle() {
     let guard = guard(
         r#"<web-protection enabled="true" max-tracked-clients="1">
                 <rate-limit name="all" requests="1" seconds="60" burst="1"/>
@@ -281,10 +283,18 @@ fn a_full_table_serves_new_clients_untracked() {
         "",
     );
     assert_eq!(status(&guard, "203.0.113.5", "GET", "/"), 200);
-    for _ in 0..3 {
-        assert_eq!(status(&guard, "203.0.113.6", "GET", "/"), 200);
-    }
-    assert!(guard.metrics().contains("edge_untracked 3\n"), "{}", guard.metrics());
+    assert_eq!(status(&guard, "203.0.113.6", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.6", "GET", "/"), 429);
+    // 203.0.113.6 is idle, so the next new client takes its place and is limited in turn
+    let slot = guard.admit(ip("203.0.113.7")).expect("admitted");
+    assert_eq!(status(&guard, "203.0.113.7", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.7", "GET", "/"), 429);
+    // 203.0.113.7 holds a connection: no client is idle, so a new one is refused
+    assert_eq!(status(&guard, "203.0.113.8", "GET", "/"), 503);
+    assert!(guard.admit(ip("203.0.113.8")).is_none());
+    assert!(guard.metrics().contains("edge_untracked 2\n"), "{}", guard.metrics());
+    drop(slot);
+    assert_eq!(status(&guard, "203.0.113.8", "GET", "/"), 200);
 }
 
 #[test]

@@ -56,6 +56,8 @@ const SHARDS: usize = 32;
 const DEFAULT_MAX_PER_CLIENT: usize = 64;
 const DEFAULT_MAX_TRACKED: usize = 100_000;
 const DEFAULT_RETRY_AFTER: u64 = 5;
+/// How often a full client table logs that it refuses new clients.
+const UNTRACKED_LOG_EVERY: Duration = Duration::from_secs(60);
 const DEFAULT_QUEUE_TIMEOUT: u64 = 10;
 /// The shortest time an idle client stays in the table.
 const MIN_IDLE: Duration = Duration::from_secs(60);
@@ -712,6 +714,10 @@ pub(crate) struct Guard {
     /// exempt from the per-address rate limits ([`Self::ci_token_verified`]).
     ci_tokens: Mutex<HashMap<u64, Instant>>,
     ci_keys: std::hash::RandomState,
+    /// The shard [`Self::evict_idle`] looks in first, turned by one each time.
+    evict_from: AtomicUsize,
+    /// When a full table last logged a refused client, nanoseconds after [`Self::epoch`]; 0 for never.
+    untracked_logged: AtomicU64,
 }
 
 /// A connection counted against its client's `max-per-client` until it is dropped.
@@ -745,6 +751,8 @@ impl Guard {
             notifier: std::sync::OnceLock::new(),
             ci_tokens: Mutex::new(HashMap::new()),
             ci_keys: std::hash::RandomState::new(),
+            evict_from: AtomicUsize::new(0),
+            untracked_logged: AtomicU64::new(0),
         }
     }
 
@@ -853,17 +861,34 @@ impl Guard {
         &self.shards[index]
     }
 
-    /// Run `body` on the client of `key`, adding it unless the table is full (then `None`, and it is counted).
+    /// Run `body` on the client of `key`, adding it. When the table is full a new client takes the place of an idle
+    /// one ([`Self::evict_idle`]); with none to drop it gets `None`, which is counted and logged and which the callers
+    /// answer as a refusal, so a full table never lets a client pass the per-client rules uncounted (SEC-WEB-83).
     fn with_client<R>(&self, key: IpAddr, body: impl FnOnce(&mut Client, u64) -> R) -> Option<R> {
         let now = self.now();
+        let full = || self.tracked.load(Ordering::Relaxed) >= self.conf().max_tracked;
+        if full() && !moqui_lib::sync::lock(self.shard(key)).contains_key(&key) && !self.evict_idle(now) {
+            self.counts.untracked.fetch_add(1, Ordering::Relaxed);
+            let last = self.untracked_logged.load(Ordering::Relaxed);
+            if (last == 0 || now.saturating_sub(last) >= nanos(UNTRACKED_LOG_EVERY))
+                && self
+                    .untracked_logged
+                    .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
+                tracing::warn!(
+                    "web protection: the client table is full ({} clients, none idle) and new clients are refused; \
+                     {} so far (max-tracked-clients)",
+                    self.conf().max_tracked,
+                    self.counts.untracked.load(Ordering::Relaxed)
+                );
+            }
+            return None;
+        }
         let mut shard = moqui_lib::sync::lock(self.shard(key));
         let client = match shard.entry(key) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
-                if self.tracked.load(Ordering::Relaxed) >= self.conf().max_tracked {
-                    self.counts.untracked.fetch_add(1, Ordering::Relaxed);
-                    return None;
-                }
                 self.tracked.fetch_add(1, Ordering::Relaxed);
                 entry.insert(Client {
                     connections: 0,
@@ -877,6 +902,27 @@ impl Guard {
         };
         client.seen = now;
         Some(body(client, now))
+    }
+
+    /// Drop the client seen longest ago that has no connection and no ban, from the first shard after the last one
+    /// that gave one up which has such a client: one shard's scan, not the table's, for each new client while it is
+    /// full. False when no shard has one.
+    fn evict_idle(&self, now: u64) -> bool {
+        let start = self.evict_from.fetch_add(1, Ordering::Relaxed);
+        for offset in 0..SHARDS {
+            let mut shard = moqui_lib::sync::lock(&self.shards[(start + offset) % SHARDS]);
+            let oldest = shard
+                .iter()
+                .filter(|(_, client)| client.connections == 0 && client.banned_until <= now)
+                .min_by_key(|(_, client)| client.seen)
+                .map(|(key, _)| *key);
+            if let Some(oldest) = oldest {
+                shard.remove(&oldest);
+                self.tracked.fetch_sub(1, Ordering::Relaxed);
+                return true;
+            }
+        }
+        false
     }
 
     /// Run `body` on the client of `key` when it is in the table.
@@ -935,11 +981,10 @@ impl Guard {
             }
         });
         match admitted {
-            None => Some(uncounted),
             Some(true) => Some(ConnectionSlot {
                 counted: Some((Arc::clone(self), key)),
             }),
-            Some(false) => {
+            None | Some(false) => {
                 self.counts.connections_refused.fetch_add(1, Ordering::Relaxed);
                 tracing::debug!("web protection: a connection from {peer} was refused");
                 None
@@ -1018,16 +1063,23 @@ impl Guard {
         if self.conf().rate_limits.is_empty() || self.ci_token_exempt(host, path, headers) {
             return Ok(());
         }
-        let limits = &self.conf().rate_limits;
         let credentials = has_credentials(headers);
+        self.limit(key, client, |limit| {
+            limit.applies(host, method, &decoded, credentials)
+                || resolved.as_deref().is_some_and(|resolved| limit.applies(host, method, resolved, credentials))
+        })
+    }
+
+    /// Count a request of `client` against each rate limit `applies` picks: a 429 past one's burst (which then takes
+    /// nothing from the others), and a 503 when the table is full with no idle client to drop.
+    fn limit(&self, key: IpAddr, client: IpAddr, applies: impl Fn(&RateLimit) -> bool) -> Result<(), Refused> {
+        let limits = &self.conf().rate_limits;
         let waited = self.with_client(key, |client_state, now| {
             // a conf reload between reading the rules and this client (Self::replace_conf) changes their count
             client_state.arrivals.resize(limits.len(), 0);
             let mut next = Vec::with_capacity(limits.len());
             for (index, limit) in limits.iter().enumerate() {
-                if !limit.applies(host, method, &decoded, credentials)
-                    && !resolved.as_deref().is_some_and(|resolved| limit.applies(host, method, resolved, credentials))
-                {
+                if !applies(limit) {
                     next.push(None);
                     continue;
                 }
@@ -1045,7 +1097,13 @@ impl Guard {
             }
             None
         });
-        let Some(Some((wait, name))) = waited else {
+        let Some(waited) = waited else {
+            // a full table with no idle client to drop: refused, not served without the limits
+            return Err(Refused {
+                response: Box::new(self.unavailable("the server is busy; try again")),
+            });
+        };
+        let Some((wait, name)) = waited else {
             return Ok(());
         };
         self.counts.rate_limited.fetch_add(1, Ordering::Relaxed);
