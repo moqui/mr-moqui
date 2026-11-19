@@ -138,6 +138,65 @@ fn open(dir: &Path) -> (Box<dyn KeyStore>, &'static str) {
     (Box::new(FileKeyStore::new(dir)), "file")
 }
 
+/// Where the app keeps a secret of its own, the backup key (`crate::backup_key`): the OS key store, or where there is
+/// none, a file in a directory of its own that only the user can read, chosen as the device keys' store is ([`open`]).
+/// Unlike [`Keys`], a read tells an entry that is not there from a store that did not answer, so no caller takes the
+/// one for the other and makes a new secret over one it could not read.
+pub(crate) enum Secrets {
+    Os,
+    File(std::path::PathBuf),
+}
+
+impl Secrets {
+    /// The store for `dir`, the file store's directory.
+    pub(crate) fn open(dir: &Path) -> Self {
+        let variable = std::env::var("MOQUI_DESKTOP_KEY_STORE").ok();
+        if chosen(variable.as_deref(), tauri::is_dev()) == "os" {
+            match OsKeyStore::available() {
+                Ok(()) => return Self::Os,
+                Err(err) => tracing::warn!("No OS key store ({err}): the backup key is kept in {}", dir.display()),
+            }
+        }
+        Self::File(dir.to_path_buf())
+    }
+
+    /// The secret `name`; none when the store holds none.
+    ///
+    /// # Errors
+    ///
+    /// Returns why when the store does not answer.
+    pub(crate) fn read(&self, name: &str) -> Result<Option<String>, String> {
+        let text = match self {
+            Self::Os => match OsKeyStore::entry(name).map_err(|err| err.to_string())?.get_password() {
+                Ok(text) => text,
+                Err(keyring_core::Error::NoEntry) => return Ok(None),
+                Err(err) => return Err(format!("the key store did not answer: {err}")),
+            },
+            Self::File(dir) => match std::fs::read_to_string(dir.join(format!("{name}.key"))) {
+                Ok(text) => text,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(err) => return Err(format!("{}: {err}", dir.display())),
+            },
+        };
+        Ok(Some(text.trim().to_string()).filter(|text| !text.is_empty()))
+    }
+
+    /// Keep `value` as the secret `name`.
+    ///
+    /// # Errors
+    ///
+    /// Returns why when the store does not take it.
+    pub(crate) fn write(&self, name: &str, value: &str) -> Result<(), String> {
+        match self {
+            Self::Os => OsKeyStore.set(name, value).map_err(|err| err.to_string()),
+            Self::File(dir) => {
+                moqui_lib::private_fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+                FileKeyStore::new(dir).set(name, value).map_err(|err| err.to_string())
+            }
+        }
+    }
+}
+
 /// Move into `store` (the OS key store of this run) the keys a run with the file store left in `dir`
 /// (`<account>.key`: a development run, `MOQUI_DESKTOP_KEY_STORE=file`, a session with no Secret Service), and remove
 /// each file. Else it stays in plain text, never read again (the account shows signed out, and its sign-out and removal
@@ -193,9 +252,16 @@ mod tests {
         std::fs::write(dir.join("accounts.json"), "{}").unwrap();
 
         assert_eq!(move_file_keys(&dir, &store), 3);
-        assert_eq!(store.get("example.com-0123456789ab").as_deref(), Some("os-key"), "the OS store's own is kept");
+        assert_eq!(
+            store.get("example.com-0123456789ab").as_deref(),
+            Some("os-key"),
+            "the OS store's own is kept"
+        );
         assert_eq!(store.get("example.org-ba9876543210").as_deref(), Some("file-key"));
-        assert_eq!(store.get("example.org-ba9876543210.chat-store").as_deref(), Some("passphrase"));
+        assert_eq!(
+            store.get("example.org-ba9876543210.chat-store").as_deref(),
+            Some("passphrase")
+        );
         let left: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())

@@ -32,7 +32,8 @@ devtools = ["moqui-app/devtools"]
 [dependencies]
 moqui-app = { path = "../../target/moqui-app", default-features = false }
 moqui-host = { path = "../moqui-host", default-features = false }
-moqui-lib = { path = "../moqui-lib" }
+# age: the backup key and the sealed backups (src/backup_key.rs, SEC-CLI-114)
+moqui-lib = { path = "../moqui-lib", features = ["age"] }
 # The client of a remote server (src/client/, plans/Mobile-Desktop.md configuration 3): accounts, sign-in, the proxy and
 # the sockets.
 moqui-client = { path = "../moqui-client" }

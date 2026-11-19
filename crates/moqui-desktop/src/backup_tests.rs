@@ -29,6 +29,7 @@ fn the_settings_file_reads_back_what_it_keeps() {
         folder: Some(PathBuf::from("/Users/me/Documents/MR-Moqui Backups")),
         scheduled: false,
         told: true,
+        key_told: true,
     };
     assert_eq!(Settings::parse(&settings.to_text()), settings);
     assert_eq!(Settings::parse(&Settings::default().to_text()), Settings::default());
@@ -59,6 +60,7 @@ fn the_node_gets_the_schedule_and_the_folder_unless_it_is_the_frameworks() {
         folder: Some(PathBuf::from("/b")),
         scheduled: true,
         told: false,
+        key_told: false,
     };
     assert_eq!(
         properties(&chosen, Some(PathBuf::from("/d"))),
@@ -76,6 +78,7 @@ fn the_node_gets_the_schedule_and_the_folder_unless_it_is_the_frameworks() {
         folder: None,
         scheduled: false,
         told: false,
+        key_told: false,
     };
     assert_eq!(
         properties(&off, None),
@@ -90,6 +93,7 @@ fn the_folder_is_the_chosen_then_the_default_then_the_runtimes() {
         folder: Some(PathBuf::from("/b")),
         scheduled: true,
         told: false,
+        key_told: false,
     };
     assert_eq!(
         folder_of(&chosen, Some(PathBuf::from("/d")), runtime),
@@ -116,11 +120,11 @@ fn a_folder_in_or_around_the_database_is_refused() {
 
 #[test]
 fn an_app_backup_is_named_outside_the_frameworks_ladder() {
-    let name = backup_name(stamp("2026-11-03T14:05:09Z"), MANUAL);
+    let name = backup_name(stamp("2026-11-03T14:05:09Z"), MANUAL, false);
     assert_eq!(name, "moqui-20261103T140509Z-manual.dump");
     assert!(!moqui_core::backup::is_archive_name(&name));
     assert_eq!(
-        backup_name(stamp("2026-11-03T14:05:09Z"), BEFORE_RESTORE),
+        backup_name(stamp("2026-11-03T14:05:09Z"), BEFORE_RESTORE, false),
         "moqui-20261103T140509Z-before-restore.dump"
     );
 }
@@ -189,10 +193,10 @@ fn save_db_and_load_save_take_the_cluster_and_the_dump() {
     let runtime = Path::new("/rt");
     let dump = Path::new("/b/moqui-x-manual.dump.partial");
     assert_eq!(
-        tool_args(false, runtime, dump),
+        tool_args(false, runtime, dump, None),
         vec!["save-db", "/rt/db/embedded", "/b/moqui-x-manual.dump.partial"]
     );
-    assert_eq!(tool_args(true, runtime, dump)[0], "load-save");
+    assert_eq!(tool_args(true, runtime, dump, None)[0], "load-save");
 }
 
 #[test]
@@ -211,6 +215,7 @@ fn the_settings_are_kept_in_the_config_directory() {
         folder: Some(PathBuf::from("/b")),
         scheduled: true,
         told: false,
+        key_told: false,
     };
     save(&dir, &settings).unwrap();
     assert_eq!(load(&dir), settings);
@@ -223,10 +228,99 @@ fn the_settings_are_kept_in_the_config_directory() {
 fn the_nightly_backup_is_told_once() {
     let mut settings = Settings::default();
     assert!(notice_due(&settings, false));
-    assert!(!notice_due(&settings, true), "a development run keeps the framework's folder");
+    assert!(
+        !notice_due(&settings, true),
+        "a development run keeps the framework's folder"
+    );
     settings.told = true;
     assert!(!notice_due(&settings, false));
-    assert!(!notice_due(&Settings { scheduled: false, ..Settings::default() }, false));
+    assert!(!notice_due(
+        &Settings {
+            scheduled: false,
+            ..Settings::default()
+        },
+        false
+    ));
     assert!(Settings::parse(&settings.to_text()).told);
-    assert!(NOTICE.contains("not encrypted") && NOTICE.contains("Nightly backup off"));
+    assert!(
+        NOTICE.contains("encrypted with a backup key")
+            && NOTICE.contains("Save backup key")
+            && NOTICE.contains("Nightly backup off")
+    );
+}
+
+/// SEC-CLI-114: a backup the app takes sealed is `.dump.age`, the tray's last backup and its partial read it as the
+/// plain one, and the tools are handed the key as wanted: the save the public key on its command line, the restore
+/// `--identity -` with the key itself on its stdin, never in its arguments.
+#[test]
+fn a_sealed_backup_is_named_dump_age_and_its_key_never_goes_on_a_command_line() {
+    let taken = stamp("2026-11-03T14:05:09Z");
+    let name = backup_name(taken, MANUAL, true);
+    assert_eq!(name, "moqui-20261103T140509Z-manual.dump.age");
+    assert_eq!(backup_stamp(&name), Some(taken));
+    assert_eq!(
+        backup_stamp("moqui-20261103T020000Z-d.dump.age"),
+        Some(stamp("2026-11-03T02:00:00Z"))
+    );
+    assert_eq!(backup_stamp("moqui-20261103T020000Z-d.age"), None);
+    assert!(not_a_restore_dump("moqui_content-20261103T140509Z-manual.dump.age"));
+    assert_eq!(
+        partial_of(Path::new("/b").join(&name).as_path()),
+        Path::new("/b/moqui-20261103T140509Z-manual.dump.age.partial")
+    );
+
+    let runtime = Path::new("/rt");
+    let dump = Path::new("/b/moqui-x-manual.dump.age");
+    assert_eq!(
+        tool_args(false, runtime, dump, Some("age1recipient")),
+        vec![
+            "save-db",
+            "/rt/db/embedded",
+            "/b/moqui-x-manual.dump.age",
+            "--recipient",
+            "age1recipient"
+        ]
+    );
+    let restore = tool_args(true, runtime, dump, Some("AGE-SECRET-KEY-1SECRET"));
+    assert_eq!(
+        restore,
+        vec![
+            "load-save",
+            "/rt/db/embedded",
+            "/b/moqui-x-manual.dump.age",
+            "--identity",
+            "-"
+        ]
+    );
+    assert!(
+        !restore.iter().any(|arg| arg.contains("SECRET")),
+        "the key is on the command line"
+    );
+    // the node's dumps are sealed to the key the tray's take theirs to
+    let source = include_str!("backup.rs");
+    assert!(source.contains("properties.push((RECIPIENT_PROPERTY, recipient))"));
+    assert!(source.contains("\"moqui_conf__database_backup__recipient\""));
+}
+
+/// The user told of the nightly backup before its backups were sealed is told of the key once; one told by the new
+/// notice is not told again, and nothing is said of a key while the backups are not sealed or in a development run.
+#[test]
+fn the_backup_key_is_told_once_to_a_user_told_of_the_backups_before() {
+    let before = Settings {
+        told: true,
+        ..Settings::default()
+    };
+    assert!(key_notice_due(&before, true, false));
+    assert!(!key_notice_due(&before, false, false), "the backups are not sealed");
+    assert!(!key_notice_due(&before, true, true), "a development run");
+    let told = Settings {
+        key_told: true,
+        ..before.clone()
+    };
+    assert!(!key_notice_due(&told, true, false));
+    assert!(
+        !key_notice_due(&Settings::default(), true, false),
+        "the first notice tells of the key itself"
+    );
+    assert!(KEY_NOTICE.contains("Save backup key"));
 }

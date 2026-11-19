@@ -40,7 +40,7 @@
 //! authentication").
 
 mod conf;
-mod keystore;
+pub(crate) mod keystore;
 mod scheme;
 pub(crate) mod sockets;
 pub(crate) mod windows;

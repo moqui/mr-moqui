@@ -21,6 +21,7 @@
 //! client of a remote server.
 
 mod backup;
+mod backup_key;
 mod bridge;
 mod client;
 mod download;

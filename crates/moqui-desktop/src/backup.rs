@@ -25,12 +25,18 @@
 //!   node's Postgres running), choose and open the folder, restore from a dump, and the last backup's time. A backup
 //!   taken from the menu is named outside the ladder (`moqui-<stamp>-manual.dump`), so the nightly rotation neither
 //!   counts nor removes it. Nightly backup turns the scheduled one on and off, which starts the node again.
-//! - **Told.** The first start that has the nightly backup on tells the user what it holds and where it goes (the whole
-//!   node, in clear, into a folder their own backup or a cloud may sync), and how to turn it off; the `backups` file
-//!   notes that it did (plans/Security-Review.md SEC-CLI-114).
+//! - **Sealed.** Each backup, the nightly one and the tray's, is sealed as it is written to the public key of the
+//!   app's backup key (`crate::backup_key`, kept in the OS key store), `<name>.dump.age`: the folder, which the user's
+//!   own backup or a cloud may copy, holds no plain copy of the data. The tray's Save backup key… writes the key to a
+//!   file, which a restore on another computer needs (plans/Security-Review.md SEC-CLI-114). Where the key cannot be
+//!   had, the backups are written as they are, and the user is told.
+//! - **Told.** The first start that has the nightly backup on tells the user what it holds, where it goes and to save
+//!   the key, and how to turn it off; one told before the backups were sealed is told of the key once. The `backups`
+//!   file notes each.
 //! - **Restore** stops the node and runs `moqui load-save` (`pg_restore --clean`), the proven restore path, then
 //!   starts the node again. It first takes a backup of the data it replaces (`-before-restore`), and does not restore
-//!   when that fails.
+//!   when that fails. A sealed backup is opened with the key from the store, or one the user picks when that is not the
+//!   key it was sealed to; it is checked before anything stops, and handed to `moqui load-save` on its stdin.
 //!
 //! The sidecar node uses the `moqui` binary for both. The node in process dumps with the drivers' function in the
 //! app's process, and restores with the binary when there is one, else the same function.
@@ -56,6 +62,9 @@ pub(crate) const DEFAULT_FOLDER: &str = "MR-Moqui Backups";
 /// The environment names of the conf's `database-backup` `dir` and `scheduled`, which the node takes as overrides.
 const DIR_PROPERTY: &str = "moqui_conf__database_backup__dir";
 const SCHEDULED_PROPERTY: &str = "moqui_conf__database_backup__scheduled";
+/// The environment name of the conf's `database-backup` `recipient`, the backup key's public key the node's dumps are
+/// sealed to (SEC-CLI-114).
+const RECIPIENT_PROPERTY: &str = "moqui_conf__database_backup__recipient";
 /// The kinds of a backup the app takes, the last part of its name.
 pub(crate) const MANUAL: &str = "manual";
 pub(crate) const BEFORE_RESTORE: &str = "before-restore";
@@ -66,6 +75,7 @@ const OPEN_ITEM: &str = "backup-open";
 const RESTORE_ITEM: &str = "backup-restore";
 const LAST_ITEM: &str = "backup-last";
 const NIGHTLY_ITEM: &str = "backup-nightly";
+const SAVE_KEY_ITEM: &str = "backup-save-key";
 
 /// What the `backups` file says. A line is `name=value`; `#` starts a comment.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +86,8 @@ pub(crate) struct Settings {
     pub(crate) scheduled: bool,
     /// Whether the user was told what the nightly backup holds and where it goes ([`NOTICE`]).
     pub(crate) told: bool,
+    /// Whether the user was told of the backup key and to save it ([`NOTICE`], [`KEY_NOTICE`]).
+    pub(crate) key_told: bool,
 }
 
 impl Default for Settings {
@@ -84,20 +96,36 @@ impl Default for Settings {
             folder: None,
             scheduled: true,
             told: false,
+            key_told: false,
         }
     }
 }
 
-/// What the user is told once, at the first start with the nightly backup on: what a dump holds, where it goes, and
-/// how to stop it (SEC-CLI-114).
+/// What the user is told once, at the first start with the nightly backup on: what a dump holds, where it goes, that
+/// it is sealed to the backup key and to save the key, and how to stop it (SEC-CLI-114).
 pub(crate) const NOTICE: &str = "Each night MR Moqui backs up all its data (every record, with the accounts' password \
-     hashes) to this folder, not encrypted. A folder your own backup or a cloud service syncs takes a copy of it. Choose \
-     another folder, or turn Nightly backup off, in the tray's Backups menu.";
+     hashes) to this folder, encrypted with a backup key kept in this computer's key store. To restore on another \
+     computer you need that key: save it with Save backup key… in the tray's Backups menu, and keep it apart from the \
+     backups. Choose another folder, or turn Nightly backup off, there too.";
+
+/// What a user told of the nightly backup before the backups were sealed is told once of the key.
+pub(crate) const KEY_NOTICE: &str = "MR Moqui's backups are now encrypted with a backup key kept in this computer's \
+     key store. To restore on another computer you need that key: save it with Save backup key… in the tray's Backups \
+     menu, and keep it apart from the backups. Backups taken before stay as they were.";
+
+/// What the user is told when the backups cannot be sealed: there is no backup key to seal them to.
+pub(crate) const PLAIN_NOTICE: &str = "MR Moqui's backups are not encrypted: its backup key could not be read or made.";
 
 /// Whether this start tells the user of the nightly backup: it is on, they were not told, and it is not a development
 /// run.
 pub(crate) fn notice_due(settings: &Settings, dev: bool) -> bool {
     settings.scheduled && !settings.told && !dev
+}
+
+/// Whether this start tells the user of the backup key ([`KEY_NOTICE`]): the backups are `sealed`, the user was told of
+/// the nightly backup before the backups were and not of the key, and it is not a development run.
+pub(crate) fn key_notice_due(settings: &Settings, sealed: bool, dev: bool) -> bool {
+    sealed && settings.told && !settings.key_told && !dev
 }
 
 impl Settings {
@@ -121,6 +149,7 @@ impl Settings {
                     _ => tracing::warn!("{SETTINGS_FILE}: scheduled is {value:?}, not true or false"),
                 },
                 "told" => settings.told = value == "true",
+                "key_told" => settings.key_told = value == "true",
                 other => tracing::warn!("{SETTINGS_FILE}: {other:?} is not a setting; it is passed over"),
             }
         }
@@ -136,8 +165,8 @@ impl Settings {
             .unwrap_or_default();
         format!(
             "# MR Moqui backups: the folder (empty for the default), whether the nightly backup runs, and whether the \
-             user was told of it\nfolder={folder}\nscheduled={}\ntold={}\n",
-            self.scheduled, self.told
+             user was told of it and of the backup key\nfolder={folder}\nscheduled={}\ntold={}\nkey_told={}\n",
+            self.scheduled, self.told, self.key_told
         )
     }
 }
@@ -208,14 +237,16 @@ pub(crate) fn refuse_folder(folder: &Path, runtime: &Path) -> Option<String> {
 }
 
 /// The name of a backup the app takes at `stamp`: `moqui-<UTC stamp>-<kind>.dump`, the framework's stamp with a kind
-/// in place of its tier letter, so its ladder passes over it.
-pub(crate) fn backup_name(stamp: Timestamp, kind: &str) -> String {
-    format!("moqui-{}-{kind}.dump", stamp.strftime("%Y%m%dT%H%M%SZ"))
+/// in place of its tier letter, so its ladder passes over it; `.dump.age` when it is `sealed`.
+pub(crate) fn backup_name(stamp: Timestamp, kind: &str, sealed: bool) -> String {
+    let age = if sealed { ".age" } else { "" };
+    format!("moqui-{}-{kind}.dump{age}", stamp.strftime("%Y%m%dT%H%M%SZ"))
 }
 
-/// When the backup named `name` was taken: one of the ladder's dumps (`moqui-<stamp>-d.dump`) or one the app took
-/// ([`backup_name`]). Physical backups and anything else are none.
+/// When the backup named `name` was taken: one of the ladder's dumps (`moqui-<stamp>-d.dump`, or sealed `.dump.age`)
+/// or one the app took ([`backup_name`]). Physical backups and anything else are none.
 pub(crate) fn backup_stamp(name: &str) -> Option<Timestamp> {
+    let name = name.strip_suffix(".age").unwrap_or(name);
     let rest = name.strip_prefix("moqui-")?.strip_suffix(".dump")?;
     let (stamp, kind) = rest.split_once('-')?;
     if kind.is_empty() {
@@ -255,13 +286,33 @@ pub(crate) fn last_label(last: Option<Timestamp>, zone: &TimeZone) -> String {
     }
 }
 
-/// The arguments of `moqui save-db` (`restore` false) or `moqui load-save` for `runtime`'s cluster and `dump`.
-pub(crate) fn tool_args(restore: bool, runtime: &Path, dump: &Path) -> Vec<String> {
-    vec![
+/// The arguments of `moqui save-db` (`restore` false) or `moqui load-save` for `runtime`'s cluster and `dump`; with
+/// `sealed`, the save's `--recipient` (the backup key's public key) or the restore's `--identity -`, the key itself
+/// going on its stdin, never on a command line another process may read.
+pub(crate) fn tool_args(restore: bool, runtime: &Path, dump: &Path, sealed: Option<&str>) -> Vec<String> {
+    let mut args = vec![
         if restore { "load-save" } else { "save-db" }.to_string(),
         cluster_dir(runtime).display().to_string(),
         dump.display().to_string(),
-    ]
+    ];
+    match (restore, sealed) {
+        (false, Some(recipient)) => args.extend(["--recipient".to_string(), recipient.to_string()]),
+        (true, Some(_)) => args.extend(["--identity".to_string(), "-".to_string()]),
+        (_, None) => {}
+    }
+    args
+}
+
+/// The public key the backups are sealed to, the backup key's; none, logged, when the key cannot be had, and the
+/// backups are written as they are.
+fn sealing_recipient(app: &AppHandle) -> Option<String> {
+    match crate::backup_key::app_key(app) {
+        Ok(identity) => Some(identity.recipient().to_string()),
+        Err(err) => {
+            tracing::error!("The backups are not sealed: {err}");
+            None
+        }
+    }
 }
 
 /// The `.partial` file a dump is written to before it gets its name, as the framework's; its nightly run removes one
@@ -296,13 +347,29 @@ pub(crate) fn node_properties(app: &AppHandle) -> Vec<(&'static str, String)> {
             .unwrap_or_default();
         notify(app, "Nightly backups go to", Some(&format!("{place}\n{NOTICE}")));
         settings.told = true;
+        settings.key_told = true;
         if let Err(err) = app.path().app_config_dir().map_err(|err| err.to_string()).and_then(|dir| {
             save(&dir, &settings).map_err(|err| err.to_string())
         }) {
             tracing::warn!("{SETTINGS_FILE}: not written, so the nightly backup's note shows again: {err}");
         }
     }
+    let recipient = sealing_recipient(app);
+    if recipient.is_none() {
+        notify(app, "Backups are not encrypted", Some(PLAIN_NOTICE));
+    } else if key_notice_due(&settings, true, tauri::is_dev()) {
+        notify(app, "Save your backup key", Some(KEY_NOTICE));
+        settings.key_told = true;
+        if let Err(err) = app.path().app_config_dir().map_err(|err| err.to_string()).and_then(|dir| {
+            save(&dir, &settings).map_err(|err| err.to_string())
+        }) {
+            tracing::warn!("{SETTINGS_FILE}: not written, so the backup key's note shows again: {err}");
+        }
+    }
     let mut properties = properties(&settings, default_folder_of(app));
+    if let Some(recipient) = recipient {
+        properties.push((RECIPIENT_PROPERTY, recipient));
+    }
     // A development run is on this repository's runtime: its job row keeps whatever the developer set, as the
     // property would set it for every later `./moq run` too.
     if tauri::is_dev() {
@@ -322,10 +389,11 @@ pub(crate) fn add_tray_items(app: &AppHandle, menu: &Menu<tauri::DynRuntime>) ->
     let choose = MenuItem::with_id(app, CHOOSE_ITEM, "Choose backup folder…", true, None::<&str>)?;
     let open = MenuItem::with_id(app, OPEN_ITEM, "Open backup folder", true, None::<&str>)?;
     let restore = MenuItem::with_id(app, RESTORE_ITEM, "Restore from backup…", true, None::<&str>)?;
+    let save_key = MenuItem::with_id(app, SAVE_KEY_ITEM, "Save backup key…", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let nightly = CheckMenuItem::with_id(app, NIGHTLY_ITEM, "Nightly backup", true, settings.scheduled, None::<&str>)?;
     let last = MenuItem::with_id(app, LAST_ITEM, "Last backup: none", false, None::<&str>)?;
-    let items: [&dyn IsMenuItem<_>; 7] = [&now, &nightly, &choose, &open, &restore, &separator, &last];
+    let items: [&dyn IsMenuItem<_>; 8] = [&now, &nightly, &choose, &open, &restore, &save_key, &separator, &last];
     let submenu = Submenu::with_items(app, "Backups", true, &items)?;
     let position = menu.items()?.len().saturating_sub(1);
     menu.insert(&submenu, position)?;
@@ -346,6 +414,7 @@ pub(crate) fn on_menu_event(app: &AppHandle, id: &str) -> bool {
         OPEN_ITEM => open_folder(app),
         RESTORE_ITEM => choose_restore(app),
         NIGHTLY_ITEM => toggle_nightly(app),
+        SAVE_KEY_ITEM => save_key(app),
         _ => return false,
     }
     true
@@ -424,13 +493,25 @@ fn take_backup(app: &AppHandle, start: &NodeStart, kind: &str) -> Result<PathBuf
         return Err(refused);
     }
     std::fs::create_dir_all(&folder).map_err(|err| format!("could not create {}: {err}", folder.display()))?;
-    let path = folder.join(backup_name(Timestamp::now(), kind));
+    let recipient = sealing_recipient(app);
+    let path = folder.join(backup_name(Timestamp::now(), kind, recipient.is_some()));
     let partial = partial_of(&path);
     tracing::info!("Backing up the database to {}", path.display());
     let dumped = match start.mode {
-        Mode::Sidecar => run_moqui(&node::moqui_binary()?, false, &start.runtime, &partial),
-        Mode::InProcess => moqui_host::db::embedded::save_db(&start.runtime, &cluster_dir(&start.runtime), &partial)
-            .map_err(|err| err.to_string()),
+        Mode::Sidecar => run_moqui(
+            &node::moqui_binary()?,
+            false,
+            &start.runtime,
+            &partial,
+            recipient.as_deref(),
+        ),
+        Mode::InProcess => moqui_host::db::embedded::save_db_to(
+            &start.runtime,
+            &cluster_dir(&start.runtime),
+            &partial,
+            recipient.as_deref(),
+        )
+        .map_err(|err| err.to_string()),
         // a client has no node and no backups: its tray has no Backups menu
         Mode::Client => Err("a client of a server has no database to back up".to_string()),
     };
@@ -444,12 +525,27 @@ fn take_backup(app: &AppHandle, start: &NodeStart, kind: &str) -> Result<PathBuf
     Ok(path)
 }
 
-/// Run `moqui save-db` or `moqui load-save` (`restore`) on `runtime` and `dump`, and wait for it.
-fn run_moqui(binary: &Path, restore: bool, runtime: &Path, dump: &Path) -> Result<(), String> {
-    let output = Command::new(binary)
-        .args(tool_args(restore, runtime, dump))
+/// Run `moqui save-db` or `moqui load-save` (`restore`) on `runtime` and `dump`, and wait for it; `key` is the save's
+/// recipient or the restore's identity, which goes on its stdin ([`tool_args`]).
+fn run_moqui(binary: &Path, restore: bool, runtime: &Path, dump: &Path, key: Option<&str>) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut child = Command::new(binary)
+        .args(tool_args(restore, runtime, dump, key))
         .env("MOQUI_RUNTIME", runtime)
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("could not run {}: {err}", binary.display()))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        if let (true, Some(identity)) = (restore, key) {
+            stdin
+                .write_all(identity.as_bytes())
+                .map_err(|err| format!("could not hand moqui the backup key: {err}"))?;
+        }
+    }
+    let output = child
+        .wait_with_output()
         .map_err(|err| format!("could not run {}: {err}", binary.display()))?;
     if output.status.success() {
         return Ok(());
@@ -606,7 +702,7 @@ fn choose_restore(app: &AppHandle) {
         move || {
             let mut dialog = rfd::AsyncFileDialog::new()
                 .set_title("Restore from backup")
-                .add_filter("Database backup", &["dump"]);
+                .add_filter("Database backup", &["dump", "age"]);
             if let Some(current) = current.filter(|path| path.is_dir()) {
                 dialog = dialog.set_directory(current);
             }
@@ -628,39 +724,94 @@ fn choose_restore(app: &AppHandle) {
                 );
                 return;
             }
-            let description = format!(
-                "All data in MR Moqui is replaced with the backup {name}. A backup of the data now is taken first. \
-                 The node stops while it restores."
-            );
-            let confirm_app = handle.clone();
-            pick(
-                &handle,
-                move || {
-                    rfd::AsyncMessageDialog::new()
-                        .set_level(rfd::MessageLevel::Warning)
-                        .set_title("Restore from backup?")
-                        .set_description(description)
-                        .set_buttons(rfd::MessageButtons::OkCancelCustom(
-                            "Restore".to_string(),
-                            "Cancel".to_string(),
-                        ))
-                        .show()
-                },
-                move |answer| {
-                    // Linux answers Ok for the custom button
-                    if matches!(answer, rfd::MessageDialogResult::Ok)
-                        || matches!(&answer, rfd::MessageDialogResult::Custom(text) if text == "Restore")
-                    {
-                        exclusive(&confirm_app, "moqui-desktop-restore", move |app| restore(app, &dump));
-                    }
-                },
-            );
+            // a sealed backup: the key that opens it, from the store or a file the user picks, before anything stops
+            if crate::backup_key::is_sealed(&name) {
+                let stored = crate::backup_key::app_key(&handle)
+                    .ok()
+                    .filter(|identity| crate::backup_key::opens(identity, &dump));
+                match stored {
+                    Some(identity) => confirm_restore(&handle, dump, name, Some(identity.secret_text())),
+                    None => pick_key(&handle, dump, name),
+                }
+                return;
+            }
+            confirm_restore(&handle, dump, name, None);
         },
     );
 }
 
-/// Back up the data now, stop the node, restore `dump`, and start the node again, with the splash page showing.
-fn restore(app: &AppHandle, dump: &Path) {
+/// Ask the user for the key file of the sealed backup `dump` (one this computer's key does not open), then confirm.
+fn pick_key(app: &AppHandle, dump: PathBuf, name: String) {
+    let handle = app.clone();
+    pick(
+        app,
+        move || {
+            rfd::AsyncFileDialog::new()
+                .set_title("Choose the backup key of this backup")
+                .pick_file()
+        },
+        move |chosen| {
+            let Some(chosen) = chosen else {
+                return;
+            };
+            let key = std::fs::read_to_string(chosen.path())
+                .map_err(|err| err.to_string())
+                .and_then(|text| crate::backup_key::identity_of(&text));
+            match key {
+                Ok(identity) if crate::backup_key::opens(&identity, &dump) => {
+                    confirm_restore(&handle, dump, name, Some(identity.secret_text()));
+                }
+                Ok(_) => notify(
+                    &handle,
+                    "Restore not started",
+                    Some("That backup key does not open this backup."),
+                ),
+                Err(err) => notify(
+                    &handle,
+                    "Restore not started",
+                    Some(&format!("That is not a backup key: {err}")),
+                ),
+            }
+        },
+    );
+}
+
+/// Confirm the restore of `dump`, opened with `key` when it is sealed, then [`restore`].
+fn confirm_restore(app: &AppHandle, dump: PathBuf, name: String, key: Option<String>) {
+    let description = format!(
+        "All data in MR Moqui is replaced with the backup {name}. A backup of the data now is taken first. The node \
+         stops while it restores."
+    );
+    let confirm_app = app.clone();
+    pick(
+        app,
+        move || {
+            rfd::AsyncMessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title("Restore from backup?")
+                .set_description(description)
+                .set_buttons(rfd::MessageButtons::OkCancelCustom(
+                    "Restore".to_string(),
+                    "Cancel".to_string(),
+                ))
+                .show()
+        },
+        move |answer| {
+            // Linux answers Ok for the custom button
+            if matches!(answer, rfd::MessageDialogResult::Ok)
+                || matches!(&answer, rfd::MessageDialogResult::Custom(text) if text == "Restore")
+            {
+                exclusive(&confirm_app, "moqui-desktop-restore", move |app| {
+                    restore(app, &dump, key.as_deref())
+                });
+            }
+        },
+    );
+}
+
+/// Back up the data now, stop the node, restore `dump` (opened with `key`, an identity's text, when it is sealed), and
+/// start the node again, with the splash page showing.
+fn restore(app: &AppHandle, dump: &Path, key: Option<&str>) {
     let Some(start) = started_with(app) else {
         notify(app, "Restore failed", Some("The node has not started."));
         return;
@@ -701,10 +852,10 @@ fn restore(app: &AppHandle, dump: &Path) {
         node.stop();
     }
     let restored = match start.mode {
-        Mode::Sidecar => node::moqui_binary().and_then(|binary| run_moqui(&binary, true, &start.runtime, dump)),
+        Mode::Sidecar => node::moqui_binary().and_then(|binary| run_moqui(&binary, true, &start.runtime, dump, key)),
         Mode::InProcess => match node::moqui_binary() {
-            Ok(binary) => run_moqui(&binary, true, &start.runtime, dump),
-            Err(_) => moqui_host::db::embedded::load_save(&start.runtime, &cluster_dir(&start.runtime), dump)
+            Ok(binary) => run_moqui(&binary, true, &start.runtime, dump, key),
+            Err(_) => moqui_host::db::embedded::load_save_with(&start.runtime, &cluster_dir(&start.runtime), dump, key)
                 .map_err(|err| err.to_string()),
         },
         Mode::Client => Err("a client of a server has no database to restore".to_string()),
@@ -732,6 +883,52 @@ fn restore(app: &AppHandle, dump: &Path) {
         Mode::InProcess => app.request_restart(),
         Mode::Client => state.restarting.store(false, Ordering::SeqCst),
     }
+}
+
+/// The tray's Save backup key…: the backup key written as a file where the user chooses, readable by them only; a
+/// restore on another computer needs it (SEC-CLI-114).
+fn save_key(app: &AppHandle) {
+    let identity = match crate::backup_key::app_key(app) {
+        Ok(identity) => identity,
+        Err(err) => {
+            tracing::error!("The backup key could not be had to save: {err}");
+            notify(app, "The backup key is not saved", Some(&err));
+            return;
+        }
+    };
+    let handle = app.clone();
+    let documents = app.path().document_dir().ok().filter(|path| path.is_dir());
+    pick(
+        app,
+        move || {
+            let mut dialog = rfd::AsyncFileDialog::new()
+                .set_title("Save the backup key")
+                .set_file_name("MR-Moqui-backup-key.txt");
+            if let Some(documents) = documents {
+                dialog = dialog.set_directory(documents);
+            }
+            dialog.save_file()
+        },
+        move |chosen| {
+            let Some(chosen) = chosen else {
+                return;
+            };
+            match crate::backup_key::save_key_file(&identity, chosen.path()) {
+                Ok(()) => notify(
+                    &handle,
+                    "Backup key saved",
+                    Some(
+                        "Keep it apart from the backups, somewhere safe: without it they do not restore on another \
+                          computer, and whoever has both reads all the data.",
+                    ),
+                ),
+                Err(err) => {
+                    tracing::error!("The backup key was not saved: {err}");
+                    notify(&handle, "The backup key is not saved", Some(&err));
+                }
+            }
+        },
+    );
 }
 
 /// Show a dialog that `open` makes, on the main thread as macOS needs, and hand its answer to `then` on a thread of

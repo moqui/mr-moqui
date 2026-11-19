@@ -43,9 +43,11 @@ their own.
 ## The desktop app
 
 - **The node.** Run as a node, the app is itself an MR Moqui server, for your own use: all its data is in the app's
-  data folder on this computer. Each night it backs the whole database up, unencrypted, to a folder (by default
-  `MR-Moqui Backups` in your Documents, which your own backup or a cloud service may copy); it tells you so the first
-  time, and the tray's Backups menu chooses the folder or turns the nightly backup off.
+  data folder on this computer. Each night it backs the whole database up, encrypted with a backup key kept in the
+  system's key store, to a folder (by default `MR-Moqui Backups` in your Documents, which your own backup or a cloud
+  service may copy); it tells you so the first time, and the tray's Backups menu chooses the folder, turns the nightly
+  backup off, and saves the backup key to a file, which restoring on another computer needs. Backups taken before the
+  key are not encrypted.
 - **As a client** of a server, it keeps what both apps keep (above), its device keys in the system's key store (the
   macOS Keychain, the Windows Credential Manager, the Secret Service on Linux) or, where there is none, in a file only
   you can read.

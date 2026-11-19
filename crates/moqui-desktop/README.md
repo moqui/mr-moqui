@@ -165,17 +165,25 @@ The attributes are in `moqui-conf-3.xsd` and
 
 ## Backups, restore and sleep
 
-`src/backup.rs`, with a Backups menu in the tray: Back up now, choose and open the folder, Restore from backup, and the
-last backup's time. The folder and whether the nightly backup runs are in `backups` in the app's config directory.
+`src/backup.rs`, with a Backups menu in the tray: Back up now, Nightly backup, choose and open the folder, Restore from
+backup, Save backup key…, and the last backup's time. The folder and whether the nightly backup runs are in `backups` in the app's config directory.
 
 - **Nightly:** the node gets `moqui_conf__database_backup__scheduled=true` and `database-backup@dir`, which run the
   framework's `backup_EmbeddedDatabase_daily` job into the folder, by default `MR-Moqui Backups` in Documents (a
   development run keeps `runtime/db/backup` and leaves the job's schedule as the repository's runtime has it). See [PostgresBackup](../../plans/archive/PostgresBackup.md).
-- **Back up now:** a `pg_dump` of the live database (`moqui save-db`), named `moqui-<stamp>-manual.dump`, outside the
-  nightly rotation, with the content database's `moqui_content-<stamp>-manual.dump` beside it.
+- **Sealed:** each backup, the nightly one and the tray's, is sealed as it is written to the public key of the app's
+  backup key, an age identity made once and kept in the OS key store (`src/backup_key.rs`), as `<name>.dump.age`; the
+  node gets `database-backup@recipient`. **Save backup key…** writes the key to a file (`age -d -i <file>` reads it),
+  which a restore on another computer needs. Where the key cannot be had, the backups are written as they are and the
+  user is told.
+- **Back up now:** a `pg_dump` of the live database (`moqui save-db --recipient`), named
+  `moqui-<stamp>-manual.dump.age`, outside the nightly rotation, with the content database's
+  `moqui_content-<stamp>-manual.dump.age` beside it.
 - **Restore:** backs up the current data (`-before-restore`, and does not go on if that fails), stops the node, runs
   `moqui load-save` on the chosen `moqui-` dump (which restores the content database from the dump beside it; another
-  database's dump is refused), and starts it again.
+  database's dump is refused), and starts it again. A sealed dump is opened with the key from the store, or a key file
+  the user picks when that is not the key it was sealed to, checked before anything stops; the key goes to `moqui
+  load-save --identity -` on its stdin.
 - **Sleep:** `src/wake.rs` compares the wall clock with the monotonic one; after a sleep it asks the node's `/health`
   again and logs the answer. A nightly backup missed in a sleep runs once soon after the wake.
 
