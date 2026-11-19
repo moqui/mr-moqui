@@ -668,7 +668,8 @@ const VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 /// DMARC is RFC 9989's: `t=y` lowers the policy one level, and there is no `pct`. A failure under `p=reject` or
 /// `p=quarantine` is overridden when a passing ARC chain was last sealed by one of `smtp-server@arc-trusted-sealers` (a
 /// mailing list or forwarder this node trusts) and that sealer's `ARC-Authentication-Results` records `dmarc=pass` for
-/// the From domain; with that property empty there is no ARC exception.
+/// the From domain; with that property empty there is no ARC exception. A DMARC result of `temperror` (a DNS error), or
+/// no resolver, is a temporary error too.
 pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records: Option<Arc<Records>>) -> Verdict {
     let id = authserv_id.clone();
     let done = dns::on_runtime(async move {
@@ -763,9 +764,11 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         Ok(resolver) => resolver,
         Err(err) => {
             tracing::error!("Mail authentication has no resolver: {err}");
+            // not judged is not accepted: the sender tries again (SEC-MAIL-92)
             return Verdict {
                 field: format!("Authentication-Results: {authserv_id}; none (no resolver)\r\n"),
                 summary: "no resolver".to_string(),
+                temp_error: true,
                 ..Verdict::default()
             };
         }
@@ -875,11 +878,13 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         result_word(&dmarc.result().to_string()),
         result_word(&arc.result().to_string()),
     );
+    // a DNS error is not a judgment: the sender tries again rather than the message going in unjudged (SEC-MAIL-92)
+    let temp_error = matches!(dmarc.result(), DmarcResult::TempError(_));
     Verdict {
         field,
         dmarc: action,
         summary,
-        temp_error: false,
+        temp_error,
         refused: None,
         domain: if dmarc.domain().is_empty() {
             from

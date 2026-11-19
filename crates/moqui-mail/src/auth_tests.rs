@@ -421,3 +421,22 @@ fn a_trusted_arc_sealer_overrides_dmarc_only_for_a_pass_it_recorded() {
          trusted ARC sealer lists.example) header.from=example.com policy.dmarc=reject\r\n"
     );
 }
+
+/// SEC-MAIL-92: a DMARC lookup that ends in a DNS error is a temporary error (451), not an accepted message.
+#[test]
+fn a_dmarc_dns_error_is_a_temporary_error() {
+    let records = Records::offline();
+    records.fix_txt("example.com", "v=spf1 ip4:192.0.2.1 -all").unwrap();
+    records.fail_txt("_dmarc.example.com");
+    let verdict = dns::run(verify(
+        MESSAGE.as_bytes().to_vec(),
+        session("198.51.100.7"),
+        "edge.example.net".to_string(),
+        Some(Arc::new(records)),
+    ))
+    .unwrap();
+    assert!(verdict.temp_error, "{verdict:?}");
+    assert!(verdict.field.contains("dmarc=temperror"), "{verdict:?}");
+    // a domain whose record is read is judged as before
+    assert!(!check(MESSAGE.as_bytes(), "198.51.100.7", "none").temp_error);
+}
