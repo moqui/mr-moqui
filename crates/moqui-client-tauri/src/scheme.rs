@@ -211,6 +211,13 @@ pub fn answer(
             "The server's pages open in an app window, not in the shell",
         );
     }
+    // Every account's server pages share the app's one origin (APP_ORIGIN), so a worker a page of one server started
+    // there, a service worker above all, could outlive its account and answer the next account's requests, which are
+    // forwarded with that account's key: no worker of a server's runs in the apps (plans/Security-Review-Medium.md
+    // SEC-CLI-81).
+    if worker_request(request.headers()) {
+        return plain(StatusCode::FORBIDDEN, "A server's worker does not run in the app");
+    }
     let Some((account, key)) = state.account_of(label) else {
         return plain(StatusCode::UNAUTHORIZED, "No account is signed in");
     };
@@ -423,6 +430,18 @@ pub fn forwarded_on_shell(headers: &HeaderMap) -> bool {
         "empty" | "image" | "audio" | "video" | "track" | "font" => true,
         _ => false,
     }
+}
+
+/// Whether a request is a worker's script (`Sec-Fetch-Dest` `worker`, `sharedworker` or `serviceworker`, or a
+/// `Service-Worker` header, which a service worker's registration sends): refused on every origin of the client.
+pub fn worker_request(headers: &HeaderMap) -> bool {
+    let dest = headers
+        .get("sec-fetch-dest")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    matches!(dest.as_str(), "worker" | "sharedworker" | "serviceworker") || headers.contains_key("service-worker")
 }
 
 #[cfg(test)]

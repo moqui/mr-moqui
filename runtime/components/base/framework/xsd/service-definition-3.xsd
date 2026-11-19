@@ -341,8 +341,10 @@ along with this software (see the LICENSE.md file). If not, see
                 users, other systems, etc). Defaults to "none" meaning no HTML is allowed (will result in an error
                 message).
 
-                If some HTML is desired then use "safe" which will follow the rules in the antisamy-esapi.xml file.
-                This should be safe for both internal and public users.
+                If some HTML is desired then use "safe", the safe set (moqui_lib::safe_html::clean), for both internal
+                and public users and for outgoing mail. "app" is the safe set for app text read by signed-in users (a
+                note, a comment, a message): an image keeps only a src of this server, so an outside image does not
+                tell its host who read the text.
 
                 In rare cases when users are trusted or it is not a sensitive field the "any" option may be used to not
                 check the HTML content at all.
@@ -351,6 +353,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:restriction base="xs:token">
                     <xs:enumeration value="any"/>
                     <xs:enumeration value="safe"/>
+                    <xs:enumeration value="app"/>
                     <xs:enumeration value="none"/>
                 </xs:restriction>
             </xs:simpleType>

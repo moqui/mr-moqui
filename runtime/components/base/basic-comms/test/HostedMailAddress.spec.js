@@ -125,3 +125,48 @@ feature("only a mail administrator sets a hosted account's quota, which clears i
         afterClear.quotaBytes == null
     },
 })
+
+// SEC-MAIL-82: mail From an address of a hosted domain gets the node's DKIM signature, so an identity of such an address
+// (other than the account's own) is a mail administrator's to give, on any account, made or changed to it
+feature("an identity of a hosted domain's address is a mail administrator's to give", {
+    when() {
+        const run = Date.now().toString(36)
+        const ceo = `ceo-${run}@hosted.example.invalid`
+        const external = as(USER, "create#EmailAccount", { accountKindEnumId: "EakExternal", emailAddress: `mine-${run}@elsewhere.example.invalid`,
+            storeHost: "127.0.0.1", storePort: "1", storeProtocol: "imap", mailPassword: "x" })
+        const hosted = as(HOLDER, "create#EmailAccount", { accountKindEnumId: "EakHosted", emailAddress: `box-${run}@hosted.example.invalid` })
+        sys(() => ec.entity.find("moqui.basic.email.EmailAccount").condition("emailAccountId", hosted.emailAccountId).one()
+            .set("ownerUserId", USER).update())
+        const held = as(HOLDER, "create#EmailAccount", { accountKindEnumId: "EakHosted", emailAddress: `desk-${run}@hosted.example.invalid` })
+        const identity = (userId, account, emailAddress) => as(userId, "create#EmailIdentity", { emailAccountId: account.emailAccountId, emailAddress })
+        const onExternal = identity(USER, external, ceo)
+        const onHosted = identity(USER, hosted, ceo)
+        const own = identity(USER, hosted, `box-${run}@hosted.example.invalid`)
+        const elsewhere = identity(USER, external, `alias-${run}@elsewhere.example.invalid`)
+        const changed = as(USER, "update#EmailIdentity", { emailIdentityId: elsewhere.emailIdentityId, emailAddress: ceo })
+        const byHolder = identity(HOLDER, held, ceo)
+        // a mail administrator adds an alias to the user's account delivered here (not one of another server), and
+        // the user changes its name with its address given as it is
+        const alias = `alias-${run}@hosted.example.invalid`
+        const holderOnUsers = identity(HOLDER, hosted, alias)
+        const holderOnExternal = identity(HOLDER, external, `other-${run}@hosted.example.invalid`)
+        const renamed = as(USER, "update#EmailIdentity", { emailIdentityId: holderOnUsers.emailIdentityId,
+            emailAddress: alias.toUpperCase(), displayName: "Renamed" })
+        const kept = sys(() => ec.entity.find("moqui.basic.email.EmailIdentity").condition("emailIdentityId", holderOnUsers.emailIdentityId).one())
+        return { external, hosted, onExternal, onHosted, own, elsewhere, changed, byHolder, holderOnUsers, holderOnExternal, renamed, kept, alias }
+    },
+    then({ external, hosted, onExternal, onHosted, own, elsewhere, changed, byHolder, holderOnUsers, holderOnExternal, renamed, kept, alias }) {
+        holderOnUsers.error == "" && !!holderOnUsers.emailIdentityId
+        holderOnExternal.error.includes("not found")
+        renamed.error == ""
+        kept.displayName == "Renamed" && kept.emailAddress == alias
+        external.error == "" && hosted.error == ""
+        onExternal.error.includes("mail administrator")
+        onHosted.error.includes("mail administrator")
+        own.error == ""
+        elsewhere.error == ""
+        changed.error.includes("mail administrator")
+        byHolder.error == ""
+        !!byHolder.emailIdentityId
+    },
+})

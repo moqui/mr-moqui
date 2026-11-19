@@ -6,7 +6,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN screen[@location=" + sri.get
     if ($text || false || false) {
         // the menu's name for assistive technology: its text (Quasar names a slot-labelled dropdown "Expand")
         const $name = String($text || "" || ec.l10n.localize("Menu"));
-        if ("" !== "false") $text = $v.t($text);
+        if ("" !== "false" || sri.isOverlaid()) $text = $v.t($text);
         let $icon = "";
         if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
         const $badge = ec.resource.expand("", "");

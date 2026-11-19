@@ -218,6 +218,7 @@ Writing and the render:
 | `encodeHtml(value)` | The value HTML-encoded; `null` and `undefined` are empty text |
 | `getRenderMode()` | The mode's name, `html-print` for `xsl-fo` |
 | `isAgentRender()` | Whether the render is an agent's (an Assist screen session, the data tool, the canvas read proxy, `agent-apps`) or runs inside one; the `tui` macros then write a placeholder for an `ai-opt-out` field, section or screen ([Assist, AI opt-out](../ai/Assist.md#ai-opt-out)) |
+| `isOverlaid()` | Whether the screen rendering now stands at a preview's proposed text (an overlay: a dev-aide change set or a `screen-xml` canvas, its file or a screen-extend of it); the macros then write a placeholder for its render-mode text, qvt and templates, so model-written client code does not run in the application's origin (plans/Security-Review-Medium.md SEC-AI-82) |
 | `doBoundaryComments()` | Whether the screen facade's `boundary-comments` is on |
 | `once(key)` | True the first time this render sees the key, for output a page needs once |
 | `stamp(src)` | Sets the source stamp of the next element written, in a render that writes stamps; `null` clears it |

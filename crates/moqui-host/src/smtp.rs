@@ -1927,6 +1927,10 @@ impl<B: Backend> Session<'_, B> {
             // the checks did not finish: the sender tries again rather than the message going in unjudged
             return Err("451 4.7.0 Temporary authentication failure, try again later".to_string());
         }
+        if let Some(why) = &verdict.refused {
+            // no single author domain for DMARC to judge (SEC-MAIL-81)
+            return Err(format!("550 5.7.1 {why}"));
+        }
         if verdict.dmarc == moqui_mail::auth::DmarcAction::Reject {
             return Err(format!(
                 "550 5.7.1 Rejected by the DMARC policy of {}",

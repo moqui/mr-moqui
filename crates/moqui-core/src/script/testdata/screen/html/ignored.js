@@ -4,7 +4,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN screen[@location=" + sri.get
     let $text = $map ? ec.resource.expand("Menu", "", $map) : ec.resource.expand("Menu", "");
     if ($text === "null") $text = "";
     if ($text || false || false) {
-        if ("" !== "false") $text = $h.e($text);
+        if ("" !== "false" || sri.isOverlaid()) $text = $h.e($text);
         let $icon = "";
         if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
         const $badge = ec.resource.expand("", "");

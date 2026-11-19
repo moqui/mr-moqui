@@ -454,9 +454,9 @@
     };
     // The version the frame document's scripts are loaded with (?v=), so a page caches Vue and Quasar once: change it
     // when WebrootAssistSandbox.js changes.
-    sfc.RUNTIME_VERSION = "13.8.1";
+    sfc.RUNTIME_VERSION = "13.8.2";
     sfc.frameUrl = (base, version, nonce, external) =>
-        String(base || "/assist/sandbox") + "?v=" + encodeURIComponent(version || "") + (external ? "&x=1" : "") + "#n=" + nonce;
+        String(base || "/assist/sandboxHost") + "?v=" + encodeURIComponent(version || "") + (external ? "&x=1" : "") + "#n=" + nonce;
     // A flat value of the canvas: text, a number, true or false, null, or a list of those.
     const flatValue = (value) => {
         if (value === null || typeof value === "boolean") return true;
@@ -1107,7 +1107,7 @@
                 actionList() { return sfc.actions(this.program || ""); },
                 src() {
                     const boot = (moqui.assist && moqui.assist.state && moqui.assist.state.bootstrap) || {};
-                    const base = (boot.paths && boot.paths.sandbox) || "/assist/sandbox";
+                    const base = (boot.paths && boot.paths.sandbox) || "/assist/sandboxHost";
                     // frameKey: a new frame (a new element, a new nonce) for each version and each restart
                     return this.frameKey >= 0 ? sfc.frameUrl(base, sfc.RUNTIME_VERSION, this.nonce, this.external) : "";
                 },
@@ -1315,7 +1315,7 @@
                     kids.push(h(R("q-banner"), { dense: true, rounded: true, class: "bg-red-1 text-red-10 q-my-sm", "data-assist-sfc-killed": this.killed.reason },
                         { default: () => this.killed.message, action: () => [h(R("q-btn"), { flat: true, dense: true, noCaps: true, label: "Show again", "data-assist-sfc-reload": "", onClick: () => this.restart() })] }));
                 } else {
-                    kids.push(h("iframe", { key: this.frameKey, ref: "frame", sandbox: "allow-scripts", referrerpolicy: "no-referrer", allow: "", title: "Canvas",
+                    kids.push(h("iframe", { key: this.frameKey, ref: "frame", sandbox: "allow-scripts allow-same-origin", referrerpolicy: "no-referrer", allow: "", title: "Canvas",
                         class: "m-assist-sfc-frame", "data-assist-sfc-frame": "", src: this.src, onLoad: () => this.onLoad(),
                         style: { width: "100%", height: this.height + "px", border: "0", display: "block", colorScheme: "normal" } }));
                 }
@@ -1365,12 +1365,24 @@
             return { location: attr("at"), path: attr("path") };
         };
         canvas.previewUrl = (path, token) => path ? path + (path.indexOf("?") >= 0 ? "&" : "?") + "moquiPreview=" + encodeURIComponent(token) : "";
+        // the page path the model names is a frame's src only when it is a plain path of the apps (/apps/... or /qapps/...,
+        // no scheme, host, .., // or backslash), as the server's prepare refuses any other: never javascript: or another
+        // site (plans/Security-Review-Medium.md SEC-AI-82)
+        canvas.plainAppPath = (path) => {
+            const bare = String(path || "").split(/[?#]/)[0];
+            return /^\/(q?apps)(\/|$)/.test(bare) && bare.indexOf("//") < 0 && bare.indexOf("\\") < 0
+                && !/[\u0000-\u001f\u007f]/.test(bare) && !bare.split("/").some((part) => part === ".." || part === ".");
+        };
         const screenXml = {
             name: "mAssistScreenXml",
             props: { program: String, streaming: Boolean, artifactId: String, version: Number, initialState: Object, readOnly: Boolean },
+            // the preview renders the model's screen in this app as the user, so it is shown only when the user asks,
+            // for each version: text a run read cannot open it by itself (SEC-AI-82)
+            data() { return { shown: false }; },
+            watch: { version() { this.shown = false; }, program() { this.shown = false; } },
             computed: {
                 header() { return canvas.screenXmlHeader(this.program) || { location: "", path: "" }; },
-                src() { return this.header.path ? canvas.previewUrl(this.header.path, "canvas:" + this.artifactId) + "&v=" + (this.version || 0) : ""; }
+                src() { return canvas.plainAppPath(this.header.path) ? canvas.previewUrl(this.header.path, "canvas:" + this.artifactId) + "&v=" + (this.version || 0) : ""; }
             },
             methods: {
                 // the proposal as the screen builder's buffer, unsaved (plans/design-dev-aide.md 13.5): the Workspace takes
@@ -1386,9 +1398,13 @@
                     h("span", { class: "col" }, "Preview of " + (this.header.location || "a screen") + " · not saved"),
                     this.header.path && this.header.location && !this.readOnly ? h(root.Vue.resolveComponent("q-btn"), { dense: true, flat: true, noCaps: true, size: "sm", icon: "sym_o_dashboard_customize",
                         label: "Open in the builder", "data-assist-screen-xml-builder": "", onClick: () => this.openInBuilder() }) : null])];
-                if (this.src) kids.push(h("iframe", { src: this.src, title: "Screen preview", class: "m-assist-screen-xml-frame",
+                if (this.src && this.shown) kids.push(h("iframe", { src: this.src, title: "Screen preview", class: "m-assist-screen-xml-frame",
                     style: "width:100%;min-height:28rem;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px", "data-assist-screen-xml": "" }));
-                else kids.push(h("div", { class: "q-pa-sm m-muted" }, "The program names no page path to show it on."));
+                else if (this.src) kids.push(h("div", { class: "q-pa-sm row items-center q-gutter-sm" }, [
+                    h("span", { class: "col m-muted" }, "The preview runs this proposed screen in the app as you, at " + this.header.path + "."),
+                    h(root.Vue.resolveComponent("q-btn"), { dense: true, outline: true, noCaps: true, size: "sm", label: "Show the preview",
+                        "data-assist-screen-xml-show": "", onClick: () => { this.shown = true; } })]));
+                else kids.push(h("div", { class: "q-pa-sm m-muted" }, "The program names no page path of the apps to show it on."));
                 return h("div", { class: "m-assist-screen-xml" }, kids);
             }
         };

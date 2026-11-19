@@ -1233,7 +1233,7 @@ async fn read_multipart(
     use moqui_core::web::multipart::{MultipartError, MultipartReader, Spool};
 
     let refused = |err: MultipartError| match err {
-        MultipartError::FieldTooLarge(_) => BodyRefused::TooLarge(limit),
+        MultipartError::FieldTooLarge(_, field_limit) => BodyRefused::TooLarge(field_limit),
         MultipartError::Io(why) => BodyRefused::Failed(why),
         MultipartError::SpoolFull => BodyRefused::SpoolFull,
         other => BodyRefused::Malformed(other.to_string()),

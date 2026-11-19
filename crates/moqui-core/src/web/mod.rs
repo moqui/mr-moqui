@@ -674,6 +674,54 @@ pub fn started_by_another_site(request: &WebRequest) -> bool {
     referer_host.is_empty() || host.is_empty() || !referer_host.eq_ignore_ascii_case(host)
 }
 
+/// Whether the browser loads `request` as a part of a page, not a page or the page's own fetch: `Sec-Fetch-Dest` is
+/// there and is not `document`, `iframe`, `frame` or `empty` (an image, a script, a style, a font, media, a worker);
+/// from a browser that sends no `Sec-Fetch-Dest`, an `Accept` that names an image, style, media or font type and not
+/// `text/html`. An image in a stored text (a note, a message, a page) is a same-origin GET with the reader's session,
+/// which [`started_by_another_site`] does not catch (plans/Security-Review-Medium.md SEC-CLI-82). A request with
+/// neither header, as a client that is not a browser sends, is not.
+pub fn loaded_as_subresource(request: &WebRequest) -> bool {
+    if let Some(dest) = fetch_dest(request) {
+        return !["document", "iframe", "frame", "empty"].iter().any(|page| dest.eq_ignore_ascii_case(page));
+    }
+    let accept = request.header("accept").unwrap_or("").to_ascii_lowercase();
+    !accept.contains("text/html")
+        && ["image/", "text/css", "video/", "audio/", "font/"]
+            .iter()
+            .any(|kind| accept.contains(kind))
+}
+
+/// The request's `Sec-Fetch-Dest`, when it sent one.
+pub fn fetch_dest(request: &WebRequest) -> Option<&str> {
+    request.header("sec-fetch-dest").map(str::trim).filter(|dest| !dest.is_empty())
+}
+
+/// Whether `request` carries this session's token: in `parameter` (the request's `moquiSessionToken`), else in an
+/// `X-CSRF-Token`, `moquiSessionToken` or `SessionToken` header. False with no session token.
+pub fn session_token_presented(request: &WebRequest, parameter: &str) -> bool {
+    let Ok(expected) = crate::user::csrf_token() else {
+        return false;
+    };
+    if expected.is_empty() {
+        return false;
+    }
+    let presented = if parameter.is_empty() {
+        ["moquisessiontoken", "sessiontoken", "x-csrf-token"]
+            .iter()
+            .find_map(|name| request.header(name).filter(|text| !text.is_empty()))
+            .unwrap_or("")
+    } else {
+        parameter
+    };
+    !presented.is_empty() && moqui_lib::codec::constant_time_eq(presented.as_bytes(), expected.as_bytes())
+}
+
+/// Whether a state change on a GET is refused for `request`: another site started it ([`started_by_another_site`]),
+/// or the browser loads it as a part of a page ([`loaded_as_subresource`]).
+pub fn get_write_refused(request: &WebRequest) -> bool {
+    started_by_another_site(request) || loaded_as_subresource(request)
+}
+
 pub fn current_request() -> Option<std::sync::Arc<WebRequest>> {
     WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.request.clone()))
 }

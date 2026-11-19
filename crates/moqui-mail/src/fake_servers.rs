@@ -1173,6 +1173,17 @@ fn serve_pop(
                     write(&mut writer, "-ERR [AUTH] invalid password\r\n")?;
                 }
             }
+            // LIST n: one message's size on one line
+            "LIST" if argument > 0 => {
+                let found = lock(messages)
+                    .get(argument - 1)
+                    .filter(|(_, _, deleted)| !*deleted)
+                    .map(|(_, raw, _)| raw.len());
+                match found {
+                    Some(size) => write(&mut writer, &format!("+OK {argument} {size}\r\n"))?,
+                    None => write(&mut writer, "-ERR no such message\r\n")?,
+                }
+            }
             "UIDL" | "LIST" => {
                 let mut out = "+OK\r\n".to_string();
                 for (index, (uidl, raw, deleted)) in lock(messages).iter().enumerate() {

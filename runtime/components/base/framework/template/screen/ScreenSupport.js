@@ -310,7 +310,20 @@
     // and cached by its text. A text file is rendered by the renderer registered for its extension. A template
     // writes as it renders (renderText, writeInlineText), so a screen it renders keeps its place in its text and
     // the page streams; one to encode is rendered for its value and encoded.
+    // A screen that stands at a preview's proposed text (sri.isOverlaid(): a dev-aide change set, a screen-xml canvas)
+    // writes a placeholder for its render-mode text, a qvt or a template: model-written client code would run in the
+    // application's origin (plans/Security-Review-Medium.md SEC-AI-82)
+    const PREVIEW_PLACEHOLDER = '<div class="m-preview-placeholder text-caption">(text, scripts and templates are not shown in a preview)</div>';
     const renderTextCode = (node) => {
+        const code = renderTextCodeOf(node);
+        return code ? js`
+            if (sri.isOverlaid()) sri.write(${jsString(PREVIEW_PLACEHOLDER)});
+            else {
+                ${code}
+            }
+        ` : "";
+    };
+    const renderTextCodeOf = (node) => {
         const template = attr(node, "template");
         const label = template || "true";
         const encode = attr(node, "encode") === "true";

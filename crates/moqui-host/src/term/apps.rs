@@ -342,7 +342,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         theme: start.terminal.theme(),
         columns: columns.max(20),
         rows: rows.max(10),
-        notes: Some(|note| tracing::warn!("terminal theme: {note}")),
+        notes: Some(|note| tracing::warn!("terminal session: {note}")),
         log,
         login_name,
     };

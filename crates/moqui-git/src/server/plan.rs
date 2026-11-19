@@ -63,7 +63,7 @@ pub(crate) struct ShallowInfo {
 
 /// The commits each of `heads` reaches within `depth` commits (a head is at depth 1): those at `depth` are the
 /// boundary, the others are not shallow. By breadth, so each commit has its least depth.
-fn by_depth(
+pub(super) fn by_depth(
     store: &dyn GitStore,
     heads: &[ObjectId],
     depth: u32,

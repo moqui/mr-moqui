@@ -1466,6 +1466,10 @@ fn run_source_in_app(
 /// authorization record and entity filters apply, then popped. The app's frame is a check, not a hit: untracked
 /// before the body runs, so the body's spans are children of the request's.
 ///
+/// The body's authorization toggles end with it, as its frame does, however it ends (a return, an error, a panic that
+/// unwinds through it): a `disableAuthz()` or `enableAuthz()` of its scripts, or of a service it calls, never reaches
+/// the caller or the next provider ([`ExecutionContext::keep_authz`]).
+///
 /// # Errors
 ///
 /// Returns an error when the user may not view the app root, or the body's error.
@@ -1474,6 +1478,7 @@ pub fn run_in_app<T>(
     requires_authentication: bool,
     body: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::keep_authz);
     ExecutionContext::with_current(|ec| {
         // The app's frame is decided by the user's own authorization records, as the shell decides the apps the user may
         // open, not inherited from the caller: an inheritable always-allow below it (a service group's, such as the XMPP
@@ -1494,9 +1499,32 @@ pub fn run_in_app<T>(
         Ok::<(), crate::context::Error>(())
     })
     .unwrap_or(Ok(()))?;
+    let frame = AppFrame { pushed: true };
     let answer = body();
-    ExecutionContext::with_current(ExecutionContext::pop).unwrap_or(Ok(()))?;
+    frame.pop()?;
     answer
+}
+
+/// The app's frame of [`run_in_app`]: popped by [`AppFrame::pop`] after the body, or when a panic unwinds through it.
+struct AppFrame {
+    pushed: bool,
+}
+
+impl AppFrame {
+    fn pop(mut self) -> Result<(), Error> {
+        self.pushed = false;
+        ExecutionContext::with_current(ExecutionContext::pop).unwrap_or(Ok(()))
+    }
+}
+
+impl Drop for AppFrame {
+    fn drop(&mut self) {
+        if self.pushed {
+            if let Some(Err(err)) = ExecutionContext::with_current(ExecutionContext::pop) {
+                tracing::warn!(error = %err, "Could not pop an app's frame after its body panicked");
+            }
+        }
+    }
 }
 
 fn run_source(

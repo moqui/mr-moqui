@@ -813,7 +813,7 @@ along with this software (see the LICENSE.md file). If not, see
                         Most header fields in a request (100); more is answered 431.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-body" type="xs:string"><xs:annotation><xs:documentation>
                         Largest request body that is not multipart, bytes or with a k, m or g suffix (webapp-list/webapp[webroot]/web-protection/requests@max-body,
-                        10m); larger is answered 413.</xs:documentation></xs:annotation></xs:attribute>
+                        10m); larger is answered 413. The text fields of a multipart body hold at most this together.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-upload" type="xs:string"><xs:annotation><xs:documentation>
                         Largest multipart/form-data body (webapp-list/webapp[webroot]/web-protection/requests@max-upload, 2g). A request with no user (no session
                         signed in, no api_key or login_key, no Basic credentials that hold) takes max-body instead,
@@ -1831,6 +1831,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="sync-batch" type="non-neg-int-expandable" default="500"><xs:annotation><xs:documentation>The most new messages a folder brings in one sync.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="flag-scan" type="non-neg-int-expandable" default="15"><xs:annotation><xs:documentation>Minutes between reading every message's flags, on a server without CONDSTORE.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sync-push-now" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>Make a local change on the server right after it commits; false waits for the next sync.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-message-size" type="non-neg-int-expandable" default="67108864"><xs:annotation><xs:documentation>The largest message, in bytes, a sync or poll reads from an IMAP or POP3 server; a larger one, by the size the server gives, is skipped, and one answer of a server is at most this (or 8 MiB, when more) and 1 MiB more.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="answer-timeout" type="non-neg-int-expandable" default="660"><xs:annotation><xs:documentation>The seconds one answer of an IMAP or POP3 server may take from its command; past it the connection is closed.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="mailbox-quota" type="non-neg-int-expandable" default="10737418240"><xs:annotation><xs:documentation>The bytes of mail (the sum of its messages' messageSize) a hosted or shared account keeps when its EmailAccount.quotaBytes is empty; once it has that much, the SMTP listener answers its recipients 452 4.2.2.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="autoconfig-urls" type="xs:string"><xs:annotation><xs:documentation>discover#EmailServer's Thunderbird autoconfig URLs, comma separated, with
                 {domain} and {email}; empty for autoconfig.{domain}, the domain's .well-known URL and the Thunderbird ISPDB.</xs:documentation></xs:annotation></xs:attribute>
@@ -2178,6 +2180,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" name="web"><xs:complexType>
                     <xs:attribute name="vapid-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="subject" type="xs:string" default="mailto:admin@localhost"/>
+                    <xs:attribute name="max-subscriptions" type="xs:integer" default="10"><xs:annotation><xs:documentation>
+                        The most browser subscriptions one user keeps active (0: no cap); past it the longest unregistered is disabled.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="fcm"><xs:complexType>
                     <xs:attribute name="service-account" type="xs:string"><xs:annotation><xs:documentation>A secret: the service account key's JSON file path, or the JSON.</xs:documentation></xs:annotation></xs:attribute>

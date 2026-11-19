@@ -41,6 +41,7 @@ pub(crate) fn routes(app: Router<Arc<HttpState>>) -> Router<Arc<HttpState>> {
     app.route("/assist/runs/{run_id}/events", get(sse::events))
         .route("/assist/runs/{run_id}/events.json", get(sse::events_json))
         .route("/assist/sandbox", get(sandbox::frame))
+        .route("/assist/sandboxHost", get(sandbox::host))
         .route("/a2a", any(a2a::handle))
         .route("/a2a/", any(a2a::handle))
         .route("/a2a/{*rest}", any(a2a::handle))

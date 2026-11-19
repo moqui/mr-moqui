@@ -62,10 +62,10 @@ fn step_home(workspace: &Path) -> Vec<(String, String)> {
     job_home(workspace)
 }
 
-/// A `home` beside the workspace, as the steps' `HOME`.
+/// A `home` beside the workspace, as the steps' `HOME`: the runner's alone (`0700`) until it is handed to a step user.
 fn job_home(workspace: &Path) -> Vec<(String, String)> {
     let home = workspace.parent().unwrap_or(workspace).join("home");
-    match std::fs::create_dir_all(&home) {
+    match moqui_lib::private_fs::create_dir_all(&home) {
         Ok(()) => vec![("HOME".to_string(), home.to_string_lossy().into_owned())],
         Err(_) => Vec::new(),
     }
@@ -211,6 +211,53 @@ fn rotate_when_due(server: &str, answer: &serde_json::Value, token: &mut String,
     }
 }
 
+/// Remove the work directory the runner made (no `--work`) when SIGINT, SIGTERM or SIGHUP ends the runner, where the
+/// directory's drop does not run (SEC-GIT-98). The handlers are registered before this returns; one that cannot be is
+/// a warning, and the runner goes on.
+#[cfg(unix)]
+fn remove_on_signal(work: &Path) {
+    use tokio::signal::unix::{signal, SignalKind};
+    let path = work.to_path_buf();
+    let not_watched = |why: &dyn std::fmt::Display| {
+        eprintln!(
+            "moqui ci-run poll: {} is not removed if a signal ends the runner: {why}",
+            work.display()
+        );
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(err) => return not_watched(&err),
+    };
+    let signals = {
+        let _entered = runtime.enter();
+        (
+            signal(SignalKind::interrupt()),
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        )
+    };
+    let (mut interrupt, mut terminate, mut hangup) = match signals {
+        (Ok(interrupt), Ok(terminate), Ok(hangup)) => (interrupt, terminate, hangup),
+        (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => return not_watched(&err),
+    };
+    let started = std::thread::Builder::new()
+        .name("moqui-ci-signals".to_string())
+        .spawn(move || {
+            let status = runtime.block_on(async {
+                tokio::select! {
+                    _ = interrupt.recv() => 130,
+                    _ = terminate.recv() => 143,
+                    _ = hangup.recv() => 129,
+                }
+            });
+            let _ = std::fs::remove_dir_all(&path);
+            std::process::exit(status);
+        });
+    if let Err(err) = started {
+        not_watched(&err);
+    }
+}
+
 /// Hold the step user for this runner process alone: an exclusive lock on `moqui-ci-step-user-<uid>.lock` in `/run`
 /// (or `/var/run`), root's, kept while the process runs. Before it reads a job's files a runner kills every process of
 /// its step user that started during the job, so a second runner with the same step user would kill the first's
@@ -313,10 +360,19 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 .and_then(|seconds| seconds.parse::<u64>().ok())
                 .unwrap_or(10)
                 .clamp(2, 3600);
-            let work = option(args, "--work").map_or_else(|| std::env::temp_dir().join("moqui-ci"), PathBuf::from);
-            // absolute, as a collect child runs in another directory and is given paths of the workspace (SEC-GIT-81)
-            let work = std::path::absolute(&work)
-                .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
+            // a directory of the runner's own, absolute (a collect child runs in another directory and is given paths
+            // of the workspace, SEC-GIT-81): with no --work a new one under the temporary directory, never one another
+            // local user could have made first and so own (SEC-GIT-98)
+            let work = runner::work_dir(
+                option(args, "--work").map(PathBuf::from).as_deref(),
+                step_user.is_some(),
+            )
+            .map_err(|why| Error::new(format!("moqui ci-run poll: {why}")))?;
+            eprintln!("moqui ci-run poll: working in {}", work.path().display());
+            #[cfg(unix)]
+            if work.made() {
+                remove_on_signal(work.path());
+            }
             // the step user must run this binary, which reads the reports, artifacts and caches as that user: asked
             // once here, so a runner that could not read them takes no job
             #[cfg(unix)]
@@ -326,9 +382,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
             };
             #[cfg(unix)]
             if let Some(user) = &step_user {
-                std::fs::create_dir_all(&work)
-                    .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
-                runner::collect::probe(user, &work).map_err(|why| {
+                runner::collect::probe(user, work.path()).map_err(|why| {
                     Error::new(format!(
                         "moqui ci-run poll: --step-user {} cannot run this program, which reads each job's reports, \
                          artifacts and caches as that user: {why}",
@@ -351,8 +405,16 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                             noticed = true;
                         }
                         if let (Some(job), Some(token)) = (answer["jobRunId"].as_str(), answer["token"].as_str()) {
-                            let dir = work.join(job);
-                            let _ = std::fs::remove_dir_all(&dir);
+                            let dir = match runner::job_dir(work.path(), job, step_user.is_some()) {
+                                Ok(dir) => dir,
+                                Err(why) => {
+                                    eprintln!("moqui ci-run poll: job run {job} was not run: {why}");
+                                    if once {
+                                        return Ok(2);
+                                    }
+                                    continue;
+                                }
+                            };
                             let began = std::time::Instant::now();
                             let code = run_one(
                                 &server,

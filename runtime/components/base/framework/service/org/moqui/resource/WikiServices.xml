@@ -285,7 +285,7 @@ along with this software (see the LICENSE.md file). If not, see
                 // a file is a page's only when named as the page with its type or no extension, as get#WikiPageChildren
                 // names a file's page: Restricted.md is page Restricted's file, Name.md.fancy page Name's, never a page of
                 // their own whose record (none) and access rules are not the page's (SEC-BOS-85)
-                const pageNameOf = ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').pageNameOf
+                const pageNameOf = ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').namer()
                 let found = null
                 // the usual names first, then the directory's files
                 for (const fileName of [name, `${name}.md`, `${name}.html`]) {
@@ -627,10 +627,16 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="ec.message.hasError() || !childrenAccess?.canView"><return error="true" message="Page not found"/></if>
 
             <set field="childPageRefList" from="pageReference.getChildren()"/>
+            <!-- each page's name by its file's name, the types looked up once for the list -->
+            <script><![CDATA[
+                const pageNameOf = ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').namer()
+                childPageNames = {}
+                for (const childRef of Array.from(childPageRefList || [])) childPageNames[childRef.getFileName()] = pageNameOf(childRef.getFileName())
+            ]]></script>
             <set field="childPageInfoList" from="[]"/>
             <iterate list="childPageRefList" entry="childPageRef">
                 <set field="childFilename" from="childPageRef.getFileName()"/>
-                <set field="childPageName" from="ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').pageNameOf(childFilename)"/>
+                <set field="childPageName" from="childPageNames[childFilename]"/>
                 <set field="childPagePath" from="(pagePath ? pagePath + '/' : '') + childPageName"/>
                 <!-- <log level="warn" message="wikiSpaceId ${wikiSpaceId} childPagePath '${childPagePath}' childFilename '${childFilename}' pagePath '${pagePath}'"/> -->
 

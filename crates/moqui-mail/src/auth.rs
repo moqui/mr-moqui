@@ -264,17 +264,22 @@ pub fn hosted_domains(
     role_domains(
         role,
         || own_addresses(facade),
-        || {
-            let values = moqui_core::edge::replica::list_values(
-                facade,
-                None,
-                super::edge_mail::RECIPIENT_SET,
-                Some(super::sync::ACCOUNT),
-                1_000_000,
-            )?;
-            Ok(replicated_addresses(&values))
-        },
+        || replicated_copies(facade, None),
     )
+}
+
+/// The hosted and shared accounts' addresses among the copies of paired node `node` (every paired node's with none),
+/// with the copies of their servers, so an account with a store server elsewhere is left out.
+fn replicated_copies(
+    facade: &moqui_core::entity::EntityFacade,
+    node: Option<&str>,
+) -> Result<Vec<String>, moqui_lib::error::Error> {
+    let list = |entity: &str| {
+        moqui_core::edge::replica::list_values(facade, node, super::edge_mail::RECIPIENT_SET, Some(entity), 1_000_000)
+    };
+    let mut values = list(super::sync::ACCOUNT)?;
+    values.extend(list(super::implementation::SERVER)?);
+    Ok(replicated_addresses(&values))
 }
 
 /// The domains of paired node `node`'s hosted and shared accounts, from its copies: what its `mailOut` items are signed
@@ -287,14 +292,7 @@ pub fn paired_domains(
     facade: &moqui_core::entity::EntityFacade,
     node: &str,
 ) -> Result<std::collections::BTreeSet<String>, moqui_lib::error::Error> {
-    let values = moqui_core::edge::replica::list_values(
-        facade,
-        Some(node),
-        super::edge_mail::RECIPIENT_SET,
-        Some(super::sync::ACCOUNT),
-        1_000_000,
-    )?;
-    Ok(domains_of(&replicated_addresses(&values)))
+    Ok(domains_of(&replicated_copies(facade, Some(node))?))
 }
 
 /// The role whose domains this node's own sends are signed for: an all-in-one node's are the server's own, as a normal
@@ -327,6 +325,7 @@ fn role_domains(
 /// The addresses of the server's own hosted and shared accounts.
 fn own_addresses(facade: &moqui_core::entity::EntityFacade) -> Result<Vec<String>, moqui_lib::error::Error> {
     use moqui_lib::object::Value;
+    let text = moqui_core::service::util::field_text;
     let rows = facade
         .find(super::sync::ACCOUNT)?
         .condition(moqui_core::entity::Condition::is_in(
@@ -334,26 +333,51 @@ fn own_addresses(facade: &moqui_core::entity::EntityFacade) -> Result<Vec<String
             vec![Value::string("EakHosted"), Value::string("EakShared")],
         ))
         .select_field("emailAddress")
+        .select_field("emailServerId")
         .disable_authz()
         .list()?;
+    // delivered here: no server, or a server with no incoming host; an account of a store elsewhere is a user's own
+    // (only a mail administrator makes one delivered here, SEC-MAIL-01), the rule `implementation::client_signs` keeps
+    let stored: std::collections::HashSet<String> = facade
+        .find(super::implementation::SERVER)?
+        .condition(moqui_core::entity::Condition::not_equals("storeHost", Value::string("")))
+        .condition(moqui_core::entity::Condition::is_not_null("storeHost"))
+        .select_field("emailServerId")
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .map(|row| text(row, "emailServerId"))
+        .collect();
     Ok(rows
         .values()
         .iter()
-        .map(|row| moqui_core::service::util::field_text(row, "emailAddress"))
+        .filter(|row| !stored.contains(&text(row, "emailServerId")))
+        .map(|row| text(row, "emailAddress"))
         .collect())
 }
 
-/// The addresses of the hosted and shared accounts among a paired node's copies of `EmailAccount`.
+/// The addresses of the hosted and shared accounts delivered here among a paired node's copies of `EmailAccount`:
+/// those whose copied server (`EmailServer`, in the same values) has no incoming host (SEC-MAIL-82).
 fn replicated_addresses(values: &[moqui_core::edge::replica::ReplicaValue]) -> Vec<String> {
+    let field = |json: &serde_json::Value, name: &str| json[name].as_str().unwrap_or_default().to_string();
+    let stored: std::collections::HashSet<(String, String)> = values
+        .iter()
+        .filter(|value| value.entity_name == super::implementation::SERVER)
+        .filter(|value| !field(&value.fields, "storeHost").trim().is_empty())
+        .map(|value| (value.paired_node_id.clone(), field(&value.pk, "emailServerId")))
+        .collect();
     values
         .iter()
+        .filter(|value| value.entity_name == super::sync::ACCOUNT)
         .filter(|value| {
             matches!(
                 value.fields["accountKindEnumId"].as_str(),
                 Some("EakHosted" | "EakShared")
             )
         })
-        .map(|value| value.fields["emailAddress"].as_str().unwrap_or_default().to_string())
+        .filter(|value| !stored.contains(&(value.paired_node_id.clone(), field(&value.fields, "emailServerId"))))
+        .map(|value| field(&value.fields, "emailAddress"))
         .collect()
 }
 
@@ -556,6 +580,37 @@ pub struct Verdict {
     pub domain: String,
     /// The checks did not finish (a timeout, a failure): the message is not judged now, and the listener answers 451.
     pub temp_error: bool,
+    /// Why the message is refused before any policy is asked: its author is not one domain ([`author_refusal`]). Its
+    /// `dmarc` is then [`DmarcAction::Reject`] too, and the listener answers 550 with this text.
+    pub refused: Option<String>,
+}
+
+/// Why a message whose author is not one domain is refused, or none: more than one `From` field, no `From` address,
+/// or `From` addresses of more than one domain. DMARC judges one author domain and `mail-auth` passes over such a
+/// message (an empty result, no policy), while the stored sender is the first address, so `From: ceo@bank.example,
+/// x@evil.example` would come in as the bank's whatever its policy (RFC 7489 section 6.6.1; plans/Security-Review-Medium.md
+/// SEC-MAIL-81).
+fn author_refusal(raw: &[u8], addresses: &[String]) -> Option<String> {
+    let (head, _) = super::delivery::split_head(raw);
+    let fields = super::delivery::header_fields(head)
+        .into_iter()
+        .map(super::delivery::field_name_value)
+        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("From"))
+        .count();
+    if fields > 1 {
+        return Some(format!("The message has {fields} From fields: one author is required"));
+    }
+    let domains: std::collections::BTreeSet<String> = addresses
+        .iter()
+        .filter_map(|address| address.rsplit_once('@'))
+        .map(|(_, domain)| domain.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|domain| !domain.is_empty())
+        .collect();
+    match domains.len() {
+        0 => Some("The message names no From address: one author is required".to_string()),
+        1 => None,
+        _ => Some("The message's From addresses are of more than one domain: one author domain is required".to_string()),
+    }
 }
 
 /// The SMTP session a message came in, as the checks read it.
@@ -635,6 +690,15 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
             ..Verdict::default()
         };
     };
+    if let Some(why) = author_refusal(raw, message.from_addresses()) {
+        return Verdict {
+            field: format!("Authentication-Results: {authserv_id}; dmarc=permerror (no single author domain)\r\n"),
+            dmarc: DmarcAction::Reject,
+            summary: "dmarc=permerror (no single author domain)".to_string(),
+            refused: Some(why),
+            ..Verdict::default()
+        };
+    }
     let mut kept = 0;
     message.retain_dkim_signatures(|_| {
         kept += 1;
@@ -666,6 +730,20 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
             Parameters::new(DmarcParameters::new(&message, &dkim, &mail_from_domain, &spf)).with_cache(records),
         )
         .await;
+    // mail-auth judges no author domain when it reads the From addresses as of more than one domain, by its own
+    // normalization (IDNA, no trailing dot taken off), which `author_refusal`'s may not match: such a message is
+    // refused too, whatever the two made of it (SEC-MAIL-81)
+    if dmarc.domain().is_empty() {
+        return Verdict {
+            field: format!("Authentication-Results: {authserv_id}; dmarc=permerror (no single author domain)\r\n"),
+            dmarc: DmarcAction::Reject,
+            summary: "dmarc=permerror (no single author domain)".to_string(),
+            refused: Some(
+                "The message's From addresses are of more than one domain: one author domain is required".to_string(),
+            ),
+            ..Verdict::default()
+        };
+    }
     let from = message
         .first_from_address()
         .rsplit_once('@')
@@ -713,6 +791,7 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         dmarc: action,
         summary,
         temp_error: false,
+        refused: None,
         domain: if dmarc.domain().is_empty() {
             from
         } else {

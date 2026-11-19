@@ -50,7 +50,7 @@ $v.dynamicDialog({"name":"dynamic-dialog","attrs":{"id":"DynDlg","button-text":"
     if ($text || false || true) {
         // the menu's name for assistive technology: its text (Quasar names a slot-labelled dropdown "Expand")
         const $name = String($text || "" || ec.l10n.localize("Menu"));
-        if ("" !== "false") $text = $v.t($text);
+        if ("" !== "false" || sri.isOverlaid()) $text = $v.t($text);
         let $icon = "fa fa-cog";
         if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
         const $badge = ec.resource.expand("", "");

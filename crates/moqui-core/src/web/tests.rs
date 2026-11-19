@@ -908,3 +908,54 @@ fn an_unexpected_error_and_a_backend_tls_failure_are_logged_at_error() {
         "{logged:?}"
     );
 }
+
+/// SEC-CLI-82: an image of this site in a stored rich text is a same-origin GET with the reader's session; a GET that
+/// would change state is refused when the browser loads it as a part of a page (`Sec-Fetch-Dest` an image, a script,
+/// a style...), as when another site started it, and runs as a page, a frame or the page's own fetch.
+#[test]
+fn a_get_loaded_as_a_part_of_a_page_changes_nothing() {
+    let request = |headers: &[(&str, &str)]| {
+        let mut request = super::WebRequest::new("GET", "/Login/logout");
+        request.set_header("Host", "app.example.com");
+        for (name, value) in headers {
+            request.set_header(*name, *value);
+        }
+        request
+    };
+    let same = ("Sec-Fetch-Site", "same-origin");
+    for dest in [
+        "image", "script", "style", "font", "video", "audio", "track", "object", "embed", "worker",
+    ] {
+        let image = request(&[same, ("Sec-Fetch-Dest", dest)]);
+        assert!(
+            super::loaded_as_subresource(&image) && super::get_write_refused(&image),
+            "{dest}"
+        );
+    }
+    for dest in ["document", "iframe", "frame", "empty", "DOCUMENT"] {
+        let page = request(&[same, ("Sec-Fetch-Dest", dest)]);
+        assert!(!super::get_write_refused(&page), "{dest}");
+    }
+    assert!(!super::get_write_refused(&request(&[same])) && !super::get_write_refused(&request(&[])));
+    assert!(super::get_write_refused(&request(&[
+        ("Sec-Fetch-Site", "cross-site"),
+        ("Sec-Fetch-Dest", "document")
+    ])));
+    // a browser that sends no Sec-Fetch-Dest: an image or a style is told by its Accept, a page and a client that is
+    // not a browser are not
+    for accept in [
+        "image/webp,image/*,*/*;q=0.8",
+        "text/css,*/*;q=0.1",
+        "video/*",
+        "font/woff2",
+    ] {
+        assert!(super::get_write_refused(&request(&[("Accept", accept)])), "{accept}");
+    }
+    for accept in [
+        "text/html,application/xhtml+xml,image/webp,*/*;q=0.8",
+        "*/*",
+        "application/json",
+    ] {
+        assert!(!super::get_write_refused(&request(&[("Accept", accept)])), "{accept}");
+    }
+}

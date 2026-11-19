@@ -134,6 +134,32 @@ fn refused(changes: &[(&str, Option<&str>)], code: &str, file: &str, line: usize
     found.message.clone()
 }
 
+/// SEC-SCR-82: a theme expression is parsed, written as ESTree and walked on the parse stack, so a deep chain is
+/// checked from a small stack without overflowing it, and one past `MAX_EXPRESSION` is refused before it is parsed.
+#[test]
+fn a_deep_theme_expression_is_checked_in_a_small_stack() {
+    let max = crate::script::parse::MAX_EXPRESSION;
+    let small_stack = |text: String| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || expr::check(&text))
+            .unwrap()
+            .join()
+            .expect("checked in a 256 KiB stack")
+    };
+    for chain in ["a?b:", "x=>", "!"] {
+        let fits = format!("{}1", chain.repeat(max / chain.len() - 1));
+        let problems = small_stack(fits);
+        assert!(
+            problems.iter().all(|problem| !problem.message.contains("longer than")),
+            "{problems:?}"
+        );
+    }
+    let problems = small_stack(format!("{}1", "!".repeat(max)));
+    assert!(problems[0].message.contains("longer than"), "{problems:?}");
+    assert!(expr::check("a ? b : c").is_empty());
+}
+
 #[test]
 fn the_stone_package_validates() {
     let validation = validate_stone(&[]);

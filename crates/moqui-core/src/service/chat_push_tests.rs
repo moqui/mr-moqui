@@ -60,6 +60,10 @@ struct Post {
 struct Recorder {
     posts: Mutex<Vec<Post>>,
     script: Mutex<HashMap<String, VecDeque<Sent>>>,
+    /// A Web Push answer held this long, and the time past which a send counts as slow (none: the push services').
+    slow: Mutex<Option<(std::time::Duration, std::time::Duration)>>,
+    /// Each user's budget of a delivery round (none: the push services').
+    budget: Mutex<Option<std::time::Duration>>,
 }
 
 impl Recorder {
@@ -112,7 +116,19 @@ impl PushTransport for Recorder {
             urgency: post.urgency.to_string(),
             topic: post.topic.to_string(),
         });
+        let held = *self.slow.lock().unwrap();
+        if let Some((hold, _)) = held {
+            std::thread::sleep(hold);
+        }
         self.next(device)
+    }
+
+    fn slow_after(&self) -> std::time::Duration {
+        self.slow.lock().unwrap().map_or(SLOW_SEND, |(_, after)| after)
+    }
+
+    fn user_round_budget(&self) -> std::time::Duration {
+        self.budget.lock().unwrap().unwrap_or(USER_ROUND_BUDGET)
     }
 }
 
@@ -807,6 +823,169 @@ fn a_gone_device_is_deleted_or_disabled() {
     send(&bed.room, "<p>Again</p>", &[]);
     run(bed.now + 1_000);
     assert!(bed.net.take().is_empty());
+}
+
+/// SEC-COM-81: a Web Push endpoint that takes most of the request's timeout to answer counts as failing though it took
+/// the push, and is disabled after [`super::super::web_push::MAX_FAILURES`] such answers, as one that never answers: a
+/// host a browser names does not hold the one push worker for every user. An FCM phone is not held to it.
+#[test]
+fn a_web_endpoint_that_answers_late_is_disabled_as_failing() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    *bed.net.slow.lock().unwrap() = Some((
+        std::time::Duration::from_millis(30),
+        std::time::Duration::from_millis(10),
+    ));
+    login("alice");
+    for round in 0..super::super::web_push::MAX_FAILURES {
+        send(&bed.room, &format!("<p>Message {round}</p>"), &[]);
+        run(bed.now + round * 1_000);
+    }
+    assert!(devices(&bed.net.take()).contains("BOB-WEB"));
+    let web = rows(&bed.facade, DEVICE, &[("subscriptionId", "BOB-WEB")]).remove(0);
+    assert!(millis_of(&web, "disabledDate").is_some());
+    assert_eq!(count_of(&web, "sentCount"), 0);
+    let phone = rows(&bed.facade, DEVICE, &[("subscriptionId", "BOB-PHONE")]).remove(0);
+    assert!(millis_of(&phone, "disabledDate").is_none());
+}
+
+/// SEC-COM-81: a user keeps at most `push/web@max-subscriptions` (10) browser subscriptions active, each an endpoint
+/// of any https host; a new one past it disables the longest unregistered. And a test push is one a user in ten
+/// seconds, whichever of the user's endpoints asks.
+#[test]
+fn a_user_keeps_ten_browser_subscriptions_and_one_test_push_at_a_time() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("carol");
+    let endpoint = |n: usize| format!("https://push.attacker.example/{n}");
+    for n in 0..12 {
+        ok(
+            "org.moqui.ui.NotificationServices.store#WebPushSubscription",
+            &[
+                ("endpoint", text(&endpoint(n))),
+                ("p256dhKey", text(UA_PUBLIC)),
+                ("authSecret", text(AUTH)),
+            ],
+        );
+    }
+    let web: Vec<EntityValue> = rows(&bed.facade, DEVICE, &[("userId", "carol")])
+        .into_iter()
+        .filter(|row| field(row, "pushProviderEnumId") == "PushWeb")
+        .collect();
+    let active: Vec<String> = web
+        .iter()
+        .filter(|row| millis_of(row, "disabledDate").is_none())
+        .map(|row| field(row, "endpoint"))
+        .collect();
+    assert_eq!((web.len(), active.len()), (12, 10), "{active:?}");
+    assert!(active.contains(&endpoint(11)), "{active:?}");
+    let test = |n: usize| {
+        let out = ok(
+            "org.moqui.ui.NotificationServices.send#TestPush",
+            &[("endpoint", text(&endpoint(n)))],
+        );
+        field_of(&out, "reasonCode")
+    };
+    assert_eq!(test(11), "");
+    assert_eq!(test(10), "tooSoon");
+    // an endpoint stored again keeps its failures: one disabled for them stays disabled, one short of them is still
+    // counting
+    let stored = |n: usize| {
+        let row = rows(&bed.facade, DEVICE, &[("userId", "carol")])
+            .into_iter()
+            .find(|row| field(row, "endpoint") == endpoint(n))
+            .unwrap();
+        (
+            count_of(&row, "failureCount"),
+            millis_of(&row, "disabledDate").is_some(),
+        )
+    };
+    let store = |n: usize| {
+        ok(
+            "org.moqui.ui.NotificationServices.store#WebPushSubscription",
+            &[
+                ("endpoint", text(&endpoint(n))),
+                ("p256dhKey", text(UA_PUBLIC)),
+                ("authSecret", text(AUTH)),
+            ],
+        );
+    };
+    let failing = |n: usize, failures: i64, disabled: bool| {
+        let hash = super::super::web_push::endpoint_hash(&endpoint(n));
+        update(
+            &bed.facade,
+            DEVICE,
+            &[("endpointHash", hash.as_str())],
+            &[
+                ("failureCount", Value::I64(failures)),
+                ("disabledDate", if disabled { stamp(bed.now) } else { Value::Null }),
+            ],
+        );
+    };
+    failing(11, super::super::web_push::MAX_FAILURES, true);
+    failing(10, 3, false);
+    store(11);
+    store(10);
+    assert_eq!(stored(11), (super::super::web_push::MAX_FAILURES, true));
+    assert_eq!(stored(10), (3, false));
+}
+
+/// SEC-COM-81: a delivery round gives each user's pushes at most a budget of its time; that user's other pushes wait
+/// for the next round, so the endpoints one user names do not hold the others'.
+#[test]
+fn each_user_has_a_budget_of_a_delivery_round() {
+    let mut spent = UserBudget::new(std::time::Duration::from_millis(100));
+    assert!(!spent.exhausted("mallory"));
+    spent.add("mallory", std::time::Duration::from_millis(60));
+    assert!(!spent.exhausted("mallory"));
+    spent.add("mallory", std::time::Duration::from_millis(60));
+    assert!(spent.exhausted("mallory") && !spent.exhausted("ann"));
+    assert!(USER_ROUND_BUDGET > SLOW_SEND);
+}
+
+/// SEC-COM-81: the rest of the pushes of a user whose budget of the round is spent are put off to the next round, and
+/// the round reads the pushes due again, so a user with many old pushes does not hold everyone else's.
+#[test]
+fn a_user_whose_budget_is_spent_waits_and_the_others_are_pushed() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    login("alice");
+    send(&bed.room, "<p>Hello all</p>", &[]);
+    let mut report = RoundReport::default();
+    fan_out(&bed.facade, bed.net.as_ref(), "node-1", bed.now, &mut report).unwrap();
+    bed.net.take();
+    // bob's two pushes (his phone and browser) are the oldest, and each user's budget ends at a push
+    update(
+        &bed.facade,
+        OUTBOX,
+        &[("userId", "bob")],
+        &[("createdDate", stamp(bed.now - 60_000))],
+    );
+    *bed.net.budget.lock().unwrap() = Some(std::time::Duration::ZERO);
+    let pushed = |at: i64| {
+        let mut report = RoundReport::default();
+        deliver_due(&bed.facade, bed.net.as_ref(), "node-1", at, 2, &mut report).unwrap();
+        bed.net.take().into_iter().map(|post| post.device).collect::<Vec<_>>()
+    };
+    let first = pushed(bed.now);
+    assert_eq!(
+        first.iter().filter(|device| device.starts_with("BOB-")).count(),
+        1,
+        "{first:?}"
+    );
+    assert!(
+        first.iter().any(|device| device == "DAVE-UP"),
+        "dave is pushed in the same round: {first:?}"
+    );
+    let put_off = rows(&bed.facade, OUTBOX, &[("userId", "bob"), ("statusEnumId", PENDING)]);
+    assert_eq!(put_off.len(), 1);
+    assert!(put_off
+        .iter()
+        .all(|row| millis_of(row, "nextAttemptDate").is_some_and(|at| at > bed.now)));
+    // the next round sends it
+    assert_eq!(pushed(bed.now).len(), 0, "not again in this round");
+    let next = pushed(bed.now + 1);
+    assert!(next.len() == 1 && next[0].starts_with("BOB-"), "{next:?}");
 }
 
 /// A message lives 4 weeks with the room's collapse key at high priority; one not taken by then fails.

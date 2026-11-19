@@ -653,6 +653,9 @@ fn clean_text(param: &ParamDef, text: String, failures: &mut Vec<String>) -> Str
     if param.allow_html == AllowHtml::Safe {
         return moqui_lib::safe_html::clean(&text);
     }
+    if param.allow_html == AllowHtml::App {
+        return moqui_lib::safe_html::clean_app(&text);
+    }
     failures.push(localized(
         "HTML not allowed including less-than (<), greater-than (>), etc symbols",
     ));

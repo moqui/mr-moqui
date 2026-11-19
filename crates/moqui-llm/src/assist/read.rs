@@ -204,7 +204,7 @@ pub(super) fn bootstrap(caller: &Caller) -> Answer {
             "calls": "/assist",
             "events": "/assist/runs/{runId}/events",
             "catchUp": "/assist/runs/{runId}/events.json",
-            "sandbox": "/assist/sandbox",
+            "sandbox": "/assist/sandboxHost",
         },
     }))
 }

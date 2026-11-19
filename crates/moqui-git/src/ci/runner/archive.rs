@@ -31,7 +31,7 @@ use flate2::Compression;
 ///
 /// When a file is outside the workspace or cannot be read, or `out` cannot be written.
 pub fn pack(workspace: &Path, files: &[PathBuf], out: &Path) -> Result<(), String> {
-    let file = File::create(out).map_err(|err| format!("{}: {err}", out.display()))?;
+    let file = super::create_new(out)?;
     pack_into(workspace, files, file)
 }
 

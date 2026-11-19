@@ -351,6 +351,13 @@ user per runner process**: the kill before reading takes every process of USER t
 runners with one step user would end each other's steps; `poll` holds an exclusive lock on
 `/run/moqui-ci-step-user-<uid>.lock` while it runs and refuses to start when another runner holds it. In any mode a report or artifact path is kept only while it resolves inside the workspace, a report that is a
 link is refused, and a link under an artifact directory is stored as a link (plans/Security-Review.md SEC-GIT-81).
+`poll` works in a directory of its own: `--work DIR` is made when missing, refused when it is a link, another user's,
+or writable by a group or other users, and set to mode 700 (711 with `--step-user`, which the step user passes
+through and cannot list); without `--work` it is a new `moqui-ci-<random>` in the temporary directory, made at the
+start, so no other local user can have made it first. Each job's directory in it is `<work>/<jobRunId>` (an id, or the
+job is not run), made new with the same mode, and its checkout and `home` are 700 until they are handed to the step
+user; the runner's scratch files there are always made new, never through a name that is there (plans/Security-Review-Medium.md
+SEC-GIT-98).
 `poll` says at each claim whether it was started with `--step-user` (`stepUser` in the claim's body), and **a pool that takes untrusted runs
 (`trusted` N) gives a job only to a runner that was**: one without it is given none, its claim's answer says why
 (`notice`, which `poll` prints once), and the untrusted run waits, queued, for such a runner (plans/Security-Review-Low.md

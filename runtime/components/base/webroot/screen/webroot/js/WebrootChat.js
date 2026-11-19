@@ -473,8 +473,8 @@
         },
         // the host's outbox (the desktop client), null on the web
         host() { return moqui.hostOutbox ? moqui.hostOutbox() : null; },
-        // Show the host's outbox and hear its changes: a chat send answered is told as the page's own (sent). The outbox this
-        // browser kept before is moved into the host first (importOutbox).
+        // Show the host's outbox and hear its changes: a chat send answered is told as the page's own (sent). An outbox this
+        // browser kept is dropped first, never sent (dropBrowserOutbox).
         startHost(host) {
             chat.hostOff = host.on((event) => {
                 if (event && event.kind === "sent" && event.op === "chat-send") {
@@ -496,7 +496,8 @@
                 chat.refreshHost();
             });
             chat.readKinds(host);
-            return chat.importOutbox(host).then(() => chat.refreshHost());
+            chat.dropBrowserOutbox();
+            return chat.refreshHost();
         },
         // the kinds the host's outbox takes for the account's server (outbox.kinds(): {clientApi, kinds, internalSend}); with
         // none known, a message's changes are asked of the server as on the web
@@ -564,32 +565,21 @@
                 throw err;
             });
         },
-        // The outbox this browser kept (localStorage, under the scope) moved into the host once: each item with its clientRef,
-        // createdDate and ciphertext (the host takes an item it has once), taken off the stored list once the host has it,
-        // or dropped with a warning when the host refuses it for good (one refused for now stays to try again). Resolves to
-        // how many there were.
-        importOutbox(host) {
+        // An outbox this browser kept (localStorage, under the scope) is dropped, never moved into the host: in the apps every
+        // server's pages share one origin, so another server's page may have written it under this account's key, and the
+        // host would send it as this user (plans/Security-Review-Medium.md SEC-CLI-81). The host's outbox is the one the
+        // apps send from. Answers how many items there were.
+        dropBrowserOutbox() {
             const key = chat.outboxKey();
-            let list = [];
+            let count = 0;
             try {
                 const text = root.localStorage ? root.localStorage.getItem(key) : null;
                 const parsed = text ? JSON.parse(text) : [];
-                if (Array.isArray(parsed)) list = parsed.filter((item) => item && item.clientRef && item.chatRoomId);
-            } catch (err) { list = []; }
-            if (!list.length) return Promise.resolve(0);
-            let left = list.slice();
-            const done = (item) => {
-                left = left.filter((other) => other !== item);
-                try {
-                    if (left.length) root.localStorage.setItem(key, JSON.stringify(left));
-                    else root.localStorage.removeItem(key);
-                } catch (err) { /* no storage */ }
-            };
-            return list.reduce((previous, item) => previous.then(() => host.add("chat-send", item).then(() => done(item), (err) => {
-                if (moqui.hostBusy && moqui.hostBusy(err)) { console.info("chat outbox item " + item.clientRef + " not moved to the app yet", err); return; }
-                console.warn("chat outbox item " + item.clientRef + " not taken by the app, dropped", err);
-                done(item);
-            })), Promise.resolve()).then(() => list.length);
+                count = Array.isArray(parsed) ? parsed.length : 0;
+                if (text !== null) root.localStorage.removeItem(key);
+            } catch (err) { /* no storage, or not a list: nothing to drop */ }
+            if (count) console.warn("chat outbox of this browser dropped, not sent: " + count + " items");
+            return count;
         },
         // A room read up to seq, through the host's outbox (sent when it can, the room shown read at once in the stored
         // copy): resolves as markRead answers; null on the web or with no seq, where the screen asks the server itself.

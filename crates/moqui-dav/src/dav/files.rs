@@ -37,6 +37,8 @@ struct Drive {
     drive_id: String,
     folder: String,
     can_write: bool,
+    /// The user manages the drive (`RdpManage`, level 3): may break another user's lock in it (SEC-FIL-83).
+    can_manage: bool,
     root_location: String,
 }
 
@@ -137,6 +139,7 @@ fn drives() -> Result<Vec<Drive>, String> {
         drives.push(Drive {
             folder: if shared { format!("{name} ({drive_id})") } else { name },
             can_write: flag_of(row, "canWrite"),
+            can_manage: text_of(row, "level").parse::<i64>().unwrap_or(0) >= 3 || flag_of(row, "isOwner"),
             root_location: text_of(row, "rootLocation"),
             drive_id,
         });
@@ -328,7 +331,28 @@ pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
             if let Err(refused) = locks::check_write(&location, &context.user_id, false) {
                 return refused;
             }
-            let exists = matches!(info(drive, &path), Ok(Some(_)));
+            // a lock holds every other writer off what it covers: it is taken only where the user may write (a path
+            // that is not there by its folder's right), and never on the drive itself, which would hold the whole drive
+            // (plans/Security-Review-Medium.md SEC-FIL-83)
+            if path.is_empty() {
+                return DavResponse::text(403, "The drive itself is not locked: lock a file or folder in it");
+            }
+            let found = match info(drive, &path) {
+                Ok(found) => found,
+                Err(err) => return server_error(&err),
+            };
+            let may_write = match &found {
+                Some(entry) => entry.can_write,
+                None => match info(drive, &split_parent(&path).0) {
+                    Ok(Some(folder)) => folder.is_directory && folder.can_write,
+                    Ok(None) => return DavResponse::status(409),
+                    Err(err) => return server_error(&err),
+                },
+            };
+            if !may_write {
+                return DavResponse::status(403);
+            }
+            let exists = found.is_some();
             let mut answer = locks::lock(
                 context.request,
                 &location,
@@ -341,7 +365,12 @@ pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
             }
             answer
         }
-        "UNLOCK" => locks::unlock(context.request, &drive.location(&path), &context.user_id),
+        "UNLOCK" => locks::unlock(
+            context.request,
+            &drive.location(&path),
+            &context.user_id,
+            drive.can_manage,
+        ),
         "REPORT" => DavResponse::condition(403, xml::DAV, "supported-report"),
         _ => DavResponse::status(405),
     }

@@ -687,7 +687,7 @@ along with this software (see the LICENSE.md file). If not, see
             encrypted (the Megolm ciphertext) and mentionUserIdList in place of a body, and no records are looked up.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
-            <parameter name="body" allow-html="safe"/>
+            <parameter name="body" allow-html="app"/>
             <parameter name="replyToEventSeq" type="Integer"/>
             <parameter name="threadRootEventSeq" type="Integer"/>
             <parameter name="chatAttachmentIds"/>

@@ -30,7 +30,7 @@ use moqui_lib::node::MNode;
 use moqui_lib::sync::{lock, read, write};
 
 use super::anonymous::AnonymousAccess;
-use super::artifact::{ArtifactStack, Authz, AuthzGuard, AuthzRequired, Tarpit};
+use super::artifact::{ArtifactStack, Authz, AuthzGuard, AuthzScope, Tarpit};
 
 thread_local! {
     /// The entered contexts, innermost last, one entry per live guard. Each entry is a handle that
@@ -497,7 +497,7 @@ impl ExecutionContextFactory {
                 #[cfg(feature = "telemetry")]
                 telemetry: std::cell::OnceCell::new(),
                 effective_time: std::cell::Cell::new(None),
-                script_authz: RefCell::new(None),
+                script_authz: Rc::new(RefCell::new(None)),
             }),
         }
     }
@@ -1083,8 +1083,9 @@ struct ContextState {
     telemetry: std::cell::OnceCell<Arc<crate::telemetry::Telemetry>>,
     /// Java's `UserFacade.setEffectiveTime`: epoch millis that `ec.user.nowTimestamp` returns instead of the clock.
     effective_time: std::cell::Cell<Option<i64>>,
-    /// The guard of a script's `ec.artifactExecution.disableAuthz()`, held until `enableAuthz()` or the context ends.
-    script_authz: RefCell<Option<AuthzGuard>>,
+    /// The guard of a script's `ec.artifactExecution.disableAuthz()`, held until `enableAuthz()`, the end of the
+    /// [`AuthzScope`] it was taken in (which sets the caller's aside and puts it back) or the end of the context.
+    script_authz: Rc<RefCell<Option<AuthzGuard>>>,
 }
 
 impl ExecutionContext {
@@ -1343,9 +1344,22 @@ impl ExecutionContext {
 
     /// Check authorization until the guard drops, even when a caller disabled it: for work done on the user's behalf
     /// whose reach must be the user's own (the provider hooks of the apps the user may open). The caller's state comes
-    /// back on drop.
-    pub fn require_authz(&self) -> AuthzRequired {
-        self.state.artifacts.borrow().require_authz()
+    /// back on drop, whatever the work's scripts did with `disableAuthz()` and `enableAuthz()` ([`AuthzScope`]).
+    pub fn require_authz(&self) -> AuthzScope {
+        self.state
+            .artifacts
+            .borrow()
+            .scope_authz(true, &self.state.script_authz)
+    }
+
+    /// The caller's authorization state, kept as it is and put back when the guard drops: component code run for the
+    /// framework outside a service call of its own (a shell provider, `crate::screen::shell::run_in_app`) may toggle
+    /// authorization only until its call ends ([`AuthzScope`]).
+    pub fn keep_authz(&self) -> AuthzScope {
+        self.state
+            .artifacts
+            .borrow()
+            .scope_authz(false, &self.state.script_authz)
     }
 
     /// The authorization in place here, for work registered to run after the transaction ends. See
@@ -1405,7 +1419,8 @@ impl ExecutionContext {
     }
 
     /// Java's `ArtifactExecutionFacade.disableAuthz()` for a script, which has no guard to hold: authorization stays
-    /// disabled until [`Self::script_enable_authz`] or the context ends. Returns whether it was already disabled.
+    /// disabled until [`Self::script_enable_authz`], the end of the [`AuthzScope`] it runs in, or the end of the
+    /// context. Returns whether it was already disabled.
     ///
     /// When it was already disabled nothing is held, as Java's flag is not changed then: a script takes the idiom
     /// `wasDisabled = disableAuthz(); ...; if (!wasDisabled) enableAuthz()` and so never enables what it found disabled,
@@ -1424,18 +1439,6 @@ impl ExecutionContext {
     pub fn script_enable_authz(&self) {
         let guard = self.state.script_authz.borrow_mut().take();
         drop(guard);
-    }
-
-    /// The guard of [`Self::script_disable_authz`], taken out: a scope that must leave the script's authorization state
-    /// as it found it (`ec.artifactExecution.runAsUser`) takes it before and puts it back with
-    /// [`Self::put_script_authz`] after.
-    pub fn take_script_authz(&self) -> Option<AuthzGuard> {
-        self.state.script_authz.borrow_mut().take()
-    }
-
-    /// Put back a guard [`Self::take_script_authz`] took.
-    pub fn put_script_authz(&self, guard: Option<AuthzGuard>) {
-        *self.state.script_authz.borrow_mut() = guard;
     }
 
     /// Java's `disableEntityEca`: entity ECA rules do not run for writes of this context until
@@ -1553,7 +1556,7 @@ pub(crate) struct RestoredAuthz {
     ctx: ExecutionContext,
     frames: usize,
     _disabled: Option<AuthzGuard>,
-    _required: Option<AuthzRequired>,
+    _required: Option<AuthzScope>,
 }
 
 impl Drop for RestoredAuthz {

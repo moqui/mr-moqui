@@ -2784,7 +2784,8 @@ pub(super) fn is_empty(value: Option<&Value>) -> bool {
 /// A GET (or HEAD) of a transition that runs actions and is not read-only, started by another site
 /// ([`web::started_by_another_site`]) and carrying no session token: refused, since a GET is not token-checked and a
 /// cross-site link carries the `SameSite=Lax` cookie (plans/Security-Review.md SEC-WEB-04, SEC-TLS-04). The app's own
-/// links and a typed URL still run, as does a request with no browser's headers.
+/// links and a typed URL still run, as does a request with no browser's headers. So is one the browser loads as a part
+/// of a page ([`web::loaded_as_subresource`]): an image of this site in a stored rich text (SEC-CLI-82).
 fn cross_site_write(job: &Job<'_>, transition: &TransitionDef) -> Result<bool, Error> {
     if matches!(
         job.method.to_ascii_lowercase().as_str(),
@@ -2795,7 +2796,7 @@ fn cross_site_write(job: &Job<'_>, transition: &TransitionDef) -> Result<bool, E
     if transition.read_only || !runs_actions(transition) {
         return Ok(false);
     }
-    if !web::started_by_another_site(job.request) {
+    if !web::get_write_refused(job.request) {
         return Ok(false);
     }
     Ok(!session_token_presented(job)?)

@@ -152,8 +152,9 @@ impl Request {
     }
 
     /// Resolve `deepen-not` refs, check that the wants are what the refs name or commits they reach (an object the
-    /// store has is not enough: it may be another repository's of the fork network, or a hidden merge request's), and
-    /// that depth is not combined with the others, as git refuses.
+    /// store has is not enough: it may be another repository's of the fork network, or a hidden merge request's), keep
+    /// only the client's shallow commits the same rule gives, and check that depth is not combined with the others, as
+    /// git refuses.
     fn check(&mut self, advertised: &Advertised, wanted: &WantCheck<'_>) -> Result<(), Error> {
         // v0 sends deepen-relative as a capability of the first want, v2 as an argument
         if self.has("deepen-relative") {
@@ -190,6 +191,22 @@ impl Request {
             if let Some(want) = by_id.iter().find(|want| !allowed.contains(*want)) {
                 return Err(Error::new(format!("upload-pack: not our ref {want}")));
             }
+        }
+        // a client's shallow commits are held to the wants' rule, before `plan::shallow` sees them: one the readers do
+        // not read (another fork's, a hidden merge request's, one its ref has left) is dropped, as an id the store
+        // lacks is, so it is neither unshallowed (its parents sent) nor answered (SEC-GIT-82)
+        let shallow_by_id: Vec<ObjectId> = self
+            .deepen
+            .client_shallow
+            .iter()
+            .filter(|id| !named.contains(*id))
+            .copied()
+            .collect();
+        if !shallow_by_id.is_empty() {
+            let allowed = wanted(&shallow_by_id)?;
+            self.deepen
+                .client_shallow
+                .retain(|id| named.contains(id) || allowed.contains(id));
         }
         Ok(())
     }

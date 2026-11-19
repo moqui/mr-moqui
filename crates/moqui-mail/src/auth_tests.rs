@@ -110,6 +110,36 @@ fn a_changed_message_from_elsewhere_fails_dmarc_and_its_policy_decides() {
     assert_eq!(verdict.summary, "spf=pass dkim=none dmarc=pass arc=none", "{verdict:?}");
 }
 
+/// SEC-MAIL-81: DMARC judges one author domain, and mail-auth passes over a message with none or several (no result,
+/// no policy). A From of two domains (in one field or two), two From fields, and no From address are refused before any
+/// policy is asked, so `ceo@example.com`, whose policy is reject, is not the stored sender of mail it never sent.
+#[test]
+fn a_message_whose_author_is_not_one_domain_is_refused() {
+    let body = "To: bob@example.org\r\nSubject: Pay\r\nMessage-ID: <m2@evil.example>\r\n\r\nPay me.\r\n";
+    for (from, why) in [
+        ("From: ceo@example.com, x@evil.example\r\n", "more than one domain"),
+        // one domain by our reading, two by mail-auth's (it keeps the trailing dot), which then judges none
+        ("From: ceo@example.com, x@example.com.\r\n", "more than one domain"),
+        ("From: ceo@example.com\r\nFrom: x@evil.example\r\n", "2 From fields"),
+        ("From: ceo@example.com\r\nFrom: ceo@example.com\r\n", "2 From fields"),
+        ("", "no From address"),
+        ("From: undisclosed:;\r\n", "no From address"),
+    ] {
+        let verdict = check(format!("{from}{body}").as_bytes(), "198.51.100.7", "reject");
+        assert_eq!(verdict.dmarc, DmarcAction::Reject, "{from:?}: {verdict:?}");
+        let refused = verdict.refused.as_deref().unwrap_or_default();
+        assert!(refused.contains(why), "{from:?}: {verdict:?}");
+    }
+    // two mailboxes of one domain are one author domain, judged as any message
+    let verdict = check(
+        format!("From: ann@example.com, ceo@example.com\r\n{body}").as_bytes(),
+        "192.0.2.1",
+        "reject",
+    );
+    assert_eq!((verdict.refused, verdict.dmarc), (None, DmarcAction::Accept));
+    assert_eq!(check(MESSAGE.as_bytes(), "192.0.2.1", "reject").refused, None);
+}
+
 #[test]
 fn the_record_and_the_signing_domain() {
     let record = test_key().record();
@@ -228,6 +258,22 @@ fn the_dkim_domains_are_by_role_and_an_all_in_one_nodes_are_both_sides() {
     assert!(role_domains(NodeRole::Normal, own, fails).is_ok());
     assert!(role_domains(NodeRole::FrontEdge, fails, replicated).is_ok());
     assert!(role_domains(NodeRole::AllInOne, own, fails).is_err());
+    // SEC-MAIL-82: a hosted kind whose copied server has an incoming host elsewhere is a user's own, not signed for
+    let stored = vec![
+        ReplicaValue {
+            fields: serde_json::json!({"emailAddress": "me@stored.example", "accountKindEnumId": "EakHosted",
+                "emailServerId": "S9"}),
+            ..copy("4", "", "")
+        },
+        ReplicaValue {
+            entity_name: "moqui.basic.email.EmailServer".to_string(),
+            pk: serde_json::json!({"emailServerId": "S9"}),
+            fields: serde_json::json!({"storeHost": "imap.stored.example"}),
+            ..copy("", "", "")
+        },
+        copy("5", "ok@delivered.example", "EakHosted"),
+    ];
+    assert_eq!(replicated_addresses(&stored), ["ok@delivered.example"]);
 }
 
 #[test]

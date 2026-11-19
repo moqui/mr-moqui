@@ -235,7 +235,7 @@ pub(super) fn send_template(
             }
         }
     }
-    if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
+    if let Err(err) = deliver(facade, &letter, &server, &email_message_id, true) {
         note_message(format!("Error sending email: {err}"));
         let outcome = delivery_outcome(&server, &err);
         record_send_failure(facade, &email_message_id, &err, outcome);
@@ -417,7 +417,10 @@ pub(super) fn send_message(
             ));
         }
     }
-    if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
+    // a client message is signed only as its account's own address on an account hosted here (SEC-MAIL-82); system
+    // mail as before
+    let signs = !client || client_signs(facade, &account_id, &letter.from_address);
+    if let Err(err) = deliver(facade, &letter, &server, &email_message_id, signs) {
         let outcome = delivery_outcome(&server, &err);
         // a client message's result is the mail client's to write (record#SendResult, which keeps the outcome too): its
         // row may be locked by the transaction this runs in
@@ -1541,12 +1544,26 @@ pub(super) fn header_value(headers: &str, name: &str) -> String {
 
 /// Send `letter` (of message `email_message_id`, when it has a row) through `server`: by SMTP, or through the edge
 /// node for a server whose `smtpHost` is `edge:` (queued, in the caller's transaction; the edge node's answer comes
-/// back to the row, `edge_mail.rs`).
-fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue, email_message_id: &str) -> Result<(), Error> {
+/// back to the row, `edge_mail.rs`). `signs`: whether the sender may have the node's DKIM signature on its From
+/// ([`client_signs`]); the edge node signs what it is given for the hosted domains, so a message that may not be
+/// signed is not given to it.
+fn deliver(
+    facade: &EntityFacade,
+    letter: &Letter,
+    server: &EntityValue,
+    email_message_id: &str,
+    signs: bool,
+) -> Result<(), Error> {
     if captured(letter) {
         return Ok(());
     }
     if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) {
+        if !signs {
+            return Err(Error::new(format!(
+                "{} is not this account's own address or one of its identities: it is not sent through the edge node",
+                letter.from_address
+            )));
+        }
         let message = build_lettre(letter)?;
         let to: Vec<String> = message.envelope().to().iter().map(ToString::to_string).collect();
         let from = message.envelope().from().map(ToString::to_string).unwrap_or_default();
@@ -1559,7 +1576,49 @@ fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue, email_m
             message.formatted(),
         );
     }
-    lettre_send(facade, letter, server)
+    lettre_send(facade, letter, server, signs)
+}
+
+/// Whether the node's DKIM signature may go on a mail client message of account `account_id` From `from`
+/// (plans/Security-Review-Medium.md SEC-MAIL-82): only when the account is delivered here (hosted or shared, its server
+/// with no incoming host, which only a mail administrator makes, SEC-MAIL-01) and `from` is its own address or the
+/// address of one of its identities (one of a hosted domain is a mail administrator's to make). An account of another
+/// server is the user's, whose From the node does not vouch for: its mail goes out unsigned. Read with authorization
+/// off, as the decision is the node's; an account that cannot be read signs nothing.
+fn client_signs(facade: &EntityFacade, account_id: &str, from: &str) -> bool {
+    let read = || -> Result<bool, LibError> {
+        let Some(account) = facade.find(ACCOUNT)?.eq("emailAccountId", Value::string(account_id)).disable_authz().one()?
+        else {
+            return Ok(false);
+        };
+        if !matches!(field_text(&account, "accountKindEnumId").as_str(), "EakHosted" | "EakShared") {
+            return Ok(false);
+        }
+        let server_id = field_text(&account, "emailServerId");
+        if !server_id.is_empty() {
+            let server = facade.find(SERVER)?.eq("emailServerId", Value::string(&server_id)).disable_authz().one()?;
+            if server.is_some_and(|server| !field_text(&server, "storeHost").trim().is_empty()) {
+                return Ok(false);
+            }
+        }
+        let from = from.trim();
+        if field_text(&account, "emailAddress").trim().eq_ignore_ascii_case(from) {
+            return Ok(true);
+        }
+        let identities = facade
+            .find(IDENTITY)?
+            .eq("emailAccountId", Value::string(account_id))
+            .disable_authz()
+            .list()?;
+        Ok(identities
+            .values()
+            .iter()
+            .any(|identity| field_text(identity, "emailAddress").trim().eq_ignore_ascii_case(from)))
+    };
+    read().unwrap_or_else(|err| {
+        tracing::warn!(account = %account_id, "The mail account was not read to sign its message: {err}");
+        false
+    })
 }
 
 /// A message built whole (the SMTP listener's delivered notice, `delivery.rs`), sent from the null reverse path to
@@ -1655,15 +1714,18 @@ fn captured(letter: &Letter) -> bool {
     false
 }
 
-/// Send `letter` by SMTP through `server`, DKIM-signed with the node's key when its From domain is a hosted account's
+/// Send `letter` by SMTP through `server`, DKIM-signed with the node's key when `signs` (the sender may be signed for,
+/// [`client_signs`]) and its From domain is a hosted account's
 /// (or one of `mail-delivery/dkim@domains`: `auth.rs`), so mail between the hosted accounts carries the same signature as mail
 /// out (plans/archive/Edge-Node.md §5.4, "the same standards inside"). Only when the key is configured (so its record can be
 /// published), or when the server is this node's own SMTP listener, where the node verifies its own key: a node that
 /// sends through another provider's server sends no signature of a key nobody published.
-fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {
+fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue, signs: bool) -> Result<(), Error> {
     let message = build_lettre(letter)?;
+    #[cfg(not(feature = "imap"))]
+    let _ = signs;
     #[cfg(feature = "imap")]
-    if super::auth::key_configured() || own_listener(server) {
+    if signs && (super::auth::key_configured() || own_listener(server)) {
         let formatted = message.formatted();
         let signed = super::auth::sign_for(formatted.clone(), |domain| {
             super::auth::is_hosted_domain(facade, domain)
@@ -1758,20 +1820,23 @@ impl From<SessionError> for Error {
     }
 }
 
-/// Run one SMTP session on a thread of its own, waiting for it until `deadline`. A session past it is left to end on
-/// its own (lettre's command timeout) and is an error with no SMTP answer, so its outcome is uncertain: the message
-/// may have gone.
+/// Run one SMTP session on a thread of its own, through its relay ([`SmtpSession::open`]), waiting for it until
+/// `deadline`. At the deadline the relay closes the session's sockets, so its thread ends with a failed read; a
+/// session past the deadline is an error with no SMTP answer, so its outcome is uncertain: the message may have gone.
 fn send_within(
-    transport: lettre::SmtpTransport,
+    session: &SmtpSession,
     payload: &Arc<Payload>,
     deadline: std::time::Instant,
 ) -> Result<(), SessionError> {
+    let (transport, relay) = session.open(deadline).map_err(SessionError::Stopped)?;
     let (done, result) = std::sync::mpsc::sync_channel(1);
     let payload = Arc::clone(payload);
     std::thread::Builder::new()
         .name("smtp-session".to_string())
         .spawn(move || {
             let _ = done.send(payload.send(&transport));
+            // the session's end shuts the relay, which ends its thread
+            drop(relay);
         })
         .map_err(|err| SessionError::Stopped(Error::new(format!("could not start the SMTP session: {err}"))))?;
     let wait = deadline.saturating_duration_since(std::time::Instant::now());
@@ -1798,8 +1863,8 @@ fn smtp_send_retry(
     let deadline = std::time::Instant::now() + session_limit();
     let payload = Arc::new(payload);
     let auth = smtp_auth(facade, server, None)?;
-    let transport = smtp_transport(server, &auth, timeout)?;
-    match send_within(transport, &payload, deadline) {
+    let session = smtp_transport(server, &auth, timeout)?;
+    match send_within(&session, &payload, deadline) {
         Ok(()) => Ok(()),
         Err(SessionError::Smtp(err)) if matches!(auth, SmtpAuth::OAuth(..)) && smtp_auth_refused(&err) => {
             let SmtpAuth::OAuth(_, rejected) = &auth else {
@@ -1809,8 +1874,8 @@ fn smtp_send_retry(
             if matches!(&fresh, SmtpAuth::OAuth(_, token) if token == rejected) {
                 return Err(SessionError::Smtp(err).into());
             }
-            let transport = smtp_transport(server, &fresh, timeout)?;
-            send_within(transport, &payload, deadline).map_err(Error::from)
+            let session = smtp_transport(server, &fresh, timeout)?;
+            send_within(&session, &payload, deadline).map_err(Error::from)
         }
         Err(err) => Err(err.into()),
     }
@@ -1834,11 +1899,16 @@ fn refused_before_connecting(server: &EntityValue, error: &Error) -> bool {
     (field_text(server, "disabled") == "Y" && text.contains(DISABLED_SERVER))
         || text.contains(INTERNAL_SERVER)
         || (private_network_denied(server) && text.contains(SERVER_NOT_FOUND))
+        || text.contains(SERVER_NOT_REACHED)
 }
 
 const DISABLED_SERVER: &str = "is disabled until a test of it passes";
 pub(super) const INTERNAL_SERVER: &str = "is an internal address, which this server may not use";
 const SERVER_NOT_FOUND: &str = "could not be looked up";
+/// A session's server not reached: not resolved or not connected to, before any command ([`SmtpSession::open`]).
+const SERVER_NOT_REACHED: &str = "could not be reached";
+/// How long a connection takes at most when the server row sets no timeout: lettre's own default.
+const SMTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Whether a server row's connections reach public addresses only: its `allowPrivateNetwork` N, or anything but Y on a
 /// production instance (`moqui_core::outbound::deny_private_network`): SMTP, IMAP and POP alike. A mail account's
@@ -1935,12 +2005,65 @@ fn smtp_auth_refused(err: &lettre::transport::smtp::Error) -> bool {
     matches!(code, Some(454 | 530 | 534 | 535)) || (code.is_none() && err.to_string().contains("challenge"))
 }
 
-/// The SMTP transport of a server row, signing in as `auth` says. `timeout` replaces lettre's default of a minute.
-fn smtp_transport(
-    server: &EntityValue,
-    auth: &SmtpAuth,
+/// An SMTP session of a server row, checked and ready to open ([`smtp_transport`]): where it connects and how it signs
+/// in. Nothing is connected until [`SmtpSession::open`].
+struct SmtpSession {
+    host: String,
+    /// What is connected to: the address found for a server that may not use the private network, else the host.
+    connect_host: String,
+    port: u16,
+    tls: Option<lettre::transport::smtp::client::Tls>,
     timeout: Option<Duration>,
-) -> Result<lettre::SmtpTransport, Error> {
+    credentials: Option<(
+        lettre::transport::smtp::authentication::Credentials,
+        Vec<lettre::transport::smtp::authentication::Mechanism>,
+    )>,
+}
+
+impl SmtpSession {
+    /// Connect to the server through a relay that ends the session at `deadline` and once the server has sent more
+    /// than `relay::MAX_REPLIES` bytes (SEC-MAIL-83): lettre reads a reply line to its end with a timeout of one read,
+    /// so a server that sends a byte now and then, or a line with no end, would hold the session's thread or fill its
+    /// memory. TLS is to the server's name, through the relay.
+    ///
+    /// # Errors
+    ///
+    /// The server was not resolved or not connected to ([`SERVER_NOT_REACHED`]: nothing was sent).
+    fn open(&self, deadline: std::time::Instant) -> Result<(lettre::SmtpTransport, crate::relay::Relay), Error> {
+        let not_reached = |why: String| Error::new(format!("{}:{} {SERVER_NOT_REACHED}: {why}", self.host, self.port));
+        let addresses: Vec<std::net::SocketAddr> = match self.connect_host.parse::<std::net::IpAddr>() {
+            Ok(ip) => vec![std::net::SocketAddr::new(ip, self.port)],
+            Err(_) => moqui_lib::net::non_link_local_addresses(&self.connect_host, self.port)
+                .map_err(|err| not_reached(err.to_string()))?,
+        };
+        let relay = crate::relay::Relay::start(
+            &addresses,
+            self.timeout.unwrap_or(SMTP_CONNECT_TIMEOUT),
+            deadline,
+            crate::relay::MAX_REPLIES,
+            &format!("{}:{}", self.host, self.port),
+        )
+        .map_err(not_reached)?;
+        let mut builder =
+            lettre::SmtpTransport::builder_dangerous(relay.local.ip().to_string()).port(relay.local.port());
+        if let Some(tls) = &self.tls {
+            builder = builder.tls(tls.clone());
+        }
+        if self.timeout.is_some() {
+            builder = builder.timeout(self.timeout);
+        }
+        if let Some((credentials, mechanisms)) = &self.credentials {
+            builder = builder.credentials(credentials.clone());
+            if !mechanisms.is_empty() {
+                builder = builder.authentication(mechanisms.clone());
+            }
+        }
+        Ok((builder.build(), relay))
+    }
+}
+
+/// The SMTP session of a server row, signing in as `auth` says. `timeout` replaces lettre's default of a minute.
+fn smtp_transport(server: &EntityValue, auth: &SmtpAuth, timeout: Option<Duration>) -> Result<SmtpSession, Error> {
     let host = field_text(server, "smtpHost");
     // Every SMTP connection starts here, so nothing reaches a mail server under the read fence.
     moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, &host)?;
@@ -1969,24 +2092,28 @@ fn smtp_transport(
     // except to a server on this machine (smtp_tls_mode). All trust `email-client` `tls-ca-file` too.
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
     use lettre::transport::smtp::client::Tls;
-    let mut builder = lettre::SmtpTransport::builder_dangerous(connect_host.as_str()).port(port);
-    builder = match smtp_tls_mode(server, !matches!(auth, SmtpAuth::None)) {
-        SmtpTlsMode::Wrapper => builder.tls(Tls::Wrapper(smtp_tls(&host)?)),
-        SmtpTlsMode::Required => builder.tls(Tls::Required(smtp_tls(&host)?)),
-        SmtpTlsMode::Opportunistic => builder.tls(Tls::Opportunistic(smtp_tls(&host)?)),
-        SmtpTlsMode::None => builder,
+    let tls = match smtp_tls_mode(server, !matches!(auth, SmtpAuth::None)) {
+        SmtpTlsMode::Wrapper => Some(Tls::Wrapper(smtp_tls(&host)?)),
+        SmtpTlsMode::Required => Some(Tls::Required(smtp_tls(&host)?)),
+        SmtpTlsMode::Opportunistic => Some(Tls::Opportunistic(smtp_tls(&host)?)),
+        SmtpTlsMode::None => None,
     };
-    if timeout.is_some() {
-        builder = builder.timeout(timeout);
-    }
-    builder = match auth {
-        SmtpAuth::None => builder,
-        SmtpAuth::Password(user, password) => builder.credentials(Credentials::new(user.clone(), password.clone())),
-        SmtpAuth::OAuth(user, token) => builder
-            .credentials(Credentials::new(user.clone(), token.clone()))
-            .authentication(vec![Mechanism::Xoauth2]),
+    let credentials = match auth {
+        SmtpAuth::None => None,
+        SmtpAuth::Password(user, password) => Some((Credentials::new(user.clone(), password.clone()), Vec::new())),
+        SmtpAuth::OAuth(user, token) => Some((
+            Credentials::new(user.clone(), token.clone()),
+            vec![Mechanism::Xoauth2],
+        )),
     };
-    Ok(builder.build())
+    Ok(SmtpSession {
+        host,
+        connect_host,
+        port,
+        tls,
+        timeout,
+        credentials,
+    })
 }
 
 /// How an SMTP session of a server row uses TLS ([`smtp_transport`]).
@@ -2467,7 +2594,8 @@ fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> TestStep {
     };
     let connect = |auth: &SmtpAuth| {
         smtp_transport(server, auth, Some(TEST_TIMEOUT))
-            .and_then(|transport| transport.test_connection().map_err(|err| Error::new(err.to_string())))
+            .and_then(|session| session.open(std::time::Instant::now() + session_limit()))
+            .and_then(|(transport, _relay)| transport.test_connection().map_err(|err| Error::new(err.to_string())))
     };
     let checked = require_host(&host)
         .and_then(|()| smtp_auth(facade, server, None))

@@ -2891,7 +2891,7 @@ fn enable_entity_eca(_call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `runAsSystem`.
 fn run_as_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let location = call.text_or_empty(0);
-    let outer_script_authz = with_ec(crate::context::ExecutionContext::take_script_authz)?;
+    // the script's own disableAuthz state is set aside with it, and both come back when the guard drops
     let required = with_ec(crate::context::ExecutionContext::require_authz)?;
     // The check may run nested scripts (an authorization service, the entity ECA rules of a recorded failure), so it
     // runs with the engine lent; the call back after it is this leaf's own.
@@ -2916,31 +2916,28 @@ fn run_as_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
         (Ok(()), None) => Some(HostError::message("the authorization of runAsUser did not run")),
     };
     if let Some(refused) = refused {
-        restore_run_as_user(outer_script_authz, required);
         return Err(refused);
     }
     // the frame is popped and the guards put back however the call back ends: a return, a throw, the deadline, or a
     // panic that unwinds through it
     let _restore = RunAsUserRestore {
         location: location.clone(),
-        guards: Some((outer_script_authz, required)),
+        required: Some(required),
     };
     // the second function argument: the one that calls body and keeps its result
     call.ops.call_back(1, Vec::new()).map(|_| Ret::Undefined)
 }
 
-/// Pops `runAsUser`'s frame and puts back what it set aside, when dropped.
+/// Pops `runAsUser`'s frame and then puts back what it set aside, when dropped.
 struct RunAsUserRestore {
     location: String,
-    guards: Option<(Option<crate::context::AuthzGuard>, crate::context::AuthzRequired)>,
+    required: Option<crate::context::AuthzScope>,
 }
 
 impl Drop for RunAsUserRestore {
     fn drop(&mut self) {
         let popped = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::pop);
-        if let Some((outer_script_authz, required)) = self.guards.take() {
-            restore_run_as_user(outer_script_authz, required);
-        }
+        drop(self.required.take());
         let location = &self.location;
         match popped {
             Some(Err(err)) => tracing::warn!("Pop after runAsUser of {location}: {}", err.message()),
@@ -2948,17 +2945,6 @@ impl Drop for RunAsUserRestore {
             Some(Ok(())) => {}
         }
     }
-}
-
-/// The guards go in the reverse of their making: what body left of the script's state, then the requirement, and then
-/// the caller's own state comes back.
-fn restore_run_as_user(
-    outer_script_authz: Option<crate::context::AuthzGuard>,
-    required: crate::context::AuthzRequired,
-) {
-    crate::context::ExecutionContext::with_current(|ec| drop(ec.take_script_authz()));
-    drop(required);
-    crate::context::ExecutionContext::with_current(|ec| ec.put_script_authz(outer_script_authz));
 }
 
 /// `ec.artifactExecution.runAsSystem(body)`: `body()` with no user and authorization off, in a fresh execution context

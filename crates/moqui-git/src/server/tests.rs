@@ -16,7 +16,7 @@
 //! [`super::serve_http`] (stateless RPC, protocol v0 and v2) and a `git://` listener calls [`super::serve_ssh`] (one
 //! stateful conversation, as over SSH), on the in-memory database. Each test is skipped when git is not installed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -1750,6 +1750,91 @@ fn a_planned_pack_holds_what_the_client_lacks() {
     for (id, kind) in read {
         assert_eq!(store.find(&id).unwrap().map(|(found, _)| found), Some(kind));
     }
+}
+
+/// A commit of `branch` with one file of `text`.
+fn commit_on(store: &MemoryStore, branch: &str, text: &str) -> gix::ObjectId {
+    let blob = store.write(Kind::Blob, text.as_bytes()).unwrap();
+    let edits = vec![Edit::Put(vec!["f.txt".into()], gix::objs::tree::EntryKind::Blob, blob)];
+    let author = Author {
+        name: "Test".into(),
+        email: "test@example.com".into(),
+        user_id: None,
+        seconds: None,
+    };
+    ops::commit(store, branch, &author, |_| Ok(Some((edits.clone(), text.into()))))
+        .unwrap()
+        .unwrap()
+}
+
+/// The number of objects of the pack in a fetch answer (its header's count), 0 when it has none.
+fn pack_count(answer: &[u8]) -> u32 {
+    answer
+        .windows(4)
+        .position(|window| window == b"PACK")
+        .map_or(0, |at| u32::from_be_bytes(answer[at + 8..at + 12].try_into().unwrap()))
+}
+
+/// SEC-GIT-82: a fetch's `shallow` line naming a commit the readers may not read (here one of a branch that is not
+/// advertised, as another fork's or a hidden merge request's is) is dropped, as one the store lacks is: with `deepen`
+/// of all of history it is not unshallowed, its parents are not sent, and the answer does not say the store holds it.
+/// A shallow commit the readers do read is unshallowed as before.
+#[test]
+fn a_fetch_unshallows_only_commits_its_readers_read() {
+    let store = MemoryStore::default();
+    let visible = commit_on(&store, "main", "visible one\n");
+    let tip = commit_on(&store, "main", "visible two\n");
+    commit_on(&store, "hidden", "hidden parent\n");
+    let hidden = commit_on(&store, "hidden", "hidden tip\n");
+    let advertised = super::Advertised {
+        head: Some(tip),
+        branch_ref: "refs/heads/main".into(),
+        refs: vec![super::AdvertisedRef {
+            name: "refs/heads/main".into(),
+            id: tip,
+            peeled: None,
+        }],
+        review: Vec::new(),
+    };
+    let readable: HashSet<gix::ObjectId> = [visible, tip].into_iter().collect();
+    let wanted = |ids: &[gix::ObjectId]| -> Result<HashSet<gix::ObjectId>, moqui_core::context::Error> {
+        Ok(ids.iter().filter(|id| readable.contains(*id)).copied().collect())
+    };
+    let fetch = |shallow: &gix::ObjectId| -> Vec<u8> {
+        let mut request = Vec::new();
+        super::pktline::text(&mut request, "command=fetch").unwrap();
+        super::pktline::delim(&mut request).unwrap();
+        super::pktline::text(&mut request, &format!("want {tip}")).unwrap();
+        super::pktline::text(&mut request, &format!("shallow {shallow}")).unwrap();
+        super::pktline::text(&mut request, &format!("have {shallow}")).unwrap();
+        super::pktline::text(&mut request, &format!("deepen {}", plan::INFINITE_DEPTH)).unwrap();
+        super::pktline::text(&mut request, "no-progress").unwrap();
+        super::pktline::text(&mut request, "done").unwrap();
+        super::pktline::flush(&mut request).unwrap();
+        let mut answer = Vec::new();
+        super::upload::serve_v2(
+            &store,
+            &advertised,
+            &wanted,
+            &mut &request[..],
+            &mut answer,
+            true,
+            Some(1),
+        )
+        .unwrap();
+        answer
+    };
+    // the hidden tip, which the client says it has: not unshallowed, and its parent's commit, tree and blob are not
+    // sent; the pack is the two visible commits, their trees and blobs
+    let answer = fetch(&hidden);
+    let text = String::from_utf8_lossy(&answer);
+    assert!(!text.contains(&format!("unshallow {hidden}")), "{text}");
+    assert_eq!(pack_count(&answer), 6, "{text}");
+    // the client's own shallow commit of the branch it reads is unshallowed: the commit below it is sent
+    let answer = fetch(&tip);
+    let text = String::from_utf8_lossy(&answer);
+    assert!(text.contains(&format!("unshallow {tip}")), "{text}");
+    assert_eq!(pack_count(&answer), 3, "{text}");
 }
 
 #[test]

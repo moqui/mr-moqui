@@ -116,6 +116,10 @@ pub(super) struct ServerInfo {
     pub(super) deny_internal: bool,
     /// For an EatOAuth2 server, the access token [`connect_imap`] signs in with (XOAUTH2).
     pub(super) access_token: Option<AccessToken>,
+    /// When a session on this server must end, its answers together (SEC-MAIL-85): a sync's lease, so the minute job
+    /// cannot start a second session on the account while one still reads; none for an IDLE worker, whose connection
+    /// stays open by design.
+    pub(super) session_deadline: Option<std::time::Instant>,
 }
 
 impl ServerInfo {
@@ -208,6 +212,7 @@ fn server_info(row: &EntityValue) -> Option<ServerInfo> {
         allow_plain: field_text(row, "storeAllowPlain") == "Y",
         deny_internal: super::implementation::private_network_denied(row),
         access_token: None,
+        session_deadline: None,
     })
 }
 
@@ -418,10 +423,17 @@ impl Selected {
 }
 
 /// One status line from a raw connection, before the imap client takes it over (the greeting, STARTTLS).
-fn raw_line(stream: &mut TcpStream) -> Result<String, SyncFailure> {
+fn raw_line(stream: &mut TcpStream, until: std::time::Instant) -> Result<String, SyncFailure> {
     let mut line = Vec::new();
     let mut byte = [0u8; 1];
     while line.len() < 16_384 {
+        // a byte now and then never times a read out: the answer as a whole has a time (`email-client` `answer-timeout`)
+        if std::time::Instant::now() > until {
+            return Err(SyncFailure::Connect(format!(
+                "the mail server's answer took more than {} seconds (email-client answer-timeout)",
+                super::inbound::answer_time().as_secs()
+            )));
+        }
         match stream.read(&mut byte) {
             Ok(0) => {
                 return Err(SyncFailure::Connect(
@@ -440,15 +452,44 @@ fn raw_line(stream: &mut TcpStream) -> Result<String, SyncFailure> {
     Ok(String::from_utf8_lossy(&line).trim_end().to_string())
 }
 
-/// A command on a raw connection: the lines up to its tagged answer, which must be OK.
-fn raw_command(stream: &mut TcpStream, tag: &str, command: &str) -> Result<Vec<String>, SyncFailure> {
+/// The most bytes of the answer to a command on a raw connection (CAPABILITY, STARTTLS), its lines together.
+const MAX_RAW_ANSWER: usize = 64 * 1024;
+
+/// When a sync's session started now must end: its lease, which the minute job waits out before it starts another
+/// session on the account (SEC-MAIL-85).
+fn session_deadline() -> std::time::Instant {
+    std::time::Instant::now() + std::time::Duration::from_millis(u64::try_from(LEASE_MILLIS).unwrap_or(0))
+}
+
+/// When an answer started now must end: after `email-client` `answer-timeout`, or at the session's deadline when sooner.
+fn answer_until(session: Option<std::time::Instant>) -> std::time::Instant {
+    let answer = std::time::Instant::now() + super::inbound::answer_time();
+    session.map_or(answer, |session| session.min(answer))
+}
+
+/// A command on a raw connection: the lines up to its tagged answer, which must be OK, at most [`MAX_RAW_ANSWER`]
+/// bytes of them, by [`answer_until`] of `session`.
+fn raw_command(
+    stream: &mut TcpStream,
+    tag: &str,
+    command: &str,
+    session: Option<std::time::Instant>,
+) -> Result<Vec<String>, SyncFailure> {
     stream
         .write_all(format!("{tag} {command}\r\n").as_bytes())
         .and_then(|()| stream.flush())
         .map_err(|err| SyncFailure::Connect(format!("writing to the mail server: {err}")))?;
     let mut lines = Vec::new();
+    let mut bytes = 0usize;
+    let until = answer_until(session);
     loop {
-        let line = raw_line(stream)?;
+        let line = raw_line(stream, until)?;
+        bytes = bytes.saturating_add(line.len() + 2);
+        if bytes > MAX_RAW_ANSWER {
+            return Err(SyncFailure::Connect(format!(
+                "{command}: the mail server's answer is larger than {MAX_RAW_ANSWER} bytes"
+            )));
+        }
         if let Some(rest) = line.strip_prefix(&format!("{tag} ")) {
             if rest.to_ascii_uppercase().starts_with("OK") {
                 return Ok(lines);
@@ -468,7 +509,8 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
         .map_err(|err| SyncFailure::Connect(err.to_string()))?;
     let socket = tcp.try_clone().ok();
     let client = if use_tls(&server.protocol, server.port) {
-        let net = wrap_tls(tcp, &server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?;
+        let mut net = wrap_tls(tcp, &server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?;
+        net.set_deadline(server.session_deadline);
         let mut client = imap::Client::new(net);
         let greeting = client
             .read_greeting()
@@ -483,18 +525,18 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
         client
     } else {
         let mut tcp = tcp;
-        let greeting = raw_line(&mut tcp)?;
+        let greeting = raw_line(&mut tcp, answer_until(server.session_deadline))?;
         if greeting.to_ascii_uppercase().starts_with("* BYE") {
             return Err(SyncFailure::Connect(format!(
                 "IMAP {} refused the connection: {greeting}",
                 server.host
             )));
         }
-        let capabilities = raw_command(&mut tcp, "s1", "CAPABILITY")?
+        let capabilities = raw_command(&mut tcp, "s1", "CAPABILITY", server.session_deadline)?
             .join(" ")
             .to_ascii_uppercase();
         let net = if capabilities.split_whitespace().any(|word| word == "STARTTLS") {
-            raw_command(&mut tcp, "s2", "STARTTLS")?;
+            raw_command(&mut tcp, "s2", "STARTTLS", server.session_deadline)?;
             wrap_tls(tcp, &server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?
         } else if plain_allowed(&server.host, server.allow_plain) {
             if !is_loopback(&server.host) {
@@ -504,10 +546,12 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
                     server.host
                 );
             }
-            Net::Plain(tcp)
+            Net::plain(tcp)
         } else {
             return Err(SyncFailure::Connect(plain_refused("IMAP", &server.host, "STARTTLS")));
         };
+        let mut net = net;
+        net.set_deadline(server.session_deadline);
         imap::Client::new(net)
     };
     let mut session = sign_in(client, server)?;
@@ -1715,9 +1759,12 @@ fn imap_sync(
     Ok(())
 }
 
-/// A signed-in IMAP connection with CONDSTORE or QRESYNC turned on when the server offers them.
+/// A signed-in IMAP connection with CONDSTORE or QRESYNC turned on when the server offers them, which ends within the
+/// sync's lease ([`ServerInfo::session_deadline`]).
 fn open_session(facade: &EntityFacade, server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
-    let mut conn = connect_imap(facade, server)?;
+    let mut server = server.clone();
+    server.session_deadline = Some(session_deadline());
+    let mut conn = connect_imap(facade, &server)?;
     if conn.caps.has("QRESYNC") && conn.caps.has("ENABLE") {
         if conn.session.run_command_and_check_ok("ENABLE QRESYNC").is_ok() {
             conn.qresync = true;
@@ -2106,6 +2153,26 @@ fn search(conn: &mut ImapConn, query: &str) -> Result<Vec<u32>, imap::Error> {
     Ok(uids)
 }
 
+/// UIDs one flag fetch asks for (SEC-MAIL-85): a line of its answer is some 60 bytes, so a chunk's answer is a few MiB
+/// however large the folder, well under a connection's answer limit (`inbound::Net`).
+const FLAG_CHUNK: u32 = 50_000;
+
+/// The UID sets from `low` on, [`FLAG_CHUNK`] UIDs each up to `next` (the folder's UIDNEXT), the last open (`n:*`) so a
+/// message that came after the select is in it too; one open set without `next`.
+fn uid_chunks(low: u32, next: Option<u32>) -> Vec<String> {
+    let low = low.max(1);
+    let mut sets = Vec::new();
+    let mut from = low;
+    if let Some(next) = next {
+        while next > from && next - from > FLAG_CHUNK {
+            sets.push(format!("{from}:{}", from + FLAG_CHUNK - 1));
+            from += FLAG_CHUNK;
+        }
+    }
+    sets.push(format!("{from}:*"));
+    sets
+}
+
 /// What a new UID is to the rows already kept.
 enum Decision {
     /// This row is the message: it moved here, or it is a local copy waiting for its UID.
@@ -2327,13 +2394,14 @@ fn sync_folder(
             } else {
                 format!("(UID FLAGS) (CHANGEDSINCE {since})")
             };
-            let fetches = conn.session.uid_fetch("1:*", query)?;
-            for fetch in fetches.iter() {
-                if let Some(uid) = fetch.uid {
-                    flags.push((uid, FlagSet::of(fetch.flags())));
+            for set in uid_chunks(1, mailbox.uid_next) {
+                let fetches = conn.session.uid_fetch(set, &query)?;
+                for fetch in fetches.iter() {
+                    if let Some(uid) = fetch.uid {
+                        flags.push((uid, FlagSet::of(fetch.flags())));
+                    }
                 }
             }
-            drop(fetches);
             let mut vanished: Vec<(u32, u32)> = Vec::new();
             for response in conn.session.take_all_unsolicited() {
                 if let imap::types::UnsolicitedResponse::Vanished { uids, .. } = response {
@@ -2357,12 +2425,14 @@ fn sync_folder(
                 locals.extend(local_rows(session.facade, &folder.id)?);
                 all_loaded = true;
             }
-            let fetches = conn.session.uid_fetch(format!("{min_uid}:*"), "(UID FLAGS)")?;
             let mut present = HashSet::new();
-            for fetch in fetches.iter() {
-                if let Some(uid) = fetch.uid {
-                    present.insert(uid);
-                    flags.push((uid, FlagSet::of(fetch.flags())));
+            for set in uid_chunks(min_uid, mailbox.uid_next) {
+                let fetches = conn.session.uid_fetch(set, "(UID FLAGS)")?;
+                for fetch in fetches.iter() {
+                    if let Some(uid) = fetch.uid {
+                        present.insert(uid);
+                        flags.push((uid, FlagSet::of(fetch.flags())));
+                    }
                 }
             }
             gone.extend(locals.keys().copied().filter(|uid| !present.contains(uid)));
@@ -2410,6 +2480,9 @@ fn sync_folder(
     // The lowest UID whose store failed this session and was not skipped, which the next session starts from, with
     // the sessions it failed in and why.
     let mut failed: Option<(u32, u32, String)> = None;
+    // a message larger than this, by the size the server gives, is skipped: its answer would pass the connection's
+    // limit (`inbound::Net`) and fail every session
+    let max_message = super::inbound::max_message();
     for chunk in wanted.chunks(HEADER_CHUNK) {
         session.lease.keep(session.facade)?;
         let heads = conn.session.uid_fetch(
@@ -2452,6 +2525,17 @@ fn sync_folder(
                     size,
                     existing,
                 }),
+                Decision::Store if size.is_some_and(|size| u64::try_from(size).unwrap_or(0) > max_message) => {
+                    tracing::warn!(
+                        account = %session.account.id,
+                        "Email UID {uid} of folder {} of account {} is {} bytes, over email-client \
+                        max-message-size ({max_message}); skipped",
+                        folder.path,
+                        session.account.id,
+                        size.unwrap_or(0)
+                    );
+                    report.skipped_messages += 1;
+                }
                 Decision::Store => to_fetch.push((uid, flags, internal, size)),
             }
         }
@@ -3091,6 +3175,7 @@ fn pop_sync(
         delete: server.store_delete,
         allow_plain: server.allow_plain,
         deny_internal: server.deny_internal,
+        session_deadline: Some(session_deadline()),
     };
     let mut pop = open_pop(facade, server, &settings)?;
     let total_folders = 1;
@@ -3119,7 +3204,21 @@ fn pop_sync(
     unknown.truncate(usize::try_from(property_number("sync-batch", 500)).unwrap_or(500));
     progress.new_mail(unknown.len(), pending, known.len());
     let mut new_ids = Vec::new();
+    let max_message = super::inbound::max_message();
     for (number, uidl) in unknown {
+        let size = pop
+            .size(number)
+            .map_err(|err| SyncFailure::Connect(format!("POP3 LIST {number} on {}: {}", server.host, err.message())))?;
+        if let Some(size) = size.filter(|size| *size > max_message) {
+            tracing::warn!(
+                account = %account.id,
+                "POP3 message {uidl} of account {} is {size} bytes, over email-client max-message-size \
+                ({max_message}); skipped",
+                account.id
+            );
+            report.skipped_messages += 1;
+            continue;
+        }
         let raw = match pop.retrieve(number) {
             Ok(raw) => raw,
             Err(err) => {
@@ -3332,8 +3431,29 @@ pub(super) fn sync_due_accounts(
 mod tests {
     use super::{
         decode_mutf7, encode_mutf7, expand_set, fetch_batches, header_message_id, imap_date, label_keyword,
-        remote_kind, uid_set, UNKNOWN_SIZE,
+        remote_kind, uid_chunks, uid_set, FLAG_CHUNK, UNKNOWN_SIZE,
     };
+
+    /// SEC-MAIL-85: a flag scan asks for at most FLAG_CHUNK UIDs at once up to UIDNEXT, the last set open so a message
+    /// that came after the select is in it; a folder within one chunk is one open set, as before.
+    #[test]
+    fn a_flag_scan_is_fetched_in_chunks_of_uids() {
+        assert_eq!(uid_chunks(1, Some(100)), ["1:*"]);
+        assert_eq!(uid_chunks(5, None), ["5:*"]);
+        assert_eq!(uid_chunks(0, Some(1)), ["1:*"]);
+        let chunk = FLAG_CHUNK;
+        assert_eq!(uid_chunks(1, Some(chunk + 1)), ["1:*"]);
+        assert_eq!(
+            uid_chunks(1, Some(2 * chunk + 2)),
+            [
+                format!("1:{chunk}"),
+                format!("{}:{}", chunk + 1, 2 * chunk),
+                format!("{}:*", 2 * chunk + 1)
+            ]
+        );
+        // 3 million UIDs: 60 chunks of a few MiB each instead of one answer of some 180 MB
+        assert_eq!(uid_chunks(1, Some(3_000_000)).len(), 60);
+    }
 
     /// Body fetches by count and by bytes; a message over the budget alone, one with no size counted as
     /// [`UNKNOWN_SIZE`] (HL-038).

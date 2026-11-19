@@ -56,6 +56,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
+use crate::relay::Relay;
 use lettre::transport::smtp::client::{SmtpConnection, TlsParameters};
 use lettre::transport::smtp::commands::{Data, Mail, Quit, Rcpt};
 use lettre::transport::smtp::extension::{ClientId, Extension, MailBodyParameter, MailParameter};
@@ -93,6 +94,9 @@ const LOCAL_DOMAIN: &str = "(local node)";
 const IDLE: Duration = Duration::from_secs(30);
 /// How long a connection and each SMTP command may take.
 const SMTP_TIMEOUT: Duration = Duration::from_secs(60);
+/// The most bytes an MX sends in one session, its replies together (SEC-MAIL-83): a session's replies are a few KiB,
+/// and lettre reads a reply line to its end before it tests the line's length.
+const MAX_SESSION_REPLIES: u64 = crate::relay::MAX_REPLIES;
 /// The longest retry wait.
 const MAX_RETRY: Duration = Duration::from_secs(4 * 3600);
 /// The SMTP port of an MX.
@@ -1165,11 +1169,22 @@ fn session(
 ) -> Result<Vec<(String, Answer)>, String> {
     let (host, address, secure) = (target.host, target.address, target.secure);
     let client = ClientId::Domain(hostname());
+    // through a relay that ends the session at its deadline and bounds what the MX sends (SEC-MAIL-83)
     let connect = || {
         let step = target.step()?;
-        SmtpConnection::connect(address, Some(step), &client, None, None).map_err(|err| reply_text(&err))
+        let relay = Relay::start(
+            &[address],
+            step,
+            target.deadline,
+            MAX_SESSION_REPLIES,
+            &format!("MX {host} [{address}]"),
+        )
+        .map_err(|err| format!("Connection error: {err}"))?;
+        SmtpConnection::connect(relay.local, Some(step), &client, None, None)
+            .map(|connection| (connection, relay))
+            .map_err(|err| reply_text(&err))
     };
-    let mut connection = connect()?;
+    let (mut connection, mut _relay) = connect()?;
     // each step within the try's deadline
     macro_rules! within {
         () => {
@@ -1203,7 +1218,7 @@ fn session(
             }
             tracing::warn!("MX {host} [{address}]: STARTTLS failed ({err}); sending without TLS");
             connection.abort();
-            connection = connect()?;
+            (connection, _relay) = connect()?;
         }
     } else if let Some(rule) = secure {
         // never in clear text: the try waits, and the message bounces after mail-delivery@days

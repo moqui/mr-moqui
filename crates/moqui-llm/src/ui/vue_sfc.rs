@@ -1297,7 +1297,7 @@ pub fn frame_document(origin: &str, version: &str, external: bool) -> FrameDocum
          script-src {origin}/libs/vue/ {origin}/libs/quasar/ {origin}/js/WebrootAssistSandbox.js 'unsafe-eval'; \
          style-src {origin}/libs/ 'unsafe-inline'; font-src {origin}/libs/; img-src data: {origin}/images/ {origin}/libs/{images}; \
          connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; \
-         manifest-src 'none'; form-action 'none'; frame-ancestors 'self' {origin}; base-uri 'none'"
+         manifest-src 'none'; form-action 'none'; frame-ancestors 'self' {origin}; base-uri 'none'; webrtc 'block'"
     );
     let html = format!(
         "<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\">\
@@ -1312,6 +1312,38 @@ pub fn frame_document(origin: &str, version: &str, external: bool) -> FrameDocum
          <script src=\"/libs/quasar/quasar.umd.prod.js{query}\"></script>\
          <script src=\"/js/WebrootAssistSandbox.js{query}\"></script>\
          </body></html>\n"
+    );
+    FrameDocument { html, csp }
+}
+
+/// The document that holds a Vue SFC canvas's frame (`GET /assist/sandboxHost`), on this site's origin: the drawer
+/// frames it, and it frames [`frame_document`] at `/assist/sandbox` with the same query and fragment. Its policy lets
+/// its one frame load only `{origin}/assist/sandbox`, and a browser holds a frame's own navigations to the policy of
+/// the document that frames it, so the component cannot navigate its frame to another site with what it read
+/// (plans/Security-Review-Medium.md SEC-AI-81); the app's pages keep their own policy. Its only script is
+/// `WebrootAssistSandboxHost.js`, which makes the frame and hands it the drawer's port; no data, no session.
+pub fn host_document(origin: &str, version: &str) -> FrameDocument {
+    let version: String = version
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+        .take(40)
+        .collect();
+    let query = if version.is_empty() {
+        String::new()
+    } else {
+        format!("?v={version}")
+    };
+    let csp = format!(
+        "default-src 'none'; script-src {origin}/js/WebrootAssistSandboxHost.js; style-src 'unsafe-inline'; \
+         frame-src {origin}/assist/sandbox; child-src {origin}/assist/sandbox; connect-src 'none'; img-src 'none'; \
+         object-src 'none'; worker-src 'none'; form-action 'none'; frame-ancestors 'self' {origin}; base-uri 'none'; \
+         webrtc 'block'"
+    );
+    let html = format!(
+        "<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\">\
+         <title>Canvas</title><style>html,body{{margin:0;padding:0;height:100%;overflow:hidden;background:transparent}}\
+         iframe{{border:0;width:100%;height:100%;display:block}}</style></head><body>\
+         <script src=\"/js/WebrootAssistSandboxHost.js{query}\"></script></body></html>\n"
     );
     FrameDocument { html, csp }
 }

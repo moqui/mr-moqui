@@ -119,7 +119,7 @@ pub(super) fn report(options: &Options, file: &Path, out: &Path, deadline: Insta
         return in_child(options, user, Collect::Report, &request, out, deadline);
     }
     let _ = deadline;
-    let mut written = std::fs::File::create(out).map_err(|err| format!("{}: {err}", out.display()))?;
+    let mut written = super::create_new(out)?;
     copy_regular(&options.workspace, file, &mut written)
 }
 
@@ -143,12 +143,13 @@ pub(super) fn pack(options: &Options, files: &[PathBuf], out: &Path, deadline: I
 /// Why it did not run.
 #[cfg(unix)]
 pub fn probe(user: &super::StepUser, dir: &Path) -> Result<(), String> {
+    let out = super::Scratch::in_dir(dir, "probe");
     run_as(
         user,
         &Collector::this_binary()?,
         Collect::Probe,
         &[],
-        Path::new("/dev/null"),
+        &out.0,
         dir,
         Instant::now() + Duration::from_secs(60),
     )
@@ -279,26 +280,19 @@ pub(super) fn run_as(
     }
     let list = super::Scratch::in_dir(dir, "collect-input");
     let errors = super::Scratch::in_dir(dir, "collect-errors");
-    let open = |path: &Path, write: bool| {
-        std::fs::OpenOptions::new()
-            .read(!write)
-            .write(write)
-            .create(write)
-            .truncate(write)
-            .open(path)
-            .map_err(|err| format!("{}: {err}", path.display()))
-    };
-    open(&list.0, true)?
+    // the runner's files are made new, never through a name another user made first (SEC-GIT-98)
+    super::create_new(&list.0)?
         .write_all(input)
         .map_err(|err| format!("{}: {err}", list.0.display()))?;
+    let input = super::open_regular(&list.0)?;
     let mut child = Command::new(&collector.program)
         .args(&collector.args)
         .arg(kind.word())
         .current_dir("/")
         .env_clear()
-        .stdin(open(&list.0, false)?)
-        .stdout(open(out, true)?)
-        .stderr(open(&errors.0, true)?)
+        .stdin(input)
+        .stdout(super::create_new(out)?)
+        .stderr(super::create_new(&errors.0)?)
         .uid(user.uid)
         .gid(user.gid)
         .spawn()

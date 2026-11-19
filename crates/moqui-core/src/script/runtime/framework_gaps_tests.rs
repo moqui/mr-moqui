@@ -858,6 +858,63 @@ fn a_script_disable_under_a_rust_guard_does_not_outlive_it() {
     assert!(!context.authz_disabled());
 }
 
+/// A service's authorization toggles end with its call: one that disables authorization and fails before it enables
+/// it, and one that never enables it, leave the caller's authorization on; a caller's own disable is still in force
+/// after a service that enables it. Entity ECA rules and tarpit counting a failing service disabled are on again too.
+#[test]
+fn a_services_authorization_toggles_end_with_its_call() {
+    clear_context_stack();
+    let context = database();
+    let _entered = context.enter();
+    let path = std::env::temp_dir().join(format!("moqui-gaps-toggles-{}.xml", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"<services>
+            <service verb="disable" noun="AndFail" authenticate="false">
+                <actions><script><![CDATA[
+                    ec.artifactExecution.disableAuthz(); ec.artifactExecution.disableEntityEca()
+                    ec.artifactExecution.disableTarpit(); throw new Error('down')
+                ]]></script></actions></service>
+            <service verb="disable" noun="AndLeave" authenticate="false">
+                <actions><script>ec.artifactExecution.disableAuthz()</script></actions></service>
+            <service verb="enable" noun="Authz" authenticate="false">
+                <actions><script>ec.artifactExecution.enableAuthz(); ec.artifactExecution.enableEntityEca()</script></actions></service>
+        </services>"#,
+    )
+    .unwrap();
+    assert!(crate::service::lint(std::slice::from_ref(&path)).unwrap().is_empty());
+    run_script("ec.service.sync().name('disable#AndFail').call()").unwrap();
+    assert!(!context.message().errors().is_empty(), "the failing service failed");
+    context.message().clear_errors();
+    assert!(
+        !context.authz_disabled(),
+        "a service that failed with authorization disabled left it so"
+    );
+    assert!(
+        !context.entity_eca_disabled(),
+        "a service that failed with entity ECA rules disabled left them so"
+    );
+    assert!(
+        !context.tarpit_disabled(),
+        "a service that failed with tarpit counting disabled left it so"
+    );
+    run_script("ec.service.sync().name('disable#AndLeave').call()").unwrap();
+    assert!(
+        !context.authz_disabled(),
+        "a service that never enabled authorization left it disabled"
+    );
+    holds("ec.artifactExecution.disableAuthz() === false && ec.artifactExecution.disableEntityEca() === false");
+    run_script("ec.service.sync().name('enable#Authz').call()").unwrap();
+    assert!(context.authz_disabled(), "a service ended its caller's own disable");
+    assert!(
+        context.entity_eca_disabled(),
+        "a service ended its caller's own disableEntityEca"
+    );
+    run_script("ec.artifactExecution.enableAuthz(); ec.artifactExecution.enableEntityEca()").unwrap();
+    assert!(!context.authz_disabled() && !context.entity_eca_disabled());
+    let _ = std::fs::remove_file(&path);
+}
+
 // A load's disableEntityEca and disableAuditLog are its own: another thread's writes keep their entity ECA rules and
 // their audit rows while it runs, and nothing is left switched off after it (plans/Security-Review-Medium.md SEC-DAT-83).
 #[test]

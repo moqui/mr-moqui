@@ -77,6 +77,8 @@ pub enum AllowHtml {
     #[default]
     None,
     Safe,
+    /// The safe set with only this server's images: app text read by signed-in users (SEC-CLI-82).
+    App,
     Any,
 }
 
@@ -84,6 +86,7 @@ fn allow_html_of(node: &MNode) -> AllowHtml {
     node.with_attribute("allow-html", |value| match value {
         Some("any") => AllowHtml::Any,
         Some("safe") => AllowHtml::Safe,
+        Some("app") => AllowHtml::App,
         _ => AllowHtml::None,
     })
 }

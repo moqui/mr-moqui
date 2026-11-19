@@ -34,6 +34,11 @@ use crate::resource::source::{ByteSource, FileSource, MemorySource};
 
 const MAX_PARTS: usize = 2000;
 const MAX_PART_HEADERS: usize = 16 * 1024;
+/// The longest rest of a boundary line, its white space before the line break (SEC-RTE-82).
+const MAX_BOUNDARY_LINE: usize = 1024;
+/// The bytes the file parts of one request keep in memory together, [`Spool::memory_total`] by default: past it a file
+/// part goes to a spool file from its first byte, so many small files are counted as one large one (SEC-RTE-82).
+const MEMORY_TOTAL: usize = 4 * 1024 * 1024;
 
 /// The first bytes of a file the program check looks at.
 const HEAD_BYTES: usize = 16;
@@ -303,8 +308,8 @@ pub enum MultipartError {
     Malformed(String),
     /// More parts than the parser allows.
     TooManyParts,
-    /// A text field over the field limit.
-    FieldTooLarge(String),
+    /// A text field over a limit: the field's name and the limit it passed, its own or the request's fields together.
+    FieldTooLarge(String, usize),
     /// A spool file could not be written.
     Io(String),
     /// The spool files of the uploads being read already hold [`Spool::max_total`] bytes.
@@ -316,7 +321,9 @@ impl std::fmt::Display for MultipartError {
         match self {
             Self::Malformed(why) => write!(f, "multipart body is not valid: {why}"),
             Self::TooManyParts => write!(f, "multipart body has more than {MAX_PARTS} parts"),
-            Self::FieldTooLarge(name) => write!(f, "multipart field {name} is too large"),
+            Self::FieldTooLarge(name, limit) => {
+                write!(f, "multipart field {name} is too large: the limit is {limit} bytes")
+            }
             Self::Io(why) => write!(f, "multipart body could not be stored: {why}"),
             Self::SpoolFull => write!(f, "uploads in progress fill the upload spool; try again later"),
         }
@@ -356,6 +363,11 @@ pub struct Spool {
     pub memory_limit: usize,
     /// Bytes of a text field.
     pub field_limit: usize,
+    /// Bytes of all the text fields of one request together: they are held in memory, and parsed into the request's
+    /// parameters (SEC-RTE-82).
+    pub fields_total: usize,
+    /// Bytes all the file parts of one request keep in memory together; past it a file part is spooled at once.
+    pub memory_total: usize,
     /// Bytes all spool files may hold at once, over every request of the process; a write past it fails the upload
     /// with [`MultipartError::SpoolFull`], so uploads at once cannot fill the runtime disk (SEC-RTE-07).
     pub max_total: u64,
@@ -368,9 +380,10 @@ const DEFAULT_MAX_SPOOL: u64 = 4 * 1024 * 1024 * 1024;
 static SPOOLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl Spool {
-    /// `runtime/tmp/upload` of `runtime_dir`: 256 KiB of a file in memory, fields of up to 1 MiB, and all spool files
-    /// together at most the webroot webapp's `web-protection` `requests` `max-spool` (bytes, or with a `k`, `m` or `g`
-    /// suffix; 4 GiB by default).
+    /// `runtime/tmp/upload` of `runtime_dir`: 256 KiB of a file in memory and 4 MiB of a request's files, fields of up
+    /// to 1 MiB and together at most the webroot webapp's `web-protection` `requests` `max-body` (10 MiB by default),
+    /// and all spool files together at most its `max-spool` (bytes, or with a `k`, `m` or `g` suffix; 4 GiB by
+    /// default).
     #[must_use]
     pub fn under(runtime_dir: &Path) -> Self {
         let max_total = super::parse_size(&super::protection_setting(None, "requests", "max-spool"))
@@ -379,6 +392,9 @@ impl Spool {
             dir: runtime_dir.join("tmp").join("upload"),
             memory_limit: 256 * 1024,
             field_limit: 1024 * 1024,
+            fields_total: super::parse_size(&super::protection_setting(None, "requests", "max-body"))
+                .unwrap_or(super::DEFAULT_MAX_BODY),
+            memory_total: MEMORY_TOTAL,
             max_total,
         }
     }
@@ -523,8 +539,9 @@ impl Part {
         }
     }
 
-    /// Take the next bytes of a file part: in memory up to `spool`'s memory limit, then in a spool file.
-    fn write_file(&mut self, spool: Option<&Spool>, data: &[u8]) -> Result<(), MultipartError> {
+    /// Take the next bytes of a file part: in memory up to `spool`'s memory limit, or the `room` the request's other
+    /// files leave in memory when that is less, then in a spool file.
+    fn write_file(&mut self, spool: Option<&Spool>, room: usize, data: &[u8]) -> Result<(), MultipartError> {
         self.size += data.len() as u64;
         if self.head.len() < HEAD_BYTES {
             let take = (HEAD_BYTES - self.head.len()).min(data.len());
@@ -535,7 +552,7 @@ impl Part {
             return writing.write(spool, data);
         }
         match spool {
-            Some(spool) if self.memory.len() + data.len() > spool.memory_limit => {
+            Some(spool) if self.memory.len() + data.len() > spool.memory_limit.min(room) => {
                 self.spooled = Some(SpoolWriting::start(spool, &[&self.memory, data])?);
                 self.memory = Vec::new();
                 Ok(())
@@ -583,6 +600,9 @@ pub struct MultipartReader {
     part: Option<Part>,
     count: usize,
     spool: Option<Spool>,
+    /// The bytes of the text fields read, and of the file parts kept in memory, of this request.
+    fields_bytes: usize,
+    files_memory: usize,
 }
 
 static SPOOL_FILES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -615,6 +635,8 @@ impl MultipartReader {
             part: None,
             count: 0,
             spool,
+            fields_bytes: 0,
+            files_memory: 0,
         })
     }
 
@@ -657,13 +679,20 @@ impl MultipartReader {
                     self.buffer.clear();
                     return Ok(false);
                 }
-                // the rest of the boundary line is white space, then the line break
+                // the rest of the boundary line is white space, then the line break; a short one, so it is not kept and
+                // searched again without end
                 let Some(line_end) = find(&self.buffer, b"\r\n", 0) else {
                     if self.buffer.iter().any(|byte| !matches!(byte, b' ' | b'\t' | b'\r')) {
                         return Err(MultipartError::Malformed("text follows a boundary".into()));
                     }
+                    if self.buffer.len() > MAX_BOUNDARY_LINE {
+                        return Err(MultipartError::Malformed("a boundary line is too long".into()));
+                    }
                     return Ok(false);
                 };
+                if line_end > MAX_BOUNDARY_LINE {
+                    return Err(MultipartError::Malformed("a boundary line is too long".into()));
+                }
                 if self.buffer[..line_end].iter().any(|byte| !matches!(byte, b' ' | b'\t')) {
                     return Err(MultipartError::Malformed("text follows a boundary".into()));
                 }
@@ -690,7 +719,18 @@ impl MultipartReader {
                 if self.count > MAX_PARTS {
                     return Err(MultipartError::TooManyParts);
                 }
-                self.part = Some(Self::start_part(&headers)?);
+                let part = Self::start_part(&headers)?;
+                // the names are kept too, with the fields' values
+                let names = part.name.len() + part.file.as_ref().map_or(0, |(file_name, _)| file_name.len());
+                self.fields_bytes = self.fields_bytes.saturating_add(names);
+                if let Some(spool) = self
+                    .spool
+                    .as_ref()
+                    .filter(|spool| self.fields_bytes > spool.fields_total)
+                {
+                    return Err(field_too_large(&part.name, spool.fields_total));
+                }
+                self.part = Some(part);
                 // the headers' last line break may be the line break of the next delimiter (an empty part)
                 self.buffer.drain(..end + 2);
                 self.state = State::Data { skip: 2 };
@@ -761,15 +801,21 @@ impl MultipartReader {
             return Ok(());
         }
         if part.file.is_some() {
-            return part.write_file(self.spool.as_ref(), data);
+            let room = self
+                .spool
+                .as_ref()
+                .map_or(usize::MAX, |spool| spool.memory_total.saturating_sub(self.files_memory));
+            return part.write_file(self.spool.as_ref(), room, data);
         }
         part.size += data.len() as u64;
-        if self
-            .spool
-            .as_ref()
-            .is_some_and(|spool| part.memory.len() + data.len() > spool.field_limit)
-        {
-            return Err(MultipartError::FieldTooLarge(part.name.clone()));
+        self.fields_bytes = self.fields_bytes.saturating_add(data.len());
+        if let Some(spool) = self.spool.as_ref() {
+            if part.memory.len() + data.len() > spool.field_limit {
+                return Err(field_too_large(&part.name, spool.field_limit));
+            }
+            if self.fields_bytes > spool.fields_total {
+                return Err(field_too_large(&part.name, spool.fields_total));
+            }
         }
         part.memory.extend_from_slice(data);
         Ok(())
@@ -786,7 +832,12 @@ impl MultipartReader {
             )),
             // a file input left empty posts a part with an empty file name
             Some((file_name, _)) if file_name.is_empty() && part.size == 0 => {}
-            Some((file_name, content_type)) => self.parsed.files.push(part.into_file(file_name, content_type)?),
+            Some((file_name, content_type)) => {
+                if part.spooled.is_none() {
+                    self.files_memory = self.files_memory.saturating_add(part.memory.len());
+                }
+                self.parsed.files.push(part.into_file(file_name, content_type)?);
+            }
         }
         Ok(())
     }
@@ -805,6 +856,12 @@ impl MultipartReader {
             State::Data { .. } => Err(MultipartError::Malformed("no closing boundary".into())),
         }
     }
+}
+
+/// The refusal of a field past `limit`, logged.
+fn field_too_large(name: &str, limit: usize) -> MultipartError {
+    tracing::warn!("a multipart upload was refused: field {name} passes the limit of {limit} bytes");
+    MultipartError::FieldTooLarge(name.to_string(), limit)
 }
 
 /// A request body that is one file (a DAV `PUT`), taken as it arrives as a multipart file part is: in memory up to the
@@ -833,7 +890,7 @@ impl BodySpool {
         if data.is_empty() {
             return Ok(());
         }
-        self.part.write_file(Some(&self.spool), data)
+        self.part.write_file(Some(&self.spool), usize::MAX, data)
     }
 
     /// The body read so far.

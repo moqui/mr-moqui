@@ -1568,7 +1568,8 @@ fn identities_out_of_office_text_blocks_and_searches() {
             "create#EmailIdentity",
             &[
                 ("emailAccountId", text(&account)),
-                ("emailAddress", text("sales@example.com")),
+                // not of a domain this server signs for, which only a mail administrator gives (SEC-MAIL-82)
+                ("emailAddress", text("sales@sales.example.org")),
                 ("displayName", text("Sales")),
                 ("replyToAddress", text("orders@example.com")),
                 ("isDefault", Value::Bool(true)),
@@ -1596,7 +1597,7 @@ fn identities_out_of_office_text_blocks_and_searches() {
         ],
     );
     let draft = out_text(&draft, "emailMessageId");
-    assert_eq!(message_field(&facade, &draft, "fromAddress"), "sales@example.com");
+    assert_eq!(message_field(&facade, &draft, "fromAddress"), "sales@sales.example.org");
     assert_eq!(message_field(&facade, &draft, "fromName"), "Sales");
     ok(
         "update#EmailIdentity",
@@ -3130,4 +3131,81 @@ fn a_slow_automatic_reply_takes_none_of_the_others_back() {
     assert_eq!(out_number(&again, "sentCount"), 0, "{again:?}");
     assert!(ctx.factory().wait_worker_pool_empty(50));
     assert_eq!(lock(&smtp.state).messages.len(), 2, "not sent again");
+}
+
+/// SEC-MAIL-82: with the node's DKIM key, a mail client message is signed only from an account delivered here
+/// (`client_signs`): the shared account with its mail on another server sends unsigned through its own SMTP server,
+/// and once its server has no incoming host (delivered here) the same send is signed.
+#[test]
+fn a_client_message_is_signed_only_from_an_account_delivered_here() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let key = super::auth::DkimKey::generate().unwrap();
+    let (ctx, facade) = setup_with(&format!(
+        r#"<moqui-conf><email-client allowed-hosts="127.0.0.1"/><mail-delivery><dkim key="{key}" domains="example.com"/></mail-delivery></moqui-conf>"#
+    ));
+    let _entered = ctx.enter();
+    install();
+    let account = shared_account(&facade, "127.0.0.1");
+    let smtp = FakeSmtp::start("team@example.com");
+    lock(&smtp.state)
+        .passwords
+        .push(("team@example.com".to_string(), "secret".to_string()));
+    let server = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let server = find_one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account)
+            .and_then(|row| row.get("emailServerId").map(to_plain_string))
+            .unwrap();
+        let mut row = find_one(&facade, "moqui.basic.email.EmailServer", "emailServerId", &server).unwrap();
+        row.set("smtpPort", text(&smtp.port.to_string()));
+        row.set("mailUsername", text("team@example.com"));
+        row.set("mailPassword", text("secret"));
+        row.update(&facade).unwrap();
+        server
+    };
+    let send = |subject: &str| {
+        let id = out_text(
+            &ok(
+                "save#Draft",
+                &[
+                    ("emailAccountId", text(&account)),
+                    ("toAddresses", text("someone@example.com")),
+                    ("subject", text(subject)),
+                    ("body", text("<p>Hello</p>")),
+                ],
+            ),
+            "emailMessageId",
+        );
+        ok(
+            "send#Draft",
+            &[("emailMessageId", text(&id)), ("scheduledSendDate", stamp(now() + DAY))],
+        );
+        set_message(&facade, &id, &[("scheduledSendDate", stamp(now() - 1000))]);
+        let _authz = ctx.disable_authz();
+        call("send#DueDrafts", &[]);
+    };
+    let arrived = |count: usize| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while lock(&smtp.state).messages.len() < count && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        lock(&smtp.state).messages.clone()
+    };
+    send("Elsewhere");
+    let sent = arrived(1);
+    assert_eq!(sent.len(), 1);
+    assert!(!sent[0].2.contains("DKIM-Signature"), "{}", sent[0].2);
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut row = find_one(&facade, "moqui.basic.email.EmailServer", "emailServerId", &server).unwrap();
+        row.set("storeHost", Value::Null);
+        row.update(&facade).unwrap();
+    }
+    send("Delivered here");
+    let sent = arrived(2);
+    assert_eq!(sent.len(), 2);
+    assert!(
+        sent[1].2.contains("DKIM-Signature") && sent[1].2.contains("d=example.com"),
+        "{}",
+        sent[1].2
+    );
 }

@@ -45,3 +45,47 @@ feature('a person reviews a result, and starting an experiment needs MONITOR_EVA
   return{bad,score:one('moqui.agent.AgentScore',{scoreId:ok.scoreId}),denied,after:one('moqui.agent.AgentExperiment',{experimentId:e.experimentId})}},
  then({bad,score,denied,after}){bad.error.includes('0 to 1');score.sourceEnumId=='AgssReview';score.passed=='Y';denied.error.includes('MONITOR_EVAL_RUN');num(after.meanScore)==0.5},
 })
+// SEC-AI-83: another user's run is read (listed with its message and reply, saved as an item, scored) only with
+// AgentAudit, and each such read is written to AgentAuditLog; MONITOR_EVAL alone reads the evaluator's own runs
+feature("another user's run is read only with AgentAudit, and the read is logged",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  const theirs=call('create#moqui.agent.AgentRun',{agentId:'EVAL_T_AGENT',userId:'EVAL_T_VIEWER',statusId:'AgrCompleted',submittedDate:'2026-01-02T00:00:00Z',resultJson:JSON.stringify({text:'Their private reply'})}).runId
+  call('create#moqui.agent.AgentMessage',{conversationId:'EVAL_T_CONV2',messageSeq:1,runId:theirs,role:'user',createdDate:ec.user.nowTimestamp})
+  call('create#moqui.security.UserAccount',{userId:'EVAL_T_AUDITOR',username:'eval.auditor',userFullName:'Eval auditor',currentPassword:'16ac58bbfa332c1c55bd98b53e60720bfa90d394',passwordHashType:'SHA'})
+  call('create#moqui.security.UserGroup',{userGroupId:'EVAL_T_AUDIT',description:'Eval auditors'})
+  call('create#moqui.security.UserGroupPermission',{userGroupId:'EVAL_T_AUDIT',userPermissionId:'AgentAudit',fromDate:'2000-01-01T00:00:00Z'})
+  call('create#moqui.security.UserGroupMember',{userGroupId:'EVAL_T_AUDIT',userId:'EVAL_T_AUDITOR',fromDate:'2000-01-01T00:00:00Z'})
+  const reads=(id)=>call(S+'check#RunReadable',{runId:id,reason:'spec'}).readable
+  const own=reads(runId),other=reads(theirs),saved=invoke(S+'save#RunAsDatasetItem',{runId:theirs,datasetId:'EVAL_T_DS',useOutput:'Y'}),scored=invoke(S+'score#Run',{runId:theirs,scorerId:'CONTAINS'})
+  const before=list('moqui.agent.AgentAuditLog',{runId:theirs}).length
+  login('eval.auditor');ec.artifactExecution.disableAuthz();let audited;try{audited=reads(theirs)}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  return{own,other,saved,scored,before,logs:list('moqui.agent.AgentAuditLog',{runId:theirs}),ownLogs:list('moqui.agent.AgentAuditLog',{runId}).length,audited}},
+ then({own,other,saved,scored,before,logs,ownLogs,audited}){own===true;other===false;saved.error.includes('AgentAudit');scored.error.includes('AgentAudit');before==0;ownLogs==0
+  audited===true;logs.length==1;logs[0].auditorUserId=='EVAL_T_AUDITOR';logs[0].targetUserId=='EVAL_T_VIEWER';logs[0].reason=='spec'},
+})
+// SEC-AI-83: Evals › Runs (its html render) lists another user's run without its content, the viewer's own with it
+feature("Runs lists the content and scores of the viewer's own runs only",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  // a score of another user's run whose reason would tell what the run said
+  const theirs=list('moqui.agent.AgentRun',{userId:'EVAL_T_VIEWER'})[0]
+  call('create#moqui.agent.AgentScore',{scorerId:'CONTAINS',sourceEnumId:'AgssLive',runId:theirs.runId,score:1,passed:'Y',reason:'Found the secret term',scoredDate:ec.user.nowTimestamp})
+  const render=screenTest('apps').render('system/Llm/Evals/Runs',{agentId:'EVAL_T_AGENT'},'get')
+  return{output:render.output||'',errors:Array.from(render.errorMessages||[])}},
+ then({output,errors}){errors.length==0;output.includes('The order ships Tuesday.');!output.includes('Their private reply');output.includes('needs the AgentAudit permission')
+  !output.includes('Found the secret term')},
+})
+// SEC-AI-83: live scoring reads every user's runs of an agent, so attaching a scorer to an agent needs AgentAudit and
+// is logged; a service scorer runs a service of the evals' own unless an AgentAudit holder makes another
+feature("attaching a live scorer and a scorer of another service need AgentAudit",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  const change=(p)=>call(S+'check#ScorerChange',p).refusal||''
+  const attach=change({op:'attach',scorerId:'CONTAINS',agentId:'EVAL_T_AGENT'})
+  const other=change({op:'store',scorerTypeEnumId:'AgstService',serviceName:'org.moqui.impl.UserServices.create#UserAccount'})
+  const own=change({op:'store',scorerTypeEnumId:'AgstService',serviceName:S+'score#Contains'})
+  const judge=change({op:'store',scorerTypeEnumId:'AgstJudge'})
+  login('eval.auditor');ec.artifactExecution.disableAuthz();let audited,auditedOther;try{audited=change({op:'attach',scorerId:'CONTAINS',agentId:'EVAL_T_AGENT'})
+   auditedOther=change({op:'store',scorerTypeEnumId:'AgstService',serviceName:'org.example.Any.score#Thing'})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  return{attach,other,own,judge,audited,auditedOther,logs:list('moqui.agent.AgentAuditLog',{auditorUserId:'EVAL_T_AUDITOR'}).filter(l=>String(l.reason).includes('live scoring'))}},
+ then({attach,other,own,judge,audited,auditedOther,logs}){attach.includes('AgentAudit');other.includes('AgentAudit');own=='';judge==''
+  audited=='';auditedOther=='';logs.length==1},
+})
