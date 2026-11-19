@@ -316,6 +316,20 @@ fn the_default_conf_is_off_until_there_are_trusted_proxies() {
         assert!(!git.applies("", "POST", path, true), "{path}");
     }
     assert!(!git.applies("", "GET", "/moqui/mr-moqui/-/issues", false));
+    // the password and code checks, a second factor's code and its sending included, with the extra path a screen
+    // walk keeps (SEC-WEB-87)
+    let login = &on.rate_limits[1];
+    for path in [
+        "/rest/login",
+        "/rest/verifyOtp",
+        "/rest/verifyOtp/x",
+        "/rest/sendOtp",
+        "/rest/sendOtp/x",
+        "/SecondFactor/verifyUserAuthcFactor",
+    ] {
+        assert!(login.applies("", "POST", path, false), "{path}");
+    }
+    assert!(!login.applies("", "GET", "/rest/verifyOtp", false));
     assert_eq!(on.bans.len(), 3);
     assert!(on
         .bans
