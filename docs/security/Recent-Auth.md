@@ -74,8 +74,10 @@ An SSO-only account (no password) confirms one of two ways:
 
 - **A code to its verified address.** When the account's `emailAddress` has a `VerifiedAddress` row (the provider verified
   it under a verified-email link rule, or the registration's mail link did), `check#RecentAuth` answers `emailCode`, and
-  `confirm()` offers it: `/ReAuth/sendEmailCode` (`send#ReauthEmailCode`, one a half minute in a session) mails a single-use
-  code, and `/ReAuth/password` takes it as `{code}` alone (`reauthenticate#User`). A wrong code counts as a failed login.
+  `confirm()` offers it: `/ReAuth/sendEmailCode` (`send#ReauthEmailCode`, one a half minute in a session, and at most
+  `login@reauth-email-codes-per-hour` (5) to the address in an hour, whoever asks) mails a single-use code good for ten
+  minutes, and `/ReAuth/password` takes it as `{code}` alone (`reauthenticate#User`). A wrong code counts as a failed
+  login.
   This does not depend on the provider.
 - **A fresh sign-in at its provider.** A POST of `/sso/reauth` with `authFlowId`, a same-origin `returnTo` and the session
   token (SEC-WEB-84); `/sso/login` is always a plain sign-in, so a link or another site cannot start a re-authentication.

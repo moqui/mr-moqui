@@ -474,11 +474,46 @@ pub fn send_reauth_email_code() -> Result<(), Error> {
             "A code was sent a moment ago: wait half a minute before asking for another",
         ));
     }
+    let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+    // a mailbox is not flooded however many sessions ask: codes to the account's address in the last hour, whoever
+    // asked, at most `login@reauth-email-codes-per-hour`
+    let cap = super::policy::reauth_email_codes_per_hour();
+    let sent = super::login::entity_facade()?
+        .find("moqui.security.UserAuthcFactor")?
+        .eq("userId", Value::string(&user_id))
+        .eq("fromFactorId", Value::string(ACCOUNT_EMAIL_FACTOR))
+        .eq("factorTypeEnumId", Value::string("UafSingleUse"))
+        .condition(Condition::greater(
+            "fromDate",
+            super::login::stamp_value(now - HOUR_MILLIS),
+        ))
+        .count()?;
+    if sent >= cap {
+        tracing::warn!(
+            "A re-authentication code to the address of {user_id} was refused: {sent} were sent in the last hour"
+        );
+        return Err(Error::new(
+            "Codes were sent to your email address too many times in the last hour: try again later",
+        ));
+    }
     super::session::set_session_attribute(REAUTH_CODE_SENT, Some(&now.to_string()));
     let username = super::current_username()?.unwrap_or_default();
-    let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
-    factor_service(SEND_ACCOUNT_EMAIL_CODE, &[("username", &username)]).map(|_| ())
+    // a code for a re-authentication is good for minutes, not the day a sign-in's code is
+    let parameters = std::collections::BTreeMap::from([
+        ("username".to_string(), Value::string(username)),
+        (
+            "thruDate".to_string(),
+            super::login::stamp_value(now + REAUTH_EMAIL_CODE_MILLIS),
+        ),
+    ]);
+    factor_service_with(SEND_ACCOUNT_EMAIL_CODE, &parameters).map(|_| ())
 }
+
+/// The factor id a code to the account's own `emailAddress` comes from (`send#AuthcCodeUserAccountEmail`).
+const ACCOUNT_EMAIL_FACTOR: &str = "UserAccountEmail";
+/// How long a re-authentication's mailed code is good for: ten minutes.
+const REAUTH_EMAIL_CODE_MILLIS: i64 = 10 * 60 * 1000;
+const HOUR_MILLIS: i64 = 60 * 60 * 1000;
 
 /// The service that mails a single-use code to an account's `emailAddress` (`UserServices.xml`).
 const SEND_ACCOUNT_EMAIL_CODE: &str = "org.moqui.impl.UserServices.send#AuthcCodeUserAccountEmail";
@@ -503,7 +538,15 @@ fn factor_service(name: &str, pairs: &[(&str, &str)]) -> Result<std::collections
         .iter()
         .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
         .collect();
-    let result = crate::service::sync(name, &parameters);
+    factor_service_with(name, &parameters)
+}
+
+/// [`factor_service`] with parameters of any type.
+fn factor_service_with(
+    name: &str,
+    parameters: &std::collections::BTreeMap<String, Value>,
+) -> Result<std::collections::BTreeMap<String, Value>, Error> {
+    let result = crate::service::sync(name, parameters);
     let errors = ExecutionContext::with_current(|ec| {
         let text = ec.message().errors_text();
         ec.message().clear_errors();

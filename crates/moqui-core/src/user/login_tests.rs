@@ -1736,6 +1736,35 @@ fn an_account_without_a_password_confirms_by_a_code_to_its_verified_address() {
         crate::user::CodeLogin::LoggedIn
     );
     assert!(recent_auth(300_000));
+
+    // a mailed code is good for ten minutes, and at most five go to the address in an hour, whatever the session
+    let codes = || {
+        facade
+            .find("moqui.security.UserAuthcFactor")
+            .unwrap()
+            .eq("userId", Value::string("sso.only"))
+            .eq("fromFactorId", Value::string("UserAccountEmail"))
+            .list()
+            .unwrap()
+    };
+    let before = codes().len();
+    crate::user::send_reauth_email_code().unwrap();
+    let rows = codes();
+    assert_eq!(rows.len(), before + 1);
+    let newest = rows
+        .iter()
+        .max_by_key(|row| moqui_lib::object::to_plain_string(row.get("fromDate").unwrap()))
+        .unwrap();
+    let millis = |name: &str| field_millis(newest, name).unwrap_or_default();
+    let good_for = millis("thruDate") - millis("fromDate");
+    assert!((9 * 60_000..=10 * 60_000 + 5_000).contains(&good_for), "{good_for}");
+    for _ in 0..3 {
+        session::set_session_attribute("moquiReauthCodeSent", None);
+        crate::user::send_reauth_email_code().unwrap();
+    }
+    session::set_session_attribute("moquiReauthCodeSent", None);
+    let refused = crate::user::send_reauth_email_code().unwrap_err();
+    assert!(refused.to_string().contains("too many times"), "{refused}");
     logout_local().unwrap();
     session::reset_session();
 }

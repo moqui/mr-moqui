@@ -1082,7 +1082,9 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="send" noun="AuthcCodeUserAccountEmail">
-        <in-parameters><parameter name="username" required="true"/></in-parameters>
+        <in-parameters><parameter name="username" required="true"/>
+            <parameter name="thruDate" type="Timestamp"><description>When the code ends; empty takes a day (a
+                re-authentication's code gives ten minutes).</description></parameter></in-parameters>
         <out-parameters>
             <parameter name="singleUseFactorId"/>
             <parameter name="code"/>
@@ -1098,7 +1100,8 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- create a new single use authc factor code and get it's factorId -->
             <service-call name="org.moqui.impl.UserServices.create#SingleUseAuthcFactor"
-                    in-map="{userId: userId, fromFactorId: 'UserAccountEmail'}" out-map="createSuFactorOut"/>
+                    in-map="thruDate ? {userId: userId, fromFactorId: 'UserAccountEmail', thruDate: thruDate} : {userId: userId, fromFactorId: 'UserAccountEmail'}"
+                    out-map="createSuFactorOut"/>
             <set field="singleUseFactorId" from="createSuFactorOut.factorId"/>
 
             <!-- send an email with the single use code -->

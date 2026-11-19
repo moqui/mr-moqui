@@ -1069,6 +1069,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>How long to disable the account (0 means no limit, ie forever)</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-store" type="boolean" default="true">
                 <xs:annotation><xs:documentation>Store records of login attempts?</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="reauth-email-codes-per-hour" type="xs:nonNegativeInteger" default="5">
+                <xs:annotation><xs:documentation>The re-authentication codes mailed to an account's verified address
+                    (send#ReauthEmailCode, for an account with no password) in an hour, whoever asks; past it one is
+                    refused. Each such code is good for ten minutes.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="initial-admin-enabled" type="boolean-expandable" default="false">
                 <xs:annotation><xs:documentation>The Login page's Create Initial Admin Account form and
                     create#InitialAdminAccount, while no account exists but the seed ones.</xs:documentation></xs:annotation></xs:attribute>

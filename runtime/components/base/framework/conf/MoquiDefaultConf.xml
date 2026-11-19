@@ -661,7 +661,7 @@
             initial-admin-secret: the setup secret, when the server's starter chooses it and hands it to its own client
             (the Desktop app for its sidecar); empty, the server makes one and writes it to its startup log. -->
         <login max-failures="3" disable-minutes="5" history-store="true" initial-admin-enabled="false"
-               initial-admin-local="loopback" initial-admin-secret=""/>
+               initial-admin-local="loopback" initial-admin-secret="" reauth-email-codes-per-hour="5"/>
         <!-- privileged-groups: UserGroupMember create/update/delete for these groups is allowed only if the caller is
             already a member (seed/install and disableAuthz skip the check). SYSMSG_RECEIVE is one: its members may call
             receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission
