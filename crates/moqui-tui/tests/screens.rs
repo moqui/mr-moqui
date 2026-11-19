@@ -22,8 +22,8 @@ use std::path::PathBuf;
 
 use moqui_tui::render_text;
 use moqui_tui::{
-    gallery_link, AdminSetup, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel, Session,
-    ShellInfo, Target, Theme, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
+    gallery_link, AdminSetup, Agent, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel,
+    Session, ShellInfo, Target, Theme, TransitionOutcome, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
 };
 use revue::layout::Rect;
 use revue::render::{Buffer, Modifier};
@@ -346,6 +346,88 @@ fn control_characters_in_a_value_never_reach_the_terminal() {
     let text = view.screen_text(80, 20);
     assert!(text.contains("a]52;c;Zm9vbc"), "{text}");
     assert!(!text.contains('\u{1b}') && !text.contains('\u{202e}'), "{text}");
+}
+
+/// Text with a terminal's controls: an OSC 52 clipboard write ended by BEL, a C1 CSI, a right-to-left override and an
+/// isolate. [`HOSTILE_DRAWN`] is what is left of it to draw.
+const HOSTILE: &str = "a\u{1b}]52;c;Zm9v\u{7}b\u{9b}31mc\u{202e}d\u{2067}e";
+const HOSTILE_DRAWN: &str = "a]52;c;Zm9vb31mcde";
+
+/// No control character (other than the newline between lines) and no bidirectional override or isolate.
+fn drawable(text: &str) -> bool {
+    !text.chars().any(|ch| {
+        (ch.is_control() && ch != '\n')
+            || ('\u{202a}'..='\u{202e}').contains(&ch)
+            || ('\u{2066}'..='\u{2069}').contains(&ch)
+    })
+}
+
+/// SEC-CLI-93: text that does not come in the screen model, which is cleaned when it is read, is cleaned where it
+/// becomes a cell: a menu title from the shell's data and a transition's message reach no cell, no snapshot
+/// (`moqui tui --snapshot`) and no agent answer with a control character or a bidirectional override.
+#[test]
+fn control_characters_from_outside_the_screen_model_never_reach_the_terminal() {
+    let json = r#"{"v":1,"screen":{"path":"/c","title":"C"},"c":[{"t":"form","id":"C","name":"C","transitionUrl":"/c/save",
+        "c":[{"t":"field","id":"C.go","name":"go","title":"Go","w":{"kind":"submit","text":"Go"}}]}]}"#;
+    let link = FakeLink::from_json(&[json]).unwrap();
+    link.answer_shell(ShellInfo {
+        menu: vec![MenuItem {
+            title: HOSTILE.to_string(),
+            url: "/c".to_string(),
+            children: Vec::new(),
+            disabled: false,
+            group: String::new(),
+        }],
+        ..ShellInfo::default()
+    });
+    link.answer_transition("/c/save", TransitionOutcome::saved(HOSTILE));
+    // The snapshot: at 180 columns the drawer docks, with the menu's title.
+    let snapshot = moqui_tui::snapshot(link.clone(), "/c", 180, 40, Theme::built_in(true));
+    assert!(snapshot.contains(HOSTILE_DRAWN), "{snapshot}");
+    assert!(drawable(&snapshot), "{snapshot:?}");
+    // The cells the terminal's writer gets, after the transition put its message on the message line.
+    let mut view = AppView::with_session(Session::start("/c"), link.clone());
+    view.set_clock("Tue 14:32");
+    view.session_mut().resize(180, 40);
+    view.run_requests();
+    while view.session().focus_id() != "C.go" {
+        press(&mut view, Key::Tab);
+    }
+    press(&mut view, Key::Enter);
+    view.run_requests();
+    assert_eq!(view.session().message(), HOSTILE_DRAWN);
+    let mut buffer = Buffer::new(180, 40);
+    view.render(&mut RenderContext::new(&mut buffer, Rect::new(0, 0, 180, 40)));
+    let cells: String = (0..40)
+        .flat_map(|y| (0..180).map(move |x| (x, y)))
+        .filter_map(|(x, y)| buffer.get(x, y))
+        .filter(|cell| !cell.is_continuation())
+        .map(|cell| cell.symbol)
+        .collect();
+    assert_eq!(
+        cells.matches(HOSTILE_DRAWN).count(),
+        2,
+        "the menu title and the message: {cells}"
+    );
+    assert!(drawable(&cells), "{cells:?}");
+    // The agent's answers, as text and as JSON: the message line and the screen's rows.
+    let mut agent = Agent::open(link, "/c", 180, 40);
+    let answer = agent.run("do Go");
+    assert!(
+        answer.text.contains(&format!("message {HOSTILE_DRAWN}")),
+        "{}",
+        answer.text
+    );
+    assert_eq!(answer.text.matches(HOSTILE_DRAWN).count(), 3, "{}", answer.text);
+    assert!(drawable(&answer.text), "{:?}", answer.text);
+    agent.set_json(true);
+    let answer = agent.run("look");
+    assert!(answer.text.contains(HOSTILE_DRAWN), "{}", answer.text);
+    assert!(
+        drawable(&answer.text) && !answer.text.contains("\\u001b"),
+        "{}",
+        answer.text
+    );
 }
 
 /// The login dialog in setup, on a server with no accounts: its five fields (the passwords masked), the rule hint and

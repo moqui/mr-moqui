@@ -29,7 +29,7 @@ use crate::forms::{self, Extra, FocusItem, FocusKind, Index, Scope};
 use crate::keys::{scheme_keys, Action, Key, KeyMap, KeyPress, KeyScheme, MergeSkip};
 use crate::layout::PAGE_ROWS;
 use crate::link::{row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo};
-use crate::model::{Cell, Choice, FormList, Node, ScreenModel, Widget};
+use crate::model::{clean_text, Cell, Choice, FormList, Node, ScreenModel, Widget};
 use crate::nav::{level_path, Location, Nav};
 use crate::state::{Confirm, Edits, Finished, Lanes, Purpose, Request, Then};
 
@@ -1114,6 +1114,10 @@ impl Session {
     /// Put `text` on the clipboard through the loop, and say so: the count, a cut when it was longer than OSC 52
     /// carries, and the first time, how to fall back where the terminal does not take OSC 52.
     pub fn copy_text(&mut self, text: String) {
+        // The clipboard gets no control character: an `ESC [ 201 ~` in copied text would end a shell's bracketed paste
+        // early when the user pastes it (SEC-CLI-94). The painter already drops them from the cells a selection reads;
+        // this also covers a field's value and a component's copy. Tab and newline stay.
+        let text = clean_text(&text);
         if text.is_empty() {
             return;
         }
@@ -2237,6 +2241,9 @@ impl Session {
     // ---- messages ----
 
     fn set_message(&mut self, text: String, error: bool) {
+        // A message is often the server's text (a transition's messages, an error): cleaned as the model's text is,
+        // for the agent's answer and the history as well as the painter, which drops the same characters (SEC-CLI-93).
+        let text = clean_text(&text);
         self.message = Message {
             text,
             error,

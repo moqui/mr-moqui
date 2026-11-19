@@ -24,6 +24,7 @@ use revue::widget::{Border, RenderContext, View};
 
 pub use crate::keys::Target;
 use crate::layout::{char_width, display_width};
+use crate::model::clean_text;
 use crate::theme::{Role, Theme};
 
 /// How a run of text looks.
@@ -198,11 +199,17 @@ impl Painter<'_, '_> {
         let stop = (usize::from(x) + max).min(right);
         let mut used = 0;
         for ch in text.chars() {
+            // A control character or a bidirectional override has no width, so it never reaches a cell; a tab or a
+            // newline is a space of the one column it is laid out in (SEC-CLI-93).
             let width = char_width(ch);
             if width == 0 {
                 continue;
             }
-            let ch = if self.theme.ascii { ascii_stand_in(ch) } else { ch };
+            let ch = match ch {
+                '\t' | '\n' => ' ',
+                ch if self.theme.ascii => ascii_stand_in(ch),
+                ch => ch,
+            };
             if col + width > stop {
                 break;
             }
@@ -243,6 +250,7 @@ impl Painter<'_, '_> {
         let Some((first_y, screen_top)) = first else {
             return;
         };
+        let title = &frame_title_text(title);
         let mut border = if self.theme.ascii {
             Border::ascii()
         } else {
@@ -292,6 +300,7 @@ impl Painter<'_, '_> {
 
     /// A frame on screen rows, for the overlays.
     pub fn fixed_frame(&mut self, rect: Rect, title: &str) {
+        let title = &frame_title_text(title);
         let mut border = if self.theme.ascii {
             Border::ascii()
         } else {
@@ -393,6 +402,12 @@ impl<V: View> RenderInto for V {
         });
         ctx.render_child_with_overflow(self, absolute, false, clip.intersection(&bounds));
     }
+}
+
+/// A frame's title as Revue's `Border` draws it, on one line and cleaned, as the painter would draw it: the border writes
+/// its title's cells itself, not through [`Painter::put`] (SEC-CLI-93).
+fn frame_title_text(title: &str) -> String {
+    clean_text(title).replace(['\t', '\n'], " ")
 }
 
 /// OSC 8 links are written only for these schemes (section 2.7).
