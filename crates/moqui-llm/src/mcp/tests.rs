@@ -1080,9 +1080,9 @@ fn the_tarpit_counts_every_request_before_anything_is_built() {
     assert_eq!(status, 429, "tools/list counts too");
 }
 
-/// SEC-AI-86: an `LlmApiClient` that names the credential bounds the MCP server as it does the gateway: a client with
-/// no `mcp` scope, a disabled one, or one whose `allowedAgents` leave out the MCP agent is refused; a key no client
-/// names is the account's and is bounded by its permissions alone.
+/// SEC-AI-86: an `LlmApiClient` with the `mcp` scope bounds the MCP server as one with `gateway` bounds the gateway: a
+/// disabled one, or one whose `allowedAgents` leave out the MCP agent, is refused; a key no row with the `mcp` scope
+/// names (none at all, or rows for the gateway or A2A only) is bounded by its account's permissions alone.
 #[test]
 fn an_api_client_of_the_key_must_have_the_mcp_scope_and_allow_the_agent() {
     let bed = bed("");
@@ -1117,7 +1117,8 @@ fn an_api_client_of_the_key_must_have_the_mcp_scope_and_allow_the_agent() {
         client.update(&bed.facade).unwrap();
     };
     for (fields, allowed) in [
-        (&[("scopes", "a2a")][..], false),
+        // a key whose rows are for the gateway or A2A only: MCP is bounded by the account's permissions alone
+        (&[("scopes", "a2a,gateway")][..], true),
         (&[("scopes", "a2a,mcp"), ("disabled", "Y")][..], false),
         (&[("disabled", "N"), ("allowedAgents", "assist")][..], false),
         (&[("allowedAgents", "assist,mcp")][..], true),

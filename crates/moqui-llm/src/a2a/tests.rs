@@ -568,12 +568,37 @@ fn a_clients_allowed_agents_bound_contexts_tasks_and_the_card() {
     let ctx = super::ops::Ctx::new(context.factory(), &limited).unwrap();
     for message in [
         json!({"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hi"}], "contextId": "conv-open"}),
-        json!({"messageId": "m2", "role": "ROLE_USER", "parts": [{"text": "hi"}], "taskId": "task-open"}),
         json!({"messageId": "m3", "role": "ROLE_USER", "parts": [{"text": "hi"}], "metadata": {"agentId": "open"}}),
     ] {
         let why = refused(&ctx, message.clone());
         assert!(why.contains("no agent open"), "{message}: {why}");
     }
+    // a task of an agent the client does not allow is not found, through a message, a get or the list
+    let why = refused(
+        &ctx,
+        json!({"messageId": "m2", "role": "ROLE_USER", "parts": [{"text": "hi"}], "taskId": "task-open"}),
+    );
+    assert!(why.contains("task-open was not found"), "{why}");
+    assert!(super::ops::owned(&ctx, "task-open").is_err());
+    let listed = |ctx: &super::ops::Ctx<'_>| -> Vec<String> {
+        let Ok(page) = super::ops::list(ctx, &json!({})) else {
+            panic!("the list failed");
+        };
+        page["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|task| task["id"].as_str().map(str::to_string))
+            .collect()
+    };
+    assert!(listed(&ctx).is_empty(), "{:?}", listed(&ctx));
+    let open_only = Caller {
+        agents: Some(vec!["open".to_string()]),
+        ..limited.clone()
+    };
+    let open_ctx = super::ops::Ctx::new(context.factory(), &open_only).unwrap();
+    assert_eq!(listed(&open_ctx), vec!["task-open".to_string()]);
+    assert!(super::ops::owned(&open_ctx, "task-open").is_ok());
     let skills = |caller: &Caller| -> Vec<String> {
         super::card::extended(context.factory(), &facade, caller).unwrap()["skills"]
             .as_array()
@@ -588,4 +613,92 @@ fn a_clients_allowed_agents_bound_contexts_tasks_and_the_card() {
         ..limited.clone()
     };
     assert_eq!(skills(&any), vec!["open".to_string()]);
+}
+
+/// SEC-AI-86: `authenticate` reads the `LlmApiClient` rows of the credential: one with the `a2a` scope gives the
+/// caller its `allowedAgents`, a disabled one is refused, and a key whose rows are for the gateway only is bounded by
+/// its account's permissions alone.
+#[test]
+fn authenticate_takes_the_a2a_client_of_the_key() {
+    moqui_core::script::clear_context_stack();
+    let context = moqui_core::context::ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><llm-facade enabled="true"><a2a enabled="true"/></llm-facade></moqui-conf>"#,
+    );
+    let facade = moqui_core::testing::open();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let row = |entity: &str, fields: &[(&str, &str)]| {
+        let mut value = facade.make_value(entity).unwrap();
+        for (field, text) in fields {
+            value.set(*field, moqui_lib::object::Value::string(*text));
+        }
+        value.create(&facade).unwrap();
+    };
+    row(
+        "moqui.security.UserAccount",
+        &[("userId", "ann"), ("username", "ann"), ("userFullName", "Ann")],
+    );
+    row(
+        "moqui.security.UserGroup",
+        &[("userGroupId", "A2A"), ("description", "A2A")],
+    );
+    row(
+        "moqui.security.UserGroupMember",
+        &[("userGroupId", "A2A"), ("userId", "ann"), ("fromDate", "1265184000000")],
+    );
+    for permission in ["A2aServerUse", "AgentUse"] {
+        row(
+            "moqui.security.UserGroupPermission",
+            &[
+                ("userGroupId", "A2A"),
+                ("userPermissionId", permission),
+                ("fromDate", "1265184000000"),
+            ],
+        );
+    }
+    moqui_core::user::internal_login_user("ann").unwrap();
+    let key = moqui_core::user::get_login_key(None).unwrap();
+    moqui_core::user::logout().unwrap();
+    let hash = moqui_core::user::hash_login_key(&key).unwrap();
+    let request = super::HttpRequest {
+        method: "POST".to_string(),
+        headers: vec![("authorization".to_string(), format!("Bearer {key}"))],
+        secure: true,
+        client_ip: "127.0.0.1".to_string(),
+        ..super::HttpRequest::default()
+    };
+    let set = |scopes: &str, disabled: &str| {
+        let mut client = facade
+            .find("moqui.llm.LlmApiClient")
+            .unwrap()
+            .eq("clientId", moqui_lib::object::Value::string("A2A_CLIENT"))
+            .disable_authz()
+            .one()
+            .unwrap()
+            .unwrap();
+        client.set("scopes", moqui_lib::object::Value::string(scopes));
+        client.set("disabled", moqui_lib::object::Value::string(disabled));
+        client.update(&facade).unwrap();
+    };
+    let agents_of = || {
+        let answer = super::authenticate(context.factory(), &request);
+        let _ = moqui_core::user::logout();
+        answer.map(|caller| caller.agents).map_err(|reply| reply.status)
+    };
+    assert_eq!(agents_of(), Ok(None), "no client names the key");
+    row(
+        "moqui.llm.LlmApiClient",
+        &[
+            ("clientId", "A2A_CLIENT"),
+            ("userId", "ann"),
+            ("loginKey", &hash),
+            ("scopes", "gateway"),
+            ("allowedAgents", "assist"),
+        ],
+    );
+    assert_eq!(agents_of(), Ok(None), "a gateway client bounds the gateway only");
+    set("gateway,a2a", "N");
+    assert_eq!(agents_of(), Ok(Some(vec!["assist".to_string()])));
+    set("gateway,a2a", "Y");
+    assert_eq!(agents_of(), Err(403), "a disabled client");
 }

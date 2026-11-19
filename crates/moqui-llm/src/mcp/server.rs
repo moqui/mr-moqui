@@ -451,7 +451,7 @@ pub fn authenticate(factory: &ExecutionContextFactory, request: &HttpRequest) ->
     let facade = factory
         .entity()
         .ok_or_else(|| McpError::internal("the entity facade is not installed"))?;
-    let agents = crate::gateway::protocol_client(&facade, &credential, &user_id, "mcp")
+    let agents = crate::a2a::protocol_client(&facade, &credential, &user_id, "mcp")
         .map_err(|message| McpError::new(403, code::FORBIDDEN, message))?;
     let agent_id = crate::facade(factory).conf().mcp.agent.clone();
     if agents.is_some_and(|agents| !agents.is_empty() && !agents.contains(&agent_id)) {

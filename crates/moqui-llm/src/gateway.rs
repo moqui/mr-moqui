@@ -70,7 +70,7 @@ use moqui_core::llm_hooks::RustServiceFn;
 use moqui_core::rust_service;
 
 const LLM_MODEL_ALIAS: &str = "moqui.llm.LlmModelAlias";
-const LLM_API_CLIENT: &str = "moqui.llm.LlmApiClient";
+pub(crate) const LLM_API_CLIENT: &str = "moqui.llm.LlmApiClient";
 
 /// The content log keeps at most this much of a stream.
 const MAX_LOGGED_STREAM: usize = 1024 * 1024;
@@ -803,7 +803,7 @@ pub fn authenticate(
 }
 
 /// The comma list of a field.
-fn list_of(row: &moqui_core::entity::EntityValue, field: &str) -> Vec<String> {
+pub(crate) fn list_of(row: &moqui_core::entity::EntityValue, field: &str) -> Vec<String> {
     text_of(row, field)
         .map(|text| {
             text.split(',')
@@ -876,7 +876,7 @@ fn client_of(facade: &EntityFacade, credential: &Credential, user_id: &str) -> R
 }
 
 /// Note a client's use, at most once a minute; a write that fails is logged and the call goes on.
-fn note_use(facade: &EntityFacade, row: &moqui_core::entity::EntityValue) {
+pub(crate) fn note_use(facade: &EntityFacade, row: &moqui_core::entity::EntityValue) {
     let client_id = text_of(row, "clientId").unwrap_or_default();
     let now = jiff::Timestamp::now().as_millisecond();
     let used = row
@@ -898,71 +898,6 @@ fn note_use(facade: &EntityFacade, row: &moqui_core::entity::EntityValue) {
     if let Err(error) = noted {
         tracing::warn!("client {client_id}: last use not written: {error}");
     }
-}
-
-/// The agents the `LlmApiClient` rows of a credential let it call over the A2A or MCP server (`scope` `a2a` or
-/// `mcp`), as [`client_of`] reads them for the gateway.
-///
-/// `Ok(None)` when no client names the credential: an account's own key or app password, bounded by its user's
-/// permissions alone. `Ok(Some(agents))` for the user's clients of the credential with the scope that are not
-/// disabled: the agents they allow, empty for any agent the server exposes (with several rows, an agent any one allows).
-/// Each use is noted as the gateway notes it.
-///
-/// # Errors
-///
-/// Returns why the credential is refused: the clients that name it are another user's or have not the scope, or all of
-/// them are disabled; or the rows cannot be read.
-pub(crate) fn protocol_client(
-    facade: &EntityFacade,
-    credential: &Credential,
-    user_id: &str,
-    scope: &str,
-) -> Result<Option<Vec<String>>, String> {
-    let (field, value) = match credential {
-        Credential::LoginKey(hash) => ("loginKey", hash),
-        Credential::AppPassword(id) => ("appPasswordId", id),
-    };
-    let rows = facade
-        .find(LLM_API_CLIENT)
-        .and_then(|find| find.eq(field, Value::string(value)).disable_authz().list())
-        .map_err(|error| {
-            tracing::error!("the LlmApiClient of a {scope} call could not be read: {error}");
-            "the client could not be read".to_string()
-        })?;
-    if rows.iter().next().is_none() {
-        return Ok(None);
-    }
-    let scoped: Vec<&moqui_core::entity::EntityValue> = rows
-        .iter()
-        .filter(|row| list_of(row, "scopes").iter().any(|listed| listed == scope))
-        .filter(|row| text_of(row, "userId").as_deref() == Some(user_id))
-        .collect();
-    if scoped.is_empty() {
-        return Err(format!(
-            "the LlmApiClient of this credential does not have the {scope} scope"
-        ));
-    }
-    let enabled: Vec<&moqui_core::entity::EntityValue> = scoped
-        .iter()
-        .copied()
-        .filter(|row| flag_of(row, "disabled") != Some(true))
-        .collect();
-    if enabled.is_empty() {
-        let ids: Vec<String> = scoped.iter().filter_map(|row| text_of(row, "clientId")).collect();
-        return Err(format!("client {} is disabled", ids.join(", ")));
-    }
-    let mut agents = Vec::new();
-    for row in enabled {
-        note_use(facade, row);
-        let allowed = list_of(row, "allowedAgents");
-        if allowed.is_empty() {
-            return Ok(Some(Vec::new()));
-        }
-        agents.extend(allowed);
-    }
-    agents.sort();
-    agents.dedup();
-    Ok(Some(agents))
 }
 
 /// The routes under `/llm/v1`.

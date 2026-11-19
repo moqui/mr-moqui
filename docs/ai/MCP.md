@@ -55,8 +55,9 @@ The server is off by default; while it is off `/mcp` and its documents answer 40
 login key as the password); never the account password. Credentials are taken only over TLS, a believed proxy's https
 or loopback (403 otherwise). Without valid credentials the answer is 401 with
 `WWW-Authenticate: Bearer realm="mcp", Basic realm="mcp"` and the JSON-RPC code `-31401`; a user without the
-permissions is 403 (`-31403`). When `LlmApiClient` rows name the credential, one of the user's that is not disabled must
-have the `mcp` scope and, with `allowedAgents` set, allow the MCP agent (403 otherwise); a credential no row names is
+permissions is 403 (`-31403`). When an `LlmApiClient` row with the `mcp` scope names the credential, one such row of the
+user's must not be disabled and, with `allowedAgents` set, allow the MCP agent (403 otherwise); a credential no row with
+the `mcp` scope names (none, or rows for the gateway or A2A only, as a developer's key with a gateway row) is
 bounded by its user's permissions alone. A refused login counts for web protection. `server/discover` needs no
 credentials.
 

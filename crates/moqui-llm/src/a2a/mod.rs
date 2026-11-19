@@ -176,7 +176,7 @@ pub fn enabled(factory: &ExecutionContextFactory) -> bool {
 pub struct Caller {
     pub user_id: String,
     pub base_url: String,
-    /// The agents the caller's `LlmApiClient` allows ([`crate::gateway::protocol_client`]); `None` for any the server
+    /// The agents the caller's `LlmApiClient` allows ([`protocol_client`]); `None` for any the server
     /// exposes.
     pub agents: Option<Vec<String>>,
 }
@@ -276,6 +276,81 @@ pub(crate) fn log_in(factory: &ExecutionContextFactory, request: &HttpRequest, b
     }
 }
 
+/// The agents the `LlmApiClient` rows of a credential ([`log_in`]) let it call over the A2A or MCP server (`scope`
+/// `a2a` or `mcp`), as `gateway::client_of` reads them for the gateway.
+///
+/// `Ok(None)` when no row of the credential has the scope: an account's own key or app password, or one whose rows are
+/// for another protocol (a developer's key with a gateway row, used for MCP too), bounded by its user's permissions
+/// alone. `Ok(Some(agents))` when one has: the agents the user's rows with the scope that are not disabled allow, empty
+/// for any agent the server exposes (with several rows, an agent any one allows). Each use is noted as the gateway
+/// notes it.
+///
+/// # Errors
+///
+/// Returns why the credential is refused: its rows with the scope are another user's, or all disabled; or the rows
+/// cannot be read.
+pub(crate) fn protocol_client(
+    facade: &moqui_core::entity::EntityFacade,
+    credential: &crate::gateway::Credential,
+    user_id: &str,
+    scope: &str,
+) -> Result<Option<Vec<String>>, String> {
+    use crate::gateway::{list_of, note_use, Credential, LLM_API_CLIENT};
+    let (field, value) = match credential {
+        Credential::LoginKey(hash) => ("loginKey", hash),
+        Credential::AppPassword(id) => ("appPasswordId", id),
+    };
+    let rows = facade
+        .find(LLM_API_CLIENT)
+        .and_then(|find| {
+            find.eq(field, moqui_lib::object::Value::string(value))
+                .disable_authz()
+                .list()
+        })
+        .map_err(|error| {
+            tracing::error!("the LlmApiClient of a {scope} call could not be read: {error}");
+            "the client could not be read".to_string()
+        })?;
+    let scoped: Vec<&moqui_core::entity::EntityValue> = rows
+        .iter()
+        .filter(|row| list_of(row, "scopes").iter().any(|listed| listed == scope))
+        .collect();
+    if scoped.is_empty() {
+        return Ok(None);
+    }
+    let mine: Vec<&moqui_core::entity::EntityValue> = scoped
+        .iter()
+        .copied()
+        .filter(|row| crate::text_of(row, "userId").as_deref() == Some(user_id))
+        .collect();
+    if mine.is_empty() {
+        return Err(format!(
+            "the LlmApiClient of this credential for {scope} is another user's"
+        ));
+    }
+    let enabled: Vec<&moqui_core::entity::EntityValue> = mine
+        .iter()
+        .copied()
+        .filter(|row| crate::flag_of(row, "disabled") != Some(true))
+        .collect();
+    if enabled.is_empty() {
+        let ids: Vec<String> = mine.iter().filter_map(|row| crate::text_of(row, "clientId")).collect();
+        return Err(format!("client {} is disabled", ids.join(", ")));
+    }
+    let mut agents = Vec::new();
+    for row in enabled {
+        note_use(facade, row);
+        let allowed = list_of(row, "allowedAgents");
+        if allowed.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        agents.extend(allowed);
+    }
+    agents.sort();
+    agents.dedup();
+    Ok(Some(agents))
+}
+
 /// Log the request's user in from its headers ([`log_in`]).
 ///
 /// # Errors
@@ -315,7 +390,7 @@ pub fn authenticate(factory: &ExecutionContextFactory, request: &HttpRequest) ->
     let facade = factory
         .entity()
         .ok_or_else(|| refusal(500, "INTERNAL", "Internal error"))?;
-    let agents = crate::gateway::protocol_client(&facade, &credential, &user_id, "a2a")
+    let agents = protocol_client(&facade, &credential, &user_id, "a2a")
         .map_err(|message| refusal(403, "PERMISSION_DENIED", &message))?;
     Ok(Caller {
         user_id,
