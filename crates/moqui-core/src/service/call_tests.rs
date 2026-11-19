@@ -793,7 +793,8 @@ fn parameters_are_converted_then_checked_and_defaults_apply() {
         "{out}"
     );
     assert!(!out.contains("javascript:") && !out.contains("onerror"), "{out}");
-    assert!(out.contains(r#"src="http://h/i.png""#), "{out}");
+    // an outside image loses its src (SEC-CLI-82)
+    assert!(out.contains("<img") && !out.contains("http://h/i.png"), "{out}");
     let link = call(&[("careful", text(r#"<a href="https://example.com/">go</a>"#))]).unwrap();
     let link = link.get("careful").and_then(Value::as_str).unwrap().to_string();
     assert!(link.contains(r#"rel="noopener noreferrer""#), "{link}");

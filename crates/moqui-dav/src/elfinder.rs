@@ -574,9 +574,10 @@ impl Connector {
         // `/resources` is a read-only transition, so a GET with URL parameters runs any command: a write command (put,
         // rm, rename, mkdir, mkfile, upload) another site started, by a link the browser follows with the session's
         // Lax cookie, is refused; the file manager's own requests are the page's (plans/Security-Review.md SEC-RTE-05,
-        // SEC-FIL-01)
+        // SEC-FIL-01), and so is one the browser loads as a part of a page, an image of this site in a stored text
+        // (SEC-CLI-82)
         let cross_site = moqui_core::web::current_request()
-            .is_some_and(|request| moqui_core::web::started_by_another_site(&request));
+            .is_some_and(|request| moqui_core::web::get_write_refused(&request));
         let write_refused = |response: &mut moqui_lib::object::ValueMap| {
             if cross_site {
                 fail(

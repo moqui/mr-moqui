@@ -674,6 +674,24 @@ pub fn started_by_another_site(request: &WebRequest) -> bool {
     referer_host.is_empty() || host.is_empty() || !referer_host.eq_ignore_ascii_case(host)
 }
 
+/// Whether the browser loads `request` as a part of a page, not a page or the page's own fetch: `Sec-Fetch-Dest` is
+/// there and is not `document`, `iframe`, `frame` or `empty` (an image, a script, a style, a font, media, a worker).
+/// An image in a stored text (a note, a message, a page) is a same-origin GET with the reader's session, which
+/// [`started_by_another_site`] does not catch (plans/Security-Review-Medium.md SEC-CLI-82).
+pub fn loaded_as_subresource(request: &WebRequest) -> bool {
+    request
+        .header("sec-fetch-dest")
+        .map(str::trim)
+        .filter(|dest| !dest.is_empty())
+        .is_some_and(|dest| !["document", "iframe", "frame", "empty"].iter().any(|page| dest.eq_ignore_ascii_case(page)))
+}
+
+/// Whether a state change on a GET is refused for `request`: another site started it ([`started_by_another_site`]),
+/// or the browser loads it as a part of a page ([`loaded_as_subresource`]).
+pub fn get_write_refused(request: &WebRequest) -> bool {
+    started_by_another_site(request) || loaded_as_subresource(request)
+}
+
 pub fn current_request() -> Option<std::sync::Arc<WebRequest>> {
     WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.request.clone()))
 }

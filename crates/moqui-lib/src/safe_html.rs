@@ -275,7 +275,10 @@ fn cleaner() -> &'static ammonia::Builder<'static> {
         for tag in ["code", "pre", "span"] {
             builder.add_tag_attributes(tag, &["class"]);
         }
-        builder.attribute_filter(|_element, attribute, value| {
+        builder.attribute_filter(|element, attribute, value| {
+            if element == "img" && attribute == "src" {
+                return own_image_src(value).then(|| value.into());
+            }
             if attribute != "class" {
                 return Some(value.into());
             }
@@ -284,6 +287,17 @@ fn cleaner() -> &'static ammonia::Builder<'static> {
         });
         builder
     })
+}
+
+/// Whether an image `src` of the safe set is this server's: a path with no scheme or host (`/apps/...`,
+/// `/richTextImage/1`, `a.png`), never `https://`, `//host` or a backslash. An outside image would tell its host each
+/// reader's address and when they read; a path of this server is a same-origin GET, which a transition that writes
+/// refuses when the browser loads it as an image (`moqui_core::web::loaded_as_subresource`; plans/Security-Review-Medium.md
+/// SEC-CLI-82).
+fn own_image_src(src: &str) -> bool {
+    let src = src.trim();
+    let before_path = src.split(['/', '?', '#']).next().unwrap_or_default();
+    !src.is_empty() && !src.starts_with("//") && !src.contains('\\') && !before_path.contains(':')
 }
 
 /// Whether `name` is a code block's language or highlighting class: `language-` or `lang-` and a name of letters,
@@ -357,11 +371,36 @@ mod tests {
             assert!(!cleaned.contains("src="), "{outside}: {cleaned}");
             assert!(cleaned.contains("hi"), "{cleaned}");
         }
-        // the safe set keeps an outside image, as any allow-html="safe" text does
-        assert!(clean(r#"<img src="https://host.example/x.png">"#).contains("src="));
         // mentions survive
         let mention = r#"<p><span data-mention-id="john.doe">@John</span></p>"#;
         assert_eq!(clean_chat(mention), mention);
+    }
+
+    /// SEC-CLI-82: the safe set keeps an image only from this server: an outside one, which would tell the writer who
+    /// read the text and when, loses its `src`; a path of this server is kept (a transition that writes refuses it as
+    /// an image, `moqui_core::web::loaded_as_subresource`).
+    #[test]
+    fn rich_text_keeps_only_this_servers_images() {
+        for own in [
+            "/richTextImage/100123",
+            "/apps/wiki/attachment?name=a.png",
+            "a.png",
+            "Page/_attachments/b.png",
+        ] {
+            let html = format!(r#"<p><img src="{own}" alt="a"></p>"#);
+            assert!(clean(&html).contains("src="), "{own}: {}", clean(&html));
+        }
+        for outside in [
+            "https://host.example/x.png?u=1",
+            "http://host.example/x.png",
+            "//host.example/x.png",
+            "HTTPS://host.example/x.png",
+            "\\\\host.example\\x.png",
+            "data:image/png;base64,AAAA",
+        ] {
+            let cleaned = clean(&format!(r#"<p>hi <img src="{outside}" alt="a"></p>"#));
+            assert!(!cleaned.contains("src="), "{outside}: {cleaned}");
+        }
     }
 
     /// A code block keeps its language and highlighting classes; any other class, a `style` and an `id` go.

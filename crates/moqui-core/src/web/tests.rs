@@ -683,3 +683,37 @@ fn a_request_another_site_started_is_told_by_its_fetch_site_or_referer() {
     assert!(!request(&[("Referer", "https://APP.example.com/apps/tools")]));
     assert!(!request(&[]));
 }
+
+/// SEC-CLI-82: an image of this site in a stored rich text is a same-origin GET with the reader's session; a GET that
+/// would change state is refused when the browser loads it as a part of a page (`Sec-Fetch-Dest` an image, a script,
+/// a style...), as when another site started it, and runs as a page, a frame or the page's own fetch.
+#[test]
+fn a_get_loaded_as_a_part_of_a_page_changes_nothing() {
+    let request = |headers: &[(&str, &str)]| {
+        let mut request = super::WebRequest::new("GET", "/Login/logout");
+        request.set_header("Host", "app.example.com");
+        for (name, value) in headers {
+            request.set_header(*name, *value);
+        }
+        request
+    };
+    let same = ("Sec-Fetch-Site", "same-origin");
+    for dest in [
+        "image", "script", "style", "font", "video", "audio", "track", "object", "embed", "worker",
+    ] {
+        let image = request(&[same, ("Sec-Fetch-Dest", dest)]);
+        assert!(
+            super::loaded_as_subresource(&image) && super::get_write_refused(&image),
+            "{dest}"
+        );
+    }
+    for dest in ["document", "iframe", "frame", "empty", "DOCUMENT"] {
+        let page = request(&[same, ("Sec-Fetch-Dest", dest)]);
+        assert!(!super::get_write_refused(&page), "{dest}");
+    }
+    assert!(!super::get_write_refused(&request(&[same])) && !super::get_write_refused(&request(&[])));
+    assert!(super::get_write_refused(&request(&[
+        ("Sec-Fetch-Site", "cross-site"),
+        ("Sec-Fetch-Dest", "document")
+    ])));
+}

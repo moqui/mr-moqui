@@ -1125,7 +1125,7 @@ mod safe_html_tests {
             "<a href=\"https://example.com/x\">a link</a> <span data-mention-id=\"john.doe\">@John Doe</span></p>",
             "<ul><li><p>one</p></li></ul><ol start=\"3\"><li><p>three</p></li></ol>",
             "<blockquote><p>quoted</p></blockquote><pre><code>let x = 1;</code></pre>",
-            "<p>line<br>break</p><hr><img src=\"https://example.com/a.png\" alt=\"a picture\">"
+            "<p>line<br>break</p><hr><img src=\"/richTextImage/100123\" alt=\"a picture\">"
         );
         let cleaned = clean_safe_html(editor);
         assert_eq!(
