@@ -570,9 +570,15 @@ pub fn signed_out(app: &AppHandle, id: &str) {
     let Ok(state) = state(app) else {
         return;
     };
+    signed_out_in(&state, id);
+}
+
+/// [`signed_out`] on the client's state.
+pub(crate) fn signed_out_in(state: &ClientState, id: &str) {
     if let Err(err) = state.core.keys().delete(id) {
         tracing::error!("The key of {id} was not removed from the key store: {err}");
     }
+    state.shell.account_signed_out(id);
     state.shell.close_remotes(Some(id));
     let (current, mode) = {
         let accounts = moqui_lib::sync::lock(state.core.accounts());
@@ -587,7 +593,7 @@ pub fn signed_out(app: &AppHandle, id: &str) {
     }
     if modes::forgets_on_sign_out(mode, state.core.conf().device_mode) {
         tracing::info!("{id} is a shared device's account: its data on this device is deleted");
-        if let Err(err) = remove_account(&state, id) {
+        if let Err(err) = remove_account(state, id) {
             tracing::error!("The shared account {id} was not removed: {err}");
         }
     }

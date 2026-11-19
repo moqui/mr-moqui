@@ -55,6 +55,10 @@ fn each_window_stays_on_its_origin() {
         Goes::Outside
     );
     assert_eq!(goes(&url("about:blank"), APP_ORIGIN), Goes::Here);
+    // a page's own blob (an inline answer) stays; another origin's, and a data: document, go nowhere (SEC-CLI-03)
+    assert_eq!(goes(&url("blob:http://moqui-app.localhost/0c5f4b9e"), APP_ORIGIN), Goes::Here);
+    assert_eq!(goes(&url("blob:https://evil.example.com/0c5f4b9e"), APP_ORIGIN), Goes::Nowhere);
+    assert_eq!(goes(&url("data:text/html,<p>x</p>"), APP_ORIGIN), Goes::Nowhere);
     // a node's loopback port is the web to a client
     assert_eq!(goes(&url("http://127.0.0.1:8080/qapps"), SHELL_ORIGIN), Goes::Outside);
 }

@@ -235,26 +235,48 @@ fn main_window(app: &AppHandle, origin: &Arc<OnceLock<Url>>) -> tauri::Result<We
 }
 
 /// Whether the window may go to `url`: the app's own pages and the node's origin. Anything else on the web, and
-/// `mailto:` and `tel:` links, opens in the system browser or the handler the OS has for it, and the window stays.
+/// `mailto:` and `tel:` links, opens in the system browser or the handler the OS has for it, and the window stays; any
+/// other scheme goes nowhere.
 fn stays_in_app(url: &Url, node: Option<&Url>) -> bool {
-    let external = is_external(url, node, &splash::base());
-    if external {
-        open_externally(url);
+    match node_goes(url, node, &splash::base()) {
+        NodeGoes::Here => true,
+        NodeGoes::Outside => {
+            open_externally(url);
+            false
+        }
+        NodeGoes::Nowhere => {
+            tracing::warn!("The window does not go to a {}: URL", url.scheme());
+            false
+        }
     }
-    !external
 }
 
-/// Whether `url` leaves the app: a web page on neither the app's own pages (at `app`, a development run's dev server
-/// or `tauri.localhost`) nor the node's origin, or a `mailto:`, `tel:` or `sip:` link.
-fn is_external(url: &Url, node: Option<&Url>, app: &Url) -> bool {
+/// Where a navigation of the node's window goes (plans/Security-Review.md SEC-CLI-03).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum NodeGoes {
+    /// The app's own pages (at `app`, a development run's dev server or `tauri.localhost`), the node's origin,
+    /// `about:blank`, or a `blob:` of one of them (a page's inline answer with no file name, `WebrootVue.qvt.js`).
+    Here,
+    /// The web, or a `mailto:`, `tel:` or `sip:` link: the system browser or handler.
+    Outside,
+    /// Any other scheme (`file:`, `data:`, `chrome:`, a `blob:` of another origin): nowhere.
+    Nowhere,
+}
+
+pub(crate) fn node_goes(url: &Url, node: Option<&Url>, app: &Url) -> NodeGoes {
+    // a blob's origin is the document's that made it
+    let own = |at: &Url| {
+        let origin = at.origin().ascii_serialization();
+        origin == "http://tauri.localhost"
+            || origin == app.origin().ascii_serialization()
+            || node.is_some_and(|node| origin == node.origin().ascii_serialization())
+    };
     match url.scheme() {
-        "http" | "https" => {
-            !matches!(url.host_str(), Some("tauri.localhost"))
-                && url.origin() != app.origin()
-                && node.is_none_or(|node| url.origin() != node.origin())
-        }
-        "mailto" | "tel" | "sip" => true,
-        _ => false,
+        "http" | "https" if own(url) => NodeGoes::Here,
+        "http" | "https" | "mailto" | "tel" | "sip" => NodeGoes::Outside,
+        "about" if url.as_str() == "about:blank" => NodeGoes::Here,
+        "blob" if own(url) => NodeGoes::Here,
+        _ => NodeGoes::Nowhere,
     }
 }
 
@@ -458,7 +480,6 @@ fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let location = runtime_dir::Location::choose(
         std::env::var_os("MOQUI_RUNTIME").map(Into::into),
         dev,
-        runtime_dir::find_existing(),
         &paths.resource_dir()?,
         &paths.app_data_dir()?,
     );

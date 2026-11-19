@@ -136,6 +136,10 @@ fn the_dev_tools_follow_the_variable_then_the_purpose_file_and_are_off_by_defaul
             (
                 "moqui_conf__user_facade__login__initial_admin_local",
                 "in-process".to_string()
+            ),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__csp_append",
+                "upgrade-insecure-requests".to_string()
             )
         ]
     );

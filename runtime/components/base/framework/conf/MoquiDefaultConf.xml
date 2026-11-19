@@ -440,9 +440,12 @@
                 in front. With it, client-ip-header and X-Forwarded-Proto are believed only from those proxies, the
                 client address is the rightmost one in the header that is not a trusted proxy (so an appended
                 X-Forwarded-For is safe), and the per-client web-protection below is on by default. Empty, the header is
-                believed from any peer. -->
+                believed from any peer.
+            csp-append: directives added to every screen response's Content-Security-Policy (with a semicolon), or the
+                whole policy where none is set; empty adds none. The Desktop app's sidecar sets upgrade-insecure-requests,
+                so a page's http:// loads of other hosts go over https there too (SEC-CLI-105). -->
         <webapp name="webroot" http-port="" http-host="" https-port="" https-host="" https-enabled="false"
-                https-listen-port="" http-bind="" allowed-hosts="" http2="true"
+                https-listen-port="" http-bind="" allowed-hosts="" http2="true" csp-append=""
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"

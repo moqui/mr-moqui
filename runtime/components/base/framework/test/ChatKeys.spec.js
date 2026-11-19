@@ -224,6 +224,22 @@ feature("queries and claims reach only users who share a room or a live call, an
     }
 })
 
+// plans/Security-Review.md SEC-CLI-106: a device's own user sees the name they gave it; another user who shares a room is
+// told only the kind of device it is (from the request that made it), never the owner's name for it
+feature("another user sees a device's kind, not the name its owner gave it", {
+    when() {
+        const name = (asUser) => {
+            const out = as(asUser, "query#Keys", {device_keys: {[mx(A)]: [dev.A1]}})
+            return (((out.device_keys || {})[mx(A)] || {})[dev.A1] || {}).unsigned?.device_display_name ?? null
+        }
+        return {own: name(A), other: name(B)}
+    },
+    then({own, other}) {
+        own == "A laptop"
+        other == "A device"
+    },
+})
+
 feature("concurrent claims never hand out the same one-time key, and one user takes at most 10 a minute of a device: the fallback key answers past it", {
     when() {
         const target = device(B, 20, "conc")

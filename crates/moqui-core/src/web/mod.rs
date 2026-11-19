@@ -2488,6 +2488,7 @@ pub fn finish_response(
     preflight: bool,
 ) -> WebResponse {
     apply_conf_headers(Some(factory), "screen-render", &mut response.headers, true);
+    append_csp(&mut response.headers, &factory.webapp_setting("webroot", "csp-append"));
     // HSTS holds for every port of a host (RFC 6797), so on localhost a trusted dev certificate would send the plain
     // dev listener and any other local server to https for a year.
     if request.https && !is_localhost(request.header("host").unwrap_or("")) {
@@ -2500,6 +2501,30 @@ pub fn finish_response(
         }
     }
     response
+}
+
+/// `webapp@csp-append`'s directives added to the response's `Content-Security-Policy` (each policy, with a semicolon),
+/// or set as its policy where it has none: the Desktop app's sidecar adds `upgrade-insecure-requests`, so a page's
+/// `http://` loads of other hosts go over https as they do in the app's own windows (plans/Security-Review.md
+/// SEC-CLI-105). Nothing for an empty `append`.
+pub(crate) fn append_csp(headers: &mut Vec<(String, String)>, append: &str) {
+    let append = append.trim().trim_matches(';').trim();
+    if append.is_empty() {
+        return;
+    }
+    let mut found = false;
+    for (name, value) in headers.iter_mut() {
+        if name.eq_ignore_ascii_case("content-security-policy") {
+            found = true;
+            if !value.contains(append) {
+                let kept = value.trim().trim_end_matches(';').trim_end().to_string();
+                *value = if kept.is_empty() { append.to_string() } else { format!("{kept}; {append}") };
+            }
+        }
+    }
+    if !found {
+        headers.push(("Content-Security-Policy".to_string(), append.to_string()));
+    }
 }
 
 /// Java's `WebappInfo.addHeaders`: the conf's `response-header` entries for `kind` (`screen-render`, `cors-actual`). An

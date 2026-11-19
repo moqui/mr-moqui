@@ -215,9 +215,35 @@ pub struct Store {
     written: Cell<i64>,
     /// Read times not yet written, by row.
     reads: RefCell<HashMap<Read, i64>>,
+    /// This account's server's clock less this device's (ms), learned from its answers ([`Self::learn_server_time`]).
+    server_offset: Cell<i64>,
 }
 
+/// How far a server's clock may be from this device's before it is taken as the server's error: a day.
+const SERVER_CLOCK_MAX_MS: i64 = 24 * 60 * 60 * 1000;
+
 impl Store {
+    /// This account's server said its time is `server_ms` now (an answer just received): disappearing messages go by
+    /// the server's time, so a device whose clock is wrong neither keeps nor drops them early. Each account's server is
+    /// its own, so another server's clock never decides this account's messages; a time more than a day from the
+    /// device's is passed over as the server's error (plans/Security-Review.md SEC-CLI-86).
+    pub(crate) fn learn_server_time(&self, server_ms: i64) {
+        if server_ms <= 0 {
+            return;
+        }
+        let offset = server_ms - now_ms();
+        if offset.abs() > SERVER_CLOCK_MAX_MS {
+            tracing::warn!("{}: the server's clock is {offset} ms from this device's; passed over", self.account);
+            return;
+        }
+        self.server_offset.set(offset);
+    }
+
+    /// Now by this account's server's clock, as far as it is known.
+    pub(crate) fn server_now(&self) -> i64 {
+        now_ms() + self.server_offset.get()
+    }
+
     /// Open (or make) the store of `account_id` in `<dir>/data/`, with a size cap of `max_bytes`, and bring its schema
     /// up to date. Operations a crash left `sending` are made due again (the server takes each `clientRef` once),
     /// acknowledged ones past their keep are dropped, and files nothing refers to are removed.
@@ -263,6 +289,7 @@ impl Store {
             clock: Cell::new(0),
             written: Cell::new(0),
             reads: RefCell::new(HashMap::new()),
+            server_offset: Cell::new(0),
         };
         let last_read = store
             .conn
@@ -481,8 +508,9 @@ pub fn forget(dir: &Path, account_id: &str) -> Result<(), Error> {
         return Err(Error::new(format!("Client store: {account_id} is not an account id")));
     };
     let mut failures = Vec::new();
-    for suffix in ["", "-wal", "-shm", "-journal"] {
-        let file = PathBuf::from(format!("{}{suffix}", db.display()));
+    // with the copy an earlier schema's rebuild kept beside it, which holds the whole old store (SEC-CLI-95)
+    let old = PathBuf::from(format!("{}.old", db.display()));
+    for file in db_files(&db).into_iter().chain(db_files(&old)) {
         match std::fs::remove_file(&file) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}

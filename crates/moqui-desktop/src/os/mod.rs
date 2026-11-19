@@ -48,6 +48,8 @@ struct State {
     pending: Option<Url>,
     /// The node's runtime directory, for its `.env`.
     runtime: Option<PathBuf>,
+    /// The node's `comms@app-root` as its conf has it, once read after it started ([`learn_comms_root`]).
+    comms_root: Option<String>,
     /// The single-instance socket of this first instance.
     socket: Option<PathBuf>,
 }
@@ -56,6 +58,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     node: None,
     pending: None,
     runtime: None,
+    comms_root: None,
     socket: None,
 });
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -202,51 +205,83 @@ pub(crate) fn node_started(qapps: Url) -> Url {
         state.node = Some(qapps.clone());
         state.pending.take()
     };
+    learn_comms_root();
     pending
         .and_then(|link| links::route(&link, &qapps, &comms_root()))
         .unwrap_or(qapps)
 }
 
-/// The file in the app's config directory with the Comms app's root the node's pages last reported.
+/// The file in the app's config directory where an earlier version kept the Comms app's root a node's page reported;
+/// deleted, as a page no longer says where the OS's links go (plans/Security-Review.md SEC-CLI-05).
 const COMMS_ROOT_FILE: &str = "comms-root";
 
-/// The node's pages reported its Comms app (`bridge::set_comms_root`): kept, so links work before a page loads on later
-/// runs too.
-pub(crate) fn comms_root_reported(app: &AppHandle, root: &str) {
-    let Ok(dir) = app.path().app_config_dir() else {
+/// The conf's `comms@app-root` (basic-comms's own element).
+const COMMS_ROOT_SETTING: &str = "comms@app-root";
+
+/// Read the node's `comms@app-root` from its conf, on a thread of its own, once it started: in process the running
+/// node's (`conf_env::setting`, its overrides included); for the sidecar the runtime's conf merged with its
+/// components', as the sidecar reads it. Never a page's: a page of the node could otherwise send the OS's mail and call
+/// links anywhere on it, and keep that across runs (SEC-CLI-05).
+fn learn_comms_root() {
+    if let Some(dir) = APP.get().and_then(|app| app.path().app_config_dir().ok()) {
+        let _ = std::fs::remove_file(dir.join(COMMS_ROOT_FILE));
+    }
+    let Some(runtime) = state().runtime.clone() else {
         return;
     };
-    let path = dir.join(COMMS_ROOT_FILE);
-    if std::fs::read_to_string(&path).is_ok_and(|kept| kept.trim() == root) {
-        return;
+    let started = std::thread::Builder::new().name("comms-root".to_string()).spawn(move || {
+        let root = conf_comms_root(&runtime);
+        if let Some(root) = &root {
+            tracing::info!("The OS's mail and call links open in {root}");
+        }
+        state().comms_root = root;
+    });
+    if let Err(err) = started {
+        tracing::warn!("The Comms app's root is not read from the conf: {err}");
     }
-    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, root)) {
-        tracing::warn!("The Comms app's root was not kept in {}: {err}", path.display());
-    }
+}
+
+/// `comms@app-root` of the node on `runtime`, as its conf has it: the running node's in this process, else the
+/// runtime's merged conf; none when neither says, or it is not a Comms app's path.
+pub(crate) fn conf_comms_root(runtime: &Path) -> Option<String> {
+    let running = moqui_core::context::conf_env::setting(COMMS_ROOT_SETTING);
+    let root = if running.is_empty() {
+        let framework = moqui_core::context::default_framework_dir(runtime);
+        let components = moqui_core::context::discover_components(runtime, &framework)
+            .inspect_err(|err| tracing::warn!("The node's components were not read for its Comms app: {err}"))
+            .ok()?;
+        let dirs: Vec<PathBuf> = components.iter().map(|info| info.location.clone()).collect();
+        let merged = match moqui_core::context::merge_component_confs_with(&framework, runtime, &dirs, false) {
+            Ok(Some((conf, _))) => Some(conf),
+            Ok(None) => moqui_core::context::load_merged_conf_with(&framework, runtime).ok().map(|(conf, _)| conf),
+            Err(err) => {
+                tracing::warn!("The node's conf was not read for its Comms app: {err}");
+                None
+            }
+        }?;
+        moqui_core::context::conf_env::conf_attribute(&merged, COMMS_ROOT_SETTING)
+    } else {
+        running
+    };
+    Some(root).filter(|root| crate::bridge::comms_root_valid(root))
 }
 
 /// The environment name of the conf's `comms@app-root` (basic-comms's own element), which a node takes as an override.
 const COMMS_ROOT_ENV: &str = "moqui_conf__comms__app_root";
 
-/// The Comms app's root: a client's server's; else what the node's pages last reported; else `comms@app-root` as the
-/// node in process has it, or as the runtime's `.env` sets it; else BasicComms (which a node with BOSS still serves).
+/// The Comms app's root: a client's server's; else `comms@app-root` as the environment, the node's conf or the
+/// runtime's `.env` sets it; else BasicComms (which a node with BOSS still serves).
 fn comms_root() -> String {
     // a client's: its server's, as its client config says
     if let Some(root) = APP.get().and_then(crate::client::comms_root) {
         return root;
     }
-    let reported = APP
-        .get()
-        .and_then(|app| app.path().app_config_dir().ok())
-        .and_then(|dir| std::fs::read_to_string(dir.join(COMMS_ROOT_FILE)).ok())
-        .map(|text| text.trim().to_string())
-        .filter(|root| crate::bridge::comms_root_valid(root));
-    if let Some(root) = reported {
-        return root;
-    }
     let own = moqui_lib::env::get_prop_or_env(COMMS_ROOT_ENV);
     if !own.trim().is_empty() {
         return own;
+    }
+    if let Some(root) = state().comms_root.clone() {
+        return root;
     }
     let runtime = state().runtime.clone();
     runtime

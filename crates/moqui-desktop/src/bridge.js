@@ -152,9 +152,9 @@
         pageCommands.secureScreen = (reason, on) => invoke("secure_screen", { reason: String(reason || ""), on: on === true }).then((held) => held === true, () => false);
     }
     if (node) {
-        // the node's Comms app, which the host's mailto:, tel: and sip: links open (WebrootVue.qvt.js, on load)
-        // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket)
-        const own = { setCommsRoot: (root) => invoke("set_comms_root", { root: String(root || "") }) };
+        // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket); the
+        // Comms app the OS's links open is the node's conf's, which the host reads, never a page's (SEC-CLI-05)
+        const own = {};
         if (inProcess) own.socket = (url) => new HostSocket(url);
         window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, own));
         // A sidecar asks every caller for its first administrator's setup secret, its window too (any account of the

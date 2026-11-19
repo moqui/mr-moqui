@@ -33,3 +33,14 @@ fn the_identifier_name_and_schemes_are_those_of_tauri_conf() {
     ours.push(links::APP_SCHEME);
     assert_eq!(schemes, ours);
 }
+
+/// SEC-CLI-05: the Comms app the OS's links open is read from the node's conf (the repository's runtime here, merged
+/// with its components'), never from a page, which has no command to set it.
+#[test]
+fn the_comms_app_comes_from_the_nodes_conf() {
+    let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+    let root = super::conf_comms_root(&runtime).expect("the runtime's conf names a Comms app");
+    assert!(crate::bridge::comms_root_valid(&root), "{root}");
+    let commands = include_str!("../../build.rs");
+    assert!(!commands.contains("\"set_comms_root\""), "a page has no command to set it");
+}

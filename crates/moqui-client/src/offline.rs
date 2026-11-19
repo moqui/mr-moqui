@@ -212,7 +212,7 @@ pub fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u8]) {
     };
     // the server's clock, which disappearing messages go by (a timeline page's and a room view's serverNow)
     if let Some(server) = number(&json["serverNow"]).or_else(|| number(&json["timeline"]["serverNow"])) {
-        learn_server_time(server);
+        store.learn_server_time(server);
     }
     let params = Params::of(query);
     let kept = match kind {
@@ -252,7 +252,7 @@ pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<
     if kind == Kind::Compose {
         return compose_answer(store, bare, query, &params);
     }
-    let now = server_now();
+    let now = store.server_now();
     if matches!(
         kind,
         Kind::Timeline | Kind::RoomView | Kind::ChatData | Kind::Rooms | Kind::Room
@@ -279,22 +279,6 @@ pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<
 }
 
 // ---- disappearing messages (plans/Comms-Messaging.md phase 16) ----
-
-/// The server's clock less this device's (ms), learned from the server's answers: disappearing messages go by the
-/// server's time, so a device whose clock is wrong neither keeps nor drops them early.
-static SERVER_OFFSET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-
-/// The server said its time is `server_ms` now (an answer just received).
-pub(crate) fn learn_server_time(server_ms: i64) {
-    if server_ms > 0 {
-        SERVER_OFFSET.store(server_ms - crate::store::now_ms(), std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Now by the server's clock, as far as it is known.
-pub(crate) fn server_now() -> i64 {
-    crate::store::now_ms() + SERVER_OFFSET.load(std::sync::atomic::Ordering::Relaxed)
-}
 
 /// Every kept event due by `now_ms` goes (`Store::expire_chat_events`), with the kept pages of each room it went from.
 /// Gives those rooms; a failure is logged, and the rows are due again next time.

@@ -33,24 +33,16 @@ pub(crate) enum Location {
 }
 
 impl Location {
-    /// `env` is `MOQUI_RUNTIME`, `dev` whether this is a development run (`cargo tauri dev`), `found` the runtime
-    /// [`moqui_host::find_runtime_dir`] found, `resources` the app's resource directory and `app_data` its data
-    /// directory.
-    pub(crate) fn choose(
-        env: Option<PathBuf>,
-        dev: bool,
-        found: Option<PathBuf>,
-        resources: &Path,
-        app_data: &Path,
-    ) -> Self {
+    /// `env` is `MOQUI_RUNTIME`, `dev` whether this is a development run (`cargo tauri dev`), `resources` the app's
+    /// resource directory and `app_data` its data directory. A release build looks for no runtime of its own: one in its
+    /// working directory or beside it could be any account's of the computer, whose code and data the node would run
+    /// (plans/Security-Review.md SEC-CLI-91); `MOQUI_RUNTIME` names one.
+    pub(crate) fn choose(env: Option<PathBuf>, dev: bool, resources: &Path, app_data: &Path) -> Self {
         if let Some(dir) = env.filter(|dir| !dir.as_os_str().is_empty()) {
             return Self::Existing(dir);
         }
         if dev {
             return Self::Existing(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime"));
-        }
-        if let Some(dir) = found {
-            return Self::Existing(dir);
         }
         Self::Bundled {
             resources: resources.join("runtime"),
@@ -72,20 +64,6 @@ impl Location {
             }
         }
     }
-}
-
-/// A runtime found with no `MOQUI_RUNTIME`, if there is one: `runtime` in the working directory, or beside or around
-/// the executable (an app is started from anywhere, so it looks beside itself where `moqui` looks only in its working
-/// directory). In an AppImage the executable is the AppImage file (`APPIMAGE`), not the binary in
-/// its mounted image, so a runtime beside the file is found.
-pub(crate) fn find_existing() -> Option<PathBuf> {
-    let exe = std::env::var_os("APPIMAGE")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok())
-        .and_then(|exe| std::fs::canonicalize(exe).ok());
-    let found = moqui_host::find_runtime_dir(Path::new("runtime"), exe.as_deref())?;
-    Some(std::path::absolute(&found).unwrap_or(found))
 }
 
 /// Link each read-only part in `resources` from `runtime`, replacing a link that points elsewhere (the app moved or

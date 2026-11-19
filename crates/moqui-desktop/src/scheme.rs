@@ -18,5 +18,5 @@
 //! with the mobile app (tested there).
 
 pub(crate) use moqui_client_tauri::scheme::{
-    document_request, has_script_policy, plain, run, upgraded_page, PAGE_PERMISSIONS_POLICY,
+    document_request, has_script_policy, page_policies, plain, run, upgraded_page, PAGE_PERMISSIONS_POLICY,
 };

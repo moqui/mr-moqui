@@ -154,16 +154,38 @@ pub fn has_script_policy(csp: &str) -> bool {
 /// sends a policy of its own keeps it.
 pub const PAGE_PERMISSIONS_POLICY: &str = "camera=(self), microphone=(self), geolocation=(self)";
 
-/// The policy a server's page gets in a meta tag: its `http://` loads of other hosts are upgraded to https, as they are
-/// when the page is served over https on the web. The app's origins are `http://*.localhost`, which Chromium does not
-/// treat as mixed content and does not upgrade (nor loopback), so the page's own loads stay as they are
-/// (SEC-CLI-105). A meta tag, not a header: the CEF runtime rewrites a page's first CSP header to add its scripts'
-/// hashes, and a header with this alone would then stop the page's inline scripts.
-const UPGRADE_META: &[u8] = b"<meta http-equiv=\"Content-Security-Policy\" content=\"upgrade-insecure-requests\">";
+/// The directives a policy in a meta tag does not take (CSP 3).
+const META_IGNORED: [&str; 4] = ["frame-ancestors", "report-uri", "report-to", "sandbox"];
 
-/// A server's HTML page with [`UPGRADE_META`] at the start of its head: after the `<head>` tag, else after `<html>`,
-/// else after a doctype, else first.
-pub fn upgraded_page(mut body: Vec<u8>) -> Vec<u8> {
+/// The policies a server's page gets in meta tags, each its own: first each CSP of the server's that its header could
+/// not carry (one with no script policy, to which the CEF runtime would add `script-src` with its scripts' hashes:
+/// [`has_script_policy`]), less what a meta tag ignores, so the page keeps the server's `form-action` and the like
+/// (SEC-CLI-04); then `upgrade-insecure-requests`, so its `http://` loads of other hosts go over https, as when the page
+/// is served over https on the web (SEC-CLI-105). The app's origins are `http://*.localhost`, which Chromium neither
+/// treats as mixed content nor upgrades (nor loopback), so the page's own loads stay as they are. Meta tags, not a
+/// header: the runtime rewrites a page's first CSP header, and a header with these would then stop its inline scripts.
+pub fn page_policies(dropped: &[&str]) -> Vec<String> {
+    let mut policies: Vec<String> = dropped
+        .iter()
+        .map(|csp| {
+            csp.split(';')
+                .map(str::trim)
+                .filter(|directive| {
+                    let name = directive.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+                    !name.is_empty() && !META_IGNORED.contains(&name.as_str()) && name != "upgrade-insecure-requests"
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .filter(|policy| !policy.is_empty())
+        .collect();
+    policies.push("upgrade-insecure-requests".to_string());
+    policies
+}
+
+/// A server's HTML page with a meta tag of each of `policies` ([`page_policies`]) at the start of its head: after the
+/// `<head>` tag, else after `<html>`, else after a doctype, else first.
+pub fn upgraded_page(mut body: Vec<u8>, policies: &[String]) -> Vec<u8> {
     let lower = body.to_ascii_lowercase();
     let after_tag = |tag: &[u8]| -> Option<usize> {
         let at = lower.windows(tag.len()).position(|window| window == tag)?;
@@ -178,7 +200,18 @@ pub fn upgraded_page(mut body: Vec<u8>) -> Vec<u8> {
         .or_else(|| after_tag(b"<html"))
         .or_else(|| after_tag(b"<!doctype"))
         .unwrap_or(0);
-    body.splice(at..at, UPGRADE_META.iter().copied());
+    let metas: String = policies
+        .iter()
+        .map(|policy| {
+            let content = policy
+                .replace('&', "&amp;")
+                .replace('"', "&quot;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{content}\">")
+        })
+        .collect();
+    body.splice(at..at, metas.into_bytes());
     body
 }
 
@@ -369,8 +402,10 @@ pub fn answer(
     }
     let html = header(&headers, "content-type").is_some_and(|kind| kind.to_ascii_lowercase().starts_with("text/html"));
     let mut response = Response::builder().status(status);
+    let mut dropped: Vec<&str> = Vec::new();
     for (name, value) in &headers {
         if html && name.eq_ignore_ascii_case("content-security-policy") && !has_script_policy(value) {
+            dropped.push(value);
             continue;
         }
         // Chromium puts the app's initialization scripts into every HTML answer of the scheme: a page's fetch of a
@@ -390,7 +425,7 @@ pub fn answer(
         // the server's answer is data to the shell, never a script or style its origin would take
         response = response.header("X-Content-Type-Options", "nosniff");
     }
-    let body = if page { upgraded_page(body) } else { body };
+    let body = if page { upgraded_page(body, &page_policies(&dropped)) } else { body };
     let response = response
         .body(body)
         .unwrap_or_else(|_| plain(StatusCode::BAD_GATEWAY, "The server's answer could not be passed on"));

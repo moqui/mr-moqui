@@ -45,7 +45,8 @@ fn the_apps_pages_and_the_node_stay_in_the_window() {
     let dev: Url = "http://127.0.0.1:1430/".parse().unwrap();
     let bundled = base_for(None);
     let node: Url = "http://127.0.0.1:51234/qapps".parse().unwrap();
-    let external = |url: &str, node: Option<&Url>, app: &Url| crate::is_external(&url.parse().unwrap(), node, app);
+    let external =
+        |url: &str, node: Option<&Url>, app: &Url| crate::node_goes(&url.parse().unwrap(), node, app) != crate::NodeGoes::Here;
     assert!(
         !external("http://127.0.0.1:1430/index.html?failed=x", None, &dev),
         "the dev server's splash"
@@ -80,4 +81,29 @@ fn only_the_app_s_own_pages_are_the_splash() {
     assert!(!is_splash(&at("http://moqui-node.localhost/qapps"), &base));
     assert!(!is_splash(&at("http://moqui-shell.localhost/"), &base));
     assert!(!is_splash(&at("http://127.0.0.1:8080/qapps"), &base));
+}
+
+/// SEC-CLI-03: the node's window goes to the app's pages, the node's origin, `about:blank` and their own blobs; the web
+/// and the OS's links open outside; any other scheme, a blob of another origin among them, goes nowhere.
+#[test]
+fn the_nodes_window_goes_nowhere_but_its_own_pages_and_the_web() {
+    use crate::NodeGoes::{Here, Nowhere, Outside};
+    let app: Url = "http://tauri.localhost/".parse().unwrap();
+    let node: Url = "http://127.0.0.1:51234/qapps".parse().unwrap();
+    let goes = |url: &str| crate::node_goes(&url.parse().unwrap(), Some(&node), &app);
+    assert_eq!(goes("http://127.0.0.1:51234/qapps/x"), Here);
+    assert_eq!(goes("about:blank"), Here);
+    assert_eq!(goes("blob:http://127.0.0.1:51234/0c5f4b9e-1c1d-4d6a"), Here, "an inline answer the node's page made");
+    assert_eq!(goes("https://example.com/"), Outside);
+    assert_eq!(goes("sip:alice@example.com"), Outside);
+    for nowhere in [
+        "blob:https://evil.example.com/0c5f4b9e",
+        "data:text/html,<p>x</p>",
+        "file:///etc/passwd",
+        "chrome://settings",
+        "about:srcdoc",
+        "javascript:alert(1)",
+    ] {
+        assert_eq!(goes(nowhere), Nowhere, "{nowhere}");
+    }
 }

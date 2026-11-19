@@ -115,6 +115,15 @@ fn answer(mut stream: std::os::unix::net::UnixStream) -> Option<Vec<tauri::Url>>
     Some(links)
 }
 
+/// `dir`, made owner-only (`0700`), or made so when it is there already: an earlier version made it with the default
+/// mode.
+#[cfg(unix)]
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    moqui_lib::private_fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+}
+
 /// Claim the socket at `path`, or hand `links` to the instance that has it.
 #[cfg(unix)]
 pub(crate) fn claim(path: &Path, links: &[tauri::Url]) -> Claim {
@@ -131,13 +140,20 @@ pub(crate) fn claim(path: &Path, links: &[tauri::Url]) -> Claim {
         }
         let _ = std::fs::remove_file(path);
     }
+    // the socket's directory is this user's alone before the socket is made in it, so no other account of the computer
+    // reaches the socket in the moment before its own mode is set (plans/Security-Review.md SEC-CLI-09)
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        if let Err(err) = private_dir(dir) {
+            tracing::warn!("Single instance: {} is not this user's alone ({err}); no socket", dir.display());
+            return Claim::Alone;
+        }
     }
     match UnixListener::bind(path) {
         Ok(listener) => {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            if let Err(err) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+                tracing::warn!("Single instance: {} is not owner-only: {err}", path.display());
+            }
             Claim::First(Listener {
                 path: path.to_path_buf(),
                 listener,

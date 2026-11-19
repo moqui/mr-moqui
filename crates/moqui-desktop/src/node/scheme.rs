@@ -28,7 +28,9 @@ use tauri::http::{Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder};
 
 use super::cookies::Jar;
-use crate::scheme::{document_request, has_script_policy, plain, run, upgraded_page, PAGE_PERMISSIONS_POLICY};
+use crate::scheme::{
+    document_request, has_script_policy, page_policies, plain, run, upgraded_page, PAGE_PERMISSIONS_POLICY,
+};
 
 /// The node's scheme, and its origin on Chromium.
 pub(crate) const NODE_SCHEME: &str = "moqui-node";
@@ -202,8 +204,10 @@ fn answer(app: &AppHandle, request: tauri::http::Request<Vec<u8>>) -> Response<V
     };
     let html = header(&shown, "content-type").is_some_and(|kind| kind.to_ascii_lowercase().starts_with("text/html"));
     let mut response = Response::builder().status(status);
+    let mut dropped: Vec<&str> = Vec::new();
     for (name, value) in &shown {
         if html && name.eq_ignore_ascii_case("content-security-policy") && !has_script_policy(value) {
+            dropped.push(value);
             continue;
         }
         // Chromium puts the app's initialization scripts into every HTML answer of the scheme: a page's fetch of a
@@ -220,7 +224,8 @@ fn answer(app: &AppHandle, request: tauri::http::Request<Vec<u8>>) -> Response<V
     if page && header(&shown, "permissions-policy").is_none() {
         response = response.header("Permissions-Policy", PAGE_PERMISSIONS_POLICY);
     }
-    let body = if page { upgraded_page(body) } else { body };
+    // the node's own CSP but its script policy, in meta tags (SEC-CLI-04)
+    let body = if page { upgraded_page(body, &page_policies(&dropped)) } else { body };
     response
         .body(body)
         .unwrap_or_else(|_| plain(StatusCode::BAD_GATEWAY, "The node's answer could not be passed on"))

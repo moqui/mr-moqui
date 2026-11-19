@@ -57,8 +57,10 @@ const METHODS: [&str; 7] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OP
 
 /// Response headers the page does not get: the cookies (the key is the session), the hop-by-hop ones, the body's
 /// length and encoding (the host hands the page the whole, decoded body), a Basic challenge (the page has no password
-/// to give) and, by prefix, the CORS grants (no other site reads through the app's origin).
-const DROPPED_RESPONSE_HEADERS: [&str; 10] = [
+/// to give), what a server's answer could do to every account's pages and the shell (`Clear-Site-Data` wiping their
+/// storage, a service worker's scope, a refresh or preloads elsewhere; plans/Security-Review.md SEC-CLI-85) and, by
+/// prefix, the CORS grants (no other site reads through the app's origin).
+const DROPPED_RESPONSE_HEADERS: [&str; 14] = [
     "set-cookie",
     "set-cookie2",
     "connection",
@@ -69,6 +71,10 @@ const DROPPED_RESPONSE_HEADERS: [&str; 10] = [
     "strict-transport-security",
     "alt-svc",
     "www-authenticate",
+    "clear-site-data",
+    "service-worker-allowed",
+    "refresh",
+    "link",
 ];
 
 /// A request of the page.
@@ -352,6 +358,20 @@ pub fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str
         .map(|(_, value)| value.as_str())
 }
 
+/// Whether `c` is a Unicode format character that changes how the text around it shows without showing itself: the
+/// bidirectional marks, embeddings, overrides and isolates, the zero-width characters, and the byte-order mark.
+fn format_character(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}'
+    )
+}
+
 /// The file name of an `attachment` disposition (`filename*=UTF-8''…` first, then `filename=`), as a plain name with
 /// no directory in it; `download` when it names none.
 #[must_use]
@@ -378,11 +398,13 @@ pub fn attachment_name(disposition: &str) -> Option<String> {
     }
     let name = extended.or(plain).unwrap_or_default();
     let name = name.rsplit(['/', '\\']).next().unwrap_or("");
-    // a name any desktop can save: no characters Windows refuses, no leading dot, no trailing dot or space
+    // a name any desktop can save: no characters Windows refuses, no leading dot, no trailing dot or space; no
+    // character that reorders or hides what follows it, as a right-to-left override makes `invoice\u{202E}fdp.exe`
+    // read as a PDF (SEC-CLI-87)
     let name: String = name
         .chars()
         .map(|c| {
-            if c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            if c.is_control() || format_character(c) || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
                 '_'
             } else {
                 c

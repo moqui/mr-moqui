@@ -32,6 +32,8 @@ pub(crate) struct TestHost {
     pub(crate) shown: Mutex<Vec<String>>,
     /// What the host answers of the device's screen lock.
     pub(crate) secure: Mutex<Option<bool>>,
+    /// The accounts the host was told are signed out.
+    pub(crate) signed_out: Mutex<Vec<String>>,
 }
 
 impl ClientHost for TestHost {
@@ -86,6 +88,10 @@ impl ShellHost for TestHost {
     fn device_secure(&self) -> Option<bool> {
         *moqui_lib::sync::lock(&self.secure)
     }
+
+    fn account_signed_out(&self, account: &str) {
+        moqui_lib::sync::lock(&self.signed_out).push(account.to_string());
+    }
 }
 
 pub(crate) struct Fixture {
@@ -127,6 +133,7 @@ pub(crate) fn fixture(name: &str, signed_in: bool) -> Fixture {
         client: Mutex::new(Some(Arc::clone(&client))),
         shown: Mutex::new(Vec::new()),
         secure: Mutex::new(None),
+        signed_out: Mutex::new(Vec::new()),
     });
     let files = Assets::new(dir.join("shell"), dir.join("webroot"));
     let state = ClientState::new(client, host.clone(), host.clone(), Box::new(files));
@@ -192,5 +199,17 @@ fn the_shell_hears_whether_the_device_has_a_screen_lock() {
     assert_eq!(crate::commands::state_json(&state)["deviceSecure"], Value::Bool(false));
     *moqui_lib::sync::lock(&host.secure) = Some(true);
     assert_eq!(crate::commands::state_json(&state)["deviceSecure"], Value::Bool(true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-100: every sign-out tells the host, which takes the account's notifications and shortcuts off the phone,
+/// a sign-out the server did not hear (no network, as this host has) included; its key is gone.
+#[test]
+fn a_sign_out_tells_the_host_even_with_no_network() {
+    let Fixture { state, dir, account, host } = fixture("signed-out", true);
+    assert!(state.core.keys().get(&account).is_some());
+    crate::commands::signed_out_in(&state, &account);
+    assert_eq!(moqui_lib::sync::lock(&host.signed_out).clone(), vec![account.clone()]);
+    assert!(state.core.keys().get(&account).is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }

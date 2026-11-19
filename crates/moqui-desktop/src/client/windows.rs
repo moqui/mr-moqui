@@ -178,7 +178,8 @@ pub(crate) fn notify_pages(app: &AppHandle, account: &str, event: &Value) {
 /// Where a window on `origin` sends a navigation to a URL.
 #[derive(Debug, PartialEq, Eq)]
 enum Goes {
-    /// The window goes there: its own origin, or a page's own `about:`, `data:` or `blob:` document.
+    /// The window goes there: its own origin (a `blob:` of it too), or `about:blank`. A `data:` document, or a `blob:`
+    /// of another origin, goes nowhere (plans/Security-Review.md SEC-CLI-03).
     Here,
     /// A page of the server, from the shell: in an app window.
     AppWindow,
@@ -195,7 +196,7 @@ fn goes(url: &Url, origin: &str) -> Goes {
     if at == SHELL_ORIGIN && origin == SHELL_ORIGIN && !matches!(url.path(), "/" | "/index.html") {
         return Goes::AppWindow;
     }
-    if at == origin || matches!(url.scheme(), "about" | "data" | "blob") {
+    if at == origin || url.as_str() == "about:blank" {
         Goes::Here
     } else if at == APP_ORIGIN {
         Goes::AppWindow

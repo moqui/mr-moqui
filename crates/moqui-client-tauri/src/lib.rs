@@ -121,6 +121,14 @@ pub trait ShellHost: Send + Sync {
     fn account_signing_out(&self, account: &moqui_client::account::Account, key: &str) {
         let _ = (account, key);
     }
+
+    /// An account is signed out here: its key is forgotten, whether its server heard (a sign-out with no network, a key
+    /// the server no longer takes) or not. The mobile app takes its chat notifications and conversation shortcuts off
+    /// the phone (plans/Security-Review.md SEC-CLI-100), and what its push and calling state names of it, with no
+    /// request to the server ([`Self::account_signing_out`] has that part, when the server can be reached).
+    fn account_signed_out(&self, account: &str) {
+        let _ = account;
+    }
 }
 
 /// The shell's own files, as the scheme serves them: from disk ([`Assets`], the desktop) or from the app's embedded

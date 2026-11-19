@@ -26,14 +26,13 @@ use tauri::{AppHandle, Manager};
 use crate::runtime_dir::Location;
 
 /// The runtime whose conf the client reads: the one a node's mode would run on (`MOQUI_RUNTIME`, this repository's in
-/// a development run, one found beside the app), else the bundled one in the app's resources, read where it is (the
-/// client makes no runtime in the app data directory).
+/// a development run), else the bundled one in the app's resources, read where it is (the client makes no runtime in
+/// the app data directory).
 pub(crate) fn runtime_dir(app: &AppHandle) -> Option<PathBuf> {
     let paths = app.path();
     let location = Location::choose(
         std::env::var_os("MOQUI_RUNTIME").map(Into::into),
         tauri::is_dev(),
-        crate::runtime_dir::find_existing(),
         &paths.resource_dir().ok()?,
         &paths.app_data_dir().ok()?,
     );
