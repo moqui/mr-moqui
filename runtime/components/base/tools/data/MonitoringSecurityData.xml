@@ -61,6 +61,14 @@
         <artifacts artifactName="org.moqui.report.share.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <authz artifactAuthzId="REPORT_SHARE_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
+    <!-- Adding a field to a business dataset's document that a group the steward is not in reads (store#BusinessDatasetFields,
+        org.moqui.report.widen.<userGroupId>; crates/moqui-report/src/business.rs): ADMIN's for any group, and an app grants
+        its stewards the artifacts of the groups that read its documents. ADMIN, which reads every entity, and a group of
+        one's own need none; ALL_USERS is never widened. -->
+    <artifactGroups artifactGroupId="REPORT_WIDEN_ADMIN" description="Add fields to business dataset documents any group reads">
+        <artifacts artifactName="org.moqui.report.widen.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
+        <authz artifactAuthzId="REPORT_WIDEN_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
     <moqui.security.UserPermission userPermissionId="MONITOR_INGEST" description="Send telemetry through source-scoped ingestion keys"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_INGEST" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="MONITOR_REPLAY" description="See browser session replays (Monitor › Replays)"/>

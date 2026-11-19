@@ -867,13 +867,27 @@ feature("a field is added to a dataset's document only by a steward who may wide
         readers("add", "ALL_USERS")
         const everyone = add("enumTypeId", "widenTypeId")
         readers("remove", "ALL_USERS")
-        return {created: created.error || "", own, related, alone, everyone}
+        // ADMIN, which reads every entity, is no group to widen; BDS_READER is, until the steward holds its widen grant
+        readers("add", "ADMIN")
+        readers("add", "BDS_READER")
+        const ungranted = add("enumTypeId", "widenTypeId")
+        sys(() => {
+            make("moqui.security.ArtifactGroup", {artifactGroupId: "BDS_WIDEN_READER", description: "BDS widen reader"})
+            make("moqui.security.ArtifactGroupMember", {artifactGroupId: "BDS_WIDEN_READER", artifactName: "org.moqui.report.widen.BDS_READER",
+                artifactTypeEnumId: "AT_SERVICE"})
+            make("moqui.security.ArtifactAuthz", {artifactAuthzId: "BDS_WIDEN_READER", userGroupId: "BDS_STEWARD", artifactGroupId: "BDS_WIDEN_READER",
+                authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_ALL"})
+        })
+        const granted = add("enumTypeId", "widenTypeId")
+        return {created: created.error || "", own, related, alone, everyone, ungranted, granted}
     },
-    then({created, own, related, alone, everyone}) {
+    then({created, own, related, alone, everyone, ungranted, granted}) {
         created == ""
         own.includes("not yours to widen")
         related.includes("not yours to widen")
         alone == ""
         everyone.includes("not yours to widen")
+        ungranted.includes("read by 1 group(s)")
+        granted == ""
     }
 })
