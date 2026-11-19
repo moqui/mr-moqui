@@ -1195,3 +1195,17 @@ fn every_user_security_checks_assert_is_a_security_check() {
     }
     assert!(!super::is_security_check("ec.service.sync().name('update#Thing').call()"));
 }
+
+/// SEC-DAT-91: a document read whole and a CSV line are held to the loader's unit size, 64 MiB, whatever the input.
+#[test]
+fn a_document_read_whole_and_a_csv_line_are_held_to_the_unit_size() {
+    use std::io::Read as _;
+    let unit = super::pull::MAX_UNIT as u64;
+    let mut whole = super::pull::Pull::new(std::io::BufReader::new(std::io::repeat(b'a').take(unit + 1)));
+    let refused = whole.read_to_end().unwrap_err();
+    assert!(refused.message().contains("larger than"), "{refused}");
+    let mut line = super::csv::LineBound::new(std::io::repeat(b'a').take(unit + 1));
+    assert!(std::io::copy(&mut line, &mut std::io::sink()).is_err());
+    let mut lines = super::csv::LineBound::new(std::io::repeat(b'\n').take(unit + 1));
+    assert_eq!(std::io::copy(&mut lines, &mut std::io::sink()).unwrap(), unit + 1);
+}

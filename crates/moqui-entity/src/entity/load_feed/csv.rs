@@ -24,7 +24,38 @@ use super::loader::{
     call_data_file_service, complete_csv_pk, data_service_name, decode_base64, entity_defined, shape_of, skip_type,
     store_value, Record,
 };
+use super::pull::MAX_UNIT;
 use super::{DataFileService, LoadOptions};
+
+/// A reader that fails past [`MAX_UNIT`] bytes with no line break, so the CSV reader never holds an unbounded record
+/// (SEC-DAT-91); a record is held to the same size when it is read.
+pub(super) struct LineBound<R> {
+    inner: R,
+    since_break: usize,
+}
+
+impl<R> LineBound<R> {
+    pub(super) fn new(inner: R) -> Self {
+        Self { inner, since_break: 0 }
+    }
+}
+
+impl<R: Read> Read for LineBound<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        for byte in &buf[..read] {
+            if *byte == b'\n' {
+                self.since_break = 0;
+            } else {
+                self.since_break += 1;
+            }
+        }
+        if self.since_break > MAX_UNIT {
+            return Err(std::io::Error::other(format!("a line is longer than {MAX_UNIT} bytes")));
+        }
+        Ok(read)
+    }
+}
 use crate::entity::facade::EntityFacade;
 
 pub(super) fn load_csv_reader(
@@ -50,7 +81,7 @@ pub(super) fn load_csv_reader(
         .has_headers(false)
         .flexible(true)
         .trim(csv::Trim::All)
-        .from_reader(reader);
+        .from_reader(LineBound::new(reader));
     let mut records = reader.records();
     // A given entity name or field names stand for the entity line and the header line, which the text then lacks.
     let mut file_type = None;
@@ -132,6 +163,11 @@ pub(super) fn load_csv_reader(
     let mut total = 0_u64;
     for (line, record) in records.enumerate() {
         let record = record.map_err(|err| Error::new(format!("could not read csv {location}")).with_source(err))?;
+        if record.as_slice().len() > MAX_UNIT {
+            return Err(Error::new(format!(
+                "csv {location} has a record larger than {MAX_UNIT} bytes"
+            )));
+        }
         if record_blank(&record) {
             continue;
         }
