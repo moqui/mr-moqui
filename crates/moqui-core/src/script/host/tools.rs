@@ -1903,10 +1903,14 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             _ => Vec::new(),
         },
     };
-    let before = facade.flags();
-    facade.set_disable_entity_eca(flag("disableEntityEca") || before.disable_entity_eca);
-    facade.set_disable_audit_log(flag("disableAuditLog") || before.disable_audit_log);
-    facade.set_disable_data_feed(flag("disableDataFeed") || before.disable_data_feed);
+    // the load's own writes, on this thread only, until the scope drops on any way out: not the facade's flags, which
+    // every thread reads (plans/Security-Review-Medium.md SEC-DAT-83)
+    let switches = crate::entity::WriteSwitches {
+        disable_entity_eca: flag("disableEntityEca"),
+        disable_audit_log: flag("disableAuditLog"),
+        disable_data_feed: flag("disableDataFeed"),
+    }
+    .enter();
     let factory = factory()?;
     let check = flag("check");
     let listing = flag("list");
@@ -1936,9 +1940,7 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     } else {
         load_source(&facade, &factory, &text, &locations, &load_options)
     };
-    facade.set_disable_entity_eca(before.disable_entity_eca);
-    facade.set_disable_audit_log(before.disable_audit_log);
-    facade.set_disable_data_feed(before.disable_data_feed);
+    drop(switches);
     let (records, messages) = loaded.map_err(HostError::Lib)?;
     let mut out = indexmap::IndexMap::default();
     out.insert(

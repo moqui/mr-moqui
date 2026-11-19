@@ -689,6 +689,58 @@ fn an_admin_group_member_is_not_stored_while_entity_eca_runs() {
     assert_eq!(admin_member_count(&facade), 0);
 }
 
+// A load's own switch is this thread's and ends with its scope, nested or not; it leaves the security checks
+// (plans/Security-Review-Medium.md SEC-DAT-83).
+#[test]
+fn a_loads_switch_is_this_threads_and_leaves_the_security_checks() {
+    use crate::entity::WriteSwitches;
+    let (facade, context) = open_eca();
+    let _entered = context.enter();
+    // the facade's own flags, which every thread sees
+    let shared = facade.shared_flags();
+    assert!(!shared.disable_entity_eca);
+    let off = WriteSwitches {
+        disable_entity_eca: true,
+        disable_audit_log: true,
+        disable_data_feed: false,
+    };
+    {
+        let _outer = off.enter();
+        assert!(facade.flags().disable_entity_eca && facade.flags().disable_audit_log);
+        assert_eq!(facade.shared_flags(), shared);
+        let elsewhere = {
+            let facade = facade.clone();
+            std::thread::spawn(move || facade.flags()).join().unwrap()
+        };
+        assert_eq!(elsewhere, shared);
+        {
+            let _inner = WriteSwitches {
+                disable_data_feed: true,
+                ..WriteSwitches::default()
+            }
+            .enter();
+            assert!(facade.flags().disable_data_feed && facade.flags().disable_entity_eca);
+        }
+        assert_eq!(WriteSwitches::current(), off);
+        // the privileged-group check still runs: an ADMIN member is refused to a caller who is not in ADMIN
+        let err = load_entity_xml_text(&facade, "xmlText", ADMIN_MEMBER, &LoadOptions::default()).unwrap_err();
+        assert!(
+            error_chain(&err).contains("not authorized to change membership of group ADMIN"),
+            "{}",
+            error_chain(&err)
+        );
+        assert_eq!(admin_member_count(&facade), 0);
+    }
+    assert_eq!(WriteSwitches::current(), WriteSwitches::default());
+    // a panic in the load puts them back too
+    let unwound = std::panic::catch_unwind(|| {
+        let _scope = off.enter();
+        panic!("a load that fails");
+    });
+    assert!(unwound.is_err());
+    assert_eq!(WriteSwitches::current(), WriteSwitches::default());
+}
+
 #[test]
 fn disable_entity_eca_stores_an_admin_group_member() {
     let (facade, context) = open_eca();

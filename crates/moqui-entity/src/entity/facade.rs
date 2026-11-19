@@ -47,6 +47,67 @@ pub struct EntityFlags {
     pub dummy_fks: bool,
 }
 
+/// What a data load turns off for its own writes (`disableEntityEca`, `disableAuditLog`, `disableDataFeed`): only on
+/// the thread that runs it, so a write any other thread makes meanwhile keeps its entity ECA rules, its audit row and its
+/// feed (plans/Security-Review-Medium.md SEC-DAT-83). With `disable_entity_eca` the `UserSecurityChecks` rules still run
+/// ([`super::load_feed::is_security_check`]); the facade's own flags ([`EntityFacade::shared_flags`]) turn off all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WriteSwitches {
+    pub disable_entity_eca: bool,
+    pub disable_audit_log: bool,
+    pub disable_data_feed: bool,
+}
+
+thread_local! {
+    static THREAD_SWITCHES: std::cell::Cell<WriteSwitches> = const {
+        std::cell::Cell::new(WriteSwitches {
+            disable_entity_eca: false,
+            disable_audit_log: false,
+            disable_data_feed: false,
+        })
+    };
+}
+
+impl WriteSwitches {
+    /// The switches the loads running on this thread turned off.
+    #[must_use]
+    pub fn current() -> Self {
+        THREAD_SWITCHES.with(std::cell::Cell::get)
+    }
+
+    /// Turn these off, with what is off already, for this thread until the scope drops, which puts back what was set
+    /// before: a load inside another, an error or a panic leaves the switches as they were.
+    #[must_use = "the switches are back on when the scope drops"]
+    pub fn enter(self) -> WriteSwitchScope {
+        let before = Self::current();
+        THREAD_SWITCHES.with(|slot| {
+            slot.set(Self {
+                disable_entity_eca: before.disable_entity_eca || self.disable_entity_eca,
+                disable_audit_log: before.disable_audit_log || self.disable_audit_log,
+                disable_data_feed: before.disable_data_feed || self.disable_data_feed,
+            });
+        });
+        WriteSwitchScope {
+            before,
+            _not_send: std::marker::PhantomData,
+        }
+    }
+}
+
+/// While alive, this thread's [`WriteSwitches`] are those of [`WriteSwitches::enter`]; dropped, those before it.
+pub struct WriteSwitchScope {
+    before: WriteSwitches,
+    // the switches are this thread's: the scope ends on it
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for WriteSwitchScope {
+    fn drop(&mut self) {
+        let before = self.before;
+        THREAD_SWITCHES.with(|slot| slot.set(before));
+    }
+}
+
 /// One entity group: a dialect name and the transaction manager the host registered.
 pub struct EntityGroup {
     name: String,
@@ -519,7 +580,19 @@ impl EntityFacade {
         self.inner.crypt_read_plain.load(Ordering::Acquire)
     }
 
+    /// The facade's flags, with the switches of the loads running on this thread ([`WriteSwitches::enter`]) added.
     pub fn flags(&self) -> EntityFlags {
+        let mut flags = self.shared_flags();
+        let thread = WriteSwitches::current();
+        flags.disable_entity_eca |= thread.disable_entity_eca;
+        flags.disable_audit_log |= thread.disable_audit_log;
+        flags.disable_data_feed |= thread.disable_data_feed;
+        flags
+    }
+
+    /// The facade's own flags, which every thread sees (a boot or a seed load sets them), without this thread's load
+    /// switches.
+    pub fn shared_flags(&self) -> EntityFlags {
         *read(&self.inner.flags)
     }
 

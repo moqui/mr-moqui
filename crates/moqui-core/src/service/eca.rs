@@ -27,7 +27,7 @@ use moqui_lib::sync::lock;
 use super::rule_actions::{condition_allows, publish_names, run_stored_actions};
 use super::util::{has_error, take_errors_string};
 use crate::context::ExecutionContext;
-use crate::entity::load_feed::{self, DataFileService, EcaRule};
+use crate::entity::load_feed::{self, is_security_check, DataFileService, EcaRule};
 use crate::entity::EntityFacade;
 
 /// Whether feed receive found search down. Kept with the facade, so it is the same on every thread
@@ -257,14 +257,6 @@ pub fn schedule_feed_receive(facade: &EntityFacade, pending_ids: Vec<String>) ->
         Value::List(pending_ids.into_iter().map(Value::String).collect()),
     );
     super::call::async_call(PROCESS_PENDING_SERVICE, &params).map_err(to_lib)
-}
-
-/// Whether a rule's actions call one of the `UserSecurityChecks` asserts (`Security.eecas.xml`). Those are checks, not
-/// business rules, so they run even when the message facade already has errors.
-fn is_security_check(actions: &str) -> bool {
-    actions.contains("UserSecurityChecks.assertPrivilegedGroupMembership(")
-        || actions.contains("UserSecurityChecks.assertSealedPermissionGrant(")
-        || actions.contains("UserSecurityChecks.assertSealedGroupMembership(")
 }
 
 pub(super) fn to_lib(err: crate::context::Error) -> Error {

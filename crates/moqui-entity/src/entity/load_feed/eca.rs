@@ -60,16 +60,29 @@ pub fn match_rules(facade: &EntityFacade, entity_name: &str, operation: &str) ->
 }
 
 /// The ECA rules for a write, which the write hands to `service::run_matched_eca`: nothing is kept on the
-/// facade, so a nested or concurrent write cannot change the rules of this one.
+/// facade, so a nested or concurrent write cannot change the rules of this one. A load's switch on this thread
+/// ([`crate::entity::WriteSwitches`]) leaves the security checks ([`is_security_check`]); the facade's own flag and the
+/// execution context's `disableEntityEca` leave none.
 pub(crate) fn match_rules_with(facade: &EntityFacade, entity_name: &str, operation: &str) -> Vec<Arc<EcaRule>> {
-    if facade.flags().disable_entity_eca || (crate::hooks::get().entity_eca_disabled)() {
+    if facade.shared_flags().disable_entity_eca || (crate::hooks::get().entity_eca_disabled)() {
         return Vec::new();
     }
+    let checks_only = crate::entity::WriteSwitches::current().disable_entity_eca;
     eca_index(facade)
         .of_entity(entity_name)
         .filter(|rule| rule_matches(rule, entity_name, operation))
+        .filter(|rule| !checks_only || is_security_check(&rule.actions))
         .cloned()
         .collect()
+}
+
+/// Whether a rule's actions call one of the `UserSecurityChecks` asserts (`Security.eecas.xml`): checks, not business
+/// rules, so they run even when the message facade already has errors, and a load's switch does not turn them off.
+#[must_use]
+pub fn is_security_check(actions: &str) -> bool {
+    actions.contains("UserSecurityChecks.assertPrivilegedGroupMembership(")
+        || actions.contains("UserSecurityChecks.assertSealedPermissionGrant(")
+        || actions.contains("UserSecurityChecks.assertSealedGroupMembership(")
 }
 
 /// Rules stored for `entity_name`. This lookup does not run them; `service::run_matched_eca` does.
