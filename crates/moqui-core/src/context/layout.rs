@@ -229,9 +229,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// The old component directories are named nowhere in the repository but this module and the archived plans, the one
-    /// that moved them among them (plans/archive/Components-Dir.md §5), so a stale path or a new hand-built one shows up
-    /// here rather than at the next move. Skipped outside a git checkout.
+    /// The old component directories are named nowhere in the repository but this module, the archived plans (the one
+    /// that moved them among them, plans/archive/Components-Dir.md §5) and the test runtime cleanup, so a stale path or
+    /// a new hand-built one shows up here rather than at the next move. Skipped outside a git checkout.
     #[test]
     fn the_old_component_directories_are_named_nowhere() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -246,8 +246,12 @@ mod tests {
         if !out.status.success() {
             return;
         }
-        let allowed =
-            |path: &str| path.starts_with("plans/archive/") || path == "crates/moqui-core/src/context/layout.rs";
+        // interrupt.rs names the old set directories to clear a scratch runtime made before `components/`
+        let allowed = |path: &str| {
+            path.starts_with("plans/archive/")
+                || path == "crates/moqui-core/src/context/layout.rs"
+                || path == "crates/moqui-host/src/test_cmd/interrupt.rs"
+        };
         let old = [
             "base-component",
             "dev-component",
