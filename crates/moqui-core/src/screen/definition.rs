@@ -108,8 +108,12 @@ impl Actions {
         }
     }
 
-    /// Run the actions in the thread's context.
+    /// Run the actions in the thread's context, under the scope a service call holds
+    /// ([`crate::context::ExecutionContext::keep_authz`]): a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()`
+    /// the block leaves on, by a throw or an early return, ends with it, and the rest of the render (later actions,
+    /// subscreens, widget finds) runs with the state it had before (SEC-RTE-92).
     pub fn run(&self) -> Result<(), Error> {
+        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
         self.prepared.run(&self.xml, None)
     }
 }
