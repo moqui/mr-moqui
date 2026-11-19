@@ -1156,6 +1156,33 @@ async fn dispatch_screen(
     // passed, the client went away) before a worker took it is not run
     let serve_factory = Arc::clone(&state.factory);
     let guard = Arc::clone(&state.guard);
+    // web protection again for the screen path the request reaches, once the worker has resolved it (SEC-WEB-81)
+    let reached_check = {
+        let guard = Arc::clone(&state.guard);
+        let raw_host = parts
+            .headers
+            .get(axum::http::header::HOST)
+            .and_then(|value| value.to_str().ok())
+            .or_else(|| parts.uri.authority().map(axum::http::uri::Authority::as_str))
+            .unwrap_or_default();
+        let host = crate::guard::request_host(raw_host);
+        let (method, path, headers) = (parts.method.to_string(), parts.uri.path().to_string(), parts.headers.clone());
+        Box::new(move |reached: &str| {
+            let refused = guard
+                .check_reached(client, &host, &method, &path, reached, &headers)
+                .err()?;
+            let response = refused.response;
+            let retry_after = response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse().ok());
+            Some(moqui_core::web::reached::PathRefusal {
+                status: response.status().as_u16(),
+                retry_after,
+            })
+        }) as moqui_core::web::reached::ReachedCheck
+    };
     let worker_trace = trace_context.clone();
     // a page past the screen facade's stream-threshold goes as it renders: its head comes first, then its body
     // (docs/ui/Screen-Output.md); a smaller one comes whole as the job's answer
@@ -1172,7 +1199,9 @@ async fn dispatch_screen(
         move || {
             let _trace = moqui_core::telemetry::attach(worker_trace);
             let sink = sink.map(|sink| Box::new(sink) as Box<dyn moqui_core::web::stream::OutputSink>);
-            let response = moqui_core::screen::serve_to(&serve_factory, web, sink);
+            let response = moqui_core::web::reached::with_reached_check(reached_check, || {
+                moqui_core::screen::serve_to(&serve_factory, web, sink)
+            });
             if moqui_core::web::take_auth_failure() {
                 guard.record(client, Event::AuthFailure);
             }

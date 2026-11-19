@@ -1185,6 +1185,58 @@ fn fop_sends_the_print_document_of_the_screen_as_pdf() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-WEB-81: a request's render asks the host's check with the transition it reached, whatever extra path, FOP
+/// prefix or render-mode extension it came by, and answers the check's refusal before the transition runs.
+#[test]
+fn the_host_is_asked_for_the_path_a_request_reached_and_its_refusal_is_answered() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-reached-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Form.xml"),
+        r#"<screen require-authentication="false">
+            <transition name="go" read-only="true">
+                <actions><script>ec.web.sendTextResponse('ran')</script></actions>
+                <default-response type="none"/>
+            </transition>
+            <widgets><label text="Form body"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let serve = |path: &str, refuse: bool| {
+        let seen = Arc::clone(&seen);
+        let check = Box::new(move |reached: &str| {
+            seen.lock().unwrap().push(reached.to_string());
+            refuse.then_some(crate::web::reached::PathRefusal {
+                status: 429,
+                retry_after: Some(7),
+            })
+        }) as crate::web::reached::ReachedCheck;
+        crate::web::reached::with_reached_check(check, || serve_at(&world.factory, request("GET", path), &root))
+    };
+    for path in ["/Form/go", "/Form/go/x/y", "/fop/Form/go", "/Form/go.text"] {
+        let response = serve(path, false);
+        // through the FOP servlet the transition's answer goes on to the PDF engine, which a test has not
+        if !path.starts_with("/fop/") {
+            assert_eq!(response.body_text(), "ran", "{path}");
+        }
+        assert_ne!(response.status, 429, "{path}");
+        let response = serve(path, true);
+        assert_eq!(response.status, 429, "{path}: {}", response.body_text());
+        assert_eq!(response.header("retry-after"), Some("7"), "{path}");
+    }
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen, vec!["/Form/go"; 8]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 mod anonymous;
 mod authc;
 mod boxes;

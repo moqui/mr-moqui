@@ -820,6 +820,20 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
     }
     check_web_settings(&info)?;
+    // the host's path rules and rate limits for the path the request reached, where that is not the path it was sent
+    // with: the FOP prefix, a search path, an alias, the extra path after a transition (SEC-WEB-81)
+    if job.enforce_request_checks {
+        if let Some(refused) = web::reached::refused(&info.reached_path()) {
+            web::send_json_error(
+                refused.status,
+                if refused.status == 429 { "too many requests" } else { "not found" },
+            );
+            if let Some(seconds) = refused.retry_after {
+                web::add_header("Retry-After", seconds.to_string());
+            }
+            return Ok(());
+        }
+    }
     // a shared device opens only its route group, before anything of the target runs (user/device.rs)
     user::device::check_route(&info)?;
     if job.enforce_request_checks && (redirect_to_https(factory, job, &info) || redirect_to_login(factory, job, &info)?)

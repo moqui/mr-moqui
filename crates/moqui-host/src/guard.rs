@@ -1070,6 +1070,52 @@ impl Guard {
         })
     }
 
+    /// The path rules and rate limits again, in the request's worker, for `reached`: the screen path the request
+    /// resolved to (`ScreenUrlInfo::reached_path`), which the path as sent does not show for the FOP servlet's prefix,
+    /// a `//name` search path, a `ScreenPathAlias` row, the extra path after a transition or a render-mode extension
+    /// (SEC-WEB-81). Only a rule or a limit that matched neither form [`Self::check`] read applies here, so no limit
+    /// counts a request twice; the client rules, the methods and the bans were applied there.
+    pub(crate) fn check_reached(
+        &self,
+        client: IpAddr,
+        host: &str,
+        method: &str,
+        path: &str,
+        reached: &str,
+        headers: &HeaderMap,
+    ) -> Result<(), Refused> {
+        if !self.conf().enabled || self.exempt(client, Some(host)) {
+            return Ok(());
+        }
+        let decoded = decode_path(path);
+        let resolved = screen_path(path);
+        let reached = decode_path(reached);
+        if reached.eq_ignore_ascii_case(&decoded) || reached.eq_ignore_ascii_case(&resolved) {
+            return Ok(());
+        }
+        let key = self.key(client);
+        let rule = self.conf().path_rules.iter().find_map(|rule| {
+            let only_reached = rule.hosts.matches(host)
+                && rule
+                    .globs
+                    .iter()
+                    .any(|glob| glob.matches(&reached) && !glob.matches(&decoded) && !glob.matches(&resolved));
+            only_reached.then(|| rule.label.clone())
+        });
+        if let Some(rule) = rule {
+            return Err(self.deny(key, client, &rule, refusal(404, "not found", false, None)));
+        }
+        if self.conf().rate_limits.is_empty() || self.ci_token_exempt(host, path, headers) {
+            return Ok(());
+        }
+        let credentials = has_credentials(headers);
+        self.limit(key, client, |limit| {
+            limit.applies(host, method, &reached, credentials)
+                && !limit.applies(host, method, &decoded, credentials)
+                && !limit.applies(host, method, &resolved, credentials)
+        })
+    }
+
     /// Count a request of `client` against each rate limit `applies` picks: a 429 past one's burst (which then takes
     /// nothing from the others), and a 503 when the table is full with no idle client to drop.
     fn limit(&self, key: IpAddr, client: IpAddr, applies: impl Fn(&RateLimit) -> bool) -> Result<(), Refused> {
