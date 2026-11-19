@@ -404,8 +404,9 @@ impl Mapping {
 
     /// [`Self::validate`], and what only the entity definitions tell: a view over a restricted entity as the source,
     /// the target (also an entity-auto service's) or a lookup; and a source condition, a target's match field, or a
-    /// lookup's match or result field that is a field no mapping reads ([`super::access::hidden_fields_of`]: a password field, by name or as a
-    /// view's alias of one, or an encrypted field), so neither answers one nor matches on one.
+    /// lookup's match or result field that is a field no mapping reads ([`super::access::hidden_fields_of`]: a
+    /// password field, by name or as a view's alias of one, or an encrypted field), so none answers one or matches on
+    /// one.
     ///
     /// # Errors
     ///
