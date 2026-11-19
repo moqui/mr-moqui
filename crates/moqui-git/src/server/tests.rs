@@ -1753,7 +1753,7 @@ fn a_planned_pack_holds_what_the_client_lacks() {
 }
 
 /// A commit of `branch` with one file of `text`.
-fn commit_on(store: &MemoryStore, branch: &str, text: &str) -> gix::ObjectId {
+pub(crate) fn commit_on(store: &MemoryStore, branch: &str, text: &str) -> gix::ObjectId {
     let blob = store.write(Kind::Blob, text.as_bytes()).unwrap();
     let edits = vec![Edit::Put(vec!["f.txt".into()], gix::objs::tree::EntryKind::Blob, blob)];
     let author = Author {
@@ -1839,9 +1839,9 @@ fn a_fetch_unshallows_only_commits_its_readers_read() {
 
 /// A store that counts the objects read from it.
 #[derive(Debug, Default)]
-struct CountedStore {
-    inner: MemoryStore,
-    reads: std::sync::atomic::AtomicUsize,
+pub(crate) struct CountedStore {
+    pub(crate) inner: MemoryStore,
+    pub(crate) reads: std::sync::atomic::AtomicUsize,
 }
 
 impl GitStore for CountedStore {

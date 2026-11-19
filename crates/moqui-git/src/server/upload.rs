@@ -227,8 +227,12 @@ struct Negotiation<'a> {
     /// How many common commits there were when [`Negotiation::ok_to_give_up`] last answered no: until another is
     /// acknowledged the answer stays no, so a have that is not common costs no walk (SEC-GIT-83).
     refused_at: Option<usize>,
-    /// The commits the walks of this negotiation read, at most [`MOST_COMMITS_WALKED`].
+    /// The commits the walks of this negotiation read, at most `most_walked` ([`MOST_COMMITS_WALKED`]).
     walked: usize,
+    most_walked: usize,
+    /// Haves the store has that the readers do not read: answered not common again without asking `readable`, which
+    /// reads the refs (SEC-GIT-83).
+    not_common: HashSet<ObjectId>,
 }
 
 /// The most commits the `ok_to_give_up` walks of one negotiation read. Past it the server gives up as git does when the
@@ -251,6 +255,8 @@ impl<'a> Negotiation<'a> {
             satisfied: HashSet::new(),
             refused_at: None,
             walked: 0,
+            most_walked: MOST_COMMITS_WALKED,
+            not_common: HashSet::new(),
         }
     }
 
@@ -262,7 +268,11 @@ impl<'a> Negotiation<'a> {
             return Ok(false);
         };
         // a client's haves are commits: a tag object's id is not answered through the commit it names
-        if commit != id || (!self.have_set.contains(&commit) && !(self.readable)(&[commit])?.contains(&commit)) {
+        if commit != id || self.not_common.contains(&commit) {
+            return Ok(false);
+        }
+        if !self.have_set.contains(&commit) && !(self.readable)(&[commit])?.contains(&commit) {
+            self.not_common.insert(commit);
             return Ok(false);
         }
         if self.have_set.insert(commit) {
@@ -280,7 +290,7 @@ impl<'a> Negotiation<'a> {
         let Some(oldest) = self.oldest_have else {
             return Ok(false);
         };
-        if self.walked >= MOST_COMMITS_WALKED {
+        if self.walked >= self.most_walked {
             return Ok(true);
         }
         if self.refused_at == Some(self.haves.len()) {
@@ -307,10 +317,11 @@ impl<'a> Negotiation<'a> {
                     break;
                 }
                 self.walked += 1;
-                if self.walked >= MOST_COMMITS_WALKED {
+                if self.walked >= self.most_walked {
                     tracing::warn!(
-                        "git upload-pack: a negotiation walked {MOST_COMMITS_WALKED} commits; sending the pack for the \
-                         {} common commits acknowledged",
+                        "git upload-pack: a negotiation walked {} commits; sending the pack for the {} common commits \
+                         acknowledged",
+                        self.most_walked,
                         self.haves.len()
                     );
                     return Ok(true);
@@ -812,3 +823,7 @@ fn fetch_v2(
     pktline::text(out, "packfile").map_err(io_error)?;
     sender.pack(&request, &negotiation.haves, &info, &grafts, out, Some(MAX_BAND_64K))
 }
+
+#[cfg(test)]
+#[path = "upload_tests.rs"]
+mod tests;
