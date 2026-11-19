@@ -101,43 +101,6 @@ fn a_limit_and_a_path_rule_match_the_screen_path_a_request_reaches() {
     assert_eq!(status(&guard, "203.0.113.16", "GET", "/tools-not/x"), 200);
 }
 
-/// SEC-WEB-81: the worker asks again with the screen path a request reached, and a limit or a path rule that only that
-/// path matches applies then; one the path as sent matched is not counted twice.
-#[test]
-fn a_limit_and_a_path_rule_apply_to_the_path_the_worker_reached() {
-    let guard = guard(
-        r#"<web-protection enabled="true">
-                <rate-limit name="login" path="/Login/**" methods="POST" requests="1" seconds="60" burst="1"/>
-                <rate-limit name="submit" path="/r/*/submit" methods="POST" requests="1" seconds="60" burst="1"/>
-                <path-rule name="tools" action="deny" path="/apps/tools/**"/>
-            </web-protection>"#,
-        "",
-    );
-    let reached = |client: &str, path: &str, reached: &str| {
-        let client = ip(client);
-        match guard.check_reached(client, "", "POST", path, reached, &HeaderMap::new()) {
-            Ok(()) => 200,
-            Err(refused) => refused.response.status().as_u16(),
-        }
-    };
-    for (client, path, to) in [
-        ("203.0.113.21", "/fop/Login/login", "/Login/login"),
-        ("203.0.113.22", "/r/tok/submit/x", "/r/tok/submit"),
-        ("203.0.113.23", "/fop/Login/login.json", "/Login/login"),
-    ] {
-        assert_eq!(status(&guard, client, "POST", path), 200, "{path}");
-        assert_eq!(reached(client, path, to), 200, "{path}");
-        assert_eq!(status(&guard, client, "POST", path), 200, "{path}");
-        assert_eq!(reached(client, path, to), 429, "{path}");
-    }
-    // the path as sent was counted at the edge: the same path reached is not counted again
-    assert_eq!(status(&guard, "203.0.113.24", "POST", "/Login/login"), 200);
-    assert_eq!(reached("203.0.113.24", "/Login/login", "/Login/login"), 200);
-    assert_eq!(reached("203.0.113.24", "/Login/./login", "/Login/login"), 200);
-    assert_eq!(status(&guard, "203.0.113.25", "GET", "//tools/x"), 200);
-    assert_eq!(reached("203.0.113.25", "//tools/x", "/apps/tools/x"), 404);
-}
-
 #[test]
 fn a_rate_limit_answers_429_past_its_burst_and_only_where_it_applies() {
     let guard = guard(

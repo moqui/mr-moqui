@@ -1072,8 +1072,9 @@ impl Guard {
         })
     }
 
-    /// The path rules and rate limits again, in the request's worker, for `reached`: the screen path the request
-    /// resolved to (`ScreenUrlInfo::reached_path`), which the path as sent does not show for the FOP servlet's prefix,
+    /// The path rules and rate limits again, in the request's worker, for `reached`: the screen paths the request
+    /// resolved to (`ScreenUrlInfo::reached_path` under a token route's base, and with the extra path after a
+    /// transition), which the path as sent does not show for the FOP servlet's prefix,
     /// a `//name` search path, a `ScreenPathAlias` row, the extra path after a transition or a render-mode extension
     /// (SEC-WEB-81). Only a rule or a limit that matched neither form [`Self::check`] read applies here, so no limit
     /// counts a request twice; the client rules, the methods and the bans were applied there.
@@ -1083,7 +1084,7 @@ impl Guard {
         host: &str,
         method: &str,
         path: &str,
-        reached: &str,
+        reached: &[String],
         headers: &HeaderMap,
     ) -> Result<(), Refused> {
         if !self.conf().enabled || self.exempt(client, Some(host)) {
@@ -1091,17 +1092,22 @@ impl Guard {
         }
         let decoded = decode_path(path);
         let resolved = screen_path(path);
-        let reached = decode_path(reached);
-        if reached.eq_ignore_ascii_case(&decoded) || reached.eq_ignore_ascii_case(&resolved) {
+        let reached: Vec<String> = reached
+            .iter()
+            .map(|reached| decode_path(reached))
+            .filter(|reached| !reached.eq_ignore_ascii_case(&decoded) && !reached.eq_ignore_ascii_case(&resolved))
+            .collect();
+        if reached.is_empty() {
             return Ok(());
         }
         let key = self.key(client);
         let rule = self.conf().path_rules.iter().find_map(|rule| {
             let only_reached = rule.hosts.matches(host)
-                && rule
-                    .globs
-                    .iter()
-                    .any(|glob| glob.matches(&reached) && !glob.matches(&decoded) && !glob.matches(&resolved));
+                && rule.globs.iter().any(|glob| {
+                    reached.iter().any(|reached| glob.matches(reached))
+                        && !glob.matches(&decoded)
+                        && !glob.matches(&resolved)
+                });
             only_reached.then(|| rule.label.clone())
         });
         if let Some(rule) = rule {
@@ -1112,7 +1118,7 @@ impl Guard {
         }
         let credentials = has_credentials(headers);
         self.limit(key, client, |limit| {
-            limit.applies(host, method, &reached, credentials)
+            reached.iter().any(|reached| limit.applies(host, method, reached, credentials))
                 && !limit.applies(host, method, &decoded, credentials)
                 && !limit.applies(host, method, &resolved, credentials)
         })

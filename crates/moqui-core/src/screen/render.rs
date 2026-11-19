@@ -820,10 +820,17 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
     }
     check_web_settings(&info)?;
-    // the host's path rules and rate limits for the path the request reached, where that is not the path it was sent
-    // with: the FOP prefix, a search path, an alias, the extra path after a transition (SEC-WEB-81)
     if job.enforce_request_checks {
-        if let Some(refused) = web::reached::refused(&info.reached_path()) {
+        // a transition runs only at its own path: not through the FOP servlet, which renders screens to PDF, and not
+        // with names after it that it declares no path-parameter for, but a read-only one and one under a screen that
+        // takes extra path, as the REST and menu-data transitions do (SEC-WEB-81)
+        if let Some(reason) = refused_transition_path(job, &info) {
+            web::send_json_error(404, reason);
+            return Ok(());
+        }
+        // the host's path rules and rate limits for the path the request reached, where that is not the path it was
+        // sent with: the FOP prefix, a search path, an alias, a token route's base, the extra path after a transition
+        if let Some(refused) = web::reached::refused(&reached_paths(&facade, &info)) {
             let text = if refused.status == 429 {
                 "too many requests"
             } else {
@@ -1785,6 +1792,49 @@ impl Drop for Frames {
 enum Step {
     Sent,
     Respond(ResponseDef),
+}
+
+/// Why a request to a transition is refused at its path, or `None` (SEC-WEB-81): through the FOP servlet (`/fop`), whose
+/// renders are screens, or with extra path names that a transition with no `path-parameter` would ignore, which paths a
+/// rule or a limit of the host's web protection would not match. A read-only transition (the REST and menu-data ones,
+/// which read the extra path as their own resource path) and one under a screen with `allow-extra-path` keep it.
+fn refused_transition_path(job: &Job<'_>, info: &ScreenUrlInfo) -> Option<&'static str> {
+    info.target_transition_name.as_ref()?;
+    if job.render_mode == Some("xsl-fo") {
+        return Some("a transition does not run through the FOP servlet");
+    }
+    if info.extra_path.is_empty() || info.target_screen.allow_extra_path {
+        return None;
+    }
+    let transition = info.transition(Some(job.method))?;
+    (!transition.read_only && transition.path_parameters.is_empty()).then_some("screen path not found")
+}
+
+/// The paths the host's web protection is asked about for a request that reached `info` (SEC-WEB-81): its reached path
+/// ([`ScreenUrlInfo::reached_path`]) under the link prefix of the render (a token route's `/<name>/<token>`, whose screen
+/// is the root), and after a transition that path with its extra path too, the last name's render-mode extension taken
+/// off, so a limit on a REST resource (`/rest/s1/...`) matches it through the FOP servlet or with an extension.
+fn reached_paths(facade: &ScreenFacade, info: &ScreenUrlInfo) -> Vec<String> {
+    let prefix = web::link_prefix();
+    let reached = info.reached_path();
+    let reached = if prefix.is_empty() {
+        reached
+    } else {
+        format!("{prefix}{}", reached.trim_end_matches('/'))
+    };
+    let mut paths = vec![reached.clone()];
+    if info.target_transition_name.is_some() && !info.extra_path.is_empty() {
+        let mut extra = info.extra_path.clone();
+        if let Some(last) = extra.last_mut() {
+            if let Some((before, mode)) = last.rsplit_once('.') {
+                if !before.is_empty() && facade.is_render_mode_valid(mode) {
+                    *last = before.to_string();
+                }
+            }
+        }
+        paths.push(format!("{}/{}", reached.trim_end_matches('/'), extra.join("/")));
+    }
+    paths
 }
 
 /// The methods a screen renders for.

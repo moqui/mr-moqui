@@ -182,3 +182,48 @@ fn rejected_stream_login_keys_count_toward_the_client_ban() {
         assert_eq!(status, 403, "{path}");
     }
 }
+
+/// SEC-WEB-81: a rate limit and a path rule apply to the screen path a request reached, not only the path it came with:
+/// a token route's transition with extra path after it (`/tk/<token>/files/x` is `/tk/<token>/files`), and a screen
+/// through the FOP servlet (`/fop/apps/tools` is `/apps/tools`); a transition through the FOP servlet is not found.
+#[test]
+fn a_limit_and_a_rule_apply_to_the_path_a_request_reached() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let token = crate::common::LINK_TOKEN;
+    let data = format!(
+        r#"<entity-facade-xml type="seed">
+    <moqui.resource.ResourceDrive driveId="WPD" driveName="Reached drive" driveKindEnumId="RdkShared" rootLocation="dbresource://reacheddrive"
+            ownerUserId="EX_JOHN_DOE"/>
+    <moqui.resource.DbResource resourceId="WPR1" filename="reacheddrive" isFile="N"/>
+    <moqui.resource.ResourceShare shareId="WPS1" driveId="WPD" path="" isDirectory="Y" isLink="Y" linkTokenHash="{}"
+            permissionEnumId="RspView" note="For the guard" createdByUserId="EX_JOHN_DOE" openedCount="0"/>
+</entity-facade-xml>"#,
+        moqui_core::user::single_use_hash(token).unwrap()
+    );
+    let conf = r#"<webapp-list><webapp name="webroot" client-ip-header="X-Forwarded-For" trusted-proxies="127.0.0.1">
+        <token-route name="tk" screen-location="component://example/screen/PublicLink.xml"
+            token-service="org.moqui.resource.FileServices.check#PublicShareToken"/>
+        <web-protection>
+            <rate-limit name="all" enabled="false"/>
+            <rate-limit name="files" path="/tk/*/files" requests="1" seconds="60" burst="1"/>
+            <path-rule name="tools" action="deny" path="/apps/tools/**"/>
+        </web-protection>
+    </webapp></webapp-list>"#;
+    let gate = crate::common::start_with_conf_properties("web-protection-reached", Some(&data), conf, &[]);
+    let address = gate.server.address();
+    let send = |method: &str, path: &str, client: &str| {
+        exchange(address, &http_request(method, path, &[("X-Forwarded-For", client)], ""))
+    };
+    let (status, _, body) = send("GET", &format!("/tk/{token}/files"), "203.0.113.70");
+    assert_eq!(status, 200, "{body}");
+    let (status, headers, body) = send("GET", &format!("/tk/{token}/files/x"), "203.0.113.70");
+    assert_eq!(status, 429, "{body}");
+    assert!(header(&headers, "retry-after").is_some(), "{headers:?}");
+    // the screen through the FOP servlet meets the rule of the screen
+    let (status, _, body) = send("GET", "/fop/apps/tools", "203.0.113.71");
+    assert_eq!(status, 404, "{body}");
+    let (status, _, body) = send("POST", "/fop/Login/login", "203.0.113.72");
+    assert_eq!(status, 404, "{body}");
+}

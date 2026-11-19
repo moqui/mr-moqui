@@ -1185,7 +1185,7 @@ async fn dispatch_screen(
             parts.uri.path().to_string(),
             parts.headers.clone(),
         );
-        Box::new(move |reached: &str| {
+        Box::new(move |reached: &[String]| {
             let refused = guard
                 .check_reached(client, &host, &method, &path, reached, &headers)
                 .err()?;
