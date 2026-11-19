@@ -668,7 +668,7 @@ moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
 | `database` | `moqui` | |
 | `schema-name` | | Empty for the default schema |
 | `user`, `password` | `moqui`, ... | |
-| `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+| `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only and needs `sslrootcert` (it trusts that file alone, as libpq does; without it the connection is refused), `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
 | `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 
 `entity-facade@crypt-pass` (`moqui_conf__entity_facade__crypt_pass`), generated at the first start, is the key of
