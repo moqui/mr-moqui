@@ -256,6 +256,22 @@ fn the_dkim_domains_are_by_role_and_an_all_in_one_nodes_are_both_sides() {
     assert!(role_domains(NodeRole::Normal, own, fails).is_ok());
     assert!(role_domains(NodeRole::FrontEdge, fails, replicated).is_ok());
     assert!(role_domains(NodeRole::AllInOne, own, fails).is_err());
+    // SEC-MAIL-82: a hosted kind whose copied server has an incoming host elsewhere is a user's own, not signed for
+    let stored = vec![
+        ReplicaValue {
+            fields: serde_json::json!({"emailAddress": "me@stored.example", "accountKindEnumId": "EakHosted",
+                "emailServerId": "S9"}),
+            ..copy("4", "", "")
+        },
+        ReplicaValue {
+            entity_name: "moqui.basic.email.EmailServer".to_string(),
+            pk: serde_json::json!({"emailServerId": "S9"}),
+            fields: serde_json::json!({"storeHost": "imap.stored.example"}),
+            ..copy("", "", "")
+        },
+        copy("5", "ok@delivered.example", "EakHosted"),
+    ];
+    assert_eq!(replicated_addresses(&stored), ["ok@delivered.example"]);
 }
 
 #[test]

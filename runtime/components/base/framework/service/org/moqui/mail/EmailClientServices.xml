@@ -5127,6 +5127,41 @@ along with this software (see the LICENSE.md file). If not, see
                     'An address of ${domain}, a domain this server signs mail for, is given to an identity only by a mail administrator'), '', {domain}))
         ]]></script></actions>
     </service>
+    <service verb="get" noun="IdentityAccess" allow-remote="false">
+        <description>The level at which the current user changes the identities of an account: get#EmailAccountAccess's,
+            or for a mail administrator (EMAIL_ACCOUNT_HOSTED) manage on an account delivered here (hosted or shared, its
+            server with no incoming host), so the administrator adds an alias of a hosted domain without reaching the
+            account's mail (plans/Security-Review-Medium.md SEC-MAIL-82). accountAddress and isInternal are the
+            account's when level is 1 or more.</description>
+        <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="level" type="Integer"/>
+            <parameter name="accountAddress"/>
+            <parameter name="isInternal" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess')
+                    .parameter('emailAccountId', emailAccountId).call()
+            if (ec.message.hasError()) return
+            level = access.level || 0
+            accountAddress = access.account ? (access.account.emailAddress ?? null) : null
+            isInternal = !!(access.account && access.account.isInternal)
+            if (level >= 3 || !ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')) return
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const account = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', emailAccountId).one()
+                if (!account || !['EakHosted', 'EakShared'].includes(account.accountKindEnumId) || account.statusId === 'EasRemoved') return
+                const server = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer')
+                        .condition('emailServerId', account.emailServerId).one() : null
+                if (server && server.storeHost) return
+                level = 3
+                accountAddress = account.emailAddress ?? null
+                isInternal = false
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
     <service verb="create" noun="EmailIdentity">
         <description>An address an account sends as (manage permission); isDefault makes it the account's default. An
             address of a domain this server signs mail for is a mail administrator's to give (check#IdentityAddress).</description>
@@ -5142,14 +5177,14 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="emailIdentityId"/></out-parameters>
         <actions><script><![CDATA[
-            const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess')
+            const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#IdentityAccess')
                     .parameter('emailAccountId', emailAccountId).call()
             if (ec.message.hasError()) return
             if (!(access.level >= 1)) { ec.message.addError(`Email account ${emailAccountId} not found`); return }
             if (access.level < 3) { ec.message.addError(`You may not add identities to email account ${emailAccountId}`); return }
-            if (access.account.isInternal) { ec.message.addError(ec.l10n.localize('The Internal account sends as the user')); return }
+            if (access.isInternal) { ec.message.addError(ec.l10n.localize('The Internal account sends as the user')); return }
             ec.service.sync().name('org.moqui.mail.EmailClientServices.check#IdentityAddress')
-                    .parameters({emailAddress, accountAddress: access.account.emailAddress}).call()
+                    .parameters({emailAddress, accountAddress: access.accountAddress}).call()
             if (ec.message.hasError()) return
             const others = Array.from(ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailAccountId', emailAccountId).list())
             const makeDefault = isDefault || others.length === 0
@@ -5177,15 +5212,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="isDefault" type="Boolean"/>
         </in-parameters>
         <actions><script><![CDATA[
-            const identity = ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailIdentityId', emailIdentityId).one()
-            const access = identity ? ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess')
+            const identity = ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailIdentityId', emailIdentityId).disableAuthz().one()
+            const access = identity ? ec.service.sync().name('org.moqui.mail.EmailClientServices.get#IdentityAccess')
                     .parameter('emailAccountId', identity.emailAccountId).call() : {level: 0}
             if (ec.message.hasError()) return
             if (!(access.level >= 1)) { ec.message.addError(`Email identity ${emailIdentityId} not found`); return }
             if (access.level < 3) { ec.message.addError(`You may not change email identity ${emailIdentityId}`); return }
-            if (emailAddress != null) {
+            // an address given as it is (a form passes it with every change) is not checked again: only a new one is
+            const sameAddress = emailAddress != null && String(emailAddress).trim().toLowerCase() === String(identity.emailAddress || '').trim().toLowerCase()
+            if (emailAddress != null && !sameAddress) {
                 ec.service.sync().name('org.moqui.mail.EmailClientServices.check#IdentityAddress')
-                        .parameters({emailAddress, accountAddress: access.account.emailAddress}).call()
+                        .parameters({emailAddress, accountAddress: access.accountAddress}).call()
                 if (ec.message.hasError()) return
                 identity.set('emailAddress', emailAddress)
             }

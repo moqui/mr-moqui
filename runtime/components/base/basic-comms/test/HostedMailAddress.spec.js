@@ -145,9 +145,21 @@ feature("an identity of a hosted domain's address is a mail administrator's to g
         const elsewhere = identity(USER, external, `alias-${run}@elsewhere.example.invalid`)
         const changed = as(USER, "update#EmailIdentity", { emailIdentityId: elsewhere.emailIdentityId, emailAddress: ceo })
         const byHolder = identity(HOLDER, held, ceo)
-        return { external, hosted, onExternal, onHosted, own, elsewhere, changed, byHolder }
+        // a mail administrator adds an alias to the user's account delivered here (not one of another server), and
+        // the user changes its name with its address given as it is
+        const alias = `alias-${run}@hosted.example.invalid`
+        const holderOnUsers = identity(HOLDER, hosted, alias)
+        const holderOnExternal = identity(HOLDER, external, `other-${run}@hosted.example.invalid`)
+        const renamed = as(USER, "update#EmailIdentity", { emailIdentityId: holderOnUsers.emailIdentityId,
+            emailAddress: alias.toUpperCase(), displayName: "Renamed" })
+        const kept = sys(() => ec.entity.find("moqui.basic.email.EmailIdentity").condition("emailIdentityId", holderOnUsers.emailIdentityId).one())
+        return { external, hosted, onExternal, onHosted, own, elsewhere, changed, byHolder, holderOnUsers, holderOnExternal, renamed, kept, alias }
     },
-    then({ external, hosted, onExternal, onHosted, own, elsewhere, changed, byHolder }) {
+    then({ external, hosted, onExternal, onHosted, own, elsewhere, changed, byHolder, holderOnUsers, holderOnExternal, renamed, kept, alias }) {
+        holderOnUsers.error == "" && !!holderOnUsers.emailIdentityId
+        holderOnExternal.error.includes("not found")
+        renamed.error == ""
+        kept.displayName == "Renamed" && kept.emailAddress == alias
         external.error == "" && hosted.error == ""
         onExternal.error.includes("mail administrator")
         onHosted.error.includes("mail administrator")
