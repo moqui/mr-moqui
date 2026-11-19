@@ -1048,3 +1048,25 @@ feature("a notification contact reaches another user, a group or another topic o
         own == ""
     }
 })
+
+feature("an owner-mode schedule whose owner lacks the group delivery grant sends nothing at its run (SEC-TLS-105)", {
+    when() {
+        const saved = as("rda.other", "save#Definition", {definition: {id: "rda-other-board", type: "dashboard",
+            title: "Other board", body: {panels: {}}}})
+        // a row made with the grant since taken away: written as the framework, the grant asked at its run
+        sys(() => {
+            make("moqui.screen.ScreenScheduled", {screenScheduledId: "RDA_OWNER_MODE", screenPath: "/apps/dashboards/Reports",
+                reportDefinitionId: "rda-other-board", reportOwnerId: "RDA_OTHER", paused: "N", noResultsAbort: "Y",
+                renderMode: "csv", cronExpression: "0 0 6 ? * MON", emailTemplateId: "RDA_REPORT", userId: "RDA_EQUAL"})
+            make("moqui.screen.ScreenScheduledLock", {screenScheduledId: "RDA_OWNER_MODE"})
+        })
+        capture.clear()
+        const sent = as("rda.other", "send#Report", {screenScheduledId: "RDA_OWNER_MODE"})
+        return {saved: saved.error || "", sent: sent.error || JSON.stringify(sent.out || {}), messages: capture.count()}
+    },
+    then({saved, sent, messages}) {
+        saved == ""
+        sent.includes("GROUP_DELIVERY_DENIED")
+        messages == 0
+    }
+})

@@ -1372,6 +1372,21 @@ pub(crate) fn deliver(
             .get("reportDefinitionId")
             .and_then(Value::as_str)
             .ok_or_else(|| fail("report definition missing"))?;
+        // an owner-mode schedule reaches anyone but its owner only while the owner holds the group delivery grant, as
+        // send_each asks; refused before anything is rendered or sent (SEC-TLS-105)
+        let owner_name = account.get("username").and_then(Value::as_str).unwrap_or("");
+        if !business
+            && delivers_to_others(
+                owner,
+                schedule.get("userId").and_then(Value::as_str).unwrap_or(""),
+                schedule.get("userGroupId").and_then(Value::as_str).unwrap_or(""),
+            )
+            && !crate::delivery::holds_as(ec, owner_name, crate::delivery::GROUP_ARTIFACT, "create")
+        {
+            return Err(fail(
+                "GROUP_DELIVERY_DENIED: the schedule's owner may not deliver a report to other users",
+            ));
+        }
         let rendered = render(
             &context,
             definition_id,
@@ -1472,19 +1487,6 @@ pub(crate) fn deliver(
                 )
             } else {
                 (|| -> Result<Vec<String>, Error> {
-                    // the owner's result goes to others only while the owner holds the group delivery grant, as
-                    // send_each asks (SEC-TLS-105)
-                    let owner_name = account.get("username").and_then(Value::as_str).unwrap_or("");
-                    if delivers_to_others(
-                        owner,
-                        schedule.get("userId").and_then(Value::as_str).unwrap_or(""),
-                        schedule.get("userGroupId").and_then(Value::as_str).unwrap_or(""),
-                    ) && !crate::delivery::holds_as(ec, owner_name, crate::delivery::GROUP_ARTIFACT, "create")
-                    {
-                        return Err(fail(
-                            "GROUP_DELIVERY_DENIED: the schedule's owner may not deliver a report to other users",
-                        ));
-                    }
                     let mut recipients = Vec::new();
                     let _authz = context.disable_authz();
                     if let Some(user) = schedule.get("userId").and_then(Value::as_str) {
