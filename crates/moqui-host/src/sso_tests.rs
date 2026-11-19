@@ -231,6 +231,8 @@ impl Keys {
 struct Idp {
     issuer: String,
     id_token: Arc<Mutex<String>>,
+    /// What its user info endpoint answers: the ID token's subject unless a test says otherwise.
+    user_info: Arc<Mutex<String>>,
 }
 
 impl Idp {
@@ -238,10 +240,12 @@ impl Idp {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
         let id_token = Arc::new(Mutex::new(String::new()));
+        let user_info = Arc::new(Mutex::new(json!({"sub": "proof-user"}).to_string()));
         let discovery = json!({
             "issuer": issuer,
             "authorization_endpoint": format!("{issuer}/authorize"),
             "token_endpoint": format!("{issuer}/token"),
+            "userinfo_endpoint": format!("{issuer}/userinfo"),
             "jwks_uri": format!("{issuer}/jwks"),
             "response_types_supported": ["code"],
             "subject_types_supported": ["public"],
@@ -256,9 +260,11 @@ impl Idp {
         ]})
         .to_string();
         let next = Arc::clone(&id_token);
+        let info = Arc::clone(&user_info);
         serve(listener, move |path| match path {
             "/.well-known/openid-configuration" => Some(discovery.clone()),
             "/jwks" => Some(jwks.clone()),
+            "/userinfo" => Some(info.lock().unwrap().clone()),
             "/token" => Some(
                 json!({
                     "access_token": "proof-access-token", "token_type": "Bearer", "expires_in": 300,
@@ -268,7 +274,11 @@ impl Idp {
             ),
             _ => None,
         });
-        Self { issuer, id_token }
+        Self {
+            issuer,
+            id_token,
+            user_info,
+        }
     }
 
     fn flow(&self, auth_flow_id: &str) -> FlowConfig {
@@ -761,4 +771,26 @@ fn a_user_info_answer_is_taken_only_for_the_id_tokens_subject() {
         assert!(err.to_string().contains("not for the ID token's subject"), "{err}");
     }
     assert!(same_subject("F", Some(&sub("u1")), Some(&json!(1))).is_err());
+
+    // through the real start and callback: another subject's user info refuses the sign-in, the ID token's own is
+    // merged into the profile
+    let keys = Keys::new();
+    let sso = HuskarlSso::default();
+    let idp = Idp::start(&["ES256"], &keys);
+    let flow = idp.flow("PROOF_USER_INFO");
+    let es256 = |claims: &Json| {
+        jws(&json!({"alg": "ES256", "kid": "k1", "typ": "JWT"}), claims, |input| {
+            es256_sign(&keys.es256, input)
+        })
+    };
+    *idp.user_info.lock().unwrap() = json!({"sub": "someone-else", "email": "other@example.com"}).to_string();
+    let (started, callback) = idp.begin(&sso, &flow, es256);
+    let err = sso.complete(&flow, &started.pending, &callback).unwrap_err();
+    assert!(err.to_string().contains("not for the ID token's subject"), "{err}");
+    *idp.user_info.lock().unwrap() = json!({"sub": "proof-user", "zoneinfo": "Europe/Oslo"}).to_string();
+    let taken = idp.sign_in(&sso, &flow, es256);
+    assert_eq!(
+        taken.attributes.get("zoneinfo").map(moqui_lib::object::to_plain_string).as_deref(),
+        Some("Europe/Oslo")
+    );
 }
