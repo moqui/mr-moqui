@@ -959,7 +959,10 @@ pub(crate) fn get_etl_mapping(
 }
 
 /// Save `mapping` (an inline map) as `EtlMapping` and its `EtlMappingField` rows, its fields replaced. A new mapping
-/// gets an id. Returns the id.
+/// gets an id. Returns the id. Whoever saves a mapping owns it: a `DATABASE_ADMIN` holder who changes another user's
+/// mapping becomes its owner, so a scheduled run (which signs in as the owner, [`sign_in_owner`]) never runs what
+/// another user wrote under the old owner's permissions, and the old owner's jobs refuse it until the new owner is a
+/// user of them (SEC-TLS-103).
 fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibError> {
     let user_id = moqui_core::user::current_user_id().ok().flatten();
     let Value::Map(map) = mapping.to_value() else {
@@ -974,7 +977,19 @@ fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibE
         };
         let creating = existing.is_none();
         let mut row = match existing {
-            Some(row) => row,
+            Some(mut row) => {
+                let owner = row.get("ownerUserId").map(to_plain_string).unwrap_or_default();
+                if let Some(user) = user_id.as_ref().filter(|user| **user != owner) {
+                    tracing::info!(
+                        mapping = mapping.mapping_id.as_deref().unwrap_or_default(),
+                        from = owner,
+                        to = user.as_str(),
+                        "An ETL mapping saved by a user other than its owner is now that user's"
+                    );
+                    row.set("ownerUserId", Value::string(user));
+                }
+                row
+            }
             None => {
                 let mut row = facade.make_value(MAPPING)?;
                 match &mapping.mapping_id {
