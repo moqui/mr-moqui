@@ -1513,6 +1513,45 @@ fn a_mail_server_answer_past_its_time_fails_the_read() {
     assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
 }
 
+/// SEC-MAIL-85: a sync's session ends at its deadline (its lease) however its answers fall, each one under the answer
+/// time; the default answer time is longer than an IDLE's renewal and shorter than the lease.
+#[test]
+fn a_session_with_a_deadline_ends_there_whatever_its_answers() {
+    use std::io::{BufReader, Write};
+    let (ctx, _facade) = setup();
+    let _entered = ctx.enter();
+    let answer = crate::inbound::answer_time();
+    assert_eq!(answer, Duration::from_secs(660));
+    assert!(answer > Duration::from_secs(600) && answer < Duration::from_secs(15 * 60));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        // a line every 100 ms, for ten seconds: each answer is quick, the session is not
+        for _ in 0..100 {
+            if stream.write_all(b"* OK still here\r\n").is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut net = crate::inbound::Net::plain(tcp);
+    net.set_deadline(Some(Instant::now() + Duration::from_millis(500)));
+    let mut reader = BufReader::new(net);
+    let started = Instant::now();
+    let refused = loop {
+        match crate::inbound::read_line_bytes(&mut reader) {
+            Ok(_) => assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the session goes on past its deadline"
+            ),
+            Err(err) => break err,
+        }
+    };
+    assert!(refused.message().contains("the sync's lease"), "{}", refused.message());
+}
+
 pub(super) fn pop_log_has(pop: &FakePop, line: &str) -> bool {
     moqui_lib::sync::lock(&pop.log).iter().any(|known| known == line)
 }

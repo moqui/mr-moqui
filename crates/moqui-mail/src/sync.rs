@@ -116,6 +116,10 @@ pub(super) struct ServerInfo {
     pub(super) deny_internal: bool,
     /// For an EatOAuth2 server, the access token [`connect_imap`] signs in with (XOAUTH2).
     pub(super) access_token: Option<AccessToken>,
+    /// When a session on this server must end, its answers together (SEC-MAIL-85): a sync's lease, so the minute job
+    /// cannot start a second session on the account while one still reads; none for an IDLE worker, whose connection
+    /// stays open by design.
+    pub(super) session_deadline: Option<std::time::Instant>,
 }
 
 impl ServerInfo {
@@ -208,6 +212,7 @@ fn server_info(row: &EntityValue) -> Option<ServerInfo> {
         allow_plain: field_text(row, "storeAllowPlain") == "Y",
         deny_internal: super::implementation::private_network_denied(row),
         access_token: None,
+        session_deadline: None,
     })
 }
 
@@ -450,16 +455,33 @@ fn raw_line(stream: &mut TcpStream, until: std::time::Instant) -> Result<String,
 /// The most bytes of the answer to a command on a raw connection (CAPABILITY, STARTTLS), its lines together.
 const MAX_RAW_ANSWER: usize = 64 * 1024;
 
+/// When a sync's session started now must end: its lease, which the minute job waits out before it starts another
+/// session on the account (SEC-MAIL-85).
+fn session_deadline() -> std::time::Instant {
+    std::time::Instant::now() + std::time::Duration::from_millis(u64::try_from(LEASE_MILLIS).unwrap_or(0))
+}
+
+/// When an answer started now must end: after `email-client` `answer-timeout`, or at the session's deadline when sooner.
+fn answer_until(session: Option<std::time::Instant>) -> std::time::Instant {
+    let answer = std::time::Instant::now() + super::inbound::answer_time();
+    session.map_or(answer, |session| session.min(answer))
+}
+
 /// A command on a raw connection: the lines up to its tagged answer, which must be OK, at most [`MAX_RAW_ANSWER`]
-/// bytes of them.
-fn raw_command(stream: &mut TcpStream, tag: &str, command: &str) -> Result<Vec<String>, SyncFailure> {
+/// bytes of them, by [`answer_until`] of `session`.
+fn raw_command(
+    stream: &mut TcpStream,
+    tag: &str,
+    command: &str,
+    session: Option<std::time::Instant>,
+) -> Result<Vec<String>, SyncFailure> {
     stream
         .write_all(format!("{tag} {command}\r\n").as_bytes())
         .and_then(|()| stream.flush())
         .map_err(|err| SyncFailure::Connect(format!("writing to the mail server: {err}")))?;
     let mut lines = Vec::new();
     let mut bytes = 0usize;
-    let until = std::time::Instant::now() + super::inbound::answer_time();
+    let until = answer_until(session);
     loop {
         let line = raw_line(stream, until)?;
         bytes = bytes.saturating_add(line.len() + 2);
@@ -487,7 +509,8 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
         .map_err(|err| SyncFailure::Connect(err.to_string()))?;
     let socket = tcp.try_clone().ok();
     let client = if use_tls(&server.protocol, server.port) {
-        let net = wrap_tls(tcp, &server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?;
+        let mut net = wrap_tls(tcp, &server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?;
+        net.set_deadline(server.session_deadline);
         let mut client = imap::Client::new(net);
         let greeting = client
             .read_greeting()
@@ -502,18 +525,18 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
         client
     } else {
         let mut tcp = tcp;
-        let greeting = raw_line(&mut tcp, std::time::Instant::now() + super::inbound::answer_time())?;
+        let greeting = raw_line(&mut tcp, answer_until(server.session_deadline))?;
         if greeting.to_ascii_uppercase().starts_with("* BYE") {
             return Err(SyncFailure::Connect(format!(
                 "IMAP {} refused the connection: {greeting}",
                 server.host
             )));
         }
-        let capabilities = raw_command(&mut tcp, "s1", "CAPABILITY")?
+        let capabilities = raw_command(&mut tcp, "s1", "CAPABILITY", server.session_deadline)?
             .join(" ")
             .to_ascii_uppercase();
         let net = if capabilities.split_whitespace().any(|word| word == "STARTTLS") {
-            raw_command(&mut tcp, "s2", "STARTTLS")?;
+            raw_command(&mut tcp, "s2", "STARTTLS", server.session_deadline)?;
             wrap_tls(tcp, &server.host).map_err(|err| SyncFailure::Connect(err.to_string()))?
         } else if plain_allowed(&server.host, server.allow_plain) {
             if !is_loopback(&server.host) {
@@ -527,6 +550,8 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
         } else {
             return Err(SyncFailure::Connect(plain_refused("IMAP", &server.host, "STARTTLS")));
         };
+        let mut net = net;
+        net.set_deadline(server.session_deadline);
         imap::Client::new(net)
     };
     let mut session = sign_in(client, server)?;
@@ -1734,9 +1759,12 @@ fn imap_sync(
     Ok(())
 }
 
-/// A signed-in IMAP connection with CONDSTORE or QRESYNC turned on when the server offers them.
+/// A signed-in IMAP connection with CONDSTORE or QRESYNC turned on when the server offers them, which ends within the
+/// sync's lease ([`ServerInfo::session_deadline`]).
 fn open_session(facade: &EntityFacade, server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
-    let mut conn = connect_imap(facade, server)?;
+    let mut server = server.clone();
+    server.session_deadline = Some(session_deadline());
+    let mut conn = connect_imap(facade, &server)?;
     if conn.caps.has("QRESYNC") && conn.caps.has("ENABLE") {
         if conn.session.run_command_and_check_ok("ENABLE QRESYNC").is_ok() {
             conn.qresync = true;
@@ -2125,6 +2153,26 @@ fn search(conn: &mut ImapConn, query: &str) -> Result<Vec<u32>, imap::Error> {
     Ok(uids)
 }
 
+/// UIDs one flag fetch asks for (SEC-MAIL-85): a line of its answer is some 60 bytes, so a chunk's answer is a few MiB
+/// however large the folder, well under a connection's answer limit (`inbound::Net`).
+const FLAG_CHUNK: u32 = 50_000;
+
+/// The UID sets from `low` on, [`FLAG_CHUNK`] UIDs each up to `next` (the folder's UIDNEXT), the last open (`n:*`) so a
+/// message that came after the select is in it too; one open set without `next`.
+fn uid_chunks(low: u32, next: Option<u32>) -> Vec<String> {
+    let low = low.max(1);
+    let mut sets = Vec::new();
+    let mut from = low;
+    if let Some(next) = next {
+        while next > from && next - from > FLAG_CHUNK {
+            sets.push(format!("{from}:{}", from + FLAG_CHUNK - 1));
+            from += FLAG_CHUNK;
+        }
+    }
+    sets.push(format!("{from}:*"));
+    sets
+}
+
 /// What a new UID is to the rows already kept.
 enum Decision {
     /// This row is the message: it moved here, or it is a local copy waiting for its UID.
@@ -2346,13 +2394,14 @@ fn sync_folder(
             } else {
                 format!("(UID FLAGS) (CHANGEDSINCE {since})")
             };
-            let fetches = conn.session.uid_fetch("1:*", query)?;
-            for fetch in fetches.iter() {
-                if let Some(uid) = fetch.uid {
-                    flags.push((uid, FlagSet::of(fetch.flags())));
+            for set in uid_chunks(1, mailbox.uid_next) {
+                let fetches = conn.session.uid_fetch(set, &query)?;
+                for fetch in fetches.iter() {
+                    if let Some(uid) = fetch.uid {
+                        flags.push((uid, FlagSet::of(fetch.flags())));
+                    }
                 }
             }
-            drop(fetches);
             let mut vanished: Vec<(u32, u32)> = Vec::new();
             for response in conn.session.take_all_unsolicited() {
                 if let imap::types::UnsolicitedResponse::Vanished { uids, .. } = response {
@@ -2376,12 +2425,14 @@ fn sync_folder(
                 locals.extend(local_rows(session.facade, &folder.id)?);
                 all_loaded = true;
             }
-            let fetches = conn.session.uid_fetch(format!("{min_uid}:*"), "(UID FLAGS)")?;
             let mut present = HashSet::new();
-            for fetch in fetches.iter() {
-                if let Some(uid) = fetch.uid {
-                    present.insert(uid);
-                    flags.push((uid, FlagSet::of(fetch.flags())));
+            for set in uid_chunks(min_uid, mailbox.uid_next) {
+                let fetches = conn.session.uid_fetch(set, "(UID FLAGS)")?;
+                for fetch in fetches.iter() {
+                    if let Some(uid) = fetch.uid {
+                        present.insert(uid);
+                        flags.push((uid, FlagSet::of(fetch.flags())));
+                    }
                 }
             }
             gone.extend(locals.keys().copied().filter(|uid| !present.contains(uid)));
@@ -3124,6 +3175,7 @@ fn pop_sync(
         delete: server.store_delete,
         allow_plain: server.allow_plain,
         deny_internal: server.deny_internal,
+        session_deadline: Some(session_deadline()),
     };
     let mut pop = open_pop(facade, server, &settings)?;
     let total_folders = 1;
@@ -3379,8 +3431,29 @@ pub(super) fn sync_due_accounts(
 mod tests {
     use super::{
         decode_mutf7, encode_mutf7, expand_set, fetch_batches, header_message_id, imap_date, label_keyword,
-        remote_kind, uid_set, UNKNOWN_SIZE,
+        remote_kind, uid_chunks, uid_set, FLAG_CHUNK, UNKNOWN_SIZE,
     };
+
+    /// SEC-MAIL-85: a flag scan asks for at most FLAG_CHUNK UIDs at once up to UIDNEXT, the last set open so a message
+    /// that came after the select is in it; a folder within one chunk is one open set, as before.
+    #[test]
+    fn a_flag_scan_is_fetched_in_chunks_of_uids() {
+        assert_eq!(uid_chunks(1, Some(100)), ["1:*"]);
+        assert_eq!(uid_chunks(5, None), ["5:*"]);
+        assert_eq!(uid_chunks(0, Some(1)), ["1:*"]);
+        let chunk = FLAG_CHUNK;
+        assert_eq!(uid_chunks(1, Some(chunk + 1)), ["1:*"]);
+        assert_eq!(
+            uid_chunks(1, Some(2 * chunk + 2)),
+            [
+                format!("1:{chunk}"),
+                format!("{}:{}", chunk + 1, 2 * chunk),
+                format!("{}:*", 2 * chunk + 1)
+            ]
+        );
+        // 3 million UIDs: 60 chunks of a few MiB each instead of one answer of some 180 MB
+        assert_eq!(uid_chunks(1, Some(3_000_000)).len(), 60);
+    }
 
     /// Body fetches by count and by bytes; a message over the budget alone, one with no size counted as
     /// [`UNKNOWN_SIZE`] (HL-038).

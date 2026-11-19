@@ -114,6 +114,7 @@ pub(super) fn poll_server(
         delete: field_text(&server, "storeDelete") == "Y",
         allow_plain: field_text(&server, "storeAllowPlain") == "Y",
         deny_internal: private_network_denied(&server),
+        session_deadline: None,
     };
     let mut store = match open_store(&settings) {
         Ok(store) => store,
@@ -304,6 +305,7 @@ pub(super) fn store_steps(
         delete: false,
         allow_plain: field_text(server, "storeAllowPlain") == "Y",
         deny_internal: private_network_denied(server),
+        session_deadline: None,
     };
     // the connection the sync makes: TLS from the start on imaps or port 993, else STARTTLS when the server offers it
     // (without it, refused unless the server allows plain text or is on this machine)
@@ -319,6 +321,7 @@ pub(super) fn store_steps(
         allow_plain: settings.allow_plain,
         deny_internal: settings.deny_internal,
         access_token: None,
+        session_deadline: None,
     };
     // this server's own refusal of a store with no TLS is shown as it is; any other failure as its kind only
     let own = [plain_refused("POP3", &host, "STLS"), plain_refused("IMAP", &host, "STARTTLS")];
@@ -438,6 +441,8 @@ pub(super) struct StoreSettings {
     pub(super) allow_plain: bool,
     /// The server may reach no internal address (`implementation::private_network_denied`).
     pub(super) deny_internal: bool,
+    /// When the session must end, its answers together (`sync::ServerInfo::session_deadline`).
+    pub(super) session_deadline: Option<std::time::Instant>,
 }
 
 fn eca_fields(message: &Inbound, server_id: &str) -> BTreeMap<String, Value> {
@@ -693,6 +698,7 @@ impl ImapBox {
             allow_plain: settings.allow_plain,
             deny_internal: settings.deny_internal,
             access_token: None,
+            session_deadline: None,
         };
         let mut session = super::sync::open_imap(&info)
             .map_err(|err| Error::new(err.to_string()))?
@@ -874,12 +880,14 @@ impl Pop3 {
             return Err(Error::new("the POP3 username or password has a line break"));
         }
         let tls = use_tls(&settings.protocol, settings.port);
-        let net = connect_net(&settings.host, settings.port, tls, settings.deny_internal)?;
+        let mut net = connect_net(&settings.host, settings.port, tls, settings.deny_internal)?;
+        net.set_deadline(settings.session_deadline);
         let mut reader = BufReader::new(net);
         let greeting = read_line(&mut reader)?;
         expect_ok(&greeting)?;
         if !tls {
             reader = pop_start_tls(reader, settings)?;
+            reader.get_mut().set_deadline(settings.session_deadline);
         }
         let mut client = Self { reader, closed: false };
         match token {
@@ -1060,6 +1068,8 @@ pub(super) struct Net {
     /// When the last write was (or the connection was made), and how long its answer may take.
     since: std::time::Instant,
     answer_time: Duration,
+    /// When the whole session must end, for a session that has one ([`Net::set_deadline`]).
+    deadline: Option<std::time::Instant>,
 }
 
 enum Stream {
@@ -1087,9 +1097,9 @@ fn answer_limit() -> u64 {
 }
 
 /// How long one answer of a mail server may take: `email-client` `answer-timeout`, seconds. It is longer than an IDLE,
-/// whose answer lasts until the client ends it (`idle.rs` `IDLE_RENEW`).
+/// whose answer lasts until the client ends it (`idle.rs` `IDLE_RENEW`, 10 minutes), and shorter than a sync's lease.
 pub(super) fn answer_time() -> Duration {
-    Duration::from_secs(u64::try_from(super::sync::property_number("answer-timeout", 900)).unwrap_or(900))
+    Duration::from_secs(u64::try_from(super::sync::property_number("answer-timeout", 660)).unwrap_or(660))
 }
 
 impl Net {
@@ -1104,7 +1114,13 @@ impl Net {
             limit: answer_limit(),
             since: std::time::Instant::now(),
             answer_time: answer_time(),
+            deadline: None,
         }
+    }
+
+    /// End the session at `deadline`, its answers together: a sync's lease (SEC-MAIL-85). None for no end of its own.
+    pub(super) fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.deadline = deadline;
     }
 
     /// The TCP connection, when no TLS is on it yet (for STARTTLS).
@@ -1138,6 +1154,15 @@ impl Read for Net {
                 "the mail server's answer took more than {} seconds (email-client answer-timeout)",
                 self.answer_time.as_secs()
             )));
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() > deadline)
+        {
+            tracing::warn!("a mail server session passed its deadline (the sync's lease); the connection is closed");
+            return Err(std::io::Error::other(
+                "the mail server session took longer than the sync's lease; the next sync goes on",
+            ));
         }
         let room = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
         let read = match &mut self.stream {
