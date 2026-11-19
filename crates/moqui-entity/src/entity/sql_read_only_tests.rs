@@ -60,7 +60,7 @@ fn a_read_only_run_takes_only_a_query_without_the_calls_past_the_tables() {
     }
     let mysql = SqlSyntax::Mysql;
     assert_eq!(refusal("SELECT enum_id INTO @id FROM ENUMERATION", mysql), None);
-    assert_eq!(refusal("# a note\nSELECT '/*!' AS said", mysql), None);
+    assert_eq!(refusal("# a note\nSELECT 'the /* notes */' AS said", mysql), None);
     for sql in [
         "SELECT * FROM ENUMERATION INTO OUTFILE '/tmp/out'",
         "SELECT 1 INTO DUMPFILE '/tmp/out'",
@@ -69,6 +69,12 @@ fn a_read_only_run_takes_only_a_query_without_the_calls_past_the_tables() {
         "SELECT 1 /*!INTO OUTFILE '/tmp/x'*/",
         "SELECT 1 /*!50110 INTO DUMPFILE '/tmp/x'*/",
         "SELECT 1 /*M! INTO OUTFILE '/tmp/x'*/",
+        // under NO_BACKSLASH_ESCAPES the server ends the string at its second quote and runs what follows
+        "SELECT '\\' /*!INTO OUTFILE '/tmp/x' */ -- '",
+        "SELECT '\\' INTO OUTFILE '/tmp/x' -- '",
+        // a string that holds one is refused too
+        "SELECT '/*!' AS said",
+        "SELECT 'load_file' AS said",
         "CALL nothing()",
     ] {
         assert!(refusal(sql, mysql).is_some(), "{sql}");

@@ -109,9 +109,10 @@ const MYSQL_WORDS: &[&str] = &["load_file", "outfile", "dumpfile", "get_lock"];
 #[must_use]
 pub fn refusal(sql: &str, syntax: SqlSyntax) -> Option<String> {
     let blanked = blank_sql(sql, syntax);
-    // MySQL and MariaDB run the inside of a `/*! … */` or `/*M! … */` comment, which the blanked text has as a comment
-    if syntax == SqlSyntax::Mysql && executable_comment(sql, &blanked) {
-        return Some("a /*! … */ comment runs on MySQL and MariaDB, and does not run read only".to_string());
+    if syntax == SqlSyntax::Mysql {
+        if let Some(refusal) = mysql_raw_refusal(sql) {
+            return Some(refusal);
+        }
     }
     if !is_query(&blanked) {
         return Some(match syntax {
@@ -147,14 +148,20 @@ fn is_query(blanked: &str) -> bool {
     super::info::is_query(blanked.trim_start_matches(|ch: char| ch.is_whitespace() || ch == '('))
 }
 
-/// Whether `sql` has a MySQL executable comment (`/*!`, `/*M!`) where `blanked` has a comment.
-fn executable_comment(sql: &str, blanked: &str) -> bool {
+/// On MySQL and MariaDB, what the raw text refuses before it is blanked: an executable comment (`/*!`, `/*M!`, whose
+/// inside the server runs) or a [`MYSQL_WORDS`] word anywhere, in a string too. Where a string ends depends on the
+/// server's `sql_mode` (`NO_BACKSLASH_ESCAPES`, `ANSI_QUOTES`), which [`blank_sql`] does not know, so
+/// `SELECT '\' /*!INTO OUTFILE … */ -- '` would hide one in what it takes as a string; a string that holds one is
+/// refused too.
+fn mysql_raw_refusal(sql: &str) -> Option<String> {
     let lower = sql.to_ascii_lowercase();
-    ["/*!", "/*m!"].iter().any(|start| {
-        lower
-            .match_indices(start)
-            .any(|(at, _)| blanked.as_bytes().get(at) == Some(&b' '))
-    })
+    if lower.contains("/*!") || lower.contains("/*m!") {
+        return Some("a /*! … */ comment runs on MySQL and MariaDB, and does not run read only".to_string());
+    }
+    lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .find(|word| MYSQL_WORDS.contains(word))
+        .map(|word| format!("{word} does not run read only on MySQL and MariaDB, in a string or not"))
 }
 
 /// The words of `sql` outside its comments and text, with the inside of each quoted name, all lowercase.
