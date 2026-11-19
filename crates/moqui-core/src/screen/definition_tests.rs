@@ -564,7 +564,8 @@ fn a_shortcut_is_a_multi_call_only_when_written_or_a_multi_form_posts_to_it() {
                 <always-actions><set field="ownerId" from="ec.user.userId"/><if condition="true"><set field="nested.part" value="x"/></if></always-actions>
                 <transition name="plain"><parameter name="transitionParam" value="v"/><parameter name="plainParam"/><service-call name="update#Account"/><default-response type="none"/></transition>
                 <transition name="written"><service-call name="update#Account" multi="parameter"/><default-response type="none"/></transition>
-                <transition name="never"><service-call name="update#Account" multi="false"/><default-response type="none"/></transition>
+                <transition name="never"><service-call name="update#Account" multi="false"
+                    in-map="Object.assign({{}}, {{ownerId: ec.user.userId, 'quoted': 1, short}}, ctx ? a : b)"><field-map field-name="fromField" from="x"/></service-call><default-response type="none"/></transition>
                 <transition name="fromList"><service-call name="update#Row"/><default-response type="none"/></transition>
                 <transition name="fromBase"><service-call name="update#Row"/><default-response type="none"/></transition>
                 <transition name="fromSelection"><service-call name="update#Row"/><default-response type="none"/></transition>
@@ -633,6 +634,11 @@ fn a_shortcut_is_a_multi_call_only_when_written_or_a_multi_form_posts_to_it() {
     assert_eq!(def.pinned_names, set(&["nested", "ownerId", "screenParam"]).unwrap());
     let plain = def.transition("plain", Some("post")).unwrap();
     assert_eq!(plain.pinned_names, set(&["transitionParam"]).unwrap());
+    let never = def.transition("never", Some("post")).unwrap();
+    assert_eq!(
+        never.in_map_pins,
+        set(&["fromField", "ownerId", "quoted", "short"]).unwrap()
+    );
     for name in [
         "written",
         "fromList",

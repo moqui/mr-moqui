@@ -306,6 +306,9 @@ pub struct TransitionDef {
     /// The names its `parameter`s with a `from` or `value` set, which a multi call's posted rows never replace
     /// (`pinned_names`, SEC-RTE-81).
     pub pinned_names: BTreeSet<String>,
+    /// The names the in-maps and `field-map`s of its `service-call`s set, pinned as well where the posting form's fields
+    /// are not known ([`in_map_pins`], SEC-RTE-81).
+    pub in_map_pins: BTreeSet<String>,
     /// The shortcut with its `in-map` and `out-map` defaults, when it writes no `multi` and is not async: a screen
     /// that takes this transition by `transition-include` and has a multi form posting to it compiles it again as a
     /// multi call ([`Self::as_multi_target`]).
@@ -373,6 +376,7 @@ impl TransitionDef {
             single_service: None,
             multi_parameter: false,
             pinned_names: BTreeSet::new(),
+            in_map_pins: BTreeSet::new(),
             defaultable_shortcut: None,
             conditional_responses: Vec::new(),
             default_response: ResponseDef::none(),
@@ -493,6 +497,7 @@ impl TransitionDef {
             single_service,
             multi_parameter,
             pinned_names: pinned_names(None, &parameters_of(node)),
+            in_map_pins: in_map_pins(node),
             defaultable_shortcut,
             conditional_responses,
             default_response,
@@ -708,6 +713,71 @@ impl FormChain {
             .collect();
         Some(fields)
     }
+}
+
+/// The names the `service-call`s of a transition set themselves: each `field-map`'s `field-name`, and each key of an
+/// object literal in an `in-map` (`{userId: ec.user.userId}`, `Object.assign({}, context, {userId})`). Where no
+/// multi form's fields say which names are row fields, a multi call keeps these plain values (SEC-RTE-81).
+fn in_map_pins(transition: &MNode) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let mut stack = transition.children();
+    while let Some(node) = stack.pop() {
+        if node.has_name("service-call") {
+            if let Some(in_map) = node.attribute("in-map") {
+                names.extend(object_literal_keys(&in_map));
+            }
+            for field in node.children_named("field-map") {
+                if let Some(name) = field.attribute("field-name").filter(|text| !text.is_empty()) {
+                    names.insert(name);
+                }
+            }
+        }
+        stack.extend(node.children());
+    }
+    names
+}
+
+/// The keys of the object literals in an expression: a name (or quoted name) after `{` or `,`, followed by `:`, or by
+/// `,` or `}` as a shorthand key. An over-read (a `, x:` in a string) only keeps a plain value.
+fn object_literal_keys(text: &str) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut at = 0;
+    while at < chars.len() {
+        if chars[at] != '{' && chars[at] != ',' {
+            at += 1;
+            continue;
+        }
+        let mut next = at + 1;
+        while next < chars.len() && chars[next].is_whitespace() {
+            next += 1;
+        }
+        let quote = chars.get(next).copied().filter(|ch| *ch == '\'' || *ch == '"');
+        let start = if quote.is_some() { next + 1 } else { next };
+        let mut end = start;
+        while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_' || chars[end] == '$') {
+            end += 1;
+        }
+        let mut after = end;
+        if let Some(quote) = quote {
+            if chars.get(after) != Some(&quote) {
+                at += 1;
+                continue;
+            }
+            after += 1;
+        }
+        while after < chars.len() && chars[after].is_whitespace() {
+            after += 1;
+        }
+        let key: String = chars[start..end].iter().collect();
+        let keyed = matches!(chars.get(after), Some(':'))
+            || (quote.is_none() && matches!(chars.get(after), Some(',') | Some('}')));
+        if !key.is_empty() && !key.starts_with(|ch: char| ch.is_ascii_digit()) && keyed {
+            keys.insert(key);
+        }
+        at += 1;
+    }
+    keys
 }
 
 /// The names a screen or transition sets apart from the request, which a multi call's posted rows never replace

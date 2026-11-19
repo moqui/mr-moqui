@@ -1450,6 +1450,7 @@ fn a_multi_form_post_calls_the_transition_service_for_each_row() {
         &root,
         r#"<screen require-authentication="false">
     <transition name="saveRows" require-session-token="false"><service-call name="save#Row"/><default-response type="none"/></transition>
+    <transition name="saveExplicit" require-session-token="false"><service-call name="save#Row" multi="true" in-map="Object.assign({}, context, {testMedium: 'inmap'})"/><default-response type="none"/></transition>
     <widgets><form-list name="Rows" list="rows" transition="saveRows" multi="true">
         <field name="testId"><default-field><display/></default-field></field>
         <field name="testMedium"><default-field><text-line/></default-field></field></form-list></widgets>
@@ -1499,6 +1500,14 @@ fn a_multi_form_post_calls_the_transition_service_for_each_row() {
     };
     assert_eq!(medium("R0").as_deref(), Some("first"));
     assert_eq!(medium("R1").as_deref(), Some("second"));
+    // an explicit multi call no multi form posts to: what its in-map sets itself is kept over a posted row
+    let explicit = serve_at(
+        &world.factory,
+        form_post("/saveExplicit", "_isMulti=true&testId_0=E0&testMedium_0=posted"),
+        &root,
+    );
+    assert!(explicit.status < 400, "{}", explicit.body_text());
+    assert_eq!(medium("E0").as_deref(), Some("inmap"));
     // no multi form posts to saveOne: the post is one call with the screen's values, and the rows reach nothing
     let one = serve_at(
         &world.factory,

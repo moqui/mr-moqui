@@ -2128,16 +2128,20 @@ fn run_transition_steps(
     // the call's `if (ec.message.hasError()) return` cannot skip the actions. A multi call either of them makes takes a
     // posted row value only for a row field of the screen's multi forms that post here, never for a name the path's
     // screens or the transition set apart from the request (SEC-RTE-81).
+    let fields = screen.multi_rows.get(&transition.name).cloned().flatten();
+    // with no form fields to go by, what the transition's in-maps set themselves is kept too
+    let in_map_pins = fields.is_none().then_some(&transition.in_map_pins);
     let rows = crate::service::call::TransitionRows {
-        fields: screen.multi_rows.get(&transition.name).cloned().flatten(),
         pinned: info
             .path_defs
             .iter()
             .flat_map(|def| def.pinned_names.iter())
             .chain(screen.pinned_names.iter())
             .chain(transition.pinned_names.iter())
+            .chain(in_map_pins.into_iter().flatten())
             .cloned()
             .collect(),
+        fields,
     };
     crate::service::call::with_transition_rows(rows, || -> Result<(), Error> {
         if let Some(actions) = &transition.service_actions {
