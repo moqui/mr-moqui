@@ -23,6 +23,12 @@ const EVAL_FIXTURE: &str = r#"
     const call = (name, parameters) => ec.service.sync().name(name).parameters(parameters).call() || {}
     // an entity-auto create without authorization, as the screens' transitions make them
     const make = (entity, parameters) => ec.service.sync().name('create#' + entity).parameters(parameters).disableAuthz().call() || {}
+    // the walk attaches a scorer to an agent for live scoring, which reads every user's runs: AgentAudit's (SEC-AI-83)
+    make('moqui.security.UserGroup', {userGroupId: 'TUI_EVAL_AUDIT', description: 'TUI eval auditors'})
+    make('moqui.security.UserGroupPermission', {userGroupId: 'TUI_EVAL_AUDIT', userPermissionId: 'AgentAudit',
+        fromDate: '2000-01-01 00:00:00'})
+    make('moqui.security.UserGroupMember', {userGroupId: 'TUI_EVAL_AUDIT', userId: ec.user.userId,
+        fromDate: '2000-01-01 00:00:00'})
     make('moqui.agent.AgentDefinition', {agentId: 'TUI_EVAL_AGENT', agentName: 'TUI eval agent', surfaces: 'job'})
     make('moqui.agent.AgentScorer', {scorerId: 'TUI_SCORER', scorerName: 'TUI says ships', scorerTypeEnumId: 'AgstService',
         serviceName: S + 'score#Contains', configJson: '{"terms": ["ships"]}', passThreshold: 0.5, createdDate: ec.user.nowTimestamp})
@@ -1055,7 +1061,8 @@ fn evals_screens_work_in_the_terminal() {
     {
         let context = factory.new_context();
         let _entered = context.enter();
-        // john.doe holds MONITOR_EVAL and MONITOR_EVAL_RUN through ADMIN (AgentEvalData.xml). A scorer, a dataset with
+        // john.doe holds MONITOR_EVAL and MONITOR_EVAL_RUN through ADMIN (AgentEvalData.xml), and AgentAudit through a
+        // group of the fixture's. A scorer, a dataset with
         // two items and the scorers attached, two service-target experiments of it (which complete at once) for Compare,
         // and a scored agent run with live scoring for Runs and Scorers.
         moqui_core::user::internal_login_user("john.doe").unwrap();
