@@ -423,6 +423,12 @@ impl Parser<'_> {
             }
             Token::Open => {
                 self.pos += 1;
+                // an empty group matches nothing: no clauses would be match-all, so `ownerPartyId:()` written for a
+                // user of no organization would lift the limit it stands for (SEC-DAT-85)
+                if matches!(self.tokens.get(self.pos), Some((Token::Close, _))) {
+                    self.pos += 1;
+                    return Ok(match_none());
+                }
                 let inner = self.query(field, depth + 1)?;
                 match self.tokens.get(self.pos) {
                     Some((Token::Close, _)) => {
@@ -517,6 +523,16 @@ fn word_query(field: Option<&str>, text: &str, quoted: bool, wild: &[bool]) -> Q
     Query::Text { terms, fields, kind }
 }
 
+/// A query no document matches: every document excluded.
+fn match_none() -> Query {
+    Query::Bool {
+        all: Vec::new(),
+        any: Vec::new(),
+        none: vec![Query::MatchAll],
+        min_any: None,
+    }
+}
+
 fn combine(clauses: Vec<(Occur, Query)>) -> Query {
     if clauses.is_empty() {
         return Query::MatchAll;
@@ -560,6 +576,23 @@ mod tests {
             fields: field.map_or(TextFields::All, |name| TextFields::Only(vec![name.into()])),
             kind,
         }
+    }
+
+    /// SEC-DAT-85: an empty group, alone or for a field, matches nothing, so a limit written as a group of no values
+    /// stays a limit.
+    #[test]
+    fn an_empty_group_matches_nothing() {
+        assert_eq!(parse("()"), match_none());
+        assert_eq!(parse("ownerPartyId:()"), match_none());
+        assert_eq!(
+            parse("shoes AND ownerPartyId:()"),
+            Query::Bool {
+                all: vec![text(None, "shoes", TextMatch::Term), match_none()],
+                any: Vec::new(),
+                none: Vec::new(),
+                min_any: None,
+            }
+        );
     }
 
     /// SEC-DAT-84: a query string holds at most search-facade@query-max-clauses terms (64 by default).
