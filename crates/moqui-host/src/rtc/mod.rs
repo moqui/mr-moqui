@@ -50,6 +50,10 @@ mod turn;
 // the edge wizard's TURN check, which only the edge link calls
 #[cfg(feature = "edge")]
 pub(crate) mod turn_probe;
+// Its TURN client comes with the rtc feature, since a feature cannot ask for rtc and edge both; with no edge link it is
+// linked and unused.
+#[cfg(not(feature = "edge"))]
+use turn_client_proto as _;
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
