@@ -347,11 +347,25 @@ pub(crate) fn render_locked(
         let data = JsString::try_from_utf8(json).map_err(|_| RuntimeError::OutOfMemory)?;
         context.call(&function, Value::Undefined, &[Value::String(data)])
     });
+    let out = rendered(&sandbox, &mut context, ran);
+    // A job the render queued (a promise's reaction) would stay in the sandbox, never run, with all it refers to, and a
+    // few such renders fill the heap for every later render on the thread (SEC-SCR-83). Nothing runs the jobs of a
+    // locked render, so the sandbox is dropped; the thread's next render at this cap starts a new one.
+    if !matches!(sandbox.runtime.is_job_pending(), Ok(false)) {
+        tracing::warn!("a locked template left promise jobs queued; its sandbox is dropped");
+        forget(sandbox.cap);
+    }
+    out
+}
+
+/// The text of a locked render's result, or its error; an error that leaves the sandbox unusable or full drops the
+/// sandbox or its compiled functions.
+fn rendered(sandbox: &Sandbox, context: &mut Context, ran: JsResult<Value>) -> Result<String, Error> {
     match ran {
         Ok(Value::String(text)) => Ok(text.to_utf8_lossy()),
         Ok(other) => Ok(context
             .to_js_string(&other)
-            .map_err(|err| runtime_error(&mut context, err))?
+            .map_err(|err| runtime_error(context, err))?
             .to_utf8_lossy()),
         Err(err) => {
             match &err {
@@ -362,7 +376,7 @@ pub(crate) fn render_locked(
                 }
                 _ => {}
             }
-            Err(runtime_error(&mut context, err))
+            Err(runtime_error(context, err))
         }
     }
 }
@@ -409,5 +423,34 @@ mod tests {
                 .any(|sandbox| sandbox.cap == template::LOCKED_BUDGET.1)
         });
         assert!(default_kept);
+    }
+
+    /// SEC-SCR-83: a locked render that queues a promise job does not leave it in the thread's sandbox: the sandbox is
+    /// dropped, so renders that each queue a job holding a large string do not fill the heap, and the next render
+    /// starts a sandbox with no job. A render that queues nothing keeps its sandbox.
+    #[test]
+    fn a_render_that_queues_a_promise_job_leaves_no_job_in_the_sandbox() {
+        let cap = template::LOCKED_BUDGET.1;
+        let deadline = || Instant::now() + template::LOCKED_BUDGET.0;
+        let plain = Arc::from("(function(){ return function(){ return 'x'; }; })()");
+        assert_eq!(render_locked(&plain, "{}", deadline(), cap).unwrap(), "x");
+        let kept = sandbox(cap).unwrap();
+        assert_eq!(render_locked(&plain, "{}", deadline(), cap).unwrap(), "x");
+        assert!(
+            Rc::ptr_eq(&kept, &sandbox(cap).unwrap()),
+            "a render with no job keeps the sandbox"
+        );
+        drop(kept);
+        let queued = Arc::from(
+            "(function(){ return function(){ const big = 'x'.repeat(1000000); \
+             Promise.resolve(big).then(text => text.length); return 'y'; }; })()",
+        );
+        // each render would leave about a megabyte (twice that as UTF-16) behind in a 16 MiB sandbox
+        for _ in 0..40 {
+            assert_eq!(render_locked(&queued, "{}", deadline(), cap).unwrap(), "y");
+            let fresh = sandbox(cap).unwrap();
+            assert_eq!(fresh.runtime.is_job_pending().ok(), Some(false));
+        }
+        assert_eq!(render_locked(&plain, "{}", deadline(), cap).unwrap(), "x");
     }
 }
