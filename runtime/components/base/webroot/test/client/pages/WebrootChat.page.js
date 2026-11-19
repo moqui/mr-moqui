@@ -626,7 +626,7 @@ const fakeHostOutbox = () => {
     return host;
 };
 
-test("with the desktop client's host the outbox is the host's: imported once, sent by it, shown here", async () => {
+test("with the desktop client's host the outbox is the host's: this browser's dropped, sent by it, shown here", async () => {
     const stored = new Map();
     const realGet = localStorage.getItem.bind(localStorage);
     const realSet = localStorage.setItem.bind(localStorage);
@@ -652,37 +652,23 @@ test("with the desktop client's host the outbox is the host's: imported once, se
         chat.state = freshState();
         chat.me = "ann";
         chat.started = true;
-        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify(older));
-        await chat.startHost(host);
-        // the browser's outbox moved into the host, with its refs, dates and ciphertext, and removed here
-        assert.deepEqual(host.ops.map((op) => op.id), ["c1", "c2"]);
-        assert.equal(stored.has("acct1:moqui.chat.outbox.ann"), false);
-        assert.deepEqual(chat.state.outbox.map((item) => [item.clientRef, item.status, item.createdDate]), [["c1", "waiting", 1000], ["c2", "waiting", 2000]]);
-        assert.equal(chat.state.outbox[1].sealed, true);
-        assert.equal(chat.state.outbox[1].params.encryptedJson, "{\"ct\":\"x\"}");
-        // again (a crash before the list was removed): taken once
-        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify(older));
-        assert.equal(await chat.importOutbox(host), 2);
-        assert.equal(host.ops.length, 2);
-        assert.equal(stored.has("acct1:moqui.chat.outbox.ann"), false);
-        // one the host cannot take now (its outbox full): the list stays to try again
-        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify(older));
-        host.failAdd = true;
-        await chat.importOutbox(host);
-        assert.equal(JSON.parse(stored.get("acct1:moqui.chat.outbox.ann")).length, 2);
-        // one refused for good is dropped, and each taken comes off the list on its own
-        const refused = { clientRef: "bad", chatRoomId: "R1", url: "https://elsewhere.example.com/", params: {} };
-        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify([refused].concat(older)));
-        host.failAdd = false;
-        const realAdd = host.add;
-        host.add = (kind, payload, files) => (payload.clientRef === "bad" ? Promise.reject(new Error("Not the comms app's send")) : realAdd(kind, payload, files));
+        // SEC-CLI-81: on the apps' one origin another server's page may have written this account's outbox key, so what
+        // this browser kept is dropped, never moved into the host to be sent as the user
+        const planted = { clientRef: "planted", chatRoomId: "R1", url: "/apps/chat/send", params: { body: "<p>not mine</p>" }, text: "" };
+        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify(older.concat([planted])));
         const warn = console.warn;
         const warned = [];
         console.warn = (...args) => warned.push(String(args[0]));
-        try { await chat.importOutbox(host); } finally { console.warn = warn; host.add = realAdd; }
-        assert.equal(warned.length, 1, "the one dropped is told");
+        try { await chat.startHost(host); } finally { console.warn = warn; }
+        assert.equal(host.ops.length, 0);
         assert.equal(stored.has("acct1:moqui.chat.outbox.ann"), false);
-        assert.equal(host.ops.some((op) => op.id === "bad"), false);
+        assert.equal(warned.length, 1, "the drop is told");
+        // the host's own outbox is the one shown: its items with their refs, dates and ciphertext
+        for (const item of older) await host.add("chat-send", item);
+        await chat.refreshHost();
+        assert.deepEqual(chat.state.outbox.map((item) => [item.clientRef, item.status, item.createdDate]), [["c1", "waiting", 1000], ["c2", "waiting", 2000]]);
+        assert.equal(chat.state.outbox[1].sealed, true);
+        assert.equal(chat.state.outbox[1].params.encryptedJson, "{\"ct\":\"x\"}");
 
         // a send is kept by the host, which sends it: the page asks nothing itself
         const outcome = await chat.send({ clientRef: "c3", chatRoomId: "R1", url: "/apps/chat/send", params: { body: "<p>three</p>" }, text: "three" });

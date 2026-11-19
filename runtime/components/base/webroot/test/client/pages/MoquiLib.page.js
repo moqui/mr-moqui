@@ -695,7 +695,7 @@ test("drafts: this browser's storage under the scope on the web", async () => {
     }
 });
 
-test("drafts: the desktop client's store, with this browser's drafts moved in once", async () => {
+test("drafts: the desktop client's store, with this browser's drafts dropped", async () => {
     const savedScope = moqui.storageScope;
     const kept = new Map([["ironstone.compose.x", { value: "{\"newer\":true}", files: [] }]]);
     const calls = [];
@@ -722,9 +722,8 @@ test("drafts: the desktop client's store, with this browser's drafts moved in on
         // before the host's drafts are read: nothing (the callers wait for ready), never this browser's stale copy
         assert.equal(moqui.drafts.get("boss.chat.draft.R1"), null);
         assert.deepEqual(moqui.drafts.keys("boss.chat.draft."), []);
-        // one refused for good is dropped; a newer copy of this browser's (by its time) replaces the host's
-        localStorage.setItem("acct1:ironstone.compose.big", "x".repeat(10));
-        kept.set("ironstone.compose.n", { value: "{\"at\":5}", files: [] });
+        // SEC-CLI-81: on the apps' one origin another server's page may have written this account's draft keys, so what
+        // this browser kept is dropped, never moved into the host where Compose would show it as the user's own
         localStorage.setItem("acct1:ironstone.compose.n", JSON.stringify({ at: Date.now() + 1000 }));
         assert.ok(moqui.hostOutbox(), "the host's outbox");
         const warn = console.warn;
@@ -732,28 +731,24 @@ test("drafts: the desktop client's store, with this browser's drafts moved in on
         console.warn = (...args) => warned.push(String(args[0]));
         try { await moqui.drafts.ready(); } finally { console.warn = warn; }
         assert.equal(warned.length, 1);
-        assert.ok(warned[0].includes("ironstone.compose.big"));
-        assert.equal(kept.get("boss.chat.draft.R1").value, "<p>old</p>", "moved into the host");
+        assert.ok(warned[0].includes("boss.chat.draft.R1") && warned[0].includes("ironstone.compose.n"), warned[0]);
+        assert.equal(kept.get("boss.chat.draft.R1"), undefined, "not moved into the host");
         assert.equal(kept.get("ironstone.compose.x").value, "{\"newer\":true}", "the host's own is kept");
         assert.equal(localStorage.getItem("acct1:boss.chat.draft.R1"), null);
         assert.equal(localStorage.getItem("acct1:ironstone.compose.x"), null);
+        assert.equal(localStorage.getItem("acct1:ironstone.compose.n"), null);
         assert.equal(localStorage.getItem("acct2:boss.chat.draft.R9"), "another account's", "other scopes stay");
-        assert.equal(localStorage.getItem("acct1:ironstone.compose.big"), null, "refused for good: dropped");
-        assert.ok(JSON.parse(kept.get("ironstone.compose.n").value).at > 5, "this browser's newer copy");
-        assert.deepEqual(calls.map((call) => call[1]).sort(), ["boss.chat.draft.R1", "ironstone.compose.n"]);
-        calls.length = 1;
-        // read once; a key left in this browser again (a crash before it was removed) is only removed
+        assert.deepEqual(calls, [], "nothing put into the host");
+        // read once
         assert.equal(moqui.drafts.ready(), moqui.drafts.loading);
-        localStorage.setItem("acct1:boss.chat.draft.R1", "<p>old</p>");
-        assert.equal(await moqui.drafts.importLocal(host), 0);
-        assert.equal(localStorage.getItem("acct1:boss.chat.draft.R1"), null);
-        assert.equal(calls.length, 1);
+        // the user's own drafts go to the host
+        assert.equal(await moqui.drafts.put("boss.chat.draft.R1", "<p>old</p>"), true);
         // through the host from now on
         assert.equal(moqui.drafts.get("boss.chat.draft.R1"), "<p>old</p>");
         assert.equal(await moqui.drafts.put("ironstone.compose.y", "{}", ["ab12-a.txt"]), true);
         assert.deepEqual(kept.get("ironstone.compose.y"), { value: "{}", files: ["ab12-a.txt"] });
         assert.deepEqual(moqui.drafts.files("ironstone.compose.y"), ["ab12-a.txt"]);
-        assert.deepEqual(moqui.drafts.keys("ironstone.compose.").sort(), ["ironstone.compose.n", "ironstone.compose.x", "ironstone.compose.y"]);
+        assert.deepEqual(moqui.drafts.keys("ironstone.compose.").sort(), ["ironstone.compose.x", "ironstone.compose.y"]);
         assert.equal(localStorage.getItem("acct1:ironstone.compose.y"), null, "not in this browser");
         const put = host.put, remove = host.remove;
         try {
