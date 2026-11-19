@@ -368,6 +368,14 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
         .unwrap();
     drop(authz_off);
     assert!(audited.len() >= 2, "{}", audited.len());
+    // SEC-TLS-102: the stores and the test of the connection are audited too
+    assert!(audited.iter().any(
+        |row| row.get("actionEnumId").map(to_plain_string).as_deref() == Some("DbaConnection")
+            && row
+                .get("detailJson")
+                .map(to_plain_string)
+                .is_some_and(|detail| detail.contains("\"op\":\"test\""))
+    ));
     let list = call("get#DatabaseList", &[]).unwrap();
     assert!(rows(&list, "databases")
         .iter()

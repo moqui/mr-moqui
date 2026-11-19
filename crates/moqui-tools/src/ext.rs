@@ -510,10 +510,42 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
         row.create(facade)?;
     }
     forget(&connection_id);
+    audit_connection(
+        facade,
+        &connection_id,
+        true,
+        serde_json::json!({
+            "op": if existing.is_some() { "update" } else { "create" },
+            "dbType": text_of(row.get("dbType")),
+            "host": text_of(row.get("host")),
+            "port": text_of(row.get("port")),
+            "databaseName": text_of(row.get("databaseName")),
+            "userName": text_of(row.get("userName")),
+            "sslMode": text_of(row.get("sslMode")),
+            "readOnly": read_only,
+            "passwordSet": !text(parameters, "password").is_empty(),
+            "passwordCleared": password_cleared,
+        }),
+    );
     let mut out = BTreeMap::new();
     out.insert("connectionId".to_string(), Value::String(connection_id));
     out.insert("passwordCleared".to_string(), Value::Bool(password_cleared));
     Ok(out)
+}
+
+/// Write the `DbaConnection` audit row of a store, delete or test of the connection `connection_id`, with what was done
+/// in `detail` (never the password) (SEC-TLS-102).
+fn audit_connection(facade: &EntityFacade, connection_id: &str, is_change: bool, detail: serde_json::Value) {
+    crate::audit::record(
+        facade,
+        &crate::audit::AuditEntry {
+            action: "DbaConnection",
+            db: Some(format!("ext:{connection_id}")),
+            is_change,
+            detail_json: Some(detail.to_string()),
+            ..crate::audit::AuditEntry::default()
+        },
+    );
 }
 
 /// Whether the current user may change, delete or test the connection `row`: its owner, or a `DATABASE_ADMIN`
@@ -544,6 +576,7 @@ fn delete_database_connection(parameters: &BTreeMap<String, Value>, facade: &Ent
             return none();
         }
         row.delete(facade)?;
+        audit_connection(facade, &connection_id, true, serde_json::json!({"op": "delete"}));
     }
     forget(&connection_id);
     none()
@@ -576,6 +609,12 @@ fn test_database_connection(parameters: &BTreeMap<String, Value>, facade: &Entit
         };
         db.query(sql, &[])
     });
+    audit_connection(
+        facade,
+        &connection_id,
+        false,
+        serde_json::json!({"op": "test", "connected": tested.is_ok()}),
+    );
     match tested {
         Ok(rows) => {
             out.insert("connected".to_string(), Value::Bool(true));

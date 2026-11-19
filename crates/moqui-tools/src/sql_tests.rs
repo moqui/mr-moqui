@@ -269,6 +269,20 @@ fn sql_runs_are_read_only_by_default_confirmed_audited_and_cancelled() {
         vec![vec![Value::string("two'); DROP TABLE sql_note; --")]],
         "the parameter was bound as a value"
     );
+    // SEC-TLS-102: every statement of a run with changes allowed is audited as a change, the SELECT too
+    let audited: Vec<_> = audit_rows(&facade, "changes-run-2")
+        .into_iter()
+        .filter(|row| !field(row, "statementSeq").is_empty())
+        .collect();
+    assert_eq!(audited.len(), 2);
+    assert!(audited.iter().all(|row| field(row, "isChange") == "Y"));
+    // and a refusal after the confirmation (a parameter with no value) is audited as the confirmation's is
+    let mut unbound = changes("changes-run-4", script, token(script, &ana));
+    unbound.params.insert("id".to_string(), Value::I64(4));
+    assert!(run(&facade, &unbound, &ana, false).is_err(), "no body");
+    let refusals = audit_rows(&facade, "changes-run-4");
+    assert_eq!(refusals.len(), 1, "the refused attempt is audited");
+    assert_eq!(field(&refusals[0], "isChange"), "Y");
     with_params.run_id = "changes-run-3".to_string();
     assert!(run(&facade, &with_params, &ana, false).is_err(), "the token is spent");
 
@@ -495,4 +509,20 @@ fn sql_runs_are_read_only_by_default_confirmed_audited_and_cancelled() {
     drop(facade);
     drop(driver);
     drop(cluster);
+}
+
+/// SEC-TLS-102: an `EXPLAIN` whose options name `ANALYZE` anywhere runs the statement, so it is not a plain read.
+#[test]
+fn an_explain_that_analyzes_is_not_a_plain_read_wherever_the_option_is() {
+    for sql in [
+        "EXPLAIN (COSTS, VERBOSE, BUFFERS, TIMING, ANALYZE) DELETE FROM t",
+        "EXPLAIN ANALYZE DELETE FROM t",
+        "EXPLAIN (FORMAT JSON, SETTINGS, WAL, ANALYSE true) UPDATE t SET a = 1",
+    ] {
+        assert!(!super::plain_read(sql, SqlSyntax::Postgres), "{sql}");
+    }
+    assert!(super::plain_read(
+        "EXPLAIN (COSTS, VERBOSE) SELECT 1",
+        SqlSyntax::Postgres
+    ));
 }
