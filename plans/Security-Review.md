@@ -473,7 +473,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Web authentication and controls (`WEB`) | 0 | 1 | 5 | 19 | 2 | 0 | 27 |
 | Routes, screens and REST (`RTE`) | 0 | 2 | 9 | 16 | 3 | 0 | 30 |
-| Administration, identity and sign-in (`ADM`) | 0 | 1 | 9 | 12 | 1 | 0 | 23 |
+| Administration, identity and sign-in (`ADM`) | 0 | 1 | 10 | 12 | 1 | 0 | 24 |
 | Tools, System, Monitor and Dashboards (`TLS`) | 0 | 4 | 20 | 28 | 3 | 0 | 55 |
 | LLM, A2A, MCP and Assist (`AI`) | 0 | 0 | 5 | 26 | 4 | 0 | 35 |
 | Git hosting and pipelines (`GIT`) | 0 | 3 | 8 | 24 | 4 | 0 | 39 |
@@ -492,7 +492,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 173 | 413 | 162 | 0 | 772 |
+| **All** | 0 | 24 | 174 | 413 | 162 | 0 | 773 |
 
 ## Findings by area
 
@@ -596,6 +596,7 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 | SEC-ADM-88 | `admin/ConfigurationConnections.js:1388-1389`, `:292-300` | A connection key that names no record starts a new connection of a kind marked not creatable | Low | reported (to check) |
 | SEC-ADM-89 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:121-166, :452-466, :652-687; runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:963-995; runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:61-66; runtime/components/addon/mr-marble/screen/SimpleScreens/Customer/EditCustomer.xml:49-54 | A holder of Marble's Party or Customer screens changes another account's email and sign-in fields, and enables or disables any account | Medium | reported (confirmed in code) |
 | SEC-ADM-90 | runtime/components/base/framework/service/org/moqui/admin/Access.js:507-571, :1100-1103, :828-862 | An access administrator gives themselves any bundle they may delegate, with no second person | Low | reported (confirmed in code) |
+| SEC-ADM-91 | `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:69-72`; `runtime/components/base/framework/entity/Security.eecas.xml:16-25` | A Marble Party screen user adds any account, their own included, to any group that is neither privileged nor sealed | Medium | reported (likely) |
 
 ### Tools, System, Monitor and Dashboards
 
