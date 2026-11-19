@@ -7,7 +7,8 @@
 // sent nothing and that a test sends no credentials; the others are refused before a socket (an internal address, no print
 // client) or are of a kind whose test sends nothing (the mail sign-in provider). The relay the sign-in mail goes through
 // (SYSTEM, or one a reset or code template names) is read only without ADMIN_ACCESS_MANAGE and changed only after a recent
-// sign-in (plans/Security-Review-Medium.md SEC-ADM-82).
+// sign-in (plans/Security-Review-Medium.md SEC-ADM-82), and a relay's link base URL is on one of the instance's own names
+// (SEC-ADM-83).
 // Run: ./moq test framework --spec AdminConnectionServices
 const C = "org.moqui.admin.ConfigurationServices."
 const REMOTE = "moqui.service.message.SystemMessageRemote"
@@ -546,5 +547,24 @@ feature("the relay the sign-in mail goes through is read only without ADMIN_ACCE
         out.staleTest.reasonCode === "reauthRequired"
         out.confirmed.applied === true
         out.after === out.before
+    }
+})
+
+feature("a relay's link base URL is on one of the instance's own names", {
+    when() {
+        const out = {}
+        as(users.manage, () => {
+            out.elsewhere = store("relay", ids.relay, {webBaseUrl: "https://taker.example.net/app"})
+            out.own = store("relay", ids.relay, {webBaseUrl: "https://localhost/app"})
+        })
+        out.row = one(SERVER, {emailServerId: ids.relay}).getMap()
+        context.out = out
+    },
+    then() {
+        const out = context.out
+        out.elsewhere.applied !== true
+        out.elsewhere.error.includes("own names")
+        out.own.applied === true
+        out.row.webBaseUrl === "https://localhost/app"
     }
 })

@@ -87,6 +87,32 @@ function hostOf(url) {
     const parts = /^[a-z][a-z0-9+.-]*:\/\/(?:[^\/?#@]*@)?(\[[^\]]+\]|[^\/?#:]+)/i.exec(text(url))
     return parts ? parts[1].toLowerCase() : ""
 }
+// The names this instance answers by: the webroot webapp's http-host and https-host and its allowed-hosts (without a
+// port), and on an instance that is not production this machine's own names.
+function ownHosts() {
+    const conf = name => text(ec.factory.getConfValue("webapp-list/webapp[webroot]@" + name))
+    const found = [conf("http-host"), conf("https-host")]
+        .concat(conf("allowed-hosts").split(","))
+        .map(host => text(host).toLowerCase().replace(/:\d+$/, ""))
+        .filter(host => host)
+    if (!production()) found.push("localhost", "127.0.0.1", "[::1]")
+    return Array.from(new Set(found))
+}
+// A relay's link base URL (the start of every link in the mail it sends, a password reset's and an invitation's among
+// them): an http(s) URL on one of the instance's own names, so a delegated administrator does not send the links of
+// system mail to another host (plans/Security-Review-Medium.md SEC-ADM-83). Another host is an instance administrator's to
+// set, in Tools.
+function linkBaseText(value, what) {
+    const found = urlText(value, what)
+    if (found && !ownHosts().includes(hostOf(found)))
+        throw new Error(
+            what +
+                " is on one of this instance's own names (" +
+                (ownHosts().join(", ") || "none is configured") +
+                "): an instance administrator sets another host in Tools"
+        )
+    return found
+}
 // A URL as a read shows it: without the user and password an instance administrator may have written into it (Tools).
 const shownUrl = url => text(url).replace(/^([a-z][a-z0-9+.-]*:\/\/)[^\/?#@]*@/i, "$1(credentials)@")
 // Why a request did not get an answer, from the error's own words, as one of a fixed list: never the remote's text.
@@ -918,7 +944,8 @@ const relayDefinition = {
             label: "Link base URL",
             kind: "url",
             audited: true,
-            help: "The base of links in mail sent through this relay"
+            validate: value => linkBaseText(value, "The link base URL"),
+            help: "The base of links in mail sent through this relay: an address of this instance; empty for its own"
         },
         {
             name: "authTypeName",
