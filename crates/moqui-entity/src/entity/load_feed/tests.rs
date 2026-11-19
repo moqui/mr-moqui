@@ -1204,8 +1204,20 @@ fn a_document_read_whole_and_a_csv_line_are_held_to_the_unit_size() {
     let mut whole = super::pull::Pull::new(std::io::BufReader::new(std::io::repeat(b'a').take(unit + 1)));
     let refused = whole.read_to_end().unwrap_err();
     assert!(refused.message().contains("larger than"), "{refused}");
-    let mut line = super::csv::LineBound::new(std::io::repeat(b'a').take(unit + 1));
+    let mut line = super::csv::RecordBound::new(std::io::repeat(b'a').take(unit + 1), b'"');
     assert!(std::io::copy(&mut line, &mut std::io::sink()).is_err());
-    let mut lines = super::csv::LineBound::new(std::io::repeat(b'\n').take(unit + 1));
-    assert_eq!(std::io::copy(&mut lines, &mut std::io::sink()).unwrap(), unit + 1);
+    // a quoted field of many short lines is one record
+    let quoted = std::io::Cursor::new(b"\"".to_vec()).chain(std::io::repeat(b'\n').take(unit + 1));
+    let mut quoted = super::csv::RecordBound::new(quoted, b'"');
+    assert!(std::io::copy(&mut quoted, &mut std::io::sink()).is_err());
+    // short lines, \n or \r alone, are records of their own however many there are
+    for end in [b'\n', b'\r'] {
+        let short = std::io::repeat(b'a').take(10).chain(std::io::repeat(end).take(1)).chain(
+            std::io::Cursor::new([b'b'; 10].iter().chain(&[end]).copied().collect::<Vec<u8>>()),
+        );
+        let mut lines = super::csv::RecordBound::new(short, b'"');
+        assert_eq!(std::io::copy(&mut lines, &mut std::io::sink()).unwrap(), 22);
+        let mut many = super::csv::RecordBound::new(std::io::repeat(end).take(unit + 1), b'"');
+        assert_eq!(std::io::copy(&mut many, &mut std::io::sink()).unwrap(), unit + 1);
+    }
 }
