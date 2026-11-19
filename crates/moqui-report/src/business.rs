@@ -103,6 +103,8 @@ fn check_document_steward(ec: &ExecutionContext, id: &str, document: &str, chang
     .as_ref()
     .and_then(|row| row.get("indexName").and_then(Value::as_str).map(str::to_owned))
     .filter(|index| !index.is_empty());
+    // the refusal counts the others: their ids are not the steward's to read
+    let mut others = 0;
     for (other, body) in definitions::all_datasets(ec)? {
         if other == id {
             continue;
@@ -113,17 +115,21 @@ fn check_document_steward(ec: &ExecutionContext, id: &str, document: &str, chang
             (None, None) => other == document,
         };
         if over && steward_of(&other).is_err() {
-            return Err(fail(format!(
-                "document {document} is read by dataset {other} too, which you do not steward; its fields and conditions \
-                 are changed by a steward of every dataset over it"
-            )));
+            others += 1;
         }
+    }
+    if others > 0 {
+        return Err(fail(format!(
+            "document {document} is read by {others} other dataset(s) you do not steward; its fields and conditions \
+             are changed by a steward of every dataset over it"
+        )));
     }
     Ok(())
 }
-/// The conditions of its document a dataset added (`conditionSeqIds`), the only ones its steward changes or removes.
-fn added_conditions(row: Option<&moqui_core::entity::EntityValue>) -> BTreeSet<String> {
-    row.and_then(|row| row.get("conditionSeqIds"))
+/// The fields or conditions of its document a dataset added (`fieldSeqIds`, `conditionSeqIds` of its admission row),
+/// the only ones its steward changes or removes.
+fn added_ids(row: Option<&moqui_core::entity::EntityValue>, field: &str) -> BTreeSet<String> {
+    row.and_then(|row| row.get(field))
         .and_then(Value::as_str)
         .map(|ids| {
             ids.split(',')
@@ -133,6 +139,14 @@ fn added_conditions(row: Option<&moqui_core::entity::EntityValue>) -> BTreeSet<S
                 .collect()
         })
         .unwrap_or_default()
+}
+/// `ids` as an admission row's list field: comma separated, or null when there is none.
+fn ids_value(ids: &BTreeSet<String>) -> Value {
+    if ids.is_empty() {
+        Value::Null
+    } else {
+        Value::string(ids.iter().map(String::as_str).collect::<Vec<_>>().join(","))
+    }
 }
 fn admission_row(ec: &ExecutionContext, id: &str) -> Result<Option<moqui_core::entity::EntityValue>, Error> {
     metadata(ec, || {
@@ -662,7 +676,14 @@ pub fn create_business_dataset(
     let (mut row, creating) = admission_for_update(ec, id, None)?;
     row.set("stewardUserId", Value::string(&user));
     // a new dataset starts in review, whatever a row of the same id held
-    for field in ["admittedDate", "admittedByUserId", "retiredDate"] {
+    // and owns no field or condition of its document yet
+    for field in [
+        "admittedDate",
+        "admittedByUserId",
+        "retiredDate",
+        "fieldSeqIds",
+        "conditionSeqIds",
+    ] {
         row.set(field, Value::Null);
     }
     save_admission(ec, &row, creating)?;
@@ -763,7 +784,8 @@ pub fn index_business_dataset(
     steward_of(id)?;
     let definition = business_definition(ec, id)?;
     let document = text(&definition["body"], "documentType", "").to_owned();
-    check_document_steward(ec, id, &document, false)?;
+    // a rebuild of the document as it is widens nothing: the dataset's steward builds it, whether or not a group of
+    // theirs reads the document (BOSS's People datasets are stewarded by a group that does not)
     let feed = feeds_of(ec, &document)?
         .into_iter()
         .next()
@@ -852,12 +874,6 @@ fn consumers_naming(ec: &ExecutionContext, id: &str, names: &BTreeSet<String>) -
     Ok(out)
 }
 
-/// Record a change of a dataset's fields or conditions: a new version, and the index stale until it is rebuilt.
-fn fields_changed(ec: &ExecutionContext, id: &str, expected: Option<i64>) -> Result<(), Error> {
-    let (mut row, creating) = admission_for_update(ec, id, expected)?;
-    row.set("fieldsChangedDate", moqui_core::user::now_value());
-    save_admission(ec, &row, creating)
-}
 /// The document's definition is read afresh and checked after a change, so a path that does not resolve is refused, and so is
 /// an encrypted entity field anywhere in it: the index would hold it decrypted for every reader of the dataset.
 fn recompile(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
@@ -924,6 +940,8 @@ pub fn store_business_dataset_fields(
     let definition = business_definition(ec, id)?;
     let document = text(&definition["body"], "documentType", "").to_owned();
     check_document_steward(ec, id, &document, true)?;
+    // a field the dataset did not add (the document's own, another dataset's) is not changed or removed here
+    let mut added = added_ids(admission_row(ec, id)?.as_ref(), "fieldSeqIds");
     let facade = entity(ec)?;
     let existing: Vec<_> = metadata(ec, || {
         facade
@@ -1032,15 +1050,36 @@ pub fn store_business_dataset_fields(
             blockers.join("; ")
         )));
     }
-    fields_changed(ec, id, expected_version(&params))?;
+    let seq = |row: &moqui_core::entity::EntityValue| {
+        row.get("fieldSeqId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    if let Some(field) = pending
+        .iter()
+        .filter(|(_, keep)| *keep != Some(true))
+        .map(|(row, _)| seq(row))
+        .find(|field| !added.contains(field))
+    {
+        return Err(fail(format!(
+            "field {field} of {document} was not added by dataset {id}; it is changed where it was made"
+        )));
+    }
+    // the version is checked before any write, and the fields the dataset added are kept with it
+    let (mut admission, creating) = admission_for_update(ec, id, expected_version(&params))?;
     let mut all = existing.clone();
     metadata(ec, || {
         for (row, keep) in &mut pending {
             match keep {
-                None => row.delete(&facade)?,
+                None => {
+                    added.remove(&seq(row));
+                    row.delete(&facade)?;
+                }
                 Some(true) => {
                     row.set("fieldSeqId", Value::string(next_seq(&all, "fieldSeqId")));
                     row.create(&facade)?;
+                    added.insert(seq(row));
                     all.push(row.clone());
                 }
                 Some(false) => row.update(&facade)?,
@@ -1048,6 +1087,9 @@ pub fn store_business_dataset_fields(
         }
         Ok(())
     })?;
+    admission.set("fieldsChangedDate", moqui_core::user::now_value());
+    admission.set("fieldSeqIds", ids_value(&added));
+    save_admission(ec, &admission, creating)?;
     recompile(ec, &document)?;
     let saved = definitions::read(ec, id)?;
     Ok(output(json!({"dataset": describe(ec, &saved)?})))
@@ -1070,7 +1112,7 @@ pub fn store_business_dataset_conditions(
     let document = text(&definition["body"], "documentType", "").to_owned();
     check_document_steward(ec, id, &document, true)?;
     // a condition the dataset did not add (a Tools one, another dataset's) is not changed or removed here (SEC-TLS-92)
-    let mut added = added_conditions(admission_row(ec, id)?.as_ref());
+    let mut added = added_ids(admission_row(ec, id)?.as_ref(), "conditionSeqIds");
     let facade = entity(ec)?;
     let names: BTreeSet<String> = metadata(ec, || {
         facade
@@ -1192,14 +1234,7 @@ pub fn store_business_dataset_conditions(
         Ok(())
     })?;
     admission.set("fieldsChangedDate", moqui_core::user::now_value());
-    admission.set(
-        "conditionSeqIds",
-        if added.is_empty() {
-            Value::Null
-        } else {
-            Value::string(added.iter().map(String::as_str).collect::<Vec<_>>().join(","))
-        },
-    );
+    admission.set("conditionSeqIds", ids_value(&added));
     save_admission(ec, &admission, creating)?;
     recompile(ec, &document)?;
     let saved = definitions::read(ec, id)?;

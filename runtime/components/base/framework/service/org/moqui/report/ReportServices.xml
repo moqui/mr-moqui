@@ -153,8 +153,7 @@
     </service>
     <service verb="index" noun="BusinessDataset" type="rust" transaction-timeout="3600" location="moqui_core::report::index_business_dataset">
         <description>Rebuild one business dataset's index: org.moqui.search.SearchServices.index#DataFeedDocuments for its feed
-            and its document only, for its steward (the dataset's update artifact) whose groups read the document, recording
-            when and how many.</description>
+            and its document only, for its steward (the dataset's update artifact), recording when and how many.</description>
         <in-parameters><parameter name="datasetId" required="true"/></in-parameters>
         <out-parameters><parameter name="documentsIndexed" type="Long"/><parameter name="dataFeedId"/><parameter name="dataDocumentId"/></out-parameters>
     </service>
@@ -162,8 +161,8 @@
         <description>A steward adds, revises and removes a business dataset's document fields (fields: fieldSeqId, fieldPath,
             fieldNameAlias, functionName, sequenceNum, remove). A new path is plain (no expression or secret field); names stay
             unique; removing or renaming a field a definition over the dataset names is refused until it is revised, as is a
-            stale expectedVersion. The steward's groups read the document, and every other dataset over it is one they
-            steward too. The index is stale until rebuilt.</description>
+            stale expectedVersion. Only a field the dataset added is revised or removed; the steward's groups read the
+            document, and every other dataset over it is one they steward too. The index is stale until rebuilt.</description>
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="fields" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
         <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
     </service>

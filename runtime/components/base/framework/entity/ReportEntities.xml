@@ -43,8 +43,9 @@
         <field name="lastIndexedCount" type="number-integer"/>
         <field name="lastIndexedByUserId" type="id"/>
         <field name="fieldsChangedDate" type="date-time"/>
-        <!-- the conditions of its document this dataset added (conditionSeqId, comma separated): the only ones its steward
-            changes or removes (crates/moqui-report/src/business.rs, SEC-TLS-92) -->
+        <!-- the fields and conditions of its document this dataset added (fieldSeqId, conditionSeqId, comma separated): the
+            only ones its steward changes or removes (crates/moqui-report/src/business.rs, SEC-TLS-92) -->
+        <field name="fieldSeqIds" type="text-medium"/>
         <field name="conditionSeqIds" type="text-medium"/>
         <field name="versionNumber" type="number-integer"/>
     </entity>

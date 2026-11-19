@@ -716,11 +716,11 @@ feature(
 // A dataset's document is shared by everything that reads it (SEC-TLS-92): a dataset is made over a document a group of its
 // creator's reads; its steward changes the document's fields and conditions only when they steward every other dataset over
 // it, and changes or removes only a condition their dataset added, never one made in Tools.
-feature("a steward changes a document only when it is theirs: one their groups read, no other steward's dataset over it, conditions they added", {
+feature("a steward changes a document only when it is theirs: one their groups read, no other steward's dataset over it, fields and conditions they added", {
     when() {
         const STEWARD = "bds.steward"
         sys(() => {
-            for (const verbNoun of ["store#BusinessDatasetFields", "store#BusinessDatasetConditions"])
+            for (const verbNoun of ["store#BusinessDatasetFields", "store#BusinessDatasetConditions", "index#BusinessDataset"])
                 make("moqui.security.ArtifactGroupMember", {
                     artifactGroupId: "BDS_STEWARD",
                     artifactName: R + verbNoun,
@@ -733,7 +733,17 @@ feature("a steward changes a document only when it is theirs: one their groups r
             scopePolicyId: "ReportUserGroups",
             rowFilterParameters: policy.rowFilterParameters
         })
-        // bds-own-sales (the steward's) reads the document bds-sales (not theirs) reads
+        // a rebuild widens nothing: the steward of a dataset over a document their groups do not read builds its index
+        asUser(STEWARD, R + "save#Definition", {
+            definition: {
+                id: "bds-own-built",
+                type: "dataset",
+                title: "bds-own-built",
+                body: Object.assign({documentType: types.unbuilt, timeField: "_timestamp", signal: "business"}, policy)
+            }
+        })
+        const built = asUser(STEWARD, R + "index#BusinessDataset", {datasetId: "bds-own-built"})
+        // bds-own-sales (the steward's) reads the document bds-sales (not theirs) reads, which is not named to them
         const shared = asUser(STEWARD, R + "store#BusinessDatasetFields", {
             datasetId: "bds-own-sales",
             fields: [{fieldPath: "enumTypeId", fieldNameAlias: "typeAgain"}]
@@ -741,8 +751,20 @@ feature("a steward changes a document only when it is theirs: one their groups r
         const kept = sys(() =>
             ec.entity.find("moqui.entity.document.DataDocumentField").condition("dataDocumentId", types.fed).condition("fieldNameAlias", "typeAgain").count()
         )
-        // the system administrator stewards every dataset over it: the condition made with the document is not theirs to
-        // change, one they add is, and its removal
+        // the system administrator stewards every dataset over it: the field and the condition made with the document are
+        // not theirs to change, those they add are, and their removal
+        const fields = () =>
+            Array.from(sys(() => ec.entity.find("moqui.entity.document.DataDocumentField").condition("dataDocumentId", types.fed).list()))
+        const seededField = asSteward(R + "store#BusinessDatasetFields", {
+            datasetId: "bds-sales",
+            fields: [{fieldSeqId: fields().find(row => row.fieldPath === "enumId").fieldSeqId, fieldNameAlias: "renamedId"}]
+        })
+        const addedField = asSteward(R + "store#BusinessDatasetFields", {datasetId: "bds-sales", fields: [{fieldPath: "enumId", fieldNameAlias: "ownId"}]})
+        const ownField = fields().find(row => row.fieldNameAlias === "ownId")
+        const removedField = asSteward(R + "store#BusinessDatasetFields", {
+            datasetId: "bds-sales",
+            fields: [{fieldSeqId: ownField?.fieldSeqId, remove: true}]
+        })
         const seeded = asSteward(R + "store#BusinessDatasetConditions", {
             datasetId: "bds-sales",
             conditions: [{conditionSeqId: "01", fieldNameAlias: "enumTypeId", operator: "not-equals", fieldValue: "BdsFixture"}]
@@ -762,27 +784,53 @@ feature("a steward changes a document only when it is theirs: one their groups r
             datasetId: "bds-sales",
             conditions: [{conditionSeqId: mine?.conditionSeqId, remove: true}]
         })
+        const left = conditions().map(row => row.conditionSeqId + ":" + row.fieldNameAlias + ":" + (row.operator || "equals")).join(",")
+        // a dataset made under the id of an admission row left behind owns none of what that row listed
+        sys(() => make("moqui.report.BusinessDataset", {datasetId: "bds-left", conditionSeqIds: "01", fieldSeqIds: "01", versionNumber: 1}))
+        asSteward(R + "create#BusinessDataset", {
+            datasetId: "bds-left",
+            dataDocumentId: types.fed,
+            scopePolicyId: "ReportUserGroups",
+            rowFilterParameters: policy.rowFilterParameters
+        })
+        const inherited = asSteward(R + "store#BusinessDatasetConditions", {
+            datasetId: "bds-left",
+            conditions: [{conditionSeqId: "01", remove: true}]
+        })
         return {
             unread: unread.error || "",
+            built: built.error || "",
             shared: shared.error || "",
             kept,
+            seededField: seededField.error || "",
+            addedField: addedField.error || "",
+            ownField: !!ownField,
+            removedField: removedField.error || "",
             seeded: seeded.error || "",
             removeSeeded: removeSeeded.error || "",
             added: added.error || "",
             mine: !!mine,
             removed: removed.error || "",
-            left: conditions().map(row => row.conditionSeqId + ":" + row.fieldNameAlias + ":" + (row.operator || "equals")).join(",")
+            left,
+            inherited: inherited.error || ""
         }
     },
-    then({unread, shared, kept, seeded, removeSeeded, added, mine, removed, left}) {
+    then({unread, built, shared, kept, seededField, addedField, ownField, removedField, seeded, removeSeeded, added, mine, removed, left, inherited}) {
         unread.includes("is not one your groups read")
-        shared.includes("is read by dataset bds-")
+        built == ""
+        shared.includes("other dataset(s) you do not steward")
+        !shared.includes("bds-sales")
         kept == 0
+        seededField.includes("was not added by dataset bds-sales")
+        addedField == ""
+        ownField
+        removedField == ""
         seeded.includes("was not added by dataset bds-sales")
         removeSeeded.includes("was not added by dataset bds-sales")
         added == ""
         mine
         removed == ""
         left == "01:enumTypeId:equals"
+        inherited.includes("was not added by dataset bds-left")
     }
 })
