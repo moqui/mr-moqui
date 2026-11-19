@@ -324,6 +324,15 @@ Medium; reported (confirmed in code).
 - **What happens:** `update#UserAccount`'s only rule for another account is `check#AccountAction` bounded (`Identity.js:222-238` `heldBeyond`: the account is in a privileged group the caller is not in, or holds a sealed permission the caller lacks), plus a recent sign-in, the caller's own, for the email address. The caller's authority over accounts is not asked. So a Party screen user changes a coworker's or customer's `emailAddress`, `username`, `ipAllowed` or `requirePasswordChange`, provided that account holds no more than they do. They then ask a password reset at the new address and sign in as that user, and read that user's mail, chats and files. `enable#UserAccount` and `disable#UserAccount` ask nothing, not even `heldBeyond`. The same user therefore disables an ADMIN's account, or brings back one an administrator disabled for good (a departed employee's), by `userId` alone. A screen's `service-call` is not a generic call, so `account_write_refusal` (`service/call.rs:1632-1700`) does not apply.
 - **Suggested fix:** Have `update#UserAccount` ask `check#AccountAction` with `ADMIN_IDENTITY_MANAGE` (its default) for another account. Have `enable#` and `disable#UserAccount` ask the same, bounded. Have `update#PartyUserAccount` take the `userId` of `partyId` only, as `update#Account` does.
 
+#### SEC-ADM-91. A Marble Party screen user adds any account, their own included, to any group that is neither privileged nor sealed
+
+Medium; reported (likely).
+
+- **Where:** `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:69-72` (the `createUserGroupMember` and `updateUserGroupMember` transitions call `create#` and `update#moqui.security.UserGroupMember` from a screen); `runtime/components/base/framework/entity/Security.eecas.xml:16-25` (only the privileged-group and sealed-permission checks apply); `crates/moqui-entity/src/entity/sensitive.rs` (the identity-admin refusal applies to generic calls only).
+- **Reached by:** a member of a group given Marble's `SimpleScreensParty` artifact group, or `MarbleErpAdmin`, with no access-administration permission.
+- **What happens:** a screen's `service-call` is not a generic call, so the refusal that keeps `UserGroupMember` writes to access administrators does not apply. Any group that is neither privileged nor grants a sealed permission can be joined, for example `BOSS_ACCOUNTING_ADMIN` or `MarbleErpAdmin`, by the user for their own account or another's. Found by the SEC-ADM-89/90 reviewer, from the code; not run.
+- **Suggested fix:** route both transitions through `org.moqui.admin.AccessServices.store#Membership`, which applies the access-administrator rules and SEC-ADM-90's own-account rule, or remove them from Marble and point to Admin.
+
 ## Tools, System, Monitor and Dashboards
 
 #### SEC-TLS-03. `runTokenCommand` is on `ec.resource` for every script
