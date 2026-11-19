@@ -50,6 +50,9 @@ const COLUMNS_ASKED: i32 = 40;
 const MAX_CELLS: i32 = 20_000;
 const LAST_ROW: i32 = 1_048_576;
 const LAST_COLUMN: i32 = 16_384;
+/// The most frozen rows and columns kept on screen: more than a terminal has lines, and columns of three characters.
+const MAX_FROZEN_ROWS: i32 = 200;
+const MAX_FROZEN_COLUMNS: i32 = 100;
 const POLL_MILLIS: u64 = 1_500;
 /// A column's width in characters is its width in pixels over this, as a browser's average character.
 const PIXELS_PER_CHARACTER: f64 = 8.0;
@@ -337,9 +340,15 @@ impl View {
         self.layout()["data"] == true
     }
 
+    /// The frozen rows and columns drawn: the sheet's, at most what a terminal shows. A workbook may say any number (an
+    /// xlsx file's `ySplit` is read as it is, up to `i32::MAX`), and the frozen ones are drawn and read on every frame
+    /// (SEC-CLI-83); past the bound they scroll as the others do.
     fn frozen_counts(&self) -> (i32, i32) {
         let layout = self.layout();
-        (int(&layout["frozenRows"]).max(0), int(&layout["frozenColumns"]).max(0))
+        (
+            int(&layout["frozenRows"]).clamp(0, MAX_FROZEN_ROWS),
+            int(&layout["frozenColumns"]).clamp(0, MAX_FROZEN_COLUMNS),
+        )
     }
 
     /// A column's width in characters.
