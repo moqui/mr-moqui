@@ -105,6 +105,23 @@ fn a_paste_keeps_at_most_its_limit_and_ends_at_its_marker() {
     assert!(decoder.take_cut());
     assert!(!decoder.take_cut());
     assert_eq!(decoder.push(b"y"), vec![key(Key::Char('y'))]);
+
+    // a few bytes past the limit, held with the marker's room, are a cut paste too; a cut does not split a character
+    let mut decoder = Decoder::new();
+    let mut over = b"\x1b[200~".to_vec();
+    over.extend(std::iter::repeat_n(b'a', MAX_PASTE - 1));
+    over.extend_from_slice("é".as_bytes());
+    over.extend_from_slice(b"zz\x1b[201~");
+    let decoded = decoder.push(&over);
+    assert!(
+        matches!(&decoded[..], [Decoded::Paste(text)] if text.len() == MAX_PASTE - 1 && !text.contains('\u{fffd}')),
+        "{:?}",
+        decoded
+            .iter()
+            .map(|d| matches!(d, Decoded::Paste(_)))
+            .collect::<Vec<_>>()
+    );
+    assert!(decoder.take_cut());
 }
 
 #[test]

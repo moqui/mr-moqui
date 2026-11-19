@@ -142,9 +142,9 @@ impl Decoder {
                     paste.keep_within();
                     break;
                 };
-                let text = String::from_utf8_lossy(&paste.bytes[..at.min(MAX_PASTE)]).into_owned();
+                let text = String::from_utf8_lossy(&paste.bytes[..kept(&paste.bytes, at)]).into_owned();
                 let rest = paste.bytes[at + PASTE_END.len()..].to_vec();
-                if paste.cut {
+                if paste.cut || at > MAX_PASTE {
                     self.cut += 1;
                 }
                 self.paste = None;
@@ -513,6 +513,19 @@ fn alt(key: Key) -> Decoded {
 
 fn ctrl(key: Key) -> Decoded {
     Decoded::Key(KeyPress::with_ctrl(key))
+}
+
+/// How much of a paste of `end` bytes is delivered: all of it, or at most [`MAX_PASTE`], back to the start of a UTF-8
+/// character so the cut does not split one.
+fn kept(bytes: &[u8], end: usize) -> usize {
+    if end <= MAX_PASTE {
+        return end;
+    }
+    let mut at = MAX_PASTE;
+    while at > 0 && bytes.get(at).is_some_and(|byte| byte & 0xC0 == 0x80) {
+        at -= 1;
+    }
+    at
 }
 
 fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
