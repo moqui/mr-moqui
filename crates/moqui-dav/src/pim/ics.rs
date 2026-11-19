@@ -221,15 +221,16 @@ pub(crate) fn parse_duration(text: &str) -> Option<i64> {
                 let value: i64 = number.parse().ok()?;
                 number.clear();
                 any = true;
-                seconds += value
-                    * match (ch, in_time) {
-                        ('W', _) => 604_800,
-                        ('D', _) => 86_400,
-                        ('H', true) => 3600,
-                        ('M', true) => 60,
-                        ('S', true) => 1,
-                        _ => return None,
-                    };
+                let unit = match (ch, in_time) {
+                    ('W', _) => 604_800,
+                    ('D', _) => 86_400,
+                    ('H', true) => 3600,
+                    ('M', true) => 60,
+                    ('S', true) => 1,
+                    _ => return None,
+                };
+                // a duration too long for the seconds of an i64 is not one
+                seconds = seconds.checked_add(value.checked_mul(unit)?)?;
             }
             _ => return None,
         }
@@ -320,7 +321,8 @@ fn event(reader: &Reader<'_>, component: &Component) -> moqui_lib::object::Value
             }
             .or_else(|| {
                 let days = duration.map_or(1, |seconds| (seconds / 86_400).max(1));
-                date.checked_add(days.days()).ok()
+                // a DURATION past jiff's range of days is no end date, not a panic (SEC-FIL-93)
+                date.checked_add(jiff::Span::new().try_days(days).ok()?).ok()
             });
             if reader.default.0 != "UTC" {
                 zone_name = Some(reader.default.0.clone());
@@ -332,7 +334,7 @@ fn event(reader: &Reader<'_>, component: &Component) -> moqui_lib::object::Value
             end_ms = match &end {
                 Some(When::At(end, _)) => Some(end.as_millisecond()),
                 Some(When::Day(day)) => reader.day_start(*day, &reader.zone(Some(zone)).1),
-                None => duration.map(|seconds| at.as_millisecond() + seconds * 1000),
+                None => duration.and_then(|seconds| at.as_millisecond().checked_add(seconds.checked_mul(1000)?)),
             };
         }
         None => {}
@@ -516,7 +518,7 @@ fn todo(reader: &Reader<'_>, component: &Component) -> moqui_lib::object::ValueM
     };
     let due_ms = instant(due).or_else(|| {
         let seconds = component.text("DURATION").and_then(|text| parse_duration(&text))?;
-        start_ms.map(|start| start + seconds * 1000)
+        start_ms.and_then(|start| start.checked_add(seconds.checked_mul(1000)?))
     });
     out.insert("due".into(), due_ms.map_or(Value::Null, Value::I64));
     out.insert(

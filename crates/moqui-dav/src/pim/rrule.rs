@@ -28,12 +28,15 @@
 
 use jiff::civil::{Date, DateTime, Time, Weekday};
 use jiff::tz::TimeZone;
-use jiff::{Timestamp, ToSpan};
+use jiff::{Span, Timestamp, ToSpan};
 
 /// The most instances one expansion returns, and the most periods it looks at, so a rule that never matches or a
 /// SECONDLY rule over years cannot run away.
 pub(crate) const MAX_INSTANCES: usize = 100_000;
 const MAX_PERIODS: usize = 2_000_000;
+/// The largest INTERVAL a rule may have: a million periods (eleven days of seconds, 2,700 years of days) is past
+/// any real rule, and keeps `index` far from overflowing (SEC-FIL-93).
+const MAX_INTERVAL: i64 = 1_000_000;
 /// The most candidates one period gives (SEC-FIL-85): a yearly rule with every weekday and every hour, minute and
 /// second would build 31.5 million date-times before any other limit applied. A period is built in order, so the
 /// candidates kept are its first ones; BYSETPOS then counts within them.
@@ -216,8 +219,8 @@ impl Rule {
                     rule.interval = value
                         .parse::<i64>()
                         .ok()
-                        .filter(|interval| *interval >= 1)
-                        .ok_or_else(|| format!("INTERVAL {value} is not a positive number"))?
+                        .filter(|interval| (1..=MAX_INTERVAL).contains(interval))
+                        .ok_or_else(|| format!("INTERVAL {value} is not a number from 1 to {MAX_INTERVAL}"))?
                 }
                 "COUNT" => {
                     rule.count = Some(
@@ -239,10 +242,12 @@ impl Rule {
                 "BYSETPOS" => rule.by_set_pos = numbers(&key, value, |n| n != 0 && (-366..=366).contains(&n))?,
                 "BYDAY" => {
                     for item in value.split(',').map(str::trim).filter(|item| !item.is_empty()) {
-                        if item.len() < 2 {
-                            return Err(format!("BYDAY has {item}"));
-                        }
-                        let (ordinal, day) = item.split_at(item.len() - 2);
+                        // the last two bytes, which must be whole characters (`€` is not)
+                        let (ordinal, day) = item
+                            .len()
+                            .checked_sub(2)
+                            .and_then(|at| item.split_at_checked(at))
+                            .ok_or_else(|| format!("BYDAY has {item}"))?;
                         let day = weekday_of(day).ok_or_else(|| format!("BYDAY has {item}"))?;
                         let ordinal = if ordinal.is_empty() {
                             0
@@ -305,8 +310,9 @@ pub(crate) fn epoch_day(date: Date) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
+/// `date` plus `days`, or `None` past jiff's range: a span of too many days is an error, not a panic.
 fn add_days(date: Date, days: i64) -> Option<Date> {
-    date.checked_add(days.days()).ok()
+    date.checked_add(Span::new().try_days(days).ok()?).ok()
 }
 
 fn offset(day: Weekday) -> i64 {
@@ -526,13 +532,17 @@ impl<'a> Plan<'a> {
                 }
             }
             Freq::Monthly => {
-                let first = start.date().first_of_month().checked_add(index.months()).ok()?;
+                let first = start
+                    .date()
+                    .first_of_month()
+                    .checked_add(Span::new().try_months(index).ok()?)
+                    .ok()?;
                 for day in 0..i64::from(first.days_in_month()) {
                     add_day(add_days(first, day)?, &mut out);
                 }
             }
             Freq::Weekly => {
-                let first = add_days(week_start(start.date(), rule.wkst)?, index * 7)?;
+                let first = add_days(week_start(start.date(), rule.wkst)?, index.checked_mul(7)?)?;
                 for day in 0..7 {
                     add_day(add_days(first, day)?, &mut out);
                 }
@@ -544,11 +554,12 @@ impl<'a> Plan<'a> {
                     Freq::Minutely => start.with().second(0).subsec_nanosecond(0).build().ok()?,
                     _ => start.with().subsec_nanosecond(0).build().ok()?,
                 };
-                let at = match rule.freq {
-                    Freq::Hourly => base.checked_add(index.hours()).ok()?,
-                    Freq::Minutely => base.checked_add(index.minutes()).ok()?,
-                    _ => base.checked_add(index.seconds()).ok()?,
+                let span = match rule.freq {
+                    Freq::Hourly => Span::new().try_hours(index),
+                    Freq::Minutely => Span::new().try_minutes(index),
+                    _ => Span::new().try_seconds(index),
                 };
+                let at = base.checked_add(span.ok()?).ok()?;
                 if !self.day_matches(at.date()) {
                     return Some(out);
                 }
@@ -706,7 +717,10 @@ fn expand_within(
     let mut next_look = 0usize;
     for _ in 0..MAX_PERIODS {
         let Some(candidates) = plan.period(index) else { break };
-        index += rule.interval;
+        let Some(next) = index.checked_add(rule.interval) else {
+            break;
+        };
+        index = next;
         done = done.saturating_add(candidates.len() + 1);
         if done > work {
             tracing::warn!(
@@ -775,8 +789,11 @@ impl Plan<'_> {
         let start = self.start.date();
         match self.rule.freq {
             Freq::Yearly => Date::new(i16::try_from(i64::from(start.year()) + index).ok()?, 1, 1).ok(),
-            Freq::Monthly => start.first_of_month().checked_add(index.months()).ok(),
-            Freq::Weekly => add_days(week_start(start, self.rule.wkst)?, index * 7),
+            Freq::Monthly => start
+                .first_of_month()
+                .checked_add(Span::new().try_months(index).ok()?)
+                .ok(),
+            Freq::Weekly => add_days(week_start(start, self.rule.wkst)?, index.checked_mul(7)?),
             Freq::Daily => add_days(start, index),
             Freq::Hourly => add_days(start, index.div_euclid(24)),
             Freq::Minutely => add_days(start, index.div_euclid(1440)),
