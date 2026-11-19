@@ -61,6 +61,9 @@ pub struct StreamReader {
     parser: RawParser,
     tree: TreeBuilder,
     opened: bool,
+    /// A start tag is under way: its name came and its `>` has not. minidom puts an element on its stack only at the
+    /// `>`, so the depth stays 1 through a stanza's start tag, and its attributes are held until then (SEC-COM-82).
+    in_head: bool,
     in_stanza: usize,
     max_stanza: usize,
 }
@@ -71,6 +74,7 @@ impl StreamReader {
             parser: RawParser::new(),
             tree: TreeBuilder::new(),
             opened: false,
+            in_head: false,
             in_stanza: 0,
             max_stanza,
         }
@@ -80,13 +84,14 @@ impl StreamReader {
         self.parser = RawParser::new();
         self.tree = TreeBuilder::new();
         self.opened = false;
+        self.in_head = false;
         self.in_stanza = 0;
     }
 
     /// The frames in `data`, which may end in the middle of one (the rest waits for more).
     ///
-    /// Every byte the parser takes counts toward the stanza (or the stream header) under way, until it ends; whitespace
-    /// between stanzas does not count.
+    /// Every byte the parser takes counts toward the stanza (or the stream header) under way, until it ends, its start
+    /// tag's attributes included however the reads cut them; whitespace between stanzas does not count.
     pub fn feed(&mut self, mut data: &[u8]) -> Result<Vec<Frame>, FramingError> {
         let mut frames = Vec::new();
         loop {
@@ -94,6 +99,7 @@ impl StreamReader {
             let parsed = self.parser.parse(&mut data, false);
             // whitespace between stanzas is not counted (rxml bounds a token it holds back)
             let between = self.opened
+                && !self.in_head
                 && self.tree.depth() == 1
                 && matches!(parsed, Ok(Some(RawEvent::Text(..))) | Err(EndOrError::NeedMoreData));
             if !between {
@@ -111,6 +117,11 @@ impl StreamReader {
                 Err(EndOrError::NeedMoreData) => return Ok(frames),
                 Err(EndOrError::Error(err)) => return Err(FramingError::NotWellFormed(err.to_string())),
             };
+            match &event {
+                RawEvent::ElementHeadOpen(..) => self.in_head = true,
+                RawEvent::ElementHeadClose(..) => self.in_head = false,
+                _ => {}
+            }
             let depth = self.tree.depth();
             let (head_close, foot) = match &event {
                 // whitespace keepalives between stanzas
@@ -333,6 +344,48 @@ mod tests {
         reader
             .feed(b"<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>")
             .unwrap();
+        for _ in 0..200 {
+            reader.feed(b" ").unwrap();
+        }
+        assert!(reader.feed(b"<presence/>").is_ok());
+    }
+
+    /// SEC-COM-82: a stanza's start tag sent as attributes, each value in a read of its own that ends inside it, counts
+    /// every byte, so the stream ends at the limit; under the limit the same tag, closed, is a stanza.
+    #[test]
+    fn a_start_tag_cut_inside_its_attributes_counts_toward_the_limit() {
+        let header = b"<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>";
+        let value = "v".repeat(1000);
+        let mut reader = StreamReader::new(16 * 1024);
+        reader.feed(header).unwrap();
+        reader.feed(b"<iq a0='").unwrap();
+        let mut refused = None;
+        for index in 1..40 {
+            let fed = reader
+                .feed(value.as_bytes())
+                .and_then(|_| reader.feed(format!("' a{index}='").as_bytes()));
+            match fed {
+                Ok(frames) => assert!(frames.is_empty()),
+                Err(err) => {
+                    refused = Some((index, err));
+                    break;
+                }
+            }
+        }
+        let (index, err) = refused.expect("the start tag passes the limit");
+        assert_eq!(err, FramingError::TooLarge);
+        assert!(index <= 17, "refused only after {index} KB");
+        // the same pieces, fewer of them: under the limit the stanza comes whole
+        let mut reader = StreamReader::new(16 * 1024);
+        reader.feed(header).unwrap();
+        reader.feed(b"<iq a0='").unwrap();
+        for index in 1..14 {
+            assert!(reader.feed(value.as_bytes()).unwrap().is_empty());
+            assert!(reader.feed(format!("' a{index}='").as_bytes()).unwrap().is_empty());
+        }
+        let frames = reader.feed(b"x'/>").unwrap();
+        assert!(matches!(&frames[..], [Frame::Element(iq)] if iq.attr("a13") == Some("x")));
+        // and keepalives after it are still not counted
         for _ in 0..200 {
             reader.feed(b" ").unwrap();
         }
