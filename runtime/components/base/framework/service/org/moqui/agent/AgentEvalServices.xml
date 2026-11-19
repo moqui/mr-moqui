@@ -75,7 +75,9 @@
     </service>
     <service verb="advance" noun="Experiments" allow-remote="false" transaction="ignore">
         <description>For each running experiment (or experimentId): reads the runs that ended, calls service targets, scores
-            the outputs with the dataset's scorers, and ends the experiment when every result is done. A job each minute.</description>
+            the outputs with the dataset's scorers, and ends the experiment when every result is done. A job each minute,
+            which does each experiment as its starter; a user's call (Check now) needs MONITOR_EVAL_RUN. A target service runs
+            with authorization on as that user, never with it off (SEC-AI-95).</description>
         <in-parameters><parameter name="experimentId"/></in-parameters>
         <out-parameters><parameter name="experimentCount" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('advance',context))</script></actions>

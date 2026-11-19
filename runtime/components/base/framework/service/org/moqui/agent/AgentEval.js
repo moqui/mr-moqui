@@ -20,6 +20,17 @@ function scorerRefusal(p){const audit=ec.user.hasPermission('AgentAudit')
  if(!audit)return'Live scoring reads every user\'s runs of the agent: attaching a scorer to an agent needs the AgentAudit permission'
  create('AgentAuditLog',{auditorUserId:ec.user.userId,reason:'attached scorer '+p.scorerId+' to agent '+p.agentId+' for live scoring',auditDate:now()});return null}
 function checkScorer(p){return{refusal:scorerRefusal(p)}}
+// A service an eval names by free text (an experiment's target, a scorer of another service) runs with authorization on
+// as the current user, whatever disabled it (the evals' own disableAuthz, a job's), under the System screen they reach
+// Evals through; never as the system for whoever named it (SEC-AI-95). With no user (in a job) it is refused.
+function asPerson(n,p){let out={};ec.artifactExecution.runAsUser('component://tools/screen/System.xml',()=>{out=ec.service.sync().name(n).parameters(p).call()||{}})
+ if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
+// body() as the experiment's starter: in a job, which has no user, the starter is signed in for it, so the job does what
+// the starter's own Check now would; a user calling does it as themselves.
+function asStarter(e,body){if(ec.user.userId)return body()
+ const u=ec.entity.find('moqui.security.UserAccount').condition({userId:e.startedByUserId}).disableAuthz().one()
+ if(!u||!ec.user.internalLoginUser(u.username)){ec.message.clearErrors();throw new Error('the starter '+e.startedByUserId+' of experiment '+e.experimentId+' cannot be signed in')}
+ try{return body()}finally{ec.user.logoutLocal()}}
 
 // ---- datasets: each change raises versionNum; an item belongs to versions fromVersion..thruVersion (exclusive)
 function dataset(id){const d=one('AgentDataset',{datasetId:id});if(!d)throw new Error('Dataset '+id+' is not available');return d}
@@ -61,10 +72,10 @@ function judge(s,c){
 function scoreOne(s,c){
  if(s.scorerTypeEnumId==='AgstJudge')return judge(s,c)
  if(s.scorerTypeEnumId==='AgstService'){const p={input:c.input,output:c.output,groundTruth:c.groundTruth,runId:c.runId,metadata:json(c.metadataJson),config:json(s.configJson)||{}}
-  // a built-in scorer runs as the evals do; any other service with the caller's own authorization (none in a job), never
-  // as the system for whoever named it (SEC-AI-83)
-  const out=SERVICE_SCORERS.includes(s.serviceName)?call(s.serviceName,p):(ec.service.sync().name(s.serviceName).parameters(p).call()||{})
-  if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return{score:num(out.score),reason:out.reason}}
+  // a built-in scorer runs as the evals do; any other service as a person (asPerson), never as the system for whoever
+  // named it (SEC-AI-83)
+  const out=SERVICE_SCORERS.includes(s.serviceName)?call(s.serviceName,p):asPerson(s.serviceName,p)
+  return{score:num(out.score),reason:out.reason}}
  return null // a human scorer is scored by a person
 }
 // Writes an AgentScore per scorer; a scorer that fails writes a score row with its error and the others go on.
@@ -124,7 +135,7 @@ function advanceOne(e,serviceLimit){
     finishResult(e,r,item,runOutput(run),num(run.cost),scorers)
    }else if(e.serviceName&&r.statusId==='EvrPending'){if(calls++>=serviceLimit)continue
     update('AgentExperimentResult',{resultId:r.resultId,statusId:'EvrRunning',startedDate:now()})
-    const out=call(e.serviceName,{input:item?.inputText,metadata:json(item?.metadataJson)})
+    const out=asPerson(e.serviceName,{input:item?.inputText,metadata:json(item?.metadataJson)})
     finishResult(e,r,item,text(out.output??out.text??out),null,scorers)
    }
   }catch(err){ec.logger.error('Experiment '+e.experimentId+' result '+r.resultId+' failed: '+err);update('AgentExperimentResult',{resultId:r.resultId,statusId:'EvrFailed',errorText:String(err).slice(0,4000),endedDate:now()})}
@@ -139,9 +150,10 @@ function summarize(e){
  if(open===0&&e.statusId==='EvRunning')Object.assign(f,{statusId:done?'EvCompleted':'EvFailed',endedDate:now()})
  update('AgentExperiment',f)
 }
-function advance(p){
+// The job's each minute (no user: each experiment as its starter), or a user's Check now, which needs MONITOR_EVAL_RUN.
+function advance(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
  const list=p.experimentId?[one('AgentExperiment',{experimentId:p.experimentId})].filter(Boolean):rows('AgentExperiment',{statusId:'EvRunning'})
- for(const e of list){if(e.statusId!=='EvRunning')continue;try{advanceOne(e,20)}catch(err){ec.logger.error('Experiment '+e.experimentId+' could not advance: '+err)}}
+ for(const e of list){if(e.statusId!=='EvRunning')continue;try{asStarter(e,()=>advanceOne(e,20))}catch(err){ec.logger.error('Experiment '+e.experimentId+' could not advance: '+err)}}
  return{experimentCount:list.length}
 }
 function cancel(p){need('MONITOR_EVAL_RUN');const e=one('AgentExperiment',{experimentId:p.experimentId});if(!e||e.statusId!=='EvRunning')throw new Error('Experiment is not running')
@@ -150,7 +162,8 @@ function cancel(p){need('MONITOR_EVAL_RUN');const e=one('AgentExperiment',{exper
 
 // ---- live scoring: a stable sample (a hash of the run id) of each attached agent's completed runs
 function sampled(runId,rate){let h=2166136261;for(const ch of String(runId)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)>>>0}return(h%10000)/10000<rate}
-function live(p){
+// The job's each five minutes, or a user's, which needs MONITOR_EVAL_RUN (judges cost money).
+function live(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
  let scored=0
  for(const a of rows('AgentScorerAttach').filter(a=>a.agentId&&active(a))){
   try{const s=one('AgentScorer',{scorerId:a.scorerId});if(!s||s.scorerTypeEnumId==='AgstHuman')continue

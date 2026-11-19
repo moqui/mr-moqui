@@ -89,3 +89,17 @@ feature("attaching a live scorer and a scorer of another service need AgentAudit
  then({attach,other,own,judge,audited,auditedOther,logs}){attach.includes('AgentAudit');other.includes('AgentAudit');own=='';judge==''
   audited=='';auditedOther=='';logs.length==1},
 })
+// SEC-AI-95: a service an experiment names runs with authorization on as its starter, never with it off for whoever named
+// it; and Check now (advance#Experiments) needs MONITOR_EVAL_RUN as a start does
+feature("an experiment's target service runs with the starter's authorization, and Check now needs MONITOR_EVAL_RUN",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  call('create#moqui.security.UserAccount',{userId:'EVAL_T_RUNNER',username:'eval.runner',userFullName:'Eval runner',currentPassword:'16ac58bbfa332c1c55bd98b53e60720bfa90d394',passwordHashType:'SHA'})
+  call('create#moqui.security.UserGroup',{userGroupId:'EVAL_T_RUN',description:'Eval runners'})
+  call('create#moqui.security.UserGroupPermission',{userGroupId:'EVAL_T_RUN',userPermissionId:'MONITOR_EVAL_RUN',fromDate:'2000-01-01T00:00:00Z'})
+  call('create#moqui.security.UserGroupMember',{userGroupId:'EVAL_T_RUN',userId:'EVAL_T_RUNNER',fromDate:'2000-01-01T00:00:00Z'})
+  // the runner may start experiments but may not open System, so a service the evals would call past authorization is refused
+  login('eval.runner');ec.artifactExecution.disableAuthz();let started;try{started=call(S+'start#Experiment',{datasetId:'EVAL_T_DS',serviceName:S+'score#ExactMatch',trials:1})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  login('eval.viewer');ec.artifactExecution.disableAuthz();let checked;try{checked=invoke(S+'advance#Experiments',{experimentId:started.experimentId})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  return{results:list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId}),checked}},
+ then({results,checked}){results.length==3;results.every(r=>r.statusId==='EvrFailed'&&r.outputText==null&&r.errorText.includes('not authorized'));checked.error.includes('MONITOR_EVAL_RUN')},
+})
