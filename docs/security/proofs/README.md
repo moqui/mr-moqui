@@ -3,7 +3,8 @@
 The framework's standing against the OWASP Application Security Verification Standard (ASVS) 5.0.0, requirement by
 requirement, and the proofs that show it. The plan is [Proofs-Initial](../../../plans/Proofs-Initial.md).
 
-Status 2026-11-18: the responsibility matrix (phase P1) is written for levels 1 and 2; no proof is filed under it yet.
+Status 2026-11-18: the responsibility matrix (phase P1) is written for levels 1 and 2, and the harness that runs the
+proofs (P2) is built, with the first four proofs filed (6.2.6, 6.2.7, 6.3.2 and 7.4.1).
 A status is one reading of the code at mr-moqui `bf7034ec9`, mr-pass `d2dfa67` and mr-mantle `dff2c9fe`. A Framework
 status is a claim until a proof shows it, and a Gap closes when its fix lands and a proof shows it.
 
@@ -11,8 +12,7 @@ status is a claim until a proof shows it, and a Gap closes when its fix lands an
 
 - **The project:** where the framework meets the standard by default, and where it does not.
 - **Builders and certifiers:** which requirements mr-moqui meets for an application built on it, which the
-  deployment's configuration or the application itself must meet, and, once the proofs exist, tests to run against a
-  deployment.
+  deployment's configuration or the application itself must meet, and tests to run against a deployment.
 
 ## Reading a chapter file
 
@@ -61,6 +61,25 @@ A requirement met only in part takes the status of the part that is not met, and
 | [V16 Security Logging and Error Handling](V16-Security-Logging-and-Error-Handling.md) | 16 | 7 | 3 | 0 | 6 | 0 |
 | [V17 WebRTC](V17-WebRTC.md) | 7 | 3 | 0 | 0 | 4 | 0 |
 | **All** | 253 | 89 | 22 | 28 | 85 | 29 |
+
+## Running the proofs
+
+The framework's proofs are in
+[`runtime/components/base/framework/test/proofs/`](../../../runtime/components/base/framework/test/proofs), a spec
+file for each ASVS chapter, each feature filed under the requirement its name starts with. They run in every `./moq
+test-framework`, and alone:
+
+```sh
+moqui test-client framework --proofs --serve          # the project's run: a server with the test fixtures
+MOQUI_TEST_PASSWORD=... moqui test-client framework --proofs --server https://erp.example.com --param user=auditor
+```
+
+Against a server the run did not start, the profile is *deployment*: no test fixture user signs in. A proof that needs
+an account takes the one `--param user` names, with its password in `MOQUI_TEST_PASSWORD`; one that needs the
+project's fixture data skips and says what it needs. Use a low-privilege account made for the run: a proof signs it in
+and out, and the 6.3.2 proof tries one sign-in of the demo data's well-known account. The run writes `proofs.md` and
+`proofs.json` into its output directory (`--out`): every row of this matrix with the run's proofs of it and their
+result, to attach as evidence. The harness is described in [JS-Test-Client](../../dev/JS-Test-Client.md#security-proofs).
 
 PASS, the public application, has its own matrix in its repository:
 [mr-pass ASVS matrix](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md). A PASS requirement the

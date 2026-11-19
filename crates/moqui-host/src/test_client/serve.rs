@@ -33,7 +33,7 @@ use moqui_devkit::testkit::{spec_offline, suite_server, Failure, SpecResult, Sui
 use moqui_lib::error::Error;
 
 use super::{run_against, ClientArgs, Server, SshTarget};
-use crate::test_cmd::{report, suite_tree, TestComponent};
+use crate::test_cmd::{report, TestComponent};
 
 /// How long a child has to load or restore its database and start listening. A first load of Mantle's data is minutes.
 const START_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -68,7 +68,7 @@ pub(super) fn run_served(
             ));
             continue;
         }
-        match declared_server(component, args.acceptance) {
+        match declared_server(component, args.tree()) {
             Ok(server) => match groups.iter_mut().find(|group| shares_server(&group.server, &server)) {
                 Some(group) => {
                     merge_server(&mut group.server, server);
@@ -148,10 +148,9 @@ fn merge_server(have: &mut SuiteServer, other: SuiteServer) {
     }
 }
 
-/// The server a component's client `suite.js` declares (`test/client`, or `test/acceptance/client` with `acceptance`), its
-/// own component when it names none.
-fn declared_server(component: &TestComponent, acceptance: bool) -> Result<SuiteServer, Error> {
-    let tree = suite_tree(acceptance, true);
+/// The server a component's client `suite.js` in `tree` declares (`test/client`, `test/acceptance/client` with
+/// `--acceptance`, `test/proofs` with `--proofs`), its own component when it names none.
+fn declared_server(component: &TestComponent, tree: &str) -> Result<SuiteServer, Error> {
     let suite = component.dir.join(tree).join("suite.js");
     let declared = if suite.is_file() {
         let text = std::fs::read_to_string(&suite)

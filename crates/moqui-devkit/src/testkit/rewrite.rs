@@ -329,6 +329,49 @@ pub fn suite_server(source: &str) -> Result<Option<SuiteServer>, Error> {
     Ok(None)
 }
 
+/// The responsibility matrix a proofs suite names (docs/security/proofs/README.md): `suite([...], { matrix: "..." })` in
+/// `test/proofs/suite.js`, a path or an array of paths relative to the component's directory, each a Markdown file or a
+/// directory of them, which `moqui test-client --proofs` joins its results to. Read without running the file, as
+/// [`suite_order`] reads the order. Empty when it names none; an error when the file does not parse or a path is not a
+/// string literal.
+pub fn suite_matrix(source: &str) -> Result<Vec<String>, Error> {
+    let allocator = std::default::Default::default();
+    let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
+        return Err(Error::new("suite.js is not JavaScript"));
+    }
+    let not_paths = || Error::new("suite() matrix is a path or an array of paths, as strings");
+    for statement in &parsed.program.body {
+        let Statement::ExpressionStatement(statement) = statement else {
+            continue;
+        };
+        let Expression::CallExpression(call) = &statement.expression else {
+            continue;
+        };
+        if !matches!(&call.callee, Expression::Identifier(name) if name.name == "suite") {
+            continue;
+        }
+        let Some(Expression::ObjectExpression(options)) = call.arguments.get(1).and_then(Argument::as_expression)
+        else {
+            return Ok(Vec::new());
+        };
+        return match object_property(options, "matrix") {
+            None => Ok(Vec::new()),
+            Some(Expression::StringLiteral(text)) => Ok(vec![text.value.display().to_string()]),
+            Some(Expression::ArrayExpression(array)) => array
+                .elements
+                .iter()
+                .map(|element| match element.as_expression() {
+                    Some(Expression::StringLiteral(text)) => Ok(text.value.display().to_string()),
+                    _ => Err(not_paths()),
+                })
+                .collect(),
+            Some(_) => Err(not_paths()),
+        };
+    }
+    Ok(Vec::new())
+}
+
 /// The value of the property `key` of an object literal.
 fn object_property<'a, 'b>(object: &'b ObjectExpression<'a>, key: &str) -> Option<&'b Expression<'a>> {
     object.properties.iter().find_map(|property| match property {

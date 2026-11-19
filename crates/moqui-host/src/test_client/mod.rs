@@ -28,6 +28,7 @@ mod http;
 pub(crate) mod load;
 mod load_cmd;
 mod offline;
+mod proofs;
 mod raw;
 mod serve;
 #[cfg(feature = "ssh")]
@@ -56,8 +57,8 @@ use moqui_lib::sync::lock;
 use serde_json::{json, Value};
 
 use crate::test_cmd::{
-    acceptance_only, component_name, component_specs, discover, discover_suite, report, run_order, select_across,
-    select_specs, skipped_spec, suite_tree, TestComponent,
+    acceptance_only, component_name, component_specs, discover, discover_suite, report, run_order_in, select_across,
+    select_specs, skipped_spec, suite_tree, TestComponent, PROOFS_TREE,
 };
 use http::{Ask, Server, Session, SshTarget};
 
@@ -86,6 +87,11 @@ pub struct ClientArgs {
     /// `--acceptance`: run the acceptance client specs (`test/acceptance/client/`) in place of `test/client/`; with
     /// `--serve`, against the server `test/acceptance/client/suite.js` declares, whose specs resolve across both trees.
     pub acceptance: bool,
+    /// `--proofs`: run the security proofs (`test/proofs/`) in place of `test/client/`; with `--serve`, against the
+    /// server `test/proofs/suite.js` declares. The run writes its summary by requirement ([`proofs`]).
+    pub proofs: bool,
+    /// `--profile`: what the specs may assume of the server's data; [`ClientArgs::profile`] when not given.
+    pub profile: Option<Profile>,
     /// `--param name=value`, in order; a later one wins.
     pub params: Vec<(String, String)>,
     pub junit: Option<PathBuf>,
@@ -111,6 +117,58 @@ pub struct ClientArgs {
     /// A request's limit when its own `timeout` does not set one, in seconds: 60 when not given (`moqui test-load
     /// --timeout`).
     pub request_timeout: Option<f64>,
+}
+
+/// What a client spec may assume of the server's data (`--profile`, the `profile` global of a spec).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profile {
+    /// The suite's fixtures are on the server: `--serve` made them, or a server spec made them on its database
+    /// (`moqui test framework --spec ClientFixtures --db existing`).
+    Fixtures,
+    /// A server the project did not set up, such as a certifier's deployment: no fixture user or data, only the
+    /// accounts the run's params give.
+    Deployment,
+}
+
+impl Profile {
+    pub fn name(self) -> &'static str {
+        match self {
+            Profile::Fixtures => "fixtures",
+            Profile::Deployment => "deployment",
+        }
+    }
+}
+
+impl ClientArgs {
+    /// The run's profile: `--profile`, else fixtures with `--serve`, whose servers ran the suites' fixture specs, and
+    /// deployment against a server the run did not start, so that no spec signs in there with a fixture's password.
+    pub fn profile(&self) -> Profile {
+        self.profile.unwrap_or(if self.serve {
+            Profile::Fixtures
+        } else {
+            Profile::Deployment
+        })
+    }
+
+    /// The client tree the run reads: `test/proofs` with `--proofs`, `test/acceptance/client` with `--acceptance`,
+    /// else `test/client`.
+    fn tree(&self) -> &'static str {
+        if self.proofs {
+            PROOFS_TREE
+        } else {
+            suite_tree(self.acceptance, true)
+        }
+    }
+
+    /// The trees whose `suite.js` chains order the run ([`run_order_in`]): an acceptance run's specs resolve across
+    /// `test/client` and `test/acceptance/client`.
+    fn trees(&self) -> Vec<&'static str> {
+        if self.acceptance && !self.proofs {
+            vec![suite_tree(false, true), suite_tree(true, true)]
+        } else {
+            vec![self.tree()]
+        }
+    }
 }
 
 fn seconds_option(name: &str, text: &str) -> Result<f64, Error> {
@@ -145,6 +203,15 @@ pub fn parse_client_args(args: &[String]) -> Result<ClientArgs, Error> {
             ),
             "--feature" => parsed.feature = Some(value("--feature")?),
             "--acceptance" => parsed.acceptance = true,
+            "--proofs" => parsed.proofs = true,
+            "--profile" => {
+                let name = value("--profile")?;
+                parsed.profile = Some(match name.as_str() {
+                    "fixtures" => Profile::Fixtures,
+                    "deployment" => Profile::Deployment,
+                    _ => return Err(Error::new(format!("--profile is fixtures or deployment, not '{name}'"))),
+                });
+            }
             "--param" => {
                 let pair = value("--param")?;
                 let (name, text) = pair
@@ -178,6 +245,11 @@ pub fn parse_client_args(args: &[String]) -> Result<ClientArgs, Error> {
             }
             target => parsed.targets.push(target.to_string()),
         }
+    }
+    if parsed.proofs && parsed.acceptance {
+        return Err(Error::new(
+            "--proofs and --acceptance each run a suite of their own (test/proofs, test/acceptance/client): give one",
+        ));
     }
     if parsed.serve && parsed.offline {
         return Err(Error::new(
@@ -234,8 +306,12 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
     };
     let components = select(&runtime, args)?;
     // a cycle in the dependsOn of the run is an error before any server starts
-    run_order(&components, args.acceptance, true)?;
+    run_order_in(&components, &args.trees())?;
     let out_dir = args.out.clone().unwrap_or_else(|| default_out_dir(&runtime));
+    let server_text = server.as_ref().map_or_else(
+        || "the servers --serve started".to_string(),
+        |server| server.url.clone(),
+    );
     let started = Instant::now();
     let results = match server {
         Some(server) => run_against(args, server, args.wait, &components, &out_dir, print)?,
@@ -248,10 +324,12 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
     for line in text.trim_end_matches('\n').split('\n') {
         print(line);
     }
-    // the regression budget of the client specs (test/budget's client line); not the acceptance suite
+    // the regression budget of the client specs (test/budget's client line, or its proofs line for the proofs); not
+    // the acceptance suite
     if !args.acceptance {
+        let key = if args.proofs { "proofs" } else { "client" };
         let (text, over) = report::budget_check(&results, &|name| {
-            crate::test_cmd::component_dir_named(&runtime, name).and_then(|dir| report::read_budget(&dir, "client"))
+            crate::test_cmd::component_dir_named(&runtime, name).and_then(|dir| report::read_budget(&dir, key))
         });
         for line in text
             .trim_start_matches('\n')
@@ -262,6 +340,17 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
             print(line);
         }
         failed += over;
+    }
+    if args.proofs {
+        let run = proofs::Run {
+            server: &server_text,
+            profile: args.profile().name(),
+        };
+        let written = proofs::write_summary(&out_dir, &components, &results, &run)?;
+        for line in &written.lines {
+            print(line);
+        }
+        failed += written.unfiled;
     }
     if out_dir.is_dir() {
         print(&format!("Output: {}", out_dir.display()));
@@ -296,6 +385,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
         me: me.clone(),
         server,
         params: params(args),
+        profile: args.profile(),
         client,
         insecure: args.insecure,
         timeout: load::seconds(args.timeout),
@@ -325,7 +415,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
 }
 
 /// Run the specs of `components` against `server`, once it answers (within `wait` seconds when given), each line of
-/// the report to `print`. The specs run in the order of `moqui test` ([`run_order`]): the components' order and each
+/// the report to `print`. The specs run in the order of `moqui test` ([`run_order_in`]): the components' order and each
 /// one's own, except that a spec runs after the specs its `dependsOn` names, in any of the components.
 fn run_against(
     args: &ClientArgs,
@@ -354,7 +444,7 @@ fn run_against(
     };
     let mut results = Vec::new();
     let local = http::is_loopback(&host.server.host);
-    for (index, (c, s)) in run_order(components, args.acceptance, true)?.into_iter().enumerate() {
+    for (index, (c, s)) in run_order_in(components, &args.trees())?.into_iter().enumerate() {
         let component = &components[c];
         let spec = &component.specs[s];
         *lock(&host.component_dir) = component.dir.clone();
@@ -428,7 +518,8 @@ fn video_tools(chromium: Option<&str>) -> bool {
 
 /// The components and specs to run: those named (a component, a `test/client` directory or a spec file), or every
 /// component with client specs; then `--spec` with the specs their `dependsOn` names, where a process spec
-/// (`test/client/process/*.spec.js`) can be named too.
+/// (`test/client/process/*.spec.js`) can be named too. With `--proofs`, the same of `test/proofs`, which has no
+/// process specs and no pool with another tree.
 fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error> {
     let add = |component: TestComponent, components: &mut Vec<TestComponent>| match components
         .iter_mut()
@@ -443,11 +534,15 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
         }
         None => components.push(component),
     };
-    let tree = suite_tree(args.acceptance, true);
+    let tree = args.tree();
     let named: Vec<String> = args.targets.iter().filter(|target| !is_path(target)).cloned().collect();
     crate::test_cmd::check_stale_acceptance(runtime, args.acceptance, &named)?;
     let mut discovered = if args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty() {
-        let pool = discover_suite(runtime, true, args.acceptance)?;
+        let pool = if args.proofs {
+            discover(runtime, PROOFS_TREE)?
+        } else {
+            discover_suite(runtime, true, args.acceptance)?
+        };
         if args.acceptance && args.specs.is_empty() {
             acceptance_only(pool)
         } else {
@@ -457,7 +552,10 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
         Vec::new()
     };
     // Process specs (<tree>/process/<businessProcessId>.spec.js) run only when --spec names them
-    if !args.specs.is_empty() && (args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty()) {
+    if !args.proofs
+        && !args.specs.is_empty()
+        && (args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty())
+    {
         for component in discover(runtime, &format!("{tree}/process"))? {
             add(component, &mut discovered);
         }
@@ -468,7 +566,7 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
     } else {
         for target in &args.targets {
             if is_path(target) {
-                add(path_component(Path::new(target), args.acceptance)?, &mut components);
+                add(path_component(Path::new(target), args)?, &mut components);
             } else {
                 let component = discovered
                     .iter()
@@ -515,18 +613,21 @@ fn is_path(target: &str) -> bool {
     target.contains('/') || target.ends_with(".spec.js") || target == "." || target == ".."
 }
 
-/// The component of a client directory (`test/client` or `test/acceptance/client`), a component directory (its
-/// `test/acceptance/client` with `acceptance`, else its `test/client`), or one spec file in a client directory (or a
-/// subdirectory of it) or its `process` directory: the directory above `test`. A file brings its own spec only, with
-/// what its `dependsOn` names.
-fn path_component(path: &Path, acceptance: bool) -> Result<TestComponent, Error> {
+/// The component of a client directory (`test/client`, `test/acceptance/client` or `test/proofs`), a component
+/// directory (the tree of the run: its `test/acceptance/client` with `--acceptance`, its `test/proofs` with `--proofs`,
+/// else its `test/client`), or one spec file in a client directory (or a subdirectory of it) or its `process`
+/// directory: the directory above `test`. A file brings its own spec only, with what its `dependsOn` names. A proof is
+/// run with `--proofs`, and `--proofs` runs only proofs.
+fn path_component(path: &Path, args: &ClientArgs) -> Result<TestComponent, Error> {
     let missing = || {
         Error::new(format!(
-            "{} is not a test/client or test/acceptance/client directory or a client .spec.js file",
+            "{} is not a test/client, test/acceptance/client or test/proofs directory or a client .spec.js file",
             path.display()
         ))
     };
-    let is_client_dir = |dir: &Path| dir.ends_with("test/client") || dir.ends_with("test/acceptance/client");
+    let is_client_dir = |dir: &Path| {
+        dir.ends_with("test/client") || dir.ends_with("test/acceptance/client") || dir.ends_with(PROOFS_TREE)
+    };
     let path = std::fs::canonicalize(path).map_err(|_| missing())?;
     let process_dir = path
         .parent()
@@ -535,7 +636,7 @@ fn path_component(path: &Path, acceptance: bool) -> Result<TestComponent, Error>
                 && (parent.ends_with("test/client/process") || parent.ends_with("test/acceptance/client/process"))
         })
         .map(Path::to_path_buf);
-    let own_tree = suite_tree(acceptance, true);
+    let own_tree = args.tree();
     let (client_dir, file) = if let Some(process_dir) = &process_dir {
         (
             process_dir.parent().ok_or_else(missing)?.to_path_buf(),
@@ -559,9 +660,21 @@ fn path_component(path: &Path, acceptance: bool) -> Result<TestComponent, Error>
     }
     let tree = if client_dir.ends_with("test/acceptance/client") {
         "test/acceptance/client"
+    } else if client_dir.ends_with(PROOFS_TREE) {
+        PROOFS_TREE
     } else {
         "test/client"
     };
+    if (tree == PROOFS_TREE) != args.proofs {
+        return Err(Error::new(if args.proofs {
+            format!(
+                "{} is not a test/proofs directory or a proof's .spec.js file, which --proofs runs",
+                path.display()
+            )
+        } else {
+            format!("{} is a proof: run it with --proofs", path.display())
+        }));
+    }
     let dir = client_dir
         .ancestors()
         .nth(tree.split('/').count())
@@ -745,6 +858,8 @@ pub(crate) struct ClientHost {
     me: Weak<ClientHost>,
     server: Server,
     params: BTreeMap<String, String>,
+    /// `--profile`, the `profile` of the specs; deployment for a load run in a server.
+    profile: Profile,
     client: reqwest::blocking::Client,
     insecure: bool,
     /// `--timeout`.
@@ -1020,6 +1135,7 @@ impl ClientHost {
             me: me.clone(),
             server,
             params,
+            profile: Profile::Deployment,
             client,
             insecure,
             timeout: REQUEST_TIMEOUT,
@@ -1569,6 +1685,7 @@ impl ClientHost {
                 Ok(json!({
                     "server": self.server.to_json(),
                     "params": self.params,
+                    "profile": self.profile.name(),
                     "timeout": self.timeout.as_secs_f64(),
                     "inServer": self.in_server.is_some(),
                     "threadToken": token,
@@ -1911,10 +2028,31 @@ mod tests {
             (&["--ssh"][..], "--ssh needs a value"),
             (&["--offline", "--serve"][..], "leave out --serve"),
             (&["--chromium"][..], "--chromium needs a value"),
+            (&["--proofs", "--acceptance"][..], "give one"),
+            (
+                &["--profile", "staging"][..],
+                "--profile is fixtures or deployment, not 'staging'",
+            ),
+            (&["--profile"][..], "--profile needs a value"),
         ] {
             let err = parse_client_args(&args(bad)).unwrap_err().to_string();
             assert!(err.contains(says), "{bad:?}: {err}");
         }
+        // the profile: deployment against a server the run did not start, fixtures with --serve, else --profile
+        let proofs = parse_client_args(&args(&["framework", "--proofs"])).unwrap();
+        assert!(proofs.proofs && !proofs.acceptance);
+        assert_eq!((proofs.tree(), proofs.trees()), (PROOFS_TREE, vec![PROOFS_TREE]));
+        assert_eq!(proofs.profile(), Profile::Deployment);
+        assert_eq!(
+            parse_client_args(&args(&["--serve"])).unwrap().profile(),
+            Profile::Fixtures
+        );
+        let given = parse_client_args(&args(&["--serve", "--profile", "deployment"])).unwrap();
+        assert_eq!(given.profile(), Profile::Deployment);
+        let given = parse_client_args(&args(&["--profile", "fixtures"])).unwrap();
+        assert_eq!(given.profile(), Profile::Fixtures);
+        let accept = parse_client_args(&args(&["--acceptance"])).unwrap();
+        assert_eq!(accept.trees(), vec!["test/client", "test/acceptance/client"]);
     }
 
     #[test]
@@ -1985,7 +2123,7 @@ mod tests {
         };
         let ordered = || -> Vec<String> {
             let components = select(&runtime, &ClientArgs::default()).unwrap();
-            run_order(&components, false, true)
+            run_order_in(&components, &["test/client"])
                 .unwrap()
                 .into_iter()
                 .map(|(c, s)| format!("{}/{}", components[c].name, components[c].specs[s].name))
@@ -2020,7 +2158,7 @@ mod tests {
             "spec({ dependsOn: ['CommerceOrders'] })",
         );
         let components = select(&runtime, &ClientArgs::default()).unwrap();
-        let err = run_order(&components, false, true).unwrap_err().to_string();
+        let err = run_order_in(&components, &["test/client"]).unwrap_err().to_string();
         assert!(err.contains("cycle") && err.contains("boss/CommerceOrders"), "{err}");
         let _ = std::fs::remove_dir_all(&runtime);
     }
@@ -2028,38 +2166,67 @@ mod tests {
     #[test]
     fn a_path_target_is_its_component_and_one_file_its_spec() {
         let dir = std::env::temp_dir().join(format!("moqui-test-client-path-{}", std::process::id()));
+        let regression = ClientArgs::default();
+        let acceptance = ClientArgs {
+            acceptance: true,
+            ..ClientArgs::default()
+        };
+        let proofs = ClientArgs {
+            proofs: true,
+            ..ClientArgs::default()
+        };
         let client = dir.join("comp/test/client");
         std::fs::create_dir_all(&client).unwrap();
         std::fs::write(dir.join("comp/component.xml"), "<component name=\"my-comp\"/>").unwrap();
         std::fs::write(client.join("A.spec.js"), "spec({})").unwrap();
         std::fs::write(client.join("B.spec.js"), "spec({ dependsOn: ['A'] })").unwrap();
-        let whole = path_component(&client, false).unwrap();
+        let whole = path_component(&client, &regression).unwrap();
         assert_eq!(whole.name, "my-comp");
         assert_eq!(whole.specs.len(), 2);
         assert_eq!(whole.specs[0].display, "my-comp/test/client/A.spec.js");
-        assert_eq!(path_component(&dir.join("comp"), false).unwrap().specs.len(), 2);
-        let one = path_component(&client.join("B.spec.js"), false).unwrap();
+        assert_eq!(path_component(&dir.join("comp"), &regression).unwrap().specs.len(), 2);
+        let one = path_component(&client.join("B.spec.js"), &regression).unwrap();
         assert_eq!(
             one.specs.iter().map(|spec| spec.name.as_str()).collect::<Vec<_>>(),
             vec!["A", "B"]
         );
-        assert!(path_component(&dir, false).is_err());
-        assert!(path_component(&dir.join("nowhere"), false).is_err());
+        assert!(path_component(&dir, &regression).is_err());
+        assert!(path_component(&dir.join("nowhere"), &regression).is_err());
         // test/acceptance/client: a component directory with --acceptance, a file there, and its dependsOn in test/client
         let accept = dir.join("comp/test/acceptance/client");
         std::fs::create_dir_all(&accept).unwrap();
         std::fs::write(accept.join("Walk.spec.js"), "spec({ dependsOn: ['A'] })").unwrap();
-        let walks = path_component(&dir.join("comp"), true).unwrap();
+        let walks = path_component(&dir.join("comp"), &acceptance).unwrap();
         assert_eq!(
             walks.specs.iter().map(|spec| spec.name.as_str()).collect::<Vec<_>>(),
             vec!["Walk"]
         );
         assert_eq!(walks.specs[0].display, "my-comp/test/acceptance/client/Walk.spec.js");
-        let walk = path_component(&accept.join("Walk.spec.js"), false).unwrap();
+        let walk = path_component(&accept.join("Walk.spec.js"), &regression).unwrap();
         assert_eq!(
             walk.specs.iter().map(|spec| spec.name.as_str()).collect::<Vec<_>>(),
             vec!["A", "Walk"]
         );
+        // test/proofs: only with --proofs, its own tree with no pool, and --proofs takes no other tree
+        let proof_dir = dir.join("comp/test/proofs");
+        std::fs::create_dir_all(&proof_dir).unwrap();
+        std::fs::write(proof_dir.join("V3Web.spec.js"), "spec({})").unwrap();
+        let filed = path_component(&dir.join("comp"), &proofs).unwrap();
+        assert_eq!(
+            filed.specs.iter().map(|spec| spec.display.as_str()).collect::<Vec<_>>(),
+            vec!["my-comp/test/proofs/V3Web.spec.js"]
+        );
+        assert_eq!(
+            path_component(&proof_dir.join("V3Web.spec.js"), &proofs)
+                .unwrap()
+                .specs
+                .len(),
+            1
+        );
+        let err = path_component(&proof_dir, &regression).unwrap_err().to_string();
+        assert!(err.contains("is a proof: run it with --proofs"), "{err}");
+        let err = path_component(&client, &proofs).unwrap_err().to_string();
+        assert!(err.contains("is not a test/proofs directory"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

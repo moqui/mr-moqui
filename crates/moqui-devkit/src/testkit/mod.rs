@@ -23,7 +23,7 @@ mod sandbox;
 pub mod rewrite;
 pub mod run;
 
-pub use rewrite::{suite_order, suite_server, SuiteServer};
+pub use rewrite::{suite_matrix, suite_order, suite_server, SuiteServer};
 pub use run::{
     run_on_thread, run_script_on_thread, run_spec, spec_database_free, spec_depends_on, spec_missing_features,
     spec_offline, AroundThread, CaseExtras, CaseResult, Failure, Outcome, RunOptions, ScriptFile, ScriptThread,

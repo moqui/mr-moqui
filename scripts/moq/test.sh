@@ -168,19 +168,23 @@ parse_suite_opts() {
     done
 }
 
-# The framework's suites: cargo test, the tests of this script, and the specs and client specs of components/base and
-# components/dev.
+# The framework's suites: cargo test, the tests of this script, and the specs, client specs and security proofs of
+# components/base and components/dev.
 framework_suites() {
     local name
-    local -a server client
+    local -a server client proofs
     server=()
     client=()
+    proofs=()
     while IFS= read -r name; do
         [ "$name" = demo ] || server+=("$name")
     done < <(spec_components test "$BASE_SET" "$DEV_SET")
     while IFS= read -r name; do
         client+=("$name")
     done < <(served_components test/client "$BASE_SET" "$DEV_SET")
+    while IFS= read -r name; do
+        proofs+=("$name")
+    done < <(served_components test/proofs "$BASE_SET" "$DEV_SET")
     need_cargo
     suite "cargo test --workspace" cargo test --workspace
     suite "scripts/moq-test.sh" bash scripts/moq-test.sh
@@ -196,22 +200,30 @@ framework_suites() {
         suite "moqui test-client --serve (framework)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \
             "${client[@]}"
     fi
+    if [ ${#proofs[@]} -gt 0 ]; then
+        suite "moqui test-client --serve --proofs (framework)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- \
+            --serve --proofs "${proofs[@]}"
+    fi
 }
 
-# The applications' suites: the specs and client specs of the components under runtime/components/addon. No cargo; the
-# binary is built only when it is missing.
+# The applications' suites: the specs, client specs and security proofs of the components under
+# runtime/components/addon. No cargo; the binary is built only when it is missing.
 apps_suites() {
     local name
-    local -a server client
+    local -a server client proofs
     server=()
     client=()
+    proofs=()
     while IFS= read -r name; do
         server+=("$name")
     done < <(spec_components test "$ADDON_SET" "$TEST_SET")
     while IFS= read -r name; do
         client+=("$name")
     done < <(served_components test/client "$ADDON_SET" "$TEST_SET")
-    if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ]; then
+    while IFS= read -r name; do
+        proofs+=("$name")
+    done < <(served_components test/proofs "$ADDON_SET" "$TEST_SET")
+    if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ] && [ ${#proofs[@]} -eq 0 ]; then
         info "No application component under runtime/components/addon has specs."
         return 0
     fi
@@ -221,6 +233,10 @@ apps_suites() {
     if [ ${#client[@]} -gt 0 ]; then
         suite "moqui test-client --serve (apps)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \
             "${client[@]}"
+    fi
+    if [ ${#proofs[@]} -gt 0 ]; then
+        suite "moqui test-client --serve --proofs (apps)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- \
+            --serve --proofs "${proofs[@]}"
     fi
 }
 
@@ -448,7 +464,11 @@ and any other option is passed on:
                                                (a child moqui test --serve), run, then stop it
   ./moq test-client mr-marble --serve --spec FindScreens --param screen=Order/FindOrder --headed
 --acceptance runs the acceptance client specs (test/acceptance/client/) instead, only when asked
-(./moq accept).
+(./moq accept). --proofs runs the security proofs (test/proofs/) instead and writes proofs.json and
+proofs.md, the results by requirement; against a server it did not start the profile is deployment
+(no fixture user signs in), with --serve fixtures (docs/security/proofs/README.md):
+  ./moq test-client framework --proofs --serve
+  ./moq test-client framework --proofs --server https://test.example.com --param user=auditor
 
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
   -p, --port N  The server at http://localhost:N (--server); the default is http://localhost:8080
@@ -494,6 +514,9 @@ runtime/components/dev, moq or the scripts.
   moqui test-client --serve <components>
                                     the client specs of components/base and components/dev whose
                                     test/client/suite.js declares a server, each against it
+  moqui test-client --serve --proofs <components>
+                                    their security proofs (test/proofs/), each against the server its
+                                    test/proofs/suite.js declares, with the summary by requirement
 None of them runs an acceptance test (docs/Build-Test.md#the-two-suites). The Chromium is the one PDF
 and moqui test-client use: moqui_conf__screen_facade__pdf__chromium_path, else runtime/chromium
 (./moq chromium-download), else an installed Chromium, Google Chrome or Edge.
@@ -517,6 +540,9 @@ which passed and exits 1 when any failed. The command for application work, befo
   moqui test-client --serve <components>
                                     their client specs, each against the server its
                                     test/client/suite.js declares
+  moqui test-client --serve --proofs <components>
+                                    their security proofs (test/proofs/), each against the server
+                                    its test/proofs/suite.js declares
 No cargo build or test, no moq-test.sh, and no components/base or components/dev spec. The binary is
 built only when it is missing (as --nobuild).
 

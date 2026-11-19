@@ -607,6 +607,16 @@ check "test-apps runs the app specs" 0 'moq test --nobuild -- app-x --workers 4$
 check "test-apps serves the app client specs" 0 'moq test-client --nobuild -- --serve app-x$' -- dry "$M" test-apps
 check "test-framework runs the framework specs" 0 'moq test -- fw-x --workers 4$' -- dry "$M" test-framework
 lacks "test-framework leaves the app specs out" 'app-x' -- dry "$M" test-framework
+# security proofs: their own tree, in the regression suites, never among the server specs
+mkdir -p "$R/runtime/components/base/fw-x/test/proofs" "$R/runtime/components/addon/app-y/test/proofs"
+: >"$R/runtime/components/base/fw-x/test/proofs/V3Web.spec.js"
+printf 'suite(["V3Web"], { server: { components: ["fw-x"] } })\n' >"$R/runtime/components/base/fw-x/test/proofs/suite.js"
+: >"$R/runtime/components/addon/app-y/test/proofs/V8Access.spec.js"
+printf 'suite(["V8Access"], { server: { components: ["app-y"] } })\n' >"$R/runtime/components/addon/app-y/test/proofs/suite.js"
+check "test-framework serves the framework proofs" 0 'moq test-client --nobuild -- --serve --proofs fw-x$' -- dry "$M" test-framework
+check "test-apps serves the app proofs" 0 'moq test-client --nobuild -- --serve --proofs app-y$' -- dry "$M" test-apps
+lacks "test-apps runs no server spec of a component with only proofs" 'moq test --nobuild -- .*app-y' -- dry "$M" test-apps
+lacks "accept runs no proof" '--proofs' -- dry "$M" accept
 check "test-all runs both" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-all
 check "MOQ_TEST_WORKERS sets the workers" 0 'moq test --nobuild -- app-x --workers 2$' -- env MOQ_TEST_WORKERS=2 MOQ_DRY_RUN=1 "$M" test-apps
 # acceptance: its own tree, run only by accept and accept-all

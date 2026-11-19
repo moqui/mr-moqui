@@ -163,7 +163,7 @@ spec_component_dirs() {
     shift
     case $tree in
         */client) prune=(-path "@/process") ;;
-        test) prune=(-path "@/client" -o -path "@/agent" -o -path "@/acceptance" -o -path "@/load") ;;
+        test) prune=(-path "@/client" -o -path "@/agent" -o -path "@/acceptance" -o -path "@/load" -o -path "@/proofs") ;;
         *) prune=(-path "@/client" -o -path "@/agent") ;;
     esac
     for parent in "$@"; do
@@ -290,8 +290,9 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --server --ssh --serve --spec --feature --acceptance --param --junit --out --wait \
-                        --timeout --chromium --headed --video --offline --insecure --allow-http --fail-on-skip --log-level
+                    filter_prefix "$cur" --server --ssh --serve --spec --feature --acceptance --proofs --profile --param --junit \
+                        --out --wait --timeout --chromium --headed --video --offline --insecure --allow-http --fail-on-skip \
+                        --log-level
                     ;;
             esac
             ;;

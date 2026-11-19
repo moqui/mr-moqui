@@ -1,6 +1,6 @@
 # Security proofs: the initial plan
 
-Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`). No proof is filed under it yet.
+Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`); phase P2, the harness (`moqui test-client --proofs`, the profiles and the summary by requirement), is built, with four seed proofs in the framework's `test/proofs/`.
 
 This plan is for a public library of security proofs: executable tests that show mr-moqui meets a published security
 standard's requirements. The library is organized by a standard, as the OWASP lists are. Its readers are the project,
@@ -103,9 +103,11 @@ matrix is the main tool for a certifier: it says what mr-moqui meets, what is th
 ## Layout
 
 - **Proofs** go in `runtime/components/base/framework/test/proofs/`, a third kind of test beside `test/client` and
-  `test/acceptance`, with its own `suite.js`. A file holds one ASVS chapter (`V3WebFrontend.proof.js`,
-  `V6Authentication.proof.js`, ...). A feature name starts with the requirement id: `v5.0.0-7.2.4: a successful sign-in
-  issues a new session id`. Tags are fields of the feature (`top10: "A07"`, `cwe: [384]`).
+  `test/acceptance`, with its own `suite.js`, which also names the matrix the run's summary joins. A file holds one
+  ASVS chapter (`V3WebFrontend.spec.js`, `V6Authentication.spec.js`, ...; the directory, not the suffix, marks a
+  proof). A feature name starts with the requirement id: `v5.0.0-7.2.4: a successful sign-in issues a new session id`.
+  The cross-reference tags (the Top 10 category, CWE ids) are P6's, on the matrix row or on the feature as decided
+  then; until then the requirement id is the only filing.
 - **They run** in every `./moq test-framework`, each spec under 15 seconds as in the regression suite, and alone with
   `moqui test-client framework --proofs --server URL`.
 - **The public documents** go in `docs/security/proofs/`: an index, the matrix (one file per ASVS chapter), a
@@ -157,8 +159,16 @@ Those that check an internal rule with no standard behind it stay in `test/clien
 - **P1, the matrix.** Read the ASVS 5.0.0 level 1 and 2 requirements, give each a status for the framework and for
   PASS, and name the evidence. This is the largest analysis step. PASS's statuses lean on the security review's PASS
   units (round 3, C1 to C9) and the Apps-PASS maps.
-- **P2, the harness.** `test/proofs` as a suite kind, `--proofs`, the per-requirement summary in JSON and Markdown, the
-  deployment profile; [AGENTS.md](../AGENTS.md), Build-Test and JS-Test-Client say what the third kind is.
+- **P2, the harness** (built). `test/proofs` as a suite kind, `--proofs`, the per-requirement summary in JSON and
+  Markdown, the deployment profile; [AGENTS.md](../AGENTS.md), Build-Test and JS-Test-Client say what the third kind
+  is. As built: `moqui test-client <component> --proofs` reads only `test/proofs/` (no pool with `test/client/`); its
+  `suite.js` declares the server and names the matrix (`matrix: "..."`); `--profile fixtures|deployment`, fixtures
+  with `--serve` and deployment otherwise, reaches the specs as `profile`, and `needsFixtures(what)` skips a feature
+  in the deployment profile; the run writes `proofs.json` and `proofs.md` into its output directory, each matrix row
+  with its proofs and a result (passed, partial, failed, skipped, none; an Inherited row takes the other components'
+  proofs); a passing feature filed under no requirement fails the run; `./moq test-framework` and `./moq test-apps`
+  run `--serve --proofs` beside the client specs; a `proofs` line in `test/budget` limits them. Seed proofs:
+  `V6Authentication` (6.2.6, 6.2.7, 6.3.2) and `V7SessionManagement` (7.4.1).
 - **P3, the move.** The current security specs move into proofs by requirement, renamed by id; the parts that are
   regression only stay in `test/client`.
 - **P4.** New proofs for the level 1 requirements with none: the framework's, then PASS's.

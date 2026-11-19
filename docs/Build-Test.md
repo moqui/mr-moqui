@@ -701,13 +701,14 @@ The engine is [moqui/quickjs-oxide](https://github.com/moqui/quickjs-oxide), pin
 |---|---|---|
 | Purpose | Catch a regression while developing: does what I changed break a rule? | Validate the system: complete scenarios, access and isolation walks, one screen sweep per app and mode, browser walks, load and media |
 | When | While working (the specs of what you touch) and before every commit | On a schedule, before a release, and when asked |
-| Where | `test/**/*.spec.js`, `test/client/**/*.spec.js` (outside `test/acceptance`) | `test/acceptance/**/*.spec.js`, `test/acceptance/client/**/*.spec.js` |
-| Command | `moqui test`, `moqui test-client`, `./moq test-apps`, `./moq test-framework`, `./moq test-all` | `./moq accept [component...]` (`moqui test --acceptance`, `moqui test-client --acceptance`), `./moq accept-all` |
+| Where | `test/**/*.spec.js`, `test/client/**/*.spec.js` (outside `test/acceptance`), and the security proofs, `test/proofs/**/*.spec.js` | `test/acceptance/**/*.spec.js`, `test/acceptance/client/**/*.spec.js` |
+| Command | `moqui test`, `moqui test-client`, `moqui test-client --proofs`, `./moq test-apps`, `./moq test-framework`, `./moq test-all` | `./moq accept [component...]` (`moqui test --acceptance`, `moqui test-client --acceptance`), `./moq accept-all` |
 | Failure | Blocks the commit | Reported; a test that fails on two runs in a row is fixed or deleted |
 
 A spec is in one suite or the other by the directory it is in. Everything that is a test sits under a component's
-`test/`: the regression specs at its top and the special subdirectories `client` (client specs), `acceptance` (the
-acceptance suite, with its own `client`), `agent` (agent replays) and `load` (load scripts). An acceptance run of a component
+`test/`: the regression specs at its top and the special subdirectories `client` (client specs), `proofs` (the
+security proofs, below), `acceptance` (the acceptance suite, with its own `client`), `agent` (agent replays) and `load`
+(load scripts). An acceptance run of a component
 that still has a top-level `acceptance/`, the suite's old place, is refused with the command that moves it (`moqui test
 --acceptance`, `moqui test-client --acceptance`, `./moq accept`); a regression run warns. No option of the regression commands pulls in an
 acceptance test. A regression test checks one rule or a fixed bug: a service's result and refusals, a posting, a state
@@ -720,6 +721,12 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   acceptance specs (`test/acceptance/*.spec.js` and `test/acceptance/client/*.spec.js`, with `test/acceptance/suite.js` and
   `test/acceptance/client/suite.js` giving the order and the server). `--spec` and `dependsOn` resolve across both trees, so
   an acceptance spec can depend on a regression fixture. A spec's name is unique across both trees of a component.
+- **Security proofs.** `test/proofs/` holds client specs filed by OWASP ASVS requirement, each feature's name starting
+  with its id (`v5.0.0-6.2.6: ...`): a public library that a builder or a certifier can run against their own
+  deployment ([security proofs](security/proofs/README.md)). They are regression tests under the same 15-second rule,
+  run by `./moq test-framework` and `./moq test-apps` (`moqui test-client --serve --proofs`) and alone with `moqui
+  test-client <component> --proofs`, which writes the results by requirement (`proofs.json`, `proofs.md`). A proof is
+  filed only for an industry-standard requirement; a test of one internal bug stays in `test/client/`.
 - **Fixtures.** Acceptance fixtures live under `test/acceptance/`, never among the regression specs. Helper libraries a spec loads by
   `component://<component>/test/...` stay in `test/`, for both suites.
 - **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, which runs
@@ -748,7 +755,8 @@ server = 195
 client = 30
 ```
 
-`server` limits `moqui test`, `client` `moqui test-client`. A run warns when a component's feature time goes over its
+`server` limits `moqui test`, `client` `moqui test-client`, and `proofs`, when a component has the line,
+`moqui test-client --proofs`. A run warns when a component's feature time goes over its
 budget, and fails over 1.5 times it, or when one spec takes over 15 seconds. The margin keeps a slower machine from
 failing a run; the warning keeps the growth visible. A new app adds its own budget. A budget is raised only with the
 user's agreement, like any other performance regression; cut duplicates or move scenarios to acceptance instead.
@@ -782,7 +790,8 @@ The specs of `runtime/components/addon/mr-mantle/test` are the largest set, port
 
 Tests from outside the server, over HTTP, WebSocket and headless Chromium, with a load runner, are the specs of a
 component's `test/client/`, which `moqui test-client` runs against a running server:
-[JS-Test-Client](dev/JS-Test-Client.md). Each client spec's sessions reach a test server from an address of their own
+[JS-Test-Client](dev/JS-Test-Client.md); the security proofs are client specs too, in `test/proofs/`
+([security proofs](security/proofs/README.md)). Each client spec's sessions reach a test server from an address of their own
 in 127.0.0.0/8, so a limit keyed by the requester counts per spec ([`--serve`](dev/JS-Test-Client.md#--serve)). Load scripts are a component's `test/load/*.load.js`, which `moqui
 test-load` and Tools › Load run: [JS-Test-Load](dev/JS-Test-Load.md) for writing one,
 [Load-Runner](tools/Load-Runner.md) for running it and reading its result.
