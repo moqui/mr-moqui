@@ -274,7 +274,8 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
             "a bad file destination must not prevent email delivery"
         );
         let mail = capture.messages().pop().unwrap();
-        assert!(mail.body.contains("cid:report-image@moqui"));
+        // the lease dataset is a service dataset, so its schedule is delivered recipient by recipient (SEC-TLS-105),
+        // where a csv's mail carries its file and no inline picture
         assert_eq!(mail.to, ["lease-recipient@example.test"]);
         let calls = state.calls.load(Ordering::Relaxed);
         assert_eq!(
@@ -290,8 +291,10 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
             Some("REPORT_LEASE_FAIL_NO_BODY"),
         );
         let failure = run(factory, &mail_fails).unwrap_err();
+        // delivered recipient by recipient (a service dataset, SEC-TLS-105): the failure is the recipient's, whose
+        // delivery row says why
         assert!(
-            failure.contains("email has no body"),
+            failure.contains("RECIPIENTS_FAILED"),
             "expected the configured delivery failure: {failure}"
         );
         assert!(
