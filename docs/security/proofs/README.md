@@ -5,8 +5,9 @@ requirement, and the proofs that show it. The plan is [Proofs-Initial](../../../
 
 Status 2026-11-18: the responsibility matrix (phase P1) is written for levels 1 and 2, the harness that runs the
 proofs (P2) is built, the framework's security client specs that prove a requirement are moved into proofs (P3), and
-every level 1 row that can take a proof has one (P4): 56 features under 34 requirements in thirteen chapter files, and
-in-process proofs (Rust tests and framework specs) where a client cannot see the claim.
+every level 1 row that can take a proof has one (P4), and so does every level 2 Framework and Configuration row (P5):
+73 features under 48 requirements in fourteen chapter files, and in-process proofs (Rust tests and framework specs)
+where a client cannot see the claim.
 A status is one reading of the code at mr-moqui `bf7034ec9`, mr-pass `d2dfa67` and mr-mantle `dff2c9fe`. A Framework
 status is a claim until a proof shows it, and a Gap closes when its fix lands and a proof shows it.
 

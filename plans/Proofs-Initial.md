@@ -208,6 +208,10 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   prefer its own suite order), 6.8.2 (the mail client's OAuth sign-in does not check the ID token's signature), and,
   noted with their rows, a TLS failure logged without its reason (16.3.4), TRACE rendering screens (13.4.4), an
   IP-allowed refusal that confirms the password, and forwarded headers read from their first value behind a proxy.
+  PASS part (mr-pass `899c04e`): 21 of its 28 level 2 rows proved (black-box in its `test/proofs`, in-process in
+  `SourceRules` and `Transport`); left: 3.5.5 (a theme preview host fixture), 12.3.2 (a Rust test of the authority
+  client), the documentation rows 6.1.3 and 7.1.3; 16.2.2, 16.4.2 and 16.4.3 are Inherited. 3.4.3 stays a Gap
+  (`base-uri 'self'`).
 - **P6.** Cross-references (the API Top 10 for `/rest`, the LLM Top 10 for the agents, NIST 800-63B for
   authentication, the CWE Top 25), the certifier's guide; then BOSS and the clients (MASVS).
 
