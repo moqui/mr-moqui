@@ -240,13 +240,19 @@ fn a_domain_that_requires_tls_gets_no_clear_text_and_another_still_does() {
 fn an_mx_host_with_only_internal_addresses_is_not_tried() {
     let records = crate::dns::records();
     records.fix_mx("inside.test", &[(10, "mx.inside.test")]);
-    records.fix_ips("mx.inside.test", &["127.0.0.1".parse().unwrap(), "169.254.169.254".parse().unwrap()]);
+    records.fix_ips(
+        "mx.inside.test",
+        &["127.0.0.1".parse().unwrap(), "169.254.169.254".parse().unwrap()],
+    );
     assert!(
         matches!(hosts("inside.test", None), Err(Answer::Refused(reply)) if reply.contains("has no public address")),
         "an internal MX"
     );
     records.fix_mx("mixed.test", &[(10, "mx.mixed.test")]);
-    records.fix_ips("mx.mixed.test", &["10.0.0.5".parse().unwrap(), "93.184.216.34".parse().unwrap()]);
+    records.fix_ips(
+        "mx.mixed.test",
+        &["10.0.0.5".parse().unwrap(), "93.184.216.34".parse().unwrap()],
+    );
     let found = hosts("mixed.test", None).unwrap_or_else(|_| panic!("a public address"));
     assert_eq!(found[0].1, vec!["93.184.216.34".parse::<IpAddr>().unwrap()]);
 }
@@ -290,6 +296,64 @@ fn a_null_mx_refuses_and_enforce_needs_the_policys_hosts_and_starttls() {
         ..target
     };
     assert!(session(&late, "a@example.com", &["ok@sts.test".to_string()], b"x").is_err());
+}
+
+/// A fake MX that writes `first`, then `each` every `pause`, until the client goes.
+fn endless_mx(first: &'static [u8], each: Vec<u8>, pause: Duration) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let each = each.clone();
+            std::thread::spawn(move || {
+                if stream.write_all(first).is_err() {
+                    return;
+                }
+                while stream.write_all(&each).is_ok() {
+                    std::thread::sleep(pause);
+                }
+            });
+        }
+    });
+    port
+}
+
+/// SEC-MAIL-83: an MX that sends its greeting a byte at a time, each well within a read's timeout, is closed at the
+/// try's deadline, and one that sends a line with no end is closed past `MAX_SESSION_REPLIES`; neither holds the
+/// session (lettre reads a reply line to its end, with a timeout of one read). A session under both still delivers
+/// (`a_session_answers_each_recipient_and_a_host_not_reached_waits`).
+#[test]
+fn an_mx_that_never_ends_a_reply_is_closed_at_the_deadline_or_the_byte_limit() {
+    let run = |port: u16, within: Duration| {
+        let (done, ended) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let target = Target {
+                host: "mx.test",
+                address: SocketAddr::from(([127, 0, 0, 1], port)),
+                secure: None,
+                deadline: Instant::now() + within,
+            };
+            let started = Instant::now();
+            let outcome = session(
+                &target,
+                "a@example.com",
+                &["ok@mx.test".to_string()],
+                b"Subject: x\r\n\r\nx\r\n",
+            );
+            let _ = done.send((outcome, started.elapsed()));
+        });
+        ended
+            .recv_timeout(within + Duration::from_secs(10))
+            .expect("the session ended")
+    };
+    let slow = endless_mx(b"2", b"2".to_vec(), Duration::from_millis(50));
+    let (outcome, took) = run(slow, Duration::from_secs(2));
+    assert!(outcome.is_err(), "{outcome:?}");
+    assert!(took < Duration::from_secs(5), "{took:?}");
+    let endless = endless_mx(b"220", vec![b'x'; 64 * 1024], Duration::ZERO);
+    let (outcome, took) = run(endless, Duration::from_secs(60));
+    assert!(outcome.is_err(), "{outcome:?}");
+    assert!(took < Duration::from_secs(30), "{took:?}");
 }
 
 #[test]
