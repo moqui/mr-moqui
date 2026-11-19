@@ -852,7 +852,9 @@ fn sheet_text(_bytes: &[u8], _max_chars: usize) -> Result<String, String> {
 /// read is reported and left out; the others are still written.
 /// `writeZip(target, entries)`: the zip is built in a file under `runtime/tmp/drive-zip/.building`, each entry copied
 /// from its source a window at a time, so neither a file nor the archive is ever whole in memory (SEC-BOS-83: a share
-/// link's folder zip), then written to the target from that file. A file that cannot be read is left out and reported.
+/// link's folder zip). A `runtime://` target is the part file renamed into place, so a reader never sees a part-written
+/// zip and nothing is copied; another target is written from the file. The part file never stays. A file that cannot
+/// be read is left out and reported.
 fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let target = call.text_or_empty(0);
     let files: Vec<(String, String)> = entries_of(call.value_or_null(1))
@@ -860,23 +862,18 @@ fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .map(|item| (text_field(item, "path"), text_field(item, "location")))
         .collect();
     let building = with_ec(|ec| ec.factory().resource().runtime_dir().join("tmp/drive-zip/.building"))?;
-    std::fs::create_dir_all(&building).map_err(|err| HostError::message(format!("writing the zip: {err}")))?;
-    let part = building.join(format!("{}-{}.part", std::process::id(), next_part_number()));
-    let written = write_zip_file(&part, files).and_then(|(count, failures)| {
-        let size = std::fs::metadata(&part)
-            .map_err(|err| HostError::message(format!("writing the zip: {err}")))?
-            .len();
-        let mut file =
-            std::fs::File::open(&part).map_err(|err| HostError::message(format!("writing the zip: {err}")))?;
-        with_resources(|resources| resources.write_from(&target, &mut file, Some(size)))?;
+    let (count, size, failures) = with_part_file(&building, |part| {
+        let (count, failures) = write_zip_file(part, files, |location| {
+            match with_ec(|ec| ec.factory().resource().open(location)) {
+                Ok(Ok(found)) => Ok(found.map(|opened| (opened.stat.size, opened.source))),
+                Ok(Err(err)) => Err(err.message().to_string()),
+                Err(_) => Err(format!("no execution context to read {location}")),
+            }
+        })?;
+        let size = std::fs::metadata(part).map_err(|err| zip_error(&err))?.len();
+        deliver_zip(part, &target, size)?;
         Ok((count, size, failures))
-    });
-    if let Err(err) = std::fs::remove_file(&part) {
-        if err.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(part = %part.display(), "a zip's part file was not removed: {err}");
-        }
-    }
-    let (count, size, failures) = written?;
+    })?;
     let mut map = indexmap::IndexMap::default();
     map.insert("count".to_string(), Value::I64(count));
     map.insert("size".to_string(), Value::I64(i64::try_from(size).unwrap_or(i64::MAX)));
@@ -897,21 +894,69 @@ fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Value(Value::Map(map)))
 }
 
-/// A number for a zip's part file, distinct within the process.
-fn next_part_number() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+fn zip_error(err: &dyn std::fmt::Display) -> HostError {
+    HostError::message(format!("writing the zip: {err}"))
 }
 
-/// The zip of `files` (`(path in the zip, location)`) written to the file at `part`, each source read as a stream: the
-/// entries written and the `(path, error)` of each left out (a bad or repeated path, a file that is not there or cannot
-/// be read).
+/// Run `body` with a new part file's path under `dir` (made when missing), and remove the part file afterwards whatever
+/// the body did, unless the body moved it away.
+fn with_part_file<T>(
+    dir: &std::path::Path,
+    body: impl FnOnce(&std::path::Path) -> Result<T, HostError>,
+) -> Result<T, HostError> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    std::fs::create_dir_all(dir).map_err(|err| zip_error(&err))?;
+    let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let part = dir.join(format!("{}-{number}.part", std::process::id()));
+    let result = body(&part);
+    if let Err(err) = std::fs::remove_file(&part) {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(part = %part.display(), "a zip's part file was not removed: {err}");
+        }
+    }
+    result
+}
+
+/// The built zip at `part` to `target`: a `runtime://` location (no `#`, no `..`) by renaming the file into place, made
+/// under the runtime directory; anything else, or a rename that fails (another file system), written from the file.
+fn deliver_zip(part: &std::path::Path, target: &str, size: u64) -> Result<(), HostError> {
+    if let Some(rest) = target.strip_prefix("runtime://") {
+        if !rest.contains('#') && !rest.split('/').any(|segment| segment == ".." || segment == ".") {
+            let path = with_ec(|ec| ec.factory().resource().runtime_dir().join(rest))?;
+            crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, target)
+                .map_err(|err| HostError::message(err.to_string()))?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| zip_error(&err))?;
+            }
+            match std::fs::rename(part, &path) {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    tracing::warn!(target = %target, "a zip was not renamed into place, so it is copied: {err}")
+                }
+            }
+        }
+    }
+    let mut file = std::fs::File::open(part).map_err(|err| zip_error(&err))?;
+    with_resources(|resources| resources.write_from(target, &mut file, Some(size)))
+}
+
+/// Whether an entry of `size` bytes needs zip64: past `u32::MAX`, the size a plain entry header holds.
+fn needs_zip64(size: u64) -> bool {
+    size > u64::from(u32::MAX)
+}
+
+/// A source to read into a zip: its size and bytes, `None` when nothing is at the location, or an error.
+type ZipSource = Result<Option<(u64, std::sync::Arc<dyn crate::resource::source::ByteSource>)>, String>;
+
+/// The zip of `files` (`(path in the zip, location)`) written to the file at `part`, each source `open` gives read as a
+/// stream: the entries written and the `(path, error)` of each left out (a bad or repeated path, a file that is not
+/// there or cannot be read, whole or part way, its part taken back out of the zip).
 fn write_zip_file(
     part: &std::path::Path,
     files: Vec<(String, String)>,
+    mut open: impl FnMut(&str) -> ZipSource,
 ) -> Result<(i64, Vec<(String, String)>), HostError> {
-    let fail = |err: &dyn std::fmt::Display| HostError::message(format!("writing the zip: {err}"));
-    let file = std::fs::File::create(part).map_err(|err| fail(&err))?;
+    let file = std::fs::File::create(part).map_err(|err| zip_error(&err))?;
     let mut writer = zip::ZipWriter::new(std::io::BufWriter::new(file));
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let mut failures = Vec::new();
@@ -923,7 +968,7 @@ fn write_zip_file(
             failures.push((path, "bad or repeated path in the zip".to_string()));
             continue;
         }
-        let opened = match with_ec(|ec| ec.factory().resource().open(&location))? {
+        let (size, source) = match open(&location) {
             Ok(Some(opened)) => opened,
             Ok(None) => {
                 failures.push((path, format!("no file at {location}")));
@@ -931,31 +976,30 @@ fn write_zip_file(
             }
             Err(err) => {
                 tracing::error!(location = %location, "cannot read a file for a zip: {err}");
-                failures.push((path, err.message().to_string()));
+                failures.push((path, err));
                 continue;
             }
         };
-        let large = opened.stat.size > u64::from(u32::MAX);
         writer
-            .start_file(path.as_str(), options.large_file(large))
-            .map_err(|err| fail(&err))?;
-        let mut reader = crate::resource::source::SourceReader::new(opened.source);
+            .start_file(path.as_str(), options.large_file(needs_zip64(size)))
+            .map_err(|err| zip_error(&err))?;
+        let mut reader = crate::resource::source::SourceReader::new(source);
         match std::io::copy(&mut reader, &mut writer) {
             Ok(_) => count += 1,
             Err(err) => {
                 tracing::error!(location = %location, "cannot read a file for a zip: {err}");
-                writer.abort_file().map_err(|err| fail(&err))?;
+                writer.abort_file().map_err(|err| zip_error(&err))?;
                 failures.push((path, err.to_string()));
             }
         }
     }
     writer
         .finish()
-        .map_err(|err| fail(&err))?
+        .map_err(|err| zip_error(&err))?
         .into_inner()
-        .map_err(|err| fail(&err))?
+        .map_err(|err| zip_error(&err))?
         .sync_all()
-        .map_err(|err| fail(&err))?;
+        .map_err(|err| zip_error(&err))?;
     Ok((count, failures))
 }
 
@@ -1032,6 +1076,117 @@ fn files_check_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A source whose bytes fail part way, as a file whose storage goes away while it is read.
+    struct FailingSource;
+
+    impl crate::resource::source::ByteSource for FailingSource {
+        fn len(&self) -> u64 {
+            4 * 1024 * 1024
+        }
+
+        fn read_at(&self, offset: u64, max: usize) -> Result<Vec<u8>, moqui_lib::error::Error> {
+            if offset == 0 {
+                Ok(vec![7; max.min(1024 * 1024)])
+            } else {
+                Err(moqui_lib::error::Error::new("the storage went away"))
+            }
+        }
+    }
+
+    /// A new empty directory of its own under the system temp directory, removed when dropped.
+    struct ScratchDir(std::path::PathBuf);
+
+    impl ScratchDir {
+        fn new(label: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default();
+            let path = std::env::temp_dir().join(format!("moqui-zip-{label}-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn memory(bytes: &[u8]) -> ZipSource {
+        let source: std::sync::Arc<dyn crate::resource::source::ByteSource> =
+            std::sync::Arc::new(crate::resource::source::MemorySource::new(bytes.to_vec()));
+        Ok(Some((bytes.len() as u64, source)))
+    }
+
+    /// SEC-BOS-83: a file that fails part way through the list is left out and reported, its part taken back out, and
+    /// the files before and after it are in the zip, which is a whole zip.
+    #[test]
+    fn a_zip_leaves_out_a_file_that_fails_mid_list_and_keeps_the_others() {
+        let dir = ScratchDir::new("mid-list");
+        let part = dir.0.join("one.part");
+        let files = vec![
+            ("a.txt".to_string(), "mem:a".to_string()),
+            ("b.bin".to_string(), "fail:b".to_string()),
+            ("missing.txt".to_string(), "none:c".to_string()),
+            ("c.txt".to_string(), "mem:c".to_string()),
+            ("../out.txt".to_string(), "mem:a".to_string()),
+        ];
+        let (count, failures) = write_zip_file(&part, files, |location| match location {
+            "mem:a" => memory(b"alpha"),
+            "mem:c" => memory(b"gamma"),
+            "fail:b" => {
+                let source: std::sync::Arc<dyn crate::resource::source::ByteSource> =
+                    std::sync::Arc::new(FailingSource);
+                Ok(Some((4 * 1024 * 1024, source)))
+            }
+            _ => Ok(None),
+        })
+        .unwrap();
+        assert_eq!(count, 2);
+        let failed: Vec<&str> = failures.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(failed, ["b.bin", "missing.txt", "../out.txt"]);
+        assert!(failures[0].1.contains("the storage went away"), "{failures:?}");
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&part).unwrap()).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().unwrap().to_string())
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(names.contains(&"a.txt".to_string()) && names.contains(&"c.txt".to_string()));
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("c.txt").unwrap(), &mut text).unwrap();
+        assert_eq!(text, "gamma");
+    }
+
+    #[test]
+    fn an_entry_past_four_gibibytes_takes_zip64() {
+        assert!(!needs_zip64(u64::from(u32::MAX)));
+        assert!(needs_zip64(u64::from(u32::MAX) + 1));
+    }
+
+    /// The part file never stays: removed after a body that fails as after one that succeeds.
+    #[test]
+    fn a_part_file_is_removed_whatever_the_build_did() {
+        let dir = ScratchDir::new("part");
+        let mut seen = None;
+        let failed: Result<(), HostError> = with_part_file(&dir.0, |part| {
+            std::fs::write(part, b"half").unwrap();
+            seen = Some(part.to_path_buf());
+            Err(HostError::message("the build failed"))
+        });
+        assert!(failed.is_err());
+        assert!(!seen.unwrap().exists());
+        let mut kept = None;
+        with_part_file(&dir.0, |part| {
+            std::fs::write(part, b"whole").unwrap();
+            kept = Some(part.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+        assert!(!kept.unwrap().exists());
+    }
 
     #[test]
     fn a_grant_checks_with_its_key_and_subject_only() {
