@@ -100,7 +100,7 @@ fn list(facade: &EntityFacade, entity: &str, field: &str, id: &str, order: &[&st
 
 /// Whether the viewer may read the content of `target`'s rows: their own, or with `AgentAudit`, which is logged.
 /// Out: (shown, audited).
-fn may_read(
+pub(crate) fn may_read(
     facade: &EntityFacade,
     target: Option<&str>,
     conversation_id: Option<&str>,
