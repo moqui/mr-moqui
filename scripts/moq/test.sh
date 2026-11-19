@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# moq's ./moq test, test-client, test-load, test-framework, test-apps, test-all, accept, accept-all and autodoc. Sourced by moq, which holds the task table; bash 3.2, as moq is.
+# moq's ./moq test, test-client, test-load, test-framework, test-apps, test-all, test-clients, accept, accept-all and autodoc. Sourced by moq, which holds the task table; bash 3.2, as moq is.
 
 # ========== test and accept tasks ==========
 
@@ -424,6 +424,84 @@ task_test_all() {
     suite_summary test-all
 }
 
+# The client crates test-clients runs, in its order: name|directory. moqui-client is a workspace member; the others are
+# workspaces of their own (Tauri and CEF stay out of the server builds), which cargo test --workspace does not reach.
+CLIENT_CRATES='client|crates/moqui-client
+tauri|crates/moqui-client-tauri
+mobile|crates/moqui-mobile
+desktop|crates/moqui-desktop'
+
+# client_crate_named <name> <directory>: whether CLIENT_NAMES is empty or names the crate, by its short name or its
+# crate's.
+client_crate_named() {
+    local name
+    [ ${#CLIENT_NAMES[@]} -gt 0 ] || return 0
+    for name in "${CLIENT_NAMES[@]}"; do
+        [ "$name" != "$1" ] && [ "$name" != "${2##*/}" ] || return 0
+    done
+    return 1
+}
+
+# The tests of the client crates, the clients' MASVS proofs among them (docs/security/proofs/clients/README.md).
+task_test_clients() {
+    local arg line name dir known
+    local -a cargo_args
+    CLIENT_NAMES=()
+    cargo_args=()
+    SUITE_RESULTS=()
+    SUITE_FAILED=0
+    while [ $# -gt 0 ]; do
+        arg=$1
+        case $arg in
+            --nobuild) ;;
+            --)
+                shift
+                cargo_args+=("$@")
+                break
+                ;;
+            -*) die "unknown option $arg (test-clients takes crate names, --nobuild, and cargo test's arguments after --)" ;;
+            *)
+                known=
+                while IFS= read -r line; do
+                    [ "$arg" != "${line%%|*}" ] && [ "$arg" != "${line##*/}" ] || known=1
+                done <<<"$CLIENT_CRATES"
+                [ -n "$known" ] || die "no client crate $arg: client, tauri, mobile or desktop"
+                CLIENT_NAMES+=("$arg")
+                ;;
+        esac
+        shift
+    done
+    local -a crates
+    crates=()
+    while IFS= read -r line; do
+        client_crate_named "${line%%|*}" "${line#*|}" && crates+=("$line")
+    done <<<"$CLIENT_CRATES"
+    need_cargo
+    # the crates outside the workspace build into the repository's target/ too, as ./moq desktop and android build them
+    export_var CARGO_TARGET_DIR "$ROOT/target"
+    for line in "${crates[@]}"; do
+        name=${line%%|*}
+        dir=${line#*|}
+        if [ "$name" = client ]; then
+            suite "cargo test -p moqui-client" cargo test -p moqui-client ${cargo_args[@]+"${cargo_args[@]}"}
+            continue
+        fi
+        # its lock starts from the repository's, as the apps' builds seed theirs, so the shared crates' versions are
+        # the reviewed ones; cargo adds what the crate alone needs
+        if [ ! -f "$ROOT/$dir/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$ROOT/$dir/Cargo.lock" ]; then
+            run_cmd cp "$ROOT/Cargo.lock" "$ROOT/$dir/Cargo.lock" || die "could not copy Cargo.lock to $dir"
+        fi
+        if [ "$name" = desktop ]; then
+            # the desktop app links the framework and the component crates through target/moqui-app, with the
+            # embedded Postgres of its node
+            ensure_pg_archive
+            write_desktop_app_crate
+        fi
+        suite "cargo test in $dir" cargo test --manifest-path "$dir/Cargo.toml" ${cargo_args[@]+"${cargo_args[@]}"}
+    done
+    suite_summary test-clients
+}
+
 
 # ========== help ==========
 
@@ -562,6 +640,35 @@ asked; not for application work. The acceptance suite is not part of it (./moq a
 Options:
 $PACKAGE_OPTIONS_HELP
       --nobuild        Skip the build before moqui test and test-client
+EOF
+}
+
+help_test_clients() {
+    cat <<EOF
+Runs the tests of the client crates on this machine, each whatever the ones before it did, then lists
+which passed and exits 1 when any failed: the desktop and mobile apps, the Tauri glue they share and
+the client under all three, the clients' MASVS proofs among them (docs/security/proofs/clients/README.md).
+All four by default, or those named:
+  client    cargo test -p moqui-client          a workspace member, which test-framework runs too
+  tauri     cargo test in crates/moqui-client-tauri
+  mobile    cargo test in crates/moqui-mobile   the app's host logic, on this machine's webview
+  desktop   cargo test in crates/moqui-desktop  after writing target/moqui-app (the crate that links the
+                                                framework and the component crates), as ./moq desktop does
+The last three are workspaces of their own, outside the repository's, so cargo test --workspace and
+test-framework do not reach them. Each starts its Cargo.lock from the repository's when it has none or
+an older one, and builds into target/. A run of its own, not part of test-framework or test-all: it
+builds Tauri, and for the desktop app CEF and the framework again; the first run downloads CEF (about
+1 GB) and needs the desktop app's prerequisites (docs/Build-Test.md#desktop-app). For a change to these
+crates, or to what they link from the workspace, before a commit.
+  ./moq test-clients
+  ./moq test-clients mobile tauri
+  ./moq test-clients desktop -- updates       a cargo test filter, for each crate run
+Not run: the Android build (./moq android, scripts/check-android.sh), the Kotlin tests and the device
+tests (crates/moqui-mobile/README.md).
+
+Options:
+      --nobuild        Accepted; cargo test builds what changed in any case
+      --               End of moq options; the rest goes to each cargo test
 EOF
 }
 

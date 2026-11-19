@@ -220,7 +220,13 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   parameters, the opt-in proofs, reading `proofs.md`, the settings each Configuration row asks for, the in-process
   proofs from a checkout, what is not covered). The documentation rows (6.1.1; PASS's 6.1.1, 6.1.3, 7.1.3, 8.1.1)
   cite the document that meets them, and `Attack-Surface-Web.md` now names lockout abuse, which 6.1.1 asks for.
-- **P7, BOSS.** The business applications (mr-boss, with the Mantle services behind them) through the same steps as
+- **P7, BOSS** (done, 2026-11-19: mr-boss `c8c6e27e`, `d83325f6`, `bd2e0e27`). As done: the matrix (149 inherited,
+  22 met by BOSS, 52 gaps, 30 not applicable), read by four readers; proofs in mr-boss `test/proofs` for every BOSS row
+  a test can show (3.2.2 in Chromium, 5.4.2, 6.2.2, 6.2.6, 6.2.7, 6.3.2, 7.4.3, 15.3.6, 15.3.7) and in-process ones
+  (`InProcessProofs`: 1.2.9, 5.2.3); the documentation rows cite their documents. The proof of 6.2.7 found three
+  password fields closed to password managers by the framework's text-line default, fixed the same day; the reading
+  found 11 register entries (SEC-BAP-136 to 139, SEC-BOS-141 to 146, SEC-FIL-101), SEC-BAP-138 a Medium. The plan was:
+  the business applications (mr-boss, with the Mantle services behind them) through the same steps as
   PASS: a matrix at levels 1 and 2 in mr-boss `docs/` (statuses Inherited, BOSS, Configuration, Gap, N/A; most rows
   inherit the framework's), round 3's BOSS units and the Apps-BOSS map as its evidence, then proofs in mr-boss
   `test/proofs` for the rows BOSS meets with its own code (its staff access walks, the record files, the payroll and
@@ -229,6 +235,28 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   `moqui-client-tauri`, with `moqui-client`) against OWASP MASVS 2.x (CC BY-SA 4.0, ids and links only): storage,
   cryptography, authentication, network, platform, code, resilience and privacy. A matrix of its own, since MASVS is a
   standard of its own; proofs as Rust tests and the clients' own test harnesses, as these are not served pages.
+  The owner's decisions (2026-11-19): MASVS v2.1.0 (January 2024), its 24 controls, against the MAS testing profiles
+  L1, L2 and P; R (resilience against reverse engineering) is N/A by decision, as the apps are open source and CC0;
+  the mobile app is held to MASVS as written and the desktop app by analogy, each row saying which. Steps:
+  - **P8a, read and file.** Four readers, by MASVS group, read the clients' code for each control (the parts the
+    security review did not reach first: the mobile Kotlin code, the updater's signature check, the rest of
+    `moqui-client`) and give each control a status for mobile and for desktop: App (the client's own code), Platform
+    (the OS, WebView or Tauri default), Configuration (a build, signing or store setting), Gap, N/A. The matrix goes in
+    `docs/security/proofs/clients/`; findings go to the register as SEC-CLI entries.
+  - **P8b, proofs.** Rust tests in the crates, named and doc-commented by control (key and store handling, the TLS
+    check, IPC and scheme guards, navigation), static checks of the Android manifest and settings, and Kotlin or
+    emulator tests only where nothing else reaches.
+  - **P8c, where they run.** A `./moq` task runs the clients' proof tests (the desktop, mobile and Tauri crates are
+    outside the workspace, so `./moq test-framework` does not), and the certifier's guide, the index and the
+    cross-references gain the clients.
+  - **As done (2026-11-19).** P8a: the matrix `docs/security/proofs/clients/README.md` (mobile 1 App, 1 Configuration,
+    17 Gap, 5 N/A; desktop 19 Gap, 5 N/A), and SEC-CLI-101 to 125 in the register. P8b: the two rows a proof can be
+    filed under: NETWORK-1 (mobile) by `moqui-client`'s TLS tests (requests and sockets refuse an untrusted
+    certificate and another name before sending anything) and `tests/android_settings.rs` (clear text only in the
+    debug build, no user authority or clear text by network configuration, no code turning a check off), both in
+    every `./moq test-framework`; CRYPTO-1 (mobile) by the tests it cites, a device test of `KeyVault` left. P8c:
+    `./moq test-clients` runs the four client crates' tests (about 14 minutes with CEF cached; its own run, not
+    test-framework's); the certifier's guide, the indexes, Build-Test and the pre-commit skill name it.
 
 ## Decisions
 

@@ -241,8 +241,7 @@ tauri-runtime-cef starts it with `--no-sandbox` ([Build-Test](../../docs/Build-T
 ## Test
 
 ```sh
-./moq build                                                       # writes target/moqui-app, which this crate links
-cd crates/moqui-desktop && cargo test
+./moq test-clients desktop     # writes target/moqui-app, which this crate links, then runs cargo test here
 ```
 
 This crate is a workspace of its own, so the root's `cargo lint` and `cargo test` do not reach it: run these for any

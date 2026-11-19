@@ -67,3 +67,8 @@ pub mod sync;
 pub const SHELL_ORIGIN: &str = "http://moqui-shell.localhost";
 
 pub use moqui_lib::error::Error;
+
+// The requests' and sockets' TLS checks (MASVS-NETWORK-1). Not on Android, whose verifier needs the app's JVM and takes
+// no extra root.
+#[cfg(all(test, not(target_os = "android")))]
+mod tls_tests;

@@ -8,7 +8,7 @@ proofs (P2) is built, the framework's security client specs that prove a require
 every level 1 row that can take a proof has one (P4), and so does every level 2 Framework and Configuration row (P5):
 73 features under 48 requirements in fourteen chapter files, and in-process proofs (Rust tests and framework specs)
 where a client cannot see the claim. The cross-references to five other standards and the certifier's guide are
-written (P6); BOSS and the clients are the plan's next phases.
+written (P6); BOSS has its matrix and proofs (P7); and the desktop and mobile apps theirs against OWASP MASVS (P8).
 A status is one reading of the code at mr-moqui `bf7034ec9`, mr-pass `d2dfa67` and mr-mantle `dff2c9fe`. A Framework
 status is a claim until a proof shows it, and a Gap closes when its fix lands and a proof shows it.
 
@@ -95,9 +95,12 @@ address as `--param httpUrl=http://<host>[:port]` when it is not port 80, and 12
 sign-in limit (6.3.1) is opt-in, since it gets the client's sign-ins limited for a minute: run it alone, once, with
 `--spec V6Authentication --feature v5.0.0-6.3.1 --param bruteForce=yes`.
 
-PASS, the public application, has its own matrix in its repository:
-[mr-pass ASVS matrix](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md). A PASS requirement the
-framework meets is marked inherited there and links here.
+PASS, the public application, and BOSS, the business applications, have their own matrices in their repositories:
+[mr-pass ASVS matrix](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md) and
+[mr-boss ASVS matrix](https://github.com/moqui/mr-boss/blob/master/docs/ASVS-Matrix.md). A requirement the framework
+meets is marked inherited there and links here.
+
+The desktop and mobile apps are held to another standard, OWASP MASVS: [the clients' matrix](clients/README.md).
 
 ## The standard and its license
 

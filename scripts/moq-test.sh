@@ -591,6 +591,24 @@ check "help test-framework" 0 'components/base and components/dev' -- "$M" help 
 check "test-apps with no app component" 0 'No application component' -- dry "$M" test-apps
 lacks "test-apps runs no cargo" 'cargo|moq-test.sh' -- dry "$M" test-apps
 lacks "test-framework runs no app suite" '\(apps\)' -- dry "$M" test-framework
+# the client crates: moqui-client in the workspace, the others each in a workspace of its own
+check "help test-clients" 0 'crates/moqui-client-tauri' -- "$M" help test-clients
+check "test-clients runs the client's tests" 0 'cargo test -p moqui-client$' -- dry "$M" test-clients
+check "test-clients runs the apps' tests" 0 'cargo test --manifest-path crates/moqui-mobile/Cargo.toml$' -- dry "$M" test-clients
+check "test-clients builds into target/" 0 "export CARGO_TARGET_DIR=$R/target\$" -- dry "$M" test-clients tauri
+check "test-clients starts a crate's lock from the repository's" 0 \
+    "cp $R/Cargo.lock $R/crates/moqui-client-tauri/Cargo.lock\$" -- dry "$M" test-clients tauri
+check "test-clients writes the desktop's app crate first" 0 "write $R/target/moqui-app/Cargo.toml" -- \
+    dry "$M" test-clients desktop
+lacks "test-clients of one crate runs no other" 'moqui-mobile|moqui-desktop|-p moqui-client' -- dry "$M" test-clients tauri
+check "test-clients takes a crate's name" 0 'cargo test --manifest-path crates/moqui-desktop/Cargo.toml$' -- \
+    dry "$M" test-clients moqui-desktop
+check "test-clients passes cargo test's arguments on" 0 \
+    'cargo test --manifest-path crates/moqui-client-tauri/Cargo.toml -- --list$' -- dry "$M" test-clients tauri -- -- --list
+check "test-clients unknown crate" 1 'no client crate server' -- "$M" test-clients server
+check "test-clients unknown option" 1 'unknown option --release' -- "$M" test-clients --release
+lacks "test-framework runs no crate outside the workspace" 'manifest-path|moqui-desktop' -- dry "$M" test-framework
+check "test-client is still test-client" 0 'moqui test-client$' -- dry "$M" test-client
 # an app component and a framework component with specs, a served client suite and an offline one
 mkdir -p "$R/runtime/components/addon/app-x/test/client" "$R/runtime/components/base/fw-x/test/client" \
     "$R/runtime/components/addon/app-y/test/client"

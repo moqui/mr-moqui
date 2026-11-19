@@ -350,6 +350,7 @@ complete_task() {
         desktop) filter_prefix "$cur" dev build --release ;;
         android) filter_prefix "$cur" emulator init dev build --release --window ;;
         test-all | test-apps | test-framework) filter_prefix "$cur" --lite --debug --release --enterprise --nobuild ;;
+        test-clients) filter_prefix "$cur" client tauri mobile desktop --nobuild ;;
         accept) filter_prefix "$cur" $(spec_components test/acceptance "${COMPONENT_SETS[@]}") --spec --junit \
             --lite --debug --release --enterprise --nobuild ;;
         accept-all) filter_prefix "$cur" --junit --lite --debug --release --enterprise --nobuild ;;

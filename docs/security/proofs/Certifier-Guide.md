@@ -11,8 +11,9 @@ auditor checking one. What the statuses mean is in the [index](README.md); how t
   *Configuration* (met when the deployment sets something, named in the row), *Application* (the builder's to meet,
   with the framework's tool for it), *Gap* (not met today, with its entry in the security review's
   [register](../../../plans/Security-Review.md)), *N/A*. The framework's is in this directory, one file a chapter;
-  PASS's, the public application, is in its own repository
-  ([mr-pass ASVS matrix](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md)). An application of your
+  PASS's, the public application, and BOSS's, the business applications, are in their own repositories
+  ([mr-pass](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md),
+  [mr-boss](https://github.com/moqui/mr-boss/blob/master/docs/ASVS-Matrix.md)). An application of your
   own starts from the framework's rows: its Application rows are yours, and its Configuration rows are your deployment's.
 - **Black-box proofs.** Client specs that run against any server, your deployment included, and write their results
   by requirement. These are the ones you run.
@@ -110,6 +111,14 @@ cargo test -p moqui-host --lib tls::tests          # a Rust module's proofs, by 
 
 Some requirements ask for a document, not a behavior (6.1.1, 6.1.3, 7.1.3, 8.1.1). Their rows name the document that
 meets them, in [docs/security](..) and in PASS's `docs/`; read it as part of the evidence.
+
+## The desktop and mobile apps
+
+The apps are held to OWASP MASVS, not ASVS: [the clients' matrix](clients/README.md) gives each control a status for
+the mobile app and for the desktop app (profiles L1, L2 and P; R is not covered). Their proofs are tests, not specs a
+run takes against a server: `./moq test-clients` runs the client crates' tests, the shared client's TLS proofs and the
+static checks of the Android app's settings among them (those two also in every `./moq test-framework`). Most rows are
+Gaps today, each naming the part not met and its register entry; a certifier of an app build reads those first.
 
 ## What this does not cover
 
