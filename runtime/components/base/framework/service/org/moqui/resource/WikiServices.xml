@@ -586,8 +586,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="childPageInfoList" type="List"><parameter name="childPageInfo" type="Map"/></parameter>
         </out-parameters>
         <actions>
+            <set field="childPageInfoList" from="[]"/>
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageReference" in-map="context" out-map="context"/>
             <if condition="pageReference == null"><return/></if>
+            <!-- the children of a page the user may view, and of those only the ones the user may view (get#WikiPageAccess: a
+                page's own restrictView), as get#WikiPageInfo does for the page itself (plans/Security-Review.md SEC-SCR-81) -->
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="childrenAccess"
+                    in-map="wikiPage != null ? {wikiPageId:wikiPage.wikiPageId} : {wikiSpaceId:wikiSpaceId}"/>
+            <if condition="ec.message.hasError() || !childrenAccess?.canView"><return error="true" message="Page not found"/></if>
 
             <set field="childPageRefList" from="pageReference.getChildren()"/>
             <set field="childPageInfoList" from="[]"/>
@@ -603,8 +609,14 @@ along with this software (see the LICENSE.md file). If not, see
                         in-map="{wikiSpaceId:wikiSpaceId, pagePath:childPagePath}"/>
                 <if condition="pageIdOut.wikiPage != null">
                     <set field="sequenceNum" from="pageIdOut.wikiPage.sequenceNum || 50"/></if>
+                <set field="childVisible" from="true"/>
+                <if condition="pageIdOut.wikiPage?.restrictView == 'Y'">
+                    <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="childAccess"
+                            in-map="{wikiPageId:pageIdOut.wikiPage.wikiPageId}"/>
+                    <set field="childVisible" from="!!childAccess?.canView"/>
+                </if>
 
-                <script>childPageInfoList.push({filename:childFilename, pagePath:childPagePath, pageName:childPageName, sequenceNum:sequenceNum})</script>
+                <if condition="childVisible"><script>childPageInfoList.push({filename:childFilename, pagePath:childPagePath, pageName:childPageName, sequenceNum:sequenceNum})</script></if>
             </iterate>
 
             <order-map-list list="childPageInfoList"><order-by field-name="sequenceNum"/><order-by field-name="childPageName"/></order-map-list>
