@@ -1730,7 +1730,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:annotation><xs:documentation>
                         Interpret the text at the location as an FTL or other template?
                         Supports any template type supported by the Resource Facade.
-                        Defaults to true, set to false if you want the text included literally.
+                        Defaults to true, set to false if you want the text included literally. A template location is
+                        a component's own file (component://, or a path under the components or beside the screen),
+                        never one with .. or another scheme (dbresource://, file:, git://, runtime://): such a location
+                        is logged and renders nothing, as a template runs as server script.
                     </xs:documentation></xs:annotation>
                 </xs:attribute>
                 <xs:attribute name="encode" default="false" type="boolean">

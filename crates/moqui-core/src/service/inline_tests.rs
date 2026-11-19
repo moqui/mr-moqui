@@ -48,6 +48,18 @@ const SERVICES: &str = r#"<services>
             <entity-create value-field="made"/>
         </actions>
     </service>
+    <service verb="inline" noun="Record" authenticate="false">
+        <in-parameters><parameter name="id"/><parameter name="medium"/></in-parameters>
+        <actions>
+            <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+            <script>made.set("testId", id); made.set("testMedium", medium);</script>
+            <entity-create value-field="made"/>
+        </actions>
+    </service>
+    <service verb="inline" noun="RecordRows" authenticate="false">
+        <in-parameters><parameter name="rowsIn" type="Map"/></in-parameters>
+        <actions><service-call name="inline#Record" multi="true" in-map="rowsIn"/></actions>
+    </service>
     <service verb="inline" noun="IgnoreFail" authenticate="false" transaction="ignore">
         <actions><return error="true" message="ignore failed"/></actions>
     </service>
@@ -351,6 +363,74 @@ fn a_multi_call_runs_each_row_in_one_transaction() {
     assert_eq!(medium(&facade, "MV0"), None, "row 0 rolled back with the failed row 1");
     assert_eq!(medium(&facade, "MV2"), None, "the rows after the error do not run");
     ctx.message().clear();
+}
+
+/// A multi call a screen transition makes takes a posted `name_N` only for a row field of the screen's multi forms and
+/// never for a name the screen pinned, whatever plain value the request also sends (SEC-RTE-81: a post with
+/// `userId=<own id>` and `userId_0=<another>` must not reach the other account). The services it calls keep Java's
+/// order, the row's value first, and so does a multi call outside a transition.
+#[test]
+fn a_transition_multi_call_takes_rows_only_for_form_fields_and_never_for_a_pinned_name() {
+    use super::call::{sync_multi, with_transition_rows, CallOptions, TransitionRows};
+    let (facade, ctx) = inline_context();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let parameters = |id: &str, row: &str, plain: &str| -> BTreeMap<String, Value> {
+        [("id_0", id), ("medium_0", row), ("medium", plain)]
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), Value::string(value)))
+            .collect()
+    };
+    let rule = |fields: Option<&[&str]>, pinned: &[&str]| TransitionRows {
+        fields: fields.map(|fields| fields.iter().map(|name| (*name).to_string()).collect()),
+        pinned: pinned.iter().map(|name| (*name).to_string()).collect(),
+    };
+    // pinned: the plain value, even when the request's plain value is the same (the same-value bypass)
+    with_transition_rows(rule(None, &["medium"]), || {
+        sync_multi(
+            "inline#Record",
+            &parameters("PIN0", "posted", "pinned"),
+            &CallOptions::default(),
+        )
+        .unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN0").as_deref(), Some("pinned"));
+    // not a row field of the form: the plain value
+    with_transition_rows(rule(Some(&["id"]), &[]), || {
+        sync_multi(
+            "inline#Record",
+            &parameters("PIN1", "posted", "plain"),
+            &CallOptions::default(),
+        )
+        .unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN1").as_deref(), Some("plain"));
+    // a row field, not pinned: the row's value
+    with_transition_rows(rule(Some(&["id", "medium"]), &[]), || {
+        sync_multi(
+            "inline#Record",
+            &parameters("PIN2", "posted", "plain"),
+            &CallOptions::default(),
+        )
+        .unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN2").as_deref(), Some("posted"));
+    // outside a transition, and a service's own multi call inside one: Java's order
+    sync_multi(
+        "inline#Record",
+        &parameters("PIN3", "own", "plain"),
+        &CallOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(medium(&facade, "PIN3").as_deref(), Some("own"));
+    with_transition_rows(rule(None, &["medium"]), || {
+        let mut outer = BTreeMap::new();
+        let rows: moqui_lib::object::ValueMap = parameters("PIN4", "own", "plain").into_iter().collect();
+        outer.insert("rowsIn".to_string(), Value::Map(rows));
+        super::sync("inline#RecordRows", &outer).unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN4").as_deref(), Some("own"));
+    assert!(ctx.message().errors().is_empty(), "{:?}", ctx.message().errors());
 }
 
 const AUTHZ_SERVICES: &str = r#"<services>

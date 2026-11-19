@@ -706,8 +706,8 @@ macro_rules! tools_js {
     ec.resource.textDiff = (oldText, newText, fromName, toName) => host.textDiff(oldText == null ? "" : String(oldText),
         newText == null ? "" : String(newText), fromName == null ? "old" : String(fromName),
         toName == null ? "new" : String(toName));
-    // CommonMark as HTML, unsanitized: a caller showing it to others cleans it
-    ec.resource.markdownHtml = (text) => host.markdownHtml(text == null ? "" : String(text));
+    // CommonMark as HTML, unsanitized: a caller showing it to others cleans it; relative links against base when given
+    ec.resource.markdownHtml = (text, base) => host.markdownHtml(text == null ? "" : String(text), base == null ? "" : String(base));
     // digests and archives read as streams (archive_host.rs): checksums of exports, operator-supplied import archives
     ec.resource.digest = (location, algorithm) => host.resourceDigest(String(location), String(algorithm || "sha256"));
     ec.resource.digestText = (text, algorithm) => host.textDigest(String(text ?? ""), String(algorithm || "sha256"));
@@ -1293,7 +1293,7 @@ static METHODS: &[Method] = &[
         resource_version_diff
     ),
     method!("tools", "textDiff", [Text, Text, Text, Text], None, leaf, text_diff),
-    method!("tools", "markdownHtml", [Text], None, leaf, markdown_html),
+    method!("tools", "markdownHtml", [Text, Text], None, leaf, markdown_html),
     method!("tools", "restSend", [Value], rest_send),
     method!("tools", "testConfConnection", [Value], test_conf_connection),
     method!("tools", "runSqlCountConf", [Text, Text, Value], run_sql_count_conf),
@@ -2543,11 +2543,13 @@ fn text_diff(call: &mut Call<'_>) -> Result<Ret, HostError> {
     ))
 }
 
-/// `ec.resource.markdownHtml(text)`: CommonMark (with GitHub tables) as HTML, the `.md` template renderer for text a
-/// script holds, such as imported posts. Raw HTML passes through, so a caller showing the result to others sanitizes it.
+/// `ec.resource.markdownHtml(text, base)`: CommonMark (with GitHub tables) as HTML, the `.md` template renderer for text
+/// a script holds, such as imported posts or a wiki page (`render#WikiPage`), with relative links resolved against
+/// `base` when one is given. Raw HTML passes through, so a caller showing the result to others sanitizes it.
 fn markdown_html(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let text = call.text_or_empty(0);
-    Ok(Ret::from(moqui_lib::markdown::to_html(&text)))
+    let base = call.text_or_empty(1);
+    Ok(Ret::from(moqui_lib::markdown::to_html_with_base(&text, Some(base.as_str()))))
 }
 
 // ---- SQL on a database named by a conf map (InstanceServices) ----

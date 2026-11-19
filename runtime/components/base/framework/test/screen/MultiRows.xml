@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The MultiPin spec's multi form screen (test only, never mounted): a multi form-list posts its rows to saveRows, whose
+    service-call shortcut is then a multi call; the always-actions pin value, which a posted value_N does not replace
+    (SEC-RTE-81). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-title="Multi rows">
+    <always-actions><set field="value" value="pinned"/></always-actions>
+    <transition name="saveRows" require-session-token="false">
+        <service-call name="store#moqui.test.TestEntity"/><default-response type="none"/></transition>
+    <actions><set field="rows" from="[]"/></actions>
+    <widgets>
+        <form-list name="Rows" list="rows" transition="saveRows" multi="true">
+            <field name="testId"><default-field><display/></default-field></field>
+            <field name="testMedium"><default-field><text-line/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

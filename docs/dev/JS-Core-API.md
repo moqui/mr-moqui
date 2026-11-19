@@ -354,7 +354,7 @@ Change sets, version notes and change logs are described in
 | `parseGs1(text)` | The application identifiers of a GS1 barcode's text |
 | `isValidGs1CheckDigit(text)` | Whether the last digit is the GS1 check digit of the rest |
 | `xslFoTransform(document, xslt, out, contentType)` | The PDF bytes of an `html-print` document (old name `xsl-fo`), a `Uint8Array`. `xslt` must be null and `out` is ignored. Throws when this server has no PDF engine |
-| `markdownHtml(text)` | CommonMark as HTML, not sanitized |
+| `markdownHtml(text, base)` | CommonMark as HTML, not sanitized; relative link and image destinations resolved against `base` when given. A markdown `javascript:`, `vbscript:` or link `data:` destination is written as `#` |
 | `makeThumbnail(source, target, maxSize)` | Writes a PNG thumbnail of an image, no side over `maxSize` (256): `{width, height, contentType}`; null when the bytes are not an image |
 | `makeStickerThumbnail(source, target, maxSide, thumbSize)` | A chat sticker's picture checked before it is decoded: its format from its bytes (PNG, GIF or WebP only), its sides from its header (none over `maxSide`, 512), then decoded within 16 MiB and its still PNG thumbnail (`thumbSize`, 128) written: `{format, contentType, width, height, thumbWidth, thumbHeight}`, or `{reasonCode: badType or tooLarge, format, width, height}` |
 | `makePdfPreview(source, target, maxSize)` | Writes page 1 of a PDF as a PNG (1024): `{width, height, pages, contentType}`; null with no PDF engine or a PDF that does not open |

@@ -31,8 +31,14 @@ impl Site {
         let dir = std::env::temp_dir().join(format!("moqui-forms-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let messages = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../runtime/components/base/webroot/screen/includes/Messages.html.fancy");
+        // a templated text is a file of the screen's own directory here (sections.rs template_location_allowed)
+        let messages = dir.join("Messages.html.fancy");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../runtime/components/base/webroot/screen/includes/Messages.html.fancy"),
+            &messages,
+        )
+        .unwrap();
         let screen = r#"<screen require-authentication="false">
     <transition name="save">
         <actions><script><![CDATA[
@@ -502,12 +508,17 @@ fn shell_root(name: &str) -> Site {
         <subscreens-item name="error" location="WEBROOT/webroot/error.xml"/>
     </subscreens>
     <widgets>
-        <render-mode><text type="html" location="WEBROOT/includes/Header.html.fancy" no-boundary-comment="true"/></render-mode>
+        <render-mode><text type="html" location="SHELL/Header.html.fancy" no-boundary-comment="true"/></render-mode>
         <render-mode><text template="true">${sri.renderSubscreen()}</text></render-mode>
-        <render-mode><text type="html" location="WEBROOT/includes/Footer.html.fancy"/></render-mode>
+        <render-mode><text type="html" location="SHELL/Footer.html.fancy"/></render-mode>
     </widgets>
 </screen>"#
-        .replace("WEBROOT", &webroot.display().to_string());
+        .replace("WEBROOT", &webroot.display().to_string())
+        .replace("SHELL", &dir.display().to_string());
+    // a templated text is a file of the screen's own directory here (sections.rs template_location_allowed)
+    for file in ["Header.html.fancy", "Footer.html.fancy"] {
+        std::fs::copy(webroot.join("includes").join(file), dir.join(file)).unwrap();
+    }
     std::fs::write(dir.join("Shell.xml"), screen).unwrap();
     std::fs::create_dir_all(dir.join("Shell")).unwrap();
     std::fs::write(
@@ -1414,8 +1425,10 @@ fn a_dynamic_drop_down_shows_the_transition_label_of_its_value() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A multi form-list posts `name_N` for each row with `_isMulti=true`; the transition's service-call shortcut (whose `multi`
-/// defaults to `parameter`) then calls the service once for each row.
+/// A multi form-list posts `name_N` for each row with `_isMulti=true`; the service-call shortcut of the transition it posts
+/// to (whose `multi` then defaults to `parameter`) calls the service once for each row. A shortcut no multi form posts to
+/// is one call with `_isMulti=true` too, and in a row a value the always-actions pinned is not replaced by a posted
+/// `name_N` (SEC-RTE-81).
 #[test]
 fn a_multi_form_post_calls_the_transition_service_for_each_row() {
     let dir = std::env::temp_dir().join(format!("moqui-forms-multi-{}", std::process::id()));
@@ -1437,7 +1450,23 @@ fn a_multi_form_post_calls_the_transition_service_for_each_row() {
         &root,
         r#"<screen require-authentication="false">
     <transition name="saveRows" require-session-token="false"><service-call name="save#Row"/><default-response type="none"/></transition>
-    <widgets><label text="rows"/></widgets>
+    <transition name="saveExplicit" require-session-token="false"><service-call name="save#Row" multi="true" in-map="Object.assign({}, context, {testMedium: 'inmap'})"/><default-response type="none"/></transition>
+    <widgets><form-list name="Rows" list="rows" transition="saveRows" multi="true">
+        <field name="testId"><default-field><display/></default-field></field>
+        <field name="testMedium"><default-field><text-line/></default-field></field></form-list></widgets>
+</screen>"#,
+        )
+        .unwrap();
+    let pinned = dir.join("Pinned.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &pinned,
+        r#"<screen require-authentication="false">
+    <always-actions><set field="testMedium" value="pinned"/></always-actions>
+    <transition name="saveOne" require-session-token="false"><service-call name="save#Row"/><default-response type="none"/></transition>
+    <transition name="saveRows" require-session-token="false"><service-call name="save#Row"/><default-response type="none"/></transition>
+    <widgets><form-list name="Rows" list="rows" transition="saveRows" multi="true">
+        <field name="testId"><default-field><display/></default-field></field>
+        <field name="testMedium"><default-field><text-line/></default-field></field></form-list></widgets>
 </screen>"#,
     )
     .unwrap();
@@ -1471,6 +1500,48 @@ fn a_multi_form_post_calls_the_transition_service_for_each_row() {
     };
     assert_eq!(medium("R0").as_deref(), Some("first"));
     assert_eq!(medium("R1").as_deref(), Some("second"));
+    // an explicit multi call no multi form posts to: what its in-map sets itself is kept over a posted row
+    let explicit = serve_at(
+        &world.factory,
+        form_post("/saveExplicit", "_isMulti=true&testId_0=E0&testMedium_0=posted"),
+        &root,
+    );
+    assert!(explicit.status < 400, "{}", explicit.body_text());
+    assert_eq!(medium("E0").as_deref(), Some("inmap"));
+    // no multi form posts to saveOne: the post is one call with the screen's values, and the rows reach nothing
+    let one = serve_at(
+        &world.factory,
+        form_post(
+            "/saveOne",
+            "testId=S1&testMedium=posted&_isMulti=true&testId_0=S2&testMedium_0=posted",
+        ),
+        &pinned,
+    );
+    assert!(one.status < 400, "{}", one.body_text());
+    assert_eq!(medium("S1").as_deref(), Some("pinned"));
+    assert_eq!(medium("S2"), None, "a posted row of a single call");
+    // a multi form's rows run, each with the pinned value in place of the posted one
+    let rows = serve_at(
+        &world.factory,
+        form_post(
+            "/saveRows",
+            "testMedium=posted&_isMulti=true&testId_0=P0&testMedium_0=posted",
+        ),
+        &pinned,
+    );
+    assert!(rows.status < 400, "{}", rows.body_text());
+    assert_eq!(medium("P0").as_deref(), Some("pinned"));
+    // the request's plain value the same as the pinned one does not let the row's through
+    let same = serve_at(
+        &world.factory,
+        form_post(
+            "/saveRows",
+            "testMedium=pinned&_isMulti=true&testId_0=P1&testMedium_0=posted",
+        ),
+        &pinned,
+    );
+    assert!(same.status < 400, "{}", same.body_text());
+    assert_eq!(medium("P1").as_deref(), Some("pinned"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2119,4 +2190,49 @@ fn a_service_reload_makes_again_only_the_screens_that_looked_up_its_services() {
     let (_, auto_form) = assembled(&auto);
     assert!(auto_form.contains("ownField"), "{auto_form}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A templated `<text>` renders only a component's own file: one beside the screen renders, while a location the
+/// request names elsewhere (another directory, `dbresource://`, `file:`, a path with `..`) is logged and renders
+/// nothing, so a print screen's `templateLocation` or a wiki page's location cannot run a planted `.fancy` file as server
+/// script (SEC-SCR-81).
+#[test]
+fn a_templated_text_renders_only_a_component_file() {
+    let base = std::env::temp_dir().join(format!("moqui-forms-template-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (screens, planted) = (base.join("screens"), base.join("planted"));
+    std::fs::create_dir_all(&screens).unwrap();
+    std::fs::create_dir_all(&planted).unwrap();
+    std::fs::write(screens.join("Own.html.fancy"), "own ${1 + 1}").unwrap();
+    std::fs::write(planted.join("Evil.html.fancy"), "evil ${1 + 1}").unwrap();
+    let root = screens.join("Root.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &root,
+        r#"<screen require-authentication="false"><widgets><text type="html" location="${templateLocation}"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    let render = |location: &str| {
+        let mut get = request("GET", "/");
+        get.query.push(("templateLocation".into(), location.into()));
+        serve_at(&world.factory, get, &root).body_text()
+    };
+    let own = render(&screens.join("Own.html.fancy").to_string_lossy());
+    assert!(own.contains("own 2"), "{own}");
+    let planted_file = planted.join("Evil.html.fancy").to_string_lossy().into_owned();
+    let dotted = format!("{}/../planted/Evil.html.fancy", screens.display());
+    for location in [
+        planted_file.clone(),
+        format!("file://{planted_file}"),
+        "dbresource://WikiSpace/X/Evil.html.fancy".to_string(),
+        dotted,
+        "component://webroot/../../../tmp/Evil.html.fancy".to_string(),
+    ] {
+        let text = render(&location);
+        assert!(
+            !text.contains("evil 2") && !text.contains("evil ${"),
+            "{location}: {text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&base);
 }
