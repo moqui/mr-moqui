@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::{cancel_within, has_error_message, tag_rows, Endpoint, Wire};
+use moqui_core::driver::AddressGuard;
 
 fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
@@ -93,6 +94,7 @@ fn a_tls_connection_negotiates_starts_and_answers_a_query() {
         .with_root_certificates(roots)
         .with_no_client_auth();
     let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: "localhost".to_string(),
         port,
         tls: Some(Arc::new(client_config)),
@@ -202,6 +204,7 @@ fn a_tls_write_reads_what_the_server_sends_while_it_waits() {
         .with_root_certificates(roots)
         .with_no_client_auth();
     let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: "localhost".to_string(),
         port,
         tls: Some(Arc::new(client_config)),
@@ -252,6 +255,7 @@ fn tls_server(issued: &rcgen::CertifiedKey<rcgen::KeyPair>, connections: usize) 
 
 fn tls_connect(host: &str, port: u16, options: &crate::pg_tls::TlsOptions) -> Result<Wire, moqui_lib::error::Error> {
     let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: host.to_string(),
         port,
         tls: Some(crate::pg_tls::client_config(options)?),
@@ -301,7 +305,9 @@ fn tls_modes_check_what_sslmode_says() {
     server.join().unwrap();
 
     // SEC-DAT-93: verify-ca with no root file would trust any public authority for any name: refused
-    let err = crate::pg_tls::client_config(&TlsOptions::new(TlsVerify::Ca, "")).err().unwrap();
+    let err = crate::pg_tls::client_config(&TlsOptions::new(TlsVerify::Ca, ""))
+        .err()
+        .unwrap();
     assert!(err.message().contains("sslrootcert"), "{err}");
     let missing = TlsOptions::new(TlsVerify::Full, &dir.join("missing.pem").display().to_string());
     let err = crate::pg_tls::client_config(&missing).err().unwrap();
@@ -325,6 +331,7 @@ fn a_server_that_refuses_tls_is_an_error() {
         .with_root_certificates(rustls::RootCertStore::empty())
         .with_no_client_auth();
     let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: "localhost".to_string(),
         port,
         tls: Some(Arc::new(config)),
@@ -362,6 +369,7 @@ fn an_idle_connection_the_server_closed_reads_as_closed() {
         sent.send(()).unwrap();
     });
     let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: "127.0.0.1".to_string(),
         port,
         tls: None,
@@ -431,6 +439,7 @@ fn tls_endpoint(port: u16) -> Endpoint {
         .with_root_certificates(rustls::RootCertStore::empty())
         .with_no_client_auth();
     Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: "localhost".to_string(),
         port,
         tls: Some(Arc::new(client_config)),
@@ -444,6 +453,7 @@ fn a_server_that_stalls_after_accepting_bounds_connect_and_cancel() {
     let (port, _held) = stalled_server();
     let limit = Duration::from_millis(300);
     let plain = Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: "127.0.0.1".to_string(),
         port,
         tls: None,
@@ -486,6 +496,7 @@ fn a_read_past_its_timeout_fails_and_closes_the_connection() {
         let _ = tcp.read_to_end(&mut rest);
     });
     let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
         host: "127.0.0.1".to_string(),
         port,
         tls: None,
@@ -499,4 +510,39 @@ fn a_read_past_its_timeout_fails_and_closes_the_connection() {
     assert!(wire.is_dead());
     drop(wire);
     server.join().unwrap();
+}
+
+/// SEC-TLS-101: a guarded endpoint is refused at the connection for an address its guard does not take, whatever was
+/// checked before; a link-local or metadata address is refused even where the private network is allowed.
+#[test]
+fn a_guarded_endpoint_connects_to_no_address_its_guard_refuses() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let endpoint = |host: &str, guard: AddressGuard| Endpoint::Tcp {
+        guard,
+        host: host.to_string(),
+        port,
+        tls: None,
+    };
+    let refused = Wire::connect(
+        &endpoint("127.0.0.1", AddressGuard::Internal),
+        "moqui",
+        "moqui",
+        None,
+        None,
+    )
+    .err()
+    .expect("a loopback address is refused");
+    assert!(refused.message().contains("internal address"), "{refused}");
+    let metadata = Wire::connect(
+        &endpoint("169.254.169.254", AddressGuard::LinkLocal),
+        "moqui",
+        "moqui",
+        None,
+        None,
+    )
+    .err()
+    .expect("a metadata address is refused");
+    assert!(metadata.message().contains("link-local"), "{metadata}");
+    drop(listener);
 }

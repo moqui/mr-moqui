@@ -132,6 +132,22 @@ fn field(item: &Value, key: &str) -> Value {
     }
 }
 
+/// Sets a process property and clears it when dropped, a panic included.
+struct Cleared(String);
+
+impl Cleared {
+    fn set(name: &str, value: &str) -> Self {
+        moqui_lib::env::set_property(name, value);
+        Self(name.to_string())
+    }
+}
+
+impl Drop for Cleared {
+    fn drop(&mut self) {
+        moqui_lib::env::clear_property(&self.0);
+    }
+}
+
 /// Sets `instance@purpose` and puts the old one back when dropped, a panic included.
 struct Purpose(String);
 
@@ -239,8 +255,10 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
         refused.message().contains("external-database-private-network"),
         "{refused}"
     );
-    let private_network = moqui_core::context::conf_env::env_name_of("tools@external-database-private-network");
-    moqui_lib::env::set_property(&private_network, "true");
+    let _private_network = Cleared::set(
+        &moqui_core::context::conf_env::env_name_of("tools@external-database-private-network"),
+        "true",
+    );
 
     // a second database of the embedded cluster with a row, reached over TCP through a relay to its socket
     let data = std::fs::canonicalize(gate.cluster_dir.join("data")).unwrap();
@@ -319,24 +337,26 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     assert_eq!(reset, "This connection is read only");
     let schema = call("compare#Schema", &[("db", Value::string("ext:EXTSPEC"))]).unwrap_err();
     assert!(schema.contains("not offered on an external database"), "{schema}");
-    // SEC-TLS-101: a row changed with no forget here (a store on another cluster member) is not served from the old
-    // pool: its new readOnly holds at the next use
+    // SEC-TLS-101: a row stored with no forget here (a store on another cluster member) is not served from the old
+    // pool: its new readOnly holds at the next use, two stores within one millisecond included (the revision)
     {
-        let _authz = context.disable_authz();
-        let mut row = facade
-            .find("moqui.database.DatabaseConnection")
-            .unwrap()
-            .eq("connectionId", Value::string("EXTSPEC"))
-            .one()
-            .unwrap()
-            .unwrap();
-        row.set("readOnly", Value::string("N"));
-        row.update(&facade).unwrap();
+        let store_on_another_member = |read_only: &str| {
+            let _authz = context.disable_authz();
+            let mut row = facade
+                .find("moqui.database.DatabaseConnection")
+                .unwrap()
+                .eq("connectionId", Value::string("EXTSPEC"))
+                .one()
+                .unwrap()
+                .unwrap();
+            let revision = row.get("revision").map(to_plain_string).unwrap_or_default();
+            row.set("readOnly", Value::string(read_only));
+            row.set("revision", Value::I64(revision.parse::<i64>().unwrap_or(0) + 1));
+            row.update(&facade).unwrap();
+        };
+        store_on_another_member("N");
         assert!(!moqui_tools::ext::open(&facade, "EXTSPEC").unwrap().read_only);
-        // a stamp of its own, past the last update's millisecond
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        row.set("readOnly", Value::string("Y"));
-        row.update(&facade).unwrap();
+        store_on_another_member("Y");
         assert!(moqui_tools::ext::open(&facade, "EXTSPEC").unwrap().read_only);
     }
 

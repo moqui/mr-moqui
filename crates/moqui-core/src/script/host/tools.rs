@@ -2540,6 +2540,7 @@ fn conf_db_of(conf: &Value) -> Result<crate::driver::ConfDb, HostError> {
         password: text("entity_ds_password"),
         ssl_mode: text("entity_ds_sslmode"),
         ssl_root_cert: text("entity_ds_sslrootcert"),
+        address_guard: crate::driver::AddressGuard::Off,
     })
 }
 

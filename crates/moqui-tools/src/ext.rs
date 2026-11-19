@@ -119,6 +119,17 @@ fn conf_of(row: &moqui_core::entity::EntityValue) -> moqui_core::driver::ConfDb 
         password: field("password"),
         ssl_mode: field("sslMode"),
         ssl_root_cert: field("sslRootCert"),
+        address_guard: address_guard(&moqui_core::context::conf_env::setting(PRIVATE_NETWORK_SETTING)),
+    }
+}
+
+/// The addresses a connection may reach: public ones, or with [`PRIVATE_NETWORK_SETTING`] true any but link-local and
+/// metadata ones. The driver checks each connection it opens and connects to an address it checked (SEC-TLS-101).
+fn address_guard(allow_private: &str) -> moqui_core::driver::AddressGuard {
+    if allow_private.trim().eq_ignore_ascii_case("true") {
+        moqui_core::driver::AddressGuard::LinkLocal
+    } else {
+        moqui_core::driver::AddressGuard::Internal
     }
 }
 
@@ -160,7 +171,12 @@ pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error
         forget(connection_id);
         return Err(Error::new(format!("no connection {connection_id}")));
     };
-    let stamp = row.get("lastUpdatedStamp").map(to_plain_string).unwrap_or_default();
+    // the row's revision, which each store moves, beside its stamp: two stores in one millisecond differ too
+    let stamp = format!(
+        "{}#{}",
+        row.get("lastUpdatedStamp").map(to_plain_string).unwrap_or_default(),
+        row.get("revision").map(to_plain_string).unwrap_or_default()
+    );
     let (tx, dialect, read_only) = {
         let mut pools = lock(pools());
         if let Some(open) = pools.get_mut(connection_id).filter(|open| open.stamp == stamp) {
@@ -177,7 +193,7 @@ pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error
                 )));
             }
             check_host(&conf.host).map_err(Error::new)?;
-            check_address(&conf, &moqui_core::context::conf_env::setting(PRIVATE_NETWORK_SETTING))?;
+            check_address(&conf)?;
             let read_only = row.get("readOnly").map(to_plain_string).as_deref() != Some("N");
             let dialect = dialect_of(facade, &conf.db_type)?;
             let driver = moqui_core::driver::conf_driver(&conf)?;
@@ -226,23 +242,20 @@ fn check_host(host: &str) -> Result<(), &'static str> {
 /// [`PRIVATE_NETWORK_SETTING`]) is `true`, and no link-local or metadata address even then, so a holder of
 /// `DATABASE_EXTERNAL` cannot probe the server's own network with `test#DatabaseConnection` or send a stored password
 /// to whatever answers there (SEC-TLS-101). The name is looked up again by the driver when it connects.
-fn check_address(conf: &moqui_core::driver::ConfDb, allow_private: &str) -> Result<(), Error> {
+fn check_address(conf: &moqui_core::driver::ConfDb) -> Result<(), Error> {
     let port = conf
         .port
         .trim()
         .parse::<u16>()
         .unwrap_or(if conf.db_type == "postgres" { 5432 } else { 3306 });
-    let host = conf.host.trim();
-    let checked = if allow_private.trim().eq_ignore_ascii_case("true") {
-        moqui_lib::net::non_link_local_addresses(host, port)
-    } else {
-        moqui_lib::net::public_addresses(host, port)
-    };
-    checked.map(|_| ()).map_err(|err| {
-        Error::new(format!(
-            "{err}: an external database is at a public address unless {PRIVATE_NETWORK_SETTING} is true"
-        ))
-    })
+    conf.address_guard
+        .resolve(conf.host.trim(), port)
+        .map(|_| ())
+        .map_err(|err| {
+            Error::new(format!(
+                "{err}: an external database is at a public address unless {PRIVATE_NETWORK_SETTING} is true"
+            ))
+        })
 }
 
 /// A host on this machine's loopback, the only kind a connection may reach without TLS by default.
@@ -494,6 +507,13 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
     }
     let read_only = parameters.get("readOnly").is_none_or(is_empty) || flag(parameters, "readOnly");
     row.set("readOnly", Value::string(if read_only { "Y" } else { "N" }));
+    let revision = existing
+        .as_ref()
+        .and_then(|old| old.get("revision"))
+        .map(to_plain_string)
+        .and_then(|revision| revision.parse::<i64>().ok())
+        .unwrap_or(0);
+    row.set("revision", Value::I64(revision.saturating_add(1)));
     let password = text(parameters, "password");
     let mut password_cleared = false;
     if !password.is_empty() {

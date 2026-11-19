@@ -535,9 +535,18 @@ cancel, table maintenance or entity sources.
   - An empty `sslMode` is `verify-full` for a host that is not loopback, and no TLS for localhost.
   - `sslRootCert` is the path of a PEM file of the authorities to trust.
   - MySQL's mode names (`REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`) are taken too.
+  - On Postgres `verify-ca` trusts only the `sslRootCert` file and is refused without one; use `verify-full` to trust
+    the public authorities.
+- **Public addresses only, by default.** A connection's host must resolve to public addresses only. To reach a database
+  on this machine or the private network (a test database beside the server), set
+  `tools@external-database-private-network` to `true` in the runtime conf or as
+  `moqui_conf__tools__external_database_private_network`. A link-local or cloud metadata address is refused either
+  way. The driver checks the addresses at each connection it opens and connects to an address it checked.
 - **Read only by default.** A `readOnly` connection (the default) runs every statement in a read-only transaction and
   takes no changes.
-- **Pools.** One per connection, closed after ten idle minutes, through the host's conf connection factory.
+- **Pools.** One per connection, closed after ten idle minutes, through the host's conf connection factory. A pool is
+  kept for the row's `revision`, which each store moves: on any cluster member a changed or deleted row is never
+  served from an old pool.
 
 ## Conf settings
 

@@ -200,6 +200,7 @@ mod driver {
     /// One MySQL or MariaDB server. Each [`DbDriver::connect`] opens one connection.
     pub struct MysqlDriver {
         endpoint: Endpoint,
+        guard: moqui_core::driver::AddressGuard,
     }
 
     impl MysqlDriver {
@@ -224,7 +225,16 @@ mod driver {
                     read_timeout: Some(READ_TIMEOUT),
                     isolation: None,
                 },
+                guard: moqui_core::driver::AddressGuard::Off,
             }
+        }
+
+        /// Which addresses the host may resolve to, checked before each connection (SEC-TLS-101). The client looks the
+        /// name up again as it connects, so the check holds unless the name's answer changes in between.
+        #[must_use]
+        pub fn address_guard(mut self, guard: moqui_core::driver::AddressGuard) -> Self {
+            self.guard = guard;
+            self
         }
 
         /// What TLS checks of the server's certificate (`sslMode`), and the PEM file of the authorities to trust in place
@@ -255,6 +265,9 @@ mod driver {
 
         /// Opens one [`mysql::Conn`]. The crate pool is not used.
         pub fn connect_mysql(&self) -> Result<MysqlConn, Error> {
+            if self.guard != moqui_core::driver::AddressGuard::Off {
+                self.guard.resolve(&self.endpoint.host, self.endpoint.port)?;
+            }
             let mut conn = mysql::Conn::new(self.endpoint.opts()).map_err(mysql_err)?;
             let version: Option<String> = conn.query_first("SELECT VERSION()").map_err(mysql_err)?;
             let kill = Arc::new(KillState {
