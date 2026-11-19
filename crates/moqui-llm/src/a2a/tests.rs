@@ -22,7 +22,7 @@ use serde_json::json;
 use super::card::{base_url_of, valid_base_url};
 use super::jsonrpc::envelope;
 use super::types::{self, check_version, parse_config, parse_message, parse_push, A2aError, Cursor, PartLimits};
-use super::Origin;
+use super::{Caller, Origin};
 use crate::conf::LlmConf;
 use crate::run::RunState;
 
@@ -407,7 +407,7 @@ fn a_restarted_step_replaces_the_streamed_text() {
 #[test]
 fn a_push_config_is_found_only_through_its_own_task_and_user() {
     use super::ops::Ctx;
-    use super::{push, Caller, Failure};
+    use super::{push, Failure};
     let context =
         moqui_core::context::ExecutionContextFactory::test_context_with_conf("<moqui-conf><llm-facade/></moqui-conf>");
     let facade = moqui_core::testing::open();
@@ -476,3 +476,79 @@ fn a_push_config_is_found_only_through_its_own_task_and_user() {
         .unwrap();
     assert!(still.is_some(), "bob's config is still there");
 }
+
+/// The in-memory bed of the agent tests below: two agents on the `a2a` surface, `gone` (not `exposeA2a`) and `open`
+/// (exposed), and for each a context and a working task of ann's.
+fn agent_bed() -> (moqui_core::context::ExecutionContext, moqui_core::entity::EntityFacade) {
+    let context =
+        moqui_core::context::ExecutionContextFactory::test_context_with_conf("<moqui-conf><llm-facade/></moqui-conf>");
+    let facade = moqui_core::testing::open();
+    context.factory().set_entity(facade.clone());
+    let row = |entity: &str, fields: &[(&str, &str)]| {
+        let mut value = facade.make_value(entity).unwrap();
+        for (field, text) in fields {
+            value.set(*field, moqui_lib::object::Value::string(*text));
+        }
+        value.create(&facade).unwrap();
+    };
+    for (agent, exposed) in [("gone", "N"), ("open", "Y")] {
+        row(
+            "moqui.agent.AgentDefinition",
+            &[("agentId", agent), ("surfaces", "a2a"), ("exposeA2a", exposed)],
+        );
+        row(
+            "moqui.agent.AgentConversation",
+            &[
+                ("conversationId", &format!("conv-{agent}")),
+                ("userId", "ann"),
+                ("agentId", agent),
+                ("surfaceEnumId", "AgsfA2a"),
+            ],
+        );
+        row(
+            "moqui.agent.AgentRun",
+            &[
+                ("runId", &format!("task-{agent}")),
+                ("conversationId", &format!("conv-{agent}")),
+                ("userId", "ann"),
+                ("agentId", agent),
+                ("surfaceEnumId", "AgsfA2a"),
+                ("statusId", "AgrWorking"),
+            ],
+        );
+    }
+    (context, facade)
+}
+
+/// The message of a refused send, which must be an A2A error.
+fn refused(ctx: &super::ops::Ctx<'_>, message: serde_json::Value) -> String {
+    match super::ops::send(ctx, &json!({ "message": message })) {
+        Err(super::Failure::A2a(error)) => error.message,
+        Err(super::Failure::Reply(reply)) => panic!("a reply, not an A2A error: {}", reply.body),
+        Ok(sent) => panic!("sent to task {}", sent.task.run.run_id),
+    }
+}
+
+/// SEC-AI-84: an agent withdrawn from A2A (`exposeA2a` off) takes no message through a context or a task made with
+/// it before: both are checked against the exposed agents as a new task's agent is.
+#[test]
+fn an_agent_withdrawn_from_a2a_takes_no_message_through_an_old_context_or_task() {
+    let (context, _facade) = agent_bed();
+    let _entered = context.enter();
+    let ann = Caller {
+        user_id: "ann".to_string(),
+        base_url: "https://moqui.example.com".to_string(),
+    };
+    let ctx = super::ops::Ctx::new(context.factory(), &ann).unwrap();
+    let to_context = refused(
+        &ctx,
+        json!({"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hi"}], "contextId": "conv-gone"}),
+    );
+    assert!(to_context.contains("no agent gone"), "{to_context}");
+    let to_task = refused(
+        &ctx,
+        json!({"messageId": "m2", "role": "ROLE_USER", "parts": [{"text": "hi"}], "taskId": "task-gone"}),
+    );
+    assert!(to_task.contains("no agent gone"), "{to_task}");
+}
+
