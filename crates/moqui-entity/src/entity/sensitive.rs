@@ -136,10 +136,15 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "emailoauthprovider",
     // a network printer's server is sent every document printed on it, and its allowPrivateNetwork is store#Connection's
     "networkprinter",
-    // a sign-in provider's OAuth and OpenID Connect flows: their token endpoint is sent the client secret, and their own
-    // service (store#IdentityProvider) clears it when an endpoint changes
+    // a sign-in provider (store#IdentityProvider, ConfigurationProviders.js, its only writer): the OAuth and OpenID
+    // Connect flows, whose token endpoint is sent the client secret, which it clears when an endpoint changes; the SAML
+    // flow, whose metadata location says whose assertions are believed; and the flow itself and its role mappings, whose
+    // enabling, default group, account linking and groups need ADMIN_ACCESS_MANAGE there
+    "authflow",
+    "authflowrolemap",
     "oauthflow",
     "oidcflow",
+    "samlflow",
     // ACME: a challenge row is answered on the TLS listener and a certificate row written to runtime/cert, so only an
     // order (setup#AcmeName and the renewal job) writes them
     "acmename",
@@ -651,8 +656,11 @@ mod tests {
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
         // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11, SEC-OUT-82)
         for name in [
+            "moqui.security.sso.AuthFlow",
+            "moqui.security.sso.AuthFlowRoleMap",
             "moqui.security.sso.OauthFlow",
             "moqui.security.sso.OidcFlow",
+            "moqui.security.sso.SamlFlow",
             "moqui.basic.email.EmailOAuthProvider",
             "moqui.basic.print.NetworkPrinter",
             "moqui.server.AcmeName",
