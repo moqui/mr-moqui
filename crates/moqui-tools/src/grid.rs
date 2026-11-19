@@ -1339,6 +1339,16 @@ fn cell_text(value: &Value) -> String {
     }
 }
 
+/// A cell of the CSV export, which is made for a person to open in a spreadsheet: text that would run as a formula
+/// gets a leading apostrophe (SEC-SCR-89, `moqui_lib::string::csv_formula_guarded`).
+fn csv_cell_text(value: &Value) -> String {
+    let text = cell_text(value);
+    match moqui_lib::string::csv_formula_guarded(&text) {
+        std::borrow::Cow::Borrowed(_) => text,
+        std::borrow::Cow::Owned(guarded) => guarded,
+    }
+}
+
 /// The default export directory of `user_id`: `runtime://tmp/grid-export/<userId>/`, which `clean#GridUploads` empties
 /// of files older than a day. A download of a file there checks that the user is the one its path names.
 #[must_use]
@@ -1598,7 +1608,12 @@ impl TableWriter {
 
     fn header(&mut self, names: &[String]) -> Result<(), Error> {
         if let Some(csv) = &mut self.csv {
-            csv.write_record(names).map_err(|err| Error::new(err.to_string()))?;
+            csv.write_record(
+                names
+                    .iter()
+                    .map(|name| moqui_lib::string::csv_formula_guarded(name).into_owned()),
+            )
+            .map_err(|err| Error::new(err.to_string()))?;
         }
         if let Some(book) = &mut self.book {
             for name in names {
@@ -1610,7 +1625,7 @@ impl TableWriter {
 
     fn row(&mut self, cells: &[Value]) -> Result<(), Error> {
         if let Some(csv) = &mut self.csv {
-            csv.write_record(cells.iter().map(cell_text))
+            csv.write_record(cells.iter().map(csv_cell_text))
                 .map_err(|err| Error::new(err.to_string()))?;
         }
         if let Some(book) = &mut self.book {
@@ -2139,8 +2154,8 @@ mod tests {
     use moqui_lib::object::Value;
 
     use super::{
-        escape_like, export_location_allowed, parse_filter, parse_sort, stamp_matches, statement_shape_refusal, wrap,
-        Filter, Sort,
+        csv_cell_text, escape_like, export_location_allowed, parse_filter, parse_sort, stamp_matches,
+        statement_shape_refusal, wrap, Filter, Sort,
     };
     use crate::audit::Actor;
 
@@ -2204,6 +2219,20 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// The CSV export is for a person: a text cell a spreadsheet would run as a formula is guarded, a number is not
+    /// (SEC-SCR-89).
+    #[test]
+    fn a_csv_export_cell_is_guarded_against_formulas() {
+        assert_eq!(
+            csv_cell_text(&Value::string("=1+cmd|' /C calc'!A0")),
+            "'=1+cmd|' /C calc'!A0"
+        );
+        assert_eq!(csv_cell_text(&Value::string("@SUM(A1)")), "'@SUM(A1)");
+        assert_eq!(csv_cell_text(&Value::I64(-12)), "-12");
+        assert_eq!(csv_cell_text(&Value::string("plain")), "plain");
+        assert_eq!(csv_cell_text(&Value::Null), "");
     }
 
     #[test]

@@ -280,9 +280,52 @@ pub fn to_string_clean_bom(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// A CSV cell's text that a spreadsheet will not run as a formula: text that starts with `=`, `+`, `-`, `@`, a tab
+/// or a CR, and is not a plain number such as `-12.50` or `+1,234`, gets a leading apostrophe (CSV injection). The
+/// same rule as the screen csv render mode's `$csv` (`ScreenCsv.js`), for a file made for a person to open; a CSV
+/// that is a data format to load back (the entity writers) keeps its text as it is.
+pub fn csv_formula_guarded(text: &str) -> std::borrow::Cow<'_, str> {
+    let plain_number = || {
+        let rest = text.strip_prefix(['+', '-']).unwrap_or(text);
+        let (whole, last) = rest.split_once('.').unwrap_or(("", rest));
+        let decimal = rest.contains('.');
+        whole.bytes().all(|byte| byte.is_ascii_digit() || byte == b',')
+            && last
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (byte == b',' && !decimal))
+            && last.ends_with(|ch: char| ch.is_ascii_digit())
+    };
+    if text.starts_with(['=', '+', '-', '@', '\t', '\r']) && !plain_number() {
+        std::borrow::Cow::Owned(format!("'{text}"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_csv_formula_is_guarded_and_a_plain_number_is_not() {
+        for (text, guarded) in [
+            ("=HYPERLINK(\"http://x\")", "'=HYPERLINK(\"http://x\")"),
+            ("+A1", "'+A1"),
+            ("@SUM(A1)", "'@SUM(A1)"),
+            ("-cmd", "'-cmd"),
+            ("\t=1", "'\t=1"),
+            ("-", "'-"),
+            ("-1.", "'-1."),
+            ("-12.50", "-12.50"),
+            ("+1", "+1"),
+            ("-1,234.50", "-1,234.50"),
+            ("-.5", "-.5"),
+            ("plain", "plain"),
+            ("", ""),
+        ] {
+            assert_eq!(csv_formula_guarded(text), guarded, "{text:?}");
+        }
+    }
 
     #[test]
     fn url_decoder_safe_needs_whole_escapes() {
