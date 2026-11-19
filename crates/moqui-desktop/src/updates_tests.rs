@@ -64,5 +64,57 @@ fn an_update_past_the_ceiling_is_dropped() {
     assert!(!too_large(0, None));
     assert!(!too_large(300 << 20, Some(300 << 20)));
     assert!(too_large(MAX_UPDATE_BYTES + 1, None));
-    assert!(too_large(1, Some(MAX_UPDATE_BYTES + 1)), "an announced size past it stops at the first chunk");
+    assert!(
+        too_large(1, Some(MAX_UPDATE_BYTES + 1)),
+        "an announced size past it stops at the first chunk"
+    );
+}
+
+fn vars() -> FeedVars {
+    FeedVars {
+        version: "1.2.0+build.5".to_string(),
+        target: "darwin".to_string(),
+        arch: "aarch64".to_string(),
+        bundle: "app".to_string(),
+    }
+}
+
+/// SEC-CLI-118: the app reads the feed itself, so it puts the plugin's URL variables in as the plugin does (in the
+/// path, where the parser encodes the braces, and in the query), and on HTTPS only.
+#[test]
+fn a_feeds_url_takes_the_plugins_variables_and_https_only() {
+    let url = feed_url(
+        "https://u.example/{{target}}/{{arch}}/{{current_version}}?b={{bundle_type}}",
+        &vars(),
+    )
+    .unwrap();
+    assert_eq!(url.as_str(), "https://u.example/darwin/aarch64/1.2.0%2Bbuild.5?b=app");
+    assert_eq!(
+        feed_url(" https://u.example/latest.json ", &vars()).unwrap().as_str(),
+        "https://u.example/latest.json"
+    );
+    assert!(feed_url("http://u.example/{{target}}", &vars()).is_err());
+    assert!(feed_url("file:///etc/feed.json", &vars()).is_err());
+    assert!(feed_url("not a url", &vars()).is_err());
+    assert_eq!(bundle_name(None), "unknown");
+    assert_eq!(bundle_name(Some(tauri::utils::config::BundleType::Dmg)), "app");
+    assert_eq!(
+        bundle_name(Some(tauri::utils::config::BundleType::AppImage)),
+        "appimage"
+    );
+}
+
+/// SEC-CLI-118: a feed past the ceiling is refused, read to one byte more and no further.
+#[test]
+fn a_feed_past_the_ceiling_is_refused_and_not_read_whole() {
+    assert_eq!(read_capped(&b"{}"[..], 2).unwrap(), b"{}");
+    assert!(read_capped(&b"{} "[..], 2).is_err());
+    let endless = std::io::repeat(b' ');
+    let refused = read_capped(endless, MAX_FEED_BYTES).unwrap_err();
+    assert!(refused.contains("256 KiB"), "{refused}");
+    // check_feed reads the feed this way and hands it to restore_update, which binds the version to the signature
+    let source = include_str!("updates.rs");
+    let check = &source[source.find("async fn check_feed(").expect("check_feed")..];
+    assert!(check.contains("fetch_feed(&endpoints, &vars)") && check.contains("updater.restore_update(feed)"));
+    assert!(!source.contains("updater.check()"), "the plugin reads a feed whole");
 }

@@ -28,6 +28,20 @@ fn a_build_of_one_mode_offers_no_choice() {
     assert!(wanted(Choose, Some("kiosk")).is_err());
 }
 
+/// SEC-CLI-113: a shared sign-in needs a device with a secure lock screen where the host can tell; a personal one, or
+/// one on a host that cannot tell (the desktop), goes on.
+#[test]
+fn a_shared_sign_in_is_refused_on_a_device_with_no_screen_lock() {
+    assert_eq!(
+        lock_allows(Some(Shared), Some(false)),
+        Err(SHARED_NEEDS_LOCK.to_string())
+    );
+    assert_eq!(lock_allows(Some(Shared), Some(true)), Ok(()));
+    assert_eq!(lock_allows(Some(Shared), None), Ok(()));
+    assert_eq!(lock_allows(Some(Personal), Some(false)), Ok(()));
+    assert_eq!(lock_allows(None, Some(false)), Ok(()));
+}
+
 #[test]
 fn a_personal_account_stays_personal_and_the_user_is_told() {
     // new accounts take what is asked

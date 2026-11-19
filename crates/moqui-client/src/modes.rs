@@ -29,6 +29,25 @@ use crate::conf::DeviceMode;
 pub const KEPT_PERSONAL: &str = "This account already has data kept for a personal device on this computer, so \
     it runs as a personal device: its data stays here after you sign out.";
 
+/// What the shell tells the user when a shared-device sign-in is refused on a device with no screen lock.
+pub const SHARED_NEEDS_LOCK: &str = "A shared device needs a screen lock: set a PIN, pattern or password for this \
+    device, then sign in again.";
+
+/// Whether a sign-in that asks for `wanted` may go on, on a device whose host says whether it has a secure lock screen
+/// (`device_secure`; none where it cannot tell, the desktop): a shared one is refused where there is none, since the
+/// next person to pick the device up would open the account in the app, its keys not tied to the lock
+/// (plans/Security-Review.md SEC-CLI-113).
+///
+/// # Errors
+///
+/// Returns [`SHARED_NEEDS_LOCK`] for a shared sign-in on a device with no secure lock.
+pub fn lock_allows(wanted: Option<DeviceMode>, device_secure: Option<bool>) -> Result<(), String> {
+    if wanted == Some(DeviceMode::Shared) && device_secure == Some(false) {
+        return Err(SHARED_NEEDS_LOCK.to_string());
+    }
+    Ok(())
+}
+
 /// The mode a sign-in asks for: the conf's when it is not `choose`, else what the user chose (`personal` or `shared`);
 /// none when nothing was chosen.
 ///

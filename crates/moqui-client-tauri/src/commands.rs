@@ -156,7 +156,7 @@ pub async fn client_sign_in(
 ) -> Result<Value, String> {
     let (wanted, device) = {
         let state = online_state(&app, &webview, nonce.as_deref())?;
-        let wanted = modes::wanted(state.core.conf().device_mode, device_mode.as_deref())?;
+        let wanted = sign_in_mode(&state, device_mode.as_deref())?;
         (wanted, state.shell.device_name())
     };
     let base = base_url(&server).map_err(|err| err.to_string())?;
@@ -196,6 +196,14 @@ pub async fn client_sign_in(
     };
     signed_in(&app, &base, &username, &key, &config, wanted)?;
     Ok(json!({ "status": "signed-in" }))
+}
+
+/// The device mode a sign-in (by password, or an SSO start) asks for, the build's conf and the user's `chosen`; refused
+/// for a shared one where the host says the device has no secure lock screen (SEC-CLI-113, [`modes::lock_allows`]).
+pub(crate) fn sign_in_mode(state: &ClientState, chosen: Option<&str>) -> Result<Option<DeviceMode>, String> {
+    let wanted = modes::wanted(state.core.conf().device_mode, chosen)?;
+    modes::lock_allows(wanted, state.shell.device_secure())?;
+    Ok(wanted)
 }
 
 /// A sign-in done (by password, or by SSO): the account kept with its key and the device mode it runs as (`wanted`
@@ -294,7 +302,7 @@ pub fn client_sso_start(
     device_mode: Option<String>,
 ) -> Result<(), String> {
     let state = online_state(&app, &webview, nonce.as_deref())?;
-    let wanted = modes::wanted(state.core.conf().device_mode, device_mode.as_deref())?;
+    let wanted = sign_in_mode(&state, device_mode.as_deref())?;
     let base = base_url(&server).map_err(|err| err.to_string())?;
     let (pending, url) = moqui_client::sso::start(
         &base,
@@ -436,10 +444,16 @@ async fn revoke(state: &ClientState, account: &Account, key: String) {
 }
 
 /// Sign the current account out: its key revoked on the server (when it answers) and forgotten here; the shell then
-/// shows the sign-in. A personal account stays in the list with its data, to sign in to again; a shared one is removed
-/// with its data ([`signed_out`]).
+/// shows the sign-in. A personal account stays in the list with its data, to sign in to again, unless the user asks
+/// for its data to go too (`forget`, plans/Security-Review.md SEC-CLI-08); a shared one is removed with its data
+/// ([`signed_out`]).
 #[tauri::command]
-pub async fn client_sign_out(app: AppHandle, webview: Webview, nonce: Option<String>) -> Result<(), String> {
+pub async fn client_sign_out(
+    app: AppHandle,
+    webview: Webview,
+    nonce: Option<String>,
+    forget: Option<bool>,
+) -> Result<(), String> {
     let state = shell_state(&app, &webview, nonce.as_deref())?;
     let Some((account, key)) = state.core.current() else {
         return Ok(());
@@ -447,7 +461,7 @@ pub async fn client_sign_out(app: AppHandle, webview: Webview, nonce: Option<Str
     if let Some(key) = key {
         revoke(&state, &account, key).await;
     }
-    signed_out(&app, &account.id);
+    signed_out_in(&state, &account.id, forget == Some(true));
     Ok(())
 }
 
@@ -572,11 +586,12 @@ pub fn signed_out(app: &AppHandle, id: &str) {
     let Ok(state) = state(app) else {
         return;
     };
-    signed_out_in(&state, id);
+    signed_out_in(&state, id, false);
 }
 
-/// [`signed_out`] on the client's state.
-pub(crate) fn signed_out_in(state: &ClientState, id: &str) {
+/// [`signed_out`] on the client's state; with `forget`, a personal account's data and the account go too, as a shared
+/// one's do (the user's choice at sign-out, SEC-CLI-08).
+pub(crate) fn signed_out_in(state: &ClientState, id: &str, forget: bool) {
     if let Err(err) = state.core.keys().delete(id) {
         tracing::error!("The key of {id} was not removed from the key store: {err}");
     }
@@ -598,20 +613,27 @@ pub(crate) fn signed_out_in(state: &ClientState, id: &str) {
         if let Err(err) = remove_account(state, id) {
             tracing::error!("The shared account {id} was not removed: {err}");
         }
+    } else if forget {
+        tracing::info!("{id} signed out with its data on this device deleted, as the user asked");
+        if let Err(err) = remove_account(state, id) {
+            tracing::error!("The account {id} was not removed: {err}");
+        }
     }
     if current {
+        state.shell.clear_page_storage();
         state.load_shell(None);
     }
 }
 
-/// The current account changed: the other account's pages and sockets close, a sign-in still waiting for the browser
-/// is given up, and the shell loads it.
-fn switched(state: &ClientState) {
+/// The current account changed: the other account's pages and sockets close, what they kept in the pages' origin goes
+/// (SEC-CLI-81), a sign-in still waiting for the browser is given up, and the shell loads it.
+pub(crate) fn switched(state: &ClientState) {
     *moqui_lib::sync::lock(&state.sso) = None;
     // a link kept for the other account's shell
     *moqui_lib::sync::lock(&state.open_pending) = None;
     state.core.mirror().cancel();
     state.core.sockets().close_all();
     state.shell.close_remotes(None);
+    state.shell.clear_page_storage();
     state.load_shell(None);
 }

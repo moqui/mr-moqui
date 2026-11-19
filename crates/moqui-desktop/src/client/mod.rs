@@ -53,6 +53,7 @@ use moqui_client::account::Account;
 use moqui_client::app::ClientHost;
 use moqui_client::assets::Assets;
 use moqui_client::conf::ClientConf;
+use moqui_client_tauri::shell_load::ShellLoad;
 use moqui_client_tauri::{ClientState, ShellHost};
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Url};
@@ -76,6 +77,8 @@ pub(crate) struct Client {
     /// The app windows (`remote-<n>`) and the account each shows.
     windows: Mutex<Vec<(String, String)>>,
     next_window: AtomicU64,
+    /// The main window's load, and the nonce of the shell's, which the shell's commands carry (SEC-CLI-07).
+    pub(crate) shell_load: Arc<ShellLoad>,
 }
 
 impl Client {
@@ -93,7 +96,11 @@ impl Client {
         let keys = keystore::open_keys(&dir.join("keys"));
         let core = Arc::new(moqui_client::app::Client::new(dir, keys, read_conf)?);
         let host: Arc<dyn ClientHost> = Arc::new(DesktopHost { app: app.clone() });
-        let shell: Arc<dyn ShellHost> = Arc::new(windows::DesktopShell { app: app.clone() });
+        let shell_load = Arc::new(ShellLoad::default());
+        let shell: Arc<dyn ShellHost> = Arc::new(windows::DesktopShell {
+            app: app.clone(),
+            load: Arc::clone(&shell_load),
+        });
         let files = Box::new(shell_assets(tauri::is_dev(), resources));
         let state = ClientState::new(Arc::clone(&core), Arc::clone(&host), shell, files);
         let client = Self {
@@ -101,6 +108,7 @@ impl Client {
             host,
             windows: Mutex::new(Vec::new()),
             next_window: AtomicU64::new(1),
+            shell_load,
         };
         Ok((client, state))
     }
@@ -184,6 +192,12 @@ pub(crate) fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let resources = app.path().resource_dir()?;
     let (client, state) = Client::new(app, &dir, &resources, conf::runtime_dir(app))?;
     let (core, host) = (Arc::clone(&client.core), Arc::clone(&client.host));
+    let kept: Vec<String> = moqui_lib::sync::lock(core.accounts())
+        .list()
+        .iter()
+        .map(|account| account.id.clone())
+        .collect();
+    windows::forget_old_profiles(app, &kept);
     app.manage(client);
     app.manage(state);
     core.warm();

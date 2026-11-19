@@ -79,21 +79,87 @@ fn the_keys_waiting_to_be_revoked_are_kept_beside_the_keys() {
     let _ = std::fs::remove_dir_all(&dir);
     let keys = Keys::new(Box::new(FileKeyStore::new(&dir)), "file");
     assert!(keys.pending_revokes().is_empty());
-    keys.add_pending_revoke("https://erp.example.com", "key-a", 1_000).unwrap();
-    keys.add_pending_revoke("https://erp.example.com", "key-a", 2_000).unwrap();
+    keys.add_pending_revoke("https://erp.example.com", "key-a", 1_000)
+        .unwrap();
+    keys.add_pending_revoke("https://erp.example.com", "key-a", 2_000)
+        .unwrap();
     let again = Keys::new(Box::new(FileKeyStore::new(&dir)), "file");
     assert_eq!(
         again.pending_revokes(),
-        [PendingRevoke { server: "https://erp.example.com".to_string(), key: "key-a".to_string(), at: 2_000, tried: 2_000 }]
+        [PendingRevoke {
+            server: "https://erp.example.com".to_string(),
+            key: "key-a".to_string(),
+            at: 2_000,
+            tried: 2_000
+        }]
     );
     for at in 0..40 {
-        keys.add_pending_revoke("https://erp.example.com", &format!("key-{at}"), 10_000 + at).unwrap();
+        keys.add_pending_revoke("https://erp.example.com", &format!("key-{at}"), 10_000 + at)
+            .unwrap();
     }
     let kept = keys.pending_revokes();
     assert_eq!(kept.len(), PENDING_MAX);
-    assert_eq!(kept.first().map(|entry| entry.at), Some(10_000 + 40 - PENDING_MAX as i64));
+    assert_eq!(
+        kept.first().map(|entry| entry.at),
+        Some(10_000 + 40 - PENDING_MAX as i64)
+    );
     keys.set_pending_revokes(Vec::new()).unwrap();
     assert!(keys.pending_revokes().is_empty());
     assert!(!crate::account::account_id("https://erp.example.com", "john.doe").contains('_'));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A store that opens its `.chat-store` entries only while `open`, as the phone's does while it is unlocked.
+struct Lockable {
+    inner: FileKeyStore,
+    open: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl KeyStore for Lockable {
+    fn get(&self, account: &str) -> Option<String> {
+        if self.fresh(account) && !self.open.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        self.inner.get(account)
+    }
+
+    fn set(&self, account: &str, key: &str) -> Result<(), Error> {
+        self.inner.set(account, key)
+    }
+
+    fn delete(&self, account: &str) -> Result<(), Error> {
+        self.inner.delete(account)
+    }
+
+    fn fresh(&self, entry: &str) -> bool {
+        entry.ends_with(".chat-store")
+    }
+}
+
+/// SEC-CLI-113: an entry the store opens only at some times is read each time: a read while it does not open is not
+/// kept as none for later, and what it answered is not kept in memory; the device keys are kept as before.
+#[test]
+fn an_entry_the_store_opens_only_at_some_times_is_read_each_time() {
+    use std::sync::atomic::Ordering;
+    let dir = std::env::temp_dir().join(format!("moqui-keys-fresh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let open = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let store = Lockable {
+        inner: FileKeyStore::new(&dir),
+        open: std::sync::Arc::clone(&open),
+    };
+    let keys = Keys::new(Box::new(store), "os");
+    keys.set("acct", "device-key").unwrap();
+    keys.set_chat_store_key("acct", "DEV", "pass").unwrap();
+    assert_eq!(keys.chat_store_key("acct", "DEV").as_deref(), Some("pass"));
+    // locked: the passphrase does not open, though it was read and set just now
+    open.store(false, Ordering::SeqCst);
+    assert_eq!(keys.chat_store_key("acct", "DEV"), None);
+    // unlocked again: that none was not remembered
+    open.store(true, Ordering::SeqCst);
+    assert_eq!(keys.chat_store_key("acct", "DEV").as_deref(), Some("pass"));
+    // the device key is kept in memory as before: it reads with its file moved away
+    std::fs::rename(dir.join("acct.key"), dir.join("acct.moved")).unwrap();
+    assert_eq!(keys.get("acct").as_deref(), Some("device-key"));
     let _ = std::fs::remove_dir_all(&dir);
 }

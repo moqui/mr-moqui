@@ -41,6 +41,14 @@ pub trait KeyStore: Send + Sync {
     ///
     /// Returns an error when the store cannot be changed.
     fn delete(&self, account: &str) -> Result<(), Error>;
+
+    /// Whether `entry` is read from the store each time and never kept in memory ([`Keys`]): one the store opens only
+    /// at some times (on the phone, a chat store passphrase while it is unlocked, plans/Security-Review.md SEC-CLI-113),
+    /// so a read at another time must not stay as none, nor a read at the right time outlive it.
+    fn fresh(&self, entry: &str) -> bool {
+        let _ = entry;
+        false
+    }
 }
 
 /// Keys in `<dir>/<account>.key`, mode 0600 on Unix (`files::write_private`).
@@ -112,6 +120,9 @@ impl Keys {
     }
 
     pub fn get(&self, account: &str) -> Option<String> {
+        if self.store.fresh(account) {
+            return self.store.get(account);
+        }
         if let Some(known) = moqui_lib::sync::lock(&self.known).get(account) {
             return known.clone();
         }
@@ -127,7 +138,9 @@ impl Keys {
     /// Returns an error when the store does not take it.
     pub fn set(&self, account: &str, key: &str) -> Result<(), Error> {
         self.store.set(account, key)?;
-        moqui_lib::sync::lock(&self.known).insert(account.to_string(), Some(key.to_string()));
+        if !self.store.fresh(account) {
+            moqui_lib::sync::lock(&self.known).insert(account.to_string(), Some(key.to_string()));
+        }
         Ok(())
     }
 
