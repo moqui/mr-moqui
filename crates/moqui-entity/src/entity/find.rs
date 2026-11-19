@@ -82,12 +82,22 @@ pub struct EntityFind {
     query_texts: Arc<Mutex<Vec<String>>>,
     /// Rows a bulk write reads in one query ([`Self::bulk_chunk`]); `None` is [`BULK_CHUNK`].
     bulk_chunk: Option<i64>,
-    /// The fields whose equality (or `IS NULL`) came from a map ([`Self::condition_from_map`]), which a find one with
-    /// the whole primary key leaves out.
-    map_fields: Vec<String>,
+    /// The conditions Java keeps in its `simpleAndMap`: a field value ([`Self::condition_field`]) or a map entry
+    /// ([`Self::condition_from_map`]), by index into `conditions`. A later field value for the same field replaces
+    /// one of these; every other condition is ANDed. A find one with the whole primary key leaves out a map's.
+    simple: Vec<SimpleSlot>,
     /// Set by [`Self::generic_input`]: the entity of this find came from a request (entity REST, a Service REST entity
     /// resource, a generic tool), so `search_form_map` takes no condition at all on an encrypted field.
     pub(super) generic_input: bool,
+}
+
+/// A condition of a find that Java keeps in its `simpleAndMap` ([`EntityFind::simple`]).
+#[derive(Clone, Copy, Debug)]
+struct SimpleSlot {
+    /// Its index in [`EntityFind::conditions`].
+    index: usize,
+    /// It came from a map ([`EntityFind::condition_from_map`]), not a field value.
+    from_map: bool,
 }
 
 /// The lock calls of a find that are on ([`EntityFind::for_update`], [`EntityFind::for_no_key_update`]).
@@ -122,7 +132,7 @@ impl EntityFind {
             use_clone: false,
             query_texts: Arc::new(Mutex::new(Vec::new())),
             bulk_chunk: None,
-            map_fields: Vec::new(),
+            simple: Vec::new(),
             generic_input: false,
         }
     }
@@ -204,11 +214,10 @@ impl EntityFind {
         &self.facade
     }
 
-    /// Java's `condition(field, value)`: a second value for the same field replaces the first.
-    pub fn eq(mut self, field: &str, value: Value) -> Self {
-        self.map_fields.retain(|name| name != field);
-        add_condition(&mut self.conditions, Condition::equals(field, value));
-        self
+    /// Java's `condition(field, value)`: a second value for the same field replaces the first (and a map's), as Java's
+    /// `simpleAndMap` keeps one value per field. A condition object on the field ([`Self::condition`]) is not replaced.
+    pub fn eq(self, field: &str, value: Value) -> Self {
+        self.condition_field(Condition::equals(field, value))
     }
 
     pub fn matches(mut self, field: &str, value: Value) -> Self {
@@ -216,33 +225,56 @@ impl EntityFind {
         self
     }
 
-    /// As Java's `condition(EntityCondition)`: an equality (or `IS NULL`) on a plain field replaces the one the find
-    /// already has for that field, and an `AND` is unrolled so its equalities do the same.
-    pub fn condition(mut self, condition: Condition) -> Self {
-        if !self.map_fields.is_empty() {
-            let named: Vec<&str> = match &condition {
-                Condition::And(list) => list.iter().filter_map(plain_equality_field).collect(),
-                other => plain_equality_field(other).into_iter().collect(),
-            };
-            self.map_fields.retain(|name| !named.contains(&name.as_str()));
+    /// [`Self::eq`] for a comparison already made, such as a script's `condition(field, value)`, whose null value is
+    /// `IS NULL`: an equality or `IS NULL` on a plain field replaces the field value or map entry the find already has
+    /// for that field. Any other condition is ANDed, as [`Self::condition`].
+    pub fn condition_field(mut self, condition: Condition) -> Self {
+        let replaced = plain_equality_field(&condition).and_then(|name| {
+            self.simple
+                .iter_mut()
+                .find(|slot| plain_equality_field(&self.conditions[slot.index]) == Some(name))
+        });
+        match replaced {
+            Some(slot) => {
+                slot.from_map = false;
+                self.conditions[slot.index] = condition;
+            }
+            None => self.push_simple(condition, false),
         }
-        add_condition(&mut self.conditions, condition);
         self
     }
 
-    /// [`Self::condition`] for one entry of a map such as the context (`condition(context)`, an `entity-find-one` with
-    /// `auto-field-map`), which carries whatever the context holds: a find one with the whole primary key leaves such
-    /// an equality out, as Java's `oneInternal` leaves out every field of its simple map. An equality set on its own
-    /// ([`Self::eq`], [`Self::condition`]) stays and filters the row (plans/archive/High-Level-Review.md, lane C note on
-    /// `one()`).
-    pub fn condition_from_map(mut self, condition: Condition) -> Self {
-        if let Some(name) = plain_equality_field(&condition) {
-            if !self.map_fields.iter().any(|known| known == name) {
-                self.map_fields.push(name.to_string());
-            }
-        }
-        add_condition(&mut self.conditions, condition);
+    /// A condition object (`condition(EntityCondition)`, an `AND` list unrolled): ANDed with every condition the find
+    /// has, as written, and never replaced. Java routes an `EQUALS` object to its `simpleAndMap`, where a later value for
+    /// the field replaced it, so `makeCondition([partyId = me, partyId = theirs])` read only `theirs`; here a field
+    /// equal to two values finds nothing (found while fixing SEC-BOS-97).
+    pub fn condition(mut self, condition: Condition) -> Self {
+        push_condition(&mut self.conditions, condition);
         self
+    }
+
+    /// One entry of a map such as the context (`condition(context)`, an `entity-find-one` with `auto-field-map`),
+    /// which carries whatever the context holds: ANDed as [`Self::condition`], and replaced by a later field value for
+    /// its field ([`Self::condition_field`], an `entity-find-one`'s `field-map`). A find one with the whole primary key
+    /// leaves such an equality out, as Java's `oneInternal` leaves out every field of its simple map. An equality set on
+    /// its own ([`Self::eq`], [`Self::condition`]) stays and filters the row (plans/archive/High-Level-Review.md, lane C
+    /// note on `one()`).
+    pub fn condition_from_map(mut self, condition: Condition) -> Self {
+        self.push_simple(condition, true);
+        self
+    }
+
+    /// Adds a field value or map entry: a plain equality is kept as a [`SimpleSlot`], anything else ANDed.
+    fn push_simple(&mut self, condition: Condition, from_map: bool) {
+        if plain_equality_field(&condition).is_some() {
+            self.simple.push(SimpleSlot {
+                index: self.conditions.len(),
+                from_map,
+            });
+            self.conditions.push(condition);
+        } else {
+            push_condition(&mut self.conditions, condition);
+        }
     }
 
     /// The entity of this find came from a request, not from the code that runs it: generic entity REST, a Service REST
@@ -597,9 +629,9 @@ impl EntityFind {
 
     /// Java `oneInternal`: a find one whose field equalities hold the full primary key, with more besides (a
     /// `condition(context)` puts every field of the context in, nulls as `IS NULL`), finds by the primary key and
-    /// leaves out the equalities that came from a map ([`Self::condition_from_map`]). Unlike Java, an equality set on
-    /// its own stays: a caller that names `reportPending = Y` or an owner beside the key means it. Other kinds of
-    /// condition stay.
+    /// leaves out the equalities on other fields that came from a map ([`Self::condition_from_map`]). Unlike Java, an
+    /// equality set on its own stays: a caller that names `reportPending = Y` or an owner beside the key means it, and
+    /// so does a second equality on a key field, ANDed as written. Other kinds of condition stay.
     fn narrow_to_full_pk(&mut self) {
         let pk_names: Vec<String> = match self.facade.with_entity(&self.entity_name, |entity, _, _| {
             Ok(pk_names(entity).map(str::to_string).collect())
@@ -607,25 +639,21 @@ impl EntityFind {
             Ok(names) => names,
             Err(_) => return,
         };
-        let map_fields = std::mem::take(&mut self.map_fields);
-        let from_map = |name: &str| map_fields.iter().any(|known| known == name);
+        // the narrowed find keeps no simple slots: their indexes are of the conditions before
+        let simple = std::mem::take(&mut self.simple);
+        let from_map = |index: usize| simple.iter().any(|slot| slot.index == index && slot.from_map);
         let mut kept: Vec<Condition> = Vec::new();
-        for condition in std::mem::take(&mut self.conditions) {
+        for (index, condition) in std::mem::take(&mut self.conditions).into_iter().enumerate() {
             if let Condition::IsNull(field) = &condition {
-                if field.entity_alias.is_none() && from_map(&field.name) {
+                if field.entity_alias.is_none() && from_map(index) {
                     continue;
                 }
             }
-            let Condition::Equals(field, _) = &condition else {
-                kept.push(condition);
-                continue;
+            let left_out = match &condition {
+                Condition::Equals(field, _) => from_map(index) && !pk_names.contains(&field.name),
+                _ => false,
             };
-            let is_pk = pk_names.contains(&field.name);
-            let first_for_pk = is_pk
-                && !kept
-                    .iter()
-                    .any(|known| matches!(known, Condition::Equals(other, _) if other.name == field.name));
-            if (first_for_pk && equals_on(&condition, &field.name)) || (!is_pk && !from_map(&field.name)) {
+            if !left_out {
                 kept.push(condition);
             }
         }
@@ -1047,33 +1075,17 @@ fn plain_equality_field(condition: &Condition) -> Option<&str> {
     }
 }
 
-/// Java keeps one value per field in `simpleAndMap`: `condition(field, value)`, and an `EQUALS` condition routed to it,
-/// replace the field's earlier value in place. Other conditions are ANDed in order; an `AND` list is unrolled.
-pub(super) fn add_condition(conditions: &mut Vec<Condition>, condition: Condition) {
-    let simple_field = |condition: &Condition| match condition {
-        Condition::Equals(field, _) | Condition::IsNull(field)
-            if field.entity_alias.is_none() && field.expr.is_none() =>
-        {
-            Some(field.name.clone())
+/// ANDs `condition` after the others, as written; an `AND` list is unrolled. Nothing is replaced: only
+/// [`EntityFind::condition_field`] replaces, and only a field value or map entry.
+pub(super) fn push_condition(conditions: &mut Vec<Condition>, condition: Condition) {
+    match condition {
+        Condition::And(list) => {
+            for item in list {
+                push_condition(conditions, item);
+            }
         }
-        _ => None,
-    };
-    if let Condition::And(list) = condition {
-        for item in list {
-            add_condition(conditions, item);
-        }
-        return;
+        other => conditions.push(other),
     }
-    if let Some(name) = simple_field(&condition) {
-        if let Some(slot) = conditions
-            .iter_mut()
-            .find(|known| simple_field(known).as_deref() == Some(name.as_str()))
-        {
-            *slot = condition;
-            return;
-        }
-    }
-    conditions.push(condition);
 }
 
 /// What a view's `entity-condition` and SQL expressions read: the time now, `${}` expansion in

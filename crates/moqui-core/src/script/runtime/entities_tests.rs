@@ -113,6 +113,46 @@ fn for_no_key_update_locks_as_for_update_does() {
     assert!(both.to_string().contains("both forUpdate and forNoKeyUpdate"), "{both}");
 }
 
+/// A script's conditions on one field are ANDed as written (found while fixing SEC-BOS-97): a service's own
+/// `partyId = me` is not replaced by the caller's. Only `condition(field, value)` called again for the field replaces its
+/// value (Java's simple map), and an `entity-find-one`'s `field-map` the `auto-field-map`'s.
+#[test]
+fn conditions_on_one_field_are_anded_and_only_a_second_field_value_replaces() {
+    let context = enumerations();
+    let _entered = context.enter();
+    seed();
+    // Mantle's find#TimeEntries: a one-element OR is the condition itself, then the request's equality in an AND list
+    holds(
+        r#"(() => { const cf = ec.entity.conditionFactory;
+            const seen = cf.makeCondition([cf.makeCondition("enumId", "equals", "E1")], "or");
+            const where = cf.makeCondition([seen, cf.makeCondition("enumId", "equals", "E2")], "and");
+            return ec.entity.find("moqui.basic.Enumeration").condition(where).list().length === 0; })()"#,
+    );
+    holds(
+        r#"(() => { const cf = ec.entity.conditionFactory; const find = () => ec.entity.find("moqui.basic.Enumeration");
+            return find().condition(cf.makeCondition("enumId", "equals", "E1")).condition("enumId", "E2").count() === 0
+                && find().condition("enumId", "E1").condition(cf.makeCondition("enumId", "equals", "E2")).count() === 0
+                && find().condition("enumId", "E1").condition("enumId", "equals", "E2").count() === 0
+                && find().condition("enumId", "E1").condition({enumId: "E2"}).count() === 0
+                && find().condition("enumId", "E1").condition("enumId", "E2").count() === 1
+                && find().condition({enumId: "E1"}).condition("enumId", "E2").list()[0].enumId === "E2"; })()"#,
+    );
+    crate::script::run_actions(
+        r#"<actions>
+            <set field="mine" value="E1"/><set field="theirs" value="E2"/><set field="enumId" value="E1"/>
+            <entity-find entity-name="moqui.basic.Enumeration" list="twice">
+                <econdition field-name="enumId" from="mine"/><econdition field-name="enumId" from="theirs"/>
+            </entity-find>
+            <entity-find-one entity-name="moqui.basic.Enumeration" value-field="mapped" auto-field-map="true">
+                <field-map field-name="enumId" from="theirs"/>
+            </entity-find-one>
+        </actions>"#,
+    )
+    .unwrap();
+    holds("twice.length === 0");
+    holds(r#"mapped?.enumId === "E2""#);
+}
+
 #[test]
 fn tx_cache_db_refuses_flush_mode_and_needs_an_overlay() {
     let context = enumerations();

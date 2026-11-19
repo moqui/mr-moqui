@@ -521,11 +521,14 @@ Records by entity name: finds, values, lists, conditions, and the data loader an
 ### EntityFind
 
 A find builder. Each chain method changes the builder and returns it. A run (`one()`, `list()`, `count()`) leaves
-the find as it was, so it can run again.
+the find as it was, so it can run again. Every condition is ANDed with the others as written, so a field equal to two
+values finds nothing; only `condition(field, value)` called again for a field replaces its earlier value (or a map's),
+as Java's does. A security condition is best a condition object or `condition(field, operator, value)`, which no later
+call replaces.
 
 | Member | |
 |---|---|
-| `condition(field, value)` | The field equals the value; a null value is `IS NULL` |
+| `condition(field, value)` | The field equals the value; a null value is `IS NULL`. Replaces an earlier `condition(field, value)` or map entry for the field |
 | `condition(field, operator, value)` | A comparison; the operators are [below](#conditions). An unknown one is an error |
 | `condition(map)` | Each entry as an equals condition |
 | `condition(condition)` | A condition of the factory; null is skipped |

@@ -210,3 +210,110 @@ fn the_inserted_user_is_in_all_users_and_admin() {
     assert!(is_in_group("ADMIN").unwrap());
     session::reset_session();
 }
+
+/// `hasPermission` and `isInGroup` read a grant's and a membership's dates at the effective time (`ec.user.nowTimestamp`),
+/// as Java's do, and at the clock without one (found while fixing SEC-BOS-97). The group set authorization reads stays
+/// on the clock, as Java's `getUserGroupIdSet`.
+#[test]
+fn has_permission_and_is_in_group_read_the_dates_at_the_effective_time() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    let stamp = crate::user::stamp_value;
+    row(
+        &facade,
+        "moqui.security.UserAccount",
+        &[("userId", Value::string("ada")), ("username", Value::string("ada"))],
+    );
+    // a membership of 1000 to 3000 seconds after the epoch, its group granting a permission from 1000 to 2000
+    let member = [
+        ("userGroupId", Value::string("DATED")),
+        ("userId", Value::string("ada")),
+    ];
+    let membership = [("fromDate", stamp(1_000_000)), ("thruDate", stamp(3_000_000))];
+    row(&facade, GROUP_MEMBER, &[&member[..], &membership[..]].concat());
+    let grant = [
+        ("userGroupId", Value::string("DATED")),
+        ("userPermissionId", Value::string("DATED_PERM")),
+    ];
+    let window = [("fromDate", stamp(1_000_000)), ("thruDate", stamp(2_000_000))];
+    row(&facade, GROUP_PERMISSION, &[&grant[..], &window[..]].concat());
+    crate::user::internal_login_user("ada").unwrap();
+    assert!(!has_permission("DATED_PERM").unwrap(), "the clock is after the grant");
+    assert!(!is_in_group("DATED").unwrap(), "the clock is after the membership");
+    ctx.set_effective_time(Some(1_500_000));
+    assert!(
+        has_permission("DATED_PERM").unwrap(),
+        "in the grant at the effective time"
+    );
+    assert!(is_in_group("DATED").unwrap(), "in the membership at the effective time");
+    assert!(
+        !user_group_ids(Some("ada")).unwrap().contains("DATED"),
+        "authorization reads the clock"
+    );
+    ctx.set_effective_time(Some(2_500_000));
+    assert!(
+        !has_permission("DATED_PERM").unwrap(),
+        "after the grant at the effective time"
+    );
+    assert!(is_in_group("DATED").unwrap(), "still in the membership");
+    ctx.set_effective_time(Some(500_000));
+    assert!(
+        !has_permission("DATED_PERM").unwrap(),
+        "before the grant at the effective time"
+    );
+    assert!(
+        !is_in_group("DATED").unwrap(),
+        "before the membership at the effective time"
+    );
+    ctx.set_effective_time(None);
+    session::reset_session();
+}
+
+/// `EXTERNAL_USER`, mr-moqui's own gate with no Java counterpart, is read on the clock: a user made external is external,
+/// and never holds an agent permission, while code has set an earlier effective time.
+#[test]
+fn an_external_user_is_external_on_the_clock_whatever_the_effective_time() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    let stamp = crate::user::stamp_value;
+    row(
+        &facade,
+        "moqui.security.UserAccount",
+        &[("userId", Value::string("ada")), ("username", Value::string("ada"))],
+    );
+    // a member since the epoch of a group that grants AgentUse since then, and EXTERNAL_USER from 1000 seconds after it
+    row(
+        &facade,
+        GROUP_MEMBER,
+        &[
+            ("userGroupId", Value::string("OUTSIDE")),
+            ("userId", Value::string("ada")),
+            ("fromDate", stamp(0)),
+        ],
+    );
+    for (permission, from) in [("AgentUse", 0), (EXTERNAL_USER, 1_000_000)] {
+        row(
+            &facade,
+            GROUP_PERMISSION,
+            &[
+                ("userGroupId", Value::string("OUTSIDE")),
+                ("userPermissionId", Value::string(permission)),
+                ("fromDate", stamp(from)),
+            ],
+        );
+    }
+    crate::user::internal_login_user("ada").unwrap();
+    assert!(is_external_user("ada"));
+    assert!(!user_has_permission("ada", "AgentUse").unwrap());
+    ctx.set_effective_time(Some(500_000));
+    assert!(
+        is_external_user("ada"),
+        "external on the clock before the effective time"
+    );
+    assert!(
+        !user_has_permission("ada", "AgentUse").unwrap(),
+        "an external user holds no agent permission at any effective time"
+    );
+    ctx.set_effective_time(None);
+    session::reset_session();
+}
