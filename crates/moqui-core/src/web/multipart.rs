@@ -308,8 +308,8 @@ pub enum MultipartError {
     Malformed(String),
     /// More parts than the parser allows.
     TooManyParts,
-    /// A text field over the field limit.
-    FieldTooLarge(String),
+    /// A text field over a limit: the field's name and the limit it passed, its own or the request's fields together.
+    FieldTooLarge(String, usize),
     /// A spool file could not be written.
     Io(String),
     /// The spool files of the uploads being read already hold [`Spool::max_total`] bytes.
@@ -321,7 +321,9 @@ impl std::fmt::Display for MultipartError {
         match self {
             Self::Malformed(why) => write!(f, "multipart body is not valid: {why}"),
             Self::TooManyParts => write!(f, "multipart body has more than {MAX_PARTS} parts"),
-            Self::FieldTooLarge(name) => write!(f, "multipart field {name} is too large"),
+            Self::FieldTooLarge(name, limit) => {
+                write!(f, "multipart field {name} is too large: the limit is {limit} bytes")
+            }
             Self::Io(why) => write!(f, "multipart body could not be stored: {why}"),
             Self::SpoolFull => write!(f, "uploads in progress fill the upload spool; try again later"),
         }
@@ -717,7 +719,18 @@ impl MultipartReader {
                 if self.count > MAX_PARTS {
                     return Err(MultipartError::TooManyParts);
                 }
-                self.part = Some(Self::start_part(&headers)?);
+                let part = Self::start_part(&headers)?;
+                // the names are kept too, with the fields' values
+                let names = part.name.len() + part.file.as_ref().map_or(0, |(file_name, _)| file_name.len());
+                self.fields_bytes = self.fields_bytes.saturating_add(names);
+                if let Some(spool) = self
+                    .spool
+                    .as_ref()
+                    .filter(|spool| self.fields_bytes > spool.fields_total)
+                {
+                    return Err(field_too_large(&part.name, spool.fields_total));
+                }
+                self.part = Some(part);
                 // the headers' last line break may be the line break of the next delimiter (an empty part)
                 self.buffer.drain(..end + 2);
                 self.state = State::Data { skip: 2 };
@@ -796,10 +809,13 @@ impl MultipartReader {
         }
         part.size += data.len() as u64;
         self.fields_bytes = self.fields_bytes.saturating_add(data.len());
-        if self.spool.as_ref().is_some_and(|spool| {
-            part.memory.len() + data.len() > spool.field_limit || self.fields_bytes > spool.fields_total
-        }) {
-            return Err(MultipartError::FieldTooLarge(part.name.clone()));
+        if let Some(spool) = self.spool.as_ref() {
+            if part.memory.len() + data.len() > spool.field_limit {
+                return Err(field_too_large(&part.name, spool.field_limit));
+            }
+            if self.fields_bytes > spool.fields_total {
+                return Err(field_too_large(&part.name, spool.fields_total));
+            }
         }
         part.memory.extend_from_slice(data);
         Ok(())
@@ -840,6 +856,12 @@ impl MultipartReader {
             State::Data { .. } => Err(MultipartError::Malformed("no closing boundary".into())),
         }
     }
+}
+
+/// The refusal of a field past `limit`, logged.
+fn field_too_large(name: &str, limit: usize) -> MultipartError {
+    tracing::warn!("a multipart upload was refused: field {name} passes the limit of {limit} bytes");
+    MultipartError::FieldTooLarge(name.to_string(), limit)
 }
 
 /// A request body that is one file (a DAV `PUT`), taken as it arrives as a multipart file part is: in memory up to the

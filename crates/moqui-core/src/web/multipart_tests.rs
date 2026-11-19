@@ -184,7 +184,7 @@ fn large_files_are_spooled_with_their_hash_and_removed_when_dropped() {
     let field = body(&[("Content-Disposition: form-data; name=\"x\"", &[b'x'; 200])]);
     assert_eq!(
         fed(&field, 50, Some(spool.clone())).unwrap_err(),
-        MultipartError::FieldTooLarge("x".to_string())
+        MultipartError::FieldTooLarge("x".to_string(), 100)
     );
     let mut reader = MultipartReader::new(TYPE, Some(spool.clone())).unwrap();
     reader.feed(&data[..data.len() / 2]).unwrap();
@@ -357,7 +357,8 @@ fn a_request_holds_bounded_memory_however_its_parts_are_shaped() {
         dir: dir.clone(),
         memory_limit: 100,
         field_limit: 100,
-        fields_total: 250,
+        // the three fields below with their one-byte names
+        fields_total: 253,
         memory_total: 300,
         max_total: u64::MAX,
     };
@@ -401,7 +402,17 @@ fn a_request_holds_bounded_memory_however_its_parts_are_shaped() {
     let over = form(&[field("a", 100), field("b", 100), field("c", 51)]);
     assert_eq!(
         fed(&over, 30, Some(spool.clone())).unwrap_err(),
-        MultipartError::FieldTooLarge("c".to_string())
+        MultipartError::FieldTooLarge("c".to_string(), 253)
+    );
+    // a name counts with the values: a long one is refused at its headers
+    let long_name = "n".repeat(254);
+    let named = body(&[(
+        format!("Content-Disposition: form-data; name=\"{long_name}\"").as_str(),
+        b"",
+    )]);
+    assert_eq!(
+        fed(&named, 30, Some(spool.clone())).unwrap_err(),
+        MultipartError::FieldTooLarge(long_name, 253)
     );
 
     let heads: Vec<String> = (0..5)
