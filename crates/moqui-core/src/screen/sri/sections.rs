@@ -756,6 +756,17 @@ pub fn render_text_value(state: &RenderState, location: &str, template: &str) ->
         }
         return Ok(text);
     }
+    // A templated text runs as server script (a `.fancy` file has `ec` and `sri`), so only a component's own file is
+    // one: a location a request or a record names (a wiki page's, a print screen's templateLocation, a drive or git
+    // file) is logged and renders nothing (plans/Security-Review.md SEC-SCR-81). A wiki page renders through
+    // WikiServices.render#WikiPage, and a service through `ec.resource.template`.
+    if !template_location_allowed(state, location) {
+        tracing::error!(
+            "Not rendering {location} as a template in screen [{}]: a templated text is a component:// file with no .. in it",
+            active_def(state).location
+        );
+        return Ok(String::new());
+    }
     state.templated_text.set(true);
     if location.ends_with(".ftl") {
         return Err(Error::new(format!(
@@ -766,6 +777,39 @@ pub fn render_text_value(state: &RenderState, location: &str, template: &str) ->
     // else the file's text as it is, so a .js or .css file is not run as a template.
     let _frame = ContextFrame::push();
     registry.render_location_default(&state.factory, location, None, template)
+}
+
+/// Whether a screen text may render `location` as a template: a component's own file. That is a `component://`
+/// location, or a file path (no scheme) under the runtime's components, a component's directory or the directory of the
+/// screen rendering it (a screen loaded by its path); never one with a `..` segment, nor another scheme
+/// (`dbresource://`, `file:`, `git://`, `runtime://`). A `#version` after it is not part of the name.
+pub(crate) fn template_location_allowed(state: &RenderState, location: &str) -> bool {
+    let path = location.split('#').next().unwrap_or(location);
+    if path.split(['/', '\\']).any(|segment| segment == "..") {
+        return false;
+    }
+    if path.starts_with("component://") {
+        return true;
+    }
+    // a scheme is a word of two or more before a colon; `C:\` is a drive
+    if path.split_once(':').is_some_and(|(scheme, _)| scheme.len() > 1) {
+        return false;
+    }
+    let file = std::path::Path::new(path);
+    let Ok(file) = file.canonicalize() else {
+        return false;
+    };
+    let under = |dir: &std::path::Path| dir.canonicalize().is_ok_and(|dir| file.starts_with(dir));
+    let screen = active_def(state).location.clone();
+    let screen_dir = std::path::Path::new(&screen).parent().map(std::path::Path::to_path_buf);
+    let screen_is_file = !screen.contains("://") && !screen.starts_with("file:");
+    (screen_is_file && screen_dir.as_deref().is_some_and(under))
+        || under(&state.factory.runtime_dir().join("components"))
+        || state
+            .factory
+            .components()
+            .iter()
+            .any(|component| under(&component.location))
 }
 
 pub fn append_to_after_screen_writer(state: &RenderState, text: &str) {

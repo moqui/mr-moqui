@@ -31,8 +31,14 @@ impl Site {
         let dir = std::env::temp_dir().join(format!("moqui-forms-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let messages = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../runtime/components/base/webroot/screen/includes/Messages.html.fancy");
+        // a templated text is a file of the screen's own directory here (sections.rs template_location_allowed)
+        let messages = dir.join("Messages.html.fancy");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../runtime/components/base/webroot/screen/includes/Messages.html.fancy"),
+            &messages,
+        )
+        .unwrap();
         let screen = r#"<screen require-authentication="false">
     <transition name="save">
         <actions><script><![CDATA[
@@ -502,12 +508,17 @@ fn shell_root(name: &str) -> Site {
         <subscreens-item name="error" location="WEBROOT/webroot/error.xml"/>
     </subscreens>
     <widgets>
-        <render-mode><text type="html" location="WEBROOT/includes/Header.html.fancy" no-boundary-comment="true"/></render-mode>
+        <render-mode><text type="html" location="SHELL/Header.html.fancy" no-boundary-comment="true"/></render-mode>
         <render-mode><text template="true">${sri.renderSubscreen()}</text></render-mode>
-        <render-mode><text type="html" location="WEBROOT/includes/Footer.html.fancy"/></render-mode>
+        <render-mode><text type="html" location="SHELL/Footer.html.fancy"/></render-mode>
     </widgets>
 </screen>"#
-        .replace("WEBROOT", &webroot.display().to_string());
+        .replace("WEBROOT", &webroot.display().to_string())
+        .replace("SHELL", &dir.display().to_string());
+    // a templated text is a file of the screen's own directory here (sections.rs template_location_allowed)
+    for file in ["Header.html.fancy", "Footer.html.fancy"] {
+        std::fs::copy(webroot.join("includes").join(file), dir.join(file)).unwrap();
+    }
     std::fs::write(dir.join("Shell.xml"), screen).unwrap();
     std::fs::create_dir_all(dir.join("Shell")).unwrap();
     std::fs::write(
@@ -2170,4 +2181,49 @@ fn a_service_reload_makes_again_only_the_screens_that_looked_up_its_services() {
     let (_, auto_form) = assembled(&auto);
     assert!(auto_form.contains("ownField"), "{auto_form}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A templated `<text>` renders only a component's own file: one beside the screen renders, while a location the
+/// request names elsewhere (another directory, `dbresource://`, `file:`, a path with `..`) is logged and renders
+/// nothing, so a print screen's `templateLocation` or a wiki page's location cannot run a planted `.fancy` file as server
+/// script (SEC-SCR-81).
+#[test]
+fn a_templated_text_renders_only_a_component_file() {
+    let base = std::env::temp_dir().join(format!("moqui-forms-template-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (screens, planted) = (base.join("screens"), base.join("planted"));
+    std::fs::create_dir_all(&screens).unwrap();
+    std::fs::create_dir_all(&planted).unwrap();
+    std::fs::write(screens.join("Own.html.fancy"), "own ${1 + 1}").unwrap();
+    std::fs::write(planted.join("Evil.html.fancy"), "evil ${1 + 1}").unwrap();
+    let root = screens.join("Root.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &root,
+        r#"<screen require-authentication="false"><widgets><text type="html" location="${templateLocation}"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    let render = |location: &str| {
+        let mut get = request("GET", "/");
+        get.query.push(("templateLocation".into(), location.into()));
+        serve_at(&world.factory, get, &root).body_text()
+    };
+    let own = render(&screens.join("Own.html.fancy").to_string_lossy());
+    assert!(own.contains("own 2"), "{own}");
+    let planted_file = planted.join("Evil.html.fancy").to_string_lossy().into_owned();
+    let dotted = format!("{}/../planted/Evil.html.fancy", screens.display());
+    for location in [
+        planted_file.clone(),
+        format!("file://{planted_file}"),
+        "dbresource://WikiSpace/X/Evil.html.fancy".to_string(),
+        dotted,
+        "component://webroot/../../../tmp/Evil.html.fancy".to_string(),
+    ] {
+        let text = render(&location);
+        assert!(
+            !text.contains("evil 2") && !text.contains("evil ${"),
+            "{location}: {text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&base);
 }

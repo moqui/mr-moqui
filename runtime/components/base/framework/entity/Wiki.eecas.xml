@@ -22,10 +22,17 @@ along with this software (see the LICENSE.md file). If not, see
           git://WIKI_<id>/<id>.<type>, the repository made for it) need the ADMIN group, or for a git:// location update
           access to its repository (get#GitRepositoryAccess); a location with .. never.
         Only a value that changes is checked, and a write with authorization disabled (a data load, a service writing as
-        the system) is not. -->
+        the system) is not, except that:
+        - allowScriptPages Y holds only with the space's root at its own dbresource://WikiSpace/<id>.<type> place: a git
+          or other root takes pages from whoever may write there (a push, a drive), who would then author script. -->
     <eeca id="WikiSpaceSettings" entity="moqui.resource.wiki.WikiSpace" on-create="true" on-update="true"
             run-before="true" get-original-value="true" run-on-error="true">
         <actions><script><![CDATA[
+            const scriptPages = allowScriptPages != null && allowScriptPages !== '' ? allowScriptPages : originalValue?.allowScriptPages
+            const root = String((rootPageLocation != null && rootPageLocation !== '' ? rootPageLocation : originalValue?.rootPageLocation) || '')
+            const ownDb = `dbresource://WikiSpace/${wikiSpaceId}.`
+            if (scriptPages == 'Y' && !(root.startsWith(ownDb) && !root.slice(ownDb.length).includes('/') && !root.includes('..')))
+                throw new Error(ec.l10n.localize("A space whose script pages run keeps its pages in its own place in the database, not in a repository or another place"))
             if (!ec.artifactExecution.authzDisabled()) {
                 const updating = eecaOperation == 'update' && originalValue != null
                 const changed = (value, original) => value != null && value !== '' && (!updating || value != original)

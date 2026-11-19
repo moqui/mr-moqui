@@ -508,7 +508,8 @@ along with this software (see the LICENSE.md file). If not, see
             The renderer is chosen by the page's type and the space, not by the file name: an md page is markdown, an
             html page its text, both cleaned to the safe set (StringUtilities.cleanHtml) unless the space has
             allowAnyHtml Y; a script page (.fancy) runs in the trusted template renderer only in a space with
-            allowScriptPages Y (which only a holder of DATABASE_ADMIN sets, Wiki.eecas.xml), else it is shown as text; a
+            allowScriptPages Y whose pages are in its own place in the database (which only a holder of DATABASE_ADMIN
+            sets, Wiki.eecas.xml), else it is shown as text; a
             txt page and a page of any other type are shown as text, escaped. An old version (versionName) is rendered
             the same way. pageText is the page's own text, for a terminal or an editor, never HTML to write as it is.
             A screen writes pageHtml with no template expansion of its own; a Vue template takes it with v-html or under
@@ -519,7 +520,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="wikiPageId"/>
             <parameter name="extraPathNameList" type="List"/>
             <parameter name="versionName"/>
-            <parameter name="baseLinkUrl"><description>What a markdown page's relative links resolve against</description></parameter>
+            <parameter name="baseLinkUrl"><description>What a markdown page's relative links resolve against: a path of this server (/apps/...); a URL with a scheme or a host, or with a backslash, is ignored</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="pageHtml"/>
@@ -550,8 +551,17 @@ along with this software (see the LICENSE.md file). If not, see
             wikiType = type.wikiType
             const anyHtml = space?.allowAnyHtml === 'Y'
             const asText = () => { renderedAs = 'text'; return `<pre class="wiki-page-text">${WebUtilities.encodeHtml(text)}</pre>` }
+            // a script page runs only in a space that allows them and keeps its pages in its own place in the database
+            // (Wiki.eecas.xml): a git or other root takes files from whoever may write there
+            const ownDb = `dbresource://WikiSpace/${space?.wikiSpaceId}.`
+            const ownRoot = String(space?.rootPageLocation || '')
+            const scriptSpace = space?.allowScriptPages === 'Y' && ownRoot.startsWith(ownDb) &&
+                    !ownRoot.slice(ownDb.length).includes('/') && !ownRoot.includes('..')
+            // a link base is a path of this server: not //host, no scheme, no backslash
+            const base = baseLinkUrl && /^\/(?!\/)/.test(String(baseLinkUrl)) && !/^[^\/?#]*:/.test(String(baseLinkUrl)) &&
+                    !String(baseLinkUrl).includes('\\') ? String(baseLinkUrl) : null
             if (type.scriptType) {
-                if (space?.allowScriptPages === 'Y') {
+                if (scriptSpace) {
                     renderedAs = 'script'
                     pageHtml = ec.resource.template(ref.location + (version ? '#' + version : ''), null)
                 } else {
@@ -559,7 +569,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             } else if (wikiType === 'md' || wikiType === 'markdown') {
                 renderedAs = 'markdown'
-                const html = ec.resource.markdownHtml(text, baseLinkUrl || null)
+                const html = ec.resource.markdownHtml(text, base)
                 pageHtml = anyHtml ? html : StringUtilities.cleanHtml(html)
             } else if (wikiType === 'html') {
                 renderedAs = 'html'
@@ -1247,6 +1257,18 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="wikiSpace" from="baseWikiSpace.cloneValue()"/>
             <set field="wikiSpace.wikiSpaceId" from="wikiSpaceId"/>
             <set field="wikiSpace.rootPageLocation" from="rootPageLocation"/>
+            <!-- the base space's script and HTML settings come along only for a user who may set them (Wiki.eecas.xml), and
+                script pages only into the space's own place in the database; otherwise the copy is a plain space -->
+            <script><![CDATA[
+                // as the rule: work with authorization disabled keeps them, but script pages only in the own place
+                const system = ec.artifactExecution.authzDisabled()
+                const dba = system || ec.user.hasPermission('DATABASE_ADMIN')
+                const ownDb = `dbresource://WikiSpace/${wikiSpaceId}.`
+                const ownRoot = String(rootPageLocation).startsWith(ownDb) && !String(rootPageLocation).slice(ownDb.length).includes('/')
+                if (!dba || !ownRoot) wikiSpace.allowScriptPages = null
+                if (!dba) wikiSpace.decoratorScreenLocation = null
+                if (!system && !ec.user.isInGroup('ADMIN')) wikiSpace.allowAnyHtml = null
+            ]]></script>
             <if condition="description"><set field="wikiSpace.description" from="description"/></if>
             <entity-create value-field="wikiSpace"/>
 

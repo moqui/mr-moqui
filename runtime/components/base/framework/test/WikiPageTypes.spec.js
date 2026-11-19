@@ -80,6 +80,8 @@ spec({
         invokeAs("spec.wt.user", "create#WikiSpace", {wikiSpaceId: "SPWTANY", description: "Spec any HTML", allowAnyHtml: "Y"})
         invokeAs("spec.wt.dba", "create#WikiSpace", {wikiSpaceId: "SPWTSCR", description: "Spec script pages", allowScriptPages: "Y"})
         invokeAs("spec.wt.dba", "create#WikiSpace", {wikiSpaceId: "SPWTHID", description: "Spec hidden", restrictView: "Y"})
+        // script pages allowed, none written yet: a copy by a user without DATABASE_ADMIN is a plain space
+        invokeAs("spec.wt.dba", "create#WikiSpace", {wikiSpaceId: "SPWTSC3", description: "Spec script space", allowScriptPages: "Y"})
     }
 })
 
@@ -207,5 +209,48 @@ feature("a space's script and storage settings: allowScriptPages and a screen ar
         r.script.includes("DATABASE_ADMIN") && r.decorator.includes("DATABASE_ADMIN")
         r.dotDot.includes("own place") && r.elsewhere == "" && r.dba == ""
         Array.from(r.types).includes("fancy")
+    }
+})
+
+// a service call as the user, authorized as from the System app's screens (authorization on), and its error text
+const callAs = (username, verb, parameters) => {
+    ec.user.internalLoginUser(username)
+    let out = {}
+    let error = ""
+    try {
+        out = ec.artifactExecution.runAsUser("component://tools/screen/System.xml",
+            () => ec.service.sync().name(W + verb).parameters(parameters).call()) || {}
+    } catch (e) {
+        error = String(e)
+    }
+    error += ec.message.errorsString
+    ec.message.clearErrors()
+    ec.user.logoutUser()
+    return Object.assign({}, out, {error})
+}
+const spaceRow = (wikiSpaceId) => {
+    const wasDisabled = ec.artifactExecution.disableAuthz()
+    try { return ec.entity.find("moqui.resource.wiki.WikiSpace").condition("wikiSpaceId", wikiSpaceId).one() }
+    finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+}
+
+feature("script pages run only from a space's own place in the database; a copy keeps the settings only its maker may set; a link base is a path", {
+    when() {
+        putPage("SPWTYP", "Linked.md", "[other](Other)\n")
+        const linked = (baseLinkUrl) => invokeAs("spec.wt.user", "render#WikiPage", {wikiSpaceId: "SPWTYP", pagePath: "Linked", baseLinkUrl}).pageHtml
+        return {
+            foreign: spaceAs("spec.wt.dba", {wikiSpaceId: "SPWTS6", rootPageLocation: "dbresource://WikiSpace/Elsewhere/SPWTS6.md", allowScriptPages: "Y"}),
+            onGit: spaceAs("spec.wt.dba", {wikiSpaceId: "SPWTS7", rootPageLocation: "git://WIKI_SPWTS7/SPWTS7.md", allowScriptPages: "Y"}),
+            cloned: callAs("spec.wt.admin", "clone#WikiSpace", {baseWikiSpaceId: "SPWTSC3", wikiSpaceId: "SPWTCLN"}),
+            path: linked("/apps/wiki/SPWTYP"),
+            host: linked("//evil.example/w"),
+            scheme: linked("https://evil.example/w")
+        }
+    },
+    then(r) {
+        r.foreign.includes("own place in the database") && r.onGit.includes("own place in the database")
+        r.cloned.error == "" && spaceRow("SPWTCLN")?.allowScriptPages == null && spaceRow("SPWTSC3").allowScriptPages == "Y"
+        r.path.includes('href="/apps/wiki/SPWTYP/Other"')
+        r.host.includes('href="Other"') && r.scheme.includes('href="Other"')
     }
 })
