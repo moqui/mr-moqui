@@ -12,7 +12,7 @@ left were carried out after them, and on 2026-11-17 the ones fixed in part were 
 findings 158 are fixed and 5 deferred, none refuted, and 52 (12 Low, 40 Info) are as reported. What is left is under
 [What is left](#what-is-left).
 
-A third round, 2026-11-17 and 18, read the code the first two did not reach (the "not reached" of the [coverage](#coverage) table and the map files' open questions) in 60 units, and recorded what it found without fixing it: 406 findings with ids from 81 up in each area, 12 High, 89 Medium, 224 Low and 81 Info, none Critical. The lead read the cited lines of every High (8 confirmed, 4 likely) and of 54 of the Medium (23 confirmed, 31 likely); the other 35 Medium, and every Low and Info, are as their reviewer reported them. Round 3's High findings are listed under [the findings that matter most](#round-3); the [counts](#counts) are of all three rounds. [Method](#method) step 7 says how the round was run.
+A third round, 2026-11-17 and 18, read the code the first two did not reach (the "not reached" of the [coverage](#coverage) table and the map files' open questions) in 60 units, and recorded what it found without fixing it: 406 findings with ids from 81 up in each area, 12 High, 89 Medium, 224 Low and 81 Info, none Critical. The lead read the cited lines of every High (8 confirmed, 4 likely) and of 54 of the Medium (23 confirmed, 31 likely); the other 35 Medium, and every Low and Info, are as their reviewer reported them. Round 3's High findings are listed under [the findings that matter most](#round-3); all twelve were fixed on 2026-11-18, each with its regression tests and a reviewer's reading of the fix, and its **Fix** says how; the [counts](#counts) are of all three rounds. [Method](#method) step 7 says how the round was run.
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
@@ -51,7 +51,7 @@ in [Security-Review-Low](Security-Review-Low.md).
    and most Medium candidates before they were recorded: an entry's **Re-check** says which lines and what was not
    read, and its status says `(lead)`; a Medium with no Re-check, and every Low or Info one, is as its reviewer
    reported it. One writer for each area then wrote the entries and brought the
-   area's map file up to date from the reports. Nothing was run and nothing found in this round is fixed. An entry's
+   area's map file up to date from the reports. Nothing was run in this round; its High findings were fixed after it (2026-11-18). An entry's
    lines, names and settings are those of the commit its unit read: mr-moqui `f6a7de2f9` for units A1 to A19 and B1 to
    B11, before the settings became conf attributes (`plans/archive/Conf-Paths.md` §6 maps each old name to its
    selector); the units after them read the tree of the merge `40c0b234e` or later, and their reports name it. The
@@ -120,7 +120,7 @@ No finding is rated Critical. These are the ones to look at first; each High one
 
 ### Round 3
 
-None is fixed. The two that matter most share one cause and give a signed-in user code execution:
+All twelve are fixed (2026-11-18), each entry's **Fix** saying how; the Medium, Low and Info ones are not. The two that mattered most shared one cause and gave a signed-in user code execution:
 
 - **A user's own preference is a server write location** (SEC-PFS-82, SEC-BAP-82; High; confirmed by the lead for
   the record files panel, likely for Smithy). Any signed-in user sets any preference at `/apps/setPreference`; 37 Mantle
@@ -293,7 +293,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 1. **A second check of the reported findings**, High and Medium first: someone reads the cited lines and looks for
    the guard the reviewer may have missed, then a fix or a refutation. Put off by the owner's decision of 2026-11-15
    until it is needed.
-2. **What each slice did not reach.** Round 3 read it (2026-11-17 and 18); its coverage, under [Round 3](#round-3-1) in the coverage section, says for each area what is still not reached, and each map file's open questions what is not settled. Its findings are recorded and none is fixed: they are the next batch of fixes, the High ones first, and its 35 Medium entries with no Re-check, with every Low and Info one, have had no second reading.
+2. **What each slice did not reach.** Round 3 read it (2026-11-17 and 18); its coverage, under [Round 3](#round-3-1) in the coverage section, says for each area what is still not reached, and each map file's open questions what is not settled. Its twelve High findings are fixed (2026-11-18); the Medium ones are the next batch of fixes, and its 35 Medium entries with no Re-check, with every Low and Info one, have had no second reading.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones (2026-11-16).
    Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the 169 Low and 46
    Info findings, 158 are fixed (152 Low, 6 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
@@ -332,6 +332,10 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    nonce handling, held at moqui's fork (docs/Build-Test.md, Forks) and tracked privately until disclosed upstream. The other Low and Info findings are
    not fixed. Later work beside them: DANE and TLS-RPT for MX delivery (SEC-MAIL-66 is fixed by `mail_mx_require_tls`
    for the domains it names; the default stays opportunistic).
+
+4. **Round 3's High fixes, 2026-11-18.** Found while fixing them and fixed with them: Data Load's `load`, Browse, Record, the data grid and ETL targets also wrote `UserAccount` password and identity fields (SEC-TLS-81); Customer Service answered a customer's identifications whole (SEC-BOS-82); a NACHA notification of change voided a settled payment (SEC-BOS-81); the forum's mbox import keyed authors by display text (SEC-PFS-81); a wiki screen rendered a request's `pageLocation` and eight mr-marble print screens a request's `templateLocation` as live templates, a space's public URLs were expanded, and comment bodies ran as Vue expressions (SEC-SCR-81); mr-marble's My Account contact info, messages, calendar events, tasks, time entries, request content and expense invoices acted on any record, their ids pinned only in pre-actions or not at all (SEC-RTE-81); personal drives and the wiki blog image were rooted at a user preference (SEC-BAP-82). Changed on purpose: payroll's run approvers and treasury import NACHA returns; payroll bank accounts are kept in People, with a notice to the person and no second confirmation (the owner's decision); an existing account's identity fields change only on the account screens; a report that is a link, and a `#` in any write location or upload name, are refused.
+
+   Found while fixing and not fixed: the framework's `update#UserAccount` asks `check#AccountAction` with `permissionId: 'NONE'`, so a caller that passes another user's `userId` gets no owner check from it; mr-marble's Search expands `DataDocument` titles and link text (administrator records) and its `EditParty`, `EditCustomer` and `EditSupplier` show identifications whole; SEC-BAP-87 (`Knowledge.js` expands `publicPageUrl`) stays open; the CI work directory's predictable scratch names stay with SEC-GIT-98.
 
 ## Counts
 
