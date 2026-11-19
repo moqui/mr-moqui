@@ -33,7 +33,7 @@ pub use setup::{initial_admin_allowed, initial_admin_local, log_initial_admin_se
 pub use system::as_system;
 pub(crate) use system::system_scope_allowed;
 
-pub use authz::current_user_groups;
+pub use authz::{current_user_groups, held_beyond};
 pub use authz::{authorize, authorize_own, authorize_own_unrecorded, context_entered, group_permits, permitted_own};
 pub(crate) use authz::{
     denied, entity_permitted, is_authz_entity, is_permitted, note_entity_write, AuthInfo, Permit, RegisteredAuthz,

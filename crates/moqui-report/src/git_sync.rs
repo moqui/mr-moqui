@@ -566,6 +566,36 @@ pub fn store_sync(ec: &ExecutionContext, _service: &ServiceInfo<'_>, params: &Pa
             .for_update(true)
             .one()?
     };
+    // a push and a pull sign in as the sync's user: anyone else's account is the caller's to name only as Login as
+    // allows it, with ADMIN_LOGIN_AS and no access the caller lacks (SEC-TLS-109)
+    let caller = moqui_core::user::current_user_id().map_err(fail)?.unwrap_or_default();
+    let runs_as = params["userId"]
+        .as_str()
+        .filter(|user| !user.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|row| row.get("userId").and_then(Value::as_str).map(str::to_owned))
+        })
+        .unwrap_or_default();
+    if !runs_as.is_empty() && runs_as != caller {
+        if !moqui_core::user::has_permission("ADMIN_LOGIN_AS").map_err(fail)? {
+            return Err(fail(
+                "a git sync runs as its user: one that runs as another user needs ADMIN_LOGIN_AS",
+            ));
+        }
+        if let Some(reason) = moqui_core::user::held_beyond(&runs_as).map_err(fail)? {
+            return Err(fail(format!("a git sync may not run as {runs_as}: {reason}")));
+        }
+        tracing::info!(
+            target: crate::incident::AUDIT,
+            sync = sync_id.as_str(),
+            by = caller.as_str(),
+            runs_as = runs_as.as_str(),
+            "a git sync stored to run as another user"
+        );
+    }
     let creating = existing.is_none();
     let mut row = existing.unwrap_or(facade.make_value(ENTITY)?);
     if creating {
