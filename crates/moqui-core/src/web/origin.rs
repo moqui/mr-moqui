@@ -72,9 +72,11 @@ impl SiteOrigin {
 }
 
 /// The origin a request was made to, as the browser saw it: https over TLS or from a believed proxy's
-/// `X-Forwarded-Proto` (`https`, which the host works out); the host and port of a believed proxy's `X-Forwarded-Host`
-/// (its first value), else of `Host`; the port of a believed proxy's `X-Forwarded-Port` (its first value) when it
-/// sends one. `believed` is [`ClientAddressing::believes`](super::address::ClientAddressing::believes) of the peer.
+/// `X-Forwarded-Proto` (`https`, which the host works out); the host and port of a believed proxy's `X-Forwarded-Host`,
+/// else of `Host`; the port of a believed proxy's `X-Forwarded-Port` when it sends one. `believed` is
+/// [`ClientAddressing::believes`](super::address::ClientAddressing::believes) of the peer; the callers give the
+/// forwarded values as [`ClientAddressing::forwarded_value`](super::address::ClientAddressing::forwarded_value) reads
+/// them (SEC-WEB-91), and of a list this takes the first.
 pub fn request_site(
     https: bool,
     believed: bool,
@@ -125,17 +127,20 @@ pub fn own_origins(factory: &ExecutionContextFactory, site: Option<SiteOrigin>) 
 /// The own origins of a request to the screens: [`own_origins`] with the request's https flag, believed by the
 /// peer's address as the factory's `ClientAddressing` says.
 pub(crate) fn request_own_origins(factory: &ExecutionContextFactory, request: &super::WebRequest) -> Vec<SiteOrigin> {
-    let believed = request.peer_ip.trim().parse::<std::net::IpAddr>().is_ok_and(|peer| {
-        factory
-            .extension(super::address::ClientAddressing::of_factory)
-            .believes(peer)
-    });
+    let addressing = factory.extension(super::address::ClientAddressing::of_factory);
+    let peer = request.peer_ip.trim().parse::<std::net::IpAddr>().ok();
+    let believed = peer.is_some_and(|peer| addressing.believes(peer));
+    // a believed proxy's own values, from the hop the client address is read from (SEC-WEB-91)
+    let client = (!addressing.header().is_empty())
+        .then(|| request.header(addressing.header()))
+        .flatten();
+    let forwarded = |name: &str| peer.and_then(|peer| addressing.forwarded_value(peer, client, request.header(name)));
     let site = request_site(
         request.https,
         believed,
         request.header("host"),
-        request.header("x-forwarded-host"),
-        request.header("x-forwarded-port"),
+        forwarded("x-forwarded-host").as_deref(),
+        forwarded("x-forwarded-port").as_deref(),
     );
     own_origins(factory, site)
 }

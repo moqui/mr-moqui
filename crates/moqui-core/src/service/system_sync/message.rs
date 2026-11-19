@@ -53,6 +53,40 @@ const MAX_AGE_MILLIS: i64 = 300_000;
 type HmacSha256 = Hmac<Sha256>;
 type HmacSha512 = Hmac<Sha512>;
 
+/// The remotes that take messages of any type at `/rest/sm` (SEC-RTE-86): those checked by an HMAC or a URL token that
+/// name no `systemMessageTypeId`, whose partner may deliver a type other than its own. One warning each, at startup,
+/// naming the remote, so it is given its type; they are still served. Answers their ids. A failed read is logged.
+pub fn warn_untyped_remotes(factory: &crate::context::ExecutionContextFactory) -> Vec<String> {
+    let Some(facade) = factory.entity() else {
+        return Vec::new();
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let rows = match facade.find(REMOTE).and_then(|find| {
+        find.disable_authz()
+            .condition(moqui_db::sql::Condition::is_null("systemMessageTypeId"))
+            .list()
+    }) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!("System message remotes could not be read for their message types: {err}");
+            return Vec::new();
+        }
+    };
+    let mut untyped = Vec::new();
+    for row in rows.iter() {
+        let auth = field(row, "messageAuthEnumId");
+        if auth.starts_with("SmatHmac") || auth == "SmatUrlToken" {
+            let id = field(row, "systemMessageRemoteId");
+            tracing::warn!(
+                "System message remote {id} ({auth}) names no systemMessageTypeId: /rest/sm takes a message of any type \
+                 from whoever passes its check; give it the type it sends"
+            );
+            untyped.push(id);
+        }
+    }
+    untyped
+}
+
 /// `send#SystemMessageRest`: POST the message text to the remote's `sendUrl` and read the remote message ID from a
 /// JSON reply of `{systemMessageIdList: [...]}`. A failure is a message error, so `send#ProducedSystemMessage` puts the
 /// status back.
@@ -263,8 +297,23 @@ fn receive_checked(
         refuse(&format!("remote system {remote_id} not valid"));
         return Ok(());
     };
-
     let auth = field(&remote, "messageAuthEnumId");
+    // A remote for one type (`systemMessageTypeId`) delivers that type alone, so passing its check does not deliver an
+    // order import, an EDI interchange or a git webhook; an unauthenticated remote (SmatNone) must name its type, as
+    // anyone passes its check (SEC-RTE-86).
+    let remote_type = field(&remote, "systemMessageTypeId");
+    if !remote_type.is_empty() && remote_type != type_id {
+        refuse(&format!(
+            "remote system {remote_id} is for message type {remote_type}, not {type_id}"
+        ));
+        return Ok(());
+    }
+    if remote_type.is_empty() && auth == "SmatNone" {
+        refuse(&format!(
+            "remote system {remote_id} takes no message: an unauthenticated remote needs its systemMessageTypeId"
+        ));
+        return Ok(());
+    }
     // The replay key a timestamped HMAC spent, given back when the message is not kept, so the provider's retry of a
     // delivery that failed here (a 500) is not refused as a replay.
     let mut spent_key: Option<String> = None;

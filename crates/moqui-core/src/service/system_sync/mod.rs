@@ -31,7 +31,7 @@ mod sftp;
 mod tests;
 
 pub(crate) use message::receive_rest_message;
-pub use message::{hmac_base64, timestamp_header};
+pub use message::{hmac_base64, timestamp_header, warn_untyped_remotes};
 
 const RUN_SYNC: &str = "org.moqui.impl.EntitySyncServices.run#EntitySync";
 const INTERNAL_RUN: &str = "org.moqui.impl.EntitySyncServices.internalRun#EntitySync";

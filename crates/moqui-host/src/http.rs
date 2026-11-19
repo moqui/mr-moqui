@@ -41,6 +41,10 @@ pub(crate) mod admission;
 mod serve;
 mod stream;
 pub(crate) mod test_peer;
+pub(crate) mod upload;
+
+pub(crate) use upload::read_to_spool;
+use upload::{read_multipart, upload_has_user};
 #[cfg(feature = "edge")]
 pub(crate) use serve::h2_request_form;
 pub(crate) use serve::{http1_builder, run_connection, Activity, Http, Serving};
@@ -54,6 +58,8 @@ pub(crate) struct HttpState {
     pub shutdown: tokio::sync::watch::Receiver<bool>,
     pub limits: ListenLimits,
     pub guard: Arc<Guard>,
+    /// The uploads arriving now (SEC-RTE-91).
+    pub uploads: Arc<upload::Uploads>,
 }
 
 /// The client of a request: the socket peer, or the address a trusted proxy in front names
@@ -75,6 +81,17 @@ pub(crate) struct ListenLimits {
     /// `upload-idle-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`), default 60: an upload that sends nothing for this long
     /// is cut off with 408.
     pub upload_idle: Option<Duration>,
+    /// `upload-min-rate` (`webapp-list/webapp[webroot]/web-protection/requests@upload-min-rate`), default 1024: once
+    /// `body-timeout` has passed, an upload that averaged fewer bytes a second is cut off with 408 (SEC-RTE-91); 0 for
+    /// none.
+    pub upload_min_rate: u64,
+    /// `max-uploads` (`webapp-list/webapp[webroot]/web-protection/requests@max-uploads`), default 1024: the uploads
+    /// arriving at once; another is answered 503 (SEC-RTE-91).
+    pub max_uploads: usize,
+    /// `max-uploads-per-client` (`webapp-list/webapp[webroot]/web-protection/requests@max-uploads-per-client`), default
+    /// 16: the uploads one client (an IPv6 one by its /64) has arriving at once, whether or not web protection's
+    /// per-client parts are on; another is answered 503 (SEC-RTE-91).
+    pub max_uploads_per_client: usize,
     /// `request-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@request-timeout`), default 300: from the request head to the response head, or the
     /// answer is 504. `/notws` and `/termws` are exempt, and a response body, such as a long download, is sent after it.
     pub request: Option<Duration>,
@@ -119,6 +136,11 @@ impl ListenLimits {
             header: seconds("connections", "header-timeout", 30),
             body: seconds("requests", "body-timeout", 60),
             upload_idle: seconds("requests", "upload-idle-timeout", 60),
+            upload_min_rate: setting(node, "requests", "upload-min-rate")
+                .parse::<u64>()
+                .unwrap_or(1024),
+            max_uploads: count("requests", "max-uploads", 1024),
+            max_uploads_per_client: count("requests", "max-uploads-per-client", 16),
             request: seconds("requests", "request-timeout", 300),
             connections: count("connections", "max", 4096),
             shutdown: seconds("connections", "shutdown-timeout", 30),
@@ -137,6 +159,9 @@ impl ListenLimits {
             header: None,
             body: None,
             upload_idle: None,
+            upload_min_rate: 0,
+            max_uploads: 1024,
+            max_uploads_per_client: 16,
             request: None,
             connections: 4096,
             shutdown: None,
@@ -423,6 +448,7 @@ pub(crate) async fn listen(
             shutdown: shutdown_rx.clone(),
             limits,
             guard: Arc::clone(&guard),
+            uploads: Arc::default(),
         }));
     let web = WebApp {
         allowed_hosts: serve::allowed_hosts_property(),
@@ -1127,12 +1153,16 @@ async fn dispatch_screen(
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok());
-    // an upload that may be larger than an anonymous request may send needs a user (SEC-RTE-07)
+    // a body that may be larger than an anonymous request may send (an upload, a servlet's larger max-body) needs a
+    // user (SEC-RTE-07, SEC-RTE-84)
+    let mut has_user = None;
     if let Some(anonymous) = moqui_core::web::anonymous_upload_limit(Some(&state.factory), &web) {
-        if declared.is_none_or(|length| length > anonymous)
-            && !upload_has_user(&state, &parts.headers, web.https, client).await
-        {
-            limit = anonymous;
+        if declared.is_none_or(|length| length > anonymous) {
+            let user = upload_has_user(&state, &parts.headers, web.https, client).await;
+            has_user = Some(user);
+            if !user {
+                limit = anonymous;
+            }
         }
     }
     if declared.is_some_and(|length| length > limit) {
@@ -1141,7 +1171,19 @@ async fn dispatch_screen(
     let upload = moqui_core::web::is_multipart(&web);
     if upload {
         let content_type = web.header("content-type").unwrap_or("").to_string();
-        match read_multipart(&state, body, limit, &content_type).await {
+        // an upload's place among those arriving; past the share of uploads with no user, only one that names a user
+        // (SEC-RTE-91)
+        let has_user = match has_user {
+            Some(user) => user,
+            None if state.uploads.anonymous_room(&state.limits) => false,
+            None => upload_has_user(&state, &parts.headers, web.https, client).await,
+        };
+        let per_client = upload::per_client_key(&state, peer.ip(), client, has_user);
+        let slot = match state.uploads.take(&state.limits, per_client, has_user) {
+            Ok(slot) => slot,
+            Err(refused) => return refused.response(),
+        };
+        match read_multipart(&state, body, limit, &content_type, slot).await {
             Ok(parsed) => web.multipart = Some(Arc::new(parsed)),
             Err(refused) => return refused.response(),
         }
@@ -1156,6 +1198,37 @@ async fn dispatch_screen(
     // passed, the client went away) before a worker took it is not run
     let serve_factory = Arc::clone(&state.factory);
     let guard = Arc::clone(&state.guard);
+    // web protection again for the screen path the request reaches, once the worker has resolved it (SEC-WEB-81)
+    let reached_check = {
+        let guard = Arc::clone(&state.guard);
+        let raw_host = parts
+            .headers
+            .get(axum::http::header::HOST)
+            .and_then(|value| value.to_str().ok())
+            .or_else(|| parts.uri.authority().map(axum::http::uri::Authority::as_str))
+            .unwrap_or_default();
+        let host = crate::guard::request_host(raw_host);
+        let (method, path, headers) = (
+            parts.method.to_string(),
+            parts.uri.path().to_string(),
+            parts.headers.clone(),
+        );
+        Box::new(move |reached: &[String]| {
+            let refused = guard
+                .check_reached(client, &host, &method, &path, reached, &headers)
+                .err()?;
+            let response = refused.response;
+            let retry_after = response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse().ok());
+            Some(moqui_core::web::reached::PathRefusal {
+                status: response.status().as_u16(),
+                retry_after,
+            })
+        }) as moqui_core::web::reached::ReachedCheck
+    };
     let worker_trace = trace_context.clone();
     // a page past the screen facade's stream-threshold goes as it renders: its head comes first, then its body
     // (docs/ui/Screen-Output.md); a smaller one comes whole as the job's answer
@@ -1172,7 +1245,9 @@ async fn dispatch_screen(
         move || {
             let _trace = moqui_core::telemetry::attach(worker_trace);
             let sink = sink.map(|sink| Box::new(sink) as Box<dyn moqui_core::web::stream::OutputSink>);
-            let response = moqui_core::screen::serve_to(&serve_factory, web, sink);
+            let response = moqui_core::web::reached::with_reached_check(reached_check, || {
+                moqui_core::screen::serve_to(&serve_factory, web, sink)
+            });
             if moqui_core::web::take_auth_failure() {
                 guard.record(client, Event::AuthFailure);
             }
@@ -1218,124 +1293,6 @@ async fn dispatch_screen(
 /// `write-timeout`.
 const DEFAULT_STREAM_STALL: Duration = Duration::from_secs(60);
 
-/// Bytes of an upload gathered before the reader takes them, on a blocking thread (it may write a spool file).
-const UPLOAD_FEED: usize = 1024 * 1024;
-
-/// A `multipart/form-data` body read as it arrives, up to `limit` bytes: its fields, and its files in memory or (past
-/// 256 KiB) spooled to `runtime/tmp/upload`. Each chunk must come within `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`.
-async fn read_multipart(
-    state: &HttpState,
-    body: axum::body::Body,
-    limit: usize,
-    content_type: &str,
-) -> Result<moqui_core::web::multipart::Parsed, BodyRefused> {
-    use futures_util::StreamExt as _;
-    use moqui_core::web::multipart::{MultipartError, MultipartReader, Spool};
-
-    let refused = |err: MultipartError| match err {
-        MultipartError::FieldTooLarge(_, field_limit) => BodyRefused::TooLarge(field_limit),
-        MultipartError::Io(why) => BodyRefused::Failed(why),
-        MultipartError::SpoolFull => BodyRefused::SpoolFull,
-        other => BodyRefused::Malformed(other.to_string()),
-    };
-    let spool = Spool::under(state.factory.runtime_dir());
-    let mut reader = MultipartReader::new(content_type, Some(spool)).map_err(refused)?;
-    let mut stream = body.into_data_stream();
-    let mut pending: Vec<u8> = Vec::with_capacity(UPLOAD_FEED);
-    let mut total = 0usize;
-    loop {
-        let next = match state.limits.upload_idle {
-            Some(idle) => tokio::time::timeout(idle, stream.next())
-                .await
-                .map_err(|_| BodyRefused::TimedOut)?,
-            None => stream.next().await,
-        };
-        let done = match next {
-            Some(Ok(chunk)) => {
-                total += chunk.len();
-                if total > limit {
-                    return Err(BodyRefused::TooLarge(limit));
-                }
-                pending.extend_from_slice(&chunk);
-                false
-            }
-            Some(Err(_)) => return Err(BodyRefused::Malformed("the upload was cut short".to_string())),
-            None => true,
-        };
-        if pending.len() >= UPLOAD_FEED || done {
-            let chunk = std::mem::replace(&mut pending, Vec::with_capacity(UPLOAD_FEED));
-            let (back, fed) = tokio::task::spawn_blocking(move || {
-                let fed = reader.feed(&chunk);
-                (reader, fed)
-            })
-            .await
-            .map_err(|err| BodyRefused::Failed(err.to_string()))?;
-            reader = back;
-            fed.map_err(refused)?;
-        }
-        if done {
-            return reader.finish().map_err(refused);
-        }
-    }
-}
-
-/// A body that is one file (a DAV `PUT`) read as it arrives, up to `limit` bytes, as an upload's file part is: in
-/// memory up to 256 KiB, then spooled to `runtime/tmp/upload`, never held whole (SEC-FIL-04). Each chunk must come
-/// within `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`. A body refused or cut short leaves no file.
-pub(crate) async fn read_to_spool(
-    state: &HttpState,
-    body: axum::body::Body,
-    limit: usize,
-    file_name: &str,
-    content_type: &str,
-) -> Result<moqui_core::web::multipart::UploadedFile, BodyRefused> {
-    use futures_util::StreamExt as _;
-    use moqui_core::web::multipart::{BodySpool, MultipartError, Spool};
-
-    let refused = |err: MultipartError| match err {
-        MultipartError::SpoolFull => BodyRefused::SpoolFull,
-        other => BodyRefused::Failed(other.to_string()),
-    };
-    let mut spool = BodySpool::new(Spool::under(state.factory.runtime_dir()));
-    let mut stream = body.into_data_stream();
-    let mut pending: Vec<u8> = Vec::with_capacity(UPLOAD_FEED);
-    let mut total = 0usize;
-    loop {
-        let next = match state.limits.upload_idle {
-            Some(idle) => tokio::time::timeout(idle, stream.next())
-                .await
-                .map_err(|_| BodyRefused::TimedOut)?,
-            None => stream.next().await,
-        };
-        let done = match next {
-            Some(Ok(chunk)) => {
-                total += chunk.len();
-                if total > limit {
-                    return Err(BodyRefused::TooLarge(limit));
-                }
-                pending.extend_from_slice(&chunk);
-                false
-            }
-            Some(Err(_)) => return Err(BodyRefused::Malformed("the upload was cut short".to_string())),
-            None => true,
-        };
-        if pending.len() >= UPLOAD_FEED || done {
-            let chunk = std::mem::replace(&mut pending, Vec::with_capacity(UPLOAD_FEED));
-            let (back, fed) = tokio::task::spawn_blocking(move || {
-                let fed = spool.write(&chunk);
-                (spool, fed)
-            })
-            .await
-            .map_err(|err| BodyRefused::Failed(err.to_string()))?;
-            spool = back;
-            fed.map_err(refused)?;
-        }
-        if done {
-            return spool.finish(file_name, content_type).map_err(refused);
-        }
-    }
-}
-
 /// Why [`read_body`] or [`read_multipart`] stopped.
 pub(crate) enum BodyRefused {
     /// More than this many bytes.
@@ -1345,7 +1302,8 @@ pub(crate) enum BodyRefused {
     Malformed(String),
     /// An upload that could not be spooled.
     Failed(String),
-    /// The uploads being read fill the spool (`webapp-list/webapp[webroot]/web-protection/requests@max-spool`).
+    /// The uploads being read fill the spool (`webapp-list/webapp[webroot]/web-protection/requests@max-spool`), or are
+    /// as many as `max-uploads`.
     SpoolFull,
 }
 
@@ -1359,62 +1317,6 @@ impl BodyRefused {
             Self::SpoolFull => plain(503, "the server is taking too many uploads; try again later"),
         }
     }
-}
-
-/// Whether the request names a user before its body is read: a session cookie of a signed-in session, or its own
-/// credentials (`api_key`, `login_key`, Basic) that hold, checked without logging in
-/// (`moqui_core::user::credential_user`). Asked of an upload that may be larger than an anonymous one (SEC-RTE-07);
-/// a refused credential counts for web protection as a refused login does.
-async fn upload_has_user(
-    state: &HttpState,
-    headers: &axum::http::HeaderMap,
-    https: bool,
-    client: std::net::IpAddr,
-) -> bool {
-    let header = |name: &str| {
-        headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string)
-    };
-    // the session id of a signed cookie this node made
-    let session = crate::notws::session_cookie(headers, https)
-        .and_then(|cookie| moqui_core::user::verify_session_cookie(&cookie).ok().flatten())
-        .filter(|id| !id.is_empty());
-    let (api_key, login_key, authorization) = (header("api_key"), header("login_key"), header("authorization"));
-    if session.is_none() && api_key.is_none() && login_key.is_none() && authorization.is_none() {
-        return false;
-    }
-    let factory = Arc::clone(&state.factory);
-    let guard = Arc::clone(&state.guard);
-    let found = admission::run(
-        Arc::clone(&state.factory),
-        Arc::clone(&state.guard),
-        state.guard.conf().queue_timeout,
-        move || {
-            if let Some(session) = session {
-                if matches!(crate::notws::user_of(&factory, &session), Ok(Some(_))) {
-                    return true;
-                }
-            }
-            let user = moqui_core::user::with_client_ip(&client.to_string(), || {
-                moqui_core::user::credential_user(
-                    api_key.as_deref(),
-                    login_key.as_deref(),
-                    authorization.as_deref(),
-                    true,
-                    // the route's own login asks its protocol's scope
-                    None,
-                )
-            });
-            if moqui_core::web::take_auth_failure() {
-                guard.record(client, Event::AuthFailure);
-            }
-            matches!(user, Ok(Some(_)))
-        },
-    )
-    .await;
-    matches!(found, Ok(true))
 }
 
 /// The request body, up to `limit` bytes and within `webapp-list/webapp[webroot]/web-protection/requests@body-timeout`.
@@ -1797,20 +1699,23 @@ pub(crate) fn forwarded_https(
     peer: IpAddr,
     addressing: &moqui_core::web::address::ClientAddressing,
 ) -> bool {
-    if !addressing.believes(peer) {
-        return false;
-    }
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(',')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .eq_ignore_ascii_case("https")
-        })
+    forwarded(headers, peer, addressing, "x-forwarded-proto").is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
+}
+
+/// A believed proxy's forwarding header `name` (`x-forwarded-proto`, `-host`, `-port`) of a request from `peer`, read
+/// from the hop the client address is read from, never a value the client sent ahead of a proxy that appends
+/// (`ClientAddressing::forwarded_value`, SEC-WEB-91); `None` when the peer is not believed.
+pub(crate) fn forwarded(
+    headers: &axum::http::HeaderMap,
+    peer: IpAddr,
+    addressing: &moqui_core::web::address::ClientAddressing,
+    name: &str,
+) -> Option<String> {
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    let client = (!addressing.header().is_empty())
+        .then(|| header(addressing.header()))
+        .flatten();
+    addressing.forwarded_value(peer, client, header(name))
 }
 
 /// Whether credentials may be taken over a request's transport: the listener's TLS, a believed proxy's

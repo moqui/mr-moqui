@@ -1990,6 +1990,8 @@ fn boot_server_factory(
     let smtpd = start_smtp(&factory);
     // the webapp's listeners and after-startup actions, as Java's MoquiContextListener runs them
     moqui_core::web::servlet::started(&factory);
+    // the /rest/sm remotes that take a message of any type, one warning each (SEC-RTE-86)
+    moqui_core::service::warn_untyped_remotes(&factory);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

@@ -16,11 +16,23 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false" track-artifact-hit="false" default-menu-include="false">
 
+    <!-- a plain sign-in, which any link may start; never a re-authentication, whatever its parameters say -->
     <transition name="login" read-only="true" require-session-token="false">
         <parameter name="authFlowId"/>
         <parameter name="returnTo"/>
-        <parameter name="reauth"/>
         <actions>
+            <set field="reauth" value="false"/>
+            <service-call name="org.moqui.sso.AuthServices.login#User" in-map="context"/>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- A re-authentication for the recent sign-in check (moqui.reauth): a POST with the session's token, so another
+        site, a link or a frame cannot start the round trip that would mark the session's sign-in recent (SEC-WEB-84). -->
+    <transition name="reauth" method="post">
+        <parameter name="authFlowId"/>
+        <parameter name="returnTo"/>
+        <actions>
+            <set field="reauth" value="true"/>
             <service-call name="org.moqui.sso.AuthServices.login#User" in-map="context"/>
         </actions>
         <default-response type="none"/>

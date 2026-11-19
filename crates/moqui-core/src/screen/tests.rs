@@ -1185,6 +1185,125 @@ fn fop_sends_the_print_document_of_the_screen_as_pdf() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-WEB-81: a request's render asks the host's check with the transition it reached, whatever render-mode extension
+/// it came by, and with its extra path too after a read-only transition, and answers the check's refusal before the
+/// transition runs; a transition through the FOP servlet, and a writing one with names after it that it declares no
+/// path-parameter for, is not found.
+#[test]
+fn the_host_is_asked_for_the_path_a_request_reached_and_its_refusal_is_answered() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-reached-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Form.xml"),
+        r#"<screen require-authentication="false">
+            <transition name="go" read-only="true">
+                <actions><script>ec.web.sendTextResponse('ran')</script></actions>
+                <default-response type="none"/>
+            </transition>
+            <transition name="save" require-session-token="false">
+                <actions><script>ec.web.sendTextResponse('saved')</script></actions>
+                <default-response type="none"/>
+            </transition>
+            <transition name="item" require-session-token="false"><path-parameter name="itemId"/>
+                <actions><script>ec.web.sendTextResponse('item ' + itemId)</script></actions>
+                <default-response type="none"/>
+            </transition>
+            <widgets><label text="Form body"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let serve = |method: &str, path: &str, refuse: bool| {
+        let seen = Arc::clone(&seen);
+        let check = Box::new(move |reached: &[String]| {
+            seen.lock().unwrap().push(reached.to_vec());
+            refuse.then_some(crate::web::reached::PathRefusal {
+                status: 429,
+                retry_after: Some(7),
+            })
+        }) as crate::web::reached::ReachedCheck;
+        crate::web::reached::with_reached_check(check, || serve_at(&world.factory, request(method, path), &root))
+    };
+    for (path, reached) in [
+        ("/Form/go", vec!["/Form/go"]),
+        ("/Form/go/x/y.text", vec!["/Form/go", "/Form/go/x/y"]),
+        ("/Form/go.text", vec!["/Form/go"]),
+    ] {
+        seen.lock().unwrap().clear();
+        assert_eq!(serve("GET", path, false).body_text(), "ran", "{path}");
+        let response = serve("GET", path, true);
+        assert_eq!(response.status, 429, "{path}: {}", response.body_text());
+        assert_eq!(response.header("retry-after"), Some("7"), "{path}");
+        let reached: Vec<String> = reached.into_iter().map(str::to_string).collect();
+        assert_eq!(seen.lock().unwrap().clone(), vec![reached; 2], "{path}");
+    }
+    seen.lock().unwrap().clear();
+    for (method, path) in [
+        ("GET", "/fop/Form/go"),
+        ("POST", "/Form/save/x"),
+        ("POST", "/fop/Form/save"),
+    ] {
+        let response = serve(method, path, false);
+        assert_eq!(response.status, 404, "{path}: {}", response.body_text());
+    }
+    assert!(seen.lock().unwrap().is_empty(), "refused before the check");
+    assert_eq!(serve("POST", "/Form/save", false).body_text(), "saved");
+    assert_eq!(serve("POST", "/Form/item/7", false).body_text(), "item 7");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-WEB-89: a screen renders for GET, HEAD, POST and OPTIONS only, a transition of method `any` runs for those and
+/// PUT, PATCH and DELETE, and the sign-in transitions take POST only, whatever web protection says.
+#[test]
+fn a_screen_and_an_any_transition_refuse_other_methods_and_sign_in_takes_post_only() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-methods-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Form.xml"),
+        r#"<screen require-authentication="false">
+            <transition name="go" read-only="true">
+                <actions><script>ec.web.sendTextResponse('ran')</script></actions>
+                <default-response type="none"/>
+            </transition>
+            <widgets><label text="Form body"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let serve = |method: &str, path: &str| serve_at(&world.factory, request(method, path), &root);
+    assert!(serve("GET", "/Form").body_text().contains("Form body"));
+    for method in ["TRACE", "PUT", "PROPFIND"] {
+        let response = serve(method, "/Form");
+        assert_eq!(response.status, 405, "{method}: {}", response.body_text());
+        assert_eq!(response.header("allow"), Some("GET, HEAD, POST, OPTIONS"));
+    }
+    assert_eq!(serve("PUT", "/Form/go").body_text(), "ran");
+    assert_eq!(serve("TRACK", "/Form/go").status, 405);
+    let webroot = webroot().to_string_lossy().into_owned();
+    for path in [
+        "/Login/login",
+        "/SecondFactor/verifyUserAuthcFactor",
+        "/ChangePassword/changePassword",
+    ] {
+        let response = serve_at(&world.factory, request("PUT", path), &webroot);
+        assert_eq!(response.status, 405, "{path}: {}", response.body_text());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 mod anonymous;
 mod authc;
 mod boxes;
@@ -1247,4 +1366,31 @@ fn a_parameter_named_context_reaches_a_rest_service() {
     get.set_header("authorization", basic("admin"));
     let response = serve_at(&world.factory, get, &root);
     assert_eq!(response.status, 200, "{}", response.body_text());
+}
+
+/// SEC-WEB-84: a re-authentication at an identity provider starts only by a POST with the session token: a signed-in
+/// session's POST of `/sso/reauth` without it, and a GET, are refused before anything runs.
+#[test]
+fn a_signed_in_sessions_sso_reauth_needs_a_post_with_its_token() {
+    let world = World::open("");
+    world.user("admin", None);
+    let root = webroot().to_string_lossy().into_owned();
+    let mut login = request("POST", "/rest/login");
+    login.set_header("content-type", "application/x-www-form-urlencoded");
+    login.body = b"username=admin&password=secret".to_vec();
+    let response = serve_at(&world.factory, login, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    let cookie = header_value(&response, "Set-Cookie").expect("session cookie");
+    let session = cookie.split(';').next().unwrap().split_once('=').unwrap().1.to_string();
+    let reauth = |method: &str| {
+        let mut asked = request(method, "/sso/reauth");
+        asked.set_header("content-type", "application/x-www-form-urlencoded");
+        asked.body = b"authFlowId=ANY&returnTo=/qapps".to_vec();
+        asked.session_cookie = Some(session.clone());
+        serve_at(&world.factory, asked, &root)
+    };
+    let response = reauth("POST");
+    assert_eq!(response.status, 401, "{}", response.body_text());
+    let response = reauth("GET");
+    assert_eq!(response.status, 405, "{}", response.body_text());
 }

@@ -40,6 +40,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="authFlowId"/>
             <parameter name="authFlowList" type="List"><parameter name="authFlow" type="Map">
                 <parameter name="authFlowId"/><parameter name="description"/></parameter></parameter>
+            <parameter name="emailCode" type="Boolean"><description>An account without a password with a verified email
+                address: it may confirm by a code mailed there (send#ReauthEmailCode, then reauthenticate#User with the
+                code alone), whatever its provider does.</description></parameter>
         </out-parameters>
     </service>
 
@@ -83,6 +86,13 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Send a code to the signed-in user's email or SMS factor factorId for reauthenticate#User, once its
             password was checked (in the last five minutes); else an error.</description>
         <in-parameters><parameter name="factorId" required="true"/></in-parameters>
+        <out-parameters><parameter name="sent" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="send" noun="ReauthEmailCode" type="rust" location="moqui_core::service::recent_auth::send_reauth_email_code">
+        <description>Mail a code to the verified email address of a signed-in account that has no password (it signs in only
+            through an identity provider), for reauthenticate#User with the code alone; else an error. One a half minute in
+            a session.</description>
         <out-parameters><parameter name="sent" type="Boolean"/></out-parameters>
     </service>
 </services>

@@ -221,6 +221,7 @@ fn load_flow_as(
                 token_url: field(&row, "tokenUrl"),
                 user_info_url: field(&row, "userInfoUrl"),
                 scope: field(&row, "scope"),
+                reauth_prompts: field(&row, "reauthPrompts") == "Y",
             })
         }
         "AftSaml" => {
@@ -517,8 +518,9 @@ const AUTH_TIME_SKEW_MILLIS: i64 = 60_000;
 /// - OpenID Connect: the ID token's `auth_time` (seconds), never after `now`; none without it, and for a re-authentication
 ///   (`reauth`, which asked `prompt=login` and `max_age=0`) none unless it is after the request (`started_at`, less
 ///   [`AUTH_TIME_SKEW_MILLIS`]), so a provider that answered from its own session does not count.
-/// - OAuth, which has no `auth_time` or `prompt`: now for a re-authentication the user asked for (the provider cannot be
-///   made to prove it signed the user in again), none for another login.
+/// - OAuth, which has no `auth_time` or `prompt`: now for a re-authentication through a flow whose row says its
+///   provider asks the user to sign in every time (`OauthFlow.reauthPrompts`); none otherwise, since a provider that
+///   answers from its own session would make the sign-in recent with nothing typed (SEC-WEB-84).
 fn sign_in_time(
     flow: &FlowConfig,
     profile: &SsoProfile,
@@ -526,8 +528,8 @@ fn sign_in_time(
     started_at: Option<i64>,
     now: i64,
 ) -> Option<i64> {
-    match flow.kind {
-        FlowKind::Oauth(_) => reauth.then_some(now),
+    match &flow.kind {
+        FlowKind::Oauth(config) => (reauth && config.reauth_prompts).then_some(now),
         FlowKind::Oidc(_) => {
             let seconds = profile
                 .attributes

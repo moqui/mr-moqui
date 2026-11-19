@@ -38,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
                         secret:(secretPassword || null), discoveryUri:(discoveryUri ?? null), realm:(realm ?? null), baseUri:(baseUri ?? null),
                         preferredJwsAlgorithmEnumId:(preferredJwsAlgorithmEnumId ?? null), useNonce:(useNonce ?? null),
                         appleTeamId:(appleTeamId ?? null), appleKeyId:(appleKeyId ?? null), authorizeUrl:(authorizeUrl ?? null),
-                        tokenUrl:(tokenUrl ?? null), userInfoUrl:(userInfoUrl ?? null), scope:(scope ?? null),
+                        tokenUrl:(tokenUrl ?? null), userInfoUrl:(userInfoUrl ?? null), scope:(scope ?? null), reauthPrompts:(reauthPrompts ?? null),
                         serviceProviderEntityId:(serviceProviderEntityId ?? null),
                         identityProviderMetadataLocation:(identityProviderMetadataLocation ?? null), forceAuth:(forceAuth ?? null),
                         passive:(passive ?? null), keystorePassword:(keystorePassword || null),
@@ -152,6 +152,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="secretText" from="configuration.secretSet ? 'A secret is stored. Leave empty to keep it.' : 'No secret is stored.'"/>
             <set field="configurationValues" from="Object.assign({}, configuration, {authFlowId: authFlowId, expectedRevision: provider.revision,
                     description: provider.description, sequenceNum: provider.sequenceNum, useNonce: configuration.useNonce ? 'Y' : 'N',
+                    reauthPrompts: configuration.reauthPrompts ? 'Y' : 'N',
                     forceAuth: configuration.forceAuth ? 'Y' : 'N', passive: configuration.passive ? 'Y' : 'N', secretPassword: '',
                     keystorePassword: '', privateKeyPassword: ''})"/>
             <set field="accessValues" from="{authFlowId: authFlowId, expectedRevision: provider.revision, accountLinkEnumId: provider.accountLinkEnumId,
@@ -324,6 +325,10 @@ along with this software (see the LICENSE.md file). If not, see
                                     <field name="tokenUrl"><default-field title="Token endpoint"><text-line size="70"/></default-field></field>
                                     <field name="userInfoUrl"><default-field title="User info endpoint"><text-line size="70"/></default-field></field>
                                     <field name="scope"><default-field title="Scope" tooltip="Space separated; empty takes the provider's default"><text-line size="50"/></default-field></field>
+                                    <field name="reauthPrompts">
+                                        <default-field title="Confirms a sign-in" tooltip="Used: the provider asks the user to sign in on every authorization, so signing in again through it confirms who they are for sensitive actions. Only when the provider does: one that answers from its own session would let a taken-over session confirm itself">
+                                            <drop-down><option key="N" text="Not used"/><option key="Y" text="Used"/></drop-down></default-field>
+                                    </field>
                                     <field name="reason"><default-field title="Reason" tooltip="Kept in the audit log beside the change"><text-line size="50"/></default-field></field>
                                     <field name="submitButton"><default-field title="Save configuration"><submit/></default-field></field>
                                     <field-layout>
@@ -334,6 +339,7 @@ along with this software (see the LICENSE.md file). If not, see
                                         <field-ref name="tokenUrl"/>
                                         <field-ref name="userInfoUrl"/>
                                         <field-ref name="scope"/>
+                                        <field-ref name="reauthPrompts"/>
                                         <field-ref name="reason"/>
                                         <field-ref name="submitButton"/>
                                     </field-layout>

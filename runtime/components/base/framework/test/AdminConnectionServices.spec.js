@@ -31,6 +31,7 @@ const ids = {
 const users = {manage: "SPEC_CONN_MANAGE", view: "SPEC_CONN_VIEW", none: "SPEC_CONN_NONE", access: "SPEC_CONN_ACCESS"}
 const groups = {manage: "SPEC_CONN_MANAGERS", view: "SPEC_CONN_VIEWERS", access: "SPEC_CONN_ACCESSORS"}
 const accessPassword = "Spec-conn-access-5!"
+const managePassword = "Spec-conn-manage-5!"
 const secret = "spec-conn-secret-7q2x"
 const shared = "spec-conn-shared-4m9d"
 
@@ -42,8 +43,15 @@ const make = (entityName, fields) => {
     row.setFields(fields, true, null, null)
     row.create()
 }
-function as(userId, action) {
+// signed in as userId by an internal login: a session with no recent sign-in; with `recent`, one that confirmed who it is
+// by its password (SEC-ADM-87: a connection's endpoint or secret changes only after one)
+function as(userId, action, recent = false) {
     ec.user.internalLoginUser(userId.toLowerCase().replace(/_/g, "."))
+    if (recent) {
+        ec.service.sync().name("org.moqui.sso.RecentAuthServices.reauthenticate#User")
+            .parameters({password: managePassword}).disableAuthz().call()
+        ec.message.clearErrors()
+    }
     ec.artifactExecution.enableAuthz()
     try {
         return action()
@@ -53,6 +61,7 @@ function as(userId, action) {
         ec.artifactExecution.disableAuthz()
     }
 }
+const asRecent = (userId, action) => as(userId, action, true)
 function invoke(name, parameters = {}) {
     try {
         const result = ec.service.sync().name(name).parameters(parameters).call() || {}
@@ -106,6 +115,10 @@ spec({
         accessAccount.setFields({currentPassword: ec.user.hashPassword(accessPassword), passwordHashType: "argon2",
             passwordSalt: "", passwordBase64: "N", disabled: "N", requirePasswordChange: "N"}, true, null, null)
         accessAccount.update()
+        const manageAccount = ec.entity.find("moqui.security.UserAccount").condition("userId", users.manage).one()
+        manageAccount.setFields({currentPassword: ec.user.hashPassword(managePassword), passwordHashType: "argon2",
+            passwordSalt: "", passwordBase64: "N", disabled: "N", requirePasswordChange: "N"}, true, null, null)
+        manageAccount.update()
         make("moqui.security.UserGroupMember", {userGroupId: groups.manage, userId: users.manage, fromDate: 0})
         make("moqui.security.UserGroupMember", {userGroupId: groups.view, userId: users.view, fromDate: 0})
         // a remote as an instance administrator left it: live, with its password and its shared secret
@@ -240,11 +253,16 @@ feature(
                     {sendUrl: "https://two.example.com/api"},
                     {reason: "Spec: the provider moved"}
                 )
+            }, true)
+            // SEC-ADM-87: a session with no recent sign-in repoints no connection and replaces no secret
+            as(users.manage, () => {
+                out.staleMove = store("remote", ids.remote, {sendUrl: "https://three.example.com/api"})
+                out.staleSecret = store("remote", ids.remote, {password: secret})
             })
             out.movedRow = one(REMOTE, {systemMessageRemoteId: ids.remote}).getMap()
             out.legacyRow = one(REMOTE, {systemMessageRemoteId: ids.legacy}).getMap()
             out.movedCheck = check("remote", ids.remote).getMap()
-            as(users.manage, () => {
+            asRecent(users.manage, () => {
                 out.afterMove = get("remote", ids.remote)
                 out.unsent = test("remote", ids.remote)
                 out.unsentRequests = http.count()
@@ -324,6 +342,8 @@ feature(
             out.stale.reasonCode === "STALE_REVISION"
             // the endpoint moved: every stored secret cleared, disabled, its test mark gone, the audit with no value
             out.moved.applied === true
+            out.staleMove.reasonCode === "reauthRequired"
+            out.staleSecret.reasonCode === "reauthRequired"
             out.moved.secretCleared === true
             out.moved.enabled === false
             out.movedRow.sendUrl === "https://two.example.com/api"
@@ -389,7 +409,7 @@ feature(
     {
         when() {
             const out = {}
-            as(users.manage, () => {
+            asRecent(users.manage, () => {
                 out.moved = store("mailOAuth", ids.oauth, {clientId: "spec-client-two"})
                 out.unsent = test("mailOAuth", ids.oauth)
                 out.entered = store("mailOAuth", ids.oauth, {clientSecret: secret + "-two"})
@@ -433,7 +453,7 @@ feature(
 feature("an EmailServer a mail account owns is no relay on any path, and a relay or a printer is tested within its bounds", {
     when() {
         const out = {}
-        as(users.manage, () => {
+        asRecent(users.manage, () => {
             out.relays = invoke(C + "find#Connections", {adapterGroup: "mail"})
             out.ownedRead = get("relay", ids.owned)
             out.ownedStore = invoke(C + "store#Connection", {

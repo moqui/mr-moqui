@@ -199,8 +199,16 @@ Medium; likely (lead); fixed.
 
 #### SEC-RTE-91. A multipart request from anyone, to any path, has no total time limit, so slow uploads hold every connection
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-moqui c0d0ac3e0, 4495f70ad, e85557ed5).
+  - **Upload pace:** the upload readers live in `crates/moqui-host/src/http/upload.rs`. Each chunk is waited for only until the average rate would fall under `requests@upload-min-rate` (1024 bytes a second) once `body-timeout` has passed (`upload_wait`). Past that the answer is 408.
+  - **Total cap:** `HttpState::uploads` holds at most `max-uploads` (1024) uploads arriving at once. An upload whose request names no user takes at most three quarters of them.
+  - **Per-client cap:** an upload with no user is also limited to `requests@max-uploads-per-client` (16) per client, whether or not per-client protection is on (`upload::per_client_key`).
+    - It is counted only by an address that is really the client's: client addressing is configured, or the peer is not on loopback or a private network. So a reverse proxy or an office NAT is not one shared client.
+    - An IPv6 client is keyed by `client-ipv6-prefix`.
+    - Uploads with a user, DAV PUT included, count only in the totals.
+  - **Tests:** `http/upload_tests.rs`. The proxy case is `an_upload_is_counted_per_client_only_by_an_address_that_is_the_clients`. A slow multipart through `dispatch_screen` is answered 408.
 - **Where:** `crates/moqui-host/src/http/serve.rs:655-664` (`upload`: any request whose `Content-Type` starts with `multipart/`), `:711`, `:542-552` (`request_deadline` gives a `streaming` request none); `crates/moqui-host/src/http.rs:1247-1252` (`read_multipart`: only `upload-idle-timeout` between chunks); `:1182-1183` (the deadline starts only once the body has arrived); `runtime/components/base/framework/conf/MoquiDefaultConf.xml:576-597` (`connections max="4096" max-per-client="64"`, `body-timeout="60"`, `upload-idle-timeout="60"`, `request-timeout="300"`; the per-client parts are on only with `trusted-proxies` or `enabled="true"`).
 - **Reached by:** anyone, with no session: a `multipart/form-data` POST to any path (anonymous bodies stop at `max-body`, 10 MiB; under `/s/` at `max-upload`, 2 GiB).
 - **What happens:** Any other body must arrive within `body-timeout` (60 s), and a request must answer within `request-timeout` (300 s). A multipart body has neither: it is cut off only when nothing arrives for 60 s. A client that sends one byte every 50 s keeps a request open for as long as it likes: 10 MiB at that rate lasts for years. Each such request holds a connection and an open spool. Scenario: one anonymous client on a server with no `trusted-proxies` (per-client limits off by default) opens 4096 such uploads to `/Login`. The listeners stop accepting, and no one can reach the server until the client stops. With per-client limits on, 64 addresses do the same.

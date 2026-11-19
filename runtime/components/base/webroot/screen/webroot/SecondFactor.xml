@@ -15,12 +15,12 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-include="false" require-authentication="anonymous-all" history="false">
 
-    <transition name="sendOtp">
+    <transition name="sendOtp" method="post">
         <service-call name="org.moqui.impl.UserServices.send#ExternalAuthcCode" in-map="{factorId:factorId}"/>
         <default-response url="."/>
     </transition>
 
-    <transition name="verifyUserAuthcFactor">
+    <transition name="verifyUserAuthcFactor" method="post">
         <actions>
             <set field="username" from="ec.web.sessionAttributes.moquiPreAuthcUsername"/>
             <service-call name="org.moqui.impl.UserServices.validate#ExternalUserAuthcCode"

@@ -64,6 +64,7 @@ fn state(factory: &Arc<ExecutionContextFactory>) -> Arc<HttpState> {
         shutdown,
         limits: ListenLimits::defaults(),
         guard: crate::guard::tests::guard("<web-protection/>", ""),
+        uploads: Arc::default(),
     })
 }
 
