@@ -115,6 +115,23 @@ function purposes() {
 function isCustom(group, purposeIds = new Set(purposes().map(row => row.enumId))) {
     return !!group?.groupTypeEnumId && purposeIds.has(group.groupTypeEnumId)
 }
+// A privileged bundle is not the actor's to give their own account (SEC-ADM-90): a privileged group (ADMIN among them) or a
+// group that grants a sealed permission, even one the actor holds, is given to them by another access administrator, so
+// holding ADMIN_ACCESS_MANAGE does not make a second seal for oneself. Any other bundle they may delegate they may also
+// hold, as SEC-ADM-06 chose (an access administrator changes their own memberships; an identity operator does not), with
+// the reason in the audit log. The refusal, or null.
+function ownPrivilegedRefusal(account, groupId, privileged = privilegedIds(), sealed = sealedIds()) {
+    if (!account || account.userId !== ec.user.userId) return null
+    const sealedGrant = rows(GRANT, {userGroupId: groupId}).some(row => current(row) && sealed.has(row.userPermissionId))
+    if (!privileged.has(groupId) && !sealedGrant) return null
+    return {
+        reasonCode: "OWN_ACCOUNT",
+        reason:
+            groupId +
+            (sealedGrant ? " grants a sealed permission" : " is a privileged group") +
+            ": another access administrator gives it to your own account"
+    }
+}
 // What the actor may change of a group: a registered bundle or a custom group, and for a privileged group only a member. The
 // reason code when not.
 function groupRefusal(group, registry = bundles(), privileged = privilegedIds()) {
@@ -553,6 +570,11 @@ function storeMembership(p) {
                 "MEMBERSHIP_EXISTS",
                 account.username + " is already a member of " + group.userGroupId + " for those dates"
             )
+    }
+    // a new membership of one's own, or one's own kept longer, in a privileged bundle
+    if (!existing || (ms(existing.thruDate) ?? Infinity) < (thruDate ?? Infinity)) {
+        const own = ownPrivilegedRefusal(account, group.userGroupId)
+        if (own) return refused(own.reasonCode, own.reason)
     }
     const row = {userGroupId: group.userGroupId, userId: account.userId, fromDate, thruDate}
     const path = identity.administrationPath({memberships: [row]})
@@ -1104,6 +1126,11 @@ function applyGrantProposal(p) {
     const bundleList = proposalBundles(p)
     const first = bundleList.find(row => !row.allowed)
     if (first) return refused(first.reasonCode, first.reason, {bundleList})
+    // an access administrator's own account: not a privileged bundle (SEC-ADM-90)
+    for (const row of bundleList) {
+        const own = ownPrivilegedRefusal(account, row.bundleGroupId)
+        if (own) return refused(own.reasonCode, own.reason, {bundleList})
+    }
     const now = nowMs()
     const fromDate = p.fromDate != null && p.fromDate !== "" ? ms(p.fromDate) : now
     if (!Number.isFinite(fromDate) || fromDate < now - 60000) throw new Error("A proposal's memberships start now or later")

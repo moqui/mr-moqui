@@ -15,6 +15,7 @@ const bundleId = "SPEC_ACC_BUNDLE"
 const teamId = "SPEC_ACC_TEAM"
 const unregisteredId = "SPEC_ACC_UNREGISTERED"
 const sealedGroupId = "SPEC_ACC_SEALED"
+const sealedBundleId = "SPEC_ACC_SEALED_BUNDLE"
 const appGroupId = "SPEC_ACC_APP"
 const preferenceKey = "SPEC_ACC_PAGE_SIZE"
 const viewPermission = "SPEC_ACC_VIEW"
@@ -114,7 +115,7 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, "SPEC_ACC_ADMINS"]
+        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, sealedBundleId, "SPEC_ACC_ADMINS"]
         for (const authz of rows("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}))
             find("moqui.security.ArtifactAuthzFilter", {artifactAuthzId: authz.artifactAuthzId}).deleteAll()
         find("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}).deleteAll()
@@ -301,6 +302,41 @@ feature(
         }
     }
 )
+
+// SEC-ADM-90: an access administrator gives their own account no privileged bundle (a privileged group, or one that grants a
+// sealed permission, even one they hold), by a membership or a grant proposal; they give it to another account, and a plain
+// bundle to their own
+feature("an access administrator gives their own account no privileged bundle", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserGroup", {userGroupId: sealedBundleId, description: "Spec sealed bundle"})
+        make("moqui.security.CapabilityBundle", {userGroupId: sealedBundleId, appName: "Spec", description: "Spec sealed bundle"})
+        make("moqui.security.UserGroupPermission", {userGroupId: sealedBundleId, userPermissionId: "ADMIN_PASSWORD", fromDate: 0})
+        ec.artifactExecution.enableAuthz()
+        // john.doe (ADMIN) holds ADMIN_PASSWORD and ADMIN_ACCESS_MANAGE
+        const holder = as("john.doe", () => ({
+            own: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: "EX_JOHN_DOE", reason: "Spec own"}),
+            ownProposal: invoke(S + "apply#GrantProposal", {userId: "EX_JOHN_DOE", bundleGroupIdList: [sealedBundleId], reason: "Spec own"}),
+            other: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: targetId, reason: "Spec other"})
+        }))
+        const plain = as(adminUser, () => {
+            const added = invoke(S + "store#Membership", {userGroupId: bundleId, userId: adminId, reason: "Spec own plain"})
+            const ended = invoke(S + "end#Membership", {userGroupId: bundleId, userId: adminId, fromDate: added.fromDate,
+                expectedRevision: added.revision})
+            return {added, ended}
+        })
+        const members = userId => rows("moqui.security.UserGroupMember", {userGroupId: sealedBundleId, userId}).length
+        return Object.assign(holder, plain, {ownRows: members("EX_JOHN_DOE"), otherRows: members(targetId)})
+    },
+    then({own, ownProposal, other, added, ended, ownRows, otherRows}) {
+        own.applied == false && own.reasonCode == "OWN_ACCOUNT"
+        ownProposal.applied == false && ownProposal.reasonCode == "OWN_ACCOUNT"
+        ownRows == 0
+        other.applied == true
+        otherRows == 1
+        added.applied == true && ended.applied == true
+    }
+})
 
 feature("the last administration path is refused with a reason", {
     when() {

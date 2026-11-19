@@ -122,9 +122,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A dated membership of a user in a registered bundle or a custom group, from fromDate (now when empty) to thruDate;
             with the fromDate of an existing membership and its revision, a change of its end date. Refused for an unregistered
             group (UNREGISTERED_BUNDLE), a bundle whose delegable permission the actor lacks, a privileged group the actor is not
-            in (PRIVILEGED_GROUP, before the EECA would refuse it), an overlapping membership, a stale revision or a change that
-            would leave no administration path. The dates are audit-logged with the reason; ended memberships are kept. Needs
-            ADMIN_ACCESS_MANAGE.</description>
+            in (PRIVILEGED_GROUP, before the EECA would refuse it), the actor's own account in a privileged group or one that
+            grants a sealed permission (OWN_ACCOUNT, SEC-ADM-90: another access administrator gives it), an overlapping
+            membership, a stale revision or a change that would leave no administration path. The dates are audit-logged with
+            the reason; ended memberships are kept. Needs ADMIN_ACCESS_MANAGE.</description>
         <in-parameters>
             <parameter name="userGroupId" required="true"/>
             <parameter name="userId" required="true"/>
@@ -263,7 +264,8 @@ along with this software (see the LICENSE.md file). If not, see
             privileged EECAs decide it; refused whole, nothing written, when any bundle is refused (check#GrantProposal); a bundle
             the account is already in is left. The dates are audit-logged with the reason. The framework knows no
             organization: the caller scopes the account. Needs ADMIN_ACCESS_MANAGE or ADMIN_IDENTITY_MANAGE; with only the
-            latter the caller's own account is refused (reasonCode OWN_ACCOUNT).</description>
+            latter the caller's own account is refused (reasonCode OWN_ACCOUNT), and with the former a privileged bundle for it
+            (a privileged group or one that grants a sealed permission, as store#Membership).</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="bundleGroupIdList" type="List" required="true"/>
