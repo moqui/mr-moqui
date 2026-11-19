@@ -952,8 +952,9 @@ owner mode, to one address line.
 - **Ownership.** A business schedule whose owner is disabled or gone pauses (`pausedReason` `owner-disabled`) at its next
   run. `find#OwnedSchedules`, `pause#OwnedSchedules` and `transfer#DefinitionOwner` carry the owned-resource contract of
   `org.moqui.admin.IdentityServices` for an account's lifecycle: the user's own, or another user's for a holder of
-  `REPORT_OWNER_CHANGE` (`ADMIN`'s). A transfer hands one schedule, with its definition and the definitions that references
-  which the leaving owner owns, to an active internal user who may store a schedule, reads every source and, for a group
+  `REPORT_OWNER_CHANGE` (`ADMIN`'s). A transfer hands one schedule, with its definition and the dashboards, reports, panels,
+  datasets, CalcGrids and searches it references which the leaving owner owns (an alert rule stays its owner's until
+  `transfer#AlertRuleOwner`, which pauses it), to an active internal user who may store a schedule, reads every source and, for a group
   schedule, may deliver to a group (`NEW_OWNER_REFUSED` otherwise). The schedule stays paused (`transfer-pending`) until the
   new owner resumes it, which checks the recipients against the new owner's fingerprint; nothing is sent meanwhile, by Send
   now or a retry either. The caller of these gains no report data.

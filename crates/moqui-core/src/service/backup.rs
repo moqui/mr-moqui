@@ -46,11 +46,26 @@ pub(crate) const DIR_PROPERTY: &str = "database-backup@dir";
 /// `true` runs [`BACKUP_JOB`] on its schedule, `false` pauses it; set at each boot.
 pub(crate) const SCHEDULED_PROPERTY: &str = "database-backup@scheduled";
 const MESSAGE_TYPE: &str = "moqui.service.message.SystemMessageType";
+const JOB_PARAMETER: &str = "moqui.service.job.ServiceJobParameter";
+/// This service, as a `ServiceJob` names it.
+const SERVICE_NAME: &str = "org.moqui.impl.ServerServices.backup#EmbeddedDatabase";
+/// The parameters that say where the archives go: their directory and their mirror. Choosing them takes a copy of the
+/// whole database (password hashes, every organization's records) off the server, the download the sealed
+/// `ADMIN_BACKUP_DOWNLOAD` gates (plans/Security-Review-Medium.md SEC-TLS-83).
+pub(crate) const DESTINATION_PARAMETERS: [&str; 5] = [
+    "backupDir",
+    "systemMessageRemoteId",
+    "mirrorTransport",
+    "mirrorEncrypt",
+    "mirrorRecipient",
+];
+const DOWNLOAD_PERMISSION: &str = "ADMIN_BACKUP_DOWNLOAD";
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {
     rust_service!(map, backup_embedded_database)?;
+    rust_service!(map, get_backup_destination)?;
     Ok(())
 }
 
@@ -62,6 +77,10 @@ pub(super) fn backup_embedded_database(
 ) -> Result<BTreeMap<String, Value>, LibError> {
     // a backup writes files and may upload them: nothing a read or a preview may do
     crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, "backup#EmbeddedDatabase")?;
+    if let Some(refusal) = destination_refusal(facade, parameters)? {
+        add_error(refusal);
+        return Ok(BTreeMap::new());
+    }
     let Some(runner) = crate::backup::runner(facade) else {
         tracing::info!("embedded database backup skipped, this process has no embedded cluster");
         return Ok(outcome_map(
@@ -99,6 +118,75 @@ pub(super) fn backup_embedded_database(
         add_error(error.clone());
     }
     Ok(outcome_map(&outcome, &mirrored))
+}
+
+/// `get#BackupDestination`: the parameters that say where this service's archives go ([`DESTINATION_PARAMETERS`]) and
+/// the service's name, for the security rules on the rows that set them (`Security.eecas.xml` `BackupDestination*`,
+/// `BackupDestination.js`), so the list is kept once.
+pub(super) fn get_backup_destination(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    Ok(BTreeMap::from([
+        (
+            "parameterNameList".to_string(),
+            Value::List(DESTINATION_PARAMETERS.iter().map(|name| Value::string(*name)).collect()),
+        ),
+        ("serviceName".to_string(), Value::string(SERVICE_NAME)),
+        ("permissionId".to_string(), Value::string(DOWNLOAD_PERMISSION)),
+    ]))
+}
+
+/// Where a call's archives go, as this service reads it: each of [`DESTINATION_PARAMETERS`] as text, `mirrorEncrypt` as
+/// `Y` or `N` and the transport in lower case.
+pub(crate) fn destination(parameters: &BTreeMap<String, Value>) -> [String; 5] {
+    DESTINATION_PARAMETERS.map(|name| match name {
+        "mirrorEncrypt" => if flag_param(parameters, name) { "Y" } else { "N" }.to_string(),
+        "mirrorTransport" => param_text(parameters, name).trim().to_ascii_lowercase(),
+        _ => param_text(parameters, name).trim().to_string(),
+    })
+}
+
+/// Why this call may not send its archives where it says, or None: the default directory with no mirror, a call with
+/// authorization disabled (a setup, the job runner as the system), a holder of `ADMIN_BACKUP_DOWNLOAD`, and the
+/// destination of a `ServiceJob` of this service as it is stored (a run of the job, which only a holder sets up:
+/// `Security.eecas.xml` `BackupDestination*`) pass. Anyone else naming another directory or mirror, by Service Run or
+/// any other call, is refused (plans/Security-Review-Medium.md SEC-TLS-83).
+fn destination_refusal(
+    facade: &EntityFacade,
+    parameters: &BTreeMap<String, Value>,
+) -> Result<Option<String>, LibError> {
+    let given = destination(parameters);
+    if given == destination(&BTreeMap::new())
+        || ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(true)
+        || crate::user::has_permission(DOWNLOAD_PERMISSION).unwrap_or(false)
+    {
+        return Ok(None);
+    }
+    let jobs = facade
+        .find(SERVICE_JOB)?
+        .disable_authz()
+        .use_cache(false)
+        .eq("serviceName", Value::string(SERVICE_NAME))
+        .list()?;
+    for job in jobs.iter() {
+        let rows = facade
+            .find(JOB_PARAMETER)?
+            .disable_authz()
+            .use_cache(false)
+            .eq("jobName", Value::string(field(job, "jobName")))
+            .list()?;
+        let stored: BTreeMap<String, Value> = rows
+            .iter()
+            .map(|row| (field(row, "parameterName"), Value::string(field(row, "parameterValue"))))
+            .collect();
+        if destination(&stored) == given {
+            return Ok(None);
+        }
+    }
+    Ok(Some(format!(
+        "A backup sent to another directory or mirror than a backup job's takes the whole database off the server: it needs {DOWNLOAD_PERMISSION}"
+    )))
 }
 
 fn request_from(parameters: &BTreeMap<String, Value>) -> BackupRequest {

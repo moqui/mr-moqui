@@ -30,13 +30,18 @@ pub const USER_ACCOUNT_SECRET_FIELDS: &[&str] = &[
     "passwordBase64",
 ];
 
-/// `UserAccount` fields that control authentication and identity. Service REST drops them unless the caller is ADMIN.
+/// `UserAccount` fields that control authentication and identity: the sign-in name, where a reset is mailed, the
+/// provider link (`externalUserId`, `externalAuthFlowId`) and the key a key sign-in is checked by (`publicKey`), the
+/// flags and the counters. No generic write takes them, a Service REST entity resource's included, an ADMIN's too:
+/// `update#UserAccount` changes them, with its rules.
 pub const USER_ACCOUNT_IDENTITY_FIELDS: &[&str] = &[
     "disabled",
     "username",
     "emailAddress",
     "ipAllowed",
-    "externalAuthId",
+    "externalUserId",
+    "externalAuthFlowId",
+    "publicKey",
     "requirePasswordChange",
     "hasLoggedOut",
     "disabledDateTime",
@@ -58,6 +63,12 @@ const IDENTITY_ADMIN_ENTITY_KEYS: &[&str] = &[
     "artifactgroups",
     "userauthcfactor",
     "userpasswordhistory",
+    // an account's own sign-in credentials, made through UserServices' key, app password and device services (which ask
+    // whose account it is and what it holds, heldBeyond): a generic write could plant one on another account
+    // (plans/Security-Review-Medium.md SEC-ADM-81)
+    "usersshkey",
+    "userapppassword",
+    "devicecredential",
 ];
 
 /// Secret-config entities: `EmailServer` (host and password) and `SystemMessageRemote` (HMAC secret).
@@ -68,11 +79,15 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// SQL runs with changes (§8.2), which a generic write could forge; and `DatabaseConnection`, an external database's
 /// host and password (§4.3), which a generic write could point at another host to have the password sent there; and
 /// the ETL mappings, value maps and runs (§10), whose `expression` fields run as the mapping's user, so a generic write
-/// could plant a script in another user's mapping or take it over. No entity-auto service writes them either.
+/// could plant a script in another user's mapping or take it over; and the database jobs and their statements (§6), whose
+/// text `run#DatabaseJob` executes as written, so a generic write would run any SQL past the SQL runner's permission
+/// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88). No entity-auto service writes them either.
 const AUDIT_ENTITY_KEYS: &[&str] = &[
     "databaseaudit",
     "sqlruntoken",
     "databaseconnection",
+    "databasejob",
+    "databasejobstatement",
     "etlmapping",
     "etlmappingfield",
     "etlvaluemap",
@@ -104,7 +119,15 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
 /// changes write (SEC-RTE-03); and Monitor's recovery actions, adapters, policies and emergency stop, its instance drains
 /// and its ingest keys, whose `MONITOR_*` permissions only their own services check, so a generic write of a row would
 /// run a recovery action, plant a working ingest key or lift the stop without them (SEC-TLS-11); and the scrape targets
-/// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03).
+/// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03); and the
+/// mail OAuth providers, whose token endpoint is posted the client secret and every mailbox's refresh token, so a generic
+/// write could point it at another host (SEC-OUT-82): seed data, the conf and Admin's mail sign-in provider kind set them;
+/// and the ACME names, challenges, certificates and order locks, which the TLS listener answers and each member writes to
+/// `runtime/cert` as an order made them (SEC-OUT-81); and the network printers, whose server is sent each document printed
+/// and whose `allowPrivateNetwork` and test-print gate `store#Connection` keeps (SEC-RTE-83); and the
+/// service jobs, their parameters and their users, which the job runner calls with authorization off as the service a row
+/// names, so a generic write would schedule any service, with any parameters, as any of its users (SEC-TLS-85). System ›
+/// Operations, ETL's Schedule and the services that keep their own jobs write them through their own calls.
 const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "entityauditlog",
     "recoveryaction",
@@ -116,6 +139,31 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     // the allowPrivateNetwork flag of a scrape target or synthetic check is set in Monitor/Checks, with its permission
     "scrapetarget",
     "syntheticcheck",
+    // the token endpoint of a mail OAuth provider receives the client secret and the refresh tokens
+    "emailoauthprovider",
+    // a network printer's server is sent every document printed on it, and its allowPrivateNetwork is store#Connection's
+    "networkprinter",
+    // a sign-in provider (store#IdentityProvider, ConfigurationProviders.js, its only writer): the OAuth and OpenID
+    // Connect flows, whose token endpoint is sent the client secret, which it clears when an endpoint changes; the SAML
+    // flow, whose metadata location says whose assertions are believed; and the flow itself and its role mappings, whose
+    // enabling, default group, account linking and groups need ADMIN_ACCESS_MANAGE there
+    "authflow",
+    "authflowrolemap",
+    "oauthflow",
+    "oidcflow",
+    "samlflow",
+    // a SIP trunk's stored password goes to its host: store#VoiceTrunk clears it when the endpoint changes
+    "voicetrunk",
+    // ACME: a challenge row is answered on the TLS listener and a certificate row written to runtime/cert, so only an
+    // order (setup#AcmeName and the renewal job) writes them
+    "acmename",
+    "acmechallenge",
+    "acmecertificate",
+    "acmeorderlock",
+    // a job's serviceName and parameters run with authorization off; its users decide whom it runs as
+    "servicejob",
+    "servicejobparameter",
+    "servicejobuser",
 ];
 
 /// The text after the last `.`, in lower case.
@@ -143,8 +191,9 @@ pub fn is_secret_config_entity(entity_name: &str) -> bool {
     SECRET_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
-/// `DatabaseAudit`, `SqlRunToken` and `DatabaseConnection`: read and written only by their own services, never through
-/// generic entity reads, writes or loads.
+/// `DatabaseAudit`, `SqlRunToken`, `DatabaseConnection`, the ETL mappings and runs and the database jobs
+/// ([`AUDIT_ENTITY_KEYS`]): read and written only by their own services, never through generic entity reads, writes or
+/// loads.
 pub fn is_audit_entity(entity_name: &str) -> bool {
     AUDIT_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
@@ -597,6 +646,9 @@ mod tests {
             ("userauthcfactor", true, false),
             ("moqui.security.UserAuthcFactor", true, false),
             ("moqui.security.UserPasswordHistory", true, false),
+            ("moqui.security.UserSshKey", true, false),
+            ("UserAppPassword", true, false),
+            ("moqui.security.DeviceCredential", true, false),
             ("moqui.basic.email.EmailServer", false, true),
             ("moqui.service.message.SystemMessageRemote", false, true),
             ("moqui.security.UserAccount", false, false),
@@ -616,8 +668,31 @@ mod tests {
         assert!(!is_secret_config_entity("moqui.database.DatabaseConnection"));
         assert!(is_restricted_generic_entity("moqui.database.DatabaseConnection"));
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
-        // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11)
+        // a database job's statements run as written: no generic read or write, whose text would run past the SQL
+        // runner's permission (SEC-TLS-88)
         for name in [
+            "moqui.database.DatabaseJob",
+            "moqui.database.DatabaseJobStatement",
+            "DatabaseJobStatement",
+        ] {
+            assert!(is_audit_entity(name), "{name}");
+            assert!(is_generic_write_refused(name), "{name}");
+            assert!(is_restricted_generic_entity(name), "{name}");
+        }
+        // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11, SEC-OUT-82)
+        for name in [
+            "moqui.security.sso.AuthFlow",
+            "moqui.security.sso.AuthFlowRoleMap",
+            "moqui.security.sso.OauthFlow",
+            "moqui.security.sso.OidcFlow",
+            "moqui.security.sso.SamlFlow",
+            "moqui.call.VoiceTrunk",
+            "moqui.basic.email.EmailOAuthProvider",
+            "moqui.basic.print.NetworkPrinter",
+            "moqui.server.AcmeName",
+            "moqui.server.AcmeChallenge",
+            "moqui.server.AcmeCertificate",
+            "moqui.server.AcmeOrderLock",
             "moqui.entity.EntityAuditLog",
             "moqui.monitor.RecoveryAction",
             "moqui.monitor.RecoveryAdapter",

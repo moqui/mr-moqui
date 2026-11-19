@@ -1125,6 +1125,22 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="template-renderer"/>
                 <xs:element minOccurs="0" maxOccurs="1" ref="theme-limits"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="script-runner"/>
+                <xs:element minOccurs="0" maxOccurs="1" name="drive-share">
+                    <xs:annotation><xs:documentation>The limits of a drive's share links (FileServices download#PublicShare,
+                        upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per link and per requester. No Java counterpart.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:attribute name="folder-zip-max-bytes" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>The most bytes a folder's zip holds; a larger folder is refused, not cut.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="folder-zip-max-files" type="non-neg-int-expandable" default="20000"><xs:annotation><xs:documentation>The most files a folder's zip holds; a folder with more is refused.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="folder-zip-builds-per-link" type="non-neg-int-expandable" default="20"><xs:annotation><xs:documentation>The folder zips made for one link in ten minutes; a zip kept and sent again counts nothing.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="folder-zip-downloads-per-requester" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>The folder zips one requester asks for in ten minutes.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="upload-max-files" type="non-neg-int-expandable" default="20"><xs:annotation><xs:documentation>Files in one upload through a link.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="upload-max-bytes" type="non-neg-int-expandable" default="104857600"><xs:annotation><xs:documentation>Bytes in one upload through a link.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="upload-link-max-files" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>Files uploaded through one link in all.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="upload-link-max-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>Bytes uploaded through one link in all.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="upload-calls-per-link" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>Upload calls through one link in an hour.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="upload-calls-per-requester" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>Upload calls from one requester in an hour.</xs:documentation></xs:annotation></xs:attribute>
+                    </xs:complexType>
+                </xs:element>
             </xs:sequence>
             <xs:attribute name="xml-actions-template-location" type="xs:string"/>
             <xs:attribute name="xsl-fo-handler-factory" type="xs:string"><xs:annotation><xs:documentation>

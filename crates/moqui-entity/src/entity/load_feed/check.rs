@@ -31,6 +31,7 @@ use moqui_lib::object::{basic_convert, compare_obj, to_plain_string, Value};
 use super::loader::{convert_fields, inherit_pk_fields, load_entity_data, load_entity_xml_text, Record};
 use super::{DataFileService, LoadOptions};
 use crate::entity::facade::EntityFacade;
+use crate::entity::sensitive;
 use crate::entity::EntityValue;
 use crate::entity::FieldMap;
 
@@ -355,7 +356,18 @@ impl Findings {
     }
 }
 
+/// A check reads the stored record the data names, so it is generic access ([`sensitive::generic_access`]): an entity no
+/// generic read takes (identity, secret-config, audit and hosted-instance entities, and views over them) is refused, and
+/// a password or encrypted field is not compared, so no stored value of one is answered or matched
+/// (plans/Security-Review-Medium.md SEC-TLS-84).
 fn check_tree(facade: &EntityFacade, record: &Record, ancestor: &FieldMap, found: &mut Findings) -> Result<u64, Error> {
+    let access = sensitive::generic_access(facade, &record.entity);
+    if !access.read {
+        return Err(Error::new(format!(
+            "Entity {} is not available in a data check",
+            record.entity
+        )));
+    }
     let mut fields = record.fields.clone();
     inherit_pk_fields(facade, &record.entity, ancestor, &mut fields)?;
     convert_fields(facade, &record.entity, &mut fields)?;
@@ -364,7 +376,7 @@ fn check_tree(facade: &EntityFacade, record: &Record, ancestor: &FieldMap, found
         let non_pk_names: Vec<String> = entity
             .fields
             .iter()
-            .filter(|field| !field.is_pk && field.name != "lastUpdatedStamp")
+            .filter(|field| !field.is_pk && field.name != "lastUpdatedStamp" && !access.hidden(&field.name))
             .map(|field| field.name.clone())
             .collect();
         Ok((pk_names, non_pk_names))

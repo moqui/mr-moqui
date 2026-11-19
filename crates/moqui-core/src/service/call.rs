@@ -52,6 +52,12 @@ pub struct CallOptions {
     /// A rollback of this call will be retried (a scheduled job's run): its operation's outcome is `retry`, not
     /// `rollback` (plans/archive/Monitoring.md, Later: Business operations).
     pub operation_retry: bool,
+    /// `generic()`: a call of a service a request or a stored row names, not one the framework's own code makes: Tools ›
+    /// Service Run and a `ServiceJob`'s run. Its entity-auto write, and each record nested in it, refuses an entity no
+    /// generic write takes and an account's password or identity change, as Service REST and the other generic tools do
+    /// (`run_entity`, [`generic_entity_refusal`], [`account_write_refusal`]); a defined service, which checks its own
+    /// permissions, runs as any call does, and so do the entity-auto calls it makes.
+    pub generic: bool,
 }
 
 impl CallOptions {
@@ -667,7 +673,7 @@ fn sync_input(
             tracing::warn!(service = %def.name, "errors before the service ran, so it was not run");
             return Ok(());
         }
-        let ran = execute(&def, &cleaned, &facade);
+        let ran = execute(&def, &cleaned, &facade, options.generic);
         // As Java's `finally` after the runner: tx-rollback rules are registered once the service ran, with its results,
         // empty when it failed. tx-commit is last so a post-service entity write can still register the feed schedule
         // hook.
@@ -1449,10 +1455,13 @@ fn verb_action(verb: &str) -> &'static str {
     }
 }
 
+/// Run the service's body. `generic`: the call is a generic one ([`CallOptions::generic`]), which an entity-auto body
+/// checks.
 fn execute(
     def: &ServiceDef,
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
+    generic: bool,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     match def.kind {
         ServiceKind::Rust => match def.rust_fn {
@@ -1503,7 +1512,7 @@ fn execute(
                 .map_err(|err| LibError::new(err.message()))
             })
         }
-        ServiceKind::EntityAuto => run_entity(facade, &def.verb, &def.noun, parameters, 0),
+        ServiceKind::EntityAuto => run_entity(facade, &def.verb, &def.noun, parameters, 0, generic),
         ServiceKind::Inline => run_inline(def, parameters),
     }
 }
@@ -1580,15 +1589,119 @@ fn project(def: &ServiceDef, values: BTreeMap<String, Value>) -> BTreeMap<String
         .collect()
 }
 
+/// Why a generic write (Service REST's entity resources, a generic call's entity-auto service) may not write
+/// `entity_name` with `parameters`, or None: the entities a generic write refuses (identity, audit, hosted-instance,
+/// service-written and service job; a secret-config one but to a member of `ADMIN`), and a mail account's own server
+/// (plans/Security-Review-Medium.md SEC-TLS-85). Their own services, and the framework's own calls, still write them.
+///
+/// # Errors
+///
+/// Returns an error when the entity or the account's server cannot be read.
+pub fn generic_entity_refusal(
+    facade: &EntityFacade,
+    entity_name: &str,
+    parameters: &BTreeMap<String, Value>,
+) -> Result<Option<String>, Error> {
+    use crate::entity::sensitive;
+    let full_name = facade
+        .with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone()))
+        .unwrap_or_else(|_| entity_name.to_string());
+    let refused = (sensitive::is_generic_write_refused(&full_name) || sensitive::is_generic_write_refused(entity_name))
+        && !(sensitive::is_secret_config_entity(&full_name) && crate::user::is_in_group("ADMIN")?);
+    if refused || sensitive::account_owned_email_server(facade, &full_name, parameters)? {
+        return Ok(Some(format!(
+            "Entity {full_name} is written only by its own services, not by a generic call of its entity-auto services"
+        )));
+    }
+    Ok(None)
+}
+
+/// Why a generic call's entity-auto write of a `UserAccount` may not go, or None: it sets a password field, or changes
+/// an identity field (`username`, `emailAddress`, `disabled` and the rest) of an account that is there, as the
+/// generic tools' `protectUserAccounts` refuses; a new account may be created with its identity fields. Identity and
+/// password changes go through the account services and screens, which check who may change whom
+/// (plans/Security-Review-Medium.md SEC-TLS-85).
+///
+/// # Errors
+///
+/// Returns an error when the stored account cannot be read.
+pub fn account_write_refusal(
+    facade: &EntityFacade,
+    verb: &str,
+    entity_name: &str,
+    parameters: &BTreeMap<String, Value>,
+) -> Result<Option<String>, LibError> {
+    use crate::entity::sensitive;
+    let full_name = facade
+        .with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone()))
+        .unwrap_or_else(|_| entity_name.to_string());
+    if verb == "delete" || !sensitive::is_user_account_entity(&full_name) {
+        return Ok(None);
+    }
+    let set = |field: &str| parameters.get(field).is_some_and(|value| !is_empty(value));
+    if let Some(field) = sensitive::USER_ACCOUNT_SECRET_FIELDS.iter().find(|field| set(field)) {
+        return Ok(Some(format!(
+            "The {field} of {full_name} is not taken by a generic call of its entity-auto services"
+        )));
+    }
+    let named: Vec<&str> = sensitive::USER_ACCOUNT_IDENTITY_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| parameters.contains_key(*field))
+        .collect();
+    let user_id = parameters
+        .get("userId")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
+    if named.is_empty() || user_id.is_empty() {
+        return Ok(None);
+    }
+    let stored = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find(&full_name)?
+            .eq("userId", Value::string(&user_id))
+            .use_cache(false)
+            .one()?
+    };
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    let text = |value: Option<&Value>| value.map(moqui_lib::object::to_plain_string).unwrap_or_default();
+    Ok(named
+        .into_iter()
+        .find(|field| text(parameters.get(*field)) != text(stored.get(field)))
+        .map(|field| {
+            format!(
+                "The {field} of an existing {full_name} is changed through the account services, not by a generic call"
+            )
+        }))
+}
+
+/// An entity-auto write of `noun` and the records nested in it. `generic`: the call is a generic one
+/// ([`CallOptions::generic`]), so the record and each nested one is refused where a generic write is refused; the
+/// framework's own calls (a service's or screen's `service-call`, [`store_entity`]) pass false.
 fn run_entity(
     facade: &EntityFacade,
     verb: &str,
     noun: &str,
     parameters: &BTreeMap<String, Value>,
     depth: u32,
+    generic: bool,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     if depth > 8 {
         return Err(LibError::new("nested entity-auto is too deep"));
+    }
+    if generic {
+        let refusal = match generic_entity_refusal(facade, noun, parameters) {
+            Ok(None) => account_write_refusal(facade, verb, noun, parameters)?,
+            Ok(refusal) => refusal,
+            Err(err) => return Err(LibError::new(err.message())),
+        };
+        if let Some(refusal) = refusal {
+            tracing::warn!(entity = %noun, "{refusal}");
+            return Err(LibError::new(refusal));
+        }
     }
     // the entities only their own services write (the database audit, SQL run tokens, external connections, ETL
     // mappings and runs): never through an entity-auto service, whoever calls it
@@ -1686,7 +1799,7 @@ fn run_entity(
     }
     // a nested record takes the reasons passed with it, not its parent's
     drop(reasons);
-    nest(facade, verb, noun, parameters, &record, depth)?;
+    nest(facade, verb, noun, parameters, &record, depth, generic)?;
     let mut out = status_out;
     for pk in pk_names {
         if let Some(value) = record.get(pk) {
@@ -1751,7 +1864,7 @@ pub(crate) fn store_entity(
     entity_name: &str,
     parameters: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    run_entity(facade, "store", entity_name, parameters, 0)
+    run_entity(facade, "store", entity_name, parameters, 0, false)
 }
 
 fn assign_sequence(facade: &EntityFacade, record: &mut EntityValue, pk_names: &[String]) -> Result<(), LibError> {
@@ -1882,6 +1995,7 @@ fn nest(
     parameters: &BTreeMap<String, Value>,
     record: &EntityValue,
     depth: u32,
+    generic: bool,
 ) -> Result<(), LibError> {
     let child_verb = if verb == "delete" { "delete" } else { "store" };
     for (key, value) in parameters {
@@ -1897,7 +2011,7 @@ fn nest(
         };
         for mut child in children {
             fill_link(&mut child, parameters, record, &link);
-            run_entity(facade, child_verb, &link.entity, &child, depth + 1)?;
+            run_entity(facade, child_verb, &link.entity, &child, depth + 1, generic)?;
         }
     }
     Ok(())

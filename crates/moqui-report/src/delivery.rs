@@ -436,10 +436,35 @@ fn collect(
 /// The scope fingerprint of the entered viewer for a definition. Call it in a context signed in as that user
 /// ([`scope_as`]), so only their own grants decide.
 pub(crate) fn scope(ec: &ExecutionContext, definition_id: &str) -> Scope {
+    scope_reading(ec, definition_id, false)
+}
+
+/// [`scope`], with `leave_acting` the walk of a schedule's transfer: a definition a transfer does not hand on
+/// ([`MOVES_WITH_SCHEDULE`]: an alert rule, a contact point, a silence, a mute timing) stays with its owner, paused by
+/// `transfer#AlertRuleOwner` until its own new owner resumes it, so the new owner's qualification neither reads it nor
+/// what it reads (plans/Security-Review-Medium.md SEC-TLS-90).
+fn scope_reading(ec: &ExecutionContext, definition_id: &str, leave_acting: bool) -> Scope {
     let (mut seen, mut datasets, mut unread) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    let left = |id: &str| {
+        leave_acting
+            && id != definition_id
+            && definitions::read_unchecked(ec, id)
+                .ok()
+                .flatten()
+                .is_some_and(|definition| {
+                    !MOVES_WITH_SCHEDULE.contains(&definition["type"].as_str().unwrap_or_default())
+                })
+    };
     walk(
         definition_id,
-        &|id| definitions::read(ec, id).ok(),
+        &|id| {
+            if left(id) {
+                // read, and naming nothing: what it reads is its own owner's
+                Some(json!({"type": "left-with-its-owner", "body": {}}))
+            } else {
+                definitions::read(ec, id).ok()
+            }
+        },
         &mut seen,
         &mut datasets,
         &mut unread,
@@ -563,6 +588,15 @@ pub(crate) fn scope_as(ec: &ExecutionContext, username: &str, definition_id: &st
     let _entered = context.enter();
     moqui_core::user::internal_login_user(username)?;
     Ok(scope(&context, definition_id))
+}
+
+/// [`scope_as`] for a schedule's transfer, which leaves the definitions it does not hand on with their owner
+/// ([`scope_reading`]).
+fn transfer_scope_as(ec: &ExecutionContext, username: &str, definition_id: &str) -> Result<Scope, Error> {
+    let context = ec.factory().new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(username)?;
+    Ok(scope_reading(&context, definition_id, true))
 }
 
 /// Whether `username` holds an artifact by their own grants, asked in a context of their own.
@@ -2000,6 +2034,13 @@ fn pause_owned_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Paramet
     Ok(out(json!({"pausedCount": paused})))
 }
 
+/// The definition types a schedule's transfer hands on with it: what a report reads and shows. An alert rule acts on
+/// its own, evaluated as its owner each minute and notifying the contact points its author wrote, so it goes only
+/// through `transfer#AlertRuleOwner`, which pauses it until the new owner resumes it and clears its state; its contact
+/// points, silences and mute timings stay with it, and the walk does not go through it
+/// (plans/Security-Review-Medium.md SEC-TLS-90).
+const MOVES_WITH_SCHEDULE: &[&str] = &["dashboard", "report", "panel", "dataset", "calcgrid", "search"];
+
 /// `transfer#DefinitionOwner`.
 fn transfer_definition_owner(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let (from, to, id) = (text(p, "fromUserId"), text(p, "toUserId"), text(p, "screenScheduledId"));
@@ -2040,6 +2081,9 @@ fn transfer_definition_owner(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Par
                 .eq("definitionId", Value::string(&next))
                 .one()?
             {
+                if !MOVES_WITH_SCHEDULE.contains(&field(&row, "definitionType")) {
+                    continue;
+                }
                 // a telemetry alias the leaving owner does not hold the index of stays theirs (alias.rs)
                 let owned = field(&row, "ownerId") == from && field(&row, "readOnly") != "Y";
                 let goes = owned
@@ -2061,7 +2105,8 @@ fn transfer_definition_owner(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Par
         }
     }
     // qualified: the new owner reads the definition and every source it names (an error rolls the moves back)
-    let scope = scope_as(ec, &new_owner.username, &definition_id)?;
+    // an alert rule it names stays its owner's (paused by transfer#AlertRuleOwner), not a source the new owner must read
+    let scope = transfer_scope_as(ec, &new_owner.username, &definition_id)?;
     if scope.denied {
         return Err(fail(
             "NEW_OWNER_REFUSED: the new owner may not read this report or one of its sources",

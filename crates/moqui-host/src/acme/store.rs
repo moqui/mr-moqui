@@ -222,12 +222,14 @@ pub(crate) fn remove(factory: &ExecutionContextFactory, host: &str) -> Result<bo
     Ok(removed)
 }
 
-/// Put `host`'s challenge in place: its row, for every member, and this process's memory.
+/// Put `host`'s challenge in place: its row, for every member, and this process's memory. `probe`: the reachability
+/// check's own, before the name is set up ([`refused_challenge`]).
 pub(crate) fn put_challenge(
     factory: &ExecutionContextFactory,
     host: &str,
     digest: &[u8; 32],
     open_for: Duration,
+    probe: bool,
 ) -> Result<(), Error> {
     let facade = facade(factory)?;
     let expires = moqui_core::user::now_millis() + i64::try_from(open_for.as_millis()).unwrap_or(i64::MAX / 2);
@@ -236,6 +238,7 @@ pub(crate) fn put_challenge(
         row.set("hostName", Value::string(host));
         row.set("keyAuthDigest", Value::string(crate::tls_pin::hex(digest)));
         row.set("expireDate", moqui_core::user::stamp_value(expires));
+        row.set("probe", Value::string(if probe { "Y" } else { "N" }));
         row.create_or_update(&facade)
     })?;
     let acme = Acme::of(factory);
@@ -261,31 +264,72 @@ pub(crate) fn close_challenge(factory: &ExecutionContextFactory, host: &str, dig
     Ok(())
 }
 
-/// Read the open challenges into `acme`.
+/// Read the open challenges into `acme`: those of a name set up here, and the reachability check's ([`refused_challenge`]).
 pub(crate) fn read_challenges(factory: &ExecutionContextFactory, acme: &Acme) -> Result<(), Error> {
     let facade = facade(factory)?;
     let now = moqui_core::user::now_millis();
-    let rows = committed(&facade, CHALLENGE, || {
-        facade
+    let (rows, names) = committed(&facade, CHALLENGE, || {
+        let rows = facade
             .find(CHALLENGE)?
             .condition(moqui_core::entity::Condition::greater(
                 "expireDate",
                 moqui_core::user::stamp_value(now),
             ))
-            .list()
+            .list()?;
+        let names = if rows.is_empty() {
+            moqui_core::entity::EntityList::new(Vec::new())
+        } else {
+            facade.find(NAME)?.select_field("hostName").list()?
+        };
+        Ok((rows, names))
     })?;
+    let set_up: HashSet<String> = names.iter().map(|row| text(row, "hostName")).collect();
     let mut challenges = HashMap::new();
     for row in rows.iter() {
         let host = text(row, "hostName");
         match (parse_digest(&text(row, "keyAuthDigest")), millis(row, "expireDate")) {
             (Some(digest), Some(expires)) => {
-                challenges.insert(host, Arc::new(Challenge::new(digest, expires)));
+                match refused_challenge(&host, expires, text(row, "probe") == "Y", &set_up, now) {
+                    None => {
+                        challenges.insert(host, Arc::new(Challenge::new(digest, expires)));
+                    }
+                    Some(why) => tracing::error!("The ACME challenge row of {host} is left out: {why}"),
+                }
             }
             _ => tracing::error!("The ACME challenge row of {host} is not usable; it is left out"),
         }
     }
     acme.replace_challenges(challenges);
     Ok(())
+}
+
+/// Why an unexpired challenge row is not answered, or None when it is. An order writes one only for a name set up here
+/// and keeps it open [`CHALLENGE_OPEN`](super::order::CHALLENGE_OPEN); the reachability check (`probe`) writes one, with
+/// a digest it drew at random, before the name is set up and keeps it open [`PROBE_OPEN`](super::check::PROBE_OPEN). A
+/// row for a name not set up that is not a probe, or one open longer than its kind keeps one, is neither (a generic
+/// write's, which would have the listener prove the name to an authority for whoever wrote it:
+/// plans/Security-Review-Medium.md SEC-OUT-81); the rows are written only by these services. A minute is allowed for
+/// the members' clocks.
+pub(crate) fn refused_challenge(
+    host: &str,
+    expires: i64,
+    probe: bool,
+    set_up: &HashSet<String>,
+    now: i64,
+) -> Option<&'static str> {
+    let open = if probe {
+        super::check::PROBE_OPEN
+    } else {
+        super::order::CHALLENGE_OPEN
+    };
+    let open = i64::try_from(open.as_millis()).unwrap_or(i64::MAX / 4);
+    if !probe && !set_up.contains(host) {
+        Some("its name is not set up here")
+    } else if expires > now.saturating_add(open).saturating_add(60_000) {
+        Some("it is open longer than an order or the check keeps a challenge open")
+    } else {
+        None
+    }
 }
 
 /// Take `host`'s order lock for `instance`: true when this member may order it now, false when another member holds
@@ -404,8 +448,14 @@ pub(crate) fn foreign_dir(dir: &Path, host: &str) -> bool {
 }
 
 /// Write `host`'s files when they differ: the key, then the chain, each by a rename so the listener never reads half
-/// a file. A directory that is another tool's is refused.
+/// a file. A directory that is another tool's is refused, and so is a host that is not a DNS name an authority issues
+/// for (`default`, `localhost`, a wildcard's file name, a path): the name is a directory of `runtime/cert`.
 pub(crate) fn write_files(dir: &Path, host: &str, chain_pem: &str, key_pem: &str) -> Result<(), Error> {
+    if !super::services::valid_host(host) {
+        return Err(Error::new(format!(
+            "{host:?} is not a DNS name an authority issues for; its certificate is not written"
+        )));
+    }
     if foreign_dir(dir, host) {
         return Err(Error::new(format!(
             "{} holds files another tool wrote; this node does not write over them",
@@ -437,8 +487,11 @@ pub(crate) fn write_files(dir: &Path, host: &str, chain_pem: &str, key_pem: &str
     Ok(())
 }
 
-/// Remove `host`'s files when they are this module's.
+/// Remove `host`'s files when they are this module's, under a name it could have written ([`write_files`]).
 pub(crate) fn remove_files(dir: &Path, host: &str) -> Result<(), Error> {
+    if !super::services::valid_host(host) {
+        return Ok(());
+    }
     let sub = dir.join(host);
     if !sub.join(MARKER).is_file() {
         return Ok(());

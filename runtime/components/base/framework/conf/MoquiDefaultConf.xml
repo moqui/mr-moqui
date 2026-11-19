@@ -682,6 +682,17 @@
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
             image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive">
+        <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
+            link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
+            folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not
+            cut. folder-zip-builds-per-link: the zips made for a link in ten minutes (a zip kept and sent again counts
+            nothing). folder-zip-downloads-per-requester: the folder zips one requester asks for in ten minutes.
+            upload-max-files and upload-max-bytes: one upload call; upload-link-max-files and upload-link-max-bytes: through
+            a link in all; upload-calls-per-link and upload-calls-per-requester: upload calls in an hour. -->
+        <drive-share folder-zip-max-bytes="1073741824" folder-zip-max-files="20000" folder-zip-builds-per-link="20"
+                folder-zip-downloads-per-requester="30" upload-max-files="20" upload-max-bytes="104857600"
+                upload-link-max-files="1000" upload-link-max-bytes="2147483648" upload-calls-per-link="30"
+                upload-calls-per-requester="60"/>
         <!-- resource reference class needs to implement the ResourceReference interface -->
         <resource-reference scheme="http" class="org.moqui.resource.UrlResourceReference"/>
         <resource-reference scheme="https" class="org.moqui.resource.UrlResourceReference"/>

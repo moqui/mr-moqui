@@ -22,7 +22,9 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <script><![CDATA[
                 ec.web.sessionAttributes.remove('toolsServiceRunResults')
-                serviceResults = ec.service.sync().name(serviceName).parameters(context).call()
+                // generic: an entity-auto service of an entity no generic write takes is refused, as Service REST
+                // refuses it (plans/Security-Review-Medium.md SEC-TLS-85)
+                serviceResults = ec.service.sync().name(serviceName).parameters(context).generic().call()
                 if (serviceResults && !ec.message.hasError()) {
                     // the names only: a value may be a secret the service returns (SEC-TLS-09)
                     ec.logger.info(`Service Run ${serviceName} results: ${Object.keys(serviceResults).join(", ")}`)
@@ -44,7 +46,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- Because the run transition doesn't actually return json and make things confusing when calling via rest -->
         <actions>
             <script>
-                serviceResults = ec.service.sync().name(serviceName).parameters(context).call()
+                serviceResults = ec.service.sync().name(serviceName).parameters(context).generic().call()
                 if (serviceResults) {
                     ec.web.sendJsonResponse(serviceResults)
                 }

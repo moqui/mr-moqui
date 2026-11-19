@@ -707,7 +707,10 @@ along with this software (see the LICENSE.md file). If not, see
             const trySmtp = smtpUser && (smtpUser !== storedSmtpUser || smtpPass)
             if (trySmtp && !smtpPass) { invalid('smtpPassword', 'Enter the password of the outgoing server\'s sign-in'); return }
             if (existing) {
-                const changes = Object.assign({emailAccountId: emailAccountId, emailAddress: address}, servers || {})
+                // a password account whose servers move gives its password again: the wizard says so rather than leave the
+                // stored one cleared (update#EmailAccount refuseClearing, SEC-MAIL-84)
+                const changes = Object.assign({emailAccountId: emailAccountId, emailAddress: address,
+                    refuseClearing: oauth ? [] : trySmtp ? ['mailPassword'] : ['mailPassword', 'smtpPassword']}, servers || {})
                 // the wizard came back with another kind: the account takes it (to shared at any time; personal again only
                 // when one person is left on it)
                 if (kind && existing.accountKindEnumId !== kind) changes.accountKindEnumId = kind

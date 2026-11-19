@@ -2807,9 +2807,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="download" noun="PublicShare" authenticate="anonymous-all">
         <description>A file of a share to send (location, fileName, contentType), or for a folder (path empty: the whole
             share) a zip of it (location under runtime://tmp/drive-zip). The token is checked first, then the grant when
-            the link has a password. Refused for an upload-only link. A folder's zip (SEC-BOS-83) is counted, 20 in ten
-            minutes for a link and 30 for a requester ("too many downloads" past that), refused past a gigabyte or 20,000
-            files, and kept for the link while its files are unchanged, so asking again sends the same zip.
+            the link has a password. Refused for an upload-only link. A folder's zip (SEC-BOS-83), within the
+            resource-facade/drive-share settings: a requester asks for folder-zip-downloads-per-requester in ten minutes; a
+            folder past folder-zip-max-bytes or folder-zip-max-files is refused; one zip is kept for the link and the folder
+            while its files are unchanged, so asking again sends the same file, and a changed folder's zip replaces it; a
+            zip made counts against folder-zip-builds-per-link, and one is made at a time ("being prepared" meanwhile).
 
             The visitor of a public page has no user, and a file on the database tree is entity rows the visitor may not
             read, so a token route's transition does not send the location itself: with sendResponse true this service
@@ -2858,19 +2860,26 @@ along with this software (see the LICENSE.md file). If not, see
                 fileName = name
                 contentType = ec.resource.contentTypeOf(name) ?? 'application/octet-stream'
             } else {
-                // a folder's zip (SEC-BOS-83): counted by the link and by the requester before anything is read, as open#PublicShare
-                // counts password tries; at most a gigabyte in 20,000 files, refused past that rather than cut; and one zip kept
-                // for the link and the folder's files as they are, made again only when one changed (clean#DriveTempFiles
-                // removes it after a day). writeZip streams each file into a file, never the whole folder in memory.
+                // a folder's zip (SEC-BOS-83), within the resource-facade/drive-share limits: counted by the requester before
+                // anything is read, as open#PublicShare counts password tries; at most folder-zip-max-bytes in
+                // folder-zip-max-files, refused past that rather than cut; one zip kept for the link and the folder, named
+                // by them and by the state of its files, so asking again sends the same file until one changes, and a new
+                // one replaces the link's earlier zip of that folder (clean#DriveTempFiles removes it after a day); a zip
+                // made counts against the link, one made at a time (a claim), the others told it is being prepared.
+                // writeZip streams each file into a part file renamed into place, never the whole folder in memory.
+                const conf = (name, fallback) => {
+                    const value = Number(ec.factory.getConfValue('resource-facade/drive-share@' + name))
+                    return Number.isFinite(value) && value > 0 ? value : fallback
+                }
                 const attempt = (key, limit) => ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
                         .parameters({input: {key, limit, windowMillis: 600000}}).requireNewTransaction(true).disableAuthz().call().result.allowed
                 const requester = ec.resource.script('component://framework/service/org/moqui/public/Account.js').requesterKey()
-                if (!attempt('share-zip:share:' + row.shareId, 20) || !attempt('share-zip:ip:' + requester, 30)) {
+                if (!attempt('share-zip:ip:' + requester, conf('folder-zip-downloads-per-requester', 30))) {
                     ec.message.addError(ec.l10n.localize('Too many downloads of this folder; wait a few minutes and try again'))
                     return
                 }
-                const MAX_BYTES = 1024 * 1024 * 1024
-                const MAX_FILES = 20000
+                const MAX_BYTES = conf('folder-zip-max-bytes', 1073741824)
+                const MAX_FILES = conf('folder-zip-max-files', 20000)
                 const entries = []
                 const marks = []
                 let bytes = 0
@@ -2894,15 +2903,27 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.addError(ec.l10n.localize('This folder is too large to download as one zip; download its folders or files one at a time'))
                     return
                 }
-                const key = ec.resource.digestText(`${row.shareId}\n${target}\n${marks.join('\n')}`, 'sha256')
-                location = `runtime://tmp/drive-zip/share-${key}.zip`
+                const digest = (text) => ec.resource.digestText(text, 'sha256').substring(0, 32)
+                const prefix = `share-${digest(row.shareId + '\n' + target)}-`
+                const state = digest(marks.join('\n'))
+                location = `runtime://tmp/drive-zip/${prefix}${state}.zip`
                 if (ec.resource.getLastChange(location) == null) {
-                    // made under its own name and then moved, so a download at the same time never reads a part-written zip
-                    const building = `runtime://tmp/drive-zip/${ec.user.randomString(16)}.zip`
-                    ec.resource.writeZip(building, entries)
-                    const built = ec.resource.getLocationReference(building)
-                    if (ec.resource.getLastChange(location) == null) built.move(location)
-                    else built.delete()
+                    if (!attempt(`share-zip-build:${prefix}${state}`, 1)) {
+                        ec.message.addError(ec.l10n.localize('The zip of this folder is being prepared; try again in a minute'))
+                        return
+                    }
+                    if (!attempt('share-zip:share:' + row.shareId, conf('folder-zip-builds-per-link', 20))) {
+                        ec.message.addError(ec.l10n.localize('Too many downloads of this folder; wait a few minutes and try again'))
+                        return
+                    }
+                    ec.resource.writeZip(location, entries)
+                    // the link's earlier zips of this folder: a changed folder's zip replaces them
+                    const kept = ec.resource.getLocationReference('runtime://tmp/drive-zip')
+                    for (const other of (kept.exists ? Array.from(kept.getDirectoryEntries()) : [])) {
+                        if (other.isFile() && other.fileName.startsWith(prefix) && other.fileName !== `${prefix}${state}.zip`) {
+                            try { other.delete() } catch (e) { ec.logger.warn(`An earlier share zip ${other.location} was not removed: ${e}`) }
+                        }
+                    }
                 }
                 fileName = `${String(name).replace(/[\\/:*?"<>|]/g, '_')}.zip`
                 contentType = 'application/zip'
@@ -2920,8 +2941,10 @@ along with this software (see the LICENSE.md file). If not, see
             the version note names the uploader (uploaderName). The token is checked first, then the grant when the link
             has a password; the drive's quota applies. Each file is named by the last segment of its own name, so it lands
             in the shared folder and never in a folder it names. Limits of a link's own, the drive's quota or not
-            (SEC-FIL-06): 20 files and 100 MiB in one call; 1000 files and 2 GiB through the link in all (uploadCount and
-            uploadBytes of its ResourceShare); and 30 calls an hour through the link, 60 from one requester.</description>
+            (SEC-FIL-06), within the resource-facade/drive-share settings: upload-max-files and upload-max-bytes in one
+            call (20, 100 MiB); upload-link-max-files and upload-link-max-bytes through the link in all (1000, 2 GiB;
+            uploadCount and uploadBytes of its ResourceShare); and upload-calls-per-link and upload-calls-per-requester
+            calls an hour (30, 60).</description>
         <in-parameters>
             <parameter name="token" required="true"/>
             <parameter name="grant"/>
@@ -2949,7 +2972,13 @@ along with this software (see the LICENSE.md file). If not, see
             const folder = [sharePath, relative].filter((part) => part).join('/')
             // a link's own limits: files and bytes in one call, then calls an hour by link and by requester, then what the
             // link has taken in all
-            const MAX_FILES = 20, MAX_BYTES = 100 * 1024 * 1024, LINK_FILES = 1000, LINK_BYTES = 2 * 1024 * 1024 * 1024
+            // the resource-facade/drive-share settings
+            const conf = (name, fallback) => {
+                const value = Number(ec.factory.getConfValue('resource-facade/drive-share@' + name))
+                return Number.isFinite(value) && value > 0 ? value : fallback
+            }
+            const MAX_FILES = conf('upload-max-files', 20), MAX_BYTES = conf('upload-max-bytes', 100 * 1024 * 1024)
+            const LINK_FILES = conf('upload-link-max-files', 1000), LINK_BYTES = conf('upload-link-max-bytes', 2 * 1024 * 1024 * 1024)
             const files = fileList ? Array.from(fileList) : (file ? [file] : [])
             if (!files.length) { ec.message.addError(ec.l10n.localize('No files to upload')); return }
             const sizeOf = (item) => item == null ? 0 : (typeof item === 'string' || item instanceof Uint8Array ? item.length : (Number(item.size) || 0))
@@ -2960,7 +2989,8 @@ along with this software (see the LICENSE.md file). If not, see
             const attempt = (key, limit) => ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.record#Attempt')
                     .parameters({input: {key, limit, windowMillis: 3600000}}).requireNewTransaction(true).disableAuthz().call().result.allowed
             const requester = ec.resource.script('component://framework/service/org/moqui/public/Account.js').requesterKey()
-            if (!attempt('share-upload:share:' + row.shareId, 30) || !attempt('share-upload:ip:' + requester, 60)) {
+            if (!attempt('share-upload:share:' + row.shareId, conf('upload-calls-per-link', 30))
+                    || !attempt('share-upload:ip:' + requester, conf('upload-calls-per-requester', 60))) {
                 ec.message.addError(ec.l10n.localize('Too many uploads through this link; try again later')); return
             }
             if (Number(row.uploadCount || 0) + files.length > LINK_FILES || Number(row.uploadBytes || 0) + bytes > LINK_BYTES) {

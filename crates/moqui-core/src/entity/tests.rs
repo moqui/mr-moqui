@@ -349,7 +349,7 @@ fn entity_rest_serves_the_verbs() {
         .unwrap();
     assert_eq!(map_str(&created, "testId"), Some("C1"));
     // a primary key default is evaluated, not copied as written: `'ALL_USERS'` loses its quotes
-    let fk = super::FkScope::enter(true, false);
+    let fk = super::fk_scope(true, false);
     let with_default = facade
         .rest(
             "post",

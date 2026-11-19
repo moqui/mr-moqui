@@ -16,12 +16,22 @@ along with this software (see the LICENSE.md file). If not, see
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-include="false">
 
-    <transition name="getServerPrinters"><service-call name="org.moqui.impl.PrintServices.get#ServerPrinters"/>
+    <!-- A printer is made and changed as Admin's Connections make one (store#Connection, the printer kind): a new one waits
+        for a test print there, and on a production instance reaches no internal address; only its fields of that kind are
+        taken (plans/Security-Review-Medium.md SEC-RTE-83). The lookup asks the server and makes rows, so it is a POST. -->
+    <transition name="getServerPrinters" method="post"><service-call name="org.moqui.impl.PrintServices.get#ServerPrinters"/>
         <default-response url="."/></transition>
-    <transition name="createNetworkPrinter"><service-call name="create#moqui.basic.print.NetworkPrinter"/>
-        <default-response url="."/></transition>
-    <transition name="updateNetworkPrinter"><service-call name="update#moqui.basic.print.NetworkPrinter"/>
-        <default-response url="."/></transition>
+    <transition name="createNetworkPrinter" method="post"><actions><script><![CDATA[
+        ec.service.sync().name('org.moqui.admin.ConfigurationServices.store#Connection').parameters({adapterKey: 'printer',
+            values: {connectionId: networkPrinterId || '', description: description || printerName || serverHost, location: location,
+                serverHost: serverHost, serverPort: serverPort, printerName: printerName}}).call()
+    ]]></script></actions><default-response url="."/></transition>
+    <transition name="updateNetworkPrinter" method="post"><actions><script><![CDATA[
+        const read = ec.service.sync().name('org.moqui.admin.ConfigurationServices.get#Connection')
+                .parameters({adapterKey: 'printer', connectionKey: networkPrinterId}).call()?.connection
+        if (read) ec.service.sync().name('org.moqui.admin.ConfigurationServices.store#Connection').parameters({adapterKey: 'printer',
+            connectionKey: networkPrinterId, values: {description: description, location: location}, expectedRevision: read.revision}).call()
+    ]]></script></actions><default-response url="."/></transition>
     <transition name="deleteNetworkPrinter"><service-call name="delete#moqui.basic.print.NetworkPrinter"/>
         <default-response url="."/></transition>
     <transition name="printJobList"><default-response url="../../PrintJob/PrintJobList"/></transition>

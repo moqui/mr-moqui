@@ -157,9 +157,9 @@ fn a_rest_service_is_a_span_of_the_request() {
     telemetry.shutdown();
 }
 
-/// As Java's `RestApi`: identity-admin entities are refused, a `UserAccount` write loses the password fields and,
-/// for a caller who is not ADMIN, the identity fields, secret-config writes need ADMIN, and results never carry
-/// the password fields.
+/// As Java's `RestApi`: identity-admin entities are refused, a `UserAccount` write loses the password fields and the
+/// identity fields (an ADMIN's too, [`an_admins_entity_write_of_an_account_takes_no_identity_field`]), secret-config
+/// writes need ADMIN, and results never carry the password fields.
 #[test]
 fn entity_resources_keep_sensitive_entities_and_fields_out() {
     let dir = std::env::temp_dir().join(format!("moqui-rest-sensitive-{}", std::process::id()));
@@ -219,7 +219,7 @@ fn entity_resources_keep_sensitive_entities_and_fields_out() {
     assert!(stored.get("currentPassword").is_none_or(Value::is_null));
     assert!(
         stored.get("username").is_none_or(Value::is_null),
-        "identity fields need ADMIN"
+        "no identity field is taken"
     );
 
     let mut server = BTreeMap::new();
@@ -323,6 +323,98 @@ fn an_account_owned_email_server_is_not_written_by_generic_rest_even_by_admin() 
         .rest("patch", "moqui.basic.email.EmailServer", &repoint("RELAY"))
         .unwrap();
     assert_eq!(store_host("RELAY").as_deref(), Some("127.0.0.1"));
+    crate::user::logout().unwrap();
+}
+
+/// A `UserAccount` written through a Service REST entity resource takes none of its identity fields, an ADMIN's write
+/// included (plans/Security-Review-Medium.md SEC-ADM-81): the email address a reset is mailed to, the sign-in name, the
+/// provider link and the disabled flag are changed only through `update#UserAccount`, whose rules (another account
+/// holding more access than the caller, a recent sign-in) an entity update would pass by. The full name is still taken.
+#[test]
+fn an_admins_entity_write_of_an_account_takes_no_identity_field() {
+    let dir = std::env::temp_dir().join(format!("moqui-rest-identity-{}", std::process::id()));
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(dir.join("service")).unwrap();
+    std::fs::write(
+        dir.join("service/acct.rest.xml"),
+        r#"<resource name="acct" require-authentication="false"><resource name="users">
+                <method type="post"><entity name="moqui.security.UserAccount" operation="create"/></method>
+                <id name="userId"><method type="patch"><entity name="moqui.security.UserAccount" operation="update"/></method></id>
+            </resource></resource>"#,
+    )
+    .unwrap();
+    let facade = crate::testing::open();
+    facade.set_disable_fk_create(true);
+    let ctx = ExecutionContextFactory::test_context();
+    install(ctx.factory(), &[dir.join("service/acct.rest.xml")]);
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    create(
+        &facade,
+        "moqui.security.UserAccount",
+        &[("userId", "IDADMIN"), ("username", "idadmin")],
+    );
+    let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+    member.set("userId", Value::string("IDADMIN"));
+    member.set("userGroupId", Value::string("ADMIN"));
+    member.set(
+        "fromDate",
+        moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+    );
+    member.create(&facade).unwrap();
+    create(
+        &facade,
+        "moqui.security.UserAccount",
+        &[
+            ("userId", "IDTARGET"),
+            ("username", "idtarget"),
+            ("emailAddress", "target@example.com"),
+            ("disabled", "N"),
+        ],
+    );
+    crate::user::internal_login_user("idadmin").unwrap();
+    assert!(crate::user::is_in_group("ADMIN").unwrap());
+    let changes = BTreeMap::from([
+        ("userId".to_string(), Value::string("IDTARGET")),
+        ("userFullName".to_string(), Value::string("Target Renamed")),
+        ("emailAddress".to_string(), Value::string("taker@example.net")),
+        ("username".to_string(), Value::string("taken")),
+        ("externalUserId".to_string(), Value::string("taker-subject")),
+        ("disabled".to_string(), Value::string("Y")),
+    ]);
+    run(&["acct", "users", "IDTARGET"], "patch", &changes).unwrap();
+    let stored = facade
+        .find("moqui.security.UserAccount")
+        .unwrap()
+        .eq("userId", Value::string("IDTARGET"))
+        .use_cache(false)
+        .one()
+        .unwrap()
+        .expect("the account");
+    let text = |name: &str| stored.get(name).and_then(Value::as_str).map(str::to_string);
+    assert_eq!(text("userFullName").as_deref(), Some("Target Renamed"));
+    assert_eq!(text("emailAddress").as_deref(), Some("target@example.com"));
+    assert_eq!(text("username").as_deref(), Some("idtarget"));
+    assert_eq!(text("externalUserId"), None);
+    assert_eq!(text("disabled").as_deref(), Some("N"));
+
+    let made = BTreeMap::from([
+        ("userId".to_string(), Value::string("IDMADE")),
+        ("username".to_string(), Value::string("made")),
+        ("externalUserId".to_string(), Value::string("made-subject")),
+    ]);
+    run(&["acct", "users"], "post", &made).unwrap();
+    let made = facade
+        .find("moqui.security.UserAccount")
+        .unwrap()
+        .eq("userId", Value::string("IDMADE"))
+        .use_cache(false)
+        .one()
+        .unwrap()
+        .expect("created");
+    assert!(made.get("username").is_none_or(Value::is_null), "{made:?}");
+    assert!(made.get("externalUserId").is_none_or(Value::is_null), "{made:?}");
     crate::user::logout().unwrap();
 }
 

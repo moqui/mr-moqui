@@ -242,15 +242,20 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pageReference" type="ResourceReference"/>
             <parameter name="pageLocation"/>
             <parameter name="exists" type="Boolean"/>
+            <parameter name="filePagePath"><description>When the file is there, the path of the page it is the file of: the
+                parent path as given and the file's own name less its type (get#WikiPageReference finds the page's record
+                by it, SEC-BOS-85)</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
             pageReference = null
             pageLocation = null
             exists = false
+            filePagePath = null
             let root = rootPageLocation
             if (!root && wikiSpaceId) root = ec.entity.find('moqui.resource.wiki.WikiSpace').condition('wikiSpaceId', wikiSpaceId)
                     .useCache(true).disableAuthz().one()?.rootPageLocation
             if (!root) { ec.message.addError(ec.l10n.localize('This space has no place for its pages (no root page location)')); return }
+            // a doubled, leading or trailing slash names the same page (SEC-BOS-85)
             const parts = String(pagePath || '').split('/').filter((part) => part !== '')
             if (parts.some((part) => part === '.' || part === '..')) { ec.message.addError(ec.l10n.localize('A page path has no . or .. in it')); return }
             if (parts.includes('_attachments')) { ec.message.addError(ec.l10n.localize("A page's attachments are not a page")); return }
@@ -277,10 +282,10 @@ along with this software (see the LICENSE.md file). If not, see
                 const name = parts.pop()
                 const dirLocation = [rootDir.replace(/\/+$/, '')].concat(parts).join('/')
                 const dir = ec.resource.getLocationReference(dirLocation)
-                // a file is a page's only when named as the page with one extension or none, as get#WikiPageChildren names
-                // a file's page: Restricted.md is page Restricted's file, never a page Restricted.md of its own whose
-                // record (none) and access rules are not Restricted's (SEC-BOS-85)
-                const pageNameOf = (fileName) => { const dot = String(fileName).lastIndexOf('.'); return dot > 0 ? String(fileName).substring(0, dot) : String(fileName) }
+                // a file is a page's only when named as the page with its type or no extension, as get#WikiPageChildren
+                // names a file's page: Restricted.md is page Restricted's file, Name.md.fancy page Name's, never a page of
+                // their own whose record (none) and access rules are not the page's (SEC-BOS-85)
+                const pageNameOf = ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').pageNameOf
                 let found = null
                 // the usual names first, then the directory's files
                 for (const fileName of [name, `${name}.md`, `${name}.html`]) {
@@ -299,9 +304,11 @@ along with this software (see the LICENSE.md file). If not, see
                     found = fallback
                 }
                 pageReference = found
+                if (pageReference.exists) filePagePath = parts.concat([pageNameOf(pageReference.fileName)]).join('/')
             }
             pageLocation = pageReference.location
             exists = !!pageReference.exists
+            if (pageReference === rootRef && exists) filePagePath = ''
         ]]></script></actions>
     </service>
 
@@ -317,6 +324,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="createdRecord" type="Boolean"/>
         </out-parameters>
         <actions>
+            <!-- the path as a page names it: no empty segment (a doubled, leading or trailing slash), each in NFC (SEC-BOS-85) -->
+            <set field="pagePath" from="ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').normalPath(pagePath)"/>
             <entity-find entity-name="moqui.resource.wiki.WikiPage" list="wikiPageList" cache="true">
                 <econdition field-name="wikiSpaceId"/><econdition field-name="pagePath" from="pagePath || null"/></entity-find>
             <set field="wikiPage" from="wikiPageList?.length ? wikiPageList[0] : null"/>
@@ -384,6 +393,8 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
 
             <if condition="!wikiSpaceId"><return error="true" message="Which page? Its space is needed"/></if>
+            <!-- the path as a page names it, so the record found and the file found are the same page's (SEC-BOS-85) -->
+            <set field="pagePath" from="ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').normalPath(pagePath)"/>
 
             <!-- NOTE: WikiPage record may not exist, but don't create one on get/view only -->
             <if condition="wikiPage == null"><service-call name="org.moqui.resource.WikiServices.get#WikiPageId"
@@ -407,6 +418,15 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{rootPageLocation:wikiSpace.rootPageLocation, pagePath:pagePath}"/>
             <if condition="ec.message.hasError()"><return/></if>
             <set field="pageReference" from="fileOut.pageReference"/>
+            <!-- no record at the path, but a file: the record of the page that file is (a name another case finds on a
+                case-insensitive file system), so the page's own access rules are asked, never the space's alone (SEC-BOS-85) -->
+            <if condition="wikiPage == null &amp;&amp; fileOut.filePagePath != null">
+                <set field="wikiPage" from="ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').pageOfFile(wikiSpaceId, fileOut.filePagePath)"/>
+                <if condition="wikiPage != null">
+                    <set field="wikiPageId" from="wikiPage.wikiPageId"/>
+                    <set field="pagePath" from="wikiPage.pagePath || ''"/>
+                </if>
+            </if>
         </actions>
     </service>
     <service verb="get" noun="WikiPageInfo">
@@ -610,8 +630,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="childPageInfoList" from="[]"/>
             <iterate list="childPageRefList" entry="childPageRef">
                 <set field="childFilename" from="childPageRef.getFileName()"/>
-                <set field="childDotIdx" from="childFilename.lastIndexOf('.')"/>
-                <set field="childPageName" from="childDotIdx &gt; 0 ? childFilename.substring(0, childDotIdx) : childFilename"/>
+                <set field="childPageName" from="ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').pageNameOf(childFilename)"/>
                 <set field="childPagePath" from="(pagePath ? pagePath + '/' : '') + childPageName"/>
                 <!-- <log level="warn" message="wikiSpaceId ${wikiSpaceId} childPagePath '${childPagePath}' childFilename '${childFilename}' pagePath '${pagePath}'"/> -->
 
@@ -659,7 +678,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="pagePath" from="wikiPage.pagePath || ''"/>
                 <if condition="!filename"><return error="true" message="Which file? Its name is needed"/></if>
             </then><else>
-                <set field="pathList" from="pagePath ? pagePath.split('/') : []"/>
+                <!-- no empty segment (a doubled, leading or trailing slash), each in NFC (SEC-BOS-85) -->
+                <set field="pathList" from="String(pagePath || '').split('/').filter((part) => part !== '').map((part) => part.normalize('NFC'))"/>
                 <if condition="!filename">
                     <if condition="pathList.length"><then>
                         <set field="filename" from="pathList.pop()"/>
@@ -705,14 +725,18 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="moqui.resource.wiki.WikiSpace" value-field="wikiSpace" cache="true"/>
             <if condition="wikiSpace == null"><return error="true" message="Page not found"/></if>
             <if condition="!wikiSpace.rootPageLocation"><return error="true" message="This space has no place for its pages (no root page location)"/></if>
-            <set field="viewAccessIn" from="wikiPageId ? {wikiPageId:wikiPageId} : {wikiSpaceId:wikiSpaceId}"/>
-            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="viewAccess" in-map="viewAccessIn"/>
-            <if condition="!viewAccess.canView"><return error="true" message="Page not found"/></if>
-
             <!-- the page's file at its exact path, not a page of that name elsewhere -->
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageFile" out-map="fileOut"
                     in-map="{rootPageLocation:wikiSpace.rootPageLocation, pagePath:pagePath}"/>
             <if condition="ec.message.hasError()"><return/></if>
+            <!-- no record at the path, but a file: the record of the page that file is, whose view rule is asked (SEC-BOS-85) -->
+            <if condition="wikiPage == null &amp;&amp; fileOut.filePagePath != null">
+                <set field="wikiPage" from="ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').pageOfFile(wikiSpaceId, fileOut.filePagePath)"/>
+                <set field="wikiPageId" from="wikiPage?.wikiPageId"/>
+            </if>
+            <set field="viewAccessIn" from="wikiPageId ? {wikiPageId:wikiPageId} : {wikiSpaceId:wikiSpaceId}"/>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="viewAccess" in-map="viewAccessIn"/>
+            <if condition="!viewAccess.canView"><return error="true" message="Page not found"/></if>
             <set field="pageReference" from="fileOut.pageReference"/>
             <set field="pageAttachmentsDirectoryRef" from="pageReference?.getChild('_attachments')"/>
             <set field="attachmentReference" from="pageAttachmentsDirectoryRef?.getChild(filename)"/>
@@ -927,6 +951,10 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{rootPageLocation:rootPageLocation, pagePath:pagePath, wikiType:wikiType}"/>
             <if condition="ec.message.hasError()"><return/></if>
             <set field="pageReference" from="fileOut.pageReference"/>
+            <!-- a new record whose file is already another page's (a name another case finds on a case-insensitive file
+                system) is no new page: that page's file is not written past its own rules (SEC-BOS-85) -->
+            <if condition="createdRecord &amp;&amp; fileOut.filePagePath != null &amp;&amp; ec.resource.script('component://framework/service/org/moqui/resource/WikiPageName.js').pageOfFile(wikiSpaceId, fileOut.filePagePath, wikiPageId) != null">
+                <return error="true" message="Page not found"/></if>
             <!-- the type is the file's, as the renderers read it: an existing page keeps its type (an .html page is
                 filtered as HTML whatever wikiType says), a script page (.fancy) is written only by a holder of
                 DATABASE_ADMIN (SEC-SCR-81), and a file of another type (none, .htm, .ftl) is saved as it is, shown as

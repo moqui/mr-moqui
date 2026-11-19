@@ -159,6 +159,34 @@ along with this software (see the LICENSE.md file). If not, see
                     "EmailTextBlock.bodyHtml")
         </script></actions>
     </eeca>
+    <!-- Where a whole-database backup goes is its download (plans/Security-Review-Medium.md SEC-TLS-83): a backup job's
+        directory and mirror parameters, its service, and the address, credentials and message type of a remote a backup job
+        mirrors to, and the send path of that type (the mirror's directory or key prefix), are changed only by a holder of
+        the sealed ADMIN_BACKUP_DOWNLOAD, whatever screen or tool writes them (System's JobDetail and ConnectionDetail,
+        Tools). The rules are BackupDestination.js, on get#BackupDestination's list, which backup#EmbeddedDatabase refuses
+        another destination named in a call by (service/backup.rs). A data load runs with authorization disabled and is not
+        checked. They are checks, so they run when the call already has errors too. -->
+    <eeca id="BackupDestinationParameter" entity="moqui.service.job.ServiceJobParameter"
+            on-create="true" on-update="true" on-delete="true" run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .parameter(eecaOperation, jobName, parameterName, parameterValue, originalValue)</script></actions>
+    </eeca>
+    <eeca id="BackupDestinationJob" entity="moqui.service.job.ServiceJob"
+            on-update="true" run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .job(eecaOperation, jobName, serviceName, originalValue)</script></actions>
+    </eeca>
+    <eeca id="BackupDestinationRemote" entity="moqui.service.message.SystemMessageRemote"
+            on-create="true" on-update="true" run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .remote(eecaOperation, systemMessageRemoteId, {sendUrl, username, password, privateKey, sharedSecret, sendSharedSecret,
+                systemMessageTypeId}, originalValue)</script></actions>
+    </eeca>
+    <eeca id="BackupDestinationMessageType" entity="moqui.service.message.SystemMessageType"
+            on-create="true" on-update="true" run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .messageType(eecaOperation, systemMessageTypeId, sendPath, originalValue)</script></actions>
+    </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
         most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own

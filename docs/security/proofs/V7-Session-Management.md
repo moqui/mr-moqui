@@ -42,7 +42,7 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-7.5.1 | 2 | Fresh sign-in before changing recovery or factor data | Gap | `require#RecentAuth` (5 min) guards the own email, provider link and factors (`UserServices.xml` `check#AccountAction` `recentAuth`, `service/recent_auth.rs`); open: SEC-ADM-81 (`PATCH /rest/s1/moqui/users/{userId}` writes an email past the guard), SEC-WEB-84 (OAuth 2 re-auth met by a cross-site GET) | PASS: to write: black-box |
+| v5.0.0-7.5.1 | 2 | Fresh sign-in before changing recovery or factor data | Gap | `require#RecentAuth` (5 min) guards the own email, provider link and factors (`UserServices.xml` `check#AccountAction` `recentAuth`, `service/recent_auth.rs`); `PATCH /rest/s1/moqui/users/{userId}` is `update#UserAccount` too (SEC-ADM-81 fixed); open: SEC-WEB-84 (OAuth 2 re-auth met by a cross-site GET) | PASS: to write: black-box |
 | v5.0.0-7.5.2 | 2 | Users see and end their sessions after confirming | Application | `IdentityServices.find#Sessions` and `revoke#Sessions` act on the caller's own with no permission and ask no recent sign-in for them (Recent-Auth.md); the page is the app's (mr-boss Commons Account); tool: `require#RecentAuth` | - |
 
 ## V7.6 Federated Re-authentication

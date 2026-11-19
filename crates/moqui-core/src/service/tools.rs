@@ -154,12 +154,28 @@ fn print_document(
     Ok(out)
 }
 
-/// `print#ResourceDocument`: the bytes at a resource location, printed and not stored.
+/// Whether `print#ResourceDocument` reads `location`: a stored document, in the database (`dbresource://`) or the content
+/// store (`content://`), with no `..` segment. Never a file, the runtime directory (its conf and keys), a component's
+/// file or a URL: the bytes go to the printer's server, which the caller may have named
+/// (plans/Security-Review-Medium.md SEC-RTE-83).
+fn printable_location(location: &str) -> bool {
+    let lower = location.trim().to_ascii_lowercase();
+    (lower.starts_with("dbresource://") || lower.starts_with("content://"))
+        && !location.split(['/', '\\']).any(|segment| segment == "..")
+}
+
+/// `print#ResourceDocument`: the bytes at a stored document's location ([`printable_location`]), printed and not stored.
 fn print_resource_document(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let location = param_text(parameters, "resourceLocation");
+    if !printable_location(&location) {
+        add_error(format!(
+            "[{location}] is not printed: only a stored document (dbresource:// or content://) is printed by its location"
+        ));
+        return Ok(BTreeMap::new());
+    }
     let found = ExecutionContext::with_current(|ctx| ctx.factory().resource().get(&location))
         .ok_or_else(|| LibError::new("no execution context is entered"))?;
     let resource = match found {
@@ -514,7 +530,10 @@ fn job_id_of(job: &moqui_lib::object::ValueMap) -> Option<i32> {
 }
 
 /// `get#ServerPrinters`: a `NetworkPrinter` for each printer of the server that has none yet, and the ids of all of
-/// that server's records.
+/// that server's records. The server is asked as a printer of it would be (`moqui_core::outbound::deny_private_network`
+/// of an empty `allowPrivateNetwork`: no internal address on a production instance), and each printer made is as
+/// `store#Connection` makes one: disabled until a test print in Admin's Connections passes, and on production
+/// `allowPrivateNetwork` N (plans/Security-Review-Medium.md SEC-RTE-83).
 fn get_server_printers(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -535,10 +554,11 @@ fn get_server_printers(
         names.insert(row.get("printerName").map(to_plain_string).unwrap_or_default());
     }
     let client = crate::print::client().map_err(|err| LibError::new(err.message()))?;
+    let production = crate::web::is_production();
     let server = PrintServer {
         host: host.clone(),
         port,
-        deny_internal: false,
+        deny_internal: crate::outbound::deny_private_network(""),
     };
     let printers = client.printers(&server).map_err(|err| LibError::new(err.message()))?;
     for printer in printers.into_iter().filter(|printer| !names.contains(&printer.name)) {
@@ -548,11 +568,23 @@ fn get_server_printers(
         create.insert("printerName".to_string(), Value::string(&printer.name));
         create.insert("description".to_string(), Value::string(&printer.description));
         create.insert("location".to_string(), Value::string(&printer.location));
+        create.insert("disabled".to_string(), Value::string("Y"));
+        if production {
+            create.insert("allowPrivateNetwork".to_string(), Value::string("N"));
+        }
         let created = call(&format!("create#{NETWORK_PRINTER}"), &create, &CallOptions::default());
         if has_error() {
             break;
         }
         if let Some(id) = created.get("networkPrinterId") {
+            // the test print that passes enables it, as for a printer started in Admin's Connections
+            let check = BTreeMap::from([
+                ("adapterKey".to_string(), Value::string("printer")),
+                ("connectionKey".to_string(), Value::string(to_plain_string(id))),
+                ("pendingTest".to_string(), Value::string("Y")),
+            ]);
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            call("store#moqui.server.ConnectionCheck", &check, &CallOptions::default());
             ids.push(id.clone());
         }
     }

@@ -143,6 +143,29 @@ impl fmt::Debug for Provider {
     }
 }
 
+/// Whether a provider endpoint may be used: an `https` URL, or `http` to this machine's loopback on an instance that is
+/// not production (a test's or a developer's stand-in provider). The client secret and users' refresh tokens are posted
+/// to the token endpoint, so a row's endpoint in plain text, or on an address it was not meant for, gets none
+/// (plans/Security-Review-Medium.md SEC-OUT-82).
+fn endpoint_allowed(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = lower.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.contains('@') {
+        return false;
+    }
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => bracketed.split(']').next().unwrap_or(""),
+        None => authority.rsplit_once(':').map_or(authority, |(host, _)| host),
+    };
+    moqui_lib::net::loopback_host(host) && !moqui_core::web::is_production()
+}
+
 fn comma_list(text: &str) -> Vec<String> {
     text.split(',')
         .map(|part| part.trim().to_ascii_lowercase())
@@ -178,15 +201,29 @@ impl Provider {
             tenant => tenant,
         };
         let fill = |field: &str| field_text(row, field).trim().replace("{tenant}", &tenant);
+        // an endpoint the client secret, a refresh token or an access token is sent to: https, else left out (the
+        // provider is then not offered, or not asked to revoke or for the address)
+        let endpoint = |field: &str| {
+            let url = fill(field);
+            if url.is_empty() || endpoint_allowed(&url) {
+                url
+            } else {
+                tracing::error!(
+                    "EmailOAuthProvider {id}: {field} {} is not https; it is not used",
+                    moqui_lib::http::redacted(&url)
+                );
+                String::new()
+            }
+        };
         Self {
-            name: if name.is_empty() { id.clone() } else { name },
-            id,
             client_id: pick(conf("client-id"), "clientId"),
             client_secret,
-            authorize_url: fill("authorizeUrl"),
-            token_url: fill("tokenUrl"),
-            revoke_url: fill("revokeUrl"),
-            user_info_url: fill("userInfoUrl"),
+            authorize_url: endpoint("authorizeUrl"),
+            token_url: endpoint("tokenUrl"),
+            revoke_url: endpoint("revokeUrl"),
+            user_info_url: endpoint("userInfoUrl"),
+            name: if name.is_empty() { id.clone() } else { name },
+            id,
             scope: field_text(row, "scope"),
             mail_scope: field_text(row, "mailScope"),
             pop_scope: field_text(row, "popScope"),
@@ -233,6 +270,17 @@ impl Provider {
 
     fn has_revocation(&self) -> bool {
         !self.revoke_url.is_empty()
+    }
+
+    /// Whether `host` is one of this provider's mail servers: its store, POP or SMTP host, or a host under one of its
+    /// host suffixes. An empty host names none and passes.
+    pub(super) fn serves(&self, host: &str) -> bool {
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        host.is_empty()
+            || [&self.store_host, &self.pop_host, &self.smtp_host]
+                .iter()
+                .any(|own| own.trim().eq_ignore_ascii_case(&host))
+            || self.host_suffixes.iter().any(|suffix| host_under(&host, suffix))
     }
 
     /// The scopes asked for: with `pop` (the account reads its mail over POP3) the POP scopes too.
@@ -426,7 +474,12 @@ impl Answer {
 
 fn http() -> &'static moqui_lib::http::RestClient {
     static CLIENT: OnceLock<moqui_lib::http::RestClient> = OnceLock::new();
-    CLIENT.get_or_init(|| moqui_lib::http::RestClient::new().timeout(HTTP_TIMEOUT))
+    // never a link-local or cloud metadata address, wherever a provider row points
+    CLIENT.get_or_init(|| {
+        moqui_lib::http::RestClient::new()
+            .timeout(HTTP_TIMEOUT)
+            .deny_link_local_addresses(true)
+    })
 }
 
 /// Send `request` with the trace headers of a CLIENT span; the span has the method and the redacted URL only, never the
@@ -639,6 +692,25 @@ pub(super) fn access_token(
             .ok_or_else(|| TokenError::Unavailable(format!("Email server {server_id} not found")))
     };
     let server = read()?;
+    // a token goes only to the provider's own mail servers: a server row pointed at another host (by a generic write, or
+    // one written before update#EmailAccount held its hosts to the provider's) gets none (plans/Security-Review-Medium.md
+    // SEC-MAIL-84)
+    let provider_id = field_text(&server, "oauthProviderEnumId");
+    let provider = load_provider(facade, &provider_id)
+        .map_err(|err| TokenError::Unavailable(format!("OAuth provider {provider_id}: {err}")))?
+        .ok_or_else(|| TokenError::Unavailable(format!("Email server {server_id} names no OAuth provider")))?;
+    for name in ["storeHost", "smtpHost"] {
+        let host = field_text(&server, name);
+        if !provider.serves(&host) {
+            tracing::error!(
+                "Email server {server_id}: {name} {host} is not a mail server of the OAuth provider {provider_id}; no token is sent to it"
+            );
+            return Err(TokenError::Unavailable(format!(
+                "{host} is not a mail server of {}: sign in again on the provider's own servers",
+                provider.name
+            )));
+        }
+    }
     let refresh = field_text(&server, "oauthRefreshToken");
     if !refresh.is_empty() && refresh != DECRYPT_FAILED {
         if let Some(token) =
@@ -652,10 +724,6 @@ pub(super) fn access_token(
     // another thread may have refreshed while this one waited
     let server = read()?;
     let refresh = field_text(&server, "oauthRefreshToken");
-    let provider_id = field_text(&server, "oauthProviderEnumId");
-    let provider = load_provider(facade, &provider_id)
-        .map_err(|err| TokenError::Unavailable(format!("OAuth provider {provider_id}: {err}")))?
-        .ok_or_else(|| TokenError::Unavailable(format!("Email server {server_id} names no OAuth provider")))?;
     if refresh.is_empty() {
         let text = format!("Not signed in with {}; sign in to sync this account", provider.name);
         mark_sign_in_needed(facade, server_id, &text, "no refresh token is stored");
@@ -2214,6 +2282,32 @@ fn revoke_server(facade: &EntityFacade, server_id: &str, clear: bool) -> Result<
         _ => revoke(),
     }
     Ok(true)
+}
+
+/// `check#OAuthServerHosts`: the first of `storeHost` and `smtpHost` that is not a mail server of the provider
+/// `oauthProviderEnumId` ([`Provider::serves`]), as `refusedHost`, empty when both are; with no such provider every host
+/// given is refused. `update#EmailAccount` asks it before an OAuth server's hosts change, so the rule is kept once.
+pub(super) fn check_server_hosts_service(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let id = param_text(parameters, "oauthProviderEnumId");
+    let provider = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        load_provider(facade, &id)?
+    };
+    let refused = ["storeHost", "smtpHost"]
+        .into_iter()
+        .map(|name| param_text(parameters, name).trim().to_string())
+        .find(|host| !host.is_empty() && !provider.as_ref().is_some_and(|provider| provider.serves(host)))
+        .unwrap_or_default();
+    Ok(BTreeMap::from([
+        ("refusedHost".to_string(), Value::string(refused)),
+        (
+            "providerName".to_string(),
+            Value::string(provider.map(|provider| provider.name).unwrap_or(id)),
+        ),
+    ]))
 }
 
 /// `revoke#OAuthToken`: internal (authorization disabled), for delete#EmailAccount and update#EmailAccount.

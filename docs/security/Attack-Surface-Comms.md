@@ -360,7 +360,9 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   queue's fallback to a number is set by a voice admin and checked against the deployment's policy when it is saved
   and when a call uses it; a menu loop ends after 20 menus, and a queue's fallback chain after 10.
 - **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
-  allowed algorithms. TLS to a trunk verifies its certificate against `sip-server@tls-ca-file` (the system bundle by default),
+  allowed algorithms. `store#VoiceTrunk` (`Voice.js` `storeTrunk`) clears the stored password when the host, port,
+  transport, username, authUsername or realm changes and the password is not given again (`passwordCleared`), and the
+  trunk is written only by that service, never a generic tool, REST or request load (`SERVICE_WRITTEN_ENTITY_KEYS`). TLS to a trunk verifies its certificate against `sip-server@tls-ca-file` (the system bundle by default),
   for the trunk's host as set up, never an SRV target's name, so a changed SRV record cannot point a trunk at a server
   that does not hold the provider's certificate.
   `VoiceServices.get#EngineConfig` returns each enabled trunk's decrypted `password`, and

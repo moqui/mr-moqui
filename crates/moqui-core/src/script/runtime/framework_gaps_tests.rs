@@ -858,6 +858,43 @@ fn a_script_disable_under_a_rust_guard_does_not_outlive_it() {
     assert!(!context.authz_disabled());
 }
 
+// A load's disableEntityEca and disableAuditLog are its own: another thread's writes keep their entity ECA rules and
+// their audit rows while it runs, and nothing is left switched off after it (plans/Security-Review-Medium.md SEC-DAT-83).
+#[test]
+fn a_loads_switches_are_not_seen_by_another_thread() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let context = database();
+    let _entered = context.enter();
+    let facade = context.factory().entity().unwrap();
+    // the test facade's own flags, which every thread sees: its audit log and data feed are off, its entity ECA on here
+    facade.set_disable_entity_eca(false);
+    let shared = facade.flags();
+    let (done, seen) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let watcher = {
+        let (facade, done, seen) = (facade.clone(), Arc::clone(&done), Arc::clone(&seen));
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Acquire) {
+                if facade.flags() != shared {
+                    seen.store(true, Ordering::Release);
+                }
+            }
+        })
+    };
+    run_script(
+        r#"let rows = ""
+        for (let i = 0; i < 300; i++) rows += `<moqui.test.TestEntity testId="SW${i}" testMedium="m${i}"/>`
+        ec.entity.makeDataLoader().disableEntityEca(true).disableAuditLog(true).disableDataFeed(true)
+            .xmlText(`<entity-facade-xml>${rows}</entity-facade-xml>`).load()"#,
+    )
+    .unwrap();
+    done.store(true, Ordering::Release);
+    watcher.join().unwrap();
+    assert!(!seen.load(Ordering::Acquire), "another thread saw the load's switches");
+    assert_eq!(facade.flags(), shared);
+    holds(r#"ec.entity.find("moqui.test.TestEntity").condition("testId", "SW299").one() != null"#);
+}
+
 #[test]
 fn wait_worker_pool_empty_with_no_work() {
     let context = database();

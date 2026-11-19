@@ -5,7 +5,10 @@
 // address; an EmailServer a mail account owns is no relay on any path; only a kind's declared fields change. No request
 // leaves the machine: a remote's address is answered by the HTTP fixtures, which also show that a test with a missing secret
 // sent nothing and that a test sends no credentials; the others are refused before a socket (an internal address, no print
-// client) or are of a kind whose test sends nothing (the mail sign-in provider).
+// client) or are of a kind whose test sends nothing (the mail sign-in provider). The relay the sign-in mail goes through
+// (SYSTEM, or one a reset or code template names) is read only without ADMIN_ACCESS_MANAGE and changed only after a recent
+// sign-in (plans/Security-Review-Medium.md SEC-ADM-82), and a relay's link base URL is on one of the instance's own names
+// (SEC-ADM-83).
 // Run: ./moq test framework --spec AdminConnectionServices
 const C = "org.moqui.admin.ConfigurationServices."
 const REMOTE = "moqui.service.message.SystemMessageRemote"
@@ -25,8 +28,9 @@ const ids = {
     newRelay: "SPEC_CONN_NEW",
     printer: "SPEC_CONN_PRT"
 }
-const users = {manage: "SPEC_CONN_MANAGE", view: "SPEC_CONN_VIEW", none: "SPEC_CONN_NONE"}
-const groups = {manage: "SPEC_CONN_MANAGERS", view: "SPEC_CONN_VIEWERS"}
+const users = {manage: "SPEC_CONN_MANAGE", view: "SPEC_CONN_VIEW", none: "SPEC_CONN_NONE", access: "SPEC_CONN_ACCESS"}
+const groups = {manage: "SPEC_CONN_MANAGERS", view: "SPEC_CONN_VIEWERS", access: "SPEC_CONN_ACCESSORS"}
+const accessPassword = "Spec-conn-access-5!"
 const secret = "spec-conn-secret-7q2x"
 const shared = "spec-conn-shared-4m9d"
 
@@ -96,6 +100,12 @@ spec({
             )
         grant(groups.manage, ["ADMIN_CONNECTION_VIEW", "ADMIN_CONNECTION_MANAGE"])
         grant(groups.view, ["ADMIN_CONNECTION_VIEW"])
+        grant(groups.access, ["ADMIN_CONNECTION_VIEW", "ADMIN_CONNECTION_MANAGE", "ADMIN_ACCESS_MANAGE"])
+        make("moqui.security.UserGroupMember", {userGroupId: groups.access, userId: users.access, fromDate: 0})
+        const accessAccount = ec.entity.find("moqui.security.UserAccount").condition("userId", users.access).one()
+        accessAccount.setFields({currentPassword: ec.user.hashPassword(accessPassword), passwordHashType: "argon2",
+            passwordSalt: "", passwordBase64: "N", disabled: "N", requirePasswordChange: "N"}, true, null, null)
+        accessAccount.update()
         make("moqui.security.UserGroupMember", {userGroupId: groups.manage, userId: users.manage, fromDate: 0})
         make("moqui.security.UserGroupMember", {userGroupId: groups.view, userId: users.view, fromDate: 0})
         // a remote as an instance administrator left it: live, with its password and its shared secret
@@ -495,5 +505,66 @@ feature("an EmailServer a mail account owns is no relay on any path, and a relay
         out.printerTest.passed === false
         out.printerTest.enabled === false
         out.oauthNew.reasonCode === "NOT_CREATABLE"
+    }
+})
+
+feature("the relay the sign-in mail goes through is read only without ADMIN_ACCESS_MANAGE, and changed only after a recent sign-in", {
+    when() {
+        const out = {}
+        const smtpHost = () => one(SERVER, {emailServerId: "SYSTEM"})?.smtpHost ?? null
+        out.before = smtpHost()
+        as(users.manage, () => {
+            out.read = get("relay", "SYSTEM")
+            out.repoint = store("relay", "SYSTEM", {smtpHost: "taker.example.net"})
+            out.test = test("relay", "SYSTEM")
+        })
+        out.afterManage = smtpHost()
+        as(users.access, () => {
+            out.accessRead = get("relay", "SYSTEM")
+            // signed in by an internal login: a session, not a recent sign-in
+            out.stale = store("relay", "SYSTEM", {smtpHost: "taker.example.net"})
+            out.staleTest = test("relay", "SYSTEM")
+            ec.service.sync().name("org.moqui.sso.RecentAuthServices.reauthenticate#User")
+                .parameters({password: accessPassword}).disableAuthz().call()
+            ec.message.clearErrors()
+            out.confirmed = store("relay", "SYSTEM", {})
+        })
+        out.after = smtpHost()
+        context.out = out
+    },
+    then() {
+        const out = context.out
+        out.read.state === "readOnly"
+        out.repoint.applied === false
+        out.repoint.reasonCode === "READ_ONLY"
+        out.test.passed === false
+        out.test.reasonCode === "READ_ONLY"
+        out.afterManage === out.before
+        out.accessRead.state !== "readOnly"
+        out.stale.applied !== true
+        out.stale.reasonCode === "reauthRequired"
+        out.staleTest.passed === false
+        out.staleTest.reasonCode === "reauthRequired"
+        out.confirmed.applied === true
+        out.after === out.before
+    }
+})
+
+feature("a relay's link base URL is on one of the instance's own names", {
+    when() {
+        const out = {}
+        as(users.manage, () => {
+            out.elsewhere = store("relay", ids.relay, {webBaseUrl: "https://taker.example.net/app"})
+            out.own = store("relay", ids.relay, {webBaseUrl: "https://localhost/app"})
+        })
+        out.row = one(SERVER, {emailServerId: ids.relay}).getMap()
+        context.out = out
+    },
+    then() {
+        const out = context.out
+        out.elsewhere.applied !== true
+        out.elsewhere.error.includes("own names")
+        out.own.applied === true
+        out.row.webBaseUrl === "https://localhost/app"
     }
 })

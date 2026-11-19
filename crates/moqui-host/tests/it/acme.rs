@@ -74,6 +74,26 @@ fn open_challenge(gate: &Gate, host: &str, digest: &[u8; 32]) {
     row.create_or_update(&facade).unwrap();
 }
 
+/// `host` set up on `gate` as `setup#AcmeName` leaves it, not renewed by the job: an order runs only for such a name, and
+/// only its challenge is answered.
+fn set_up_name(gate: &Gate, host: &str) {
+    let factory = gate.server.factory();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let facade = factory.entity().unwrap();
+    let mut name = facade.make_value("moqui.server.AcmeName").unwrap();
+    for (field, value) in [
+        ("hostName", host),
+        ("directoryUrl", "https://ca.example.test/dir"),
+        ("statusId", "AcmeIssued"),
+        ("renewing", "N"),
+    ] {
+        name.set(field, Value::string(value));
+    }
+    name.create(&facade).unwrap();
+}
+
 /// A field of the row of `entity` keyed by `key`, or None when there is no row.
 fn field(gate: &Gate, entity: &str, key: (&str, &str), name: &str) -> Option<String> {
     let factory = gate.server.factory();
@@ -253,6 +273,8 @@ fn https_starts_for_a_name_set_up_with_acme_and_answers_only_its_challenge() {
                 &https_port_text,
             ),
             ("moqui_conf__acme__directory_url", &directory),
+            // the reachability check connects where the authority would, here the node's own HTTPS port
+            ("moqui_conf__acme__challenge_port", &https_port_text),
         ],
     );
     let https = SocketAddr::from(([127, 0, 0, 1], https_port));
@@ -353,6 +375,25 @@ fn https_starts_for_a_name_set_up_with_acme_and_answers_only_its_challenge() {
     let answered = served(&rt, https, "acme.example.test", b"acme-tls/1").unwrap();
     assert!(carries(&answered, &digest), "the challenge's digest");
     assert!(served(&rt, https, "other.example.test", b"acme-tls/1").is_err());
+    // a challenge row for a name not set up here, as a write outside an order would leave it, is not answered
+    open_challenge(&gate, "planted.example.test", &[0x5b_u8; 32]);
+    std::thread::sleep(Duration::from_millis(1200));
+    assert!(served(&rt, https, "planted.example.test", b"acme-tls/1").is_err());
+    close_challenge(&gate, "planted.example.test");
+    // the reachability check of a new name: its own challenge is answered for that minute, before the name is set up
+    let (checked, errors) = call(
+        &gate,
+        &format!("{SERVICES}.setup#AcmeName"),
+        &[
+            ("hostName", Value::string("check.localhost")),
+            ("termsAgreed", Value::Bool(true)),
+        ],
+    );
+    assert!(errors.is_empty(), "{errors:?} {checked:?}");
+    assert!(
+        to_plain_string(&checked["checkText"]).contains("answered with this node's challenge"),
+        "{checked:?}"
+    );
     assert!(
         served(&rt, https, "acme.example.test", b"http/1.1").is_err(),
         "no certificate yet, so no HTTPS for the name"
@@ -660,7 +701,10 @@ fn the_edge_node_passes_a_passthrough_names_challenge_down_the_tunnel() {
         crate::edge_web::down(&edge, "local-acme")
     });
 
-    // the local node's challenge for its passthrough name; the edge node's own row for that name is never used
+    // the local node's challenge for its passthrough name, set up there; the edge node's own row for that name is never
+    // used, and the edge node's terminate host is set up on the edge node
+    set_up_name(&local, PASS);
+    set_up_name(&edge, TERM);
     let local_digest = [0x11_u8; 32];
     let edge_digest = [0x22_u8; 32];
     let term_digest = [0x33_u8; 32];

@@ -72,6 +72,7 @@ pub(super) static SERVICE_CALL: HostClass = HostClass {
             ignore_previous_error
         ),
         method!("ec.service.sync()", "noRememberParameters", [], no_remember_parameters),
+        method!("ec.service.sync()", "generic", [OptValue], generic),
         method!(
             "ec.service.sync()",
             "useTransactionCache",
@@ -250,6 +251,13 @@ fn ignore_previous_error(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `noRememberParameters()`: the artifact hit of this call does not keep its parameters.
 fn no_remember_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
     changed(call, |state| state.options.no_remember_parameters = true)
+}
+
+/// `generic()`: a generic tool's call of a service the request names, so an entity-auto service of an entity no generic
+/// write takes is refused ([`crate::service::call::generic_entity_refusal`]).
+fn generic(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let on = flag(call, 0).unwrap_or(true);
+    changed(call, |state| state.options.generic = on)
 }
 
 fn use_transaction_cache(call: &mut Call<'_>) -> Result<Ret, HostError> {

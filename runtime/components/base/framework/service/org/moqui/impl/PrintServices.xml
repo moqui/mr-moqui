@@ -15,8 +15,10 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="get" noun="ServerPrinters" type="rust" location="moqui_core::service::tools::get_server_printers">
-        <description>Get printers from print server and create a moqui.basic.print.NetworkPrinter record for each.
-            The body is Rust (crates/moqui-core/src/service/tools.rs), on the host's IPP client.</description>
+        <description>Get printers from print server and create a moqui.basic.print.NetworkPrinter record for each that
+            has none, disabled until a test print in Admin's Connections passes, and on a production instance with
+            allowPrivateNetwork N; the server is asked at no internal address on production. The body is Rust
+            (crates/moqui-core/src/service/tools.rs), on the host's IPP client.</description>
         <in-parameters>
             <parameter name="serverHost" required="true"/>
             <parameter name="serverPort" type="Integer" default="631"/>
@@ -64,7 +66,9 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="print" noun="ResourceDocument" type="rust" location="moqui_core::service::tools::print_resource_document">
-        <description>The body is Rust (crates/moqui-core/src/service/tools.rs).</description>
+        <description>The body is Rust (crates/moqui-core/src/service/tools.rs). resourceLocation is a stored document's:
+            dbresource:// or content://, never a file, a runtime:// or component:// location or a URL, whose bytes would go
+            to the printer's server.</description>
         <!-- org.moqui.impl.PrintServices.print#ResourceDocument -->
         <implements service="org.moqui.impl.PrintServices.print#DocumentInterface"/>
         <in-parameters>

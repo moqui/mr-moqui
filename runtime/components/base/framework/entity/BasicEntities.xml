@@ -721,10 +721,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="mailUsername" type="text-medium" enable-audit-log="update"/>
         <field name="mailPassword" type="text-medium" encrypt="true" enable-audit-log="update"/>
         <field name="smtpUsername" type="text-medium" enable-audit-log="update"><description>When set, SMTP signs in as this
-            user (with smtpPassword, else mailPassword) instead of mailUsername, for a provider whose outgoing server has its
+            user with smtpPassword (never mailPassword) instead of mailUsername, for a provider whose outgoing server has its
             own sign-in; empty for the same sign-in as the store</description></field>
         <field name="smtpPassword" type="text-medium" encrypt="true" enable-audit-log="update"><description>The password
-            of smtpUsername, encrypted; empty for mailPassword. Not used without smtpUsername.</description></field>
+            of smtpUsername, encrypted; with smtpUsername and no smtpPassword SMTP signs in with no password. Not used
+            without smtpUsername.</description></field>
         <field name="webBaseUrl" type="text-medium" enable-audit-log="update"><description>Full base URL, scheme and host,
             for links in emails sent through this server, such as https://shop.example.com. Used when the EmailTemplate has
             no webHostName; empty for the conf webapp's host. Store emails use ProductStore.storeDomain.</description></field>

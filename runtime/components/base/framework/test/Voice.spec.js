@@ -136,6 +136,35 @@ feature("the admin services are a voice admin's: the same trunk is refused for a
     }
 })
 
+// found while fixing the review's endpoint-change findings (filed under SEC-ADM-82): a delegated voice admin who moves a
+// trunk to a host of theirs gets no stored SIP password sent there
+feature("a trunk moved to another host, port, transport or user keeps no password not given again", {
+    when() {
+        const password = () => JSON.parse(sys(() => ec.entity.find("moqui.call.VoiceTrunk").condition("voiceTrunkId", trunkId).one()).authJson).password
+        const renamed = admin("store#VoiceTrunk", {voiceTrunkId: trunkId, name: "Spec trunk renamed", host: "SIP.example.test"})
+        const keptOnRename = password()
+        const movedWith = admin("store#VoiceTrunk", {voiceTrunkId: trunkId, host: "sip2.example.test", password: "secret-2"})
+        const keptWithPassword = password()
+        const moved = admin("store#VoiceTrunk", {voiceTrunkId: trunkId, host: "sip.taker.example.net"})
+        const afterMove = password()
+        admin("store#VoiceTrunk", {voiceTrunkId: trunkId, host: "sip.example.test", password: "secret-1"})
+        const user = admin("store#VoiceTrunk", {voiceTrunkId: trunkId, username: "taker"})
+        const afterUser = password()
+        admin("store#VoiceTrunk", {voiceTrunkId: trunkId, username: "spec", password: "secret-1"})
+        return {renamed, keptOnRename, movedWith, keptWithPassword, moved, afterMove, user, afterUser}
+    },
+    then({renamed, keptOnRename, movedWith, keptWithPassword, moved, afterMove, user, afterUser}) {
+        renamed.passwordCleared == false
+        keptOnRename == "secret-1"
+        movedWith.passwordCleared == false
+        keptWithPassword == "secret-2"
+        moved.passwordCleared == true
+        afterMove == null
+        user.passwordCleared == true
+        afterUser == null
+    }
+})
+
 feature("UDP or plain RTP needs a profile that allows it, never a silent downgrade", {
     when() {
         const plain = {name: "Office PBX", host: "10.0.0.5", transportEnumId: "VtrUdp", mediaEncryptionEnumId: "VmePlain"}

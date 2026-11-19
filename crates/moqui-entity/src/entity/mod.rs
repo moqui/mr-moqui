@@ -54,14 +54,14 @@ pub use derived::{generation as definition_generation, ByDefinition};
 pub use etl::{EtlLoader, EtlTransactions, EtlWriter};
 // for the tests in moqui-core that run these with a context entered
 pub use exec::statement_stats;
-pub use facade::{EntityFacade, EntityFlags, EntityGroup, SimStarter};
+pub use facade::{EntityFacade, EntityFlags, EntityGroup, SimStarter, WriteSwitchScope, WriteSwitches};
 pub use find::{
     EntityFind, EntityListIterator, Purged, BULK_CHUNK, TYPE_FORWARD_ONLY, TYPE_SCROLL_INSENSITIVE,
     TYPE_SCROLL_SENSITIVE,
 };
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
-pub use fk::FkScope;
+pub use fk::fk_scope;
 pub use fk::{missing_related, MissingRelated};
 pub use meta::{DdlConf, EntityDbMeta, TableCheck};
 pub use meta_compare::{
