@@ -333,3 +333,17 @@ fn keys_map_back_to_archive_names() {
     assert_eq!(key_prefix("/a/b/"), "a/b/");
     assert_eq!(key_prefix(""), "");
 }
+
+/// SEC-TLS-96: an `http` S3 endpoint carries the archives in clear, so it is taken only for this machine off
+/// production; https is always taken.
+#[test]
+fn a_plain_s3_endpoint_is_taken_only_for_this_machine_off_production() {
+    assert!(plain_endpoint_refusal(None, true).is_ok());
+    assert!(plain_endpoint_refusal(Some("https://minio.example.com"), true).is_ok());
+    assert!(plain_endpoint_refusal(Some("http://localhost:9000"), false).is_ok());
+    assert!(plain_endpoint_refusal(Some("http://127.0.0.1:9000/x"), false).is_ok());
+    assert!(plain_endpoint_refusal(Some("http://[::1]:9000"), false).is_ok());
+    assert!(plain_endpoint_refusal(Some("http://localhost:9000"), true).is_err());
+    assert!(plain_endpoint_refusal(Some("http://minio.example.com"), false).is_err());
+    assert!(plain_endpoint_refusal(Some("http://10.0.0.5:9000"), false).is_err());
+}
