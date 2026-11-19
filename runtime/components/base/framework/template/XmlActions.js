@@ -303,6 +303,10 @@
             flags |= 16;
             if (tx === "cache" || tx === "force-cache") flags |= 32;
         }
+        // multi="parameter" is a multi call when the request says _isMulti, as a multi form posts. A transition's
+        // shortcut has it when written, or by default only when a multi form of its screen posts to it
+        // (screen/definition.rs, SEC-RTE-81); a row is then taken only for the forms' fields, never for a name the screen pinned
+        // (TransitionRows, service/call.rs).
         const flagsExpr = attr(node, "multi") === "parameter"
             ? `(${flags} | (ec.web && ec.web.parameters && ec.web.parameters._isMulti === 'true' ? 2 : 0))`
             : String(flags);
@@ -322,8 +326,7 @@
         const inMap = attr(node, "in-map");
         const tx = attr(node, "transaction");
         const syncOnly = !isAsync;
-        // multi="parameter" (the transition shortcut's default) is a multi call when the request says _isMulti, as a multi form-list posts.
-        // A name with ${} is expanded, as the Groovy string of the Java template was.
+        // An async call is never a multi call. A name with ${} is expanded, as the Groovy string of the Java template was.
         return joinPresent([
             `ec.service.${isAsync ? "async()" : "sync()"}.name(${literalOrExpand(attr(node, "name"))})`,
             syncOnly && attr(node, "disable-authz") === "true" && ".disableAuthz()",

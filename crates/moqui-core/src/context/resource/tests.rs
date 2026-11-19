@@ -202,3 +202,61 @@ fn a_location_splits_into_its_scheme_path_and_version() {
     assert_eq!(strip_hash("#v2"), "#v2");
     assert_eq!(strip_hash("é#ü"), "é");
 }
+
+/// A write, delete or move at a location with a `#` would change the file before the `#` (a reference cuts the
+/// location there), or on `dbresource://` write a file no read finds, so it is refused on every storage, and the file
+/// there is left as it was (SEC-PFS-82, SEC-BAP-82).
+#[test]
+fn a_write_at_a_location_with_a_hash_is_refused() {
+    let root = format!("target/file-resource-hash-{}", std::process::id());
+    let resources = empty_facade();
+    let file = format!("file:{root}/screen/App.xml");
+    resources.write_bytes(&file, b"<screen/>").unwrap();
+    let cut = format!("{file}#");
+    let refused = |result: Result<(), Error>| {
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("'#'"), "{err}");
+    };
+    refused(resources.write_bytes(&cut, b"replaced"));
+    refused(resources.write_bytes(&format!("{file}#/release-notes.md"), b"replaced"));
+    refused(resources.write_from(&cut, &mut std::io::Cursor::new(b"replaced".to_vec()), Some(8)));
+    refused(resources.write_bytes_noted(&cut, b"replaced", Some("a note")));
+    refused(resources.write_many(&[(cut.clone(), b"replaced".to_vec())]));
+    refused(resources.make_directory(&cut));
+    refused(resources.delete(&cut).map(|_| ()));
+    refused(resources.rename(&cut, &format!("file:{root}/moved.xml")));
+    refused(resources.rename(&file, &format!("file:{root}/moved.xml#")));
+    refused(resources.restore_version(&cut, "1", None).map(|_| ()));
+    refused(resources.write_bytes("runtime://conf/MoquiDevConf.xml#", b"replaced"));
+    refused(resources.write_bytes("component://mr-boss/screen/Commons.xml#", b"replaced"));
+    refused(resources.write_bytes("git://repo/ci.xml#", b"replaced"));
+    refused(
+        resources
+            .apply_change_set(
+                &format!("file:{root}/screen#"),
+                &[ResourceChange::Write {
+                    path: "a.txt".into(),
+                    bytes: b"x".to_vec(),
+                }],
+                None,
+            )
+            .map(|_| ()),
+    );
+    let outcome = resources
+        .apply_change_set(
+            &format!("file:{root}/screen"),
+            &[ResourceChange::Write {
+                path: "App.xml#".into(),
+                bytes: b"replaced".to_vec(),
+            }],
+            None,
+        )
+        .unwrap();
+    assert!(outcome.applied.is_empty(), "{outcome:?}");
+    assert_eq!(outcome.failures.len(), 1, "{outcome:?}");
+    assert_eq!(resources.get(&file).unwrap().read_text().unwrap(), "<screen/>");
+    // the database tree would keep the '#' in the name it writes, and every read stops at it
+    assert!(super::refuse_cut_write("dbresource://mantle/content/order/1/Invoice #1.pdf").is_err());
+    assert!(super::refuse_cut_write(&file).is_ok());
+    std::fs::remove_dir_all(root).unwrap();
+}

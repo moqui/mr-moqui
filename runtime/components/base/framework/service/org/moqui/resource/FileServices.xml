@@ -84,7 +84,8 @@ along with this software (see the LICENSE.md file). If not, see
             const authzOff = ec.artifactExecution.authzDisabled()
             if (!userId) userId = currentUserId
             if (userId && userId !== currentUserId && !authzOff) { ec.message.addError(`The drives of user ${userId} are not yours to see`); return }
-            if (path != null && String(path).split('/').includes('..')) return
+            // a '#' ends a location where it is read, so a path with one would reach another file (SEC-PFS-82): none here
+            if (path != null && (String(path).split('/').includes('..') || String(path).includes('#'))) return
             const row = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).one()
             if (row == null) return
             const repo = row.repositoryId ? ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', row.repositoryId).one() : null
@@ -255,8 +256,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="ensure" noun="PersonalDrive">
         <description>The user's personal drive (the current user's; another user's only with authorization disabled), made
-            the first time it is asked for on the database tree under the moqui.drive.root preference
-            (dbresource://drive by default) at personal/userId.</description>
+            the first time it is asked for under the drive root (the resource-facade@drive-root setting,
+            dbresource://drive by default) at personal/userId.</description>
         <in-parameters><parameter name="userId"/></in-parameters>
         <out-parameters>
             <parameter name="driveId"/>
@@ -272,7 +273,7 @@ along with this software (see the LICENSE.md file). If not, see
             const existing = ec.entity.find('moqui.resource.ResourceDrive').condition('ownerUserId', userId)
                     .condition('driveKindEnumId', 'RdkPersonal').orderBy('driveId').limit(1).list()
             if (existing.length) { driveId = existing[0].driveId; return }
-            const root = String(ec.user.getPreference('moqui.drive.root') || 'dbresource://drive').replace(/\/+$/, '')
+            const root = String(ec.factory.getConfValue('resource-facade@drive-root') || 'dbresource://drive').replace(/\/+$/, '')
             const row = ec.entity.makeValue('moqui.resource.ResourceDrive')
             row.setSequencedIdPrimary()
             const rootLocation = `${root}/personal/${userId}`
@@ -338,7 +339,7 @@ along with this software (see the LICENSE.md file). If not, see
             row.setSequencedIdPrimary()
             driveId = row.driveId
             repositoryId = null
-            const root = String(ec.user.getPreference('moqui.drive.root') || 'dbresource://drive').replace(/\/+$/, '')
+            const root = String(ec.factory.getConfValue('resource-facade@drive-root') || 'dbresource://drive').replace(/\/+$/, '')
             if (storage === 'folder') {
                 if (!rootLocation) rootLocation = `${root}/shared/${driveId}`
             } else {
@@ -1245,7 +1246,8 @@ along with this software (see the LICENSE.md file). If not, see
                     || typeof item.readAllBytes === 'function' || typeof item.getInputStream === 'function')
             files.forEach((upload, index) => {
                 const given = relativePathList && relativePathList[index] ? relativePathList[index] : (upload && (upload.fileName || upload.name))
-                const relative = clean(given)
+                // a '#' made '_', as an uploaded file's own name has it (a read stops at a '#')
+                const relative = clean(given).replace(/#/g, '_')
                 if (!upload || !relative || String(given).split('/').includes('..')) {
                     uploadedList.push({name: given ?? null, path: null, outcome: 'failed', error: 'no file name'})
                     return
@@ -1319,6 +1321,7 @@ along with this software (see the LICENSE.md file). If not, see
             const clean = (text) => String(text == null ? '' : text).split('/').filter((part) => part && part !== '.').join('/')
             versionName = null
             if (String(path).split('/').includes('..') || !clean(path)) { ec.message.addError(ec.l10n.localize('File not found')); return }
+            if (String(path).includes('#')) { ec.message.addError(ec.l10n.localize('A file name may not have # in it')); return }
             path = clean(path)
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('File not found')); return }
@@ -1355,6 +1358,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!folderName || folderName.includes('/') || folderName === '.' || folderName === '..' || folderName === '.trash') {
                 ec.message.addError(ec.l10n.localize('That is not a folder name')); return
             }
+            if (folderName.includes('#')) { ec.message.addError(ec.l10n.localize('A folder name may not have # in it')); return }
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('Folder not found')); return }
             if (!access.canWrite) { ec.message.addError(ec.l10n.localize('You may not change this folder')); return }
@@ -1417,6 +1421,7 @@ along with this software (see the LICENSE.md file). If not, see
             path = clean(path)
             const name = String(newName).trim()
             if (!name || name.includes('/') || name === '.' || name === '..' || name === '.trash') { ec.message.addError(ec.l10n.localize('That is not a file name')); return }
+            if (name.includes('#')) { ec.message.addError(ec.l10n.localize('A file name may not have # in it')); return }
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('File not found')); return }
             if (!access.canWrite) { ec.message.addError(ec.l10n.localize('You may not change this file')); return }

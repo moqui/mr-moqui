@@ -1088,3 +1088,41 @@ fn a_repository_whose_row_changes_in_a_transaction_is_not_kept_open_until_it_end
         );
     }
 }
+
+/// The provider refuses a write, delete, move or restore at a location with a `#` itself, for a call that reaches it
+/// past the resource facade (a change set target, a native caller): the facade cuts a location at its `#`, so the write
+/// would change another file (SEC-PFS-82).
+#[test]
+fn a_git_location_with_a_hash_is_not_written() {
+    use moqui_core::native::ResourceProvider;
+    let fixture = fixture("hash");
+    let _entered = fixture.context.enter();
+    define(&fixture.entity, "hashes", "db", None, None);
+    let resources = fixture.context.factory().resource();
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    provider.write_bytes("git://hashes/ci.xml", b"one\n").unwrap();
+    let refused = |result: Result<(), moqui_core::context::Error>| {
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("'#'"), "{err}");
+    };
+    refused(provider.write_bytes("git://hashes/ci.xml#", b"two\n"));
+    refused(provider.write_bytes_noted("git://hashes/ci.xml#/x", b"two\n", Some("note")));
+    refused(provider.write_from(
+        "git://hashes/ci.xml#",
+        &mut std::io::Cursor::new(b"two\n".to_vec()),
+        Some(4),
+    ));
+    refused(provider.make_directory("git://hashes/ci.xml#"));
+    refused(provider.delete("git://hashes/ci.xml#").map(|_| ()));
+    refused(provider.rename("git://hashes/ci.xml", "git://hashes/ci.xml#"));
+    refused(
+        provider
+            .restore_version("git://hashes/ci.xml#", "HEAD", None)
+            .map(|_| ()),
+    );
+    refused(resources.write_bytes("git://hashes/ci.xml#", b"two\n"));
+    assert_eq!(
+        resources.get("git://hashes/ci.xml").unwrap().read_text().unwrap(),
+        "one\n"
+    );
+}

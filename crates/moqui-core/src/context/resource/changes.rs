@@ -234,6 +234,14 @@ fn apply_each(
     outcome
 }
 
+/// Whether a path `change` writes or takes away holds a `#` ([`super::refuse_cut_write`]).
+fn has_hash(change: &ResourceChange) -> bool {
+    match change {
+        ResourceChange::Move { from, to } => from.contains('#') || to.contains('#'),
+        other => other.path().contains('#'),
+    }
+}
+
 /// Why `change` under `root` is refused: a WebDAV lock another user holds on what it writes, or for a delete or a
 /// move on anything under what it takes away.
 fn locked(facade: &ResourceFacade, root: &str, change: &ResourceChange) -> Option<String> {
@@ -331,6 +339,7 @@ impl ResourceFacade {
     /// `dbresource://`). Storage that keeps no versions writes the bytes and drops the note.
     pub fn write_bytes_noted(&self, location: &str, bytes: &[u8], note: Option<&str>) -> Result<(), Error> {
         let note = note.map(str::trim).filter(|note| !note.is_empty());
+        super::refuse_cut_write(location)?;
         self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_bytes_noted(location, bytes, note);
@@ -354,12 +363,18 @@ impl ResourceFacade {
         changes: &[ResourceChange],
         message: Option<&str>,
     ) -> Result<ChangeSetOutcome, Error> {
-        let root = strip_hash(root).trim_end_matches('/');
+        super::refuse_cut_write(root)?;
+        let root = root.trim_end_matches('/');
         let message = message.map(str::trim).filter(|message| !message.is_empty());
         let mut refused = Vec::new();
         let mut valid = Vec::with_capacity(changes.len());
         for change in changes {
             match change.normalized() {
+                // a path with a '#' is refused: a read would stop at it (`refuse_cut_write`)
+                Ok(change) if has_hash(&change) => refused.push((
+                    change.path().to_string(),
+                    format!("a resource is not written at a path with '#' in it: {}", change.path()),
+                )),
                 // a change of a location another user holds a WebDAV lock on is refused, and only that change
                 Ok(change) => match locked(self, root, &change) {
                     Some(reason) => refused.push((change.path().to_string(), reason)),
@@ -473,6 +488,7 @@ impl ResourceFacade {
         version_name: &str,
         note: Option<&str>,
     ) -> Result<Option<String>, Error> {
+        super::refuse_cut_write(location)?;
         let location = strip_hash(location);
         let note = note.map(str::trim).filter(|note| !note.is_empty());
         self.check_lock(location, true)?;

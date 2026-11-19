@@ -1179,13 +1179,14 @@ fn the_definition_model_holds_what_the_xml_declares() {
     assert!(root.always_actions.is_some() && root.pre_actions.is_some() && root.root.actions.is_some());
     assert_eq!(root.subscreens.default_item.as_deref(), Some("Home"));
 
-    // The service-call shortcut is its own script, with the defaults the Java screen sets.
+    // The service-call shortcut is its own script, with the in-map and out-map defaults the Java screen sets; no
+    // multi form posts to it, so it is not a multi call (SEC-RTE-81).
     let service = root.transition("service", None).unwrap();
     assert_eq!(service.single_service.as_deref(), Some("moqui.Missing.noop"));
     let xml = &service.service_actions.as_ref().unwrap().xml;
     assert!(service.actions.is_none(), "{xml}");
     assert!(
-        xml.contains("in-map=\"true\"") && xml.contains("multi=\"parameter\""),
+        xml.contains("in-map=\"true\"") && !xml.contains("multi=") && !service.multi_parameter,
         "{xml}"
     );
     assert!(!service.read_only);

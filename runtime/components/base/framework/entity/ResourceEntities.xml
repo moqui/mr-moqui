@@ -575,8 +575,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <entity entity-name="ResourceDrive" package="moqui.resource" use="nontransactional" short-alias="resourceDrives">
         <description>A root location with an owner, members and a quota. The storage is the root's scheme: a personal or
-            folder drive on the database tree (dbresource://, under the moqui.drive.root preference, dbresource://drive by
-            default), a version-controlled drive or a mirror on git://repositoryId/ over the GitRepository of its kind
+            folder drive on the database tree (dbresource://, under the resource-facade@drive-root setting, dbresource://drive
+            by default), a version-controlled drive or a mirror on git://repositoryId/ over the GitRepository of its kind
             (db, local; remote for a mirror). A records drive is a view over record attachment folders, mapped by its
             ResourceDriveRecordFolder rows.</description>
         <field name="driveId" type="id" is-pk="true"/>
@@ -962,6 +962,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="restrictView" type="text-indicator"/>
         <field name="restrictUpdate" type="text-indicator"/>
         <field name="allowAnyHtml" type="text-indicator"/>
+        <field name="allowScriptPages" type="text-indicator"><description>Y: a page of a script type (.fancy) renders
+            as server script for its viewers (WikiServices.render#WikiPage); otherwise it renders as text. Set only by a
+            holder of DATABASE_ADMIN (Wiki.eecas.xml, SEC-SCR-81).</description></field>
         <field name="screenThemeId" type="id"/>
         <relationship type="one" related="moqui.screen.ScreenTheme" short-alias="screenTheme"/>
         <seed-data>
