@@ -757,6 +757,13 @@ impl Drop for SampleFlush<'_> {
 ///
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
 /// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
+/// The `Content-Security-Policy` of a preview of proposed screen text, which replaces the conf's: framed by the app
+/// only, and nothing it loads (an image, a style's `url()`, a font, a fetch or a socket) goes to another site, so what
+/// a proposed screen shows does not leave with no click (plans/Security-Review-Low.md SEC-AI-102). Scripts and styles
+/// of the page's own origin and inline ones run as on any page.
+pub(crate) const PREVIEW_POLICY: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; frame-ancestors 'self'; form-action 'self';";
+
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
     let _profile = crate::telemetry::profile::request(job.path);
     let _samples = SampleFlush(job.path);
@@ -787,10 +794,7 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
         }
     };
     if let Some(overlay) = super::overlay::for_token(factory, &token) {
-        web::set_header(
-            "Content-Security-Policy",
-            Some("frame-ancestors 'self'; form-action 'self';"),
-        );
+        web::set_header("Content-Security-Policy", Some(PREVIEW_POLICY));
         let _fence = crate::entity::fence::enter("a preview of proposed screen text");
         return super::overlay::with(overlay, run);
     }

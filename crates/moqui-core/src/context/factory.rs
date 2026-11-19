@@ -1349,7 +1349,7 @@ impl ExecutionContext {
         self.state
             .artifacts
             .borrow()
-            .scope_authz(true, &self.state.script_authz)
+            .scope_authz(true, None, &self.state.script_authz)
     }
 
     /// The caller's authorization state, kept as it is and put back when the guard drops: component code run for the
@@ -1359,7 +1359,31 @@ impl ExecutionContext {
         self.state
             .artifacts
             .borrow()
-            .scope_authz(false, &self.state.script_authz)
+            .scope_authz(false, Some(false), &self.state.script_authz)
+    }
+
+    /// [`Self::keep_authz`] for a file a script runs (`ec.resource.script`): the caller's code, so where the caller may
+    /// not disable authorization ([`Self::lock_authz`]) the file may not either.
+    pub fn keep_script_authz(&self) -> AuthzScope {
+        self.state
+            .artifacts
+            .borrow()
+            .scope_authz(false, None, &self.state.script_authz)
+    }
+
+    /// [`Self::require_authz`] for code that must not reach beyond the user: until the guard drops a script's
+    /// `disableAuthz()`, and a find's or a service call's, is refused ([`Self::authz_locked`]); a service it calls runs
+    /// its own code as ever. The actions of a preview's proposed screen text run so (SEC-AI-102).
+    pub fn lock_authz(&self) -> AuthzScope {
+        self.state
+            .artifacts
+            .borrow()
+            .scope_authz(true, Some(true), &self.state.script_authz)
+    }
+
+    /// Whether script code here may not disable authorization ([`Self::lock_authz`]).
+    pub fn authz_locked(&self) -> bool {
+        self.state.artifacts.borrow().authz_locked()
     }
 
     /// The authorization in place here, for work registered to run after the transaction ends. See

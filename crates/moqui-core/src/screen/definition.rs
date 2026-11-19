@@ -85,6 +85,29 @@ impl XmlFragment {
 pub struct Actions {
     pub xml: Arc<str>,
     prepared: crate::script::PreparedActions,
+    /// Made from a preview's proposed text ([`super::overlay`]): run with authorization required and locked.
+    proposed: bool,
+}
+
+thread_local! {
+    /// Set while a definition that stands at an overlay's text is built ([`ScreenDef::load`]): the [`Actions`] made
+    /// then are proposed text. A definition built under an overlay is never cached, so none reaches another render.
+    static PROPOSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Puts back [`PROPOSED`] as it was when dropped.
+struct ProposedBuild(bool);
+
+impl ProposedBuild {
+    fn enter(proposed: bool) -> Self {
+        Self(PROPOSED.with(|cell| cell.replace(cell.get() || proposed)))
+    }
+}
+
+impl Drop for ProposedBuild {
+    fn drop(&mut self) {
+        PROPOSED.with(|cell| cell.set(self.0));
+    }
 }
 
 impl Actions {
@@ -105,6 +128,7 @@ impl Actions {
         Self {
             xml: xml.into(),
             prepared: crate::script::PreparedActions::default(),
+            proposed: PROPOSED.with(std::cell::Cell::get),
         }
     }
 
@@ -112,8 +136,18 @@ impl Actions {
     /// ([`crate::context::ExecutionContext::keep_authz`]): a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()`
     /// the block leaves on, by a throw or an early return, ends with it, and the rest of the render (later actions,
     /// subscreens, widget finds) runs with the state it had before (SEC-RTE-92).
+    ///
+    /// The actions of a preview's proposed text, while its overlay is held, run with authorization required and a
+    /// script's `disableAuthz()` refused ([`crate::context::ExecutionContext::lock_authz`]): text a model wrote reads
+    /// only what the viewer may (plans/Security-Review-Low.md SEC-AI-102). A service they call runs its own code as
+    /// ever.
     pub fn run(&self) -> Result<(), Error> {
-        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
+        let scope = if self.proposed && super::overlay::active() {
+            crate::context::ExecutionContext::lock_authz
+        } else {
+            crate::context::ExecutionContext::keep_authz
+        };
+        let _authz = crate::context::ExecutionContext::with_current(scope);
         self.prepared.run(&self.xml, None)
     }
 }
@@ -1295,6 +1329,13 @@ impl ScreenDef {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
         let extended = apply_screen_extends(factory, &node, location, &mut sources)?;
+        // the screen or a screen-extend of it stands at a preview's proposed text: its actions are proposed (SEC-AI-102)
+        let _proposed = ProposedBuild::enter(
+            super::overlay::active()
+                && sources
+                    .iter()
+                    .any(|source| super::overlay::text_of(&source.location).is_some()),
+        );
         if crate::devtools::is_dev_instance() {
             // F10: each widget element keeps the file that wrote it, merged ones their screen-extend's
             for root in node
@@ -1639,6 +1680,11 @@ fn apply_screen_extends(
             }
         }
         if let Some(text) = overlaid(&found) {
+            // a source, as a file is: what stands at an overlay's text is known by it (sri::active_overlaid)
+            sources.push(Source {
+                location: found.to_string_lossy().into_owned(),
+                modified: None,
+            });
             match MNode::parse_text(&found.to_string_lossy(), &text) {
                 Ok(extend) => merge_extend(screen, &extend, location, &mut extended),
                 Err(err) => tracing::error!("screen-extend {} of {location} left out: {err}", found.display()),

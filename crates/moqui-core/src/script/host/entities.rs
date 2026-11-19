@@ -976,6 +976,7 @@ fn distinct(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn disable_authz(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    super::refuse_locked_authz()?;
     chain(call, EntityFind::disable_authz)
 }
 
@@ -1060,6 +1061,7 @@ fn find_one_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
         find = find.use_clone(on(XML_CLONE));
     }
     if on(XML_DISABLE_AUTHZ) {
+        super::refuse_locked_authz()?;
         find = find.disable_authz();
     }
     let auto = match call.arg(2) {

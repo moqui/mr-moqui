@@ -2962,8 +2962,10 @@ fn run_as_system(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `ec.artifactExecution.disableAuthz()`: authorization is not checked for this execution context until
-/// `enableAuthz()`. Returns whether it was already disabled, as Java.
+/// `enableAuthz()`. Returns whether it was already disabled, as Java. Refused in the actions of a preview's proposed
+/// screen text ([`super::refuse_locked_authz`]).
 fn disable_authz(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    super::refuse_locked_authz()?;
     Ok(Ret::from(with_ec(
         crate::context::ExecutionContext::script_disable_authz,
     )?))

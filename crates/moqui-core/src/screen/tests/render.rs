@@ -2130,6 +2130,65 @@ fn a_previewed_screen_writes_a_placeholder_for_its_client_text() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-AI-102: the actions of a screen that stands at a preview's proposed text run with authorization required, and a
+/// script's `disableAuthz()` there is refused, of `ec.artifactExecution`, a find and a service call alike, and in a file
+/// they run; the same text from the file disables it as written.
+#[test]
+fn a_previewed_screens_actions_may_not_disable_authorization() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-authz-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Authz.xml");
+    let screen = r#"<screen require-authentication="false"><actions>
+        <script><![CDATA[
+            const refused = []
+            const tries = [
+                ['artifact', () => { const was = ec.artifactExecution.disableAuthz(); if (!was) ec.artifactExecution.enableAuthz() }],
+                ['find', () => ec.entity.find('moqui.basic.Enumeration').disableAuthz()],
+                ['service', () => ec.service.sync().name('org.moqui.impl.BasicServices.noop#Service').disableAuthz()],
+            ]
+            for (const [name, run] of tries) { try { run() } catch (e) { refused.push(name) } }
+            refusedText = refused.join(',') || 'none'
+        ]]></script>
+        <script>try { ec.resource.script(libraryAt) ; libraryText = 'ran' } catch (e) { libraryText = 'refused' }</script>
+        </actions><widgets>
+            <label text="REFUSED[${refusedText}] LIBRARY[${libraryText}] DISABLED[${ec.artifactExecution.authzDisabled()}]"/>
+        </widgets></screen>"#;
+    // a file of a component the proposed actions run: it may disable authorization only where they may
+    let library = dir.join("Library.js");
+    std::fs::write(
+        &library,
+        "ec.artifactExecution.disableAuthz(); ec.artifactExecution.enableAuthz(); 1",
+    )
+    .unwrap();
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("text")
+            .parameters(BTreeMap::from([(
+                "libraryAt".to_string(),
+                Value::string(library.to_string_lossy()),
+            )]))
+            .render()
+            .unwrap()
+            .body_text()
+    };
+    let plain = render();
+    assert!(plain.contains("REFUSED[none] LIBRARY[ran] DISABLED[false]"), "{plain}");
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, screen);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(
+        previewed.contains("REFUSED[artifact,find,service] LIBRARY[refused] DISABLED[false]"),
+        "{previewed}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// SEC-AI-82: while a screen stands at a preview's proposed text, its `encode="false"` labels, displays, links,
 /// editables and button-menus are encoded in html and qvt (a qvt `{{ }}` as well), and a label's `type` is one of the
 /// XSD's tags, overlay or not, so it is never markup of its own.
