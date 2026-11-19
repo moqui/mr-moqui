@@ -716,4 +716,21 @@ fn a_get_loaded_as_a_part_of_a_page_changes_nothing() {
         ("Sec-Fetch-Site", "cross-site"),
         ("Sec-Fetch-Dest", "document")
     ])));
+    // a browser that sends no Sec-Fetch-Dest: an image or a style is told by its Accept, a page and a client that is
+    // not a browser are not
+    for accept in [
+        "image/webp,image/*,*/*;q=0.8",
+        "text/css,*/*;q=0.1",
+        "video/*",
+        "font/woff2",
+    ] {
+        assert!(super::get_write_refused(&request(&[("Accept", accept)])), "{accept}");
+    }
+    for accept in [
+        "text/html,application/xhtml+xml,image/webp,*/*;q=0.8",
+        "*/*",
+        "application/json",
+    ] {
+        assert!(!super::get_write_refused(&request(&[("Accept", accept)])), "{accept}");
+    }
 }

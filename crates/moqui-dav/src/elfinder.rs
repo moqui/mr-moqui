@@ -574,15 +574,16 @@ impl Connector {
         // `/resources` is a read-only transition, so a GET with URL parameters runs any command: a write command (put,
         // rm, rename, mkdir, mkfile, upload) another site started, by a link the browser follows with the session's
         // Lax cookie, is refused; the file manager's own requests are the page's (plans/Security-Review.md SEC-RTE-05,
-        // SEC-FIL-01), and so is one the browser loads as a part of a page, an image of this site in a stored text
-        // (SEC-CLI-82)
+        // SEC-FIL-01). And a write is the file manager's own request only: its fetch (`Sec-Fetch-Dest: empty`) or a
+        // request with the session's token, so neither an image of this site nor a link in a stored text, which a
+        // reader follows as a page of this site, changes files (SEC-CLI-82)
         let cross_site = moqui_core::web::current_request()
-            .is_some_and(|request| moqui_core::web::get_write_refused(&request));
+            .is_some_and(|request| file_change_refused(&request, &other_text("moquiSessionToken")));
         let write_refused = |response: &mut moqui_lib::object::ValueMap| {
             if cross_site {
                 fail(
                     response,
-                    "A file change does not run from a request another site started",
+                    "A file change does not run from a request another site started, nor from one not the file manager's own",
                 );
             }
             cross_site
@@ -874,6 +875,16 @@ fn db_path_is_empty(location: &str) -> bool {
 
 fn io_error(location: &str, err: &std::io::Error) -> LibError {
     LibError::new(format!("{err}: {location}"))
+}
+
+/// Whether a write command of `request` is refused: another site started it, or it is neither the file manager's own
+/// fetch (`Sec-Fetch-Dest: empty`) nor carries the session's token (`token`, the `moquiSessionToken` parameter, or a
+/// header). A link or an image of this site in a stored text is a same-origin page or image load with the session's
+/// cookie, and changes nothing (plans/Security-Review-Medium.md SEC-CLI-82).
+pub(crate) fn file_change_refused(request: &moqui_core::web::WebRequest, token: &str) -> bool {
+    let own_fetch = moqui_core::web::fetch_dest(request).is_some_and(|dest| dest.eq_ignore_ascii_case("empty"));
+    moqui_core::web::started_by_another_site(request)
+        || !(own_fetch || moqui_core::web::session_token_presented(request, token))
 }
 
 #[cfg(test)]

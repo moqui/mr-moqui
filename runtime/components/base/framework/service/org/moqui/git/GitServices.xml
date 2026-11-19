@@ -951,7 +951,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="mergeRequestId" required="true"/>
             <parameter name="path"/>
             <parameter name="threadId"/>
-            <parameter name="body" allow-html="safe"/>
+            <parameter name="body" allow-html="app"/>
             <parameter name="commitId"/>
             <parameter name="oldLine" type="Integer"/>
             <parameter name="newLine" type="Integer"/>

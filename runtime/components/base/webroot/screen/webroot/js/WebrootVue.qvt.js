@@ -4569,10 +4569,10 @@
                 if (!editor) return;
                 const value = this.askValue.trim();
                 if (kind === "image") {
-                    // an image of this server only: the server's safe set takes out any other, which would tell its host
-                    // who read the text (SEC-CLI-82)
-                    if (value.startsWith("/") && !value.startsWith("//") && value.indexOf("\\") < 0) editor.chain().focus().setImage({ src: value }).run();
-                    else if (value) moqui.notifyMessages(null, this.t("An image address is a path of this server, starting with /"));
+                    // the server keeps an outside image in public text (a page, a mail) and takes it out of app text
+                    // (allow-html="app", SEC-CLI-82)
+                    if (/^(https?:)?\/\//i.test(value) || value.startsWith("/")) editor.chain().focus().setImage({ src: value }).run();
+                    else if (value) moqui.notifyMessages(null, this.t("An image address starts with https:// or /"));
                     return;
                 }
                 const href = moqui.richText.linkHref(value);

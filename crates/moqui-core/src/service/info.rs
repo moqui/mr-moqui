@@ -278,6 +278,7 @@ pub fn service_detail(name: &str) -> Option<moqui_lib::object::ValueMap> {
             Value::string(match param.allow_html {
                 AllowHtml::None => "none",
                 AllowHtml::Safe => "safe",
+                AllowHtml::App => "app",
                 AllowHtml::Any => "any",
             }),
         );
@@ -389,6 +390,7 @@ fn param_node(param: &define::ParamDef) -> MNode {
     match param.allow_html {
         AllowHtml::None => {}
         AllowHtml::Safe => node.set_attribute("allow-html", "safe"),
+        AllowHtml::App => node.set_attribute("allow-html", "app"),
         AllowHtml::Any => node.set_attribute("allow-html", "any"),
     }
     set_some(&node, "entity-name", param.entity_name.as_deref());
