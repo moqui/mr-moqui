@@ -14,6 +14,7 @@ const ROLE_MAP = "moqui.security.sso.AuthFlowRoleMap"
 const flowId = "SPEC_IDP_FLOW"
 const liveFlowId = "SPEC_IDP_LIVE"
 const innerFlowId = "SPEC_IDP_INNER"
+const privateFlowId = "SPEC_IDP_PRIVATE"
 const users = {config: "SPEC_IDP_CONFIG", access: "SPEC_IDP_ACCESS", none: "SPEC_IDP_NONE", linked: "SPEC_IDP_LINKED"}
 const groups = {
     config: "SPEC_IDP_CONFIGS",
@@ -23,6 +24,8 @@ const groups = {
     plain: "SPEC_IDP_PLAIN"
 }
 const secret = "spec-idp-secret-9f3k"
+// the administrators' password, for the recent sign-in a change of who signs in asks (SEC-ADM-87)
+const password = "Spec-idp-admin-5!"
 
 const find = (entityName, conditions = {}) => ec.entity.find(entityName).condition(conditions).disableAuthz()
 const one = (entityName, conditions) => find(entityName, conditions).one()
@@ -31,8 +34,14 @@ const make = (entityName, fields) => {
     row.setFields(fields, true, null, null)
     row.create()
 }
-function as(userId, action) {
+// signed in as userId, by default with a sign-in in the last five minutes (a password user only); `recent` false is a
+// session with none, as a taken-over one
+function as(userId, action, recent = true) {
     ec.user.internalLoginUser(userId.toLowerCase().replace(/_/g, "."))
+    if (recent && (userId === users.config || userId === users.access)) {
+        ec.service.sync().name("org.moqui.sso.RecentAuthServices.reauthenticate#User").parameters({password}).disableAuthz().call()
+        ec.message.clearErrors()
+    }
     ec.artifactExecution.enableAuthz()
     try {
         return action()
@@ -72,7 +81,9 @@ spec({
                 userId,
                 username: userId.toLowerCase().replace(/_/g, "."),
                 userFullName: "Spec provider " + key,
-                externalUserId: key === "linked" ? "spec-sub-linked" : null
+                externalUserId: key === "linked" ? "spec-sub-linked" : null,
+                currentPassword: key === "config" || key === "access" ? ec.user.hashPassword(password) : null,
+                passwordHashType: key === "config" || key === "access" ? "argon2" : null
             })
         for (const [key, userGroupId] of Object.entries(groups))
             make("moqui.security.UserGroup", {userGroupId, description: "Spec provider " + key})
@@ -105,7 +116,7 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        const flowIds = [flowId, liveFlowId, innerFlowId]
+        const flowIds = [flowId, liveFlowId, innerFlowId, privateFlowId]
         for (const entityName of [ROLE_MAP, "moqui.security.sso.AuthFlowFieldMap", OAUTH, "moqui.security.sso.OidcFlow", FLOW])
             ec.entity.find(entityName).condition("authFlowId", "in", flowIds).deleteAll()
         const groupIds = Object.values(groups)
@@ -254,6 +265,9 @@ feature(
             linkTo(null)
             ec.artifactExecution.enableAuthz()
             try {
+                ec.service.sync().name("org.moqui.sso.RecentAuthServices.reauthenticate#User")
+                    .parameters({password: "moqui"}).disableAuthz().call()
+                ec.message.clearErrors()
                 out.enabled = invoke(C + "store#IdentityProvider", {
                     authFlowId: liveFlowId,
                     expectedRevision: provider(liveFlowId).revision,
@@ -328,6 +342,40 @@ feature(
         }
     }
 )
+
+// SEC-ADM-87: what decides who signs in through a provider (its endpoint, its secret, its mappings, enabling it) changes
+// only after a recent sign-in; its name does not ask. SEC-ADM-84: on a production instance a repointed provider loses the
+// private network an instance administrator allowed the old address.
+feature("a provider's sign-in parts change only after a recent sign-in, and a repointed one loses the private network", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        make(FLOW, {authFlowId: privateFlowId, authFlowTypeEnumId: "AftOauth", description: "Spec private", disabled: "Y",
+            allowPrivateNetwork: "Y"})
+        make(OAUTH, {authFlowId: privateFlowId, clientTypeEnumId: "OctOauth20", clientId: "spec-client",
+            authorizeUrl: "https://idp.example.com/authorize", tokenUrl: "https://idp.example.com/token",
+            userInfoUrl: "https://idp.example.com/userinfo"})
+        ec.artifactExecution.enableAuthz()
+        const store = (parameters, recent) =>
+            as(users.config, () => invoke(C + "store#IdentityProvider",
+                Object.assign({authFlowId: privateFlowId, expectedRevision: provider(privateFlowId).revision}, parameters)), recent)
+        const out = {}
+        out.named = store({description: "Spec private renamed"}, false)
+        out.stale = store({tokenUrl: "https://inner.example.net/token"}, false)
+        out.staleSecret = store({secret}, false)
+        out.privateBefore = one(FLOW, {authFlowId: privateFlowId}).allowPrivateNetwork
+        out.moved = withConf("instance@purpose", "production", () => store({tokenUrl: "https://inner.example.net/token"}, true))
+        out.privateAfter = one(FLOW, {authFlowId: privateFlowId}).allowPrivateNetwork
+        return out
+    },
+    then(out) {
+        out.named.applied == true
+        out.stale.reasonCode == "reauthRequired"
+        out.staleSecret.reasonCode == "reauthRequired"
+        out.privateBefore == "Y"
+        out.moved.applied == true
+        out.privateAfter == "N"
+    }
+})
 
 feature("the sign-in policy the server runs with is read only, and a group's sign-in rules are previewed before they are saved", {
     when() {

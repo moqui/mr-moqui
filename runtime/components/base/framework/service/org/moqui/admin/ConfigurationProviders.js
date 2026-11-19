@@ -648,6 +648,24 @@ function storeIdentityProvider(p) {
         !fieldRows &&
         !roleRows
     if (nothing) return {applied: true, authFlowId, revision, enabled: wasEnabled, secretCleared: false, testRequired: false}
+    // what decides who signs in as whom (enabling, the link rule, the default group, the role and identity mappings, the
+    // endpoint and the secret of a provider there is) changes only after the administrator signed in, or confirmed who
+    // they are, in the last five minutes, so a taken-over session does not (require#RecentAuth: its error and the
+    // X-Moqui-Reauth header, which a browser form answers by asking and sending again; SEC-ADM-87)
+    const signInChanged =
+        (enabledAfter && !wasEnabled) ||
+        (!creating &&
+            ("accountLinkEnumId" in flowChanges ||
+                defaultChanged ||
+                !!roleRows ||
+                !!fieldRows ||
+                endpointChanged ||
+                Object.keys(newSecrets).length > 0))
+    if (signInChanged && !ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent)
+        return refused("reauthRequired", "Confirm it is you: this change decides who signs in through the provider", {
+            authFlowId,
+            revision
+        })
     lib.auditReason(reason, auditedFields)
     if (creating) {
         const value = ec.entity.makeValue(FLOW)
