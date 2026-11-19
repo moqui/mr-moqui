@@ -40,6 +40,16 @@
         <out-parameters><parameter name="refusal"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('checkScorer',context))</script></actions>
     </service>
+    <service verb="attach" noun="Scorer" allow-remote="false">
+        <description>Attach a scorer to an agent (live scoring of samplingRate of every user's finished runs of it: needs
+            AgentAudit, written to AgentAuditLog) or to a dataset (it scores each experiment result). A scorer of a service
+            other than the evals' own needs AgentAudit either way. Needs MONITOR_EVAL. The attach keeps who made it
+            (attachedByUserId): live scoring runs a scorer of another service as them (SEC-AI-95).</description>
+        <in-parameters><parameter name="scorerId" required="true"/><parameter name="agentId"/><parameter name="datasetId"/>
+            <parameter name="samplingRate" type="BigDecimal"/></in-parameters>
+        <out-parameters><parameter name="attachId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('attach',context))</script></actions>
+    </service>
     <service verb="save" noun="RunAsDatasetItem" allow-remote="false">
         <description>A dataset item from an agent run: the run's user message is the input; groundTruth is given, or the
             run's reply when useOutput is Y. Another user's run needs AgentAudit, and the read is logged

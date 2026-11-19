@@ -32,10 +32,24 @@ function asPerson(n,p){let out={}
  if(ec.message.hasError())throw taken();return out}
 // body() as the experiment's starter: in a job, which has no user, the starter is signed in for it, so the job does what
 // the starter's own Check now would; a user calling does it as themselves.
-function asStarter(e,body){if(ec.user.userId)return body()
- const u=ec.entity.find('moqui.security.UserAccount').condition({userId:e.startedByUserId}).disableAuthz().one()
- if(!u||!ec.user.internalLoginUser(u.username)){ec.message.clearErrors();throw new Error('the starter '+e.startedByUserId+' of experiment '+e.experimentId+' cannot be signed in')}
+function asStarter(e,body){return asUserId(e.startedByUserId,'experiment '+e.experimentId,body)}
+// body() as userId when there is no user (the job), signed in for it; a user calling does it as themselves.
+function asUserId(userId,what,body){if(ec.user.userId)return body()
+ const u=userId?ec.entity.find('moqui.security.UserAccount').condition({userId}).disableAuthz().one():null
+ if(!u||!ec.user.internalLoginUser(u.username)){ec.message.clearErrors();throw new Error('user '+userId+' of '+what+' cannot be signed in')}
  try{return body()}finally{ec.user.logoutLocal()}}
+const otherService=s=>s.scorerTypeEnumId==='AgstService'&&!SERVICE_SCORERS.includes(s.serviceName)
+// Attach a scorer to an agent (live scoring of every user's runs: AgentAudit, written to AgentAuditLog) or to a dataset
+// (its experiments' results). A scorer of another service needs AgentAudit either way. The attach keeps who made it:
+// live scoring runs a scorer of another service as them (SEC-AI-95).
+function attach(p){need('MONITOR_EVAL');const s=one('AgentScorer',{scorerId:p.scorerId});if(!s)throw new Error('Choose a scorer')
+ if(!p.agentId===!p.datasetId)throw new Error('Attach a scorer to an agent or to a dataset')
+ const refusal=p.agentId?scorerRefusal({op:'attach',scorerId:s.scorerId,agentId:p.agentId})
+  :otherService(s)&&!ec.user.hasPermission('AgentAudit')?'A scorer of a service other than the evals\' own needs the AgentAudit permission':null
+ if(refusal)throw new Error(refusal)
+ let rate=null;if(p.agentId){rate=num(p.samplingRate)??1;if(!(rate>0&&rate<=1))throw new Error('Sampling rate is more than 0 and at most 1')}
+ const out=create('AgentScorerAttach',{scorerId:s.scorerId,agentId:p.agentId||null,datasetId:p.datasetId||null,samplingRate:rate,fromDate:now(),lastScoredDate:p.agentId?now():null,attachedByUserId:ec.user.userId})
+ return{attachId:out.attachId}}
 
 // ---- datasets: each change raises versionNum; an item belongs to versions fromVersion..thruVersion (exclusive)
 function dataset(id){const d=one('AgentDataset',{datasetId:id});if(!d)throw new Error('Dataset '+id+' is not available');return d}
@@ -171,14 +185,20 @@ function cancel(p){need('MONITOR_EVAL_RUN');const e=one('AgentExperiment',{exper
 // ---- live scoring: a stable sample (a hash of the run id) of each attached agent's completed runs
 function sampled(runId,rate){let h=2166136261;for(const ch of String(runId)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)>>>0}return(h%10000)/10000<rate}
 // The job's each five minutes, or a user's, which needs MONITOR_EVAL_RUN (judges cost money).
+// A scorer of another service runs as the person who attached it (attachedByUserId, an AgentAudit holder), in the job
+// signed in for it as an experiment's starter is; one whose attach names no one is not run and its runs wait.
 function live(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
  let scored=0
  for(const a of rows('AgentScorerAttach').filter(a=>a.agentId&&active(a))){
   try{const s=one('AgentScorer',{scorerId:a.scorerId});if(!s||s.scorerTypeEnumId==='AgstHuman')continue
-   const rate=num(a.samplingRate)??1,since=a.lastScoredDate||a.fromDate||now()
-   const runs=Array.from(find('AgentRun',{agentId:a.agentId,statusId:'AgrCompleted'}).condition('endedDate','greater',since).orderBy('endedDate').limit(100).list())
-   for(const run of runs){if(sampled(run.runId,rate)){try{score([s],{runId:run.runId,input:runInput(run.runId),output:runOutput(run)},'AgssLive');scored++}catch(err){ec.logger.error('Live score of run '+run.runId+' failed: '+err)}}}
-   if(runs.length)update('AgentScorerAttach',{attachId:a.attachId,lastScoredDate:runs[runs.length-1].endedDate})
+   if(otherService(s)&&!a.attachedByUserId){ec.logger.error('Live scorer '+s.scorerId+' of attach '+a.attachId+' calls '+s.serviceName+' and its attach names no one to run it as: not run');continue}
+   const pass=()=>{let count=0
+    const rate=num(a.samplingRate)??1,since=a.lastScoredDate||a.fromDate||now()
+    const runs=Array.from(find('AgentRun',{agentId:a.agentId,statusId:'AgrCompleted'}).condition('endedDate','greater',since).orderBy('endedDate').limit(100).list())
+    for(const run of runs){if(sampled(run.runId,rate)){try{score([s],{runId:run.runId,input:runInput(run.runId),output:runOutput(run)},'AgssLive');count++}catch(err){ec.logger.error('Live score of run '+run.runId+' failed: '+err)}}}
+    if(runs.length)update('AgentScorerAttach',{attachId:a.attachId,lastScoredDate:runs[runs.length-1].endedDate})
+    return count}
+   scored+=otherService(s)?asUserId(a.attachedByUserId,'attach '+a.attachId,pass):pass()
   }catch(err){ec.logger.error('Live scoring of attach '+a.attachId+' failed: '+err)}
  }
  return{scoredCount:scored}
@@ -195,5 +215,5 @@ function calledTool(p){if(!p.runId)return{score:0,reason:'No run to check'};cons
  const used=new Set(rows('AgentToolCall',{runId:p.runId}).map(c=>c.toolName));if(!want.length)return{score:used.size?1:0,reason:used.size?'Called '+[...used].join(', '):'Called no tool'}
  const missing=want.filter(t=>!used.has(t));return{score:(want.length-missing.length)/want.length,reason:missing.length?'Did not call '+missing.join(', '):'Called '+want.join(', ')}}
 
-function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,runReadable,checkScorer,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
+function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,runReadable,checkScorer,attach,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
 ;({execute})

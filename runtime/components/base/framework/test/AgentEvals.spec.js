@@ -125,3 +125,18 @@ feature("an agent experiment whose runs do not start ends failed",{
   return{e:one('moqui.agent.AgentExperiment',{experimentId:started.experimentId}),results:list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId})}},
  then({e,results}){e.statusId=='EvFailed';results.length==3;results.every(r=>r.statusId==='EvrFailed'&&r.errorText.includes('does not serve'))},
 })
+// SEC-AI-95: live scoring in the job (no user) runs a scorer of another service as whoever attached it; one whose attach
+// names no one is not run, and its runs wait; and attaching such a scorer to a dataset needs AgentAudit too
+feature("live scoring runs another service's scorer as its attacher, and such an attach needs AgentAudit",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  call('create#moqui.agent.AgentScorer',{scorerId:'EVAL_T_OTHER',scorerName:'Another service',scorerTypeEnumId:'AgstService',serviceName:'org.moqui.impl.BasicServices.noop'})
+  call('create#moqui.agent.AgentDefinition',{agentId:'EVAL_T_LIVE',agentName:'Live',surfaces:'job'})
+  const runId=call('create#moqui.agent.AgentRun',{agentId:'EVAL_T_LIVE',userId:ec.user.userId,statusId:'AgrCompleted',submittedDate:'2026-01-01T00:00:00Z',endedDate:new Date(Date.now()-1000).toISOString(),resultJson:JSON.stringify({text:'Done.'})}).runId
+  const attach=(by)=>call('create#moqui.agent.AgentScorerAttach',Object.assign({scorerId:'EVAL_T_OTHER',agentId:'EVAL_T_LIVE',samplingRate:1,fromDate:'2000-01-01T00:00:00Z',lastScoredDate:'2026-01-01T00:00:00Z'},by?{attachedByUserId:by}:{})).attachId
+  const byJohn=attach('EX_JOHN_DOE'),byNobody=attach(null),before=String(one('moqui.agent.AgentScorerAttach',{attachId:byNobody}).lastScoredDate)
+  ec.user.logoutLocal();let live;try{live=call(S+'score#LiveRuns',{})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  const refused=invoke(S+'attach#Scorer',{scorerId:'EVAL_T_OTHER',datasetId:'EVAL_T_DS'})
+  return{live,before,scores:list('moqui.agent.AgentScore',{runId}),john:one('moqui.agent.AgentScorerAttach',{attachId:byJohn}),nobody:one('moqui.agent.AgentScorerAttach',{attachId:byNobody}),refused}},
+ then({live,before,scores,john,nobody,refused}){scores.length==1;scores[0].errorText.includes('no score');!scores[0].errorText.includes('not authorized')
+  String(john.lastScoredDate)!=before;String(nobody.lastScoredDate)==before;refused.error.includes('AgentAudit')},
+})
