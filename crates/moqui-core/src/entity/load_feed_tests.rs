@@ -748,6 +748,21 @@ fn a_check_answers_no_password_or_encrypted_value_and_refuses_the_restricted_ent
         "{}",
         error_chain(&err)
     );
+    // a check without the option (the testkit's checkData) reads any entity and compares every field
+    let (_, open) = check_info_with(|| {
+        load_entity_xml_text(
+            &facade,
+            "xmlText",
+            r#"<entity-facade-xml>
+                <moqui.security.UserGroupMember userGroupId="SEC_CHECK" userId="SEC_CHECK" fromDate="2001-02-03 04:05:06.0"/>
+                <moqui.security.UserAccount userId="SEC_CHECK" passwordSalt="guess"/>
+            </entity-facade-xml>"#,
+            &LoadOptions::default(),
+        )
+    })
+    .unwrap();
+    let fields: Vec<String> = open.diff_info.iter().map(|row| text(row, "field")).collect();
+    assert_eq!(fields, ["passwordSalt"], "{:?}", open.diff_info);
 }
 
 // A load's own switch is this thread's and ends with its scope, nested or not; it leaves the security checks
