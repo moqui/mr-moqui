@@ -153,7 +153,7 @@ fn exists(facade: &EntityFacade, hash: &str) -> Result<bool, Error> {
 /// Delete the rows past their time, once in [`PURGE_EVERY`] takes; a failure is logged.
 fn purge_now_and_then(facade: &EntityFacade, at: i64) {
     static TAKES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    if TAKES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % PURGE_EVERY != 0 {
+    if !TAKES.fetch_add(1, std::sync::atomic::Ordering::Relaxed).is_multiple_of(PURGE_EVERY) {
         return;
     }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
