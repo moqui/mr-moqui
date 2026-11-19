@@ -268,7 +268,7 @@ A runner is never the server, nor on its machine or its network. A pool (`GitRun
 | `allowedImages` | Image patterns (`*`). A job whose image none matches is an error; an empty list allows none. |
 | `maxConcurrent`, `maxMinutes` | Jobs at once, and the longest a job runs. |
 | `cpuLimit`, `memoryMb`, `diskMb`, `pidsLimit` | The container's limits. `diskMb` needs a storage driver that takes it. |
-| `egressRule` | The container's network mode: `bridge` (the default), `none`, or a network of the host whose rules limit what a job reaches. A network is named by letters, digits, dot, dash and underscore only, so never `host`, `container:...`, Podman's `ns:<path>`, `slirp4netns:...` or `pasta:...` (refused when the pool is stored, and `none` if a row has one). |
+| `egressRule` | The container's network mode: `bridge` (the default), `none`, or a network of the host whose rules limit what a job reaches. A network is named by letters, digits, dot, dash and underscore only, and is no engine keyword, so never `host`, `container:...`, Podman's `ns:<path>`, `slirp4netns`, `pasta` or `private`, with options or without (refused when the pool is stored, and `none` if a row has one). |
 | `serverUrl` | The URL the pool's runners reach the server by, when it is not `git-ci` `server-url`. |
 
 The pools are an operator's: `find#RunnerPools`, `store#`, `delete#RunnerPool`, `create#RunnerPoolToken` and
@@ -319,8 +319,11 @@ that user and writes under `/tmp` (Postgres with `PGDATA` there). They are on a 
 its container, which reaches out only when the pool's `egressRule` is `bridge`: for `none` or a network of the host
 it is internal, and the job's container is put on the pool's network too, so the job's egress is the pool's and a
 service has none. A network of that name already there is an error (another run's), never shared. A job's or a
-service's image that declares a `VOLUME` is refused before its container starts: the engine would make an anonymous
-volume there, on the host's disk and outside the pool's limits.
+service's image (the image is inspected before its container is made) gets a tmpfs of `container-tmp-mb`, owned by
+the container's user, at each path its image declares a `VOLUME` (a database service keeps its data there, within the
+memory limit), where the engine would otherwise make an anonymous
+volume on the host's disk, outside the pool's limits. A path no tmpfs covers (not absolute), and a container the
+engine gave a volume anyway, are refused before it starts.
 
 The names carry this server's id (`git-ci` `server-id`, else the public URL's host), and a removal or a cleanup
 touches only containers with this server's label, so two servers can share a host. The cleanup leaves a container

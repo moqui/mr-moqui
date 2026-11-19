@@ -65,6 +65,29 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
             }
         }
         ("POST", "/v1.40/images/create") => (200, "{\"status\":\"Pulling\"}\n{\"status\":\"Done\"}\n".to_string()),
+        // an image's own config: a database image declares a VOLUME, as the official ones do
+        ("GET", path) if path.starts_with("/v1.40/images/") && path.ends_with("/json") => {
+            let image = path
+                .trim_start_matches("/v1.40/images/")
+                .trim_end_matches("/json")
+                .replace("%3A", ":")
+                .replace("%2F", "/");
+            let pulled = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, target, _)| target.starts_with("/v1.40/images/create"));
+            let volumes = match image.as_str() {
+                "postgres:16" | "with-volume:1" | "leaks-volume:1" => json!({"/var/lib/postgresql/data": {}}),
+                "relative-volume:1" => json!({"data": {}}),
+                _ => json!(null),
+            };
+            if image == "registry.example.com/ci/needs-pull:2" && !pulled {
+                (404, json!({"message": format!("No such image: {image}")}).to_string())
+            } else {
+                (200, json!({"Config": {"Volumes": volumes}}).to_string())
+            }
+        }
         ("POST", "/v1.40/networks/create") if body["Name"] == "moqui-ci-TAKEN-net" => (
             409,
             json!({"message": "network with name moqui-ci-TAKEN-net already exists"}).to_string(),
@@ -109,16 +132,15 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
                 "named-user:1" => "app",
                 _ => "1000:1000",
             };
-            // an image that declares a VOLUME: the engine made an anonymous volume for it
-            let volumes = if image == "with-volume:1" {
-                json!({"/var/lib/data": {}})
+            // an engine that made an anonymous volume although a tmpfs was asked for at its path
+            let mounts = if image == "leaks-volume:1" {
+                json!([{"Type": "volume", "Destination": "/var/lib/postgresql/data"}])
             } else {
-                json!(null)
+                json!([{"Type": "tmpfs", "Destination": "/tmp"}])
             };
             (
                 200,
-                json!({"Config": {"User": user, "Volumes": volumes, "Labels": {"moqui.ci.server": "this"}}})
-                    .to_string(),
+                json!({"Config": {"User": user, "Labels": {"moqui.ci.server": "this"}}, "Mounts": mounts}).to_string(),
             )
         }
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
@@ -347,6 +369,10 @@ fn a_jobs_container_has_limits_and_no_way_out() {
         "slirp4netns:allow_host_loopback=true",
         "pasta:-T,22",
         "private:x",
+        "private",
+        "pasta",
+        "slirp4netns",
+        "Host",
     ] {
         let mut escaping = parameters.clone();
         escaping.insert("networkMode".to_string(), Value::string(rule));
@@ -407,14 +433,16 @@ fn the_run_services_speak_the_docker_api() {
             .map(|(method, target, _)| format!("{method} {target}"))
             .collect::<Vec<_>>(),
         [
+            // the image's VOLUMEs, which a tmpfs covers, before the container is made
+            "GET /v1.40/images/moqui-build%3A1/json",
             "POST /v1.40/containers/create?name=moqui-ci-J1",
             "GET /v1.40/containers/c0/json",
             "POST /v1.40/containers/c0/start"
         ]
     );
-    assert_eq!(seen[0].2["HostConfig"]["Privileged"], false);
-    assert_eq!(seen[0].2["HostConfig"]["Memory"], 2048i64 * 1024 * 1024);
-    assert_eq!(seen[0].2["Labels"]["moqui.ci.job"], "J1");
+    assert_eq!(seen[1].2["HostConfig"]["Privileged"], false);
+    assert_eq!(seen[1].2["HostConfig"]["Memory"], 2048i64 * 1024 * 1024);
+    assert_eq!(seen[1].2["Labels"]["moqui.ci.job"], "J1");
 
     // an image the host does not have is pulled, then created again
     api.seen.lock().unwrap().clear();
@@ -429,13 +457,14 @@ fn the_run_services_speak_the_docker_api() {
         .iter()
         .map(|(method, target, _)| format!("{method} {target}"))
         .collect();
-    assert_eq!(targets[0], "POST /v1.40/containers/create?name=moqui-ci-J1");
+    assert!(targets[0].starts_with("GET /v1.40/images/"), "{targets:?}");
     assert_eq!(
         targets[1],
         "POST /v1.40/images/create?fromImage=registry.example.com%2Fci%2Fneeds-pull&tag=2"
     );
-    assert_eq!(targets[2], "POST /v1.40/containers/create?name=moqui-ci-J1");
-    assert!(targets[4].ends_with("/start"), "{targets:?}");
+    assert!(targets[2].starts_with("GET /v1.40/images/"), "{targets:?}");
+    assert_eq!(targets[3], "POST /v1.40/containers/create?name=moqui-ci-J1");
+    assert!(targets[5].ends_with("/start"), "{targets:?}");
 
     // an untrusted pool's run pulls nothing: an image the host does not have is an error
     api.seen.lock().unwrap().clear();
@@ -464,31 +493,37 @@ fn the_run_services_speak_the_docker_api() {
     assert_eq!(seen[0].2["Name"], "moqui-ci-J1-net");
     // the pool's egress is a network of the host: the job's own network reaches nothing outside it
     assert_eq!(seen[0].2["Internal"], true);
-    assert_eq!(seen[1].1, "/v1.40/containers/create?name=moqui-ci-J1-db");
-    assert_eq!(seen[1].2["Image"], "postgres:16");
-    assert_eq!(seen[1].2["Labels"]["moqui.ci.job"], "J1");
+    assert_eq!(seen[1].1, "/v1.40/images/postgres%3A16/json");
+    assert_eq!(seen[2].1, "/v1.40/containers/create?name=moqui-ci-J1-db");
+    assert_eq!(seen[2].2["Image"], "postgres:16");
+    assert_eq!(seen[2].2["Labels"]["moqui.ci.job"], "J1");
     // kept in as the job is
-    let service_host = &seen[1].2["HostConfig"];
+    let service_host = &seen[2].2["HostConfig"];
+    // its image's VOLUME is a sized tmpfs owned by the container user, not an anonymous volume on the host's disk
+    assert_eq!(
+        service_host["Tmpfs"]["/var/lib/postgresql/data"],
+        "rw,exec,nosuid,nodev,size=1024m,uid=1000,gid=1000,mode=0700"
+    );
     assert_eq!(service_host["Privileged"], false);
     assert_eq!(service_host["CapDrop"], json!(["ALL"]));
     assert!(service_host.get("CapAdd").is_none());
     assert_eq!(service_host["Init"], true);
-    assert_eq!(seen[1].2["User"], "1000:1000");
+    assert_eq!(seen[2].2["User"], "1000:1000");
     assert_eq!(service_host["NanoCpus"], 1_500_000_000i64);
     assert_eq!(service_host["MemorySwap"], 2048i64 * 1024 * 1024);
     assert_eq!(service_host["StorageOpt"], json!({"size": "10000m"}));
     assert_eq!(service_host["PidsLimit"], 512);
     assert_eq!(
-        seen[1].2["NetworkingConfig"]["EndpointsConfig"]["moqui-ci-J1-net"]["Aliases"],
+        seen[2].2["NetworkingConfig"]["EndpointsConfig"]["moqui-ci-J1-net"]["Aliases"],
         json!(["db"])
     );
-    assert!(seen[2].1.ends_with("/json") && seen[3].1.ends_with("/start"));
-    assert_eq!(seen[4].1, "/v1.40/containers/create?name=moqui-ci-J1");
-    assert_eq!(seen[4].2["HostConfig"]["NetworkMode"], "moqui-ci-J1-net");
+    assert!(seen[3].1.ends_with("/json") && seen[4].1.ends_with("/start"));
+    assert_eq!(seen[6].1, "/v1.40/containers/create?name=moqui-ci-J1");
+    assert_eq!(seen[6].2["HostConfig"]["NetworkMode"], "moqui-ci-J1-net");
     // and the job on the pool's network too, so its egress is the pool's
-    assert_eq!(seen[6].1, "/v1.40/networks/ci-egress/connect");
-    assert!(seen[6].2["Container"].as_str().is_some_and(|id| id.starts_with('c')));
-    assert!(seen[7].1.ends_with("/start"));
+    assert_eq!(seen[8].1, "/v1.40/networks/ci-egress/connect");
+    assert!(seen[8].2["Container"].as_str().is_some_and(|id| id.starts_with('c')));
+    assert!(seen[9].1.ends_with("/start"));
     // a pool on the bridge: the job's network reaches out as the bridge does
     api.seen.lock().unwrap().clear();
     let mut bridged = with_service.clone();
@@ -640,7 +675,7 @@ fn a_host_is_reached_over_a_unix_socket() {
     assert_eq!(to_plain_string(&out["instanceRef"]), "c0");
     let (out, _) = api.call(inspect_run_docker, &[("instanceRef", Value::string("a1"))]);
     assert_eq!(to_plain_string(&out["state"]), "running");
-    assert_eq!(api.seen()[0].1, "/v1.40/containers/create?name=moqui-ci-J1");
+    assert_eq!(api.seen()[1].1, "/v1.40/containers/create?name=moqui-ci-J1");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -792,15 +827,38 @@ fn an_image_user_that_is_root_is_refused_before_it_starts() {
     assert!(out.contains_key("instanceRef"));
 }
 
-/// SEC-GIT-93: an image that declares a VOLUME is refused before its container starts, whatever the container user,
-/// and the container (with the volume the engine made) is removed: the volume would be on the host's disk, outside
-/// the job's limits.
+/// SEC-GIT-93: an image that declares a VOLUME runs with a sized tmpfs at each such path, so the engine makes no
+/// anonymous volume on the host's disk; a path no tmpfs can cover is refused before anything is made, and a container
+/// the engine gave a volume anyway is refused before it starts and removed with its volumes.
 #[test]
-fn an_image_with_a_volume_is_refused_before_it_starts() {
+fn an_image_volume_is_a_sized_tmpfs_and_one_that_cannot_be_is_refused() {
     let api = Api::tcp();
     let (out, errors) = api.call(start_run_docker, &start_parameters("with-volume:1"));
+    assert!(errors.is_empty(), "{errors}");
+    assert!(out.contains_key("instanceRef"), "{out:?}");
+    let seen = api.seen();
+    let created = seen
+        .iter()
+        .find(|(method, target, _)| method == "POST" && target.starts_with("/v1.40/containers/create"))
+        .unwrap();
+    assert_eq!(
+        created.2["HostConfig"]["Tmpfs"]["/var/lib/postgresql/data"],
+        "rw,exec,nosuid,nodev,size=1024m,uid=1000,gid=1000,mode=0700"
+    );
+
+    let api = Api::tcp();
+    let (out, errors) = api.call(start_run_docker, &start_parameters("relative-volume:1"));
     assert!(!out.contains_key("instanceRef"), "{out:?}");
-    assert!(errors.contains("VOLUME (/var/lib/data)"), "{errors}");
+    assert!(errors.contains("VOLUME data that cannot be covered"), "{errors}");
+    assert!(
+        !api.seen().iter().any(|(method, _, _)| method == "POST"),
+        "nothing made"
+    );
+
+    let api = Api::tcp();
+    let (out, errors) = api.call(start_run_docker, &start_parameters("leaks-volume:1"));
+    assert!(!out.contains_key("instanceRef"), "{out:?}");
+    assert!(errors.contains("has a volume on the host's disk"), "{errors}");
     let seen = api.seen();
     assert!(
         !seen.iter().any(|(_, target, _)| target.ends_with("/start")),

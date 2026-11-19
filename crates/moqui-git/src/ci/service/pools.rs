@@ -211,7 +211,7 @@ fn store_runner_pool(parameters: &Parameters, facade: &EntityFacade) -> Out {
     }
     if let Some(rule) = field(&pool, "egressRule").filter(|rule| !crate::ci::driver::docker::valid_egress(rule)) {
         add_error(format!(
-            "egressRule {rule} is not bridge, none or the name of a network of the host (letters, digits, dot, dash and underscore): never the host's network, another container's or a namespace"
+            "egressRule {rule} is not bridge, none or the name of a network of the host (letters, digits, dot, dash and underscore) that is no engine keyword: never the host's network, another container's, a namespace or a user-mode network (pasta, slirp4netns, private)"
         ));
         return none();
     }
