@@ -16,67 +16,39 @@
 //! missing related row is created with the keys. Otherwise the database constraint decides. `one-nofk` and
 //! auto-reverse are skipped.
 
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet};
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use moqui_db::model::{EntityDefinition, EntityModel, Relationship};
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
-use super::facade::EntityFacade;
+use super::facade::{EntityFacade, WriteSwitchScope, WriteSwitches};
 use super::value::EntityValue;
 use super::value::FieldMap;
 
-thread_local! {
-    /// The `dummy_fks` and `disable_fk_create` of the data loads running on this thread, as Java keeps them on the
-    /// loader and the `ExecutionContext`, not the entity facade.
-    static SCOPE: Cell<ScopeFlags> = const { Cell::new(ScopeFlags { dummy_fks: false, disable_fk_create: false }) };
-}
-
-#[derive(Clone, Copy)]
-struct ScopeFlags {
-    dummy_fks: bool,
-    disable_fk_create: bool,
-}
-
-/// Turns on `dummy_fks` and `disable_fk_create` for this thread, for one load, until dropped. Other threads keep the
-/// facade flags. Scopes nest, and drop restores the outer scope, also on unwind.
-pub struct FkScope {
-    previous: ScopeFlags,
-    _thread: PhantomData<*const ()>,
-}
-
-impl FkScope {
-    pub fn enter(dummy_fks: bool, disable_fk_create: bool) -> Self {
-        let previous = SCOPE.get();
-        SCOPE.set(ScopeFlags {
-            dummy_fks: previous.dummy_fks || dummy_fks,
-            disable_fk_create: previous.disable_fk_create || disable_fk_create,
-        });
-        Self {
-            previous,
-            _thread: PhantomData,
-        }
+/// `dummy_fks` and `disable_fk_create` for this thread, for one load, until the scope drops: the load's
+/// [`WriteSwitches`] with those two. Other threads keep the facade flags; scopes nest, and a drop restores the outer
+/// one, also on unwind.
+#[must_use = "the switches are back on when the scope drops"]
+pub fn fk_scope(dummy_fks: bool, disable_fk_create: bool) -> WriteSwitchScope {
+    WriteSwitches {
+        dummy_fks,
+        disable_fk_create,
+        ..WriteSwitches::default()
     }
-}
-
-impl Drop for FkScope {
-    fn drop(&mut self) {
-        SCOPE.set(self.previous);
-    }
+    .enter()
 }
 
 /// True when a create inserts a dummy row for a missing related row: the facade flag, or a load on this thread.
 pub(crate) fn dummy_fks(facade: &EntityFacade) -> bool {
-    facade.flags().dummy_fks || SCOPE.get().dummy_fks
+    facade.flags().dummy_fks
 }
 
 /// True when foreign keys are neither checked on create nor created with tables: the facade flag, or a load on
 /// this thread.
 pub(crate) fn fk_create_disabled(facade: &EntityFacade) -> bool {
-    facade.flags().disable_fk_create || SCOPE.get().disable_fk_create
+    facade.flags().disable_fk_create
 }
 
 struct FkJob {
@@ -283,7 +255,7 @@ fn row_exists(facade: &EntityFacade, entity_name: &str, keys: &FieldMap) -> Resu
 mod tests {
     use moqui_lib::object::Value;
 
-    use super::{dummy_fks, fk_create_disabled, FkScope};
+    use super::{dummy_fks, fk_create_disabled, fk_scope};
     use crate::testing;
 
     #[test]
@@ -291,7 +263,7 @@ mod tests {
         let facade = testing::open();
         facade.set_disable_fk_create(false);
         {
-            let _scope = FkScope::enter(true, true);
+            let _scope = fk_scope(true, true);
             assert!(dummy_fks(&facade) && fk_create_disabled(&facade));
             let other = facade.clone();
             let seen = std::thread::spawn(move || (dummy_fks(&other), fk_create_disabled(&other)))
@@ -299,7 +271,7 @@ mod tests {
                 .unwrap();
             assert_eq!(seen, (false, false), "another thread keeps the facade flags");
             {
-                let _inner = FkScope::enter(false, false);
+                let _inner = fk_scope(false, false);
                 assert!(dummy_fks(&facade), "an inner scope keeps the outer one");
             }
             assert!(dummy_fks(&facade));
@@ -308,7 +280,7 @@ mod tests {
         assert!(!facade.flags().dummy_fks && !facade.flags().disable_fk_create);
 
         let unwound = std::panic::catch_unwind(|| {
-            let _scope = FkScope::enter(true, false);
+            let _scope = fk_scope(true, false);
             panic!("load failed");
         });
         assert!(unwound.is_err());
@@ -321,7 +293,7 @@ mod tests {
     fn dummy_fks_make_a_related_row_only_on_the_load_thread() {
         let facade = testing::open();
         facade.set_disable_fk_create(false);
-        let _scope = FkScope::enter(true, false);
+        let _scope = fk_scope(true, false);
         let other = facade.clone();
         std::thread::spawn(move || {
             let mut value = other.make_value("moqui.basic.Enumeration")?;

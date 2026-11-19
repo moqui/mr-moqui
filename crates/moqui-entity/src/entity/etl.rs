@@ -225,7 +225,7 @@ impl Loader for EtlLoader {
     fn load(&mut self, entry: &mut SimpleEntry) -> Result<(), Error> {
         let written = {
             // Dummy foreign keys are on for this thread and this write only, as for the data loader.
-            let _scope = super::fk::FkScope::enter(self.dummy_fks, false);
+            let _scope = super::fk::fk_scope(self.dummy_fks, false);
             match self.writer.as_mut() {
                 Some(writer) => writer(&self.facade, entry),
                 None => {

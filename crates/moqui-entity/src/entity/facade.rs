@@ -47,15 +47,20 @@ pub struct EntityFlags {
     pub dummy_fks: bool,
 }
 
-/// What a data load turns off for its own writes (`disableEntityEca`, `disableAuditLog`, `disableDataFeed`): only on
-/// the thread that runs it, so a write any other thread makes meanwhile keeps its entity ECA rules, its audit row and its
-/// feed (plans/Security-Review-Medium.md SEC-DAT-83). With `disable_entity_eca` the `UserSecurityChecks` rules still run
+/// What a data load switches for its own writes (`disableEntityEca`, `disableAuditLog`, `disableDataFeed`, `dummyFks`,
+/// `disableFkCreate`): only on the thread that runs it, as Java keeps them on the loader and the `ExecutionContext`,
+/// so a write any other thread makes meanwhile keeps its entity ECA rules, its audit row, its feed and its foreign keys
+/// (plans/Security-Review-Medium.md SEC-DAT-83). With `disable_entity_eca` the `UserSecurityChecks` rules still run
 /// ([`super::load_feed::is_security_check`]); the facade's own flags ([`EntityFacade::shared_flags`]) turn off all.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WriteSwitches {
     pub disable_entity_eca: bool,
     pub disable_audit_log: bool,
     pub disable_data_feed: bool,
+    /// A create inserts a dummy row for a missing related row ([`super::fk`]).
+    pub dummy_fks: bool,
+    /// Foreign keys are neither checked on create nor created with tables.
+    pub disable_fk_create: bool,
 }
 
 thread_local! {
@@ -64,6 +69,8 @@ thread_local! {
             disable_entity_eca: false,
             disable_audit_log: false,
             disable_data_feed: false,
+            dummy_fks: false,
+            disable_fk_create: false,
         })
     };
 }
@@ -85,6 +92,8 @@ impl WriteSwitches {
                 disable_entity_eca: before.disable_entity_eca || self.disable_entity_eca,
                 disable_audit_log: before.disable_audit_log || self.disable_audit_log,
                 disable_data_feed: before.disable_data_feed || self.disable_data_feed,
+                dummy_fks: before.dummy_fks || self.dummy_fks,
+                disable_fk_create: before.disable_fk_create || self.disable_fk_create,
             });
         });
         WriteSwitchScope {
@@ -587,6 +596,8 @@ impl EntityFacade {
         flags.disable_entity_eca |= thread.disable_entity_eca;
         flags.disable_audit_log |= thread.disable_audit_log;
         flags.disable_data_feed |= thread.disable_data_feed;
+        flags.dummy_fks |= thread.dummy_fks;
+        flags.disable_fk_create |= thread.disable_fk_create;
         flags
     }
 

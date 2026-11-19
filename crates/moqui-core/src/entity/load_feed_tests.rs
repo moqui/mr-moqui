@@ -763,7 +763,7 @@ fn a_loads_switch_is_this_threads_and_leaves_the_security_checks() {
     let off = WriteSwitches {
         disable_entity_eca: true,
         disable_audit_log: true,
-        disable_data_feed: false,
+        ..WriteSwitches::default()
     };
     {
         let _outer = off.enter();

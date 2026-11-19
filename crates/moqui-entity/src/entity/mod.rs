@@ -61,7 +61,7 @@ pub use find::{
 };
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
-pub use fk::FkScope;
+pub use fk::fk_scope;
 pub use fk::{missing_related, MissingRelated};
 pub use meta::{DdlConf, EntityDbMeta, TableCheck};
 pub use meta_compare::{

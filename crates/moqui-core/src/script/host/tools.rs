@@ -1909,6 +1909,7 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
         disable_entity_eca: flag("disableEntityEca"),
         disable_audit_log: flag("disableAuditLog"),
         disable_data_feed: flag("disableDataFeed"),
+        ..crate::entity::WriteSwitches::default()
     }
     .enter();
     let factory = factory()?;
