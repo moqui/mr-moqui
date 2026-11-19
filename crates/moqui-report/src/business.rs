@@ -66,40 +66,38 @@ fn steward_of(id: &str) -> Result<(), Error> {
 fn reads_document(ec: &ExecutionContext, document: &str) -> Result<bool, Error> {
     let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
         .map_err(fail)?;
-    let rows = metadata(ec, || {
-        entity(ec)?
-            .find(DOCUMENT_GROUP)?
-            .eq("dataDocumentId", Value::string(document))
-            .list()
-    })?;
-    let reads = rows.iter().any(|row| {
-        row.get("userGroupId")
-            .and_then(Value::as_str)
-            .is_some_and(|group| groups.contains(group))
-    });
-    Ok(reads)
+    Ok(document_groups(ec, document)?.iter().any(|group| groups.contains(group)))
 }
 
-/// Refused unless every group that reads `document` (its `DataDocumentUserGroup` rows) is one of the caller's own: a
-/// field of a related entity added to the document is read by all of them (SEC-TLS-92).
-fn check_readers_own(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
-    let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
-        .map_err(fail)?;
+/// The groups that read `document`: its `DataDocumentUserGroup` rows.
+fn document_groups(ec: &ExecutionContext, document: &str) -> Result<Vec<String>, Error> {
     let rows = metadata(ec, || {
         entity(ec)?
             .find(DOCUMENT_GROUP)?
             .eq("dataDocumentId", Value::string(document))
             .list()
     })?;
-    let others = rows
+    Ok(rows
         .iter()
-        .filter_map(|row| row.get("userGroupId").and_then(Value::as_str))
-        .filter(|group| !groups.contains(*group))
-        .count();
+        .filter_map(|row| row.get("userGroupId").and_then(Value::as_str).map(str::to_owned))
+        .collect())
+}
+
+/// Refused unless every group that reads `document` is the steward's to widen (SEC-TLS-92): one they belong to by a
+/// membership of their own (never the implicit `ALL_USERS`), or one whose share artifact their grant holds, as
+/// `definitions::may_share_with` asks. A field added to the document, of its own entity or a related one, is read by all
+/// of them from the index.
+fn check_readers_own(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
+    let mut others = 0;
+    for group in document_groups(ec, document)? {
+        if !crate::definitions::may_share_with(&group)? {
+            others += 1;
+        }
+    }
     if others > 0 {
         return Err(fail(format!(
-            "document {document} is read by {others} group(s) you are not in; a field of a related entity would widen \
-             what they read, so it is added by a steward in every group that reads the document"
+            "document {document} is read by {others} group(s) that are not yours to widen; a field is added to it by a \
+             steward who belongs to, or may share with, every group that reads the document"
         )));
     }
     Ok(())
@@ -1004,9 +1002,9 @@ pub fn store_business_dataset_fields(
             (None, Some(old)) => old.to_owned(),
             (None, None) => return Err(fail("a new field needs a field path")),
         };
-        // a field of a related entity is read from the index by every reader group of the document: the steward adds
-        // one only where those groups are all their own, so no other group's reads widen (SEC-TLS-92)
-        if path.contains(':') && old_path != Some(path.as_str()) {
+        // a field added is read from the index by every reader group of the document: the steward adds one only where
+        // those groups are all theirs to widen (SEC-TLS-92)
+        if old_path != Some(path.as_str()) {
             check_readers_own(ec, &document)?;
         }
         let alias = change["fieldNameAlias"].as_str().unwrap_or("");
