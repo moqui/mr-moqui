@@ -1032,7 +1032,9 @@ fn not_loaded(name: &str) -> Error {
 
 /// The `suite.js` chains of a component in a run, `test/suite.js` and in an acceptance run `test/acceptance/suite.js`
 /// (with `client`, those of `test/client` and `test/acceptance/client`), each as the indexes of the specs it lists that the
-/// component has, in its order. A suite.js that cannot be read lists nothing (discovery has already read it).
+/// component has, in its order. A suite.js that cannot be read lists nothing (discovery has already read it). The
+/// parallel workers' (`workers.rs`), which embedded Postgres builds.
+#[cfg(feature = "embedded-postgres")]
 pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool, client: bool) -> Vec<Vec<usize>> {
     if acceptance {
         suite_chains_in(component, &[suite_tree(false, client), suite_tree(true, client)])

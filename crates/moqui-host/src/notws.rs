@@ -278,7 +278,9 @@ impl RequestSite {
         self.2
     }
 
-    /// The client's address as web protection sees it (a believed proxy's client header, else the peer).
+    /// The client's address as web protection sees it (a believed proxy's client header, else the peer): the call
+    /// socket's (`rtc.rs`).
+    #[cfg(feature = "rtc")]
     pub(crate) fn client(&self) -> Option<std::net::IpAddr> {
         self.1
     }

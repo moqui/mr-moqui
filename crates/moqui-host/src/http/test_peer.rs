@@ -30,7 +30,9 @@ pub(crate) const HEADER: &str = "x-moqui-test-peer";
 
 static ALLOWED: AtomicBool = AtomicBool::new(false);
 
-/// Honour [`HEADER`] in this process from now on: `moqui test --serve` alone, before its server starts.
+/// Honour [`HEADER`] in this process from now on: `moqui test --serve` alone, before its server starts (which embedded
+/// Postgres builds, `test_cmd/serve.rs`).
+#[cfg(feature = "embedded-postgres")]
 pub(crate) fn allow() {
     ALLOWED.store(true, Ordering::Relaxed);
 }

@@ -440,6 +440,7 @@ fn h2_answer(
         // the PASS authority reads the client's address from these (`crate::pass_authority`), the OTLP receiver tells
         // the guard of a refused key (`crate::monitor::grpc`)
         let caller = crate::grpc_listen::Caller {
+            #[cfg(feature = "edge")]
             peer: remote,
             client: web.guard.client_of(remote.ip(), request.headers()),
             guard: Arc::clone(&web.guard),

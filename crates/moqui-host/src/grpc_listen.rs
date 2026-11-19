@@ -294,6 +294,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 /// guard, which a service tells of a refused credential as the HTTP routes do (SEC-TLS-17).
 #[derive(Clone)]
 pub(crate) struct Caller {
+    /// Read by the PASS authority (`crate::pass_authority`), which the edge feature builds.
+    #[cfg(feature = "edge")]
     pub peer: SocketAddr,
     pub client: std::net::IpAddr,
     pub guard: Arc<crate::guard::Guard>,
@@ -312,6 +314,7 @@ impl tonic::transport::server::Connected for Connection {
 
     fn connect_info(&self) -> Caller {
         Caller {
+            #[cfg(feature = "edge")]
             peer: self.remote,
             client: self.remote.ip().to_canonical(),
             guard: Arc::clone(&self.guard),
