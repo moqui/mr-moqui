@@ -730,6 +730,20 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
             Parameters::new(DmarcParameters::new(&message, &dkim, &mail_from_domain, &spf)).with_cache(records),
         )
         .await;
+    // mail-auth judges no author domain when it reads the From addresses as of more than one domain, by its own
+    // normalization (IDNA, no trailing dot taken off), which `author_refusal`'s may not match: such a message is
+    // refused too, whatever the two made of it (SEC-MAIL-81)
+    if dmarc.domain().is_empty() {
+        return Verdict {
+            field: format!("Authentication-Results: {authserv_id}; dmarc=permerror (no single author domain)\r\n"),
+            dmarc: DmarcAction::Reject,
+            summary: "dmarc=permerror (no single author domain)".to_string(),
+            refused: Some(
+                "The message's From addresses are of more than one domain: one author domain is required".to_string(),
+            ),
+            ..Verdict::default()
+        };
+    }
     let from = message
         .first_from_address()
         .rsplit_once('@')

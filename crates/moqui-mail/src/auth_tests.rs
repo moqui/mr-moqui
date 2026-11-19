@@ -118,6 +118,8 @@ fn a_message_whose_author_is_not_one_domain_is_refused() {
     let body = "To: bob@example.org\r\nSubject: Pay\r\nMessage-ID: <m2@evil.example>\r\n\r\nPay me.\r\n";
     for (from, why) in [
         ("From: ceo@example.com, x@evil.example\r\n", "more than one domain"),
+        // one domain by our reading, two by mail-auth's (it keeps the trailing dot), which then judges none
+        ("From: ceo@example.com, x@example.com.\r\n", "more than one domain"),
         ("From: ceo@example.com\r\nFrom: x@evil.example\r\n", "2 From fields"),
         ("From: ceo@example.com\r\nFrom: ceo@example.com\r\n", "2 From fields"),
         ("", "no From address"),
