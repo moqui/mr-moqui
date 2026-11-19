@@ -231,9 +231,10 @@ fn json_text(value: &serde_json::Value, name: &str) -> String {
 
 /// The queue item of a message the edge node's listener took, for the local node: its envelope and recipient
 /// addresses with their DSN parameters as the payload (never account ids: the local node resolves them again), the
-/// message as content. The idempotency key is its Message-ID (or, with none, a hash of the message) with the
-/// recipients, so the gateway's retry of a message the listener had queued is the same item; the conversation key
-/// is `conversation`, the recipient's mailbox.
+/// message as content. The idempotency key is a hash of the message itself with the envelope sender and the
+/// recipients, so the gateway's retry of a message the listener had queued is the same item, and only that: a message
+/// that names a known Message-ID is another item, which the local node's own Message-ID check then judges as a normal
+/// node's listener does (SEC-MAIL-87). The conversation key is `conversation`, the recipient's mailbox.
 #[cfg(feature = "imap")]
 #[must_use]
 pub fn inbound_item(
@@ -283,26 +284,19 @@ pub fn inbound_item_trusting(
             }))
             .collect::<Vec<_>>(),
     });
-    let head_end = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .or_else(|| raw.windows(2).position(|window| window == b"\n\n"))
-        .unwrap_or(raw.len());
-    let head = String::from_utf8_lossy(&raw[..head_end]);
-    let message_id = super::implementation::header_value(&head, "Message-ID");
-    let identity = if message_id.trim().is_empty() {
+    // the message's own hash, never its Message-ID alone: a known id must not stand for whatever comes with it
+    let identity = {
         use sha2::Digest as _;
         format!("sha256:{}", moqui_lib::codec::hex_encode(&sha2::Sha256::digest(&raw)))
-    } else {
-        message_id.trim().to_string()
     };
+    let sender = envelope.mail_from.trim().to_lowercase();
     let mut addresses: Vec<String> = recipients
         .iter()
         .map(|recipient| recipient.address.to_lowercase())
         .collect();
     addresses.sort_unstable();
     addresses.dedup();
-    let key = moqui_lib::json::canonical_sha256(&serde_json::json!([identity, addresses]));
+    let key = moqui_lib::json::canonical_sha256(&serde_json::json!([identity, sender, addresses]));
     NewItem {
         kind: KIND_IN.to_string(),
         conversation_key: conversation.to_string(),

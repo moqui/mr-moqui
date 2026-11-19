@@ -53,7 +53,7 @@ fn message(message_id: &str) -> Vec<u8> {
 }
 
 #[test]
-fn a_received_message_is_one_item_by_message_id_and_recipients_with_addresses_only() {
+fn a_received_message_is_one_item_by_its_content_sender_and_recipients_with_addresses_only() {
     let both = [recipient("sales@example.com"), recipient("Help@Example.com")];
     let item = inbound_item(message("<m1@example.org>"), &envelope(), &both, "acct-1");
     assert_eq!(item.kind, KIND_IN);
@@ -75,6 +75,25 @@ fn a_received_message_is_one_item_by_message_id_and_recipients_with_addresses_on
     assert_ne!(other.idempotency_key, item.idempotency_key, "other recipients");
     let other = inbound_item(message("<m2@example.org>"), &envelope(), &both, "acct-1");
     assert_ne!(other.idempotency_key, item.idempotency_key, "another message");
+    // SEC-MAIL-87: a known Message-ID with other content, or from another sender, is another item, which the local
+    // node's own Message-ID check judges; never answered 250 and dropped here
+    let forged = String::from_utf8(message("<m1@example.org>"))
+        .unwrap()
+        .replace("Hello", "Pay me");
+    let other = inbound_item(forged.into_bytes(), &envelope(), &both, "acct-1");
+    assert_ne!(
+        other.idempotency_key, item.idempotency_key,
+        "the same Message-ID, other content"
+    );
+    let elsewhere = Envelope {
+        mail_from: "mallory@evil.example".to_string(),
+        ..envelope()
+    };
+    let other = inbound_item(message("<m1@example.org>"), &elsewhere, &both, "acct-1");
+    assert_ne!(
+        other.idempotency_key, item.idempotency_key,
+        "the same message, another sender"
+    );
     // no Message-ID: the message's own hash
     let bare = b"From: dan@example.org\r\nSubject: x\r\n\r\nbody\r\n".to_vec();
     let first = inbound_item(bare.clone(), &envelope(), &both, "acct-1");
