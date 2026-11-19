@@ -489,7 +489,11 @@ fn package_template(state: &RenderState, path: &str) -> Result<Option<Arc<Static
 /// Returns a security error. A template that cannot be made is logged and the screen stays a server merge.
 pub(crate) fn serve_template(state: &RenderState, request: &WebRequest, path: &str) -> Result<bool, Error> {
     let info = &state.url_info;
-    if state.render_mode != "qvt" || info.render_path_difference + 1 != info.path_defs.len() {
+    // a preview (an overlay) renders merged, where its encode="false" text is encoded (SEC-AI-82)
+    if state.render_mode != "qvt"
+        || info.render_path_difference + 1 != info.path_defs.len()
+        || super::overlay::active()
+    {
         return Ok(false);
     }
     let force = report_forces_static();

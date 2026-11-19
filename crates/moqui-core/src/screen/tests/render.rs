@@ -2129,3 +2129,87 @@ fn a_previewed_screen_writes_a_placeholder_for_its_client_text() {
     assert!(previewed.contains("not shown in a preview"), "{previewed}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// SEC-AI-82: while a screen stands at a preview's proposed text, its `encode="false"` labels, displays, links,
+/// editables and button-menus are encoded in html and qvt (a qvt `{{ }}` as well), and a label's `type` is one of the
+/// XSD's tags, overlay or not, so it is never markup of its own.
+#[test]
+fn a_previewed_screen_writes_its_unencoded_text_encoded_and_a_label_type_is_a_tag() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-raw-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Raw.xml");
+    let screen = r#"<screen require-authentication="false">
+        <transition name="go"><default-response url="."/></transition>
+        <actions><script>rows = [{v: 1}]</script></actions>
+        <widgets>
+            <label type="img src=x @error=TYPEMARK" text="typed"/>
+            <label encode="false" text="L&lt;b class=&quot;RAWMARK&quot;&gt;x&lt;/b&gt;{{ 7*191 }}"/>
+            <link url="go" text="K&lt;b class=&quot;RAWMARK&quot;&gt;x&lt;/b&gt;{{ 7*191 }}" encode="false"/>
+            <editable text="E&lt;b class=&quot;RAWMARK&quot;&gt;x&lt;/b&gt;{{ 7*191 }}" transition="go" encode="false"/>
+            <button-menu text="M&lt;b class=&quot;RAWMARK&quot;&gt;x&lt;/b&gt;{{ 7*191 }}" encode="false"><link url="go" text="item"/></button-menu>
+            <form-list name="Rows" list="rows" skip-form="true"><field name="v"><default-field>
+                <display text="D&lt;b class=&quot;RAWMARK&quot;&gt;x&lt;/b&gt;{{ 7*191 }}" encode="false"/></default-field></field></form-list>
+        </widgets></screen>"#;
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = |mode: &str| {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode(mode)
+            .render()
+            .unwrap()
+            .body_text()
+    };
+    for mode in ["html", "qvt"] {
+        let plain = render(mode);
+        let previewed = {
+            let mut overlay = crate::screen::overlay::Overlay::new();
+            overlay.insert(&root, None, screen);
+            crate::screen::overlay::with(overlay, || render(mode))
+        };
+        for out in [&plain, &previewed] {
+            assert!(
+                !out.contains("TYPEMARK") && !out.contains("<img src=x"),
+                "{mode}: {out}"
+            );
+            assert!(out.contains(">typed</span>"), "{mode}: {out}");
+        }
+        // from the file, encode="false" is the screen's own markup
+        for prefix in ["L", "K", "D", "M"] {
+            assert!(
+                plain.contains(&format!(r#"{prefix}<b class="RAWMARK">"#)),
+                "{mode} {prefix}: {plain}"
+            );
+        }
+        assert!(!previewed.contains(r#"<b class="RAWMARK">"#), "{mode}: {previewed}");
+        // in qvt the text's braces are character references too, so Vue reads no interpolation in it
+        if mode == "qvt" {
+            for prefix in ["L", "K", "D", "M"] {
+                assert!(
+                    plain.contains(&format!("{prefix}<b class=\"RAWMARK\">x</b>{{{{ 7*191")),
+                    "{prefix}: {plain}"
+                );
+                let encoded = format!("{prefix}&lt;b class=&quot;RAWMARK&quot;&gt;x&lt;/b&gt;&#123;&#123; 7*191");
+                assert!(previewed.contains(&encoded), "{prefix}: {previewed}");
+            }
+        }
+        for prefix in ["L", "K", "D", "M"] {
+            assert!(
+                previewed.contains(&format!("{prefix}&lt;b class=")),
+                "{mode} {prefix}: {previewed}"
+            );
+        }
+        // an editable's text: written in html, an attribute m-editable shows as markup in qvt
+        let editable = if mode == "html" {
+            r#"E<b class="RAWMARK">"#
+        } else {
+            "E&lt;b class=&quot;RAWMARK"
+        };
+        assert!(plain.contains(editable), "{mode}: {plain}");
+        assert!(!previewed.contains(editable), "{mode}: {previewed}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

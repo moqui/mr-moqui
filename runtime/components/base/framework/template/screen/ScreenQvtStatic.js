@@ -937,8 +937,12 @@
             w(withCondition(n, at(n, "hover") === "true" ? '<span class="hover-image-container">' + tag + tag.replace("<img", '<img class="hover-image"') + "</span>" : tag));
         };
 
+        // The tags a label or an editable's text is written in, the XSD's list, as ScreenQvt.js: another type is a span.
+        const LABEL_TAGS = new Set(["p", "pre", "code", "div", "span", "strong", "i", "h1", "h2", "h3", "h4", "h5", "h6", "dt", "dd"]);
+        const labelTag = (n) => (LABEL_TAGS.has(at(n, "type")) ? at(n, "type") : "span");
+
         const labelWidget = (n) => {
-            const type = at(n, "type") || "span";
+            const type = labelTag(n);
             const [style, boundStyle] = styleOf(n);
             const out = { class: cls("text-inline", style), ":class": boundStyle, ":v-text": null };
             plainAttr(out, "id", at(n, "id"), n);
@@ -1064,7 +1068,7 @@
             const labelValue = exp(at(n, "text"), n, "text", true);
             // escaped unless encode="false", as the server's templates (SEC-SCR-08): m-editable shows its label as HTML
             const out = Object.assign({
-                "label-type": at(n, "type") || "span", ":label-value": at(n, "encode") === "false" ? labelValue : "$mq.enc(" + labelValue + ")", url: found.path, ":url-parameters": allParams(n, null, withInline(found, [])),
+                "label-type": labelTag(n), ":label-value": at(n, "encode") === "false" ? labelValue : "$mq.enc(" + labelValue + ")", url: found.path, ":url-parameters": allParams(n, null, withInline(found, [])),
                 "parameter-name": at(n, "parameter-name") || "value", "widget-type": widgetType, ":indicator": "ec.l10n.localize('Saving')",
                 ":tooltip": "ec.l10n.localize('Click to edit')", ":cancel": "ec.l10n.localize('Cancel')", ":submit": "ec.l10n.localize('Save')"
             });

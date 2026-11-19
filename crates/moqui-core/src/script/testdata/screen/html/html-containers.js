@@ -44,7 +44,7 @@ $h.dynamicDialog({"name":"dynamic-dialog","attrs":{"id":"DynDlg","button-text":"
     let $text = $map ? ec.resource.expand("Actions", "", $map) : ec.resource.expand("Actions", "");
     if ($text === "null") $text = "";
     if ($text || false || true) {
-        if ("" !== "false") $text = $h.e($text);
+        if ("" !== "false" || sri.isOverlaid()) $text = $h.e($text);
         let $icon = "fa fa-cog";
         if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
         const $badge = ec.resource.expand("", "");

@@ -888,6 +888,14 @@
 
         // ---- display ----
 
+        // The tags a label or an editable's text is written in, the XSD's list: another type is a span, so a type is never
+        // markup of its own (`type="img src=x @error=..."`).
+        const LABEL_TAGS = new Set(["p", "pre", "code", "div", "span", "strong", "i", "h1", "h2", "h3", "h4", "h5", "h6", "dt", "dd"]);
+        const labelTag = (n) => (LABEL_TAGS.has(at(n, "type")) ? at(n, "type") : "span");
+        // encode="false" writes text as markup, but not while the screen stands at a preview's proposed text
+        // (sri.isOverlaid()): the model's markup does not run in the application's origin (SEC-AI-82).
+        const rawText = (n) => at(n, "encode") === "false" && !sri.isOverlaid();
+
         // The attributes of a display element and its label, read once a render for each element: a unit's elements are made
         // once and frozen, and a form-list row reads every one of its cells again. The label is localized, so it is kept for
         // the render only (enter clears these at a render's outermost unit), and a title with an expression is not kept.
@@ -943,7 +951,7 @@
                 out = "<m-display" + attrs + a1("v-model", fieldRef(name)) + a1(":display", fieldRef(fnmWith(n, "_display"))) + ' :fields="formProps.fields"></m-display>';
             } else {
                 if (labelWrapper && value) attrs += a1("display", value);
-                const text = !labelWrapper && value ? (d.encode ? br(t(value)) : value) : "";
+                const text = !labelWrapper && value ? (d.encode || sri.isOverlaid() ? br(t(value)) : value) : "";
                 out = "<m-display" + attrs + ">" + (text ? "<template v-slot:default>" + text + "</template>" : "") + "</m-display>";
                 if (alsoHidden) out += '<input type="hidden"' + a1("id", id) + a1("name", name) + a1("value", dyn ? "" : texts[1]) + a1("form", owner()) + ">";
             }
@@ -968,7 +976,7 @@
             }
             const value = sri.getFieldEntityValue(n) || "";
             if (formKind === "form-single") attrs.display = value;
-            const text = formKind !== "form-single" ? (value ? (at(n, "encode") === "false" ? value : t(value).replace(/\n/g, "<br>")) : "&nbsp;") : "";
+            const text = formKind !== "form-single" ? (value ? (rawText(n) ? value : t(value).replace(/\n/g, "<br>")) : "&nbsp;") : "";
             w("<m-display" + A(attrs) + ">" + (text ? "<template v-slot:default>" + text + "</template>" : "") + "</m-display>");
             if (alsoHidden) w("<input" + A({ type: "hidden", id, name, value: sri.getFieldValuePlainString(field, ""), form: owner() }) + ">");
         };
@@ -991,11 +999,11 @@
 
         const labelWidget = (n) => {
             if (at(n, "condition") && !cond(at(n, "condition"))) return;
-            const type = at(n, "type") || "span";
+            const type = labelTag(n);
             const map = at(n, "text-map") ? ec.resource.expression(at(n, "text-map"), "") : null;
             let text = map ? ec.resource.expand(at(n, "text"), "", map) : ec.resource.expand(at(n, "text"), "");
             if (!(String(text).trim() || at(n, "condition"))) return;
-            if (at(n, "encode") !== "false") {
+            if (!rawText(n)) {
                 text = t(text);
                 if (type !== "code" && type !== "pre") text = text.replace(/\n/g, "<br>");
             }
@@ -1051,7 +1059,7 @@
             if (text === "null" || text === null || text === undefined) text = "";
             const img = l.image;
             if (!(text || img || l.icon)) return null;
-            if (l.encode) text = t(text);
+            if (l.encode || sri.isOverlaid()) text = t(text);
             let url = sri.makeUrlByType(l.url, l.urlType, n, l.expand);
             if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
             // link-type anchor and anchor-button are anchors whatever the URL (sri.isAnchorLink's first rule)
@@ -1206,7 +1214,7 @@
             const options = widgetType === "select" ? optionList(sri.getFieldOptions(n)) : null;
             const value = n.attrs && n.attrs.value !== undefined ? xn(at(n, "value")) : null;
             w("<m-editable" + A({
-                id: nodeId(n), "label-type": at(n, "type") || "span", "label-value": empty ? "" : at(n, "encode") === "false" ? text : e(text).replace(/\n/g, "<br>"),
+                id: nodeId(n), "label-type": labelTag(n), "label-value": empty ? "" : rawText(n) ? text : e(text).replace(/\n/g, "<br>"),
                 url: url.url, ":url-parameters": js_(url.getParameterMap()), "parameter-name": at(n, "parameter-name") || "value",
                 "widget-type": widgetType, indicator: L("Saving"), tooltip: L("Click to edit"), cancel: L("Cancel"), submit: L("Save"),
                 placeholder: empty ? L("Click to edit") : null, value: value === null || value === "null" ? null : value,
@@ -3000,7 +3008,7 @@
                 if ($text || ${!!image} || ${!!attr(node, "icon")}) {
                     // the menu's name for assistive technology: its text (Quasar names a slot-labelled dropdown "Expand")
                     const $name = String($text || ${attr(node, "tooltip") ? `ec.resource.expand(${lit(attr(node, "tooltip"))}, "")` : '""'} || ec.l10n.localize("Menu"));
-                    if (${lit(attr(node, "encode"))} !== "false") $text = $v.t($text);
+                    if (${lit(attr(node, "encode"))} !== "false" || sri.isOverlaid()) $text = $v.t($text);
                     let $icon = ${attr(node, "icon") ? noL10n(attr(node, "icon")) : '""'};
                     if (!$icon && $text) $icon = sri.getThemeIconClass($text) || "";
                     const $badge = ec.resource.expand(${lit(attr(node, "badge"))}, "");
