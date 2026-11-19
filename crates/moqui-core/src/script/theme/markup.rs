@@ -184,6 +184,8 @@ const DENIED_ATTRIBUTES: &[&str] = &[
     "ping",
     "http-equiv",
     "is",
+    // a link's own referrer policy overrides the page's `Referrer-Policy` (SEC-PSF-83)
+    "referrerpolicy",
 ];
 
 /// `<meta name>` values a theme may use. Others are refused, `referrer` above all: it could loosen the server's
@@ -203,7 +205,9 @@ const META_NAMES: &[&str] = &[
 ];
 
 /// Whether a theme may have this `<meta>`: a `charset`, a listed `name` or a card's `twitter:` one, an Open Graph
-/// `property`, or microdata's `itemprop`. `http-equiv` is a denied attribute wherever it stands.
+/// `property`, or microdata's `itemprop`. A `name` or `property` must be one of those whatever else the tag has, so a
+/// `charset` or `itemprop` beside `name="referrer"` does not carry it (SEC-PSF-83). `http-equiv` is a denied
+/// attribute wherever it stands.
 fn meta_allowed(tag: &Tag) -> bool {
     let value = |name: &str| {
         tag.attrs
@@ -211,17 +215,22 @@ fn meta_allowed(tag: &Tag) -> bool {
             .find(|attribute| &*attribute.name.local == name)
             .map(|attribute| attribute.value.trim().to_ascii_lowercase())
     };
-    if value("charset").is_some() || value("itemprop").is_some() {
-        return true;
+    let name = value("name");
+    if name
+        .as_deref()
+        .is_some_and(|name| !META_NAMES.contains(&name) && !name.starts_with("twitter:"))
+    {
+        return false;
     }
-    if let Some(name) = value("name") {
-        return META_NAMES.contains(&name.as_str()) || name.starts_with("twitter:");
-    }
-    value("property").is_some_and(|property| {
-        ["og:", "article:", "product:", "profile:", "book:", "music:", "video:"]
+    let property = value("property");
+    if property.as_deref().is_some_and(|property| {
+        !["og:", "article:", "product:", "profile:", "book:", "music:", "video:"]
             .iter()
             .any(|prefix| property.starts_with(prefix))
-    })
+    }) {
+        return false;
+    }
+    name.is_some() || property.is_some() || value("charset").is_some() || value("itemprop").is_some()
 }
 
 /// `<link rel>` values a theme may use: the stylesheet and icon loads, preload, and navigation relations.

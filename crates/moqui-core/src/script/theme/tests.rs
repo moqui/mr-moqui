@@ -398,6 +398,14 @@ fn a_theme_meta_is_a_charset_a_listed_name_or_a_card_property() {
         file,
         1,
     );
+    // a charset or itemprop beside an unlisted name does not carry it (SEC-PSF-83)
+    for meta in [
+        "<meta itemprop=\"x\" name=\"referrer\" content=\"unsafe-url\">",
+        "<meta charset=\"utf-8\" name=\"referrer\" content=\"unsafe-url\">",
+        "<meta name=\"description\" property=\"referrer\" content=\"x\">",
+    ] {
+        refused(&[(file, Some(meta))], "unsafe-markup", file, 1);
+    }
     for meta in [
         "<meta charset=\"utf-8\">",
         "<meta name=\"Viewport\" content=\"width=device-width\">",
@@ -736,6 +744,18 @@ fn a_css_comment_in_a_string_hides_nothing() {
     // a comment outside strings is still a comment, and a string may hold `*/` or a URL-like text
     let found = css_errors(".a { color: red /* url(https://evil.example/x) */ }\n.b { content: \"*/\" }");
     assert_eq!(found, Vec::<String>::new());
+}
+
+/// A link's own `referrerpolicy` overrides the page's `Referrer-Policy`, so a theme cannot set it (SEC-PSF-83).
+#[test]
+fn a_theme_link_cannot_set_its_referrer_policy() {
+    refuses(
+        &[(
+            "blocks/text.html.fancy-locked",
+            Some("<a href=\"https://elsewhere.example/\" referrerpolicy=\"unsafe-url\">x</a>"),
+        )],
+        "attribute `referrerpolicy`",
+    );
 }
 
 /// IE's `behavior` property is refused only as a property of its own: `scroll-behavior` passes (Shop F131), and
