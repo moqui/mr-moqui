@@ -112,22 +112,90 @@ fn append_tree<W: Write>(builder: &mut tar::Builder<W>, path: &Path, name: &Path
     Ok(())
 }
 
-/// Unpack the tar.gz `archive` into `workspace`. The count of entries written. An entry whose path would leave the
-/// workspace is skipped, as `tar` refuses it.
+/// The most bytes an archive unpacks to: what the script host's `ec.resource.extractArchive` takes by default.
+pub const MAX_UNPACK_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// The most entries an archive unpacks: what `ec.resource.extractArchive` takes by default.
+pub const MAX_UNPACK_ENTRIES: usize = 1_000_000;
+
+/// Unpack the tar.gz `archive` into `workspace`, at most [`MAX_UNPACK_BYTES`] and [`MAX_UNPACK_ENTRIES`]
+/// ([`unpack_within`]). The count of entries written.
 ///
 /// # Errors
 ///
-/// When the archive does not read or an entry cannot be written.
+/// When the archive does not read, an entry cannot be written, or the archive passes a limit.
 pub fn unpack(archive: &Path, workspace: &Path) -> Result<usize, String> {
+    unpack_within(archive, workspace, MAX_UNPACK_BYTES, MAX_UNPACK_ENTRIES)
+}
+
+/// Whether a link's `target`, from the entry at `path` (both in the archive), stays inside the workspace: relative,
+/// and its `..` never above the root.
+fn link_inside(path: &Path, target: &Path) -> bool {
+    if target.is_absolute() {
+        return false;
+    }
+    let mut depth: i64 = 0;
+    let from = path.parent().unwrap_or(Path::new(""));
+    for component in from.components().chain(target.components()) {
+        match component {
+            std::path::Component::Normal(_) => depth += 1,
+            std::path::Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            std::path::Component::CurDir => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// [`unpack`] with the limits: the entries' bytes (`entry.size()`, counted before each is written) and their count.
+/// An entry that is not a regular file, a directory or a link that stays inside the workspace (a device, a FIFO, a
+/// sparse file, a link out) is skipped, and one whose path would leave the workspace too, as `tar` refuses it.
+/// Past a limit the unpack stops with an error, which the runner logs as a cache not restored; what it wrote stays.
+///
+/// # Errors
+///
+/// When the archive does not read, an entry cannot be written, or the archive passes a limit (SEC-GIT-95).
+pub fn unpack_within(archive: &Path, workspace: &Path, max_bytes: u64, max_entries: usize) -> Result<usize, String> {
     let file = File::open(archive).map_err(|err| format!("{}: {err}", archive.display()))?;
     let mut tar = tar::Archive::new(GzDecoder::new(file));
     tar.set_overwrite(true);
-    let mut count = 0;
+    let (mut count, mut seen, mut bytes) = (0, 0usize, 0u64);
     for entry in tar
         .entries()
         .map_err(|err| format!("the archive does not read: {err}"))?
     {
         let mut entry = entry.map_err(|err| format!("the archive does not read: {err}"))?;
+        seen += 1;
+        if seen > max_entries {
+            return Err(format!("the archive has more than {max_entries} entries"));
+        }
+        let kind = entry.header().entry_type();
+        let wanted = match kind {
+            tar::EntryType::Regular | tar::EntryType::Continuous | tar::EntryType::Directory => true,
+            tar::EntryType::Symlink | tar::EntryType::Link => {
+                // a hard link names a path from the archive's root, a symbolic one a path from its own directory
+                let from = if kind == tar::EntryType::Link {
+                    Some(PathBuf::from("root-entry"))
+                } else {
+                    entry.path().ok().map(|path| path.into_owned())
+                };
+                let target = entry.link_name().ok().flatten().map(|target| target.into_owned());
+                from.zip(target)
+                    .is_some_and(|(from, target)| link_inside(&from, &target))
+            }
+            _ => false,
+        };
+        if !wanted {
+            continue;
+        }
+        bytes = bytes.saturating_add(entry.size());
+        if bytes > max_bytes {
+            return Err(format!("the archive unpacks to more than {max_bytes} bytes"));
+        }
         // unpack_in answers false for a path that would leave the directory
         if entry
             .unpack_in(workspace)

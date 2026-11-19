@@ -106,6 +106,61 @@ fn an_archive_round_trips_by_workspace_paths() {
     std::fs::remove_file(&archive_file).unwrap();
 }
 
+/// SEC-GIT-95: a cache unpacks to at most a byte and an entry limit, and only regular files, directories and links
+/// that stay in the workspace: a FIFO or a link out is skipped.
+#[test]
+fn an_archive_unpacks_within_its_limits_and_only_files_directories_and_inner_links() {
+    let to = scratch("unpack-limits");
+    let archive_file = to
+        .parent()
+        .unwrap()
+        .join(format!("moqui-ci-runner-limits-{}.tar.gz", std::process::id()));
+    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+        std::fs::File::create(&archive_file).unwrap(),
+        flate2::Compression::fast(),
+    ));
+    let entry = |kind: tar::EntryType, size: u64| {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(kind);
+        header.set_size(size);
+        header.set_mode(0o644);
+        header
+    };
+    for name in ["a.txt", "b.txt"] {
+        builder
+            .append_data(&mut entry(tar::EntryType::Regular, 100), name, &[b'x'; 100][..])
+            .unwrap();
+    }
+    builder
+        .append_data(&mut entry(tar::EntryType::Fifo, 0), "pipe", std::io::empty())
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "out", "../../etc/passwd")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "dir/in", "../a.txt")
+        .unwrap();
+    builder.into_inner().unwrap().finish().unwrap();
+
+    assert_eq!(
+        archive::unpack(&archive_file, &to).unwrap(),
+        3,
+        "a.txt, b.txt and dir/in"
+    );
+    assert!(to.join("a.txt").is_file() && to.join("b.txt").is_file());
+    assert!(to.join("pipe").symlink_metadata().is_err(), "no FIFO");
+    assert!(to.join("out").symlink_metadata().is_err(), "no link out");
+    assert!(to.join("dir/in").symlink_metadata().unwrap().file_type().is_symlink());
+    std::fs::remove_dir_all(&to).unwrap();
+    std::fs::create_dir_all(&to).unwrap();
+    let bytes = archive::unpack_within(&archive_file, &to, 150, 100).unwrap_err();
+    assert!(bytes.contains("more than 150 bytes"), "{bytes}");
+    let entries = archive::unpack_within(&archive_file, &to, 1000, 1).unwrap_err();
+    assert!(entries.contains("more than 1 entries"), "{entries}");
+    std::fs::remove_dir_all(&to).unwrap();
+    std::fs::remove_file(&archive_file).unwrap();
+}
+
 /// Between a registered runner's jobs only what started since the job began is killed: never the runner, what it runs
 /// under, or a process started before the job (the `tee` its output goes through). `ps`'s elapsed time reads in its
 /// forms (`mm:ss`, `hh:mm:ss`, `dd-hh:mm:ss`).

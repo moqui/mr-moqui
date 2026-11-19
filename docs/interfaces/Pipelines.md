@@ -119,7 +119,8 @@ not.
   `${matrix.NAME}` is expanded in the image, env values, step commands, cache keys, artifact names and service
   images, and the job has `MATRIX_NAME`. A job that needs a matrix job waits for all of them.
 - **`cache`**: a directory kept between runs by key. `${hash:FILE}` in the key is the SHA-256 of a file of the
-  checkout. It is restored before the first step, and saved after the last when the job succeeded and nothing is
+  checkout. It is restored before the first step (at most 4 GiB and a million entries, regular files, directories and
+  links that stay in the workspace; past a limit it stops and the log says it was not restored), and saved after the last when the job succeeded and nothing is
   stored under the key. Caches are per repository and apart for protected refs: a run for a protected ref reads only
   caches such a run wrote, an untrusted run never reads them (a build with secrets may have filled one), and another
   trusted run reads both. A cache of a job that was given secrets (an environment whose `allowedRefs` names a branch
