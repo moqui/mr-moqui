@@ -727,6 +727,14 @@ pub(crate) fn process_started() -> std::time::Instant {
     *STARTED.get_or_init(std::time::Instant::now)
 }
 
+/// Whether a request's peer is this machine: a loopback address that is the connection's own. The client an edge
+/// node names for a request it forwards, or a tunnel it carries, is never this machine, even when it names loopback
+/// (a client on the edge node's machine, or an edge node that lies) (SEC-CLU-01). The web listeners' rule, and the
+/// terminal's (`term::access`), which a build with SSH or the terminal client and no web server has too.
+pub(crate) fn local_peer(peer: std::net::IpAddr, via: moqui_core::web::RequestVia) -> bool {
+    via != moqui_core::web::RequestVia::Edge && peer.to_canonical().is_loopback()
+}
+
 /// No arguments start the HTTP server. `serve` starts that server in the background and writes no console log.
 /// With no command, `--port`, `--conf`, `--no-run-es`, and `-D name=value`
 /// set the listen port, the runtime conf, and other properties for that run. `help`, `--help`, `-h`, and `-?`

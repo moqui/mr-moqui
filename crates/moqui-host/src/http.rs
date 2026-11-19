@@ -1890,14 +1890,16 @@ fn endpoint_enabled(factory: &ExecutionContextFactory, path: &str) -> bool {
     factory.webapp_child_setting("webroot", &format!("endpoint {path}"), "enabled") != "false"
 }
 
-/// True when `ip` is in `configured` (the webapp's `status-ips`, comma-separated) or is a [`local_peer`]: any in
+/// True when `ip` is in `configured` (the webapp's `status-ips`, comma-separated) or is a [`crate::local_peer`]: any in
 /// 127.0.0.0/8 (a client spec's own address on a test server, test_peer.rs) or `::1`, not named by an edge node.
 fn status_allowed(configured: &str, ip: &str, via: moqui_core::web::RequestVia) -> bool {
     configured
         .split(',')
         .map(str::trim)
         .any(|item| !item.is_empty() && item == ip)
-        || ip.parse::<IpAddr>().is_ok_and(|address| local_peer(address, via))
+        || ip
+            .parse::<IpAddr>()
+            .is_ok_and(|address| crate::local_peer(address, via))
 }
 
 /// Whether `/health` and `/metrics` answer a request: its connection's `peer` passes [`status_allowed`], and when a
@@ -1914,13 +1916,6 @@ fn status_request_allowed(configured: &str, peer: IpAddr, client: IpAddr, via: m
             .any(|item| !item.is_empty() && item == text)
     };
     status_allowed(configured, &peer.to_string(), via) && (client == peer || listed(client))
-}
-
-/// Whether a request's peer is this machine: a loopback address that is the connection's own. The client an edge
-/// node names for a request it forwards, or a tunnel it carries, is never this machine, even when it names loopback
-/// (a client on the edge node's machine, or an edge node that lies) (SEC-CLU-01).
-pub(crate) fn local_peer(peer: IpAddr, via: moqui_core::web::RequestVia) -> bool {
-    via != moqui_core::web::RequestVia::Edge && peer.to_canonical().is_loopback()
 }
 
 fn from_web(factory: &Arc<moqui_core::context::ExecutionContextFactory>, mut response: WebResponse) -> Response {

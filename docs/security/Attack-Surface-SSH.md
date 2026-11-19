@@ -87,7 +87,7 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - `finish_login` resets `successiveFailedLogins` when an internal login passes the gate, and every shell line, `apps` request and queued job is an internal login. Whether an account with an open SSH or terminal session therefore never reaches its lockout while its password is guessed was not traced (`failed_or_disabled`, `increment_failed`).
 - The file sink of the log, and whether any log viewer writes a message to a terminal or a page unescaped, were not read.
 - Whether `UserPreference` values are encrypted at rest, and who else can read another user's `TERMINAL_HISTORY`, was not read.
-- `crate::http::local_peer`, `cluster_edge::member_addresses` and `apply_topic`, and `moqui_git::server::serve_ssh` were not read. Whether git over SSH checks the account again at each request was not read.
+- `crate::local_peer`, `cluster_edge::member_addresses` and `apply_topic`, and `moqui_git::server::serve_ssh` were not read. Whether git over SSH checks the account again at each request was not read.
 - How long one `moqui_tui::Agent::run` can hold an `agent-apps` session's lock, and the worker count of the runtime the SSH server shares, were not read.
 - `term/session.rs`, `term/held.rs`, `term/hold.rs`, `term/services.rs`, `term/audit.rs` and `termws.rs` were not read again in this pass.
 

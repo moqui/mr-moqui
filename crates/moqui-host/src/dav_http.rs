@@ -65,7 +65,7 @@ pub(crate) async fn handle(
         .unwrap_or_default();
     let secure = over_tls
         || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing())
-        || crate::http::local_peer(peer.ip(), via);
+        || crate::local_peer(peer.ip(), via);
     let mut dav_request = DavRequest {
         method: parts.method.as_str().to_string(),
         path: parts.uri.path().to_string(),

@@ -176,7 +176,7 @@ impl Facts {
             return Place::Local;
         }
         // a loopback address an edge node names is not this machine (SEC-CLU-01)
-        let loopback_peer = self.peer.is_some_and(|peer| crate::http::local_peer(peer, self.via));
+        let loopback_peer = self.peer.is_some_and(|peer| crate::local_peer(peer, self.via));
         if self.ssh {
             return if loopback_peer {
                 Place::Local
