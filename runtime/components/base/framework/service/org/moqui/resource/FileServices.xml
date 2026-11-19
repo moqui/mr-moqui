@@ -389,7 +389,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="update" noun="Drive">
         <description>Change a drive's name, description and quota; for a mirror its URL, credentials (an empty accessToken
-            leaves it) and fetch interval. Manage permission.</description>
+            leaves it) and fetch interval. Manage permission. A mirror's URL is an administrator's to change, as to set
+            (SEC-BOS-90: the server fetches it with the stored credentials), with create#Drive's rule that it carries no user or
+            password; the endpoint-change rule of the connections (admin/ConfigurationConnections.js): a new URL or user clears
+            the stored access token unless a new one is given in the same change.</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="driveName"/>
@@ -405,6 +408,17 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameter('driveId', driveId).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('Drive not found')); return }
             if (access.level < 3) { ec.message.addError(ec.l10n.localize('You may not change this drive')); return }
+            const mirrorRow = access.drive.repositoryKind === 'remote' && access.drive.repositoryId
+                    ? ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', access.drive.repositoryId).one() : null
+            const urlChanged = !!mirrorRow && !!remoteUrl && remoteUrl !== mirrorRow.remoteUrl
+            if (urlChanged) {
+                // SEC-BOS-90: only an administrator points a mirror elsewhere, as only one makes it
+                if (!ec.artifactExecution.authzDisabled() && !ec.user.isInGroup('ADMIN')) {
+                    ec.message.addError(ec.l10n.localize('Only an administrator changes the URL of a mirror')); return }
+                const userinfo = (/^[a-z][a-z0-9+.-]*:\/\/([^\/?#]*)@/i.exec(String(remoteUrl)) || [])[1]
+                if (userinfo != null && (userinfo.includes(':') || /^https?:/i.test(String(remoteUrl)))) {
+                    ec.message.addError('A mirror URL has no user or password in it: give them as the username and access token'); return }
+            }
             const row = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).one()
             if (driveName) row.driveName = driveName
             if (description != null) row.description = description
@@ -414,6 +428,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (access.drive.repositoryKind === 'remote' && row.repositoryId) {
                 const repo = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', row.repositoryId).one()
                 if (repo) {
+                    // the endpoint-change rule: the stored token is sent to a new URL or as a new user only when given again
+                    const userChanged = username != null && (username || null) !== (repo.username || null)
+                    if ((urlChanged || userChanged) && !accessToken) repo.accessToken = null
                     if (remoteUrl) repo.remoteUrl = remoteUrl
                     if (username != null) repo.username = username || null
                     if (accessToken) repo.accessToken = accessToken
