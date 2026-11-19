@@ -205,7 +205,9 @@ fn call_providers(
                 })
             }
             None => {
-                // its toggles end with its call, as an app's provider's do in run_in_app
+                // its toggles end with its call, as an app's provider's do in run_in_app. _kept is made before _authz so
+                // it drops after it: the caller's state is put back last, as it was before the disable, rather than
+                // depending on _authz's guard counting down after the depth was set back with it counted in.
                 let _kept = ExecutionContext::with_current(ExecutionContext::keep_authz);
                 let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
                 call_tolerant_with(&provider.service, &input, &options)
