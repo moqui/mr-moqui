@@ -2090,3 +2090,42 @@ fn a_restricted_host_refuses_the_framework_routes_but_not_the_static_ones() {
     assert_eq!(get("preview.test", "/libs/x/../.").status, 200, "still the libs");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// SEC-AI-82: a screen that stands at a preview's proposed text (an overlay) writes a placeholder for its render-mode
+/// text, so a script the model wrote there does not run in the application's origin; the same text from the file
+/// renders as written.
+#[test]
+fn a_previewed_screen_writes_a_placeholder_for_its_client_text() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Preview.xml");
+    let screen = |marker: &str| {
+        format!(
+            r#"<screen require-authentication="false"><widgets><label text="shown {marker}"/>
+            <render-mode><text type="html"><![CDATA[<script>window.{marker} = 1</script>]]></text></render-mode>
+            </widgets></screen>"#
+        )
+    };
+    std::fs::write(&location, screen("FROM_FILE")).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("html")
+            .render()
+            .unwrap()
+            .body_text()
+    };
+    let plain = render();
+    assert!(plain.contains("window.FROM_FILE = 1"), "{plain}");
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, &screen("PROPOSED"));
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(previewed.contains("shown PROPOSED"), "{previewed}");
+    assert!(!previewed.contains("window.PROPOSED"), "{previewed}");
+    assert!(previewed.contains("not shown in a preview"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

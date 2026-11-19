@@ -70,7 +70,10 @@ $h.subscreensMenu({"name":"subscreens-menu","attrs":{"id":"Menu"}});
 $h.subscreensMenu({"name":"subscreens-menu","attrs":{"type":"popup","title":"Apps"}});
 $h.subscreensPanel({"name":"subscreens-panel","attrs":{"id":"Tabs","dynamic":"true"}});
 sri.renderSection("First");
-if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
-sri.writeInlineText("<b>raw</b>");
-if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
+if (sri.isOverlaid()) sri.write("<div class=\"m-preview-placeholder text-caption\">(text, scripts and templates are not shown in a preview)</div>");
+else {
+    if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
+    sri.writeInlineText("<b>raw</b>");
+    if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
+}
 if (sri.doBoundaryComments()) sri.write("<!-- END   screen[@location=" + sri.getActiveScreenDef().location + "].widgets -->\n");

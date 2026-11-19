@@ -253,6 +253,17 @@ pub fn do_boundary_comments(state: &RenderState) -> bool {
     state.screen_path_index.get() != 0 && state.facade.conf().boundary_comments
 }
 
+/// Whether the active screen stands at an overlay's text: its file, or a screen-extend of it, is a preview's proposed
+/// text (`screen::overlay`). Its client text, which would run in the application's origin, is then a placeholder
+/// (plans/Security-Review-Medium.md SEC-AI-82).
+pub fn active_overlaid(state: &RenderState) -> bool {
+    crate::screen::overlay::active()
+        && active_def(state)
+            .sources
+            .iter()
+            .any(|source| crate::screen::overlay::text_of(&source.location).is_some())
+}
+
 pub fn active_def(state: &RenderState) -> Arc<ScreenDef> {
     if let Some(def) = state.override_def.borrow().as_ref() {
         return Arc::clone(def);

@@ -121,7 +121,7 @@ const SRI_JS: &str = r#"(function (global, hidden) {
         "htmlText", "write", "stamp", "renderSection", "renderSectionValue", "renderSectionInclude", "checkCondition", "renderSubscreen", "renderIncludeScreen",
         "renderDynamicForm", "renderUserColumnsForm", "renderText", "renderTextValue", "renderInlineText",
         "writeInlineText", "takeTemplateWrite",
-        "doBoundaryComments", "getRenderMode", "isAgentRender", "encodeHtml", "getActiveScreenDef", "getScreenUrlInfo", "pushContext",
+        "doBoundaryComments", "getRenderMode", "isAgentRender", "isOverlaid", "encodeHtml", "getActiveScreenDef", "getScreenUrlInfo", "pushContext",
         "popContext", "setInContext", "pushSingleFormMapContext", "getSingleFormMap", "holdNodeLits",
         "getFieldValueString", "getFieldValue", "getFieldValuePlainString", "getFieldValueClass", "getFieldValueTexts",
         "getNamedValuePlain", "getFieldEntityValue", "getFieldOptions", "openFormList", "startFormListRow",
@@ -200,6 +200,7 @@ static SRI: &[Method] = &[
     method!("sri", "doBoundaryComments", [], Keep, leaf, do_boundary_comments),
     method!("sri", "getRenderMode", [], Keep, leaf, get_render_mode),
     method!("sri", "isAgentRender", [], Keep, leaf, is_agent_render),
+    method!("sri", "isOverlaid", [], Keep, leaf, is_overlaid),
     method!("sri", "encodeHtml", [OptValue], None, leaf, encode_html),
     method!("sri", "getActiveScreenDef", [], Keep, leaf, get_active_screen_def),
     method!("sri", "getScreenUrlInfo", [], Keep, leaf, get_screen_url_info),
@@ -596,6 +597,13 @@ fn get_render_mode(_: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `ai-opt-out` field, section or screen writes a placeholder in place of its text.
 fn is_agent_render(_: &mut Call<'_>) -> Result<Ret, HostError> {
     read_render(|_| crate::screen::agent_render()).map(Ret::from)
+}
+
+/// `sri.isOverlaid()`: whether the screen rendering now stands at proposed text (a preview's overlay: a dev-aide change
+/// set or a screen-xml canvas, its own file or a screen-extend of it): its client text is then a placeholder
+/// (plans/Security-Review-Medium.md SEC-AI-82).
+fn is_overlaid(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    read_render(logic::active_overlaid).map(Ret::from)
 }
 
 /// `sri.encodeHtml(text)`: null-safe as Java's `WebUtilities.encodeHtml`, so a null or undefined argument is empty

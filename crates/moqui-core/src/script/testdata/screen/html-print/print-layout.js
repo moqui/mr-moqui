@@ -132,8 +132,11 @@ sri.write("<div>");
     sri.write('<a href="' + $e($url.getUrlWithParams()) + '">' + $e($linkText) + "</a>");
 }
 sri.write("</div>\n");
-if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
-sri.writeInlineText("print only");
-if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
+if (sri.isOverlaid()) sri.write("<div class=\"m-preview-placeholder text-caption\">(text, scripts and templates are not shown in a preview)</div>");
+else {
+    if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
+    sri.writeInlineText("print only");
+    if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
+}
 sri.renderSubscreen();
 sri.renderIncludeScreen("component://x/Y.xml", "");
