@@ -5,7 +5,7 @@
 //                              each segment in NFC, as update#WikiPage saves a name
 //   pageNameOf(fileName)       the page a file is: its name less the longest page type it ends with (get#WikiPageTypes:
 //                              Name.md.fancy is page Name), else less one extension (a file of another type), a dot first
-//                              kept (.profile is page .profile)
+//                              kept (.profile is page .profile); namer() gives it with the types looked up once
 //   pageOfFile(spaceId, path, exceptWikiPageId)
 //                              the WikiPage record (other than exceptWikiPageId) of the page at a file's page path: the
 //                              one at that path, else one whose path is the same ignoring case (a case-insensitive file
@@ -25,13 +25,18 @@ function pageTypes() {
         .concat(["markdown"])
         .sort((left, right) => right.length - left.length)
 }
-function pageNameOf(fileName) {
+function pageNameOf(fileName, types = pageTypes()) {
     const name = String(fileName == null ? "" : fileName)
     const lower = name.toLowerCase()
-    const type = pageTypes().find(type => name.length > type.length + 1 && lower.endsWith("." + type))
+    const type = types.find(type => name.length > type.length + 1 && lower.endsWith("." + type))
     if (type) return name.substring(0, name.length - type.length - 1)
     const dot = name.lastIndexOf(".")
     return dot > 0 ? name.substring(0, dot) : name
+}
+// pageNameOf with the types looked up once, for a loop over many file names
+function namer() {
+    const types = pageTypes()
+    return fileName => pageNameOf(fileName, types)
 }
 function pageOfFile(wikiSpaceId, filePagePath, exceptWikiPageId) {
     if (!wikiSpaceId || filePagePath == null) return null
@@ -47,4 +52,4 @@ function pageOfFile(wikiSpaceId, filePagePath, exceptWikiPageId) {
     return Array.from(find().condition(cf.makeCondition("pagePath", "equals", path, false, true)).orderBy("wikiPageId").list())[0] || null
 }
 
-;({normalPath, pageNameOf, pageOfFile})
+;({normalPath, pageNameOf, namer, pageOfFile})
