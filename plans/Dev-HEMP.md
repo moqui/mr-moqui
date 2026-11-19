@@ -4,7 +4,8 @@ November 18, 2026 — design, not implemented. This plan makes HEMP the structur
 its terms, its process as the menu, Coarchy's screens adapted for the requirements work, and a diagram-like overview
 of a site. It adds to the Dev AIDE design and changes its menu (§4); the decisions D1 to D22 cited here are that
 design's. The storage, the Coarchy scope, the overview and the place of agents were decided with the user the same
-day (H3, §5, H8, H9, H13), and the book in the component after the first draft, also that day (H14, §9).
+day (H3, §5, H8, H9, H13), and the book in the component after the first draft, also that day (H14, §9). The
+first draft's eight open questions were answered that day too (H15 to H22).
 
 Sources. HEMP: "HEMP: An agile approach to analysis and design", David E. Jones, revision 1.0, 2013
 (`~/Dropbox/Business/MyBooks/hemp/HempTheBookv1.0.pdf`; "p." is its printed page) and its back-cover artifact diagram
@@ -34,6 +35,14 @@ Coarchy clone, and `my-site` stands for a site's own component (D17). Every othe
 | H12 | Not taken from Coarchy: organizations as tenants and their entity filter (the component is the scope), invitations, premium gates, credits and Stripe, the public site, agreements, users assigned to actors, task emails and the search documents. | They serve its hosted, multi-tenant business. A component in git replaces the organization. |
 | H13 | Agents come after the screens (P7): skills per HEMP role for the `dev` agent, every write a change set through `propose_edit` (D11). | Decided with the user. The files and their rules have to exist before a skill can be held to them. |
 | H14 | The whole book is in the Dev AIDE component as Markdown, a file per chapter (`DA/book/`), as a re-release of the 2013 book under this repository's CC0 terms: corrected, improved, and adapted so that each chapter says how its step is done on the screens. Its release is the MR Moqui version it ships with, 0.1.0 first. It is the reference, the guide to the HEMP screens, the online help of the HEMP screens, and what the role skills cite. The appendix's examples are also a working HEMP set in the example component. | Asked for: Coarchy shows excerpts, and the book is short (about 21,000 words), so the whole of it explains the process better than a selection. Text that ships with the component is there for the help and for the agents, on any dev instance. The terms, the corrections, the adaptation to the screens and the version were decided by the author, Nov 18, 2026. |
+| H15 | The schema, `hemp-3.xsd`, is with the framework's XSDs, and the HEMP extractor is in the framework's index beside the entity, service and screen extractors. | Answered question 1. The index is one, and `moqui refs`, MCP and the Browser then read HEMP artifacts with no new mechanism. |
+| H16 | The Overview replaces Home. Home's panels move: the restart banner and Publish to the Overview's header, "Your customizations" to Implementation, the create-component dialogs to Repositories, the reload log to the Workspace. | Answered question 2. One landing page. |
+| H17 | The time flow is a story of its own kind: one file whose activities are grouped under periods. Daily, weekly, monthly, quarterly and yearly are built in and sort in that order; a time flow may declare named periods of its own ("Fiscal period close", "Payroll run"), which sort where it places them. It is in the story list beside the summary story and uses the story editor with a period column. | Answered question 3. The book keeps time-triggered activities in a separate flow by period (p. 39), and one place shows everything that happens at month end. |
+| H18 | The site component owns the summary story. Its high-level activities link to detailed stories in itself and in other components, upstream ones included, and the site's Overview follows those links: a card's count includes what the story reaches in other components, with the split shown ("41 activities, 12 upstream"), and its list is by component with upstream items read-only. | Answered question 4. A site is built from several components, and its requirements are one story. |
+| H19 | mr-boss Insights may import a HEMP story once as a flow map (actors as lanes, activities as steps), a copy edited on its own from then. It is a later step in mr-boss, not a phase here, and nothing in production reads `hemp/` files. | Answered question 5. Flow maps run in production for the people doing the work; a HEMP story is a requirement in a dev instance's files. |
+| H20 | A Functional Wireframe is a prototype: a draft screen made from its outline in the screen builder, with sample data, reviewed by role playing before it is finished. An image may also be attached to an outline, kept beside it and named for it (`outline/Pack.png` with `outline/Pack.xml`, `Pack-2.png` for a second state). | Answered question 6. The book lets a partly functional prototype stand in for a wireframe (p. 50), and here a real screen is quick to make. The image is for a layout sketched elsewhere. |
+| H21 | A commit names the activities it delivers in a trailer (`Activity: FulfilOrder#a3`), which Publish offers from the files changed. A story row lists its commits from the root's git history, whoever made them: Publish, an agent or a terminal. The dev agent's skill and the contributor notes say to add the trailer. Nothing is recorded outside git, and nothing changes on a task source. | Answered question 7. Tasks often live on another server; git is in every root. |
+| H22 | Dev AIDE's own `hemp/` set is the first real one: the book's chapter 2 as its summary story, its screens as the design. Other existing plans stay as prose; HEMP sets are for new work. | Answered question 8. Chapter 2 is already a process story, and the tool is tested on itself. |
 
 ---
 
@@ -126,23 +135,25 @@ The primary roles colour the cards: Analyst, UI Designer, System Architect, Deve
 mr-boss Insights has flow maps that cite Coarchy's stories
 (`runtime/components/addon/mr-boss/plan/design-insights.md`, FlowMap and ProcessStory): lanes and steps that open
 worklists in a running business. They document operations for the people doing them and stay as they are; Dev AIDE
-cannot depend on mr-boss, and its stories are requirements for building (question 5).
+cannot depend on mr-boss, and its stories are requirements for building. A flow map may later be made from a story,
+once, as a copy (H19).
 
 ---
 
 ## 3. The files
 
-A component's HEMP set is its `hemp/` directory. One schema, `hemp-3.xsd`, covers the files (question 1).
+A component's HEMP set is its `hemp/` directory. One schema, `hemp-3.xsd`, in the framework's
+`xsd/` directory, covers the files (H15).
 
 | Path | Artifact | Holds | Links written here |
 | --- | --- | --- | --- |
 | `business-case.xml` | Business Case | Narrative sections (Coarchy's Origin Story, Mission and Vision); general objectives with detailed objectives, each with a priority | objective to activities |
 | `actors.xml` | Actor Definition | Name, nature (person, system, organization), description | |
 | `requirements.xml` | Requirement Statement, Idea to Incorporate | Statements; ideas, open or incorporated | idea to the activities that incorporate it |
-| `story/<Name>.xml` | Process Story | Activities (id, actors, optional condition, action, optional phase), breaks, alternate flows, a time flow, supporting documents | activity to actors; high-level activity to its detailed story |
+| `story/<Name>.xml` | Process Story | Activities (id, actors, optional condition, action, optional phase), breaks, alternate flows, supporting documents. One story of the kind `time-flow` groups its activities under periods (H17) | activity to actors; high-level activity to its detailed story |
 | `experience/<Actor>.xml` | Experience Story | Prose in paragraphs | paragraph to activities |
 | `analysis/<Story>.xml` | Overlap Description, Gap Description | For an activity or a run of them: overlap, partial overlap, gap or no system interaction, and the instructions or the gap | to activities; to the upstream screens and services |
-| `outline/<Screen>.xml` | Screen Outline, Data Mapping | Sections, elements, what each shows, the interaction and the response | element to activities; field to entity field; outline to the Screen it became |
+| `outline/<Screen>.xml` | Screen Outline, Functional Wireframe, Data Mapping | Sections, elements, what each shows, the interaction and the response; the prototype screen and any attached image (H20) | element to activities; field to entity field; outline to the Screen it became |
 | `data/<Concept>.xml` | Data Statement | Statements of one data concept | to activities; to the entity or field |
 | `process/<Name>.xml` | Process Outline | Trigger and steps | to activities; to the Service it became |
 | `interface/<Name>.xml` | System Interface | Format, transport, fields and their mapping | to activities; to entity fields; to the Service |
@@ -173,7 +184,8 @@ A story file:
 - It reads "*When all items of the order are picked,* **Packer** packs the shipment.", as Coarchy renders it.
 - Ids are never reused in a file, so a link survives a move or a rewording. A link names the file and the id:
   `FulfilOrder#a3`, with a component in front when it is another component's.
-- `detail` names the story file of a high-level activity. The story list is the tree those make.
+- `detail` names the story file of a high-level activity, in this component or another. The story list is the tree
+  those make, from the site component's summary story (H18).
 - The index (H5) gets the file kind `hemp` and the kinds `story`, `activity`, `actor`, `objective`, `requirement`,
   `idea`, `experience`, `overlap`, `gap`, `outline`, `outline-element`, `data-statement`, `process-outline`,
   `interface`, `test-scenario` and `review`. A link's reference type says what it is (actor, detail, objective,
@@ -188,7 +200,7 @@ A story file:
 
 | Menu | Screen (`/qapps/dev/...`) | From | Modes |
 | --- | --- | --- | --- |
-| **Overview** (default) | `Overview` | new (§6); Home's restart banner and Publish in its header | `.qvue`, list twin |
+| **Overview** (default) | `Overview` | new (§6); Home's restart banner and Publish in its header (H16) | `.qvue`, list twin |
 | **Requirements** | `Requirements/BusinessCase` | Coarchy Vision, ValueStatements, ViewValueStatements | XML |
 | | `Requirements/Stories` (Find, Edit, View) | Coarchy FindProcessStory, EditProcessStory, ProcessStory, ViewProcessStory | XML |
 | | `Requirements/Actors` | Coarchy Actor, ViewActors | XML |
@@ -208,7 +220,7 @@ A story file:
 | | `Implementation/Customizations` | Home's "Your customizations" and Artifacts › Customizations | as today |
 | **Review** | `Review/Implementation` | Coarchy FindChecklist, Checklist (§7.5) | XML |
 | | `Review/TestScenarios` | new (§7.5) | XML |
-| Workspace, Repositories, Artifacts, Tasks, Settings | unchanged paths | Home's create-component dialogs move to Repositories | as today |
+| Workspace, Repositories, Artifacts, Tasks, Settings | unchanged paths | Home's create-component dialogs move to Repositories and its reload log to the Workspace; Home is removed (H16) | as today |
 | **Book** | `Book` | new: the HEMP book (§9) | XML, `markdown-view` |
 
 - The existing screens' files stay where they are and are mounted under their phase with `subscreens-item`; only
@@ -232,7 +244,7 @@ A story file:
 | `ValueStatements.xml`, `ViewValueStatements.xml` | Business Case, objectives and the read view | General objectives with detailed ones under them; Priority kept; connected activities both ways; value type dropped |
 | `Actor.xml`, `ViewActors.xml` | Actors and the read view (the glossary, then each actor's activities) | Nature added; assigned users dropped; delete refused while an activity names the actor |
 | `Process/FindProcessStory.xml` | Stories › Find | The tree of summary and detailed stories to any depth |
-| `Process/EditProcessStory.xml` and `Process/ProcessStory.xml` | Stories › Edit, one editor | Sentence rows; add in the last row; Insert above or below; Paragraph; Move; select rows to Copy, Cut and Delete; filters on actor, text and state; each row shows its state (H10) |
+| `Process/EditProcessStory.xml` and `Process/ProcessStory.xml` | Stories › Edit, one editor | Sentence rows; add in the last row; Insert above or below; Paragraph; Move; select rows to Copy, Cut and Delete; filters on actor, text and state; each row shows its state (H10) and its commits (H21) |
 | `Process/ViewProcessStory.xml` | Stories › View | High-level activities in bold, detailed stories below with show and hide; print |
 | `InsertActivity.xml` paste, Copy To, Move To | Activity clipboard | Per user, in memory as the edit buffers are (`DA/src/buffers.rs`); between stories and components; pasted activities get new ids; an actor the target lacks is added to its `actors.xml` |
 | `CreateOrSelectSubstory.xml` | Detailed story dialog | Any depth; the loop check of H4 |
@@ -265,6 +277,7 @@ screen.
 | Actor Definition | actors | |
 | Overlap Description, Gap Description | activities of each | activities not analysed |
 | Screen Outline | outlines | gap activities that an outline element names |
+| Functional Wireframe | outlines with a prototype or an image | |
 | Screen Flow Diagram | derived | |
 | Data Statement | statements | statements mapped to the model |
 | Data Model | the component's entities and extensions | |
@@ -275,11 +288,13 @@ screen.
 | Service & API | the component's services | |
 | High Level Test Scenario | scenarios | stories with one |
 | Low Level (Task) Test Scenario | the component's specs | |
-| Functional Wireframe, Graphic Design, End User Documentation, Deployment and Migration Plan | shown dimmed | later (§11) |
+| Graphic Design, End User Documentation, Deployment and Migration Plan | shown dimmed | later (§11) |
 
 - The arrows are the book's, with its dashes. An arrow carries nothing of its own; the coverage lines say how far
   each step has been taken.
-- The header has the component picker, the site's restart banner and Publish.
+- The header has the component picker, the site's restart banner and Publish. For the site component the counts
+  follow its summary story's links into other components, each with its split, and a card's list is by component
+  (H18); for any other component they are its own.
 - The counts come from the index in one service call. A component with no `hemp/` shows the map with zeros and
   "Start with a Process Story".
 - The cards' positions are constants in the page's script, tested as the Browser's layout is. At phone width and in
@@ -308,7 +323,10 @@ An outline is the screen's sections, their elements (label, link, button, form, 
 it shows, the interaction and the system's response with its target screen (p. 48). An element names the activities
 it is based on. A field names its entity field: the Data Mapping. "Create screen" hands the outline to the screen
 builder as a new subscreen and records the screen on the outline; from then the outline shows whether its screen
-still exists. Shared sections have outlines of their own. The Screen Flow Diagram is drawn from the outlines'
+still exists. That screen is first the Functional Wireframe (H20): a draft from a gallery archetype with sample
+data, walked through by role playing, the Expert User as each actor (p. 55), and then finished in place. An image
+can be attached to an outline for a layout drawn elsewhere. Shared sections have outlines of their
+own. The Screen Flow Diagram is drawn from the outlines'
 targets, one per component.
 
 ### 7.3 Data Statements, Data Model, Data Mapping
@@ -432,6 +450,10 @@ the terminal work. It has the contents beside the text, and Search finds text in
 outline and its data mapping. A new user opens a complete set; the specs of P0 to P6 use it as their fixture; the
 site template gets only an empty first story.
 
+**Dev AIDE's own set.** `DA/hemp/` holds Dev AIDE's requirements and designs (H22). Its summary story is chapter 2
+of the book, each high-level activity linked to the detailed story its chapter tells, with the screens of §4 to §7
+as the outlines. It is written as the screens are built, each phase with the tool the phase before delivered.
+
 **Outside the app.** The book is the guide to the HEMP screens: `docs/README.md` links `DA/book/README.md`, and no
 separate HEMP guide or second copy is kept in `docs/`.
 
@@ -462,13 +484,13 @@ element. The Assist prompts on HEMP screens name the artifact open, as the artif
 | --- | --- | --- |
 | P0 | The `hemp/` layout and schema; the index's file kind, kinds and references; an empty first story in `DA/template/site/`; the book in `DA/book/` with the Book screen (§9); the appendix's examples as a `hemp/` set in the example component | An index spec on the example set: a story file's activities are found, and a link is answered from both ends. The book's first commit matches the PDF's text, and every link from `README.md` resolves |
 | P1 | The menu by process with the existing tools under their phases; the Overview with its counts and its list twin | One render of the Overview in each mode; the layout's client check merged into an existing spec; old paths gone from specs, skills and docs |
-| P2 | Requirements: Actors, Stories (Find, Edit, View, detailed stories, clipboard), Statements, Business Case, Experience; the story checks | Specs of the operations (insert, move, detail, paste, delete) against a fixture file; one render of the editor |
+| P2 | Requirements: Actors, Stories (Find, Edit, View, detailed stories across components, the time flow, clipboard), Statements, Business Case, Experience; the story checks | Specs of the operations (insert, move, detail, paste, delete) against a fixture file; one render of the editor |
 | P3 | Existing System; the derived state on story rows and the Overview | A spec of the derived state |
-| P4 | Screen Outlines with Create screen; Data Statements with Add to data model; Data Mapping; Process Outlines; System Interfaces; Screen Flow | Links indexed; the two hand-offs open the right tool on the right artifact |
-| P5 | Implementation Review; High Level Test Scenario and its spec skeleton | A review file written and read back; a generated spec that parses |
+| P4 | Screen Outlines with Create screen, the prototype as the Functional Wireframe and attached images; Data Statements with Add to data model; Data Mapping; Process Outlines; System Interfaces; Screen Flow | Links indexed; the two hand-offs open the right tool on the right artifact |
+| P5 | Implementation Review; High Level Test Scenario and its spec skeleton; the `Activity` trailer in Publish and commits on story rows | A review file written and read back; a generated spec that parses |
 | P6 | The trace: HEMP kinds in the Artifact Browser | The Browser spec extended, not a second render |
 | P7 | The role skills | Agent evals with replays, as `DA/test/agent/` has |
-| Later | Functional Wireframe, Graphic Design, End User Documentation, Deployment and Migration Plan; a design pinned to the story revision it was made from, with the differences since | |
+| Later | Graphic Design, End User Documentation, Deployment and Migration Plan; a design pinned to the story revision it was made from, with the differences since | |
 
 **Rules for every phase.**
 
@@ -477,6 +499,7 @@ element. The Assist prompts on HEMP screens name the artifact open, as the artif
   at most once in each mode across the regression suite, and no spec walks the HEMP menu.
 - New routes go in `docs/security/Attack-Surface-Dev.md`. `DA/README.md` and the design's menu description follow
   the code.
+- From P2, each phase adds its part of Dev AIDE's own set in `DA/hemp/` (H22), written with the screens built so far.
 - The book follows the code: a commit that changes a HEMP screen, file or term changes its chapter. A spec checks
   that every screen the book links to exists.
 - The pre-commit skill before each commit.
@@ -485,13 +508,6 @@ element. The Assist prompts on HEMP screens name the artifact open, as the artif
 
 ## 12. Open questions
 
-1. Where `hemp-3.xsd` and the index's HEMP extractor live. The index is the framework's, so both in the framework is
-   the simple answer; the alternative is a kind a component can register.
-2. Whether Home stays as a screen. This plan moves its panels to the Overview, Implementation and Repositories.
-3. How a time flow is written: a section of a story file by period, or a story of its own kind.
-4. A story that spans components: links across components work, but which component owns the summary story of a
-   site built from several.
-5. Whether mr-boss Insights' flow maps should be able to read a HEMP story as their source.
-6. What a Functional Wireframe is here: the screen builder's preview of an outline's screen, or an attached image.
-7. Whether tasks name the activities they deliver, so the task branch and the commit trailer carry the trace.
-8. Whether the component repositories' existing `plan/` documents get HEMP sets, and for which components first.
+None are open. The first draft's eight were answered as H15 to H22, and the four those left (a time flow's periods,
+what the site's Overview shows of other components, where a wireframe image is kept, and commits made outside
+Dev AIDE) are in H17, H18, H20 and H21.
