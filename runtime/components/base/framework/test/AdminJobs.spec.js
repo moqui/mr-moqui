@@ -27,9 +27,16 @@ const jobs = {
     run: "SPEC_AJ_RUN",
     busy: "SPEC_AJ_BUSY",
     paused: "SPEC_AJ_PAUSED",
-    twice: "SPEC_AJ_TWICE"
+    twice: "SPEC_AJ_TWICE",
+    waiting: "SPEC_AJ_WAITING"
 }
-const runs = {busy: "SPEC_AJ_R_BUSY", items: "SPEC_AJ_R_ITEMS", failed: "SPEC_AJ_R_FAILED", send: "SPEC_AJ_R_SEND"}
+const runs = {
+    busy: "SPEC_AJ_R_BUSY",
+    items: "SPEC_AJ_R_ITEMS",
+    failed: "SPEC_AJ_R_FAILED",
+    send: "SPEC_AJ_R_SEND",
+    waiting: "SPEC_AJ_R_WAITING"
+}
 const topics = {open: "SPEC_AJ_TOPIC", sealed: "SPEC_AJ_PRIVATE", approval: "SPEC_AJ_APPROVAL"}
 const messageId = "SPEC_AJ_M_FAILED"
 const hour = 3600000
@@ -231,6 +238,9 @@ spec({
             hasError: "Y",
             errors: "Could not connect to https://user:pw@files.example.test/private/path?token=abc for bob@example.test\nsecond line"
         })
+        // a run asked for and not yet started: no start and no end
+        make(JOB, {jobName: jobs.waiting, description: "Spec waiting run", serviceName: NOOP, paused: "N"})
+        make(RUN, {jobRunId: runs.waiting, jobName: jobs.waiting})
         make(RUN, {
             jobRunId: runs.send,
             jobName: SEND_JOB,
@@ -462,6 +472,8 @@ feature("a run that ended without an error but with failed items is not a succes
             out.failed = invoke(O + "get#JobRun", {jobRunId: runs.failed})
             out.send = invoke(O + "get#JobRun", {jobRunId: runs.send})
             out.running = invoke(O + "find#JobRuns", {jobName: jobs.busy, state: "running"})
+            out.waiting = invoke(O + "find#JobRuns", {jobName: jobs.waiting})
+            out.waitingEnded = invoke(O + "find#JobRuns", {jobName: jobs.waiting, state: "ended"})
         })
         out.none = as(users.none, () => invoke(O + "get#JobRun", {jobRunId: runs.failed}))
         return out
@@ -488,6 +500,9 @@ feature("a run that ended without an error but with failed items is not a succes
         out.send.itemList.some(row => row.itemKey == messageId && row.state == "failed" && row.recoveryKind == "SystemMessage")
         !JSON.stringify(out.send).includes("spec private payload")
         out.running.runList.some(row => row.jobRunId == runs.busy && row.state == "running")
+        // a run asked for and not yet started (a direct run's, queued at its transaction's commit) is among all of them
+        out.waiting.runCount == 1 && out.waiting.runList[0].jobRunId == runs.waiting
+        out.waitingEnded.runCount == 0
         has(out.none.error, /ADMIN_OPERATION_VIEW/)
     }
 })

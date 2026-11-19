@@ -841,9 +841,15 @@ pub(crate) fn persist_queued(factory: &Arc<ExecutionContextFactory>, call: &Queu
 
 /// Run a named job now, outside its schedule. Returns the run id.
 ///
+/// Its run row is written in the caller's transaction when there is one (a transition's, a service's), and the run is
+/// handed to a worker once that transaction commits: a worker that took it before would write the run's start to a
+/// row it cannot see yet, and the run would end with no start, which the run lists leave out. A rollback takes the row
+/// and the run both. Outside a transaction it is handed over at once.
+///
 /// # Errors
 ///
-/// Returns an error when there is no such job, the pool is full, or a row cannot be written.
+/// Returns an error when there is no such job, the pool is full (at once; at a commit, a full pool removes the run row
+/// and logs it), or a row cannot be written.
 pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<String, Error> {
     let factory = super::pool::capture_factory()?;
     let facade = factory
@@ -899,6 +905,38 @@ pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<St
     let Some(shared) = shared else {
         delete_run(&facade, &run_id);
         return Err(Error::new("service worker pool is not running"));
+    };
+    let tx = facade.transactions_for(JOB_RUN)?;
+    let run = if tx.in_transaction() {
+        // queued at the commit of the transaction that holds the run row ([`run_job_now`]'s note)
+        let pending = Arc::new(std::sync::Mutex::new(Some(run)));
+        let at_commit = Arc::clone(&pending);
+        let (hook_run_id, hook_job) = (run_id.clone(), job_name.to_string());
+        let hook_factory = Arc::clone(&factory);
+        let hook_shared = Arc::clone(&shared);
+        let hooked = tx.on_commit(move || {
+            let Some(run) = lock(&at_commit).take() else {
+                return;
+            };
+            if hook_shared.submit_job(run) {
+                return;
+            }
+            tracing::error!(job = %hook_job, run = %hook_run_id, "the service job did not start: the service worker queue is full");
+            if let Some(facade) = hook_factory.entity() {
+                delete_run(&facade, &hook_run_id);
+            }
+        });
+        match hooked {
+            Ok(()) => return Ok(run_id),
+            Err(err) => {
+                tracing::warn!(job = %job_name, error = %err, "could not wait for the commit to start a service job; it starts now");
+                lock(&pending)
+                    .take()
+                    .ok_or_else(|| Error::new("the service job run was taken"))?
+            }
+        }
+    } else {
+        run
     };
     if !shared.submit_job(run) {
         delete_run(&facade, &run_id);

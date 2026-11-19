@@ -307,3 +307,56 @@ fn a_job_rows_entity_auto_run_is_generic_and_a_spilled_queued_call_is_not() {
     );
     assert_eq!(keys("SPEC_QUEUED_KEY"), 1);
 }
+
+/// A job run now inside a transaction (a transition's, a service's) is handed to a worker only once that transaction
+/// commits: a worker that took it before would write the run's start to a row it could not yet see, and the run would
+/// end with no start, which the run lists leave out. Here no worker touches the row while the transaction is open, and
+/// after the commit the run ends with its start and its end (an error, as its service is not one).
+#[test]
+fn a_run_started_inside_a_transaction_waits_for_its_commit() {
+    use crate::transaction::TransactionAttribute;
+
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::pool::ServicePools::bounded(1, 4),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let mut job = facade.make_value("moqui.service.job.ServiceJob").unwrap();
+    job.set("jobName", Value::string("AT_COMMIT"));
+    job.set("serviceName", Value::string("no.such#Service"));
+    job.create(&facade).unwrap();
+
+    let tx = facade.transactions_for(JOB_RUN).unwrap();
+    let run_id = tx
+        .run(TransactionAttribute::UseOrBegin, None, || {
+            let run_id = crate::service::run_job_now("AT_COMMIT", &BTreeMap::new())?;
+            // long enough for an idle job worker to have taken a run handed over at once
+            std::thread::sleep(Duration::from_millis(300));
+            let row = one(&facade, JOB_RUN, "jobRunId", &run_id);
+            assert_eq!(
+                text(&row, "startTime"),
+                "",
+                "a worker started the run before its row was committed"
+            );
+            Ok(run_id)
+        })
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    let row = loop {
+        let row = one(&facade, JOB_RUN, "jobRunId", &run_id);
+        if !text(&row, "endTime").is_empty() {
+            break row;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the run did not end after its commit"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(!text(&row, "startTime").is_empty(), "the run ended with no start");
+}

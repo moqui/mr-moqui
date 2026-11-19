@@ -1024,7 +1024,8 @@ function findJobRuns(p) {
     const runFind = () => {
         let found = find(RUN).condition("jobName", "not-like", QUEUED + "%")
         if (text(p.jobName)) found = found.condition("jobName", text(p.jobName))
-        // a run not yet started has no start time: it is listed with the running ones
+        // a run not yet started has no start time: it is listed with the running ones, and among all, whatever the
+        // range, as a run just asked for (a direct run's, queued at its transaction's commit) is one of them
         const inRange = factory.makeCondition(
             [
                 factory.makeCondition("startTime", "greater-equals", iso(since)),
@@ -1032,7 +1033,12 @@ function findJobRuns(p) {
             ],
             "and"
         )
+        const notStarted = factory.makeCondition(
+            [factory.makeCondition("startTime", "equals", null), factory.makeCondition("endTime", "equals", null)],
+            "and"
+        )
         if (state === "running") found = found.condition("endTime", "equals", null)
+        else if (state === "all") found = found.condition(factory.makeCondition([inRange, notStarted], "or"))
         else found = found.condition(inRange)
         if (state === "failed") found = found.condition("hasError", "Y")
         else if (state === "ended")
