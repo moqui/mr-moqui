@@ -20,6 +20,7 @@ pub mod engine;
 pub mod host;
 pub(crate) mod oxide;
 pub mod parse;
+pub(crate) mod preview;
 pub(crate) mod run;
 mod runtime;
 pub mod standalone;

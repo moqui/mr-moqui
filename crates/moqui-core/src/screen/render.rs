@@ -547,9 +547,9 @@ pub(super) fn with_qvt_render<R>(
 /// last service frame, so a service the text calls runs its own code as ever, and any path that runs the screen's
 /// actions under its frame (a render, a transition, the menu data, a form or tree's data) is covered; or, with no
 /// service running its own code, the screen the render is at ([`super::definition::ScreenDef::proposed`]). Its
-/// actions, widget and condition expressions, forms, trees and transitions alike: a script's `disableAuthz()`, of a
-/// find or a service call too, raw SQL, a resource read outside `component://`, a change of user or of the effective
-/// time are refused then (`script::host::refuse_locked_authz`), and authorization is required while it renders.
+/// actions, widget and condition expressions, forms, trees and transitions alike run on the preview's allow-list host
+/// then ([`crate::script::preview`]); a script's `disableAuthz()`, of a find or a service call too, and a change of user
+/// are refused (`script::host::refuse_locked_authz`), and authorization is required while it renders.
 pub(crate) fn proposed_running() -> bool {
     if !super::overlay::active() {
         return false;
@@ -835,9 +835,26 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
     if let Some(overlay) = super::overlay::for_token(factory, &token) {
         web::set_header("Content-Security-Policy", Some(PREVIEW_POLICY));
         let _fence = crate::entity::fence::enter("a preview of proposed screen text");
-        return super::overlay::with(overlay, run);
+        let result = super::overlay::with(overlay, run);
+        preview_response();
+        return result;
     }
     run()
+}
+
+/// A preview's response, whatever its render set (plans/Security-Review-Low.md SEC-AI-102): the preview's policy again,
+/// and a redirect only to this site (a relative path, or this host), else a 403 with no Location. It backs up the
+/// allow-list host, which gives the proposed text no `ec.web` member to set either.
+fn preview_response() {
+    web::set_header("Content-Security-Policy", Some(PREVIEW_POLICY));
+    for location in web::response_header_values("Location") {
+        let local = location.starts_with('/') && !location.starts_with("//") && !location.starts_with("/\\");
+        if !local && !same_origin(&location) {
+            web::set_header("Location", None);
+            web::set_status(403);
+            break;
+        }
+    }
 }
 
 fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {

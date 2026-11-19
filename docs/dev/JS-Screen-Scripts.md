@@ -231,6 +231,35 @@ Here `optionIndicator`, `parentEnumId` and `sequenceNum` are the row's fields, a
 `row-actions` run once for each row of the page, so a find or a service call there runs that many times. Read the
 related rows for the whole list in the screen's `actions`.
 
+## In a preview of proposed text
+
+A screen that stands at a preview's proposed text (a dev-aide change set or a `screen-xml` canvas, `screen::overlay`)
+runs its code on an allow-list host (`crates/moqui-core/src/script/preview.rs`, plans/Security-Review-Low.md
+SEC-AI-102). That is its actions (always-, pre-, transition and form row actions, a form's or a drop-down's
+`entity-find`, a tree node's), its widget, field and condition expressions, and the forms that `extends` one of its
+forms. The screen is told by the nearest screen frame above the last service frame, so a transition, the menu data and
+a form's or tree's data are covered as the render is. The code may call:
+
+| Group | Members |
+|---|---|
+| Entities | `ec.entity.find`, `findOneXml`, `makeValue`, `conditionFactory`; `EntityFind`, `EntityList`, `EntityValue`, `EntityListIterator`, `EntityCondition`; authorization and entity filters apply, and no `disableAuthz()` |
+| Services | `ec.service.sync()` and its builder, `callXml`; the service's authorization applies, and no `disableAuthz()` |
+| Messages and text | `ec.message`, `ec.l10n`, `ec.logger`; `ec.resource.expand`, `expandNoL10n`, `expression` and `condition`, which run more of the same text on the same host, their value copied out as data |
+| Context | names read and written, `ec.context`, its shared map, `ec.user.context` reads |
+| The user | `ec.user` `userId`, `username`, `hasPermission`, `isInGroup`, `getUserGroupIdSet`, `getPreference`, `getPreferences`, `nowTimestamp`, `timestampMillis`, `locale`, `timeZone`, `getLocale`, `getTimeZone`, `userAccount` |
+| Helpers | `StringUtilities`, `CollectionUtilities`, the pure `WebUtilities` encoders, `compare`, the decimal and date globals |
+| `sri` | the reads of the render, its field values, options and validations, and the URL builders (`buildUrl`, `makeUrlByType`, `UrlInstance`); no render, write or redirect |
+| The lock | `ec.artifactExecution.authzLocked()` |
+
+Anything else throws "... is not available in a preview of proposed screen text": every `ec.web` member (the
+response's writes, headers, redirects, errors and status, cookies, the session and the request's parameters), the rest
+of `ec.resource` (files, locations, `script`, `template`), `ec.cache`, `ec.factory`, the rest of
+`ec.artifactExecution`, raw SQL and the other `tools`, the user's switches (sign in and out, `runAsUser`) and the
+effective time, `ec.screen`, the search index and notifications. A service the code calls, and the entity filters and
+ECA rules its finds and writes reach, run their own code on the whole host. The preview renders on a script runtime of
+its own whose built-in objects and prototypes are frozen, let go after it; the response keeps the preview's
+`Content-Security-Policy` and redirects only to this site.
+
 ## Server-static screens
 
 A screen whose `server-static` names `qvt` is sent to the browser as a cached template with no request data in it,

@@ -690,6 +690,72 @@ pub(super) fn active_depth() -> usize {
     ACTIVE.with(|active| active.borrow().len())
 }
 
+thread_local! {
+    /// Set while a preview of proposed screen text holds the thread ([`PreviewRuntime`]): the runtime that starts then
+    /// freezes the language's own objects ([`FREEZE_INTRINSICS_JS`]).
+    static PREVIEW_START: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The thread's main runtime set aside while a preview of proposed screen text renders, and a fresh runtime in its place
+/// whose built-in objects and prototypes are frozen; dropped, the fresh one is let go and the main one put back
+/// (plans/Security-Review-Low.md SEC-AI-102). So nothing the proposed text changes of the language (a prototype's
+/// method, a constructor) is there for the framework code that renders around it, or for a later request.
+pub(crate) struct PreviewRuntime {
+    saved: Option<Option<Rc<OxideEngine>>>,
+}
+
+impl PreviewRuntime {
+    /// Set the main runtime aside; `None` when a script runs on the thread now, so its runtime cannot be.
+    pub(crate) fn enter() -> Option<Self> {
+        if run::is_running(EngineTag::Oxide) || ACTIVE.with(|active| !active.borrow().is_empty()) {
+            return None;
+        }
+        let saved = ENGINE.with(|engine| engine.borrow_mut().take());
+        PREVIEW_START.with(|start| start.set(true));
+        Some(Self { saved: Some(saved) })
+    }
+}
+
+impl Drop for PreviewRuntime {
+    fn drop(&mut self) {
+        PREVIEW_START.with(|start| start.set(false));
+        let preview = ENGINE.with(|engine| engine.borrow_mut().take());
+        if let Some(preview) = &preview {
+            preview.restarting.set(true);
+        }
+        drop(preview);
+        if let Some(saved) = self.saved.take() {
+            ENGINE.with(|engine| *engine.borrow_mut() = saved);
+        }
+    }
+}
+
+/// Freezes the language's own globals (the names `builtins` lists, which the runtime had before the host added any) and
+/// their prototypes, and the prototypes reached only through instances (iterators, generators, async functions), for
+/// a preview's runtime ([`PreviewRuntime`]).
+const FREEZE_INTRINSICS_JS: &str = r#"(function (builtins) {
+    const seen = new Set();
+    const freeze = (value) => {
+        if (value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return;
+        seen.add(value);
+        Object.freeze(value);
+    };
+    for (const name of builtins) {
+        if (name === "globalThis") continue;
+        let value;
+        try { value = globalThis[name]; } catch (e) { continue; }
+        freeze(value);
+        if (typeof value === "function") freeze(value.prototype);
+    }
+    const proto = Object.getPrototypeOf;
+    for (const value of [
+        proto([][Symbol.iterator]()), proto(proto([][Symbol.iterator]())), proto(new Map().entries()),
+        proto(new Set().values()), proto(""[Symbol.iterator]()), proto(/x/[Symbol.matchAll]("x")),
+        proto(function* () {}), proto(function* () {}).prototype, proto(async function () {}),
+        proto(async function* () {}), proto(async function* () {}).prototype, proto(proto(async function* () {}).prototype)
+    ]) freeze(value);
+})"#;
+
 /// Let this thread's runtime go, when no script runs on it: for a worker that has waited for work a while, so the heap
 /// a pool's idle threads hold goes back. Its next script starts a runtime again, from the process's code images.
 /// Whether one was let go.
@@ -1012,6 +1078,14 @@ impl OxideEngine {
         }
         .ok_or(RuntimeError::Invariant("the host globals' freeze"))?;
         context.call(&freeze, Value::Undefined, &[Value::Object(builtins.clone())])?;
+        if PREVIEW_START.with(Cell::get) {
+            let intrinsics = match super::compiled::eval_start(&mut context, FREEZE_INTRINSICS_JS)? {
+                Value::Object(object) => context.as_callable(&object)?,
+                _ => None,
+            }
+            .ok_or(RuntimeError::Invariant("the intrinsics' freeze"))?;
+            context.call(&intrinsics, Value::Undefined, &[Value::Object(builtins.clone())])?;
+        }
         super::names::install_names(&context)
     }
 

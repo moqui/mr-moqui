@@ -38,8 +38,12 @@ pub(crate) use crate::entity::load_feed::first_condition;
 
 /// The scope a service call holds, for a rule's inline condition or actions (an entity, service, email or git ECA rule):
 /// a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()` they leave on ends with them (SEC-RTE-92).
-fn keep_authz() -> Option<crate::context::AuthzScope> {
-    crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz)
+fn keep_authz() -> (Option<crate::context::AuthzScope>, crate::script::preview::PreviewCode) {
+    (
+        crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz),
+        // the rule is the framework's or a component's, not a preview's text (SEC-AI-102)
+        crate::script::preview::lift(),
+    )
 }
 
 /// An empty condition passes. A [`first_condition`] group is evaluated as `<if>` evaluates its

@@ -48,10 +48,34 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
         let function = context.new_function(
             FunctionOptions::new(name).length(length),
             move |scope: &mut Scope<'_>| -> JsResult<Value> {
+                // a preview's proposed text runs no script file (SEC-AI-102)
+                if name == "script" && crate::script::preview::restricted() {
+                    let refusal = crate::script::preview::refusal("ec.resource.script");
+                    return Err(scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, &refusal));
+                }
                 // each run holds the scope a service call holds: what it disables ends with it (SEC-RTE-92)
                 let _authz =
                     crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
-                super::bind::host_body(scope, body)
+                // an expand, expression or condition a proposed screen's code asks runs as its text: in a region of
+                // the preview's allow-list, its value copied out as data (SEC-AI-102)
+                let region = if name == "script" {
+                    None
+                } else {
+                    match crate::script::preview::enter() {
+                        Ok(region) => Some(region),
+                        Err(err) => {
+                            let message = err.message().to_string();
+                            return Err(
+                                scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, &message)
+                            );
+                        }
+                    }
+                };
+                let value = super::bind::host_body(scope, body)?;
+                match region {
+                    Some(region) if region.opened() => copy_out(scope, value),
+                    _ => Ok(value),
+                }
             },
         )?;
         let name = key(name).map_err(|_| RuntimeError::Invariant("a key"))?;
@@ -63,6 +87,19 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
     define("expression", 3, expression)?;
     define("condition", 3, condition)?;
     Ok(())
+}
+
+/// A value a preview region gives back to the code that asked for it, as data: through the host's values, so no getter,
+/// `toString` or function the proposed text made runs later outside the region (SEC-AI-102).
+fn copy_out(scope: &mut Scope<'_>, value: Value) -> JsResult<Value> {
+    if !matches!(value, Value::Object(_)) {
+        return Ok(value);
+    }
+    let engine = current().ok_or(RuntimeError::Invariant("no oxide engine"))?;
+    let host =
+        to_host(scope, &engine, &value).map_err(|_| RuntimeError::Invariant("a preview value that is not data"))?;
+    super::convert::to_js(scope, &engine, &host)
+        .map_err(|_| RuntimeError::Invariant("a preview value that is not data"))
 }
 
 /// The thread's runtime, which is running this call.
@@ -148,10 +185,7 @@ fn script_value(scope: &mut Scope<'_>) -> Result<Value, Conv> {
             None,
         ))
     };
-    // a preview's proposed text runs no file but a component's (SEC-AI-102)
-    if let Err(err) = crate::script::host::refuse_locked_location(&location) {
-        return Err(Conv::Js(super::bind::throw(scope, err, None)));
-    }
+
     let (text, inert) = match crate::script::runtime::read_module(&location) {
         Ok(read) => read,
         Err(err) => return Err(marked(scope, err)),

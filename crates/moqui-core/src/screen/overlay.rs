@@ -73,7 +73,16 @@ thread_local! {
 }
 
 /// Run `body` with `overlay` in effect on this thread; the overlay held before is back after it.
+///
+/// A preview of proposed text renders on a script runtime of its own whose built-in objects are frozen, let go after it
+/// (`script::oxide::PreviewRuntime`, SEC-AI-102); when a script runs on the thread now, so its runtime cannot be set
+/// aside, the proposed text runs none of its code ([`crate::script::preview`]).
 pub fn with<R>(overlay: Overlay, body: impl FnOnce() -> R) -> R {
+    let _runtime = if overlay.is_empty() {
+        None
+    } else {
+        Some(crate::script::preview::PreviewHeld::hold())
+    };
     struct Restore(Option<Overlay>);
     impl Drop for Restore {
         fn drop(&mut self) {

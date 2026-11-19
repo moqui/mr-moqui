@@ -1480,6 +1480,11 @@ impl ExecutionContext {
         self.state.artifacts.borrow().screen_above_service()
     }
 
+    /// Whether the top artifact frame is a screen's or a screen transition's ([`crate::script::preview::restricted`]).
+    pub(crate) fn top_is_screen(&self) -> bool {
+        self.state.artifacts.borrow().top_is_screen()
+    }
+
     pub(crate) fn in_service_body(&self) -> bool {
         self.state.artifacts.borrow().top_is_service_body()
     }

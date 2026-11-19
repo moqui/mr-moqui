@@ -112,8 +112,11 @@ impl Actions {
     /// ([`crate::context::ExecutionContext::keep_authz`]): a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()`
     /// the block leaves on, by a throw or an early return, ends with it, and the rest of the render (later actions,
     /// subscreens, widget finds) runs with the state it had before (SEC-RTE-92).
+    ///
+    /// A proposed screen's actions run on the preview's allow-list host ([`crate::script::preview`], SEC-AI-102).
     pub fn run(&self) -> Result<(), Error> {
         let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
+        let _preview = crate::script::preview::enter()?;
         self.prepared.run(&self.xml, None)
     }
 }
