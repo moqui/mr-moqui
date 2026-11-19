@@ -265,6 +265,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="tokenUrl"/>
             <parameter name="userInfoUrl"/>
             <parameter name="scope"/>
+            <parameter name="reauthPrompts"><description>OAuth: Y when the provider asks the user to sign in on every authorization, so
+                its round trip answers the recent sign-in check</description></parameter>
             <parameter name="serviceProviderEntityId"/>
             <parameter name="identityProviderMetadataLocation"/>
             <parameter name="forceAuth"/>

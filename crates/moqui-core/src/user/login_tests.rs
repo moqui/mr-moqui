@@ -1670,3 +1670,69 @@ fn a_password_stays_valid_with_change_weeks_zero_and_the_shipped_default_rotates
         "younger than the shipped default"
     );
 }
+
+/// SEC-WEB-84: an account with no password (it signs in through an identity provider) confirms who it is by a code to
+/// its verified address, whatever its provider does: the code alone is a recent sign-in, a wrong one counts as a failed
+/// login, and an account with a password or without a verified address is offered none.
+#[test]
+fn an_account_without_a_password_confirms_by_a_code_to_its_verified_address() {
+    session::reset_session();
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::ServicePools::bounded(2, 16),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    {
+        let _authz = ctx.disable_authz();
+        crate::service::load_definitions().unwrap();
+    }
+    create_user(&facade, "sso.only", "unused", |value| {
+        value.set("currentPassword", Value::Null);
+        value.set("emailAddress", Value::string("sso.only@example.com"));
+    });
+    create_user(&facade, "unverified", "unused", |value| {
+        value.set("currentPassword", Value::Null);
+        value.set("emailAddress", Value::string("unverified@example.com"));
+    });
+    create_user(&facade, "with.password", "Secret1!", |value| {
+        value.set("emailAddress", Value::string("with.password@example.com"));
+    });
+    for user in ["sso.only", "with.password"] {
+        let mut verified = facade.make_value("moqui.security.public.VerifiedAddress").unwrap();
+        verified.set("userId", Value::string(user));
+        verified.set("emailAddress", Value::string(format!("{user}@example.com")));
+        verified.set("verifiedAt", stamp(1));
+        verified.create(&facade).unwrap();
+    }
+    assert!(crate::user::reauth_email_code_offered("sso.only").unwrap());
+    assert!(!crate::user::reauth_email_code_offered("unverified").unwrap());
+    assert!(!crate::user::reauth_email_code_offered("with.password").unwrap());
+
+    internal_login_user("unverified").unwrap();
+    assert!(crate::user::send_reauth_email_code().is_err(), "no verified address");
+    logout_local().unwrap();
+
+    internal_login_user("sso.only").unwrap();
+    assert!(!recent_auth(300_000));
+    let made = {
+        let _authz = ctx.disable_authz();
+        crate::service::sync(
+            "org.moqui.impl.UserServices.create#SingleUseAuthcFactor",
+            &BTreeMap::from([
+                ("userId".to_string(), Value::string("sso.only")),
+                ("fromFactorId".to_string(), Value::string("UserAccountEmail")),
+            ]),
+        )
+        .unwrap()
+    };
+    let code = moqui_lib::object::to_plain_string(&made["code"]);
+    assert!(crate::user::reauthenticate("", "000000x").is_err(), "a wrong code");
+    assert_eq!(i64_field(&load_user(&facade, "sso.only"), "successiveFailedLogins"), 1);
+    assert_eq!(crate::user::reauthenticate("", &code).unwrap(), crate::user::CodeLogin::LoggedIn);
+    assert!(recent_auth(300_000));
+    logout_local().unwrap();
+    session::reset_session();
+}

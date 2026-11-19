@@ -66,11 +66,13 @@ const types = {
         entity: "moqui.security.sso.OauthFlow",
         label: "OAuth",
         endpoint: ["clientTypeEnumId", "clientId", "authorizeUrl", "tokenUrl", "userInfoUrl"],
-        other: ["scope"],
+        // reauthPrompts: the provider asks the user to sign in on every authorization, so its round trip answers the
+        // recent sign-in check (SEC-WEB-84); a change of it is one of who signs in as whom (signInChanged)
+        other: ["scope", "reauthPrompts"],
         retest: [],
         secrets: ["secret"],
         urls: ["authorizeUrl", "tokenUrl", "userInfoUrl"],
-        flags: [],
+        flags: ["reauthPrompts"],
         enums: {clientTypeEnumId: "OauthClientType"}
     },
     AftSaml: {
@@ -659,6 +661,7 @@ function storeIdentityProvider(p) {
                 defaultChanged ||
                 !!roleRows ||
                 !!fieldRows ||
+                "reauthPrompts" in subChanges ||
                 endpointChanged ||
                 Object.keys(newSecrets).length > 0))
     if (signInChanged && !ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent)

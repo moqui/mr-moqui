@@ -52,10 +52,33 @@
 
     const check = () => request("check");
 
-    /** The SSO sign-in again: this page is left for the provider, and comes back here. */
-    function viaSso(info) {
+    /** An account without a password: a code mailed to its verified address, whatever its provider does. */
+    async function viaEmailCode() {
+        const sent = await request("sendEmailCode", {});
+        if (sent.errors) throw { reasonCode: "notConfirmed", errors: sent.errors };
+        let text = t("Enter the code sent to your email address");
+        for (let i = 0; i < TRIES; i++) {
+            const code = await dialog({ title: t("Confirm it is you"), message: text, prompt: { model: "", type: "text", isValid: (v) => !!v },
+                ok: { label: t("Confirm"), color: "primary", unelevated: true, noCaps: true } });
+            const out = await request("password", { code: String(code).trim() });
+            if (out.reauthenticated) return true;
+            text = out.errors || t("Authentication code is not valid");
+        }
+        throw { reasonCode: "notConfirmed", errors: t("Authentication code is not valid") };
+    }
+
+    /** The SSO sign-in again: this page is left for the provider, and comes back here; or a mailed code. */
+    async function viaSso(info) {
         const flows = info.authFlowList || [];
         const flow = flows.find((f) => f.authFlowId === info.authFlowId) || flows[0];
+        if (info.emailCode) {
+            if (!flow) return viaEmailCode();
+            const way = await dialog({ title: t("Confirm it is you"), message: t("How do you want to confirm it is you?"),
+                options: { type: "radio", model: "email", items: [{ label: t("Send a code to my email address"), value: "email" },
+                    { label: t("Sign in again with {provider}").replace("{provider}", flow.description || flow.authFlowId), value: "sso" }] },
+                ok: { label: t("Next"), color: "primary", unelevated: true, noCaps: true } });
+            if (way === "email") return viaEmailCode();
+        }
         if (!flow) return Promise.reject({ reasonCode: "noSso", errors: t("Sign out and sign in again to do this") });
         return dialog({ title: t("Confirm it is you"), message: t("Sign in again with {provider} to do this. You come back to this page; then do it again.").replace("{provider}", flow.description || flow.authFlowId),
             ok: { label: t("Sign in again"), color: "primary", unelevated: true, noCaps: true } }).then(() => {

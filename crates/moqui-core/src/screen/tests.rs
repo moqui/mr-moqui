@@ -1363,3 +1363,30 @@ fn a_parameter_named_context_reaches_a_rest_service() {
     let response = serve_at(&world.factory, get, &root);
     assert_eq!(response.status, 200, "{}", response.body_text());
 }
+
+/// SEC-WEB-84: a re-authentication at an identity provider starts only by a POST with the session token: a signed-in
+/// session's POST of `/sso/reauth` without it, and a GET, are refused before anything runs.
+#[test]
+fn a_signed_in_sessions_sso_reauth_needs_a_post_with_its_token() {
+    let world = World::open("");
+    world.user("admin", None);
+    let root = webroot().to_string_lossy().into_owned();
+    let mut login = request("POST", "/rest/login");
+    login.set_header("content-type", "application/x-www-form-urlencoded");
+    login.body = b"username=admin&password=secret".to_vec();
+    let response = serve_at(&world.factory, login, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    let cookie = header_value(&response, "Set-Cookie").expect("session cookie");
+    let session = cookie.split(';').next().unwrap().split_once('=').unwrap().1.to_string();
+    let reauth = |method: &str| {
+        let mut asked = request(method, "/sso/reauth");
+        asked.set_header("content-type", "application/x-www-form-urlencoded");
+        asked.body = b"authFlowId=ANY&returnTo=/qapps".to_vec();
+        asked.session_cookie = Some(session.clone());
+        serve_at(&world.factory, asked, &root)
+    };
+    let response = reauth("POST");
+    assert_eq!(response.status, 401, "{}", response.body_text());
+    let response = reauth("GET");
+    assert_eq!(response.status, 405, "{}", response.body_text());
+}

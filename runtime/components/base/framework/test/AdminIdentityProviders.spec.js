@@ -365,9 +365,18 @@ feature("a provider's sign-in parts change only after a recent sign-in, and a re
         out.privateBefore = one(FLOW, {authFlowId: privateFlowId}).allowPrivateNetwork
         out.moved = withConf("instance@purpose", "production", () => store({tokenUrl: "https://inner.example.net/token"}, true))
         out.privateAfter = one(FLOW, {authFlowId: privateFlowId}).allowPrivateNetwork
+        // SEC-WEB-84: whether the provider's round trip confirms a sign-in is shown and set here, after a recent sign-in
+        out.promptsStale = store({reauthPrompts: "Y"}, false)
+        out.prompts = store({reauthPrompts: "Y"}, true)
+        out.promptsRow = one(OAUTH, {authFlowId: privateFlowId}).reauthPrompts
+        out.promptsShown = as(users.config, () => provider(privateFlowId)).configuration.reauthPrompts
         return out
     },
     then(out) {
+        out.promptsStale.reasonCode == "reauthRequired"
+        out.prompts.applied == true
+        out.promptsRow == "Y"
+        out.promptsShown == true
         out.named.applied == true
         out.stale.reasonCode == "reauthRequired"
         out.staleSecret.reasonCode == "reauthRequired"
