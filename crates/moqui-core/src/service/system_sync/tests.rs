@@ -499,7 +499,10 @@ fn a_remote_for_one_type_takes_only_that_type() {
         seed(
             facade,
             "moqui.service.message.SystemMessageRemote",
-            &[("systemMessageRemoteId", "SmsgOpenUntyped"), ("messageAuthEnumId", "SmatNone")],
+            &[
+                ("systemMessageRemoteId", "SmsgOpenUntyped"),
+                ("messageAuthEnumId", "SmatNone"),
+            ],
         );
     }
     let body = r#"{"note":"from the peer"}"#;

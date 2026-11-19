@@ -306,9 +306,8 @@ impl FromRequestParts<Arc<HttpState>> for RequestSite {
         let conf = state.guard.conf();
         let believed = peer.is_some_and(|peer| conf.addressing().believes(peer));
         // a believed proxy's own values, from the hop the client address is read from (SEC-WEB-91)
-        let forwarded = |name: &str| {
-            peer.and_then(|peer| crate::http::forwarded(&parts.headers, peer, conf.addressing(), name))
-        };
+        let forwarded =
+            |name: &str| peer.and_then(|peer| crate::http::forwarded(&parts.headers, peer, conf.addressing(), name));
         Ok(Self(
             request_site(
                 https,

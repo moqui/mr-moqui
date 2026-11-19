@@ -171,7 +171,11 @@ fn check_recent_auth(
                 "AftOidc" => true,
                 "AftOauth" => facade
                     .find("moqui.security.sso.OauthFlow")
-                    .and_then(|find| find.disable_authz().eq("authFlowId", Value::string(field(flow, "authFlowId"))).one())
+                    .and_then(|find| {
+                        find.disable_authz()
+                            .eq("authFlowId", Value::string(field(flow, "authFlowId")))
+                            .one()
+                    })
                     .ok()
                     .flatten()
                     .is_some_and(|row| field(&row, "reauthPrompts") == "Y"),

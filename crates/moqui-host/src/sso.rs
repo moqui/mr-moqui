@@ -311,7 +311,10 @@ fn discovery_uri(config: &OidcConfig) -> Result<String, Error> {
 /// An OpenID user info answer is taken only for the ID token's subject: its `sub` there and equal to the ID token's
 /// (OpenID Connect Core 5.3.2), else its claims (the email, the username, the roles) could be another user's (SEC-WEB-86).
 fn same_subject(auth_flow_id: &str, id_token_sub: Option<&Json>, user_info_sub: Option<&Json>) -> Result<(), Error> {
-    match (id_token_sub.and_then(Json::as_str), user_info_sub.and_then(Json::as_str)) {
+    match (
+        id_token_sub.and_then(Json::as_str),
+        user_info_sub.and_then(Json::as_str),
+    ) {
         (Some(token), Some(info)) if token == info => Ok(()),
         _ => Err(Error::new(format!(
             "SSO flow {auth_flow_id}: the user info answer is not for the ID token's subject"
@@ -332,10 +335,7 @@ fn secure_url(url: &str, what: &str) -> Result<(), Error> {
     let parsed = reqwest::Url::parse(url).map_err(|err| Error::new(format!("the {what} {url} is not a URL: {err}")))?;
     match parsed.scheme() {
         "https" => Ok(()),
-        "http"
-            if parsed.host_str().is_some_and(moqui_lib::net::loopback_host)
-                && !moqui_core::web::is_production() =>
-        {
+        "http" if parsed.host_str().is_some_and(moqui_lib::net::loopback_host) && !moqui_core::web::is_production() => {
             Ok(())
         }
         _ => Err(Error::new(format!("the {what} {url} must be https"))),
@@ -450,17 +450,18 @@ impl Inner {
                 }
                 // The reason is the kind of error and where, never the parser's text, which quotes a value of the
                 // body: a test of a provider (`check#Flow`) shows this message, and the URL is its administrator's.
-                let mut metadata: AuthorizationServerMetadata = serde_json::from_slice(&response.body).map_err(|err| {
-                    let what = match err.classify() {
-                        serde_json::error::Category::Data => "its JSON is not that of an OpenID provider",
-                        _ => "it is not JSON",
-                    };
-                    Error::new(format!(
-                        "{discovery} is not a discovery document: {what} (line {}, column {})",
-                        err.line(),
-                        err.column()
-                    ))
-                })?;
+                let mut metadata: AuthorizationServerMetadata =
+                    serde_json::from_slice(&response.body).map_err(|err| {
+                        let what = match err.classify() {
+                            serde_json::error::Category::Data => "its JSON is not that of an OpenID provider",
+                            _ => "it is not JSON",
+                        };
+                        Error::new(format!(
+                            "{discovery} is not a discovery document: {what} (line {}, column {})",
+                            err.line(),
+                            err.column()
+                        ))
+                    })?;
                 if !config.preferred_jws_algorithm.is_empty() && config.preferred_jws_algorithm == "ES512" {
                     return Err(Error::new(
                         "ES512 ID tokens are not supported; choose ES256, ES384, RS*, PS* or EdDSA",
@@ -470,7 +471,10 @@ impl Inner {
                 let named = [
                     ("authorization endpoint", metadata.authorization_endpoint.as_ref()),
                     ("token endpoint", Some(&metadata.token_endpoint)),
-                    ("pushed authorization endpoint", metadata.pushed_authorization_request_endpoint.as_ref()),
+                    (
+                        "pushed authorization endpoint",
+                        metadata.pushed_authorization_request_endpoint.as_ref(),
+                    ),
                     ("user info endpoint", metadata.userinfo_endpoint.as_ref()),
                     ("jwks_uri", metadata.jwks_uri.as_ref()),
                 ];

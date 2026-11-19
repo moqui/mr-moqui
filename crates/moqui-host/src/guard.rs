@@ -1066,7 +1066,9 @@ impl Guard {
         let credentials = has_credentials(headers);
         self.limit(key, client, |limit| {
             limit.applies(host, method, &decoded, credentials)
-                || resolved.as_deref().is_some_and(|resolved| limit.applies(host, method, resolved, credentials))
+                || resolved
+                    .as_deref()
+                    .is_some_and(|resolved| limit.applies(host, method, resolved, credentials))
         })
     }
 

@@ -370,8 +370,14 @@ fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
     );
     assert_eq!(crate::user::request_key_scope("/apps/git"), None);
     // SEC-RTE-85: a token for git alone makes no key for another service, and ends none
-    assert_eq!(crate::user::request_key_scope("/rest/s1/moqui/hosting/offer"), Some("git"));
-    assert_eq!(crate::user::request_key_scope("/rest/s1/moqui/hosting/gatewayKey"), None);
+    assert_eq!(
+        crate::user::request_key_scope("/rest/s1/moqui/hosting/offer"),
+        Some("git")
+    );
+    assert_eq!(
+        crate::user::request_key_scope("/rest/s1/moqui/hosting/gatewayKey"),
+        None
+    );
     assert_eq!(crate::user::request_key_scope("/rest/s1/moqui/hosting/keyRevoke"), None);
 
     // a token made before tokens had a scope is git's too

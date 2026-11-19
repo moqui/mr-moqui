@@ -126,7 +126,9 @@ impl ListenLimits {
             header: seconds("connections", "header-timeout", 30),
             body: seconds("requests", "body-timeout", 60),
             upload_idle: seconds("requests", "upload-idle-timeout", 60),
-            upload_min_rate: setting(node, "requests", "upload-min-rate").parse::<u64>().unwrap_or(1024),
+            upload_min_rate: setting(node, "requests", "upload-min-rate")
+                .parse::<u64>()
+                .unwrap_or(1024),
             max_uploads: count("requests", "max-uploads", 1024),
             request: seconds("requests", "request-timeout", 300),
             connections: count("connections", "max", 4096),
@@ -1178,7 +1180,11 @@ async fn dispatch_screen(
             .or_else(|| parts.uri.authority().map(axum::http::uri::Authority::as_str))
             .unwrap_or_default();
         let host = crate::guard::request_host(raw_host);
-        let (method, path, headers) = (parts.method.to_string(), parts.uri.path().to_string(), parts.headers.clone());
+        let (method, path, headers) = (
+            parts.method.to_string(),
+            parts.uri.path().to_string(),
+            parts.headers.clone(),
+        );
         Box::new(move |reached: &str| {
             let refused = guard
                 .check_reached(client, &host, &method, &path, reached, &headers)
@@ -1430,7 +1436,8 @@ fn upload_wait(limits: &ListenLimits, elapsed: Duration, total: usize) -> Result
         return Ok(limits.upload_idle);
     }
     let grace = limits.body.unwrap_or(Duration::from_secs(60));
-    let earned = Duration::from_millis(u64::try_from(total).unwrap_or(u64::MAX).saturating_mul(1000) / limits.upload_min_rate);
+    let earned =
+        Duration::from_millis(u64::try_from(total).unwrap_or(u64::MAX).saturating_mul(1000) / limits.upload_min_rate);
     let Some(left) = (grace + earned).checked_sub(elapsed).filter(|left| !left.is_zero()) else {
         return Err(BodyRefused::TimedOut);
     };

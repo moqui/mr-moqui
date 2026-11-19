@@ -824,10 +824,12 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     // with: the FOP prefix, a search path, an alias, the extra path after a transition (SEC-WEB-81)
     if job.enforce_request_checks {
         if let Some(refused) = web::reached::refused(&info.reached_path()) {
-            web::send_json_error(
-                refused.status,
-                if refused.status == 429 { "too many requests" } else { "not found" },
-            );
+            let text = if refused.status == 429 {
+                "too many requests"
+            } else {
+                "not found"
+            };
+            web::send_json_error(refused.status, text);
             if let Some(seconds) = refused.retry_after {
                 web::add_header("Retry-After", seconds.to_string());
             }

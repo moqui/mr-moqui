@@ -1389,8 +1389,14 @@ fn an_upload_must_keep_a_minimum_rate_and_only_so_many_arrive_at_once() {
     // a byte every 50 seconds falls behind
     assert!(matches!(wait(110, 2), Err(BodyRefused::TimedOut)));
     // 0 turns the rate off
-    let off = ListenLimits { upload_min_rate: 0, ..limits };
-    assert_eq!(upload_wait(&off, Duration::from_secs(1000), 0).ok().flatten(), Some(Duration::from_secs(60)));
+    let off = ListenLimits {
+        upload_min_rate: 0,
+        ..limits
+    };
+    assert_eq!(
+        upload_wait(&off, Duration::from_secs(1000), 0).ok().flatten(),
+        Some(Duration::from_secs(60))
+    );
 
     let first = UploadSlot::take(usize::MAX).ok().expect("a slot");
     let held = super::UPLOADS_ARRIVING.load(std::sync::atomic::Ordering::Acquire);

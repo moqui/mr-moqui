@@ -370,18 +370,26 @@ mod tests {
         assert_eq!(value(Some("198.51.100.7"), "https, http").as_deref(), Some("http"));
         // the client named a hop too: the values line up with the hops
         assert_eq!(
-            value(Some("6.6.6.6, 198.51.100.7, 10.0.0.9"), "evil.example, shop.example, inner").as_deref(),
+            value(
+                Some("6.6.6.6, 198.51.100.7, 10.0.0.9"),
+                "evil.example, shop.example, inner"
+            )
+            .as_deref(),
             Some("shop.example")
         );
         // a proxy that replaces the header
         assert_eq!(value(Some("198.51.100.7"), "https").as_deref(), Some("https"));
         assert_eq!(value(None, " shop.example ").as_deref(), Some("shop.example"));
         // not believed from a peer that is not a trusted proxy
-        assert_eq!(addressing.forwarded_value(ip("198.51.100.20"), None, Some("https")), None);
+        assert_eq!(
+            addressing.forwarded_value(ip("198.51.100.20"), None, Some("https")),
+            None
+        );
         // with no list of trusted proxies, the first, as the client address is
         let any = ClientAddressing::new("X-Forwarded-For", Vec::new());
         assert_eq!(
-            any.forwarded_value(ip("198.51.100.20"), Some("1.2.3.4"), Some("https, http")).as_deref(),
+            any.forwarded_value(ip("198.51.100.20"), Some("1.2.3.4"), Some("https, http"))
+                .as_deref(),
             Some("https")
         );
     }

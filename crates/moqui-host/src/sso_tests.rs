@@ -438,7 +438,9 @@ fn a_discovery_document_and_its_endpoints_are_https_but_on_this_machine() {
         "response_types_supported": ["code"], "id_token_signing_alg_values_supported": ["ES256"],
     })
     .to_string();
-    serve(listener, move |path| (path == "/.well-known/openid-configuration").then(|| discovery.clone()));
+    serve(listener, move |path| {
+        (path == "/.well-known/openid-configuration").then(|| discovery.clone())
+    });
     let flow = FlowConfig {
         auth_flow_id: "PROOF_HTTP_JWKS".to_string(),
         kind: FlowKind::Oidc(OidcConfig {
@@ -730,7 +732,11 @@ fn a_user_info_answer_is_taken_only_for_the_id_tokens_subject() {
     use super::same_subject;
     let sub = |text: &str| json!(text);
     assert!(same_subject("F", Some(&sub("u1")), Some(&sub("u1"))).is_ok());
-    for (token, info) in [(Some(sub("u1")), Some(sub("u2"))), (Some(sub("u1")), None), (None, Some(sub("u1")))] {
+    for (token, info) in [
+        (Some(sub("u1")), Some(sub("u2"))),
+        (Some(sub("u1")), None),
+        (None, Some(sub("u1"))),
+    ] {
         let err = same_subject("F", token.as_ref(), info.as_ref()).unwrap_err();
         assert!(err.to_string().contains("not for the ID token's subject"), "{err}");
     }

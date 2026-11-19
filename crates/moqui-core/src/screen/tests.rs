@@ -1271,7 +1271,11 @@ fn a_screen_and_an_any_transition_refuse_other_methods_and_sign_in_takes_post_on
     assert_eq!(serve("PUT", "/Form/go").body_text(), "ran");
     assert_eq!(serve("TRACK", "/Form/go").status, 405);
     let webroot = webroot().to_string_lossy().into_owned();
-    for path in ["/Login/login", "/SecondFactor/verifyUserAuthcFactor", "/ChangePassword/changePassword"] {
+    for path in [
+        "/Login/login",
+        "/SecondFactor/verifyUserAuthcFactor",
+        "/ChangePassword/changePassword",
+    ] {
         let response = serve_at(&world.factory, request("PUT", path), &webroot);
         assert_eq!(response.status, 405, "{path}: {}", response.body_text());
     }

@@ -508,9 +508,17 @@ fn save_history(user_id: &str, successful: bool) {
     // a failure and a success claim minutes of their own, and a success one for each visit, so a wrong password first,
     // or a key's login every minute, does not keep a sign-in from another visit out of the history, nor from the
     // new-device notice its row starts (SEC-WEB-85); failures stay one a minute, whatever visits they come by
-    let kind = if successful { HistoryKind::Success(visit_id) } else { HistoryKind::Failure };
-    let Some(claim) = HistoryClaim::take(factory.extension(|_| HistoryWritten::default()), user_id, &kind, from_date)
-    else {
+    let kind = if successful {
+        HistoryKind::Success(visit_id)
+    } else {
+        HistoryKind::Failure
+    };
+    let Some(claim) = HistoryClaim::take(
+        factory.extension(|_| HistoryWritten::default()),
+        user_id,
+        &kind,
+        from_date,
+    ) else {
         return;
     };
     factory.service_pools().spawn("UserLoginHistory create", move || {

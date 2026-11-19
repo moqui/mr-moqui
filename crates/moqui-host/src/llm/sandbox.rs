@@ -129,7 +129,12 @@ fn public_host(state: &HttpState, peer: SocketAddr, request: &Request) -> (Strin
     let header = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
     let believed = state.guard.conf().addressing().believes(peer.ip());
     // a believed proxy's own value, from the hop the client address is read from (SEC-WEB-91)
-    let forwarded_host = forwarded(request.headers(), peer.ip(), state.guard.conf().addressing(), "x-forwarded-host");
+    let forwarded_host = forwarded(
+        request.headers(),
+        peer.ip(),
+        state.guard.conf().addressing(),
+        "x-forwarded-host",
+    );
     let host = frame_host(
         forwarded_host.as_deref(),
         header("host"),

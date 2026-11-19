@@ -674,7 +674,10 @@ fn an_anonymous_body_stops_at_the_body_limit_whatever_its_servlet_takes() {
     );
     let mut bulk = super::WebRequest::new("POST", "/search/_bulk");
     bulk.set_header("content-type", "application/x-ndjson");
-    assert_eq!(anonymous_upload_limit(Some(context.factory()), &bulk), Some(DEFAULT_MAX_BODY));
+    assert_eq!(
+        anonymous_upload_limit(Some(context.factory()), &bulk),
+        Some(DEFAULT_MAX_BODY)
+    );
     let mut form = super::WebRequest::new("POST", "/apps/x");
     form.set_header("content-type", "application/json");
     assert_eq!(anonymous_upload_limit(Some(context.factory()), &form), None);
