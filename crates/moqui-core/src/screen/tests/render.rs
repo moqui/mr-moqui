@@ -2309,6 +2309,38 @@ fn a_previewed_screens_widgets_forms_trees_and_expressions_may_not_disable_autho
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-RTE-92: in an ordinary render a widget expression's `disableAuthz()` ends with the expression, so the widgets
+/// after it are checked.
+#[test]
+fn a_widget_expressions_disable_ends_with_it() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-widget-authz-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Widgets.xml");
+    std::fs::write(
+        &location,
+        r#"<screen require-authentication="false"><widgets>
+            <label text="FIRST ${ec.artifactExecution.disableAuthz()}"/>
+            <section name="After" condition="!ec.artifactExecution.authzDisabled()"><widgets><label text="CHECKED"/></widgets>
+                <fail-widgets><label text="UNCHECKED"/></fail-widgets></section>
+        </widgets></screen>"#,
+    )
+    .unwrap();
+    let out = make_render(&world.factory)
+        .root_screen(location.to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("text")
+        .render()
+        .unwrap()
+        .body_text();
+    assert!(
+        out.contains("FIRST false") && out.contains("CHECKED") && !out.contains("UNCHECKED"),
+        "{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// SEC-AI-102: a preview's response policy loads nothing from another site: images, styles' `url()`, fonts, fetches and
 /// sockets are its own origin's (or a `data:` image or font), and only the app frames it.
 #[test]

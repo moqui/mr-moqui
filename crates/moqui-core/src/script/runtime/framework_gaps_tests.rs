@@ -968,6 +968,19 @@ fn a_script_runs_authorization_toggles_end_with_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `ec.resource.expression`, `expand` and `condition` hold the scope a service call holds too (SEC-RTE-92).
+#[test]
+fn a_resource_expression_ends_what_it_disables() {
+    let context = database();
+    let _entered = context.enter();
+    run_script("ec.resource.expression('ec.artifactExecution.disableAuthz()', '')").unwrap();
+    assert!(!context.authz_disabled(), "an expression left authorization disabled");
+    run_script("ec.resource.expand('${ec.artifactExecution.disableEntityEca()}', '')").unwrap();
+    assert!(!context.entity_eca_disabled(), "a template left entity ECA rules disabled");
+    run_script("ec.resource.condition('ec.artifactExecution.disableTarpit() === false', '')").unwrap();
+    assert!(!context.tarpit_disabled(), "a condition left tarpit counting disabled");
+}
+
 // A load's disableEntityEca and disableAuditLog are its own: another thread's writes keep their entity ECA rules and
 // their audit rows while it runs, and nothing is left switched off after it (plans/Security-Review-Medium.md SEC-DAT-83).
 #[test]

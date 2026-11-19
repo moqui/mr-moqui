@@ -229,6 +229,33 @@ fn a_filter_chain_runs_around_its_servlet() {
     }
 }
 
+/// A webapp lifecycle element's actions hold the scope a service call holds (SEC-RTE-92): a `before-request` that
+/// disables authorization and entity ECA rules and never enables them leaves the request checked.
+#[test]
+fn a_lifecycle_actions_toggles_end_with_them() {
+    let scripts = Scripts::new("lifecycle-authz");
+    let state = scripts.write(
+        "State.js",
+        r#"({ doGet(request, response) {
+            response.write("authz " + ec.artifactExecution.authzDisabled() + " eca " + ec.artifactExecution.entityEcaDisabled())
+        } })"#,
+    );
+    let world = World::open_in_framework(&conf(&format!(
+        r#"<servlet name="State" location="{state}"><url-pattern>/state</url-pattern></servlet>
+        <before-request><actions><script>
+            ec.artifactExecution.disableAuthz(); ec.artifactExecution.disableEntityEca(); ec.artifactExecution.disableTarpit()
+        </script></actions></before-request>"#
+    )));
+    let root = webroot().to_string_lossy().into_owned();
+    let response = serve_at(&world.factory, request("GET", "/state"), &root);
+    assert_eq!(
+        response.body_text(),
+        "authz false eca false",
+        "{}",
+        response.body_text()
+    );
+}
+
 #[test]
 fn the_lifecycle_actions_and_listeners_run_at_their_points() {
     let scripts = Scripts::new("lifecycle");
