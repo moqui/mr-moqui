@@ -1070,7 +1070,7 @@ fn a_change_goes_at_once_and_waits_while_the_server_is_away() {
     assert_eq!(changes(&facade, &account), 1);
     let failed = call("sync#EmailAccount", &[("emailAccountId", text(&account))]);
     assert_eq!(out_text(&failed, "outcome"), "failed");
-    assert!(errors().contains("could not connect"));
+    assert!(errors().contains("the connection was refused"));
     assert_eq!(changes(&facade, &account), 1);
     assert_eq!(
         field(
@@ -1253,8 +1253,8 @@ fn a_uid_validity_change_resets_the_store_failure_count() {
     assert_eq!(field(&inbox, "storeFailUid"), "");
 }
 
-/// A sign-in the server refuses marks the account EasAuthFailed with the reason; the job leaves it; new settings make
-/// it Active again.
+/// A sign-in the server refuses marks the account EasAuthFailed with the reason, as a kind and not the server's own
+/// text (SEC-MAIL-94); the job leaves it; new settings make it Active again.
 #[test]
 fn a_refused_sign_in_marks_the_account() {
     let _lock = moqui_core::user::session::cookie_property_lock();
@@ -1278,13 +1278,17 @@ fn a_refused_sign_in_marks_the_account() {
     let account = imap_account(imap.port, "wrong-password");
     let out = call("sync#EmailAccount", &[("emailAccountId", text(&account))]);
     assert_eq!(out_text(&out, "outcome"), "authFailed");
-    assert!(errors().contains("refused the sign-in"));
+    let answered = errors();
+    assert!(
+        answered.contains("refused the sign-in") && !answered.contains("Invalid credentials"),
+        "{answered}"
+    );
     let row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
     assert_eq!(field(&row, "statusId"), "EasAuthFailed");
+    let stored = field(&row, "lastSyncError");
     assert!(
-        field(&row, "lastSyncError").contains("AUTHENTICATIONFAILED"),
-        "{}",
-        field(&row, "lastSyncError")
+        stored.ends_with("refused the sign-in") && !stored.contains("AUTHENTICATIONFAILED"),
+        "{stored}"
     );
     {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
