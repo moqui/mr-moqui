@@ -63,6 +63,12 @@ const IDENTITY_ADMIN_ENTITY_KEYS: &[&str] = &[
     "artifactgroups",
     "userauthcfactor",
     "userpasswordhistory",
+    // an account's own sign-in credentials, made through UserServices' key, app password and device services (which ask
+    // whose account it is and what it holds, heldBeyond): a generic write could plant one on another account
+    // (plans/Security-Review-Medium.md SEC-ADM-81)
+    "usersshkey",
+    "userapppassword",
+    "devicecredential",
 ];
 
 /// Secret-config entities: `EmailServer` (host and password) and `SystemMessageRemote` (HMAC secret).
@@ -130,6 +136,10 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "emailoauthprovider",
     // a network printer's server is sent every document printed on it, and its allowPrivateNetwork is store#Connection's
     "networkprinter",
+    // a sign-in provider's OAuth and OpenID Connect flows: their token endpoint is sent the client secret, and their own
+    // service (store#IdentityProvider) clears it when an endpoint changes
+    "oauthflow",
+    "oidcflow",
     // ACME: a challenge row is answered on the TLS listener and a certificate row written to runtime/cert, so only an
     // order (setup#AcmeName and the renewal job) writes them
     "acmename",
@@ -617,6 +627,9 @@ mod tests {
             ("userauthcfactor", true, false),
             ("moqui.security.UserAuthcFactor", true, false),
             ("moqui.security.UserPasswordHistory", true, false),
+            ("moqui.security.UserSshKey", true, false),
+            ("UserAppPassword", true, false),
+            ("moqui.security.DeviceCredential", true, false),
             ("moqui.basic.email.EmailServer", false, true),
             ("moqui.service.message.SystemMessageRemote", false, true),
             ("moqui.security.UserAccount", false, false),
@@ -638,6 +651,8 @@ mod tests {
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
         // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11, SEC-OUT-82)
         for name in [
+            "moqui.security.sso.OauthFlow",
+            "moqui.security.sso.OidcFlow",
             "moqui.basic.email.EmailOAuthProvider",
             "moqui.basic.print.NetworkPrinter",
             "moqui.server.AcmeName",
