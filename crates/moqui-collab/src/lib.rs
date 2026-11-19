@@ -121,6 +121,12 @@ pub enum Event {
     Update { document_key: String, update: Vec<u8> },
     /// The user may no longer view the page: the host drops that user's clients from the document (SEC-TLS-112).
     Revoked { document_key: String, user_id: String },
+    /// The user's right to change the page changed while they may still view it: the host tells their clients.
+    CanEdit {
+        document_key: String,
+        user_id: String,
+        can_edit: bool,
+    },
 }
 
 /// The record a document key names.
@@ -154,11 +160,15 @@ struct Room {
     stamp: Option<i64>,
 }
 
-/// Whether a member may change the document, and when that was asked.
+/// Whether a member may change the document, when that was last answered, when to ask again after a check that
+/// failed, and how many clients of the user are in the room.
 #[derive(Clone, Copy)]
 struct Grant {
     can_edit: bool,
     checked: Instant,
+    retry_at: Instant,
+    failures: u32,
+    clients: usize,
 }
 
 fn rooms() -> &'static Mutex<HashMap<String, Arc<Mutex<Room>>>> {
@@ -233,7 +243,22 @@ struct Access {
     on_database: bool,
 }
 
+/// What [`access`] answers in a test in place of the wiki's: `Some` answers that, `None` asks the wiki.
+#[cfg(test)]
+static ACCESS_FOR_TEST: Mutex<Option<Result<(bool, bool), u16>>> = Mutex::new(None);
+
 fn access(page_id: &str, user_id: &str) -> Result<Access, Refusal> {
+    #[cfg(test)]
+    if let Some(answer) = *lock(&ACCESS_FOR_TEST) {
+        return match answer {
+            Ok((can_view, can_edit)) => Ok(Access {
+                can_view,
+                can_edit,
+                on_database: true,
+            }),
+            Err(code) => Err(Refusal::new(code, "the access check failed")),
+        };
+    }
     let out = call_internal(
         "org.moqui.resource.WikiServices.get#WikiPageAccess",
         &[
@@ -621,11 +646,16 @@ pub fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Result<Join
     let room = load(key, page_id, on_database)?;
     let mut room = lock(&room);
     room.members += 1;
+    let now = Instant::now();
+    let clients = room.can_edit.get(user_id).map_or(0, |grant| grant.clients) + 1;
     room.can_edit.insert(
         user_id.to_string(),
         Grant {
             can_edit,
-            checked: Instant::now(),
+            checked: now,
+            retry_at: now,
+            failures: 0,
+            clients,
         },
     );
     let txn = room.doc.transact();
@@ -718,6 +748,26 @@ pub fn apply_remote(key: &str, update: &[u8]) {
 
 /// A client left the document. The room is written, saved and closed by the next [`tick`] once no one is in it.
 pub fn leave(key: &str) {
+    leave_as(key, None);
+}
+
+/// A client of `user_id` left the document: the room counts one member fewer, and the user's access answer goes with
+/// their last client (SEC-TLS-112).
+pub fn leave_as(key: &str, user_id: Option<&str>) {
+    if let (Some(room), Some(user_id)) = (room_of(key), user_id) {
+        let mut room = lock(&room);
+        let last = room.can_edit.get_mut(user_id).is_some_and(|grant| {
+            grant.clients = grant.clients.saturating_sub(1);
+            grant.clients == 0
+        });
+        if last {
+            room.can_edit.remove(user_id);
+        }
+    }
+    leave_count(key);
+}
+
+fn leave_count(key: &str) {
     if let Some(room) = room_of(key) {
         let mut room = lock(&room);
         room.members = room.members.saturating_sub(1);
@@ -761,37 +811,62 @@ pub fn tick() {
 fn recheck_access(key: &str, room: &Mutex<Room>) {
     let (page_id, due): (String, Vec<String>) = {
         let room = lock(room);
+        let now = Instant::now();
         let due = room
             .can_edit
             .iter()
-            .filter(|(_, grant)| grant.checked.elapsed() >= ACCESS_RECHECK)
+            .filter(|(_, grant)| grant.checked.elapsed() >= ACCESS_RECHECK && grant.retry_at <= now)
             .map(|(user, _)| user.clone())
             .collect();
         (room.target.wiki_page_id.clone(), due)
     };
     for user_id in due {
+        let revoke = |user_id: String| {
+            lock(room).can_edit.remove(&user_id);
+            lock(events()).push(Event::Revoked {
+                document_key: key.to_string(),
+                user_id,
+            });
+        };
         match access(&page_id, &user_id) {
             Ok(found) if found.can_view => {
-                lock(room).can_edit.insert(
-                    user_id,
-                    Grant {
+                let mut room = lock(room);
+                let Some(grant) = room.can_edit.get_mut(&user_id) else {
+                    continue;
+                };
+                let changed = grant.can_edit != found.can_edit;
+                grant.can_edit = found.can_edit;
+                grant.checked = Instant::now();
+                grant.retry_at = grant.checked;
+                grant.failures = 0;
+                drop(room);
+                if changed {
+                    lock(events()).push(Event::CanEdit {
+                        document_key: key.to_string(),
+                        user_id,
                         can_edit: found.can_edit,
-                        checked: Instant::now(),
-                    },
-                );
+                    });
+                }
             }
-            Ok(_) => {
-                lock(room).can_edit.remove(&user_id);
-                lock(events()).push(Event::Revoked {
-                    document_key: key.to_string(),
-                    user_id,
-                });
-            }
+            Ok(_) => revoke(user_id),
             Err(refusal) => {
                 tracing::warn!(
                     "co-edited {key}: the access of {user_id} was not checked again: {}",
                     refusal.message
-                )
+                );
+                // an answer that could not be renewed past ACCESS_STALE takes the member out; until then the check is
+                // tried again later each time (5 s, 10 s, ... at most a minute)
+                let stale = lock(room)
+                    .can_edit
+                    .get(&user_id)
+                    .is_some_and(|grant| grant.checked.elapsed() > ACCESS_STALE);
+                if stale {
+                    revoke(user_id);
+                } else if let Some(grant) = lock(room).can_edit.get_mut(&user_id) {
+                    grant.failures = grant.failures.saturating_add(1);
+                    let wait = Duration::from_secs(5u64.saturating_mul(1 << grant.failures.min(4)).min(60));
+                    grant.retry_at = Instant::now() + wait;
+                }
             }
         }
     }
@@ -803,6 +878,7 @@ fn age_grants(key: &str, by: Duration) {
     if let Some(room) = room_of(key) {
         for grant in lock(&room).can_edit.values_mut() {
             grant.checked = grant.checked.checked_sub(by).unwrap_or(grant.checked);
+            grant.retry_at = grant.retry_at.checked_sub(by).unwrap_or(grant.retry_at);
         }
     }
 }

@@ -562,3 +562,86 @@ fn an_update_past_the_state_limit_is_refused() {
     super::tick();
     let _ = super::take_events();
 }
+
+/// SEC-TLS-112: a user who may no longer view the page is taken out at the tick's check (Revoked, then 409 on an
+/// update), one who may view and not change is told (CanEdit false, then 403); a check that keeps failing takes the
+/// member out once the answer is stale; and the answer goes with the user's last client.
+#[test]
+fn a_revoked_editor_is_dropped_and_a_lost_edit_is_told() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "revoked");
+    login("revoked");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("REVOKE")),
+            ("description", Value::string("Revoke")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("REVOKE")),
+            ("pageName", Value::string("Kept")),
+            ("pageText", Value::string("Text.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    // the wiki's answer as the test sets it, put back when the test ends, a panic included
+    struct Answer;
+    impl Drop for Answer {
+        fn drop(&mut self) {
+            *super::lock(&super::ACCESS_FOR_TEST) = None;
+        }
+    }
+    let _answer = Answer;
+    let set = |answer: Option<Result<(bool, bool), u16>>| *super::lock(&super::ACCESS_FOR_TEST) = answer;
+    let joined = super::join(&key, "revoked", &[]).unwrap();
+    let doc = client(&joined);
+    let typed = type_paragraph(&doc, "Edit.");
+    let _ = super::take_events();
+
+    // view kept, edit lost
+    set(Some(Ok((true, false))));
+    super::age_grants(&key, super::ACCESS_RECHECK + std::time::Duration::from_secs(1));
+    super::tick();
+    assert!(super::take_events().iter().any(|event| matches!(event,
+        super::Event::CanEdit { user_id, can_edit: false, .. } if user_id == "revoked")));
+    assert_eq!(super::apply(&key, "revoked", &typed).unwrap_err().code, 403);
+
+    // the check fails: kept until stale, then taken out
+    set(Some(Err(500)));
+    super::age_grants(&key, super::ACCESS_RECHECK + std::time::Duration::from_secs(1));
+    super::tick();
+    assert!(!super::take_events()
+        .iter()
+        .any(|event| matches!(event, super::Event::Revoked { .. })));
+    super::age_grants(&key, super::ACCESS_STALE + std::time::Duration::from_secs(120));
+    super::tick();
+    assert!(super::take_events().iter().any(|event| matches!(event,
+        super::Event::Revoked { user_id, .. } if user_id == "revoked")));
+    assert_eq!(super::apply(&key, "revoked", &typed).unwrap_err().code, 409);
+
+    // view lost: taken out at the check
+    set(None);
+    let again = super::join(&key, "revoked", &[]).unwrap();
+    let _ = again;
+    set(Some(Ok((false, false))));
+    super::age_grants(&key, super::ACCESS_RECHECK + std::time::Duration::from_secs(1));
+    super::tick();
+    assert!(super::take_events().iter().any(|event| matches!(event,
+        super::Event::Revoked { user_id, .. } if user_id == "revoked")));
+    assert_eq!(super::apply(&key, "revoked", &typed).unwrap_err().code, 409);
+
+    // the answer goes with the user's last client
+    set(None);
+    super::join(&key, "revoked", &[]).unwrap();
+    super::leave_as(&key, Some("revoked"));
+    assert_eq!(super::apply(&key, "revoked", &typed).unwrap_err().code, 409);
+    super::leave(&key);
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
+}

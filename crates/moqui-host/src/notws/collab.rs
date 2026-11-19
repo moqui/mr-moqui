@@ -216,8 +216,8 @@ fn admit(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, member: Memb
             .iter()
             .position(|known| known.client == client && known.slot_id == slot.id);
         if let Some(index) = had {
-            list.remove(index);
-            moqui_collab::leave(doc);
+            let replaced = list.remove(index);
+            moqui_collab::leave_as(doc, Some(&replaced.user_id));
         }
         let peers = list
             .iter()
@@ -298,7 +298,7 @@ fn leave(factory: &ExecutionContextFactory, slot_id: u64, doc: &str, client: Opt
         gone
     };
     for member in left {
-        moqui_collab::leave(doc);
+        moqui_collab::leave_as(doc, Some(&member.user_id));
         let frame = json!({"topic": topic(doc), "type": "peer", "client": member.client, "userId": member.user_id, "name": member.name,
             "awareness": member.awareness, "joined": false});
         broadcast(doc, None, &frame);
@@ -379,6 +379,31 @@ pub(crate) fn deliver_events(factory: &ExecutionContextFactory, events: Vec<moqu
                         error(&slot, &document_key, &client, 403, "you may no longer view this page");
                     }
                     leave(factory, slot_id, &document_key, Some(&client));
+                }
+            }
+            // the right to change the page changed and the view stays: each client of the user is told (SEC-TLS-112)
+            moqui_collab::Event::CanEdit {
+                document_key,
+                user_id,
+                can_edit,
+            } => {
+                let slots: Vec<(String, std::sync::Weak<Slot>)> = lock(members())
+                    .get(&document_key)
+                    .map(|list| {
+                        list.iter()
+                            .filter(|member| member.user_id == user_id)
+                            .map(|member| (member.client.clone(), member.slot.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (client, slot) in slots {
+                    if let Some(slot) = slot.upgrade() {
+                        send(
+                            &slot,
+                            &json!({"topic": topic(&document_key), "type": "access", "client": client,
+                                "canEdit": can_edit}),
+                        );
+                    }
                 }
             }
         }
@@ -508,6 +533,55 @@ mod tests {
         let refused: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
         assert_eq!(refused["code"], 413);
         assert!(rx.try_recv().is_err(), "nothing else was sent");
+    }
+
+    /// SEC-TLS-112: a lost edit right is told to the user's clients, and a revoked user's clients are told and leave.
+    #[test]
+    fn a_revoked_users_clients_are_told_and_leave() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "lost".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        let doc = "revoked-in-host";
+        lock(members()).insert(
+            doc.into(),
+            vec![Member {
+                slot: Arc::downgrade(&slot),
+                slot_id: slot.id,
+                client: "l".into(),
+                user_id: "lost".into(),
+                name: "Lost".into(),
+                awareness: Json::Null,
+            }],
+        );
+        deliver_events(
+            &factory,
+            vec![moqui_collab::Event::CanEdit {
+                document_key: doc.into(),
+                user_id: "lost".into(),
+                can_edit: false,
+            }],
+        );
+        let told: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(told["type"], "access");
+        assert_eq!(told["canEdit"], false);
+        deliver_events(
+            &factory,
+            vec![moqui_collab::Event::Revoked {
+                document_key: doc.into(),
+                user_id: "lost".into(),
+            }],
+        );
+        let refused: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(refused["code"], 403);
+        assert!(lock(members()).get(doc).is_none(), "the revoked user's clients left");
     }
 
     /// SEC-TLS-111: a join worked after its socket closed leaves no member, so the page's room can close.
