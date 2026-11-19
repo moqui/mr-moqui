@@ -5,11 +5,15 @@
 // password change clears it), and is refused once older than user-facade/password@email-expire-hours (48 by default).
 // The reset password is read from the mail capture, which needs a from address on the PASSWORD_RESET template: the spec
 // sets one and puts the template back after. The in-date check alone is in crates/moqui-core/src/user/login_tests.rs.
-// It does not show that the reset password cannot become the new password: update#PasswordInternal refuses the current
-// password and those in the history, not the reset password.
+// Nor does a reset password become the new password: update#PasswordInternal refuses it, as the current password and
+// those in the history.
 // Run: ./moq test framework --spec ResetPassword
 const ONCE = "RESETPW_SPEC_ONCE"
 const LATE = "RESETPW_SPEC_LATE"
+const SAME = "RESETPW_SPEC_SAME"
+// a reset password as one could come out of randomString(12) that meets the password rules (a digit and an other
+// character), so only the reset password check can refuse it as the new password
+const PROBE_RESET = "Probe-reset-7_"
 const PASSWORD = "Reset-spec-9!"
 const NEW_PASSWORD = "Reset-spec-10!"
 const NEWER_PASSWORD = "Reset-spec-11!"
@@ -87,6 +91,7 @@ spec({
     setupSpec() {
         makeUser(ONCE)
         makeUser(LATE)
+        makeUser(SAME)
         templateFrom = sys(() => ec.entity.find("moqui.basic.email.EmailTemplate").condition("emailTemplateId", "PASSWORD_RESET")
             .one().fromAddress)
         setTemplateFrom("accounts@reset-spec.example.test")
@@ -166,5 +171,32 @@ feature("a reset password older than email-expire-hours is refused, and taken wh
         inDate.updateSuccessful == true
         after.resetPassword == null
         matches(NEW_PASSWORD, after.currentPassword)
+    }
+})
+
+feature("a reset password is not taken as the new password, only to set one of the user's own", {
+    when() {
+        ec.user.logoutUser()
+        sys(() => {
+            const row = ec.entity.find("moqui.security.UserAccount").condition("userId", SAME).one()
+            row.setFields({resetPassword: ec.user.hashPassword(PROBE_RESET), resetPasswordSetDate: ec.user.nowTimestamp},
+                true, null, null)
+            row.update()
+        })
+        const same = change(SAME, PROBE_RESET, PROBE_RESET)
+        const kept = account(SAME)
+        const own = change(SAME, PROBE_RESET, NEW_PASSWORD)
+        return {same, kept, own, after: account(SAME)}
+    },
+    then({same, kept, own, after}) {
+        same.updateSuccessful != true
+        same.said.includes("New password is the reset password that was sent")
+        // refused before anything was written: the reset password stands, and the current password is unchanged
+        matches(PROBE_RESET, kept.resetPassword)
+        matches(PASSWORD, kept.currentPassword)
+        // the control: the same reset password sets a password of the user's own
+        own.updateSuccessful == true
+        matches(NEW_PASSWORD, after.currentPassword)
+        after.resetPassword == null
     }
 })

@@ -192,8 +192,9 @@ Those that check an internal rule with no standard behind it stay in `test/clien
     the generator half of 7.2.3 (`session_tests.rs`), 6.4.1 (`ResetPassword`, a framework spec reading the mailed
     reset password from the capture). V1.3.2 and V5.3.1 became Framework when SEC-SCR-81 was fixed, proved by the
     `WikiPageTypes` spec.
-  - What the proofs found: 6.4.1 is a Gap, since a mailed reset password can be set as the new long-term password
-    (`update#PasswordInternal` does not compare the new password with `resetPassword`); a missing required field of
+  - What the proofs found: a mailed reset password could be set as the new long-term password (6.4.1), since
+    `update#PasswordInternal` did not compare the new password with `resetPassword`: fixed the same day, and
+    `ResetPassword` proves the refusal; a missing required field of
     the password change is answered HTTP 500; the OIDC allowlist is the provider's metadata, not the deployer's; a
     `discoveryUri` over plain http to another host is not refused.
   - PASS (mr-pass `test/proofs`): 3.2.2, 3.5.1 (twice), 6.2.2, 6.4.1 (a registration code), 7.4.1, 6.3.1 (PASS's own
