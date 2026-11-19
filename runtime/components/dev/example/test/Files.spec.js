@@ -126,6 +126,33 @@ feature("a link with a password: the token check, the grant, the listing, and a 
     },
 })
 
+// SEC-BOS-106: an editor of a drive shares with people, never by a public link or with every user; the owner makes the link
+feature("an editor of a drive shares with a person, not by a link or with every user", {
+    allowMessageErrors: true,
+    when() {
+        user("filesReader")
+        ec.user.internalLoginUser("filesEditor")
+        const refusal = (params) => {
+            try { files("share#Resource", Object.assign({ driveId: folderDriveId, path: "docs" }, params)) } catch (e) { /* in the messages */ }
+            const error = ec.message.getErrorsString()
+            ec.message.clearErrors()
+            return error
+        }
+        const link = refusal({ isLink: "Y" })
+        const everyone = refusal({ sharedWithUserGroupId: "ALL_USERS" })
+        const person = files("share#Resource", { driveId: folderDriveId, path: "docs", sharedWithUserId: "filesReader" })
+        ec.user.internalLoginUser("filesOwner")
+        const ownerLink = files("share#Resource", { driveId: folderDriveId, path: "docs", isLink: "Y" })
+        return { link, everyone, person, ownerLink }
+    },
+    then({ link, everyone, person, ownerLink }) {
+        link.includes("Only a manager of the drive makes a link")
+        everyone.includes("Only a manager of the drive shares with every user")
+        person.shareId != null
+        ownerLink.linkToken != null
+    },
+})
+
 feature("drive files are search documents, found by name", {
     when() {
         ec.user.internalLoginUser("filesOwner")
