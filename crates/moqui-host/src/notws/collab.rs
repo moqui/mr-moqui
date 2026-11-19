@@ -614,4 +614,37 @@ mod tests {
             "no member is left of a closed socket"
         );
     }
+
+    /// SEC-TLS-111: the socket's end closes its receiver before it lets the members go, so a join that admits its member
+    /// after that (while the socket task still holds the receiver) finds the socket closed and leaves.
+    #[test]
+    fn a_join_admitted_while_its_socket_ends_finds_it_closed() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "ender".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        super::super::end_socket(&factory, slot.id, &mut rx);
+        let doc = "joined-while-ending";
+        let member = Member {
+            slot: Arc::downgrade(&slot),
+            slot_id: slot.id,
+            client: "c".into(),
+            user_id: "ender".into(),
+            name: "Ender".into(),
+            awareness: Json::Null,
+        };
+        assert!(admit(&factory, &slot, doc, member).is_none());
+        assert!(
+            lock(members()).get(doc).is_none(),
+            "the receiver still held, no member is kept"
+        );
+        drop(rx);
+    }
 }

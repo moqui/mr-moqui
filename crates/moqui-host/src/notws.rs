@@ -617,11 +617,19 @@ async fn run_socket(
         }
     }
     tracing::debug!(session_id = %slot.session_id, user_id = %slot.user_id, "notification socket closed");
-    unregister(id);
-    collab::socket_closed(&factory, id);
-    calc::socket_closed(&factory, id);
-    rtc::socket_closed(&factory, id);
+    end_socket(&factory, id, &mut rx);
     offline_when_gone(&factory, &slot.user_id);
+}
+
+/// Let a closed socket go: its receiver is closed first, so a join still in flight that admits a member after the
+/// members are let go here finds the socket closed (`slot.tx.is_closed()`) and leaves at once (collab and calc `admit`,
+/// SEC-TLS-111); then its slot, its co-editing and sheet members and its calls.
+fn end_socket(factory: &Arc<ExecutionContextFactory>, id: u64, rx: &mut tokio::sync::mpsc::Receiver<Push>) {
+    rx.close();
+    unregister(id);
+    collab::socket_closed(factory, id);
+    calc::socket_closed(factory, id);
+    rtc::socket_closed(factory, id);
 }
 
 /// The `webroot` webapp's `/notws` `endpoint` `timeout` in milliseconds, else an hour.
