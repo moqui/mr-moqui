@@ -672,14 +672,9 @@ fn run_entity(
         "count" => count_entity(&facade, name, params),
         "create" | "update" | "store" | "delete" => {
             // the restricted entities, and those only their own services write (the entity audit log, Monitor's
-            // recovery and ingest rows); a secret-config entity by ADMIN only
-            if sensitive::is_generic_write_refused(&full_name)
-                && !(sensitive::is_secret_config_entity(&full_name) && crate::user::is_in_group("ADMIN")?)
-            {
-                return refused("writable");
-            }
-            // a mail account's own server is changed through the account, an ADMIN's write included
-            if sensitive::account_owned_email_server(&facade, &full_name, params)? {
+            // recovery and ingest rows, the service jobs); a secret-config entity by ADMIN only; a mail account's own
+            // server, an ADMIN's write included: the rule of every generic write (call::generic_entity_refusal)
+            if call::generic_entity_refusal(&facade, name, params)?.is_some() {
                 return refused("writable");
             }
             let mut parms = params.clone();

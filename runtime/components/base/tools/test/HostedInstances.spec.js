@@ -104,3 +104,88 @@ feature("Service Run does not call the entity-auto services of a hosted-instance
         written.type == 1
     },
 })
+
+// Service Run as a generic tool: an account's password and an existing account's identity are not set through its
+// entity-auto services, as the generic tools' protectUserAccounts refuses them; other fields still are
+feature("Service Run sets no account's password and changes no existing account's identity", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserAccount", { userId: "SPEC_HI_TARGET", username: "spec.hi.target", userFullName: "Spec Target",
+            emailAddress: "target@spec.invalid", currentPassword: "spec-original-hash", passwordHashType: "SHA-256" })
+        ec.artifactExecution.enableAuthz()
+        const run = (parameters) => {
+            ec.user.internalLoginUser("spec.hi.admin")
+            ec.message.clearAll()
+            const res = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml").render("Service/ServiceRun/run",
+                Object.assign({ serviceName: "update#moqui.security.UserAccount", userId: "SPEC_HI_TARGET" }, parameters), "post")
+            const out = res.errorMessages.join(" ") + " " + ec.message.errors.join(" ")
+            ec.message.clearAll()
+            ec.user.logoutUser()
+            return out
+        }
+        const password = run({ currentPassword: "spec-forged-hash", passwordHashType: "NONE" })
+        const email = run({ emailAddress: "taken@spec.invalid" })
+        const name = run({ userFullName: "Spec Renamed" })
+        ec.artifactExecution.disableAuthz()
+        const stored = ec.entity.find("moqui.security.UserAccount").condition("userId", "SPEC_HI_TARGET").useCache(false).one()
+        const out = { password, email, name, currentPassword: stored.currentPassword, emailAddress: stored.emailAddress,
+            userFullName: stored.userFullName }
+        ec.entity.find("moqui.security.UserAccount").condition("userId", "SPEC_HI_TARGET").deleteAll()
+        ec.artifactExecution.enableAuthz()
+        return out
+    },
+    then({ password, email, name, currentPassword, emailAddress, userFullName }) {
+        password.includes("is not taken by a generic call")
+        email.includes("is changed through the account services")
+        name.trim() == ""
+        currentPassword == "spec-original-hash"
+        emailAddress == "target@spec.invalid"
+        userFullName == "Spec Renamed"
+    },
+})
+
+// A ServiceJob's run calls the service its row names with authorization off, so it is a generic call: an entity-auto
+// service a generic write refuses does not run; the generic tools write no job row; and a seed job still runs
+feature("a service job's entity-auto run of a refused entity is refused, no generic tool writes a job, and a seed job runs", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        make("moqui.service.job.ServiceJob", { jobName: "SPEC_HI_JOB", serviceName: "create#moqui.server.instance.InstanceHostType", paused: "N" })
+        make("moqui.service.job.ServiceJobParameter", { jobName: "SPEC_HI_JOB", parameterName: "hostTypeId", parameterValue: "SPEC_HI_JOB_HOST" })
+        ec.artifactExecution.enableAuthz()
+        // an administrator's run now, as System › Operations' runJobNow starts it (whose screen reads the job)
+        login("john.doe")
+        ec.artifactExecution.disableAuthz()
+        const refusedRun = ec.service.job("SPEC_HI_JOB").run()
+        const seedRun = ec.service.job("clean_ChatChanges_daily").run()
+        // each run on a worker, until both have ended (at most about 20 seconds)
+        const runOf = (jobRunId) => ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobRunId", jobRunId).useCache(false).one()
+        const ended = (jobRunId) => runOf(jobRunId)?.endTime != null
+        const until = Date.now() + 20000
+        while (Date.now() < until && !(ended(refusedRun) && ended(seedRun))) ec.factory.waitWorkerPoolEmpty(1)
+        ec.artifactExecution.enableAuthz()
+        const res = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml").render("Data/Browse/AutoEdit/AutoEditMaster/update",
+            { aen: "moqui.service.job.ServiceJob", jobName: "SPEC_HI_JOB", serviceName: "create#moqui.basic.EnumerationType" }, "post")
+        ec.message.clearErrors()
+        ec.artifactExecution.disableAuthz()
+        const out = { browse: res.errorMessages.join(" "), refused: runOf(refusedRun), seed: runOf(seedRun),
+            hosts: ec.entity.find("moqui.server.instance.InstanceHostType").condition("hostTypeId", "SPEC_HI_JOB_HOST").count(),
+            serviceName: ec.entity.find("moqui.service.job.ServiceJob").condition("jobName", "SPEC_HI_JOB").useCache(false).one().serviceName }
+        out.refused = { hasError: out.refused?.hasError, errors: String(out.refused?.errors || "") }
+        out.seed = { hasError: out.seed?.hasError, ended: out.seed?.endTime != null, errors: String(out.seed?.errors || "") }
+        ec.entity.find("moqui.service.job.ServiceJobParameter").condition("jobName", "SPEC_HI_JOB").deleteAll()
+        ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobName", "SPEC_HI_JOB").deleteAll()
+        ec.entity.find("moqui.service.job.ServiceJob").condition("jobName", "SPEC_HI_JOB").deleteAll()
+        ec.artifactExecution.enableAuthz()
+        return out
+    },
+    then({ browse, refused, seed, hosts, serviceName }) {
+        hosts == 0
+        refused.hasError == "Y"
+        refused.errors.includes("written only by its own services")
+        seed.ended == true
+        seed.errors == ""
+        seed.hasError != "Y"
+        browse.includes("not available through this tool")
+        serviceName == "create#moqui.server.instance.InstanceHostType"
+    },
+})

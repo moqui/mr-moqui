@@ -108,7 +108,10 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
 /// changes write (SEC-RTE-03); and Monitor's recovery actions, adapters, policies and emergency stop, its instance drains
 /// and its ingest keys, whose `MONITOR_*` permissions only their own services check, so a generic write of a row would
 /// run a recovery action, plant a working ingest key or lift the stop without them (SEC-TLS-11); and the scrape targets
-/// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03).
+/// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03); and the
+/// service jobs, their parameters and their users, which the job runner calls with authorization off as the service a row
+/// names, so a generic write would schedule any service, with any parameters, as any of its users (SEC-TLS-85). System ›
+/// Operations, ETL's Schedule and the services that keep their own jobs write them through their own calls.
 const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "entityauditlog",
     "recoveryaction",
@@ -120,6 +123,10 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     // the allowPrivateNetwork flag of a scrape target or synthetic check is set in Monitor/Checks, with its permission
     "scrapetarget",
     "syntheticcheck",
+    // a job's serviceName and parameters run with authorization off; its users decide whom it runs as
+    "servicejob",
+    "servicejobparameter",
+    "servicejobuser",
 ];
 
 /// The text after the last `.`, in lower case.

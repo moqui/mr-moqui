@@ -1012,6 +1012,9 @@ pub(crate) fn run_job(job: JobRun) {
         disable_authz: true,
         timeout: Some(job.timeout),
         operation_retry: job.retries,
+        // the service a stored row names, run with authorization off: an entity-auto one is refused where a generic
+        // write is (plans/Security-Review-Medium.md SEC-TLS-85)
+        generic: true,
         ..CallOptions::default()
     };
     // The job's time bounds its scripts even when the service begins no transaction; a transaction inside keeps the
