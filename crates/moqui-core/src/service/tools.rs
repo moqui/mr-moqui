@@ -530,7 +530,10 @@ fn job_id_of(job: &moqui_lib::object::ValueMap) -> Option<i32> {
 }
 
 /// `get#ServerPrinters`: a `NetworkPrinter` for each printer of the server that has none yet, and the ids of all of
-/// that server's records.
+/// that server's records. The server is asked as a printer of it would be (`moqui_core::outbound::deny_private_network`
+/// of an empty `allowPrivateNetwork`: no internal address on a production instance), and each printer made is as
+/// `store#Connection` makes one: disabled until a test print in Admin's Connections passes, and on production
+/// `allowPrivateNetwork` N (plans/Security-Review-Medium.md SEC-RTE-83).
 fn get_server_printers(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -551,10 +554,11 @@ fn get_server_printers(
         names.insert(row.get("printerName").map(to_plain_string).unwrap_or_default());
     }
     let client = crate::print::client().map_err(|err| LibError::new(err.message()))?;
+    let production = crate::web::is_production();
     let server = PrintServer {
         host: host.clone(),
         port,
-        deny_internal: false,
+        deny_internal: crate::outbound::deny_private_network(""),
     };
     let printers = client.printers(&server).map_err(|err| LibError::new(err.message()))?;
     for printer in printers.into_iter().filter(|printer| !names.contains(&printer.name)) {
@@ -564,11 +568,23 @@ fn get_server_printers(
         create.insert("printerName".to_string(), Value::string(&printer.name));
         create.insert("description".to_string(), Value::string(&printer.description));
         create.insert("location".to_string(), Value::string(&printer.location));
+        create.insert("disabled".to_string(), Value::string("Y"));
+        if production {
+            create.insert("allowPrivateNetwork".to_string(), Value::string("N"));
+        }
         let created = call(&format!("create#{NETWORK_PRINTER}"), &create, &CallOptions::default());
         if has_error() {
             break;
         }
         if let Some(id) = created.get("networkPrinterId") {
+            // the test print that passes enables it, as for a printer started in Admin's Connections
+            let check = BTreeMap::from([
+                ("adapterKey".to_string(), Value::string("printer")),
+                ("connectionKey".to_string(), Value::string(to_plain_string(id))),
+                ("pendingTest".to_string(), Value::string("Y")),
+            ]);
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            call("store#moqui.server.ConnectionCheck", &check, &CallOptions::default());
             ids.push(id.clone());
         }
     }

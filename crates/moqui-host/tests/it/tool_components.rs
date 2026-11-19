@@ -323,6 +323,14 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
     };
     assert_eq!(ids.len(), 1, "{printers:?}");
     let printer_id = to_plain_string(&ids[0]);
+    // made disabled until a test print passes (SEC-RTE-83): enabled here as a passing test print enables it
+    {
+        let facade = factory.entity().unwrap();
+        let mut row = facade.make_value("moqui.basic.print.NetworkPrinter").unwrap();
+        row.set("networkPrinterId", text(&printer_id));
+        row.set("disabled", text("N"));
+        row.update(&facade).unwrap();
+    }
     let job = print(&printer_id, "Gate stub");
     assert!(
         context.message().errors().is_empty(),

@@ -135,9 +135,9 @@ along with this software (see the LICENSE.md file). If not, see
     <resource name="print" description="Print - Network Printers and Jobs">
         <resource name="printers">
             <method type="get"><entity name="moqui.basic.print.NetworkPrinter" operation="list"/></method>
-            <!-- a printer is started and changed in Admin's Connections (store#Connection: a new or repointed printer waits
-                for a test print, and on production reaches no internal address) or System › Print, not here
-                (plans/Security-Review-Medium.md SEC-RTE-83) -->
+            <!-- a printer is started and changed through store#Connection (Admin's Connections, and System › Print's
+                forms): a new or repointed printer waits for a test print, and on production reaches no internal address;
+                not here (plans/Security-Review-Medium.md SEC-RTE-83) -->
             <id name="networkPrinterId">
                 <method type="get"><entity name="moqui.basic.print.NetworkPrinter" operation="one"/></method>
 
@@ -173,7 +173,8 @@ along with this software (see the LICENSE.md file). If not, see
             </id>
         </resource>
 
-        <resource name="server"><method type="get">
+        <!-- a POST: it asks the server named and makes printer rows (disabled until a test print passes) -->
+        <resource name="server"><method type="post">
             <service name="org.moqui.impl.PrintServices.get#ServerPrinters"/></method></resource>
     </resource>
 

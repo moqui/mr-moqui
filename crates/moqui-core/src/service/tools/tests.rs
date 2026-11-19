@@ -397,6 +397,24 @@ fn a_print_job_is_sent_through_the_print_client_and_its_status_follows_the_serve
     )
     .unwrap();
     assert_eq!(printers.get("networkPrinterIdList"), again.get("networkPrinterIdList"));
+    // the printer made waits for a test print, as one started in Admin's Connections does (SEC-RTE-83)
+    let made = facade
+        .find("moqui.basic.print.NetworkPrinter")
+        .unwrap()
+        .eq("serverHost", Value::string("otherhost"))
+        .one()
+        .unwrap()
+        .expect("the printer made");
+    assert_eq!(made.get("disabled").map(to_plain_string).as_deref(), Some("Y"));
+    let check = facade
+        .find("moqui.server.ConnectionCheck")
+        .unwrap()
+        .eq("adapterKey", Value::string("printer"))
+        .eq("connectionKey", made.get("networkPrinterId").cloned().unwrap())
+        .one()
+        .unwrap()
+        .expect("its connection check");
+    assert_eq!(check.get("pendingTest").map(to_plain_string).as_deref(), Some("Y"));
     crate::print::clear_print_client();
 
     // No document at all is the Java message.
