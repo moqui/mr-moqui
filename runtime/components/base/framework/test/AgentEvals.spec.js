@@ -63,3 +63,18 @@ feature("another user's run is read only with AgentAudit, and the read is logged
  then({own,other,saved,scored,before,logs,ownLogs,audited}){own===true;other===false;saved.error.includes('AgentAudit');scored.error.includes('AgentAudit');before==0;ownLogs==0
   audited===true;logs.length==1;logs[0].auditorUserId=='EVAL_T_AUDITOR';logs[0].targetUserId=='EVAL_T_VIEWER';logs[0].reason=='spec'},
 })
+// SEC-AI-83: Evals › Runs (its html render) lists another user's run without its content, the viewer's own with it
+feature("Runs lists the content of the viewer's own runs only",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz();const render=screenTest('apps').render('system/Llm/Evals/Runs',{agentId:'EVAL_T_AGENT'},'get')
+  return{output:render.output||'',errors:Array.from(render.errorMessages||[])}},
+ then({output,errors}){errors.length==0;output.includes('The order ships Tuesday.');!output.includes('Their private reply');output.includes('needs the AgentAudit permission')},
+})
+// SEC-AI-81: while an agent may write Vue SFC canvases, the app's pages (the qapps shell, which holds the Assist drawer)
+// let frames load only from this server, the conf's policy kept
+feature("a Vue SFC agent keeps the app pages' frames on this server",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  const agent=ec.entity.find('moqui.agent.AgentDefinition').condition({agentId:'EVAL_T_AGENT'}).one();agent.set('canvasDialects','openui,vue-sfc');agent.update()
+  let render;try{render=screenTest('qapps').render('system/Llm/Evals/Runs',{agentId:'EVAL_T_AGENT'},'get')}finally{agent.set('canvasDialects',null);agent.update()}
+  return{status:render.status,csp:String(render.header('Content-Security-Policy')||'')}},
+ then({status,csp}){status==200;csp.includes("frame-src 'self'");csp.includes('frame-ancestors')},
+})

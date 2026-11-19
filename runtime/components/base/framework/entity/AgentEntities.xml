@@ -33,7 +33,10 @@ along with this software (see the LICENSE.md file). If not, see
             session starts on, and its budgets. runAsUserId is for jobs and triggers, which have no user of their own.
             requireSkill names skills the agent always loads. a2aSkillsJson describes its skills on the A2A agent
             card. canvasDialects is a comma list of the canvas dialects it may write (openui, vue-sfc); empty is openui
-            only, so Vue SFC canvases are off unless an agent names them. chatUserId is the service user that is the agent's
+            only, so Vue SFC canvases are off unless an agent names them. A Vue SFC canvas runs model-written code that
+            reads what its reads list names as the user and could send it out by navigating its frame: while any agent
+            names vue-sfc the app's pages let frames load only from this server (frame-src 'self', SEC-AI-81), so a frame
+            of another host, such as a shop's theme preview, is not shown. chatUserId is the service user that is the agent's
             member in chat rooms (a ChatRoomMember with role CmrAgent and the agentRef handle#ChatMessage). A system
             agent (isSystem) ships in seed data.</description>
         <field name="agentId" type="id" is-pk="true"/>

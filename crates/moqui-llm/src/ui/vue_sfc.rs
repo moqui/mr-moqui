@@ -1297,7 +1297,7 @@ pub fn frame_document(origin: &str, version: &str, external: bool) -> FrameDocum
          script-src {origin}/libs/vue/ {origin}/libs/quasar/ {origin}/js/WebrootAssistSandbox.js 'unsafe-eval'; \
          style-src {origin}/libs/ 'unsafe-inline'; font-src {origin}/libs/; img-src data: {origin}/images/ {origin}/libs/{images}; \
          connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; \
-         manifest-src 'none'; form-action 'none'; frame-ancestors 'self' {origin}; base-uri 'none'"
+         manifest-src 'none'; form-action 'none'; frame-ancestors 'self' {origin}; base-uri 'none'; webrtc 'block'"
     );
     let html = format!(
         "<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\">\

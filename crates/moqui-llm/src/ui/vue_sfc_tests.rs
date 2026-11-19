@@ -471,6 +471,8 @@ fn the_frame_document_loads_only_the_runtime_and_has_no_network() {
     );
     assert!(document.csp.starts_with("sandbox allow-scripts; default-src 'none';"));
     assert!(document.csp.contains("connect-src 'none'") && document.csp.contains("form-action 'none'"));
+    // SEC-AI-81: no WebRTC, where the browser knows the directive (the frame's runtime also deletes its constructors)
+    assert!(document.csp.ends_with("; webrtc 'block'"), "{}", document.csp);
     assert!(!document.csp.contains("https:"), "{}", document.csp);
     assert!(frame_document("http://localhost:8080", "", true)
         .csp

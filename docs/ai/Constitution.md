@@ -107,8 +107,9 @@ the section a new run would get.
   Constitution reset leaves them; an organization's document cannot add one; they are not CORS. A new or changed
   reference URL of an untrusted origin is refused on save.
 
-The app's screen pages send no `frame-src`, so the allowlist is enforced by `resolve#ConstitutionReference` and the
-client rather than by the browser; adding `frame-src` would mean listing every frame the app uses. A destination's own
+The app's screen pages send no `frame-src` unless an agent may write Vue SFC canvases (then `frame-src 'self'` and the
+trusted origins, SEC-AI-81), so the allowlist is enforced by `resolve#ConstitutionReference` and the client rather
+than by the browser. A destination's own
 `frame-ancestors` or `X-Frame-Options` still decides whether it can be framed.
 
 ## Tests
