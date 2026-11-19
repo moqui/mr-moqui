@@ -1,6 +1,6 @@
 # Security proofs: the initial plan
 
-Status 2026-11-18: analysis and plan. Nothing here is built yet.
+Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`). No proof is filed under it yet.
 
 This plan is for a public library of security proofs: executable tests that show mr-moqui meets a published security
 standard's requirements. The library is organized by a standard, as the OWASP lists are. Its readers are the project,

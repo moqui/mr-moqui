@@ -3,6 +3,7 @@
 Named HTTP proofs for this repository. They record what is tested. They are not a pentest report and not a WAF claim.
 
 - **Where:** [Attack-Surface.md](Attack-Surface.md)
+- **Against a standard:** [proofs](proofs/README.md) files the framework's standing under each OWASP ASVS 5.0.0 requirement; the proofs here move there by requirement (plans/Proofs-Initial.md)
 - **What:** [OWASP Top 10:2025](https://owasp.org/Top10/) (plus WSTG / ASVS L1 ideas, and API Top 10 for `/rest`)
 - **Public tests** are the client specs under `runtime/components/base/framework/test/client/`. Each feature name starts with the OWASP id, and a comment names the Moqui Java pytest it ports.
 
