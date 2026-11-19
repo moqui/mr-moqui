@@ -990,17 +990,24 @@ async fn hello(address: SocketAddr, proxy: &str) -> Client {
     client
 }
 
-/// One message from `from` to `to`, stored.
+/// One message from `from` to `to`, stored. A bounce (`from` empty) is From the sending host's mailer daemon, as a
+/// message needs one From address of one domain (SEC-MAIL-81).
 async fn send_one(client: &mut Client, from: &str, to: &[&str]) {
     assert_eq!(client.command(&format!("MAIL FROM:<{from}>")).await, "250 2.1.0 Ok");
     for rcpt in to {
         assert_eq!(client.command(&format!("RCPT TO:<{rcpt}>")).await, "250 2.1.5 Ok");
     }
     assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+    let author = if from.is_empty() {
+        "Mail Delivery System <MAILER-DAEMON@gw.example.org>"
+    } else {
+        from
+    };
     client
-        .send(&format!("From: {from}\r\nSubject: Hi\r\n\r\nHello\r\n.\r\n"))
+        .send(&format!("From: {author}\r\nSubject: Hi\r\n\r\nHello\r\n.\r\n"))
         .await;
-    assert!(client.reply().await.starts_with("250 2.0.0 Ok"));
+    let reply = client.reply().await;
+    assert!(reply.starts_with("250 2.0.0 Ok"), "{from:?}: {reply}");
 }
 
 const OVER_HOUR: &str = "451 4.7.1 Too much mail from this address in the last hour, try again later";

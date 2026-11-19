@@ -874,9 +874,25 @@ pub fn start_member_with_files(
     (server, guard)
 }
 
-/// A loopback TCP port free now, for a listener a cluster member advertises (an ephemeral `0` is not advertised).
+/// A loopback TCP port free now, for a listener whose port a test names before the server starts (in its conf, a link
+/// URL, or a port a cluster member advertises, which an ephemeral `0` is not). The server binds it later, so the port
+/// is taken from below the kernel's ephemeral range (32768 and up on Linux, 49152 on macOS): a port the kernel hands
+/// out for `:0` is also the local port of a later outgoing connection, and under the parallel suite's thousands of
+/// client connections one of them took it before the server bound it ("Address already in use"). Each process starts
+/// at its own place in the range (the tests run in processes of their own) and goes on from there.
 #[allow(dead_code)]
 pub fn free_port() -> u16 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    const LOW: u32 = 20_000;
+    const SPAN: u32 = 12_000;
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let start = std::process::id().wrapping_mul(2_654_435_761) % SPAN;
+    for _ in 0..SPAN {
+        let port = u16::try_from(LOW + (start + NEXT.fetch_add(1, Ordering::Relaxed)) % SPAN).unwrap();
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
     std::net::TcpListener::bind("127.0.0.1:0")
         .and_then(|listener| listener.local_addr())
         .map(|addr| addr.port())

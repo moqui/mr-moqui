@@ -528,9 +528,24 @@ fn organization_limit() {
         !documents.is_empty(),
         "the user's own organization's records: {limited:?}"
     );
+    // each type's records by its own organization, user and party fields (SEC-DAT-81, mr-mantle search/SearchScope.js):
+    // one of them holds one of the user's organizations, or the user's party (SF_EMP), or for a party `_NA_`
     for document in &documents {
-        let owner = text(document.get("ownerPartyId"));
-        assert!(allowed.contains(&owner), "{owner} is not one of {allowed:?}");
+        let doc_type = text(document.get("_type"));
+        assert!(
+            !["MantleCommunicationEvent", "MantleWikiPage"].contains(&doc_type.as_str()),
+            "a type with access rules of its own screens: {document:?}"
+        );
+        let (org, user, party) =
+            scope_fields(&doc_type).unwrap_or_else(|| panic!("{doc_type} is not limited: {document:?}"));
+        let values =
+            |paths: &[&str]| -> Vec<String> { paths.iter().flat_map(|path| field_values(document, path)).collect() };
+        let shown = values(org)
+            .iter()
+            .any(|id| allowed.contains(id) || (doc_type == "MantleParty" && id == "_NA_"))
+            || values(user).iter().any(|id| id == "SF_EMP")
+            || values(party).iter().any(|id| allowed.contains(id) || id == "SF_EMP");
+        assert!(shown, "{doc_type} holds none of {allowed:?} nor SF_EMP: {document:?}");
     }
     assert!(
         number(limited.get("documentListCount")) < everything,
@@ -572,6 +587,58 @@ fn organization_limit() {
         }
     }
     moqui_core::user::logout().unwrap();
+}
+
+/// The fields that show a record of a document type under an organization limit, as mr-mantle's search/SearchScope.js
+/// has them: organization fields, user fields and party fields (either). None for a type that shows nothing.
+type ScopeFields = (
+    &'static [&'static str],
+    &'static [&'static str],
+    &'static [&'static str],
+);
+fn scope_fields(doc_type: &str) -> Option<ScopeFields> {
+    const OWNER: &[&str] = &["ownerPartyId"];
+    const FROM_TO: &[&str] = &["fromPartyId", "toPartyId"];
+    const PARTIES: &[&str] = &["ownerPartyId", "parties.partyId"];
+    Some(match doc_type {
+        "MantleParty" | "MantleProduct" | "MantleFacility" | "MantleAsset" => (OWNER, &[], &[]),
+        "MantleOrder" => (&["parts.vendorPartyId", "parts.customerPartyId"], &[], &[]),
+        "MantleInvoice" | "MantlePayment" | "MantleShipment" => (FROM_TO, &[], &[]),
+        "MantleAcctgTrans" => (&["organizationPartyId"], &[], &[]),
+        "MantleGlAccount" => (&["organizationPartyIds"], &[], &[]),
+        "MantleProject" | "MantleTask" | "MantleEvent" => (&[], &[], PARTIES),
+        "MantleRequest" => (
+            &["storeOrganizationPartyId", "facilityOwnerPartyId"],
+            &["filedByPartyId"],
+            &["parties.partyId"],
+        ),
+        _ => return None,
+    })
+}
+
+/// The values at `path` of a document (`parts.vendorPartyId`: the field of each item of a list), a list's items each.
+fn field_values(document: &BTreeMap<String, Value>, path: &str) -> Vec<String> {
+    fn walk(value: &Value, names: &[&str], out: &mut Vec<String>) {
+        match value {
+            Value::List(items) => items.iter().for_each(|item| walk(item, names, out)),
+            Value::Map(entries) => {
+                if let Some((first, rest)) = names.split_first() {
+                    if let Some(next) = entries.get(*first) {
+                        walk(next, rest, out);
+                    }
+                }
+            }
+            Value::Null => {}
+            other if names.is_empty() => out.push(to_plain_string(other)),
+            _ => {}
+        }
+    }
+    let names: Vec<&str> = path.split('.').collect();
+    let mut out = Vec::new();
+    if let Some(first) = document.get(names[0]) {
+        walk(first, &names[1..], &mut out);
+    }
+    out
 }
 
 /// The universal search for a name every organization in the demo data has, with the type facet.

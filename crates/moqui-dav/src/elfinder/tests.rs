@@ -526,7 +526,8 @@ fn a_file_change_runs_only_from_the_file_managers_own_request() {
         }
         request
     };
-    let refused = |headers: &[(&str, &str)]| super::file_change_refused(&request(headers), "");
+    let refused = |headers: &[(&str, &str)]| super::file_change_refused(&request(headers), "", false);
+    let program_refused = |headers: &[(&str, &str)]| super::file_change_refused(&request(headers), "", true);
     let same = ("Sec-Fetch-Site", "same-origin");
     assert!(
         !refused(&[same, ("Sec-Fetch-Dest", "empty")]),
@@ -545,4 +546,19 @@ fn a_file_change_runs_only_from_the_file_managers_own_request() {
         "another site"
     );
     assert!(refused(&[]), "no fetch headers and no session token");
+    // a program signed in by a request header (Basic, api_key) sends no fetch headers; a browser holding the same
+    // credentials sends them when it loads a link or an image
+    assert!(!program_refused(&[]), "a program's request");
+    assert!(
+        program_refused(&[same, ("Sec-Fetch-Dest", "image")]),
+        "an image loaded by a browser with Basic credentials"
+    );
+    assert!(
+        program_refused(&[same, ("Sec-Fetch-Dest", "document")]),
+        "a link followed by a browser with Basic credentials"
+    );
+    assert!(
+        program_refused(&[("Sec-Fetch-Site", "cross-site")]),
+        "another site, whatever the credential"
+    );
 }
