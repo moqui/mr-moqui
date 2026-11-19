@@ -1,6 +1,7 @@
 # Vaults and Instances
 
-Status 2026-11-14: plan; nothing built. Reviewed 2026-11-15 against the code in the security review: the facts of §2
+Status 2026-11-19: being built, with Sealed-Secrets S3, S4 and S11; the open points were decided on Nov 19
+([§9](#9-decisions)). Before: 2026-11-14, plan; nothing built. Reviewed 2026-11-15 against the code in the security review: the facts of §2
 are corrected, the design of §3.2, §3.3, §3.5, §3.7 to §3.10, §3.12, §4.2, §4.4 to §4.6 and §4.9 changed (signing
 keys and signed wraps, the signed lease, machine access, recovery shares, the manager's limits), and the choices left
 to the owner are in [Open points](#open-points-from-the-security-review). It expands the user's notes of Nov 14, 2026
@@ -265,7 +266,7 @@ TLS key the engine uses for queued jobs. An environment may hold **machine acces
   so a row copied to another environment or item does not open.
 - **The machine key** is the `vault-machine` purpose key of the keyring
   ([Sealed-Secrets §3.1](Sealed-Secrets.md#31-key-hierarchy), S1). Until S1 it is derived by HKDF from today's field
-  pass (`entity_ds_crypt_pass`) with the label `vault-machine`, and the screen says that this pass is on the server's
+  pass (`entity-facade@crypt-pass`) with the label `vault-machine`, and the screen says that this pass is on the server's
   disk.
 - The sealed item keys are not an entity `encrypt="true"` field. Today's field format has no MAC and no associated
   data ([Sealed-Secrets §2](Sealed-Secrets.md#2-what-is-there-now)), and the entity facade decrypts such a field on
@@ -786,16 +787,26 @@ The order:
 | The pairing token | A file, as the other secrets are | Security review, 2026-11-15: a start command is as visible in `docker inspect` as the environment |
 | Deploys to a managed instance | The request, gate and decision of the built `GitDeployment` path, then the roll over the link in place of the attested call | Security review, 2026-11-15: §2 did not know the attested deploy was built. One decision approves the deployment and opens its lease |
 | The manager's own seal | `tpm`, `kms`, `passphrase` or `shamir` | Sealed-Secrets §3.3 has `kms` for cloud hosts, and this plan left it out |
+| Splitting the recovery key (open point) | Split k of n across the holders with the Shamir code of Sealed-Secrets S3, so a recovery takes k holders' clients; recovery off by default for a personal shared-key vault, on by default for an operational one | The user's answer, Nov 19, 2026 |
+| HPKE beside age (open point) | HPKE for vault wraps; age stays for files | The user's answer, Nov 19, 2026 |
+| Machine access before S1 (open point) | As §3.8: waits for nothing, its key by HKDF from `entity-facade@crypt-pass` | The user's answer, Nov 19, 2026 |
+| Vault screens' origin (open point) | One origin, with the limit of §3.12 | The user's answer, Nov 19, 2026 |
+| Fetching a wrapped personal key (open point) | Only a strong sign-in (a password and second factor, SSO, or a paired device's key; never an app password, an API key or a scoped key), and a recent one | The user's answer, Nov 19, 2026 |
+| Vault-key rotation on removal (open point) | All four: a compare-and-swap on `Vault.revision` for the whole change; the previous version's wraps kept until each member has opened the new one; a new item key at an item's first write after a key-version change, with an offer at removal to re-encrypt every body now; clients with memory keep the highest key version and a hash of the signed member list | The user's answer, Nov 19, 2026 |
+| The transit key and backups (open point) | As written, with the limit of §4.9 | The user's answer, Nov 19, 2026 |
+| CI job secrets (open point) | Environment variables, as now: a CI job's container ends with the job | The user's answer, Nov 19, 2026 |
+| Sealed-Secrets with this plan | S3, S4 and S11 are built with it; S1 is not | The user's answer, Nov 19, 2026 |
 
 ## Open points from the security review
 
-The security review of 2026-11-15 found these. Each is the owner's to decide, so the design above stays as it is.
+The security review of 2026-11-15 found these. The owner decided each on Nov 19, 2026; the choices are rows of
+[§9](#9-decisions).
 
 | Point | What the review found | Options |
 |---|---|---|
 | Splitting the organization recovery key, and recovery by default (§3.10, §1) | The recovery private key is wrapped whole to each holder. One holder who also reads the database opens every vault with recovery on; the permission, the recent sign-in and the notice are server rules. For a personal shared-key vault this is against §1's "its administrators cannot open it" | (a) Keep one holder is enough, with the limit stated in §3.12. (b) Split the private key k of n across the holders, with the Shamir code Sealed-Secrets S3 needs, so a recovery takes k holders' clients. (c) With either, recovery off by default for a personal shared-key vault and on by default for an operational one |
 | HPKE beside the age recipient wraps (§3.2) | `crates/moqui-lib/src/age.rs` already wraps a key to an X25519 recipient (X25519, HKDF, ChaCha20-Poly1305). HPKE is a second public-key construction, and no HPKE crate is in the workspace | (a) HPKE for vaults and age for files, two constructions. (b) The age recipient wrap for vault wraps too, with the names in the HKDF info: one construction, not RFC 9180. (c) HPKE for both, with age kept only as a file format |
-| Machine access before Sealed-Secrets S1 (§3.8, §6) | Until S1 the machine key comes from `entity_ds_crypt_pass`, which is in `.env`. §3.8 now seals the item keys with the vault crate's AEAD under a key derived from that pass, which keeps them out of finds and exports and binds them to their environment, but a reader of `.env` and the database still opens them | (a) As §3.8 has it: machine access waits for nothing. (b) Machine access needs S1, and V2 ships leases only |
+| Machine access before Sealed-Secrets S1 (§3.8, §6) | Until S1 the machine key comes from `entity-facade@crypt-pass`, which is in `.env`. §3.8 now seals the item keys with the vault crate's AEAD under a key derived from that pass, which keeps them out of finds and exports and binds them to their environment, but a reader of `.env` and the database still opens them | (a) As §3.8 has it: machine access waits for nothing. (b) Machine access needs S1, and V2 ships leases only |
 | Vault screens on their own origin (§3.6, §3.12) | Every screen of every app shares the origin, so a script injection anywhere on the server reaches an open vault's worker | (a) Keep one origin and the limit of §3.12. (b) Serve Commons › Vault and the lease dialog from their own host name, with their own session hand-off, which costs a second certificate name and a sign-in step |
 | Which sign-ins may fetch a wrapped personal key (§3.5) | "An online guess needs a sign-in first" does not say which kind. An app password, a login key or a stolen device key would fetch the wrapped key for an offline guess | (a) Any session of the user. (b) Only a password and second factor, or SSO, session and a paired device's key, never an app password, an API key or a scoped key (Sealed-Secrets §3.6, credential scope). (c) As (b), with a recent sign-in as well |
 | Vault-key rotation on removal (§3.9, `VaultItemHistory`) | Nothing says the server checks `Vault.revision` and `keyVersion` when a rotation commits, so two managers can interleave. A remover can commit bad wraps for some members. Item keys do not change, so a removed member with a later database copy reads items not re-keyed since. The server can put back an old key version | (a) A compare-and-swap on `Vault.revision` for the whole change. (b) The previous version's wraps kept until each member has opened the new one. (c) A new item key at an item's first write after a key-version change, and an offer at removal to re-encrypt every body now. (d) Clients that have memory keep the highest key version and a hash of the signed member list. These can be taken together |

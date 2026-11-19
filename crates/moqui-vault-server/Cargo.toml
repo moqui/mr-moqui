@@ -1,0 +1,24 @@
+# Vaults on the server (plans/Vault-Instances.md §3): the vault tables' services, personal keys and key checks,
+# members and key versions, deliveries, leases, deposits, machine access, reveal, recovery and events. Core reaches it
+# only through moqui_core::extension, which this crate fills with an inventory entry; moqui-host links it under its
+# vault feature. The crypto is moqui-vault's.
+
+[package]
+name = "moqui-vault-server"
+description = "Vaults, leases, machine access and recovery on the server."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+moqui-vault = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -19,9 +19,9 @@ default = ["maximal", "devtools"]
 # dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, the terminal client, and
 # gRPC (the cluster's transport, and the OTLP receiver when it is turned on).
-lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push", "backup-s3", "grpc"]
+lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push", "backup-s3", "grpc", "vault", "manage"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "backup-s3", "rtc", "sip", "channels", "xmpp", "edge"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "backup-s3", "rtc", "sip", "channels", "xmpp", "edge", "vault", "instances", "manage"]
 # Maximal package (`./moq build`, the default, and the debug build), with devtools: everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -125,6 +125,15 @@ grpc = [
 # edge node (instance@node-role front_edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
 # and Enterprise, whose graph already has all of it (§5.6); not Lite.
 edge = ["grpc", "dep:webpki-roots", "dep:sha1"]
+# Vaults (crates/moqui-vault-server, plans/Vault-Instances.md §3): personal and operational vaults, leases, machine
+# access and recovery. In every package.
+vault = ["dep:moqui-vault-server"]
+# Managed instances (crates/moqui-instance, plans/Vault-Instances.md §4): kinds, provisioning on Docker and Podman hosts,
+# deploys, rotation and transit by the manager. In Maximal and Enterprise; not Lite.
+instances = ["vault", "dep:moqui-instance"]
+# The manager link (src/manage_link/, plans/Vault-Instances.md §4.4): a managed instance dials its manager on ALPN
+# moqui-manage/1, gRPC both ways on HTTP/2. In every package, so any build can be managed.
+manage = ["grpc"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # components/dev crates. In the Maximal (default) and Debug packages; not in Lite or Enterprise.
 devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]
@@ -168,6 +177,10 @@ moqui-channels = { workspace = true, optional = true }
 moqui-xmpp = { workspace = true, optional = true }
 # The DAV server, the VCard and ICalendar tools and elFinder (crates/moqui-dav), in every build; /dav/ and SFTP serve it.
 moqui-dav = { workspace = true }
+# Vaults (crates/moqui-vault-server) under the vault feature, managed instances (crates/moqui-instance) under the
+# instances feature.
+moqui-vault-server = { workspace = true, optional = true }
+moqui-instance = { workspace = true, optional = true }
 # The runtime files built into the binary (crates/moqui-embedded), in every build; the embed-* features add to them.
 moqui-embedded = { workspace = true }
 # The development kit (crates/moqui-devkit), in every build: moqui test, lint, check and types; its file watcher is the

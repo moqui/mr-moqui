@@ -30,6 +30,10 @@ channels = ["moqui-host/channels"]
 xmpp = ["moqui-host/xmpp"]
 # The edge link (plans/archive/Edge-Node.md), in Enterprise and Maximal.
 edge = ["moqui-host/edge"]
+# Vaults, managed instances and the manager link (plans/Vault-Instances.md).
+vault = ["moqui-host/vault"]
+instances = ["moqui-host/instances"]
+manage = ["moqui-host/manage"]
 # The runtime built into the binary, past the framework level (docs/Build-Test.md, Embedded runtime and programs):
 # `./moq build --embed production|all`. In no package.
 embed-production = ["moqui-host/embed-production"]

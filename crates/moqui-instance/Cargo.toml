@@ -1,0 +1,23 @@
+# Managed instances (plans/Vault-Instances.md §4): instance kinds (mr-moqui, postgres, mysql, opensearch),
+# provisioning with secrets as files, the reconcile job, deploys to environments, rotation and the manager's transit
+# keys. Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry;
+# moqui-host links it under its instances feature. Credentials are operational vault items (moqui-vault-server).
+
+[package]
+name = "moqui-instance"
+description = "Managed instances: kinds, provisioning, deploys, rotation and transit."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

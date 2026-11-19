@@ -222,6 +222,12 @@ along with this software (see the LICENSE.md file). If not, see
         databases on the hosts the rows name. Sealed; each service asks it (plans/Security-Review.md SEC-TLS-02). -->
     <moqui.security.UserPermission userPermissionId="INSTANCE_ADMIN" description="System: Hosted instances (start containers and databases on the configured hosts and run their commands)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="INSTANCE_ADMIN" fromDate="0"/>
+    <!-- Vaults (plans/Vault-Instances.md §3): VAULT_ADMIN makes operational vaults and manages their members, machine
+        access and the lease key's fingerprint on System > Vaults; VAULT_RECOVERY holds a share of an organization's
+        recovery key (§3.10). Both sealed. Neither opens a vault: that takes a member's personal key, in their client. -->
+    <moqui.security.UserPermission userPermissionId="VAULT_ADMIN" description="System: operational vaults (make vaults, manage members and machine access)"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="VAULT_ADMIN" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="VAULT_RECOVERY" description="System: hold a share of an organization's vault recovery key"/>
     <!-- Admin P18 (mr-boss plan/impl-admin.md P18; docs/security/Shared-Devices.md): the shared-device services,
         org.moqui.admin.DeviceServices, for every signed-in user: find#RouteGroups and find#Devices check ADMIN_ACCESS_VIEW
         and register#Device, issue#DeviceCode and revoke#Device ADMIN_ACCESS_MANAGE themselves; inheritable, so their own reads and writes are

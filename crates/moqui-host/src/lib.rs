@@ -43,6 +43,11 @@ use moqui_tools as _;
 // without axum names neither crate elsewhere, so their entries would otherwise leave the binary.
 use moqui_collab as _;
 use moqui_dav as _;
+// Vaults and managed instances, under their features, the same way.
+#[cfg(feature = "vault")]
+use moqui_vault_server as _;
+#[cfg(feature = "instances")]
+use moqui_instance as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;

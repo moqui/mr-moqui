@@ -4871,6 +4871,7 @@ dependencies = [
  "moqui-drivers",
  "moqui-embedded",
  "moqui-git",
+ "moqui-instance",
  "moqui-lib",
  "moqui-llm",
  "moqui-mail",
@@ -4879,6 +4880,7 @@ dependencies = [
  "moqui-sip",
  "moqui-tools",
  "moqui-tui",
+ "moqui-vault-server",
  "moqui-xmpp",
  "opentelemetry-proto",
  "p256",
@@ -4915,6 +4917,14 @@ dependencies = [
  "url",
  "webpki-roots",
  "yrs",
+]
+
+[[package]]
+name = "moqui-instance"
+version = "0.1.0"
+dependencies = [
+ "moqui-core",
+ "moqui-lib",
 ]
 
 [[package]]
@@ -5091,6 +5101,19 @@ dependencies = [
  "serde",
  "serde_json",
  "unicode-width 0.2.3",
+]
+
+[[package]]
+name = "moqui-vault"
+version = "0.1.0"
+
+[[package]]
+name = "moqui-vault-server"
+version = "0.1.0"
+dependencies = [
+ "moqui-core",
+ "moqui-lib",
+ "moqui-vault",
 ]
 
 [[package]]
