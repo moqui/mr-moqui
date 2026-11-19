@@ -16,6 +16,7 @@ aborts the process; and a value that deep is dropped by a recursion too (plans/S
   is `Error::UnexpectedValue`, so `Update::decode_v1` refuses the update. What is decoded is at most that deep, so its
   drop and its encoding are bounded too. `Any::from_json` already stops at serde_json's 128.
 - `Cargo.toml`: no `[[bench]]` targets; `[lints.rust] warnings = "allow"`.
+- `LICENSE`: upstream's MIT license, from the y-crdt repository at the `v0.28.1` tag (the published crate has none).
 
 Test: `an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack` (`crates/moqui-collab/src/tests.rs`).
 
