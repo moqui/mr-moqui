@@ -1,8 +1,9 @@
 // A posted _isMulti=true with <name>_0 rows (plans/Security-Review.md SEC-RTE-81): a transition's service-call shortcut is a
 // multi call only when it says multi="parameter" or a multi form of its screen posts to it, so on a screen that pins the
 // record to the user (always-actions, as My Account pins userId) a post with testId_0 does not reach another record; and in
-// a multi call a value the screen pinned is not replaced by a posted row value, while the rows of a real multi form-list
-// still each save. The rules themselves are crates/moqui-core screen::definition and service::inline_tests.
+// a multi call a transition makes a posted row value is taken only for a field of the posting form and never for a name
+// the screen pinned (decided from the screen's definitions, so repeating the pinned value as a plain parameter does not
+// help), while the rows of a real multi form-list still each save. The rules themselves are crates/moqui-core screen::definition and service::inline_tests.
 // Run: ./moq test framework --spec MultiPin
 const PINNED = "component://framework/test/screen/MultiPin.xml"
 const ROWS = "component://framework/test/screen/MultiRows.xml"
@@ -45,10 +46,10 @@ feature("a post with _isMulti and another record's id as a row is one call on th
     }
 })
 
-feature("a multi form-list's rows each save, and a row value does not replace one the screen pinned", {
+feature("a multi form-list's rows each save; a row value does not replace one the screen pinned, though the post repeats the pinned value, nor reach a field the form has not", {
     when() {
-        return post(ROWS, "saveRows", {_isMulti: "true", testId_0: "MR0", testMedium_0: "one", value_0: "posted",
-            testId_1: "MR1", testMedium_1: "two"})
+        return post(ROWS, "saveRows", {_isMulti: "true", value: "pinned", testId_0: "MR0", testMedium_0: "one", value_0: "posted",
+            testIndicator_0: "Y", testId_1: "MR1", testMedium_1: "two"})
     },
     then({status, errors}) {
         status < 400
@@ -57,5 +58,6 @@ feature("a multi form-list's rows each save, and a row value does not replace on
         row("MR1")?.testMedium === "two"
         row("MR0").value === "pinned"
         row("MR1").value === "pinned"
+        row("MR0").testIndicator == null
     }
 })

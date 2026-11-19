@@ -215,9 +215,9 @@ pub fn sync_checked(
 
 /// The multi call of Java's `ServiceCallSyncImpl`: for each row `N` (from 0, until a row has none of the in-parameters
 /// as `name_N`), the service is called with that row's values, then the plain parameters and the results so far for the
-/// rest. A posted row value does not replace a plain value the caller set apart from the request
-/// ([`pinned_over_posted_row`]). With `_useRowSubmit` (or `_useRowSubmit_N`) only rows with `_rowSubmit_N` run. All rows run in one transaction,
-/// which an error rolls back; the first error stops the rows. The results of the rows are merged.
+/// rest. In a call a screen transition makes, a row takes only what [`TransitionRows`] allows. With `_useRowSubmit` (or
+/// `_useRowSubmit_N`) only rows with `_rowSubmit_N` run. All rows run in one transaction, which an error rolls back; the
+/// first error stops the rows. The results of the rows are merged.
 ///
 /// # Errors
 ///
@@ -227,6 +227,10 @@ pub fn sync_multi(
     parameters: &BTreeMap<String, Value>,
     options: &CallOptions,
 ) -> Result<BTreeMap<String, Value>, Error> {
+    // the transition's rule is for this call only: the services the rows call see none (RowsAside)
+    let aside = RowsAside::take();
+    let rows = aside.0.clone();
+    let takes = |parameter: &str| rows.as_ref().is_none_or(|rows| rows.takes(parameter));
     let name = canonical(name);
     let in_names: Vec<String> = match service_in_parameter_names(&name) {
         Some(names) => names,
@@ -255,23 +259,22 @@ pub fn sync_multi(
     let outcome = tx.run(TransactionAttribute::UseOrBegin, None, || {
         for index in 0.. {
             let mut row: BTreeMap<String, Value> = BTreeMap::new();
+            let mut found = false;
             for parameter in &in_names {
                 if let Some(value) = parameters.get(&format!("{parameter}_{index}")) {
-                    row.insert(parameter.clone(), value.clone());
+                    found = true;
+                    if takes(parameter) {
+                        row.insert(parameter.clone(), value.clone());
+                    }
                 }
             }
-            if row.is_empty() {
+            if !found {
                 break;
             }
             if (flag("_useRowSubmit") || flag(&format!("_useRowSubmit_{index}")))
                 && !flag(&format!("_rowSubmit_{index}"))
             {
                 continue;
-            }
-            for parameter in &in_names {
-                if let Some(pinned) = pinned_over_posted_row(parameters, parameter, index, &row) {
-                    row.insert(parameter.clone(), pinned);
-                }
             }
             for parameter in &in_names {
                 if row.get(parameter).is_some_and(|value| !is_empty(value)) {
@@ -302,29 +305,54 @@ pub fn sync_multi(
     }
 }
 
-/// The plain value of `parameter` that row `index` of a multi call keeps in place of its `<parameter>_<index>`: the
-/// row's value is the request parameter of that name, and the caller's plain value is not empty and is not the request
-/// parameter `<parameter>` (the screen's always-actions, a `parameter from` or an in-map set it). Java takes the row's
-/// value first, so a posted `userId_0` replaced a `userId` the screen pinned to the user (SEC-RTE-81). A row the caller
-/// built itself, outside a request or with values the request did not post, still takes its own values first.
-fn pinned_over_posted_row(
-    parameters: &BTreeMap<String, Value>,
-    parameter: &str,
-    index: usize,
-    row: &BTreeMap<String, Value>,
-) -> Option<Value> {
-    use moqui_lib::object::to_plain_string;
-    let plain = parameters.get(parameter).filter(|value| !is_empty(value))?;
-    let from_row = row.get(parameter)?;
-    let posted = crate::web::parameter(&format!("{parameter}_{index}"))?;
-    if to_plain_string(&posted) != to_plain_string(from_row) {
-        return None;
+/// What a multi call a screen transition makes may take from the posted `<name>_<N>` rows (SEC-RTE-81). Java takes a
+/// row's value before the plain one, so on a screen that pins an id (`userId` from `ec.user.userId` in always-actions)
+/// a posted `userId_0` replaced it. The screen layer gives this for the transition's run ([`with_transition_rows`]),
+/// from its definitions, not from the values: a row value is taken only for a row field of a multi form of the screen
+/// that posts to the transition, and never for a name the screen set apart from the request.
+#[derive(Clone, Debug, Default)]
+pub struct TransitionRows {
+    /// The row fields of the screen's multi forms that post to the transition; None when no multi form of the screen
+    /// posts to it or a form's fields are not known (`auto-fields-*`), so any in-parameter is a row field.
+    pub fields: Option<BTreeSet<String>>,
+    /// The names the screens of the path and the transition set apart from the request: always-actions `set` fields,
+    /// `parameter`s with a `from` or `value`. A row keeps their plain values.
+    pub pinned: BTreeSet<String>,
+}
+
+impl TransitionRows {
+    fn takes(&self, parameter: &str) -> bool {
+        !self.pinned.contains(parameter) && self.fields.as_ref().is_none_or(|fields| fields.contains(parameter))
     }
-    let requested = crate::web::parameter(parameter).filter(|value| !is_empty(value));
-    if requested.is_some_and(|requested| to_plain_string(&requested) == to_plain_string(plain)) {
-        return None;
+}
+
+thread_local! {
+    static TRANSITION_ROWS: std::cell::RefCell<Option<std::rc::Rc<TransitionRows>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `body`, a screen transition's actions, with `rows` the rule of the multi calls it makes itself; a service it
+/// calls runs without it, so the multi calls of a service keep Java's order.
+pub fn with_transition_rows<T>(rows: TransitionRows, body: impl FnOnce() -> T) -> T {
+    let previous = TRANSITION_ROWS.with(|slot| slot.replace(Some(std::rc::Rc::new(rows))));
+    let _restore = RowsAside(previous);
+    body()
+}
+
+/// The transition's rule set aside for a service call, put back when it ends (or, from [`with_transition_rows`], the
+/// rule before it).
+struct RowsAside(Option<std::rc::Rc<TransitionRows>>);
+
+impl RowsAside {
+    fn take() -> Self {
+        Self(TRANSITION_ROWS.with(|slot| slot.borrow_mut().take()))
     }
-    Some(plain.clone())
+}
+
+impl Drop for RowsAside {
+    fn drop(&mut self) {
+        let rows = self.0.take();
+        TRANSITION_ROWS.with(|slot| *slot.borrow_mut() = rows);
+    }
 }
 
 /// What [`prepare_async`] decided for an async call.
@@ -476,6 +504,8 @@ fn sync_input(
     parameters: std::borrow::Cow<'_, BTreeMap<String, Value>>,
     options: &CallOptions,
 ) -> Result<BTreeMap<String, Value>, Error> {
+    // a transition's row rule is for the multi calls it makes itself, not for those of the services it calls
+    let _rows = RowsAside::take();
     let _authz = if options.disable_authz {
         crate::context::ExecutionContext::with_current(|ctx| ctx.disable_authz())
     } else {

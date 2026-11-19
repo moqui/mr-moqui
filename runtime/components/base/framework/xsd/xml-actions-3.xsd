@@ -126,9 +126,10 @@ along with this software (see the LICENSE.md file). If not, see
             -->
             <xs:attribute name="ignore-error" type="boolean" default="false"/>
             <xs:attribute name="multi" default="false">
-                <xs:annotation><xs:documentation>true: a multi call, once for each row of name_0, name_1 parameters; a
-                    posted row value does not replace a plain value the caller set apart from the request (the screen's
-                    always-actions, a parameter from, the in-map). parameter: a multi call when the request's _isMulti is
+                <xs:annotation><xs:documentation>true: a multi call, once for each row of name_0, name_1 parameters. In one
+                    a screen transition makes, a row value is taken only for a field of the screen's multi forms that
+                    post to it and never for a name the screens pin (an always-actions set field, a parameter with from
+                    or value). parameter: a multi call when the request's _isMulti is
                     true. A transition's service-call shortcut that names none is parameter only when a multi form of its
                     screen posts to the transition (Java: always), so write multi="parameter" on one another screen's
                     multi form posts to.</xs:documentation></xs:annotation>

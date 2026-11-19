@@ -2125,15 +2125,31 @@ fn run_transition_steps(
     reject_html_for_entity_auto(transition);
     // The service-call runs only when there is no error and no validation error. `<actions>` always
     // run, so they can handle an error (ScreenDefinition.groovy). The two are separate scripts, so
-    // the call's `if (ec.message.hasError()) return` cannot skip the actions.
-    if let Some(actions) = &transition.service_actions {
-        if !screen_has_error() {
+    // the call's `if (ec.message.hasError()) return` cannot skip the actions. A multi call either of them makes takes a
+    // posted row value only for a row field of the screen's multi forms that post here, never for a name the path's
+    // screens or the transition set apart from the request (SEC-RTE-81).
+    let rows = crate::service::call::TransitionRows {
+        fields: screen.multi_rows.get(&transition.name).cloned().flatten(),
+        pinned: info
+            .path_defs
+            .iter()
+            .flat_map(|def| def.pinned_names.iter())
+            .chain(screen.pinned_names.iter())
+            .chain(transition.pinned_names.iter())
+            .cloned()
+            .collect(),
+    };
+    crate::service::call::with_transition_rows(rows, || -> Result<(), Error> {
+        if let Some(actions) = &transition.service_actions {
+            if !screen_has_error() {
+                run_transition_actions(actions)?;
+            }
+        }
+        if let Some(actions) = &transition.actions {
             run_transition_actions(actions)?;
         }
-    }
-    if let Some(actions) = &transition.actions {
-        run_transition_actions(actions)?;
-    }
+        Ok(())
+    })?;
     let response = pick_response(transition)?;
     Ok(Step::Respond(response.clone()))
 }

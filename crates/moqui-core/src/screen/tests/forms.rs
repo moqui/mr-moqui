@@ -1511,6 +1511,17 @@ fn a_multi_form_post_calls_the_transition_service_for_each_row() {
     );
     assert!(rows.status < 400, "{}", rows.body_text());
     assert_eq!(medium("P0").as_deref(), Some("pinned"));
+    // the request's plain value the same as the pinned one does not let the row's through
+    let same = serve_at(
+        &world.factory,
+        form_post(
+            "/saveRows",
+            "testMedium=pinned&_isMulti=true&testId_0=P1&testMedium_0=posted",
+        ),
+        &pinned,
+    );
+    assert!(same.status < 400, "{}", same.body_text());
+    assert_eq!(medium("P1").as_deref(), Some("pinned"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

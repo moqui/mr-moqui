@@ -305,7 +305,8 @@
         }
         // multi="parameter" is a multi call when the request says _isMulti, as a multi form posts. A transition's
         // shortcut has it when written, or by default only when a multi form of its screen posts to it
-        // (screen/definition.rs, SEC-RTE-81); the rows then never replace a value the screen pinned (service/call.rs).
+        // (screen/definition.rs, SEC-RTE-81); a row is then taken only for the forms' fields, never for a name the screen pinned
+        // (TransitionRows, service/call.rs).
         const flagsExpr = attr(node, "multi") === "parameter"
             ? `(${flags} | (ec.web && ec.web.parameters && ec.web.parameters._isMulti === 'true' ? 2 : 0))`
             : String(flags);

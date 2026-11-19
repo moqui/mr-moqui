@@ -549,12 +549,20 @@ fn a_shortcut_is_a_multi_call_only_when_written_or_a_multi_form_posts_to_it() {
         &shared,
         r#"<screen require-authentication="false">
                 <transition name="saveShared"><service-call name="save#Shared"/><default-response type="none"/></transition>
-                <widgets/></screen>"#,
+                <widgets>
+                    <form-list name="SharedMulti" list="rows" multi="true" transition="fromOther">
+                        <field name="x"/><field name="y"/></form-list>
+                    <form-list name="SelBase" list="rows">
+                        <row-selection id-field="rowId" parameter="selIds"><action><form-single name="SelAct" transition="fromInherited"/></action></row-selection>
+                    </form-list>
+                </widgets></screen>"#,
     )
     .unwrap();
     let screen = format!(
         r#"<screen require-authentication="false">
-                <transition name="plain"><service-call name="update#Account"/><default-response type="none"/></transition>
+                <parameter name="screenParam" from="other"/>
+                <always-actions><set field="ownerId" from="ec.user.userId"/><if condition="true"><set field="nested.part" value="x"/></if></always-actions>
+                <transition name="plain"><parameter name="transitionParam" value="v"/><parameter name="plainParam"/><service-call name="update#Account"/><default-response type="none"/></transition>
                 <transition name="written"><service-call name="update#Account" multi="parameter"/><default-response type="none"/></transition>
                 <transition name="never"><service-call name="update#Account" multi="false"/><default-response type="none"/></transition>
                 <transition name="fromList"><service-call name="update#Row"/><default-response type="none"/></transition>
@@ -562,10 +570,15 @@ fn a_shortcut_is_a_multi_call_only_when_written_or_a_multi_form_posts_to_it() {
                 <transition name="fromSelection"><service-call name="update#Row"/><default-response type="none"/></transition>
                 <transition name="fromListMode"><service-call name="update#Row"/><default-response type="none"/></transition>
                 <transition name="fromSingle"><service-call name="update#Row"/><default-response type="none"/></transition>
+                <transition name="fromOther"><service-call name="update#Row"/><default-response type="none"/></transition>
+                <transition name="fromInherited"><service-call name="update#Row"/><default-response type="none"/></transition>
                 <transition name="queued"><service-call name="update#Row" async="true"/><default-response type="none"/></transition>
                 <transition-include name="saveShared" location="{shared}"/>
                 <widgets>
-                    <form-list name="Rows" list="rows" transition="fromList" multi="true"/>
+                    <form-list name="Rows" list="rows" transition="fromList" multi="true"><field name="rowA"/></form-list>
+                    <form-list name="Cross" list="rows" extends="{shared}#SharedMulti"><field name="z"/></form-list>
+                    <form-list name="CrossSel" list="rows" extends="{shared}#SelBase"/>
+                    <form-list name="Auto" list="rows" transition="fromAuto" multi="true"><auto-fields-entity entity-name="x"/></form-list>
                     <form-list name="Base" list="rows" transition="fromBase" multi="true"/>
                     <form-list name="Extending" list="rows" extends="Base"/>
                     <form-list name="SharedRows" list="rows" transition="saveShared" multi="true"/>
@@ -592,7 +605,43 @@ fn a_shortcut_is_a_multi_call_only_when_written_or_a_multi_form_posts_to_it() {
         def.transition(name, Some("post"))
             .map(|transition| transition.multi_parameter)
     };
-    for name in ["written", "fromList", "fromBase", "fromSelection", "saveShared"] {
+    let set = |names: &[&str]| {
+        Some(
+            names
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect::<std::collections::BTreeSet<_>>(),
+        )
+    };
+    assert_eq!(def.multi_rows.get("fromList").cloned().flatten(), set(&["rowA"]));
+    assert_eq!(
+        def.multi_rows.get("fromOther").cloned().flatten(),
+        set(&["x", "y", "z"]),
+        "fields through a cross-screen extends"
+    );
+    assert_eq!(
+        def.multi_rows.get("fromInherited").cloned().flatten(),
+        set(&["selIds"]),
+        "a row-selection through extends"
+    );
+    assert_eq!(def.multi_rows.get("fromSelection").cloned().flatten(), set(&["rowId"]));
+    assert_eq!(
+        def.multi_rows.get("fromAuto"),
+        Some(&None),
+        "assembled fields are not known"
+    );
+    assert_eq!(def.pinned_names, set(&["nested", "ownerId", "screenParam"]).unwrap());
+    let plain = def.transition("plain", Some("post")).unwrap();
+    assert_eq!(plain.pinned_names, set(&["transitionParam"]).unwrap());
+    for name in [
+        "written",
+        "fromList",
+        "fromBase",
+        "fromSelection",
+        "saveShared",
+        "fromOther",
+        "fromInherited",
+    ] {
         assert_eq!(multi(name), Some(true), "{name}");
     }
     for name in ["plain", "never", "fromListMode", "fromSingle", "queued"] {

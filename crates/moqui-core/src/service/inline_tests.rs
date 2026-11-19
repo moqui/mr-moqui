@@ -56,6 +56,10 @@ const SERVICES: &str = r#"<services>
             <entity-create value-field="made"/>
         </actions>
     </service>
+    <service verb="inline" noun="RecordRows" authenticate="false">
+        <in-parameters><parameter name="rowsIn" type="Map"/></in-parameters>
+        <actions><service-call name="inline#Record" multi="true" in-map="rowsIn"/></actions>
+    </service>
     <service verb="inline" noun="IgnoreFail" authenticate="false" transaction="ignore">
         <actions><return error="true" message="ignore failed"/></actions>
     </service>
@@ -361,50 +365,71 @@ fn a_multi_call_runs_each_row_in_one_transaction() {
     ctx.message().clear();
 }
 
-/// In a multi call a row's posted `name_N` does not replace the plain value the caller set apart from the request (a
-/// value the screen pinned, which is not the request parameter of that name): it would let a post with `_isMulti=true`
-/// and `userId_0` reach another user's account (SEC-RTE-81). A plain value that is the request's own, and a row the
-/// caller built itself, keep Java's order: the row's value first.
+/// A multi call a screen transition makes takes a posted `name_N` only for a row field of the screen's multi forms and
+/// never for a name the screen pinned, whatever plain value the request also sends (SEC-RTE-81: a post with
+/// `userId=<own id>` and `userId_0=<another>` must not reach the other account). The services it calls keep Java's
+/// order, the row's value first, and so does a multi call outside a transition.
 #[test]
-fn a_posted_row_value_does_not_replace_a_value_the_caller_pinned() {
+fn a_transition_multi_call_takes_rows_only_for_form_fields_and_never_for_a_pinned_name() {
+    use super::call::{sync_multi, with_transition_rows, CallOptions, TransitionRows};
     let (facade, ctx) = inline_context();
     let _entered = ctx.enter();
     let _authz = ctx.disable_authz();
-    let record = |id: &str, plain: &str, posted: &[(&str, &str)], row: &str| {
-        let request: BTreeMap<String, Value> = posted
-            .iter()
-            .map(|(name, value)| ((*name).to_string(), Value::string(*value)))
-            .collect();
-        let _web = (!posted.is_empty()).then(|| crate::web::install(request));
-        let mut parameters = BTreeMap::new();
-        parameters.insert("id_0".to_string(), Value::string(id));
-        parameters.insert("medium_0".to_string(), Value::string(row));
-        parameters.insert("medium".to_string(), Value::string(plain));
-        super::call::sync_multi("inline#Record", &parameters, &super::call::CallOptions::default()).unwrap();
-        medium(&facade, id)
+    let parameters = |id: &str, row: &str, plain: &str| -> BTreeMap<String, Value> {
+        [("id_0", id), ("medium_0", row), ("medium", plain)]
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), Value::string(value)))
+            .collect()
     };
-    // pinned by the screen: the request has no plain value, or another one
-    let pinned = record("PIN0", "pinned", &[("id_0", "PIN0"), ("medium_0", "posted")], "posted");
-    assert_eq!(pinned.as_deref(), Some("pinned"));
-    let other = record(
-        "PIN1",
-        "pinned",
-        &[("id_0", "PIN1"), ("medium_0", "posted"), ("medium", "sent")],
-        "posted",
-    );
-    assert_eq!(other.as_deref(), Some("pinned"));
-    // the plain value is the request's own (a hidden parameter of the form): the row's value wins, as Java's
-    let hidden = record(
-        "PIN2",
-        "sent",
-        &[("id_0", "PIN2"), ("medium_0", "posted"), ("medium", "sent")],
-        "posted",
-    );
-    assert_eq!(hidden.as_deref(), Some("posted"));
-    // a row the caller built, outside a request or apart from what it posted
-    assert_eq!(record("PIN3", "plain", &[], "own").as_deref(), Some("own"));
-    let built = record("PIN4", "plain", &[("id_0", "PIN4"), ("medium_0", "posted")], "own");
-    assert_eq!(built.as_deref(), Some("own"));
+    let rule = |fields: Option<&[&str]>, pinned: &[&str]| TransitionRows {
+        fields: fields.map(|fields| fields.iter().map(|name| (*name).to_string()).collect()),
+        pinned: pinned.iter().map(|name| (*name).to_string()).collect(),
+    };
+    // pinned: the plain value, even when the request's plain value is the same (the same-value bypass)
+    with_transition_rows(rule(None, &["medium"]), || {
+        sync_multi(
+            "inline#Record",
+            &parameters("PIN0", "posted", "pinned"),
+            &CallOptions::default(),
+        )
+        .unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN0").as_deref(), Some("pinned"));
+    // not a row field of the form: the plain value
+    with_transition_rows(rule(Some(&["id"]), &[]), || {
+        sync_multi(
+            "inline#Record",
+            &parameters("PIN1", "posted", "plain"),
+            &CallOptions::default(),
+        )
+        .unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN1").as_deref(), Some("plain"));
+    // a row field, not pinned: the row's value
+    with_transition_rows(rule(Some(&["id", "medium"]), &[]), || {
+        sync_multi(
+            "inline#Record",
+            &parameters("PIN2", "posted", "plain"),
+            &CallOptions::default(),
+        )
+        .unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN2").as_deref(), Some("posted"));
+    // outside a transition, and a service's own multi call inside one: Java's order
+    sync_multi(
+        "inline#Record",
+        &parameters("PIN3", "own", "plain"),
+        &CallOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(medium(&facade, "PIN3").as_deref(), Some("own"));
+    with_transition_rows(rule(None, &["medium"]), || {
+        let mut outer = BTreeMap::new();
+        let rows: moqui_lib::object::ValueMap = parameters("PIN4", "own", "plain").into_iter().collect();
+        outer.insert("rowsIn".to_string(), Value::Map(rows));
+        super::sync("inline#RecordRows", &outer).unwrap();
+    });
+    assert_eq!(medium(&facade, "PIN4").as_deref(), Some("own"));
     assert!(ctx.message().errors().is_empty(), "{:?}", ctx.message().errors());
 }
 
