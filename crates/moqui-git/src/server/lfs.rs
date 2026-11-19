@@ -38,7 +38,7 @@ use super::{
     anonymous_slot, authenticate_with, current_user, may_push, open_path, path, provider, public_base_url,
     AnonymousSlot, GitService, HttpResponder, Refusal,
 };
-use crate::{Repo, RepositoryKind};
+use crate::{GitProvider, Repo, RepositoryKind};
 use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::EntityValue;
 use moqui_core::resource::blob::{is_blob_id, BlobStore, Expected};
@@ -363,6 +363,7 @@ fn read_json(body: &mut dyn Read) -> Result<Json, (u16, Json)> {
 
 /// A request that may go on: the operation of its token, its repository, and its slot when it has no user.
 struct Started {
+    provider: GitProvider,
     token: Option<Operation>,
     repo: Arc<Repo>,
     _anonymous: Option<AnonymousSlot>,
@@ -398,6 +399,7 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
         let repo = open_path(&provider, &request.repository, GitService::UploadPack, logged_in)?;
         let slot = if logged_in { None } else { Some(anonymous_slot()?) };
         Ok(Started {
+            provider,
             token,
             repo,
             _anonymous: slot,
@@ -405,6 +407,7 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
     })();
     // the slot is held while the request is served
     let Started {
+        provider,
         token,
         repo,
         _anonymous,
@@ -418,7 +421,9 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
     let lfs = Lfs {
         repository: repo.definition.id.clone(),
         mirror: repo.definition.kind == RepositoryKind::Remote,
+        archived: repo.definition.archived,
         token,
+        provider,
     };
     let path = request.path.trim_matches('/');
     let outcome = match (request.method.as_str(), path) {
@@ -458,8 +463,11 @@ struct Lfs {
     /// The repository's id.
     repository: String,
     mirror: bool,
+    /// Archived (read only), or being deleted, when the request came in.
+    archived: bool,
     /// The operation of the token the user came with; `None` for credentials.
     token: Option<Operation>,
+    provider: GitProvider,
 }
 
 type Reply = Result<(u16, Json), (u16, Json)>;
@@ -484,6 +492,13 @@ impl Lfs {
         if self.mirror {
             return Err(message(403, "the repository is a read-only mirror"));
         }
+        // as a push is refused (server::open): an archived repository is read only
+        if self.archived {
+            return Err(message(
+                403,
+                &format!("repository {} is archived and read only", self.repository),
+            ));
+        }
         if !may_push(&self.repository) {
             return Err(message(
                 403,
@@ -491,6 +506,18 @@ impl Lfs {
             ));
         }
         Ok(())
+    }
+
+    /// Make a row of the repository (an object, a lock) under its lock, after reading its row again, as a push stores
+    /// its objects: a repository archived or deleted since the request came in takes nothing, and
+    /// `delete#GitRepository`, which marks the repository going under the same lock, finds no row made after it.
+    fn writing<T>(&self, write: impl FnOnce() -> Result<T, (u16, Json)>) -> Result<T, (u16, Json)> {
+        let lock = self.provider.lock_of(&self.repository);
+        let _writer = moqui_lib::sync::lock(&lock);
+        self.provider
+            .still_writable(&self.repository)
+            .map_err(|err| message(403, err.message()))?;
+        write()
     }
 
     fn base(&self) -> String {
@@ -725,12 +752,18 @@ impl Lfs {
             size: request.content_length,
         };
         let info = writer.finish(&expected).map_err(|err| message(422, err.message()))?;
+        self.writing(|| self.keep_object(oid, info.size))
+    }
+
+    /// The `GitLfsObject` row of an uploaded object, unless the repository has it already.
+    fn keep_object(&self, oid: &str, size: u64) -> Reply {
+        let entity = self.entity()?;
         let _rows = crate::rows_guard();
         if self.stored(oid)?.is_none() {
             let mut row = EntityValue::make(&entity, GIT_LFS_OBJECT).map_err(|err| message(500, err.message()))?;
             row.set("repositoryId", Value::string(&self.repository));
             row.set("oid", Value::string(oid));
-            row.set("objectSize", Value::I64(i64::try_from(info.size).unwrap_or(i64::MAX)));
+            row.set("objectSize", Value::I64(i64::try_from(size).unwrap_or(i64::MAX)));
             if let Some(user) = moqui_core::user::current_user_id().ok().flatten() {
                 row.set("uploadedByUserId", Value::string(user));
             }
@@ -740,7 +773,7 @@ impl Lfs {
                 if self.stored(oid)?.is_none() {
                     return Err(message(500, err.message()));
                 }
-            } else if let Err(refusal) = self.check_upload(&[(oid.to_string(), info.size)], Asked::After) {
+            } else if let Err(refusal) = self.check_upload(&[(oid.to_string(), size)], Asked::After) {
                 // within the limit when it asked, past it now with the uploads that ran beside it: taken back (its
                 // content is no repository's, and gc#ContentBlobs lets it go)
                 if let Err(err) = row.delete(&entity) {
@@ -881,7 +914,7 @@ impl Lfs {
             row.set("ownerUserId", Value::string(user));
         }
         row.set("lockedDate", moqui_core::user::now_effective_value());
-        if let Err(err) = row.create(&entity) {
+        if let Err(err) = self.writing(|| Ok(row.create(&entity)))? {
             // another lock of the path was made at the same time (its unique index)
             return match existing(&self.locks()?) {
                 Some(lock) => Err((409, json!({ "lock": lock, "message": "the path is locked already" }))),

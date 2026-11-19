@@ -2290,3 +2290,76 @@ fn the_public_base_url_follows_the_listener_and_the_request() {
     moqui_lib::env::set_property("moqui_conf__git_server__public_url", "https://git.example/base/");
     assert_eq!(super::public_base_url(), "https://git.example/base");
 }
+
+/// SEC-GIT-84: an archived repository is read only to LFS as it is to a push: no lock is made and no object is taken,
+/// whether it was archived before the request (`Lfs::may_write`) or while the upload came in (`Lfs::writing`).
+#[test]
+fn lfs_takes_no_lock_or_object_for_an_archived_repository() {
+    let fixture = fixture("lfs-archived");
+    let _lfs_key = lfs_key("the key of the archived lfs test");
+    define(&fixture, "frozen", "db");
+    let base = http_server(fixture.context.factory());
+    let writer = format!(
+        "Basic {}",
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            format!("{WRITER}:{PASSWORD}")
+        )
+    );
+    let lfs_json = "application/vnd.git-lfs+json";
+    let content = b"an object for an archived repository".to_vec();
+    let oid = moqui_core::resource::blob::blob_id(&content);
+    let body = serde_json::json!({ "operation": "upload", "transfers": ["basic"],
+        "objects": [{ "oid": oid, "size": content.len() }] })
+    .to_string();
+    let (status, _, reply) = http(
+        &base,
+        "POST",
+        "/git/frozen.git/info/lfs/objects/batch",
+        &[
+            ("Authorization", &writer),
+            ("Accept", lfs_json),
+            ("Content-Type", lfs_json),
+        ],
+        body.as_bytes(),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+    let upload = json_of(&reply)["objects"][0]["actions"]["upload"].clone();
+    let href = upload["href"].as_str().unwrap();
+    let token = upload["header"]["Authorization"].as_str().unwrap().to_string();
+    // archived after the batch gave the token
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = EntityValue::make(&fixture.entity, crate::GIT_REPOSITORY).unwrap();
+        row.set("repositoryId", Value::string("frozen"));
+        row.set("archivedDate", moqui_core::user::now_value());
+        row.update(&fixture.entity).unwrap();
+    }
+    let (status, _, reply) = http(
+        &base,
+        "PUT",
+        &href[href.find("/git/").unwrap()..],
+        &[("Authorization", &token)],
+        &content,
+    );
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&reply));
+    let lock = serde_json::json!({ "path": "images/logo.psd" }).to_string();
+    let (status, _, reply) = http(
+        &base,
+        "POST",
+        "/git/frozen.git/info/lfs/locks",
+        &[("Authorization", &writer)],
+        lock.as_bytes(),
+    );
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&reply));
+    assert!(String::from_utf8_lossy(&reply).contains("archived"));
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    for entity in [super::lfs::GIT_LFS_OBJECT, super::lfs::GIT_LFS_LOCK] {
+        assert!(
+            fixture.entity.find(entity).unwrap().list().unwrap().is_empty(),
+            "no {entity} row"
+        );
+    }
+}
