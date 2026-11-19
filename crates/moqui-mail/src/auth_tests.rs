@@ -376,3 +376,48 @@ fn a_paired_nodes_mail_is_signed_only_for_its_own_domains_whatever_the_list() {
         "the paired node's domain, not listed"
     );
 }
+
+/// SEC-MAIL-88: a trusted sealer overrides a DMARC failure only when its own `ARC-Authentication-Results` recorded
+/// `dmarc=pass` for the From domain; a failure it recorded and sealed anyway stays a failure, and the stored field says
+/// when a failure was overridden.
+#[test]
+fn a_trusted_arc_sealer_overrides_dmarc_only_for_a_pass_it_recorded() {
+    let trusted = vec!["lists.example".to_string()];
+    let newest = |sealer: &str, results: &'static str| Some((sealer.to_string(), results.as_bytes()));
+    let passed =
+        " i=2; lists.example; dkim=pass header.d=example.com;\r\n\tdmarc=pass (p=reject) header.from=Example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", passed), "example.com", &trusted).as_deref(),
+        Some("lists.example")
+    );
+    let failed = " i=2; lists.example; spf=fail smtp.mailfrom=evil.example; dmarc=fail header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", failed), "example.com", &trusted),
+        None
+    );
+    // a pass for another domain, a pass only inside a comment, and an untrusted sealer
+    let other = " i=1; lists.example; dmarc=pass header.from=evil.example\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", other), "example.com", &trusted),
+        None
+    );
+    let comment = " i=1; lists.example; dmarc=fail (; dmarc=pass header.from=example.com) header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", comment), "example.com", &trusted),
+        None
+    );
+    assert_eq!(
+        arc_overrides(newest("other.example", passed), "example.com", &trusted),
+        None
+    );
+    assert_eq!(arc_overrides(None, "example.com", &trusted), None);
+
+    let field = "Authentication-Results: mx;\r\n\tspf=fail smtp.mailfrom=lists.example;\r\n\tdmarc=fail \
+                 header.from=example.com policy.dmarc=reject\r\n"
+        .to_string();
+    assert_eq!(
+        overridden_field(field, "lists.example"),
+        "Authentication-Results: mx;\r\n\tspf=fail smtp.mailfrom=lists.example;\r\n\tdmarc=fail (overridden by the \
+         trusted ARC sealer lists.example) header.from=example.com policy.dmarc=reject\r\n"
+    );
+}

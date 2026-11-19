@@ -220,8 +220,9 @@ cannot judge, is refused (550 5.7.1, RFC 7489 section 6.6.1).
   reached, or a check that fails, is logged and the mail taken (as not spam); checks that do not finish in 45 seconds
   answer 451.
 - **DMARC** is RFC 9989's (`t=y` lowers the policy; there is no `pct`), and a passing ARC chain sealed by one of
-  `smtp-server@arc-trusted-sealers` (a forwarder or list you trust) overrides a reject or quarantine; with none named there is
-  no ARC exception.
+  `smtp-server@arc-trusted-sealers` (a forwarder or list you trust) overrides a reject or quarantine when that sealer's
+  `ARC-Authentication-Results` records `dmarc=pass` for the From domain (the stored `dmarc=fail` then says it was
+  overridden); with none named there is no ARC exception.
 - **Recipients.** `RCPT TO` is answered from the local node's accounts, replicated to the edge node
   (`mailRecipients`), and each message is queued for the local node, which delivers it as its own listener would,
   trusting the edge node's `Authentication-Results`.

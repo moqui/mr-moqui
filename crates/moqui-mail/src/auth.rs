@@ -667,7 +667,8 @@ const VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 ///
 /// DMARC is RFC 9989's: `t=y` lowers the policy one level, and there is no `pct`. A failure under `p=reject` or
 /// `p=quarantine` is overridden when a passing ARC chain was last sealed by one of `smtp-server@arc-trusted-sealers` (a
-/// mailing list or forwarder this node trusts); with that property empty there is no ARC exception.
+/// mailing list or forwarder this node trusts) and that sealer's `ARC-Authentication-Results` records `dmarc=pass` for
+/// the From domain; with that property empty there is no ARC exception.
 pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records: Option<Arc<Records>>) -> Verdict {
     let id = authserv_id.clone();
     let done = dns::on_runtime(async move {
@@ -689,6 +690,62 @@ pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records
         summary: "temperror".to_string(),
         temp_error: true,
         ..Verdict::default()
+    }
+}
+
+/// The trusted sealer whose ARC seal overrides a DMARC failure, or none: `newest` (the newest set's sealer, with the
+/// value of its `ARC-Authentication-Results`) is one of `trusted`, and that sealer recorded `dmarc=pass` for `domain`, the
+/// message's From domain, when it took the message. A trusted sealer carries a pass across its own change of the message
+/// (a list's footer); it never turns a failure it recorded itself into a pass (SEC-MAIL-88).
+fn arc_overrides(newest: Option<(String, &[u8])>, domain: &str, trusted: &[String]) -> Option<String> {
+    let (sealer, results) = newest?;
+    (!sealer.is_empty() && trusted.contains(&sealer) && recorded_dmarc_pass(results, domain)).then_some(sealer)
+}
+
+/// Whether an `ARC-Authentication-Results` value records `dmarc=pass` with a `header.from` of `domain`.
+fn recorded_dmarc_pass(results: &[u8], domain: &str) -> bool {
+    let text = String::from_utf8_lossy(results);
+    // comments out (they may hold anything, `;` too), then the entries split on `;`
+    let mut plain = String::with_capacity(text.len());
+    let mut depth = 0usize;
+    let mut escaped = false;
+    for ch in text.chars() {
+        match ch {
+            _ if escaped => escaped = false,
+            '\\' if depth > 0 => escaped = true,
+            '(' => depth += 1,
+            ')' if depth > 0 => depth -= 1,
+            _ if depth > 0 => {}
+            ch if ch.is_whitespace() => plain.push(' '),
+            ch => plain.push(ch),
+        }
+    }
+    let domain = domain.trim().trim_end_matches('.');
+    plain.split(';').any(|entry| {
+        let mut words = entry.split_whitespace();
+        words.next().is_some_and(|word| word.eq_ignore_ascii_case("dmarc=pass"))
+            && words.any(|word| {
+                word.split_once('=').is_some_and(|(name, value)| {
+                    name.eq_ignore_ascii_case("header.from")
+                        && value
+                            .trim_matches('"')
+                            .trim_end_matches('.')
+                            .eq_ignore_ascii_case(domain)
+                })
+            })
+    })
+}
+
+/// `field` with its `dmarc=fail` result marked, in a comment, as overridden by `sealer`, so a reader of the stored field
+/// sees that the failure was let in.
+fn overridden_field(field: String, sealer: &str) -> String {
+    const ENTRY: &str = ";\r\n\tdmarc=fail";
+    match field.find(ENTRY) {
+        Some(at) => {
+            let (head, rest) = field.split_at(at + ENTRY.len());
+            format!("{head} (overridden by the trusted ARC sealer {sealer}){rest}")
+        }
+        None => field,
     }
 }
 
@@ -793,15 +850,17 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         _ => DmarcAction::Accept,
     };
     let mut arc_override = String::new();
+    let mut field = safe_mailfrom(results.to_header(), &session.mail_from);
     if action != DmarcAction::Accept && arc.result() == &DkimResult::Pass {
-        let sealer = arc
+        // the newest set: mail-auth lists the chain oldest (instance 1) first
+        let newest = arc
             .chain()
             .last()
-            .map(|link| link.seal.header.d.to_ascii_lowercase())
-            .unwrap_or_default();
-        if !sealer.is_empty() && trusted_sealers().contains(&sealer) {
+            .map(|link| (link.seal.header.d.to_ascii_lowercase(), link.results.value));
+        if let Some(sealer) = arc_overrides(newest, dmarc.domain(), &trusted_sealers()) {
             action = DmarcAction::Accept;
             arc_override = format!(" (DMARC policy overridden by the trusted ARC sealer {sealer})");
+            field = overridden_field(field, &sealer);
         }
     }
     let dkim_word = if dkim.iter().any(|output| output.result() == &DkimResult::Pass) {
@@ -817,7 +876,7 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         result_word(&arc.result().to_string()),
     );
     Verdict {
-        field: safe_mailfrom(results.to_header(), &session.mail_from),
+        field,
         dmarc: action,
         summary,
         temp_error: false,

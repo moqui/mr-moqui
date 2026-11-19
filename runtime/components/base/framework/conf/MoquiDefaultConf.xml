@@ -1236,9 +1236,10 @@
         internet: true takes mail from the internet (port 25 on an edge node; plans/archive/Edge-Node.md §5.4, E5b): any
         address, STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own
         (DMARC is RFC 9989's: t=y lowers the policy, and there is no pct). arc-trusted-sealers: the domains whose passing
-        ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts); empty for no ARC
-        exception. rspamd-url: Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for
-        none. Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.
+        ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), only when that sealer's
+        ARC-Authentication-Results records dmarc=pass for the From domain; empty for no ARC exception. rspamd-url:
+        Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for none. Rspamd not reached
+        fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.
         proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
         the address it names must be in allowed-addresses too. spam-headers: the gateway's spam verdict fields; mail one
         of them says yes to goes to Junk. plus-separator: the plus-addressing characters (sales+news@ is sales@); none
