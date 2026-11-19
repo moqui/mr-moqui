@@ -382,9 +382,19 @@ fn an_sso_sign_in_counts_from_its_auth_time() {
         sign_in_time(&oidc, &with_auth_time(Some(now / 1000 + 30)), false, started, now),
         Some(now)
     );
-    // OAuth cannot prove it: only a re-authentication the user asked for counts
-    assert_eq!(sign_in_time(&oauth, &none, true, started, now), Some(now));
+    // SEC-WEB-84: OAuth cannot prove it, so a re-authentication counts only through a flow whose provider asks the user
+    // to sign in every time
+    assert_eq!(sign_in_time(&oauth, &none, true, started, now), None);
     assert_eq!(sign_in_time(&oauth, &none, false, started, now), None);
+    let prompting = FlowConfig {
+        kind: FlowKind::Oauth(OauthConfig {
+            reauth_prompts: true,
+            ..OauthConfig::default()
+        }),
+        ..oauth
+    };
+    assert_eq!(sign_in_time(&prompting, &none, true, started, now), Some(now));
+    assert_eq!(sign_in_time(&prompting, &none, false, started, now), None);
 }
 
 fn groups_of(facade: &EntityFacade, user_id: &str) -> Vec<String> {

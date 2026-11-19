@@ -941,6 +941,11 @@ The server terminates HTTPS itself, so a proxy is optional. A proxy or load bala
   rightmost address that is not a trusted proxy.
 - `webapp-list/webapp[webroot]@client-ip-header` names the header: `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or
   `CloudFront-Viewer-Address`.
+- Each trusted proxy must set or replace `X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Forwarded-Port` (or append its
+  own value to each, as it appends to the client address header), never pass a client's on alone. The server reads each
+  from the hop it reads the client address from (the value at that hop's place when the header has as many values,
+  else the last), so a value a client sent ahead of the proxy's is not taken; a proxy that forwards a client's header
+  untouched lets the client choose the scheme or host its request counts as (SEC-WEB-91).
 - Setting `webapp-list/webapp[webroot]@trusted-proxies` also turns on the per-client web protection: rate limits, connection limits and
   bans by client address. Without a proxy, `moqui_conf__webapp_list__webapp__WEBROOT__web_protection__enabled=true` turns it on.
 - A `rate-limit` or a client, path or user-agent rule with `host="shop.example.com"` (or `*.example.com`) applies only

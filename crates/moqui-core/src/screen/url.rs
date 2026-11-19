@@ -197,6 +197,25 @@ impl ScreenUrlInfo {
         &self.path_defs[self.render_path_difference.min(self.path_defs.len())..]
     }
 
+    /// The screen or transition the path reached, as a URL path that names it plainly: the screens walked (an alias and
+    /// a `//` search expanded, the default subscreens added) and the transition's name without its render-mode
+    /// extension, but no extra path after it. The host's web protection matches this as well ([`crate::web::reached`]).
+    pub fn reached_path(&self) -> String {
+        let names = self
+            .pre_transition_path
+            .iter()
+            .chain(self.target_transition_name.as_ref());
+        let mut path = String::new();
+        for name in names {
+            path.push('/');
+            path.push_str(name);
+        }
+        if path.is_empty() {
+            path.push('/');
+        }
+        path
+    }
+
     /// The path as a URL path, with default names.
     pub fn full_path_url(&self) -> String {
         join_path(&self.full_path)

@@ -156,6 +156,13 @@ fn check_password_login(username: &str, password: &str) -> Result<bool, Error> {
         password::burn_verify(password);
         return Err(Error::new(INVALID_LOGIN));
     }
+    // an address outside the account's or its groups' ipAllowed is refused before the password is compared, with the
+    // invalid login error, so a client there cannot tell a right password from a wrong one (SEC-WEB-90)
+    if let Err(err) = check_ip_allowed(&account, &client_ip()) {
+        password::burn_verify(password);
+        save_history(&text_field(&account, "userId"), false);
+        return Err(err);
+    }
     // Once the account passes the gate every outcome is kept in the login history, a pending second factor as one
     // that did not log in.
     let outcome = authenticate(&facade, &account, username, password, now);
@@ -471,11 +478,12 @@ fn authenticate(
 }
 
 /// Record the login in `UserLoginHistory` (`login/@history-store`): the time and visit are taken now, and a worker then
-/// creates the row unless the user has one from the last minute. The minute is claimed on this node first
-/// ([`HistoryWritten`]), so logins at once write one row; the worker's count covers other nodes and a restart. A failure
-/// there is only logged. Password, login key, app password and external (SSO) logins are recorded; the password tried
-/// is never stored. The one row a minute also bounds what automation logging in with a key on every request writes; if
-/// those volumes grow, key logins may be recorded differently.
+/// creates the row unless the user has one of its kind from the last minute: failures one a minute, successes one a
+/// minute for each visit ([`HistoryKind`]). The minute is claimed on this node first ([`HistoryWritten`]), so logins at
+/// once write one row; the worker's count covers other nodes and a restart. A failure there is only logged. Password,
+/// second factor, login key, app password, SSH key and external (SSO) logins are recorded; the password tried is never
+/// stored. The one row a minute also bounds what automation logging in with a key on every request writes; if those
+/// volumes grow, key logins may be recorded differently.
 fn save_history(user_id: &str, successful: bool) {
     if user_id.is_empty() || !policy::login_history_store() {
         return;
@@ -489,18 +497,32 @@ fn save_history(user_id: &str, successful: bool) {
             Value::string(if successful { "Y" } else { "N" }),
         ),
     ]);
-    if let Some(visit_id) = session::visit_id().ok().flatten() {
+    let visit_id = session::visit_id().ok().flatten().filter(|id| !id.is_empty());
+    if let Some(visit_id) = &visit_id {
         fields.insert("visitId".to_string(), Value::string(visit_id));
     }
     let Some(factory) = ExecutionContext::with_current(|ctx| Arc::clone(ctx.factory())) else {
         tracing::warn!("UserLoginHistory create failed: no execution context");
         return;
     };
-    let Some(claim) = HistoryClaim::take(factory.extension(|_| HistoryWritten::default()), user_id, from_date) else {
+    // a failure and a success claim minutes of their own, and a success one for each visit, so a wrong password first,
+    // or a key's login every minute, does not keep a sign-in from another visit out of the history, nor from the
+    // new-device notice its row starts (SEC-WEB-85); failures stay one a minute, whatever visits they come by
+    let kind = if successful {
+        HistoryKind::Success(visit_id)
+    } else {
+        HistoryKind::Failure
+    };
+    let Some(claim) = HistoryClaim::take(
+        factory.extension(|_| HistoryWritten::default()),
+        user_id,
+        &kind,
+        from_date,
+    ) else {
         return;
     };
     factory.service_pools().spawn("UserLoginHistory create", move || {
-        let stored = store_history(&claim.user_id, from_date, &fields);
+        let stored = store_history(&claim.user_id, &kind, from_date, &fields);
         // a failure releases the minute (the claim's drop), so a later login is recorded
         claim.keep(stored.is_ok());
         stored
@@ -510,11 +532,20 @@ fn save_history(user_id: &str, successful: bool) {
 /// Above this many users the claims older than a minute are pruned.
 const HISTORY_CLAIMS_KEPT: usize = 1024;
 
-/// The minute of login history each user's last login on this factory claimed: user id to its `fromDate` millis. A
-/// login within a minute of a claim writes no row, without waiting for the row of the other to be counted.
+/// Which minute of a user's login history a login claims: a failure's, or a success's of its visit (none for a login
+/// with no visit, such as a key's).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum HistoryKind {
+    Failure,
+    Success(Option<String>),
+}
+
+/// The minute of login history each user's last login of each [`HistoryKind`] on this factory claimed: to its
+/// `fromDate` millis. A login within a minute of a claim of its kind writes no row, without waiting for the row of the
+/// other to be counted.
 #[derive(Default)]
 struct HistoryWritten {
-    claimed: Mutex<HashMap<String, i64>>,
+    claimed: Mutex<HashMap<(String, HistoryKind), i64>>,
 }
 
 /// The minute a login claimed in [`HistoryWritten`]. Dropped without [`HistoryClaim::keep`] (the store failed, or
@@ -522,26 +553,30 @@ struct HistoryWritten {
 struct HistoryClaim {
     written: Arc<HistoryWritten>,
     user_id: String,
+    key: (String, HistoryKind),
     from_date: i64,
     kept: bool,
 }
 
 impl HistoryClaim {
-    /// The minute from `from_date` for `user_id`, or `None` when a login within the minute before claimed it.
-    fn take(written: Arc<HistoryWritten>, user_id: &str, from_date: i64) -> Option<Self> {
+    /// The minute from `from_date` for `user_id` and `kind`, or `None` when a login of that kind within the minute
+    /// before claimed it.
+    fn take(written: Arc<HistoryWritten>, user_id: &str, kind: &HistoryKind, from_date: i64) -> Option<Self> {
+        let key = (user_id.to_string(), kind.clone());
         {
             let mut claimed = moqui_lib::sync::lock(&written.claimed);
-            if claimed.get(user_id).is_some_and(|stamp| *stamp > from_date - 60_000) {
+            if claimed.get(&key).is_some_and(|stamp| *stamp > from_date - 60_000) {
                 return None;
             }
             if claimed.len() >= HISTORY_CLAIMS_KEPT {
                 claimed.retain(|_, stamp| *stamp > from_date - 60_000);
             }
-            claimed.insert(user_id.to_string(), from_date);
+            claimed.insert(key.clone(), from_date);
         }
         Some(Self {
             written,
             user_id: user_id.to_string(),
+            key,
             from_date,
             kept: false,
         })
@@ -558,19 +593,35 @@ impl Drop for HistoryClaim {
             return;
         }
         let mut claimed = moqui_lib::sync::lock(&self.written.claimed);
-        if claimed.get(&self.user_id) == Some(&self.from_date) {
-            claimed.remove(&self.user_id);
+        if claimed.get(&self.key) == Some(&self.from_date) {
+            claimed.remove(&self.key);
         }
     }
 }
 
-fn store_history(user_id: &str, from_date: i64, fields: &BTreeMap<String, Value>) -> Result<(), Error> {
+/// Create the history row in `fields` unless a row of the user and `kind` is there from the minute before `from_date`
+/// (written by another node, or before a restart).
+fn store_history(
+    user_id: &str,
+    kind: &HistoryKind,
+    from_date: i64,
+    fields: &BTreeMap<String, Value>,
+) -> Result<(), Error> {
     let _authz = without_authz();
-    let recent = entity_facade()?
+    let mut find = entity_facade()?
         .find(USER_LOGIN_HISTORY)?
         .eq("userId", Value::string(user_id))
-        .condition(Condition::greater("fromDate", stamp_value(from_date - 60_000)))
-        .count()?;
+        .condition(Condition::greater("fromDate", stamp_value(from_date - 60_000)));
+    find = match kind {
+        HistoryKind::Failure => find.eq("successfulLogin", Value::string("N")),
+        HistoryKind::Success(Some(visit_id)) => find
+            .eq("successfulLogin", Value::string("Y"))
+            .eq("visitId", Value::string(visit_id)),
+        HistoryKind::Success(None) => find
+            .eq("successfulLogin", Value::string("Y"))
+            .condition(Condition::is_null("visitId")),
+    };
+    let recent = find.count()?;
     if recent == 0 {
         crate::service::call::sync("create#moqui.security.UserLoginHistory", fields)?;
     }
@@ -668,7 +719,14 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
     let finishes_factor = !username.is_empty()
         && session::session_attribute_flag(AUTHC_FACTOR_REQUIRED)
         && session::session_attribute(PRE_AUTHC_USERNAME).as_deref() == Some(username);
-    internal_login(username, false, finishes_factor).1?;
+    let (user_id, result) = internal_login(username, false, finishes_factor);
+    // the password step of such a sign-in was recorded as not logged in; this is where it logs in (SEC-WEB-85)
+    if finishes_factor {
+        if let Some(user_id) = &user_id {
+            save_history(user_id, result.is_ok());
+        }
+    }
+    result?;
     if finishes_factor {
         if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
             note_recent_auth(&user_id);
@@ -688,16 +746,19 @@ pub fn internal_login_queued_user(username: &str) -> Result<(), Error> {
     internal_login(username, true, false).1
 }
 
-/// The sign-in of a person by an SSH key the host checked to be theirs (an active `UserSshKey`): [`internal_login_user`]
-/// as a person's sign-in, which clears the account's `hasLoggedOut` as a password or a login key does, so a sign-out
-/// elsewhere earlier does not end the sessions this sign-in starts. The operations of the session after it borrow the
-/// login ([`internal_login_user`], [`logout_local`]) and leave the flag as it is.
+/// The sign-in of a person by an SSH key the host checked to be theirs (an active `UserSshKey`), from `client_ip` (the
+/// SSH peer): [`internal_login_user`] as a person's sign-in, which clears the account's `hasLoggedOut` as a password or
+/// a login key does, so a sign-out elsewhere earlier does not end the sessions this sign-in starts. As the SSH password
+/// login, it checks the account's and its groups' `ipAllowed` against `client_ip` and is recorded in the login history
+/// (SEC-FIL-89). The operations of the session after it borrow the login ([`internal_login_user`], [`logout_local`])
+/// and leave the flag as it is.
 ///
 /// # Errors
 ///
-/// Returns an error when the account is unknown, disabled, terminated, a display account, or needs a password change.
-pub fn login_ssh_key_user(username: &str) -> Result<(), Error> {
-    internal_login(username, false, true).1
+/// Returns an error when the account is unknown, disabled, terminated, a display account, needs a password change, or
+/// may not sign in from `client_ip`.
+pub fn login_ssh_key_user(username: &str, client_ip: &str) -> Result<(), Error> {
+    with_client_ip(client_ip, || recorded_login(username, true))
 }
 
 /// Whether the account is a display account (`UserAccount.displayAccount`, shared devices): it stands for no person
@@ -1463,13 +1524,18 @@ pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>, scope: 
     Ok(true)
 }
 
-/// The scope of a request path ([`apply_header_keys`]): [`ACCESS_TOKEN_SCOPE`] for the git REST, the `git` and `hosting`
-/// resources of the framework's REST (`/rest/s1/moqui/git/...`, `/rest/s1/moqui/hosting/...`), by the screen path the
-/// request reaches (`..` and empty names resolved); none for any other path.
+/// The scope of a request path ([`apply_header_keys`]): [`ACCESS_TOKEN_SCOPE`] for the git REST, the `git` resource of
+/// the framework's REST (`/rest/s1/moqui/git/...`) and the read resources of its `hosting` (`offer`, `repository`,
+/// `mergeRequests`, `agreement`), by the screen path the request reaches (`..` and empty names resolved); none for any
+/// other path, so a token for git alone makes no key for another service (`hosting/gatewayKey`) and ends none
+/// (`hosting/keyRevoke`) (SEC-RTE-85).
 pub fn request_key_scope(path: &str) -> Option<&'static str> {
     let names = crate::screen::screen_path_names(path);
     match names.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["rest", "s1", "moqui", "git" | "hosting", ..] => Some(ACCESS_TOKEN_SCOPE),
+        ["rest", "s1", "moqui", "git", ..]
+        | ["rest", "s1", "moqui", "hosting", "offer" | "repository" | "mergeRequests" | "agreement", ..] => {
+            Some(ACCESS_TOKEN_SCOPE)
+        }
         _ => None,
     }
 }
@@ -1950,7 +2016,9 @@ pub(super) fn client_ip() -> String {
 }
 
 /// `ipAllowed` of the account and of every group it is in, `ALL_USERS` included: when any is set, the client address
-/// must match one of them. With no address, as for a login outside a request, nothing is checked.
+/// must match one of them. With no address, as for a login outside a request, nothing is checked. A refusal is the
+/// invalid login error, and the address and the account only in the server's log, so the answer tells the client
+/// neither that its credential was right nor which address the server took for it (SEC-WEB-90).
 fn check_ip_allowed(account: &EntityValue, client_ip: &str) -> Result<(), Error> {
     if client_ip.is_empty() {
         return Ok(());
@@ -1972,10 +2040,11 @@ fn check_ip_allowed(account: &EntityValue, client_ip: &str) -> Result<(), Error>
     if allowed.is_empty() || allowed.iter().any(|pattern| crate::web::ip_matches(pattern, client_ip)) {
         return Ok(());
     }
-    Err(Error::new(format!(
+    tracing::warn!(
         "Authenticate failed for user {} because client IP {client_ip} is not in allowed list for user or group.",
         text_field(account, "username")
-    )))
+    );
+    Err(Error::new(INVALID_LOGIN))
 }
 
 /// The visit that began before login, or the one a session put off and starts now, belongs to the user.

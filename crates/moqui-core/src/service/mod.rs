@@ -141,7 +141,7 @@ pub(crate) use security_checks::{
 };
 pub(crate) use system_sync::receive_rest_message;
 // The test client signs with these, the same functions the server uses.
-pub use system_sync::{hmac_base64, timestamp_header};
+pub use system_sync::{hmac_base64, timestamp_header, warn_untyped_remotes};
 pub use validate::clean_safe_html;
 pub use validate::validate;
 pub use validate::{auto_entity_name, auto_fields};

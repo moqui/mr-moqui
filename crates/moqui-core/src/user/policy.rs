@@ -110,6 +110,11 @@ pub(crate) fn disable_minutes() -> i64 {
 }
 
 /// `login/@history-store`: unless `false`, each login leaves a `UserLoginHistory` row.
+/// `login/@reauth-email-codes-per-hour` (5): the re-authentication codes mailed to an account's address in an hour.
+pub(crate) fn reauth_email_codes_per_hour() -> i64 {
+    conf_number("login", "reauth-email-codes-per-hour", 5).max(0)
+}
+
 pub(crate) fn login_history_store() -> bool {
     conf_text("login", "history-store", "true") != "false"
 }

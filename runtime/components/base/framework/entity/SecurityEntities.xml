@@ -1007,6 +1007,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="tokenUrl" type="text-medium" enable-audit-log="true"/>
         <field name="userInfoUrl" type="text-medium" enable-audit-log="true"/>
         <field name="scope" type="text-medium"><description>Space separated; empty takes the client type's default.</description></field>
+        <field name="reauthPrompts" type="text-indicator" enable-audit-log="true"><description>Y: this provider asks the
+            user to sign in again on every authorization, so its round trip answers the recent sign-in check
+            (check#RecentAuth). Empty or N: OAuth 2 has no auth_time to prove it, and a provider that answers from its own
+            session would mark the sign-in recent with nothing typed (SEC-WEB-84), so it does not.</description></field>
 
         <relationship type="one" related="moqui.security.sso.AuthFlow" short-alias="authFlow">
             <key-map field-name="authFlowId"/>

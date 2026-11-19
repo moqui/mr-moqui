@@ -231,6 +231,8 @@ impl Keys {
 struct Idp {
     issuer: String,
     id_token: Arc<Mutex<String>>,
+    /// What its user info endpoint answers: the ID token's subject unless a test says otherwise.
+    user_info: Arc<Mutex<String>>,
 }
 
 impl Idp {
@@ -238,10 +240,12 @@ impl Idp {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
         let id_token = Arc::new(Mutex::new(String::new()));
+        let user_info = Arc::new(Mutex::new(json!({"sub": "proof-user"}).to_string()));
         let discovery = json!({
             "issuer": issuer,
             "authorization_endpoint": format!("{issuer}/authorize"),
             "token_endpoint": format!("{issuer}/token"),
+            "userinfo_endpoint": format!("{issuer}/userinfo"),
             "jwks_uri": format!("{issuer}/jwks"),
             "response_types_supported": ["code"],
             "subject_types_supported": ["public"],
@@ -256,9 +260,11 @@ impl Idp {
         ]})
         .to_string();
         let next = Arc::clone(&id_token);
+        let info = Arc::clone(&user_info);
         serve(listener, move |path| match path {
             "/.well-known/openid-configuration" => Some(discovery.clone()),
             "/jwks" => Some(jwks.clone()),
+            "/userinfo" => Some(info.lock().unwrap().clone()),
             "/token" => Some(
                 json!({
                     "access_token": "proof-access-token", "token_type": "Bearer", "expires_in": 300,
@@ -268,7 +274,11 @@ impl Idp {
             ),
             _ => None,
         });
-        Self { issuer, id_token }
+        Self {
+            issuer,
+            id_token,
+            user_info,
+        }
     }
 
     fn flow(&self, auth_flow_id: &str) -> FlowConfig {
@@ -349,15 +359,15 @@ impl Idp {
 }
 
 /// The security proof of OWASP ASVS 5.0.0 v5.0.0-9.1.2 (docs/security/proofs/V9-Self-contained-Tokens.md), in-process:
-/// the OIDC relying party takes an ID token only signed with an algorithm of its allowlist, which is the algorithms the
-/// provider's discovery document lists (`id_token_signing_alg_values_supported`) less `none` (huskarl's
-/// `builder_from_metadata`), among those huskarl's verifier implements; `none` is refused whatever the list says.
+/// the OIDC relying party takes an ID token only signed with an algorithm of its allowlist, which is the flow's preferred
+/// algorithm when it names one, else the algorithms the provider's discovery document lists
+/// (`id_token_signing_alg_values_supported`) among the asymmetric ones huskarl's verifier implements (SEC-WEB-93); `none`
+/// is refused whatever the list says.
 /// Against a provider the test plays, through the real start and callback: a token signed ES256 is taken; an unsigned
 /// one is refused though the provider lists `none`, and so is one naming `NONE`; one signed ES384 with the provider's
-/// own key from its JWKS is refused as off the list, and taken from a provider that lists ES384; one signed HS256 with
-/// the client secret is refused as off the list, and from a provider that lists HS256 for want of a key, as only the
-/// provider's JWKS gives keys (the client secret is none), so a symmetric algorithm cannot borrow a secret. It does not
-/// judge the provider's list: the deployer picks the provider.
+/// own key from its JWKS is refused as off the list, refused from a provider that lists ES384 by a flow that prefers
+/// ES256, and taken there by a flow that prefers none; one signed HS256 with the client secret is refused as off the
+/// list, even from a provider that lists HS256, so a symmetric algorithm cannot borrow a secret.
 #[test]
 fn an_id_token_is_taken_only_signed_with_an_algorithm_of_the_allowlist_never_none() {
     let keys = Keys::new();
@@ -399,17 +409,81 @@ fn an_id_token_is_taken_only_signed_with_an_algorithm_of_the_allowlist_never_non
     let reason = narrow.refusal(&sso, &flow, hs256);
     assert!(reason.contains("disallowed algorithm 'HS256'"), "{reason}");
 
+    // SEC-WEB-93: the flow's preferred algorithm is the only one taken, whatever the provider lists
     let wide = Idp::start(&["ES256", "ES384", "HS256"], &keys);
-    let flow = wide.flow("PROOF_ALG_WIDE");
+    let pinned = wide.flow("PROOF_ALG_PINNED");
+    let reason = wide.refusal(&sso, &pinned, es384);
+    assert!(reason.contains("disallowed algorithm 'ES384'"), "{reason}");
+    // with none preferred, the provider's list held to the asymmetric algorithms
+    let mut flow = wide.flow("PROOF_ALG_WIDE");
+    if let FlowKind::Oidc(config) = &mut flow.kind {
+        config.preferred_jws_algorithm.clear();
+    }
     let taken = wide.sign_in(&sso, &flow, es384);
     assert_eq!(
         taken.id, "proof-user",
-        "the same ES384 token, where the provider lists ES384"
+        "the same ES384 token, where the provider lists ES384 and the flow prefers none"
     );
     let reason = wide.refusal(&sso, &flow, hs256);
-    assert!(reason.ends_with("no matching key"), "{reason}");
+    assert!(reason.contains("disallowed algorithm 'HS256'"), "{reason}");
     let reason = wide.refusal(&sso, &flow, unsigned("none"));
     assert!(reason.ends_with("the token is unsigned"), "{reason}");
+}
+
+/// SEC-WEB-93: the discovery document, and the keys and endpoints it names, are https but for this machine on an
+/// instance that is not production.
+#[test]
+fn a_discovery_document_and_its_endpoints_are_https_but_on_this_machine() {
+    use super::secure_url;
+    assert!(secure_url("https://idp.example.com/.well-known/openid-configuration", "discovery").is_ok());
+    assert!(secure_url("http://127.0.0.1:9000/jwks", "jwks_uri").is_ok());
+    assert!(secure_url("http://idp.example.com/jwks", "jwks_uri").is_err());
+    assert!(secure_url("ftp://idp.example.com/jwks", "jwks_uri").is_err());
+    // a document on loopback that names a jwks_uri elsewhere in clear is refused when the grant is built
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let discovery = json!({
+        "issuer": issuer, "authorization_endpoint": format!("{issuer}/authorize"),
+        "token_endpoint": format!("{issuer}/token"), "jwks_uri": "http://keys.example.com/jwks",
+        "response_types_supported": ["code"], "id_token_signing_alg_values_supported": ["ES256"],
+    })
+    .to_string();
+    serve(listener, move |path| {
+        (path == "/.well-known/openid-configuration").then(|| discovery.clone())
+    });
+    let flow = FlowConfig {
+        auth_flow_id: "PROOF_HTTP_JWKS".to_string(),
+        kind: FlowKind::Oidc(OidcConfig {
+            client_type: "OctOther".to_string(),
+            client_id: CLIENT.to_string(),
+            secret: SECRET.to_string(),
+            discovery_uri: format!("{issuer}/.well-known/openid-configuration"),
+            ..OidcConfig::default()
+        }),
+        deny_internal: false,
+    };
+    let err = HuskarlSso::default().start(&flow, REDIRECT).unwrap_err();
+    assert!(err.to_string().contains("must be https"), "{err}");
+    // an OAuth 2 flow's endpoints are held to the same rule
+    let oauth = |token_url: &str| FlowConfig {
+        auth_flow_id: format!("PROOF_OAUTH_{}", token_url.len()),
+        kind: FlowKind::Oauth(OauthConfig {
+            client_type: "OctOauth20".to_string(),
+            client_id: CLIENT.to_string(),
+            secret: SECRET.to_string(),
+            authorize_url: "https://idp.example.com/authorize".to_string(),
+            token_url: token_url.to_string(),
+            ..OauthConfig::default()
+        }),
+        deny_internal: false,
+    };
+    let err = HuskarlSso::default()
+        .start(&oauth("http://idp.example.com/token"), REDIRECT)
+        .unwrap_err();
+    assert!(err.to_string().contains("must be https"), "{err}");
+    assert!(HuskarlSso::default()
+        .start(&oauth("https://idp.example.com/token"), REDIRECT)
+        .is_ok());
 }
 
 /// The security proof of OWASP ASVS 5.0.0 v5.0.0-9.1.3 (docs/security/proofs/V9-Self-contained-Tokens.md), in-process:
@@ -680,4 +754,47 @@ fn the_apple_client_secret_names_apple_as_its_audience() {
     .unwrap();
     let signed = format!("{}.{}", segments[0], segments[1]);
     assert!(key.verifying_key().verify(signed.as_bytes(), &signature).is_ok());
+}
+
+/// SEC-WEB-86: an OpenID user info answer is merged into the profile only when its `sub` is the ID token's.
+#[test]
+fn a_user_info_answer_is_taken_only_for_the_id_tokens_subject() {
+    use super::same_subject;
+    let sub = |text: &str| json!(text);
+    assert!(same_subject("F", Some(&sub("u1")), Some(&sub("u1"))).is_ok());
+    for (token, info) in [
+        (Some(sub("u1")), Some(sub("u2"))),
+        (Some(sub("u1")), None),
+        (None, Some(sub("u1"))),
+    ] {
+        let err = same_subject("F", token.as_ref(), info.as_ref()).unwrap_err();
+        assert!(err.to_string().contains("not for the ID token's subject"), "{err}");
+    }
+    assert!(same_subject("F", Some(&sub("u1")), Some(&json!(1))).is_err());
+
+    // through the real start and callback: another subject's user info refuses the sign-in, the ID token's own is
+    // merged into the profile
+    let keys = Keys::new();
+    let sso = HuskarlSso::default();
+    let idp = Idp::start(&["ES256"], &keys);
+    let flow = idp.flow("PROOF_USER_INFO");
+    let es256 = |claims: &Json| {
+        jws(&json!({"alg": "ES256", "kid": "k1", "typ": "JWT"}), claims, |input| {
+            es256_sign(&keys.es256, input)
+        })
+    };
+    *idp.user_info.lock().unwrap() = json!({"sub": "someone-else", "email": "other@example.com"}).to_string();
+    let (started, callback) = idp.begin(&sso, &flow, es256);
+    let err = sso.complete(&flow, &started.pending, &callback).unwrap_err();
+    assert!(err.to_string().contains("not for the ID token's subject"), "{err}");
+    *idp.user_info.lock().unwrap() = json!({"sub": "proof-user", "zoneinfo": "Europe/Oslo"}).to_string();
+    let taken = idp.sign_in(&sso, &flow, es256);
+    assert_eq!(
+        taken
+            .attributes
+            .get("zoneinfo")
+            .map(moqui_lib::object::to_plain_string)
+            .as_deref(),
+        Some("Europe/Oslo")
+    );
 }

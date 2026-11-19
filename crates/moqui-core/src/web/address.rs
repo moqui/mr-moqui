@@ -196,6 +196,40 @@ impl ClientAddressing {
         !self.header.is_empty() && (self.trusted.is_empty() || self.is_trusted(peer))
     }
 
+    /// The value of a forwarding header of a request from `peer` (`X-Forwarded-Proto`, `-Host` or `-Port`: `value`, as
+    /// sent), read from the same hop as the client address of its `client-ip-header` (`client`) (SEC-WEB-91): with
+    /// trusted proxies, the value at the index of the rightmost hop that is not one when the header has as many values,
+    /// else its last value, which the nearest trusted proxy wrote, so a value the client sent ahead of a proxy that
+    /// appends is never taken; with no list of them, its first, as the client address is the first hop. `None` when the
+    /// headers are not believed or the value is empty.
+    pub fn forwarded_value(&self, peer: IpAddr, client: Option<&str>, value: Option<&str>) -> Option<String> {
+        let peer = peer.to_canonical();
+        if !self.believes(peer) {
+            return None;
+        }
+        let values: Vec<&str> = value?.split(',').map(str::trim).collect();
+        let picked = if self.trusted.is_empty() {
+            values.first().copied()
+        } else {
+            let hops: Vec<&str> = client.map(|client| client.split(',').collect()).unwrap_or_default();
+            let mut index = None;
+            for (at, hop) in hops.iter().enumerate().rev() {
+                let Some(address) = parse_hop(hop) else {
+                    break;
+                };
+                if !self.is_trusted(address) {
+                    index = Some(at);
+                    break;
+                }
+            }
+            match index {
+                Some(at) if values.len() == hops.len() => values.get(at).copied(),
+                _ => values.last().copied(),
+            }
+        };
+        picked.filter(|picked| !picked.is_empty()).map(str::to_string)
+    }
+
     /// The client of a request from `peer` whose `client-ip-header` is `value`: `peer` itself when the header is not
     /// believed or names no address.
     pub fn resolve(&self, peer: IpAddr, value: Option<&str>) -> IpAddr {
@@ -323,5 +357,40 @@ mod tests {
         let none = ClientAddressing::new("", parse_cidrs("10.0.0.0/8", "test"));
         assert!(!none.believes(ip("10.0.0.2")));
         assert_eq!(none.resolve(ip("10.0.0.2"), Some("203.0.113.5")), ip("10.0.0.2"));
+    }
+
+    /// SEC-WEB-91: behind trusted proxies a forwarding header is read from the client address's hop, or its last value
+    /// when it has another count, never the first value a client sent ahead of a proxy that appends.
+    #[test]
+    fn a_forwarded_value_is_read_from_the_client_hop_not_the_first() {
+        let addressing = ClientAddressing::new("X-Forwarded-For", parse_cidrs("10.0.0.0/8", "test"));
+        let proxy = ip("10.0.0.2");
+        let value = |client: Option<&str>, sent: &str| addressing.forwarded_value(proxy, client, Some(sent));
+        // one proxy that appends: the client's own value first, the proxy's last
+        assert_eq!(value(Some("198.51.100.7"), "https, http").as_deref(), Some("http"));
+        // the client named a hop too: the values line up with the hops
+        assert_eq!(
+            value(
+                Some("6.6.6.6, 198.51.100.7, 10.0.0.9"),
+                "evil.example, shop.example, inner"
+            )
+            .as_deref(),
+            Some("shop.example")
+        );
+        // a proxy that replaces the header
+        assert_eq!(value(Some("198.51.100.7"), "https").as_deref(), Some("https"));
+        assert_eq!(value(None, " shop.example ").as_deref(), Some("shop.example"));
+        // not believed from a peer that is not a trusted proxy
+        assert_eq!(
+            addressing.forwarded_value(ip("198.51.100.20"), None, Some("https")),
+            None
+        );
+        // with no list of trusted proxies, the first, as the client address is
+        let any = ClientAddressing::new("X-Forwarded-For", Vec::new());
+        assert_eq!(
+            any.forwarded_value(ip("198.51.100.20"), Some("1.2.3.4"), Some("https, http"))
+                .as_deref(),
+            Some("https")
+        );
     }
 }
