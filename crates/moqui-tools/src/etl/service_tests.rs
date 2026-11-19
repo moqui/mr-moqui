@@ -14,10 +14,12 @@
 
 use std::collections::BTreeMap;
 
+use moqui_lib::etl::SimpleEtl;
 use moqui_lib::object::{to_plain_string, Value};
 
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 
+use super::source::{self, SourceOptions};
 use super::{inline_spreadsheet_load, match_fields};
 
 /// `load#SpreadsheetEntity` through its inline mapping: the header names the fields (`fieldMap` renaming one), a
@@ -102,4 +104,100 @@ fn columns_match_by_name_then_words_then_nearest() {
             ("Unrelated Column", None, "none"),
         ]
     );
+}
+
+/// An entity source reads no encrypted or password field into a row, and no source condition or lookup matches on one
+/// or answers it: the entity facade decrypts an encrypted field as it reads it, so a row, a check's sample or a lookup
+/// would answer it in clear (plans/Security-Review-Medium.md SEC-TLS-89).
+#[test]
+fn an_entity_source_and_a_lookup_read_no_encrypted_or_password_field() {
+    use super::Mapping;
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
+    );
+    let facade = moqui_core::testing::open();
+    facade.assume_db_tables();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let mut endpoint = facade.make_value("moqui.llm.LlmEndpoint").unwrap();
+    endpoint.set("endpointId", Value::string("ETL_SECRET"));
+    endpoint.set("description", Value::string("Endpoint"));
+    endpoint.set("apiKey", Value::string("stored-api-key"));
+    endpoint.create(&facade).unwrap();
+    let field = |pairs: &[(&str, &str)]| {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), Value::string(*value)))
+                .collect(),
+        )
+    };
+    let mapping = |fields: Vec<Value>, conditions: &[(&str, &str)]| {
+        let mut map = indexmap::IndexMap::default();
+        map.insert("sourceTypeEnumId".to_string(), Value::string("EtlsEntity"));
+        map.insert("sourceEntityName".to_string(), Value::string("moqui.llm.LlmEndpoint"));
+        map.insert("targetTypeEnumId".to_string(), Value::string("EtltEntity"));
+        map.insert("targetName".to_string(), Value::string("moqui.basic.Enumeration"));
+        map.insert("fields".to_string(), Value::List(fields));
+        map.insert(
+            "sourceConditions".to_string(),
+            Value::Map(
+                conditions
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), Value::string(*value)))
+                    .collect(),
+            ),
+        );
+        Mapping::from_map(&map).unwrap()
+    };
+    let plain = mapping(
+        vec![field(&[("targetField", "enumId"), ("sourceColumn", "endpointId")])],
+        &[],
+    );
+    plain.validate_with(&facade).unwrap();
+    let source = source::open(&facade, &plain, &SourceOptions::default()).unwrap();
+    let rows = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut etl = SimpleEtl::from_boxes(source.extractor, Box::new(super::Collect(std::rc::Rc::clone(&rows))));
+    etl.process();
+    let rows = rows.borrow();
+    let row = rows
+        .iter()
+        .find(|row| row.get("endpointId").map(to_plain_string).as_deref() == Some("ETL_SECRET"))
+        .expect("the endpoint's row");
+    assert_eq!(row.get("description").map(to_plain_string).as_deref(), Some("Endpoint"));
+    assert!(!row.contains_key("apiKey"), "{row:?}");
+    // a condition on it would tell whether a guess is its value
+    let conditioned = mapping(
+        vec![field(&[("targetField", "enumId"), ("sourceColumn", "endpointId")])],
+        &[("apiKey", "guess")],
+    );
+    let refused = conditioned.validate_with(&facade).unwrap_err().to_string();
+    assert!(
+        refused.contains("apiKey is not available in an ETL source condition"),
+        "{refused}"
+    );
+    // a lookup neither answers it nor matches on it
+    for (matched, result) in [("endpointId", "apiKey"), ("apiKey", "endpointId")] {
+        let looked_up = mapping(
+            vec![
+                field(&[("targetField", "enumId"), ("sourceColumn", "endpointId")]),
+                field(&[
+                    ("targetField", "description"),
+                    ("sourceColumn", "endpointId"),
+                    ("lookupEntityName", "moqui.llm.LlmEndpoint"),
+                    ("lookupMatchField", matched),
+                    ("lookupResultField", result),
+                ]),
+            ],
+            &[],
+        );
+        let refused = looked_up.validate_with(&facade).unwrap_err().to_string();
+        assert!(
+            refused.contains("apiKey is not available in an ETL lookup"),
+            "{refused}"
+        );
+    }
 }

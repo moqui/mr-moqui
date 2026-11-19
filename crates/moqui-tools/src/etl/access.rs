@@ -229,6 +229,32 @@ pub fn secret_fields_of(facade: &moqui_core::entity::EntityFacade, entity_name: 
     moqui_core::entity::sensitive::secret_fields(facade, entity_name)
 }
 
+/// The fields of `entity_name` an ETL mapping never reads: no source row holds one, and no lookup, nor a source
+/// condition, matches on one or answers it. They are the password fields, by name or by origin ([`secret_fields_of`]),
+/// and the encrypted fields, which the entity facade decrypts as it reads them, unless the user holds the sealed
+/// `ADMIN_BACKUP_DOWNLOAD`, as an export (plans/Security-Review-Medium.md SEC-TLS-89).
+#[must_use]
+pub fn hidden_fields_of(facade: &moqui_core::entity::EntityFacade, entity_name: &str) -> Vec<String> {
+    use moqui_core::entity::sensitive;
+    let access = sensitive::generic_access(facade, entity_name);
+    let mut hidden: Vec<String> = sensitive::USER_ACCOUNT_SECRET_FIELDS
+        .iter()
+        .map(|name| (*name).to_string())
+        .chain(access.secret)
+        .collect();
+    if !may_read_encrypted() {
+        hidden.extend(access.encrypted);
+    }
+    hidden
+}
+
+/// Whether the current user holds the sealed `ADMIN_BACKUP_DOWNLOAD`, which a full export needs too: an ETL source or
+/// lookup then reads encrypted fields in clear.
+#[must_use]
+pub fn may_read_encrypted() -> bool {
+    moqui_core::user::has_permission("ADMIN_BACKUP_DOWNLOAD").unwrap_or(false)
+}
+
 /// The service target's verb and noun, and whether it is an entity-auto service (`verb#Entity`, no path).
 #[must_use]
 pub fn service_target_parts(name: &str) -> (String, String, bool) {

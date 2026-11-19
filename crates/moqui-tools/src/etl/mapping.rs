@@ -403,17 +403,24 @@ impl Mapping {
     }
 
     /// [`Self::validate`], and what only the entity definitions tell: a view over a restricted entity as the source,
-    /// the target (also an entity-auto service's) or a lookup, and a lookup's match or result field that is a view's
-    /// alias of a `UserAccount` password field under another name.
+    /// the target (also an entity-auto service's) or a lookup; and a source condition or a lookup's match or result
+    /// field that is a field no mapping reads ([`super::access::hidden_fields_of`]: a password field, by name or as a
+    /// view's alias of one, or an encrypted field), so neither answers one nor matches on one.
     ///
     /// # Errors
     ///
     /// An error naming what is refused.
     pub fn validate_with(&self, facade: &EntityFacade) -> Result<(), Error> {
-        use super::access::{refuse_restricted_view, secret_fields_of, service_target_parts};
+        use super::access::{hidden_fields_of, refuse_restricted_view, service_target_parts};
         self.validate()?;
         if self.source_kind == SourceKind::Entity {
             refuse_restricted_view(facade, &self.source_entity_name, "source")?;
+            let hidden = hidden_fields_of(facade, &self.source_entity_name);
+            if let Some(name) = self.source_conditions.keys().find(|name| hidden.contains(name)) {
+                return Err(Error::new(format!(
+                    "{name} is not available in an ETL source condition"
+                )));
+            }
         }
         match self.target_kind {
             TargetKind::Entity => refuse_restricted_view(facade, &self.target_name, "target")?,
@@ -429,9 +436,9 @@ impl Mapping {
                 continue;
             };
             refuse_restricted_view(facade, entity, "lookup")?;
-            let secrets = secret_fields_of(facade, entity);
+            let hidden = hidden_fields_of(facade, entity);
             let lookup_fields = [&field.lookup_match_field, &field.lookup_result_field];
-            if let Some(name) = lookup_fields.into_iter().flatten().find(|name| secrets.contains(name)) {
+            if let Some(name) = lookup_fields.into_iter().flatten().find(|name| hidden.contains(name)) {
                 return Err(Error::new(format!("{name} is not available in an ETL lookup")));
             }
         }

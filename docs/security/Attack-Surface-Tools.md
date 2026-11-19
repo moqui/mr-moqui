@@ -70,7 +70,7 @@ The Tools database sections ([Database](../tools/Database.md), `crates/moqui-too
   production) reaches a loopback, private or link-local host on any port, and `test#DatabaseConnection` opens a TCP
   connection to it (`crates/moqui-tools/src/ext.rs`). A connection's pool is kept in each process: a store or a delete
   forgets this process's pool only, and another cluster member serves `db=ext:<id>` from the pool it made (the old
-  host, password and `readOnly`) while it is used. Data Load's check answers a stored row's fields.
+  host, password and `readOnly`) while it is used. Data Load's check refuses a connection row, as a load does.
 - **Raw SQL from scripts.** `ec.entity.runSqlStatement` (changes allowed), `runSqlUpdateConf`, `runSqlCountConf` and
   `testConfConnection` check no permission (`crates/moqui-core/src/script/host/tools.rs`). No Tools screen calls them
   (`InstanceServices.xml` and mr-mantle's `PaymentMethodServices.xml` do), but any script that runs has them, with no
@@ -78,8 +78,10 @@ The Tools database sections ([Database](../tools/Database.md), `crates/moqui-too
 - **ETL** (`crates/moqui-tools/src/etl/`). A run is the user's, with authorization on and the Tools frame checked for
   all actions. A source is a file (the locations of the table above), a SQL source (an entity group or `ext:`, read
   only, with a `DbaSql` audit row) or an entity; there is no URL source. An entity source and a field's lookup read
-  any entity that is not restricted, whole but for fields with a secret name and the source's own `secrets` list, so an
-  encrypted field with another name is read decrypted, and `check#EtlSample` answers the rows to the browser. A target
+  any entity that is not restricted, whole but for its password fields (by name or a view alias's origin) and its
+  encrypted fields, and a source condition or a lookup's match or result field naming one of those is refused
+  (`hidden_fields_of`, `Mapping::validate_with`); a holder of the sealed `ADMIN_BACKUP_DOWNLOAD` reads the encrypted
+  fields, as a full export does. `check#EtlSample` answers the rows to the browser. A target
   is an entity or any service whose verb is not `delete`, called once a row as the run's user. Only the owner or a
   `DATABASE_ADMIN` holder changes, copies or deletes a mapping or a value map, and the owner stays the owner.
   `get#EtlMapping` answers any saved mapping, its `sourceSql` and `expression` texts included, to a Tools viewer, and
