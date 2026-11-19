@@ -63,8 +63,8 @@ fn of_config(config: &Map<String, Json>) -> Option<Json> {
 /// Why `lookup` is not resolved, or None when it may be: its entity is defined and is not restricted to generic access
 /// (nor a view over one), its `keyField` is the entity's single primary-key field, so it reads only the rows the frame's
 /// ids name and not every row that shares a value, its `conditions` are a map of plain values (equalities), and none of
-/// its key, display and condition fields is a password or encrypted field, nor, on `UserAccount` or a view with it as a
-/// member, an identity field.
+/// its key, display and condition fields is a password or encrypted field, nor an identity field of `UserAccount` (its
+/// own, or a view's alias that reads one, by any name and through views of views).
 pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
     if !lookup.is_object() {
         return Some("a lookup must be a map".into());
@@ -78,14 +78,9 @@ pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
     let Some(facade) = ec.factory().entity() else {
         return Some("the entity facade is unavailable".into());
     };
-    let Ok((full_name, pk_fields, reads_accounts)) = facade.with_entity(entity_name, |entity, _, _| {
+    let Ok((full_name, pk_fields)) = facade.with_entity(entity_name, |entity, _, _| {
         let pk_fields: Vec<String> = entity.pk_field_names().into_iter().map(str::to_string).collect();
-        let reads_accounts = sensitive::is_user_account_entity(&entity.full_name)
-            || entity
-                .member_entities
-                .iter()
-                .any(|member| sensitive::is_user_account_entity(&member.entity_name));
-        Ok((entity.full_name.clone(), pk_fields, reads_accounts))
+        Ok((entity.full_name.clone(), pk_fields))
     }) else {
         return Some(format!("entity {entity_name} is not defined"));
     };
@@ -119,8 +114,9 @@ pub(crate) fn refusal(ec: &ExecutionContext, lookup: &Json) -> Option<String> {
             "field {field} of {full_name} is a password or encrypted field, which a lookup does not read"
         ));
     }
-    let identity = |field: &&&str| reads_accounts && sensitive::USER_ACCOUNT_IDENTITY_FIELDS.contains(*field);
-    if let Some(field) = fields.iter().find(identity) {
+    // by origin: a view's alias of a UserAccount identity field under any name, through views of views
+    let identity = sensitive::identity_fields(&facade, &full_name);
+    if let Some(field) = fields.iter().find(|field| identity.iter().any(|name| name == **field)) {
         return Some(format!(
             "field {field} of {full_name} is an account's identity field, which a lookup does not read"
         ));

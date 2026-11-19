@@ -2283,6 +2283,53 @@ fn a_view_that_renames_a_password_or_reads_a_restricted_entity_is_caught() {
     assert!(!stripped.contains_key("pw") && stripped.contains_key("login"));
 }
 
+/// A view's alias of a `UserAccount` identity field is one whatever its name, through a view of a view; a field of the
+/// same name on another entity is not (plans/Security-Review.md SEC-TLS-82).
+#[test]
+fn an_accounts_identity_fields_are_found_by_origin() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let dir = std::env::temp_dir().join(format!("moqui-identity-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("IdentityViews.xml"),
+        r#"<entities>
+            <view-entity entity-name="UserLogin" package="spec.identity">
+                <member-entity entity-alias="UA" entity-name="moqui.security.UserAccount"/>
+                <alias name="userId" entity-alias="UA"/>
+                <alias name="handle" entity-alias="UA" field="username"/>
+                <alias name="mail" entity-alias="UA" field="emailAddress"/>
+                <alias name="name" entity-alias="UA" field="userFullName"/>
+            </view-entity>
+            <view-entity entity-name="UserLoginAgain" package="spec.identity">
+                <member-entity entity-alias="UL" entity-name="spec.identity.UserLogin"/>
+                <alias name="userId" entity-alias="UL"/>
+                <alias name="who" entity-alias="UL" field="handle"/>
+                <alias name="label" entity-alias="UL" field="name"/>
+            </view-entity>
+            <view-entity entity-name="EnumNamed" package="spec.identity">
+                <member-entity entity-alias="EN" entity-name="moqui.basic.Enumeration"/>
+                <alias name="enumId" entity-alias="EN"/>
+                <alias name="username" entity-alias="EN" field="description"/>
+            </view-entity>
+        </entities>"#,
+    )
+    .unwrap();
+    let facade = crate::testing::open_groups_with_components("logging", std::slice::from_ref(&dir));
+    let _ = std::fs::remove_dir_all(&dir);
+    let identity = |name: &str| super::sensitive::identity_fields(&facade, name);
+    assert_eq!(identity("spec.identity.UserLogin"), ["handle", "mail"]);
+    assert_eq!(identity("spec.identity.UserLoginAgain"), ["who"]);
+    // a field named as one, of another entity
+    assert!(identity("spec.identity.EnumNamed").is_empty());
+    let own = identity("moqui.security.UserAccount");
+    assert!(own.iter().any(|name| name == "emailAddress") && own.iter().any(|name| name == "disabled"));
+    assert!(!own.iter().any(|name| name == "userFullName"));
+    // the password rule is unchanged by it
+    assert!(super::sensitive::secret_fields(&facade, "spec.identity.UserLoginAgain").is_empty());
+}
+
 /// Java's `DbViewEntity`: a view-entity built from its member, key map and alias rows on its first use, under its name
 /// and its full name, that finds, counts and iterates as a file view does. A name looked up before its rows are there
 /// is found once they are, and a write to its rows builds it again.

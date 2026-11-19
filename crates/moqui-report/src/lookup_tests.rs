@@ -188,6 +188,47 @@ fn a_lookup_refuses_secret_fields_other_keys_and_restricted_entities() {
     .is_none());
 }
 
+/// A view's alias of an account's identity field is refused by its origin, whatever its name and through a view of a
+/// view; another alias of the same view still labels.
+#[test]
+fn a_lookup_refuses_a_views_alias_of_an_identity_field() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let dir = std::env::temp_dir().join(format!("moqui-lookup-views-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("LookupViews.xml"),
+        r#"<entities>
+            <view-entity entity-name="UserLogin" package="spec.lookup">
+                <member-entity entity-alias="UA" entity-name="moqui.security.UserAccount"/>
+                <alias name="userId" entity-alias="UA"/>
+                <alias name="handle" entity-alias="UA" field="username"/>
+                <alias name="name" entity-alias="UA" field="userFullName"/>
+            </view-entity>
+            <view-entity entity-name="UserLoginAgain" package="spec.lookup">
+                <member-entity entity-alias="UL" entity-name="spec.lookup.UserLogin"/>
+                <alias name="userId" entity-alias="UL"/>
+                <alias name="who" entity-alias="UL" field="handle"/>
+                <alias name="label" entity-alias="UL" field="name"/>
+            </view-entity>
+        </entities>"#,
+    )
+    .unwrap();
+    let facade = moqui_core::testing::open_groups_with_components("logging", std::slice::from_ref(&dir));
+    let _ = std::fs::remove_dir_all(&dir);
+    let ctx = context_on(&facade);
+    let _entered = ctx.enter();
+    let lookup = |display: &str| {
+        refusal(
+            &ctx,
+            &json!({"entityName":"spec.lookup.UserLoginAgain","keyField":"userId","displayField":display}),
+        )
+    };
+    assert!(lookup("who").unwrap_or_default().contains("identity field"));
+    assert_eq!(lookup("label"), None);
+}
+
 /// `save#Definition` refuses a dataset whose field lookup is refused, before anything is written, and saves one whose
 /// lookup labels by a primary key.
 #[test]
