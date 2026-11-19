@@ -202,17 +202,17 @@ pub fn account_owned_email_server(
     Ok(owners > 0)
 }
 
-/// How deep [`secret_fields`] and [`is_restricted_entity_or_view`] follow views of views.
+/// How deep [`secret_fields`], [`identity_fields`] and [`is_restricted_entity_or_view`] follow views of views.
 const MAX_VIEW_DEPTH: u32 = 8;
 
 fn definition_of(facade: &crate::entity::EntityFacade, name: &str) -> Option<moqui_db::model::EntityDefinition> {
     facade.with_entity(name, |entity, _, _| Ok(entity.clone())).ok()
 }
 
-/// Whether raw SQL text (a `complex-alias` expression, a `pq-alias`) names a password field or its column.
-fn sql_names_secret(text: &str) -> bool {
+/// Whether raw SQL text (a `complex-alias` expression, a `pq-alias`) names one of `fields` or its column.
+fn sql_names(text: &str, fields: &[&str]) -> bool {
     let lower = text.to_ascii_lowercase();
-    USER_ACCOUNT_SECRET_FIELDS.iter().any(|field| {
+    fields.iter().any(|field| {
         let column: String = field
             .chars()
             .flat_map(|ch| {
@@ -227,25 +227,80 @@ fn sql_names_secret(text: &str) -> bool {
     })
 }
 
-fn view_secret_fields(
+/// Which fields [`fields_by_origin`] looks for: `UserAccount`'s password fields, by name on any entity and in any
+/// alias name, or its identity fields, only where they are `UserAccount`'s own.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Secret,
+    Identity,
+}
+
+impl Kind {
+    /// A field of an entity that is not a view.
+    fn is_field(self, entity: &moqui_db::model::EntityDefinition, field: &str) -> bool {
+        match self {
+            Self::Secret => USER_ACCOUNT_SECRET_FIELDS.contains(&field),
+            Self::Identity => {
+                is_user_account_entity(&entity.full_name) && USER_ACCOUNT_IDENTITY_FIELDS.contains(&field)
+            }
+        }
+    }
+
+    /// A view's alias by its own name, whatever it reads.
+    fn is_alias_name(self, name: &str) -> bool {
+        self == Self::Secret && USER_ACCOUNT_SECRET_FIELDS.contains(&name)
+    }
+
+    /// Raw SQL of a view that names one; for identity fields, of a view that reads `UserAccount`.
+    fn sql_names(self, text: &str, reads_accounts: bool) -> bool {
+        match self {
+            Self::Secret => sql_names(text, USER_ACCOUNT_SECRET_FIELDS),
+            Self::Identity => reads_accounts && sql_names(text, USER_ACCOUNT_IDENTITY_FIELDS),
+        }
+    }
+}
+
+/// Whether `entity` is `UserAccount` or a view any of whose members (through views of views) is.
+fn reads_user_accounts(
     facade: &crate::entity::EntityFacade,
     entity: &moqui_db::model::EntityDefinition,
     depth: u32,
+) -> bool {
+    if is_user_account_entity(&entity.full_name) {
+        return true;
+    }
+    entity.is_view
+        && (depth > MAX_VIEW_DEPTH
+            || entity.member_entities.iter().any(|member| {
+                is_user_account_entity(&member.entity_name)
+                    || definition_of(facade, &member.entity_name)
+                        .is_some_and(|definition| reads_user_accounts(facade, &definition, depth + 1))
+            }))
+}
+
+/// The fields of `entity` that are of `kind`: on an entity, by name ([`Kind::is_field`]); on a view (a view entity, a
+/// `DbViewEntity`, a `DataDocument`) each alias that reads one from a member, through views of views, in a complex or
+/// case alias too, or whose raw SQL names one.
+fn fields_by_origin(
+    facade: &crate::entity::EntityFacade,
+    entity: &moqui_db::model::EntityDefinition,
+    depth: u32,
+    kind: Kind,
 ) -> Vec<String> {
     use moqui_db::model::AliasExpr;
-    let by_name = |name: &str| USER_ACCOUNT_SECRET_FIELDS.contains(&name);
     if !entity.is_view {
         return entity
             .fields
             .iter()
-            .filter(|field| by_name(&field.name))
+            .filter(|field| kind.is_field(entity, &field.name))
             .map(|field| field.name.clone())
             .collect();
     }
     if depth > MAX_VIEW_DEPTH {
-        // too deep to follow: every alias is treated as secret
+        // too deep to follow: every alias is treated as one
         return entity.aliases.iter().map(|alias| alias.name.clone()).collect();
     }
+    let reads_accounts = kind == Kind::Identity && reads_user_accounts(facade, entity, depth);
     let member_name = |entity_alias: &str| {
         entity
             .member_entities
@@ -253,36 +308,39 @@ fn view_secret_fields(
             .find(|member| member.entity_alias == entity_alias)
             .map(|member| member.entity_name.clone())
     };
-    let mut member_secrets: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut origin_secret = |member: Option<String>, field: &str| {
+    let mut member_fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut from_origin = |member: Option<String>, field: &str| {
         let Some(member) = member.filter(|member| !member.is_empty()) else {
-            return by_name(field);
+            return kind.is_alias_name(field);
         };
-        let secrets = member_secrets.entry(member.clone()).or_insert_with(|| {
+        let found = member_fields.entry(member.clone()).or_insert_with(|| {
             definition_of(facade, &member)
-                .map(|definition| view_secret_fields(facade, &definition, depth + 1))
+                .map(|definition| fields_by_origin(facade, &definition, depth + 1, kind))
                 .unwrap_or_default()
         });
-        by_name(field) || secrets.iter().any(|secret| secret == field)
+        kind.is_alias_name(field) || found.iter().any(|name| name == field)
     };
     let mut out = Vec::new();
     for alias in &entity.aliases {
-        let secret = by_name(&alias.name)
+        let found = kind.is_alias_name(&alias.name)
             || match &alias.expr {
                 AliasExpr::Column => {
                     let member = alias
                         .member_entity
                         .clone()
                         .or_else(|| alias.entity_alias.as_deref().and_then(member_name));
-                    origin_secret(member, alias.field_name())
+                    from_origin(member, alias.field_name())
                 }
                 AliasExpr::Complex(complex) => {
                     let mut fields = Vec::new();
                     complex.visit_fields(&mut |field| fields.push((field.entity_alias.clone(), field.field.clone())));
-                    complex.expression.as_deref().is_some_and(sql_names_secret)
+                    complex
+                        .expression
+                        .as_deref()
+                        .is_some_and(|text| kind.sql_names(text, reads_accounts))
                         || fields
                             .into_iter()
-                            .any(|(member, field)| origin_secret(member_name(&member), &field))
+                            .any(|(member, field)| from_origin(member_name(&member), &field))
                 }
                 AliasExpr::Case(case) => {
                     let mut fields = Vec::new();
@@ -293,18 +351,20 @@ fn view_secret_fields(
                         otherwise
                             .visit_fields(&mut |field| fields.push((field.entity_alias.clone(), field.field.clone())));
                     }
-                    case.expression.as_deref().is_some_and(sql_names_secret)
+                    case.expression
+                        .as_deref()
+                        .is_some_and(|text| kind.sql_names(text, reads_accounts))
                         || fields
                             .into_iter()
-                            .any(|(member, field)| origin_secret(member_name(&member), &field))
+                            .any(|(member, field)| from_origin(member_name(&member), &field))
                 }
             };
-        if secret {
+        if found {
             out.push(alias.name.clone());
         }
     }
     for alias in &entity.pq_aliases {
-        if by_name(&alias.name) || sql_names_secret(&alias.expression) {
+        if kind.is_alias_name(&alias.name) || kind.sql_names(&alias.expression, reads_accounts) {
             out.push(alias.name.clone());
         }
     }
@@ -318,7 +378,19 @@ fn view_secret_fields(
 #[must_use]
 pub fn secret_fields(facade: &crate::entity::EntityFacade, entity_name: &str) -> Vec<String> {
     match definition_of(facade, entity_name) {
-        Some(entity) => view_secret_fields(facade, &entity, 0),
+        Some(entity) => fields_by_origin(facade, &entity, 0, Kind::Secret),
+        None => Vec::new(),
+    }
+}
+
+/// The fields of `entity_name` whose value is a `UserAccount` identity field ([`USER_ACCOUNT_IDENTITY_FIELDS`]),
+/// whatever their name: `UserAccount`'s own, and in a view each alias that reads one from a `UserAccount` member,
+/// through views of views, in a complex or case alias too, or whose raw SQL names one in a view that reads
+/// `UserAccount`. An entity that does not resolve has none here.
+#[must_use]
+pub fn identity_fields(facade: &crate::entity::EntityFacade, entity_name: &str) -> Vec<String> {
+    match definition_of(facade, entity_name) {
+        Some(entity) => fields_by_origin(facade, &entity, 0, Kind::Identity),
         None => Vec::new(),
     }
 }

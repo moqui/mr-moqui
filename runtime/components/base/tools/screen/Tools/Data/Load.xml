@@ -48,7 +48,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (dummyFks) edl.dummyFks(true)
             if (useTryInsert) edl.useTryInsert(true)
             if (hideNoActionFiles) edl.messageNoActionFiles(false)
+            // the entities no generic write takes, no account's password and no existing account's identity fields
+            // from a request (SEC-TLS-81)
             edl.restrictSensitiveEntities(true)
+            edl.protectUserAccounts(true)
 
             // with wrapForeignKeys the load runs on a worker between the jobs of plan#LoadWrap: the foreign keys of the tables
             // in the data are dropped, the data loaded, and the keys made again whatever the load did (the DatabaseLoadWrap
@@ -97,34 +100,58 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
 
-    <transition name="storeSelected">
+    <!-- Each rowOps item is base64url JSON from the request, naming an entity, a primary key and a field and value or the
+        create values: the screen makes them from a check's rows, but the holder chooses them. So a row is written only
+        where a generic write may be: not an entity WebUtilities.isGenericWriteRefused names (identity, secret config,
+        audit, hosted-instance and service-written entities, the load's restrictSensitiveEntities list), nor a field it
+        names (a password field, and UserAccount's identity fields: its username, email address, external id, disabled
+        flag and the rest), as Browse and Record's writes leave those fields (plans/Security-Review.md SEC-TLS-81). A
+        refused row is named in a message and the rest are stored. -->
+    <transition name="storeSelected" method="post" authz-action="all">
         <actions>
             <script><![CDATA[
                 let fieldsUpdated = 0
-                const rowOpList = rowOps ? rowOps.split(',') : []
+                const rowOpList = rowOps ? String(rowOps).split(',') : []
                 for (const rowOp of rowOpList) {
                     const rowOpJson = StringUtilities.base64UrlDecode(rowOp)
-                    const rowOpMap = JSON.parse(rowOpJson)
-                    if (!rowOpMap.pk) { ec.message.addMessage(`No PK in row: ${rowOpJson}`); continue }
+                    let rowOpMap = null
+                    try { rowOpMap = JSON.parse(rowOpJson) } catch (e) { rowOpMap = null }
+                    if (!rowOpMap || typeof rowOpMap !== 'object') { ec.message.addMessage(`Row is not readable, not stored: ${rowOpJson}`, 'warning'); continue }
+                    if (!rowOpMap.pk || typeof rowOpMap.pk !== 'object') { ec.message.addMessage(`No PK in row: ${rowOpJson}`); continue }
 
-                    const ed = ec.entity.getEntityDefinition(rowOpMap.entity)
-                    if (ed == null) { ec.message.addMessage(`Entity ${rowOpMap.entity} not found for row: ${rowOpJson}`); continue }
+                    const entityName = String(rowOpMap.entity || '')
+                    const ed = entityName ? ec.entity.getEntityDefinition(entityName) : null
+                    if (ed == null) { ec.message.addMessage(`Entity ${entityName} not found for row: ${rowOpJson}`); continue }
+                    if (WebUtilities.isGenericWriteRefused(entityName)) {
+                        ec.message.addMessage(`Entity ${entityName} is not available through this tool, row not stored: ${JSON.stringify(rowOpMap.pk)}`, 'warning')
+                        continue
+                    }
 
+                    let valueMap = null
                     if (rowOpMap.field) {
-                        const valueMap = Object.assign({}, rowOpMap.pk, {[rowOpMap.field]: rowOpMap.value})
-                        const stored = ec.entity.makeValue(rowOpMap.entity)
-                        stored.setFields(valueMap, true, null, null)
-                        stored.createOrUpdate()
-                        fieldsUpdated++
-                    } else if (rowOpMap.createValues) {
-                        const valueMap = Object.assign({}, rowOpMap.createValues, rowOpMap.pk)
-                        const created = ec.entity.makeValue(rowOpMap.entity)
-                        created.setFields(valueMap, true, null, null)
-                        created.create()
-                        fieldsUpdated += (Object.keys(valueMap).length - Object.keys(rowOpMap.pk).length)
+                        valueMap = Object.assign({}, rowOpMap.pk, {[rowOpMap.field]: rowOpMap.value})
+                    } else if (rowOpMap.createValues && typeof rowOpMap.createValues === 'object') {
+                        valueMap = Object.assign({}, rowOpMap.createValues, rowOpMap.pk)
                     } else {
                         // TODO: support create (at least for fields with complete PK)
                         ec.message.addMessage(`Row has no field or create values, not updating: ${rowOpJson}`)
+                        continue
+                    }
+                    // every field the row sets, its primary key map's included: a password or identity field is not taken
+                    const secretField = Object.keys(valueMap).find(name => WebUtilities.isGenericWriteRefused(entityName, name))
+                    if (secretField) {
+                        ec.message.addMessage(`Field ${secretField} of ${entityName} is not available through this tool, row not stored: ${JSON.stringify(rowOpMap.pk)}`, 'warning')
+                        continue
+                    }
+
+                    const stored = ec.entity.makeValue(entityName)
+                    stored.setFields(valueMap, true, null, null)
+                    if (rowOpMap.field) {
+                        stored.createOrUpdate()
+                        fieldsUpdated++
+                    } else {
+                        stored.create()
+                        fieldsUpdated += (Object.keys(valueMap).length - Object.keys(rowOpMap.pk).length)
                     }
                 }
 
