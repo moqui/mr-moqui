@@ -512,6 +512,10 @@ fn sync_input(
 ) -> Result<BTreeMap<String, Value>, Error> {
     // a transition's row rule is for the multi calls it makes itself, not for those of the services it calls
     let _rows = RowsAside::take();
+    // The call's authorization toggles end with it, on every exit: a body that throws between its disableAuthz() and
+    // enableAuthz(), or never enables it again, leaves its caller as it was (a Java service would leave the flag set).
+    // Made before the call's own disable guard, so it drops after it.
+    let _kept = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
     let _authz = if options.disable_authz {
         crate::context::ExecutionContext::with_current(|ctx| ctx.disable_authz())
     } else {

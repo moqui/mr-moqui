@@ -151,6 +151,9 @@ fn get_providers(
 ///   as the trusted conf that names it is (Mantle's `sms-consent` answer, read only). It is asked even when an app's
 ///   provider has the same name, so no app stands in for its answer.
 ///
+/// - Each provider's authorization toggles end with its call: what its scripts, or the services it calls, do with
+///   `disableAuthz()` and `enableAuthz()` reaches neither the caller nor the next provider, on any exit
+///   ([`crate::screen::shell::run_in_app`]).
 /// - A read (the default) runs each provider in a transaction of its own; one that fails is logged by name and listed
 ///   in `failedParts`, and the others still answer. Each answer is in `results` with its `sourceId`, in order; the
 ///   pages of several sources are never joined into one.
@@ -202,6 +205,10 @@ fn call_providers(
                 })
             }
             None => {
+                // its toggles end with its call, as an app's provider's do in run_in_app. _kept is made before _authz so
+                // it drops after it: the caller's state is put back last, as it was before the disable, rather than
+                // depending on _authz's guard counting down after the depth was set back with it counted in.
+                let _kept = ExecutionContext::with_current(ExecutionContext::keep_authz);
                 let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
                 call_tolerant_with(&provider.service, &input, &options)
             }

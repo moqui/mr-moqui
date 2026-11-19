@@ -320,7 +320,7 @@ fn user_organizations() {
 
 /// A profile entered ([`Profile::enter`]); dropping it leaves the profile.
 pub struct Entered {
-    _required: Option<moqui_core::context::AuthzRequired>,
+    _required: Option<moqui_core::context::AuthzScope>,
 }
 
 impl Drop for Entered {
