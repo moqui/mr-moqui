@@ -352,11 +352,30 @@ pub(crate) fn render_locked(
     // few such renders fill the heap for every later render on the thread (SEC-SCR-83). Nothing runs the jobs of a
     // locked render, so the sandbox is dropped; the thread's next render at this cap starts a new one.
     if !matches!(sandbox.runtime.is_job_pending(), Ok(false)) {
-        tracing::warn!("a locked template left promise jobs queued; its sandbox is dropped");
+        if first_warning(compiled) {
+            tracing::warn!(
+                "a locked template left promise jobs queued; its sandbox is dropped (logged once a template)"
+            );
+        }
         forget(sandbox.cap);
     }
     out
 }
+
+/// Whether the template `compiled` has not been logged for queued jobs yet: once a template, over the last
+/// [`MAX_WARNED`] that were, so a template on a busy page does not log on every render.
+fn first_warning(compiled: &str) -> bool {
+    static WARNED: std::sync::Mutex<std::collections::BTreeSet<u64>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    let mut warned = moqui_lib::sync::lock(&WARNED);
+    if warned.len() >= MAX_WARNED {
+        warned.clear();
+    }
+    warned.insert(crate::script::text::hash_text(compiled))
+}
+
+/// Templates remembered as logged for queued jobs.
+const MAX_WARNED: usize = 1024;
 
 /// The text of a locked render's result, or its error; an error that leaves the sandbox unusable or full drops the
 /// sandbox or its compiled functions.
@@ -441,9 +460,20 @@ mod tests {
             "a render with no job keeps the sandbox"
         );
         drop(kept);
+        assert_eq!(
+            render_locked(
+                &Arc::from("(function(){ return function(){ return typeof Promise; }; })()"),
+                "{}",
+                deadline(),
+                cap
+            )
+            .unwrap(),
+            "undefined",
+            "the sandbox has no Promise"
+        );
         let queued = Arc::from(
             "(function(){ return function(){ const big = 'x'.repeat(1000000); \
-             Promise.resolve(big).then(text => text.length); return 'y'; }; })()",
+             (async () => { await null; return big.length; })(); return 'y'; }; })()",
         );
         // each render would leave about a megabyte (twice that as UTF-16) behind in a 16 MiB sandbox
         for _ in 0..40 {

@@ -53,6 +53,7 @@ const DENIED: &[&str] = &[
     "getPrototypeOf",
     "Reflect",
     "Proxy",
+    "Promise",
     "Symbol",
     "arguments",
     "require",

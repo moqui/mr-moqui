@@ -1574,6 +1574,10 @@ pub(super) const SANDBOX_LOCKDOWN: &str = r#"
         () => Object.getOwnPropertyDescriptor(Function.prototype, "caller").get,
         () => (function () { "use strict"; return Object.getOwnPropertyDescriptor(arguments, "callee").get; })(),
     ];
+    // A template has no use for promises, and a job one queues is never run (SEC-SCR-83): the constructor goes, frozen
+    // first, since an async function still reaches its prototype.
+    freeze(Promise);
+    delete globalThis.Promise;
     freeze(globalThis);
     for (const make of hidden) {
         let item;
