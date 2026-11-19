@@ -469,3 +469,46 @@ fn a_refresh_with_rows_of_the_same_shape_replaces_them_in_place() {
     assert!(room.changed().is_some());
     assert_eq!(room.model().get_formatted_cell_value(1, 1, 1).unwrap(), "1");
 }
+
+/// An edit over an area is held to [`MAX_EDIT_CELLS`] cells and to the sheet, beyond the used cells too, where the engine
+/// would walk every cell of it with the room locked; and a room held by a call holds up only its own callers, not the
+/// map's sweep (SEC-TLS-93).
+#[test]
+fn an_area_edit_is_held_to_the_cell_bound_and_a_busy_room_holds_up_no_other() {
+    let rooms = Arc::new(Rooms::default());
+    let busy = rooms.open(opening("alice", 1)).unwrap();
+    let other = lock(&rooms.open(opening("bob", 1)).unwrap()).id.clone();
+    {
+        let mut room = lock(&busy);
+        room.edit("alice", &[json!({"op": "addSheet"})]).unwrap();
+        let started = Instant::now();
+        for op in ["clear", "clearFormatting", "style"] {
+            let huge = json!({"op": op, "sheet": 1, "row": 1, "column": 1, "width": 400, "height": 400,
+                "path": "font.b", "value": "true"});
+            let err = room.edit("alice", &[huge]).expect_err(op);
+            assert!(err.message().contains("at most"), "{op}: {}", err.message());
+        }
+        let outside = json!({"op": "clear", "sheet": 1, "row": 1_048_576, "column": 1, "width": 1, "height": 2});
+        let err = room.edit("alice", &[outside]).expect_err("outside the sheet");
+        assert!(err.message().contains("outside the sheet"), "{}", err.message());
+        let fill =
+            json!({"op": "fill", "sheet": 1, "row": 1, "column": 1, "width": 1, "height": 1, "toRow": 2_000_000});
+        assert!(room.edit("alice", &[fill]).is_err());
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        room.edit(
+            "alice",
+            &[json!({"op": "clear", "sheet": 1, "row": 1, "column": 1, "width": 300, "height": 300})],
+        )
+        .unwrap();
+    }
+
+    // alice's room is held (an edit under way); bob's call still finds his own
+    let held = lock(&busy);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let finder = Arc::clone(&rooms);
+    std::thread::spawn(move || {
+        let _ = sender.send(finder.get("bob", &other).is_some());
+    });
+    assert_eq!(receiver.recv_timeout(Duration::from_secs(5)), Ok(true));
+    drop(held);
+}

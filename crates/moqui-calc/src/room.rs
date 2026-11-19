@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use moqui_core::context::{Error, ExecutionContextFactory};
@@ -53,6 +53,11 @@ const MAX_CHART_POINTS: usize = 2_000;
 const MAX_PASTE_ROWS: usize = 5_000;
 /// The most cells an edit may change: what it changes is kept to undo it.
 pub const MAX_EDIT_CELLS: i64 = 100_000;
+/// The rows and columns of a sheet, as the engine has them.
+const SHEET_ROWS: i64 = 1_048_576;
+const SHEET_COLUMNS: i64 = 16_384;
+/// The edits over an area (`row`, `column`, `width`, `height`) that the engine walks cell by cell.
+const AREA_EDITS: [&str; 4] = ["clear", "clearFormatting", "style", "fill"];
 /// The newest edits a scratch room keeps for undo.
 const MAX_OWN_LOG: usize = 500;
 /// The most changed areas an evaluation tells the views of; past it they read everything again.
@@ -625,6 +630,7 @@ impl Room {
     ///
     /// An error for an edit that changes more than [`MAX_EDIT_CELLS`] used cells, or that the engine cannot read.
     pub fn inverse(&self, op: &Json) -> Result<Vec<Json>, Error> {
+        check_area(op)?;
         let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
         let small = |key: &str, default: i64| i32::try_from(int(key, default)).unwrap_or(i32::MAX);
         let sheet = u32::try_from(int("sheet", 0)).unwrap_or(u32::MAX);
@@ -756,6 +762,7 @@ impl Room {
     }
 
     fn apply(&mut self, op: &Json) -> Result<(), Error> {
+        check_area(op)?;
         let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
         let small = |key: &str, default: i64| i32::try_from(int(key, default)).unwrap_or(i32::MAX);
         let sheet = u32::try_from(int("sheet", 0)).unwrap_or(u32::MAX);
@@ -1062,6 +1069,35 @@ pub const REOPEN: &str = "The document was reverted or changed elsewhere; open i
 const NOTHING_TO_UNDO: &str = "Nothing of yours to undo";
 const NOTHING_TO_REDO: &str = "Nothing of yours to redo";
 
+/// Refuse an edit over an area ([`AREA_EDITS`]) of more than [`MAX_EDIT_CELLS`] cells, or one outside the sheet: the
+/// engine walks each cell of it (a `clear` keeps each old value, a `style` makes a style for each), with the room
+/// locked, so an area past the used cells is held to the same bound as one that writes them (SEC-TLS-93).
+fn check_area(op: &Json) -> Result<(), Error> {
+    if !op["op"].as_str().is_some_and(|kind| AREA_EDITS.contains(&kind)) {
+        return Ok(());
+    }
+    let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
+    let (row, column) = (int("row", 1), int("column", 1));
+    let (width, height) = (int("width", 1).max(1), int("height", 1).max(1));
+    if width.saturating_mul(height) > MAX_EDIT_CELLS {
+        return Err(Error::new(format!("An edit changes at most {MAX_EDIT_CELLS} cells")));
+    }
+    let to_row = op["toRow"].as_i64().unwrap_or(row);
+    let to_column = op["toColumn"].as_i64().unwrap_or(column);
+    let rows = |at: i64| (1..=SHEET_ROWS).contains(&at);
+    let columns = |at: i64| (1..=SHEET_COLUMNS).contains(&at);
+    let inside = rows(row)
+        && rows(row.saturating_add(height - 1))
+        && rows(to_row)
+        && columns(column)
+        && columns(column.saturating_add(width - 1))
+        && columns(to_column);
+    if !inside {
+        return Err(Error::new("An edit's area is outside the sheet"));
+    }
+    Ok(())
+}
+
 /// The kind of `ops` when it is a lone undo or redo.
 #[must_use]
 pub fn single_kind(ops: &[Json]) -> Option<&str> {
@@ -1180,10 +1216,15 @@ impl Rooms {
         }
     }
 
-    /// Drop the members not seen for [`IDLE`], and the rooms with none left.
+    /// Drop the members not seen for [`IDLE`], and the rooms with none left. A room another call holds is in use and
+    /// kept as it is: the sweep, under the map's lock, never waits for a room's work (SEC-TLS-93).
     fn sweep(rooms: &mut RoomMap) {
         rooms.retain(|_, room| {
-            let mut room = lock(room);
+            let mut room = match room.try_lock() {
+                Ok(room) => room,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => return true,
+            };
             room.members.retain(|_, used| used.elapsed() < IDLE);
             !room.members.is_empty()
         });
@@ -1193,9 +1234,12 @@ impl Rooms {
     /// left it, or it was dropped.
     #[must_use]
     pub fn get(&self, user_id: &str, id: &str) -> Option<SharedRoom> {
-        let mut rooms = lock(&self.rooms);
-        Self::sweep(&mut rooms);
-        let room = rooms.get(id).cloned()?;
+        let room = {
+            let mut rooms = lock(&self.rooms);
+            Self::sweep(&mut rooms);
+            rooms.get(id).cloned()?
+        };
+        // the room's lock is taken with the map's let go, so a busy room holds up only its own callers
         {
             let mut held = lock(&room);
             let used = held.members.get_mut(user_id)?;
