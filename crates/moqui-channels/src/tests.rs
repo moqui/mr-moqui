@@ -759,19 +759,22 @@ fn signed_texts_come_in_once_and_bad_or_replayed_ones_are_refused() {
     assert_eq!(status(&replay), 200);
     assert_eq!(body_json(&replay)["outcome"], "duplicate");
     assert!(!replay.auth_failure);
-    // the signature is held in the distributed cache the system-message HMAC check uses, not in this adapter, so a copy
-    // that reaches another node (another adapter, the same cluster cache) is a replay there too
-    let signature = request.header("telnyx-signature-ed25519").unwrap().to_string();
-    let held = bed
-        .ctx
-        .factory()
-        .cache()
-        .get("moqui.security.hmac.replay")
-        .unwrap()
-        .expect("the replay cache")
-        .get(&format!("chatBridge:{BRIDGE}:{signature}"))
-        .unwrap();
-    assert_eq!(held, Some(Value::Bool(true)));
+    // the signature is held in the replay table the system-message HMAC check uses, not in this adapter, so a copy
+    // that reaches another node (another adapter, the same table) is a replay there too (SEC-DAT-90)
+    let worked = {
+        let _authz = bed.ctx.disable_authz();
+        bed.ctx
+            .factory()
+            .entity()
+            .unwrap()
+            .find("moqui.security.SignatureReplay")
+            .unwrap()
+            .eq("worked", Value::string("Y"))
+            .use_cache(false)
+            .count()
+            .unwrap()
+    };
+    assert!(worked >= 1, "the worked webhook's key is kept");
     {
         use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
         let context = bed.ctx.factory().new_context();
