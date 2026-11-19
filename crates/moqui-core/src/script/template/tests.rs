@@ -122,6 +122,52 @@ fn compile_errors_name_the_line() {
     }
 }
 
+/// SEC-SCR-82: `${` in template literals, brackets, and `<#if>` and `<#list>` blocks nested past `MAX_NESTING` are
+/// refused, in a small stack, before any parser sees them (the scan recursed a level for each `${`, and oxc's parser
+/// for each bracket and block, and overflowed the native stack); `MAX_NESTING` levels still compile.
+#[test]
+fn nested_template_literals_past_the_limit_are_refused_in_a_small_stack() {
+    let nested = |levels: usize| {
+        let mut expression = "1".to_string();
+        for _ in 0..levels {
+            expression = format!("`${{{expression}}}`");
+        }
+        format!("a ${{{expression}}} b")
+    };
+    let tokens = tokens_at(&nested(MAX_NESTING)).unwrap();
+    assert!(tokens.iter().any(|(_, token)| matches!(token, Token::Interp(_))));
+    let err = tokens_at(&nested(MAX_NESTING + 1)).unwrap_err();
+    assert!(err.message().contains("deeper than 64"), "{}", err.message());
+    let brackets = |levels: usize| format!("${{{}1{}}}", "(".repeat(levels), ")".repeat(levels));
+    check_template(&brackets(MAX_NESTING)).unwrap();
+    let err = check_template(&brackets(MAX_NESTING + 1)).unwrap_err();
+    assert!(err.message().contains("deeper than 64"), "{}", err.message());
+    let blocks = |levels: usize| format!("{}x{}", "<#if true>".repeat(levels), "</#if>".repeat(levels));
+    check_template(&blocks(MAX_NESTING)).unwrap();
+    let err = check_template(&blocks(MAX_NESTING + 1)).unwrap_err();
+    assert!(err.message().contains("nest deeper than 64"), "{}", err.message());
+    let tag = format!("<#if `${{{}`>x</#if>", "`${".repeat(MAX_NESTING + 1));
+    let err = tokens_at(&tag).unwrap_err();
+    assert!(
+        err.message().contains("<#if> nests brackets or template literals"),
+        "{}",
+        err.message()
+    );
+    for deep in [
+        format!("${{{}", "`${".repeat(200_000)),
+        brackets(100_000),
+        blocks(100_000),
+    ] {
+        let refused = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || check_template(&deep).map_err(|err| err.message().to_string()))
+            .unwrap()
+            .join()
+            .expect("checked in a 256 KiB stack");
+        assert!(refused.unwrap_err().contains("deeper than 64"));
+    }
+}
+
 #[test]
 fn tag_only_lines_leave_no_blank_lines() {
     on_template_engines(tag_only_lines_leave_no_blank_lines_on);

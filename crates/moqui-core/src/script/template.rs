@@ -236,8 +236,7 @@ pub fn markdown_fancy_source_with_base(source: &str, base: Option<&str>) -> Resu
                 .ok_or_else(|| fail(source, index, "comment is not closed"))?;
             Some((index + end + 3, true))
         } else if rest.starts_with("${") {
-            let end =
-                scan_expression(source, index + 2, b'}').ok_or_else(|| fail(source, index, "${ has no closing }"))?;
+            let end = interp_end(source, index)?;
             Some((end + 1, false))
         } else if rest.starts_with("<#") || rest.starts_with("</#") || rest.starts_with("<@") || rest.starts_with("</@")
         {
@@ -798,10 +797,38 @@ enum Unclosed {
     End,
     /// A `//` comment in a tag, which would run past the tag's `>`.
     LineCommentInTag,
+    /// Brackets and `${` inside template literals nested deeper than [`MAX_NESTING`].
+    TooDeep,
+}
+
+/// The deepest an expression the tokenizer scans may nest, its brackets and its `${` inside template literals together
+/// (SEC-SCR-82). [`scan`] calls itself for each `${` in a template literal, so a source of `` `${ `` repeated would
+/// overflow the native stack and end the process; and oxc's parser, which each expression and the generated program
+/// go through, recurses for each bracket (10,000 overflow a service worker's stack). Real templates nest a few.
+const MAX_NESTING: usize = 64;
+
+/// The end of the `${` at `index`: the offset of its `}`.
+fn interp_end(source: &str, index: usize) -> Result<usize, Error> {
+    scan(source, index + 2, b'}').map_err(|why| match why {
+        Unclosed::TooDeep => fail(
+            source,
+            index,
+            &format!("${{ nests brackets or template literals deeper than {MAX_NESTING}"),
+        ),
+        Unclosed::End | Unclosed::LineCommentInTag => fail(source, index, "${ has no closing }"),
+    })
 }
 
 /// [`scan_expression`], saying why it found no end.
 fn scan(source: &str, from: usize, terminator: u8) -> Result<usize, Unclosed> {
+    scan_nested(source, from, terminator, 0)
+}
+
+/// [`scan`] inside `nesting` levels of brackets and `${` in template literals.
+fn scan_nested(source: &str, from: usize, terminator: u8, nesting: usize) -> Result<usize, Unclosed> {
+    if nesting > MAX_NESTING {
+        return Err(Unclosed::TooDeep);
+    }
     let bytes = source.as_bytes();
     let mut depth = 0usize;
     let mut index = from;
@@ -830,7 +857,7 @@ fn scan(source: &str, from: usize, terminator: u8) -> Result<usize, Unclosed> {
                     if bytes[index] == b'\\' {
                         index += 1;
                     } else if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{') {
-                        index = scan(source, index + 2, b'}')?;
+                        index = scan_nested(source, index + 2, b'}', nesting + depth + 1)?;
                     }
                     index += 1;
                 }
@@ -870,6 +897,9 @@ fn scan(source: &str, from: usize, terminator: u8) -> Result<usize, Unclosed> {
             }
             b'(' | b'[' | b'{' => {
                 depth += 1;
+                if nesting + depth > MAX_NESTING {
+                    return Err(Unclosed::TooDeep);
+                }
                 operand_next = true;
             }
             b')' | b']' => {
@@ -978,8 +1008,7 @@ pub(crate) fn tokens_at(source: &str) -> Result<Vec<(usize, Token)>, Error> {
             tokens.push((index, Token::Comment));
             index += end + 3;
         } else if rest.starts_with("${") {
-            let end =
-                scan_expression(source, index + 2, b'}').ok_or_else(|| fail(source, index, "${ has no closing }"))?;
+            let end = interp_end(source, index)?;
             flush!();
             tokens.push((index, Token::Interp(source[index + 2..end].to_string())));
             index = end + 1;
@@ -1043,6 +1072,11 @@ fn tag(source: &str, start: usize) -> Result<(Token, usize), Error> {
     let end = scan(source, name_end, b'>').map_err(|why| match why {
         Unclosed::LineCommentInTag => fail(source, start, &format!("a // comment in a tag (<#{name}>): use /* */")),
         Unclosed::End => fail(source, start, &format!("<#{name} has no closing >")),
+        Unclosed::TooDeep => fail(
+            source,
+            start,
+            &format!("<#{name}> nests brackets or template literals deeper than {MAX_NESTING}"),
+        ),
     })?;
     let argument = source[name_end..end].trim().to_string();
     if argument.is_empty() {
@@ -1221,6 +1255,12 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
         }
         match token {
             Token::Text(_) | Token::Interp(_) | Token::Comment => {}
+            Token::If(_) | Token::List(..) if stack.len() >= MAX_NESTING => {
+                // the generated program nests a block (two for a list) for each, which oxc's parser recurses through
+                return Err(Error::new(format!(
+                    "template: <#if> and <#list> nest deeper than {MAX_NESTING}"
+                )));
+            }
             Token::If(cond) => {
                 check_expression(cond, source)?;
                 out.push_str(&format!("if ({}) {{\n", line_closed(cond)));
