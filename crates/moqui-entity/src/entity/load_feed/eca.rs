@@ -76,13 +76,13 @@ pub(crate) fn match_rules_with(facade: &EntityFacade, entity_name: &str, operati
         .collect()
 }
 
-/// Whether a rule's actions call one of the `UserSecurityChecks` asserts (`Security.eecas.xml`): checks, not business
-/// rules, so they run even when the message facade already has errors, and a load's switch does not turn them off.
+/// Whether a rule's actions call a `UserSecurityChecks` assert (`Security.eecas.xml` and the components': privileged
+/// membership, sealed grants, stored scripts, templates, expressions, document conditions, translations, and any added
+/// later): checks, not business rules, so they run even when the message facade already has errors, and a load's switch
+/// does not turn them off.
 #[must_use]
 pub fn is_security_check(actions: &str) -> bool {
-    actions.contains("UserSecurityChecks.assertPrivilegedGroupMembership(")
-        || actions.contains("UserSecurityChecks.assertSealedPermissionGrant(")
-        || actions.contains("UserSecurityChecks.assertSealedGroupMembership(")
+    actions.contains("UserSecurityChecks.assert")
 }
 
 /// Rules stored for `entity_name`. This lookup does not run them; `service::run_matched_eca` does.

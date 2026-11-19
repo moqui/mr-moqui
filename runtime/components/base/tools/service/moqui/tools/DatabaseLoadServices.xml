@@ -57,8 +57,9 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!ec.user.hasPermission('DATABASE_ADMIN')">
                 <return error="true" message="A load with the foreign keys dropped needs the DATABASE_ADMIN permission"/></if>
             <script><![CDATA[
-            // a ServiceJob runs with authorization off: the load is the user's, authorized as from the Tools app for all
-            // actions (the Data › Load transition), so entity authorization and the security checks of what it writes apply
+            // a ServiceJob runs with authorization off: a data load is the user's, authorized as from the Tools app for all
+            // actions (the Data › Load transition), so entity authorization and the security checks of what it writes apply;
+            // a snapshot import is not (below)
             ec.artifactExecution.runAsUser('component://tools/screen/Tools.xml', () => {
             const runJob = (jobId) => {
                 const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.run#DatabaseJob').parameters({jobId, wait: true})
@@ -75,9 +76,14 @@ along with this software (see the LICENSE.md file). If not, see
                 // the load, its errors kept apart so the restore runs
                 try {
                     if (loadKind == 'snapshot') {
+                        // a snapshot restore is an administrator's whole-database operation, as the plain
+                        // ImportEntityDataSnapshot job runs it: with authorization off, past this service's own
+                        // DATABASE_ADMIN check, so the security-check rules a load's disableEntityEca keeps (privileged
+                        // memberships, sealed grants) pass for the rows of the snapshot, which they would refuse a
+                        // restorer outside those groups, rolling back the whole file (plans/Security-Review-Medium.md SEC-DAT-83)
                         const out = ec.service.sync().name('org.moqui.impl.EntityServices.import#EntityDataSnapshot').parameters({zipFilename,
                             dummyFks, useTryInsert, disableEntityEca, disableAuditLog, disableFkCreate, disableDataFeed,
-                            transactionTimeout: transactionTimeout || 3600}).call() || {}
+                            transactionTimeout: transactionTimeout || 3600}).disableAuthz().call() || {}
                         recordsLoaded = Number(out.recordsLoaded || 0)
                     } else {
                         const edl = ec.entity.makeDataLoader()
