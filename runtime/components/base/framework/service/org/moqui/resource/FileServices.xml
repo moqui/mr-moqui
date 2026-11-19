@@ -1906,7 +1906,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Share a file or folder with a user (sharedWithUserId), a user group, a party, an email address, or by
             link (isLink Y): permissionEnumId RspView (the default), RspEdit, or RspUpload (a folder only: a file drop),
             with an optional expireDate, password (links; kept only as its hash) and note. A link's token is returned once
-            (linkToken, and linkPath /s/token for the public page); only its hash is kept. Edit permission.</description>
+            (linkToken, and linkPath /s/token for the public page); only its hash is kept. Edit permission; a link, a share with
+            every user (ALL_USERS), with a group the sharer is not in or with a group of external users (EXTERNAL_USER) need
+            manage permission, the drive's owner's or a manager's (SEC-BOS-106).</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="path"/>
@@ -1941,6 +1943,20 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('File not found')); return }
             if (access.level < 2) { ec.message.addError(ec.l10n.localize('You may not share this')); return }
+            // a public link and a share with every user (ALL_USERS) are the drive's owner's and its managers' (SEC-BOS-106): an
+            // editor, by membership or by a share of the path, shares with people and groups only
+            if (access.level < 3 && link) { ec.message.addError(ec.l10n.localize('Only a manager of the drive makes a link')); return }
+            if (access.level < 3 && sharedWithUserGroupId === 'ALL_USERS') {
+                ec.message.addError(ec.l10n.localize('Only a manager of the drive shares with every user')); return }
+            // below the manage level a group only of the sharer's own, and never one of external users (EXTERNAL_USER: an app's
+            // client contacts), so an editor hands the item to no group they are not in
+            if (access.level < 3 && sharedWithUserGroupId) {
+                if (!Array.from(ec.user.getUserGroupIdSet() || []).includes(sharedWithUserGroupId)) {
+                    ec.message.addError(ec.l10n.localize('You share with a group only when you are in it; a manager of the drive shares with any')); return }
+                if (ec.entity.find('moqui.security.UserGroupPermission').condition('userGroupId', sharedWithUserGroupId).condition('userPermissionId', 'EXTERNAL_USER')
+                        .conditionDate('fromDate', 'thruDate', null).disableAuthz().count() > 0) {
+                    ec.message.addError(ec.l10n.localize('Only a manager of the drive shares with a group of external users')); return }
+            }
             const change = ec.resource.getLastChange(path ? `${access.drive.rootLocation.replace(/\/+$/, '')}/${path}` : access.drive.rootLocation)
             if (change == null && path) { ec.message.addError(ec.l10n.localize('File not found')); return }
             const isDirectory = change == null || !change.isFile
