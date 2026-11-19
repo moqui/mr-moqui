@@ -96,7 +96,9 @@ fn an_archive_round_trips_by_workspace_paths() {
     assert_eq!(std::fs::read_to_string(to.join("target/debug/app")).unwrap(), "binary");
     assert_eq!(std::fs::read_to_string(to.join("target/cache/x.bin")).unwrap(), "x");
     assert_eq!(std::fs::read_to_string(to.join("notes.txt")).unwrap(), "notes");
-    // a file outside the workspace is not packed
+    // a file outside the workspace is not packed; and the archive is a new file, never one that is there
+    assert!(archive::pack(&from, &[from.join("notes.txt")], &archive_file).is_err());
+    std::fs::remove_file(&archive_file).unwrap();
     assert!(archive::pack(&from, &[to.join("notes.txt")], &archive_file).is_err());
     for path in [&from, &to] {
         std::fs::remove_dir_all(path).unwrap();
@@ -316,6 +318,7 @@ fn an_artifact_reads_nothing_outside_the_workspace() {
         ]
     );
     for named in ["d", "d/x.xml", "dist/leak", "dist/sub", "reports/out.xml"] {
+        let _ = std::fs::remove_file(&archive_file);
         let refused = archive::pack(&workspace, &[workspace.join(named)], &archive_file).unwrap_err();
         assert!(refused.contains("outside the workspace"), "{named}: {refused}");
     }
@@ -530,6 +533,11 @@ fn a_collect_child_runs_as_the_user_answers_in_a_file_and_is_killed_at_its_deadl
     )
     .unwrap();
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "input-bytes pack\n");
+    // its answer is a new file: one that is there (another user's name made first) is not written (SEC-GIT-98)
+    let again = run_as(&user, &sh("/bin/cat"), Collect::Pack, b"other", &out, &root, later);
+    assert!(again.is_err());
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "input-bytes pack\n");
+    std::fs::remove_file(&out).unwrap();
     // a child that fails answers the first line it wrote on standard error
     let failed = run_as(
         &user,
@@ -541,6 +549,7 @@ fn a_collect_child_runs_as_the_user_answers_in_a_file_and_is_killed_at_its_deadl
         later,
     );
     assert_eq!(failed.unwrap_err(), "it went wrong");
+    std::fs::remove_file(&out).unwrap();
     // one still running at the deadline is killed
     let began = Instant::now();
     let slow = run_as(
@@ -554,6 +563,7 @@ fn a_collect_child_runs_as_the_user_answers_in_a_file_and_is_killed_at_its_deadl
     );
     assert!(slow.unwrap_err().contains("ran out of time"));
     assert!(began.elapsed() < Duration::from_secs(10));
+    std::fs::remove_file(&out).unwrap();
     // past the deadline nothing starts
     assert!(run_as(&user, &sh("true"), Collect::Probe, b"", &out, &root, Instant::now()).is_err());
     // this binary by /proc/self/exe on Linux (here the test binary, which lists its tests and ends)
@@ -572,5 +582,79 @@ fn a_collect_child_runs_as_the_user_answers_in_a_file_and_is_killed_at_its_deadl
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(left, ["out"]);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// SEC-GIT-98: a registered runner works only in a directory of its own. With no `--work` it makes a new one with a
+/// random name, the runner's alone; a named one is made, or taken when it is a directory of this user no group or other
+/// user may write, and set to the runner's mode (`0711` with a step user, which reaches its checkout through it and
+/// lists nothing); a link is not taken. A job's directory is a job run id's alone, made new.
+#[cfg(unix)]
+#[test]
+fn a_runner_works_only_in_a_directory_of_its_own() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::{job_dir, work_dir};
+
+    let mode = |path: &Path| std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777;
+    let set = |path: &Path, mode: u32| std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    let (first, second) = (work_dir(None, false).unwrap(), work_dir(None, false).unwrap());
+    assert!(first.is_absolute() && first != second, "{first:?} {second:?}");
+    assert!(first.starts_with(std::env::temp_dir()), "{first:?}");
+    assert_eq!((mode(&first), mode(&second)), (0o700, 0o700));
+    std::fs::remove_dir(&first).unwrap();
+    std::fs::remove_dir(&second).unwrap();
+
+    let root = scratch("work-dir");
+    let made = root.join("a/work");
+    assert_eq!(work_dir(Some(&made), true).unwrap(), made);
+    assert_eq!(mode(&made), 0o711);
+    set(&made, 0o755);
+    work_dir(Some(&made), false).unwrap();
+    assert_eq!(mode(&made), 0o700);
+    for open in [0o777, 0o770, 0o1777] {
+        set(&made, open);
+        let refused = work_dir(Some(&made), false).unwrap_err();
+        assert!(
+            refused.contains("may be written by a group or other users"),
+            "{open:o}: {refused}"
+        );
+    }
+    set(&made, 0o700);
+    let link = root.join("link");
+    std::os::unix::fs::symlink(&made, &link).unwrap();
+    assert!(work_dir(Some(&link), false).unwrap_err().contains("not a directory"));
+    // nothing of the owner check is left in it
+    assert_eq!(std::fs::read_dir(&made).unwrap().count(), 0);
+
+    let job = job_dir(&made, "JOB_100-a", true).unwrap();
+    assert_eq!((job.clone(), mode(&job)), (made.join("JOB_100-a"), 0o711));
+    std::fs::write(job.join("left.txt"), "old").unwrap();
+    let job = job_dir(&made, "JOB_100-a", false).unwrap();
+    assert_eq!((std::fs::read_dir(&job).unwrap().count(), mode(&job)), (0, 0o700));
+    for bad in ["", "..", "../x", "a/b", "a b", ".hidden"] {
+        assert!(job_dir(&made, bad, false).unwrap_err().contains("not an id"), "{bad:?}");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// SEC-GIT-98: the runner's scratch and answer files are made new, never written through a file or link another user
+/// put at the name first.
+#[cfg(unix)]
+#[test]
+fn a_scratch_file_is_made_new_and_never_through_a_link() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = scratch("create-new");
+    let target = root.join("target.txt");
+    std::fs::write(&target, "theirs").unwrap();
+    let link = root.join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(super::create_new(&link).is_err());
+    assert!(super::create_new(&target).is_err());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "theirs");
+    let fresh = root.join("fresh");
+    std::io::Write::write_all(&mut super::create_new(&fresh).unwrap(), b"ours").unwrap();
+    assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o600);
     std::fs::remove_dir_all(&root).unwrap();
 }

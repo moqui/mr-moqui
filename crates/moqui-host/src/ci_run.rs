@@ -62,10 +62,10 @@ fn step_home(workspace: &Path) -> Vec<(String, String)> {
     job_home(workspace)
 }
 
-/// A `home` beside the workspace, as the steps' `HOME`.
+/// A `home` beside the workspace, as the steps' `HOME`: the runner's alone (`0700`) until it is handed to a step user.
 fn job_home(workspace: &Path) -> Vec<(String, String)> {
     let home = workspace.parent().unwrap_or(workspace).join("home");
-    match std::fs::create_dir_all(&home) {
+    match moqui_lib::private_fs::create_dir_all(&home) {
         Ok(()) => vec![("HOME".to_string(), home.to_string_lossy().into_owned())],
         Err(_) => Vec::new(),
     }
@@ -313,10 +313,15 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 .and_then(|seconds| seconds.parse::<u64>().ok())
                 .unwrap_or(10)
                 .clamp(2, 3600);
-            let work = option(args, "--work").map_or_else(|| std::env::temp_dir().join("moqui-ci"), PathBuf::from);
-            // absolute, as a collect child runs in another directory and is given paths of the workspace (SEC-GIT-81)
-            let work = std::path::absolute(&work)
-                .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
+            // a directory of the runner's own, absolute (a collect child runs in another directory and is given paths
+            // of the workspace, SEC-GIT-81): with no --work a new one under the temporary directory, never one another
+            // local user could have made first and so own (SEC-GIT-98)
+            let work = runner::work_dir(
+                option(args, "--work").map(PathBuf::from).as_deref(),
+                step_user.is_some(),
+            )
+            .map_err(|why| Error::new(format!("moqui ci-run poll: {why}")))?;
+            eprintln!("moqui ci-run poll: working in {}", work.display());
             // the step user must run this binary, which reads the reports, artifacts and caches as that user: asked
             // once here, so a runner that could not read them takes no job
             #[cfg(unix)]
@@ -326,8 +331,6 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
             };
             #[cfg(unix)]
             if let Some(user) = &step_user {
-                std::fs::create_dir_all(&work)
-                    .map_err(|err| Error::new(format!("moqui ci-run poll: --work {}: {err}", work.display())))?;
                 runner::collect::probe(user, &work).map_err(|why| {
                     Error::new(format!(
                         "moqui ci-run poll: --step-user {} cannot run this program, which reads each job's reports, \
@@ -351,8 +354,16 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                             noticed = true;
                         }
                         if let (Some(job), Some(token)) = (answer["jobRunId"].as_str(), answer["token"].as_str()) {
-                            let dir = work.join(job);
-                            let _ = std::fs::remove_dir_all(&dir);
+                            let dir = match runner::job_dir(&work, job, step_user.is_some()) {
+                                Ok(dir) => dir,
+                                Err(why) => {
+                                    eprintln!("moqui ci-run poll: job run {job} was not run: {why}");
+                                    if once {
+                                        return Ok(2);
+                                    }
+                                    continue;
+                                }
+                            };
                             let began = std::time::Instant::now();
                             let code = run_one(
                                 &server,
