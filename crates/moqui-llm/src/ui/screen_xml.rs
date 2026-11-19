@@ -125,6 +125,13 @@ impl Dialect for ScreenXml {
                 Vec::new(),
             ));
         };
+        if !page_path_ok(&header.path) {
+            return Err(refused(
+                "The path is the page of this server's apps that shows the screen: /qapps/... or /apps/..., with no \
+                 scheme, host, .. or //.",
+                Vec::new(),
+            ));
+        }
         let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()));
         let problems = factory
             .map(|factory| {
@@ -151,6 +158,14 @@ impl Dialect for ScreenXml {
             reads: Vec::new(),
         })
     }
+}
+
+/// Whether a header's page `path` may be shown: none, or a plain path of the apps (`/apps/...`, `/qapps/...`). The
+/// client makes it the src of the preview frame, so `javascript:...` would run in the application's origin and
+/// another site's page would show in the drawer (plans/Security-Review-Medium.md SEC-AI-82).
+#[must_use]
+pub fn page_path_ok(path: &str) -> bool {
+    path.is_empty() || super::openui::plain_app_path(path)
 }
 
 /// The file path of a `component://` location, when its component is loaded.
@@ -238,6 +253,31 @@ mod tests {
             Some(String::new())
         );
         assert_eq!(header("<!-- screen-xml at=\"component://a.xml\""), None);
+    }
+
+    /// SEC-AI-82: the page path becomes the preview frame's src, so it is only a plain path of the apps.
+    #[test]
+    fn the_page_path_is_a_plain_path_of_the_apps() {
+        for path in [
+            "",
+            "/qapps/example/Gallery/ExampleDetail?exampleId=100",
+            "/apps/system",
+            "/qapps",
+        ] {
+            assert!(page_path_ok(path), "{path}");
+        }
+        for path in [
+            "javascript:parent.alert(1)//",
+            "https://other.example/x",
+            "//other.example/qapps/x",
+            "/qapps/../Login/logout",
+            "/qapps//x",
+            "/qapps\\x",
+            "/Login/logout",
+            "qapps/x",
+        ] {
+            assert!(!page_path_ok(path), "{path}");
+        }
     }
 
     #[test]
