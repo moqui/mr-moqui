@@ -183,6 +183,26 @@ fn escape(text: &str) -> String {
     out
 }
 
+/// A wildcard term as `query_string` text: the parser's unescaped `*` and `?` stay wildcards, and every other character
+/// (one the parser escaped with a backslash among them) is escaped, so a `:`, `/` or `\` the word held is text, never
+/// query syntax such as a field or a regular expression (SEC-DAT-87).
+fn escape_wildcard(terms: &str) -> String {
+    let mut out = String::with_capacity(terms.len() + 4);
+    let mut chars = terms.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                if let Some(literal) = chars.next() {
+                    out.push_str(&escape(&literal.to_string()));
+                }
+            }
+            '*' | '?' => out.push(ch),
+            other => out.push_str(&escape(&other.to_string())),
+        }
+    }
+    out
+}
+
 /// A field value for Elastic: dates as epoch millis, decimals as numbers.
 fn value_json(kind: Option<FieldKind>, value: &Value) -> Json {
     if kind == Some(FieldKind::Date) {
@@ -288,8 +308,7 @@ fn compile(mapping: &DocumentMapping, query: &Query, prefix: &str) -> Json {
                     .join(" "),
                 TextMatch::Contains => format!("*{}*", escape(terms)),
                 TextMatch::Phrase => format!("\"{}\"", terms.replace('\\', "\\\\").replace('"', "\\\"")),
-                // Already escaped by the parser: `\*` is literal, `*` and `?` are wildcards.
-                TextMatch::Wildcard => terms.clone(),
+                TextMatch::Wildcard => escape_wildcard(terms),
             };
             let names: Vec<Json> = match fields {
                 TextFields::All => vec![Json::String("*".into())],
